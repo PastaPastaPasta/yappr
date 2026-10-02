@@ -4,6 +4,8 @@ tags:
   - full
 ---
 - runFlow: ../../subflows/launch.yaml
+# Signed in first, so the sign-out below always has an account to act on.
+- runFlow: ../../subflows/ensure-signed-in.yaml
 - runFlow: ../../subflows/sign-out.yaml
 - assertVisible:
     id: settings-sign-in

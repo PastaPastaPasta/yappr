@@ -41,7 +41,8 @@ tags:
       text: "Following.*"
     timeout: 10000
 - takeScreenshot: following
-# Kept: the profile opened again.
+# Kept: the profile opened again still shows it
+# (likely served from the app's cache, so this checks the optimistic state holds).
 - runFlow: ../../subflows/back.yaml
 - openLink: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:

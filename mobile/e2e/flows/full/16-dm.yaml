@@ -1,8 +1,9 @@
 # A direct-message round trip (PRD DM-01 – DM-05; ADR E8) with the peer
 # persona: messages unlock with the encryption key when the device has none
-# (DM_KEY, from `-e` only), the new-message picker finds the peer, the app
-# sends a message that reaches "Sent", and the peer (the engine in Node,
-# mobile/engine/harness/e2e-peer.ts) answers it; the answer shows up live.
+# (MAESTRO_DM_KEY_1..4, from the environment only), the new-message picker
+# finds the peer, the app sends a message that reaches "Sent", and the peer
+# (the engine in Node, mobile/engine/harness/e2e-peer.ts) answers it; the
+# answer shows up live.
 # DM v5 messages stay on chain (there is no cheap delete); RUN keeps each
 # run's text unique.
 appId: ${APP_ID}
@@ -33,10 +34,10 @@ tags:
           timeout: 60000
       - tapOn:
           id: dm-unlock-key
-      - inputText: ${DM_KEY.substring(0, 16)}
-      - inputText: ${DM_KEY.substring(16, 32)}
-      - inputText: ${DM_KEY.substring(32, 48)}
-      - inputText: ${DM_KEY.substring(48)}
+      - inputText: ${MAESTRO_DM_KEY_1}
+      - inputText: ${MAESTRO_DM_KEY_2}
+      - inputText: ${MAESTRO_DM_KEY_3}
+      - inputText: ${MAESTRO_DM_KEY_4}
       - tapOn:
           id: dm-unlock-save
       - extendedWaitUntil:

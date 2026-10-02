@@ -1,6 +1,7 @@
-# Signed in as the run's persona, whatever the app's state: Settings shows the
-# account, or "Sign in" leads through the private-key sign-in (SIGN_IN_KEY).
-# Ends on Settings. Needs a launched app (subflows/launch.yaml).
+# Signed in as the run's persona (SELF_HANDLE), whatever the app's state:
+# another account is signed out first, so a write flow never posts as an
+# account that isn't a pool persona; then "Sign in" leads through the
+# private-key sign-in. Ends on Settings. Needs a launched app (launch.yaml).
 appId: ${APP_ID}
 ---
 - openLink: ${SCHEME}://settings
@@ -14,6 +15,15 @@ appId: ${APP_ID}
       id: "settings-account|settings-sign-in"
       enabled: true
     timeout: 90000
+# The account row reads "Account: <name>, @<handle> · <balance>".
+- runFlow:
+    when:
+      visible:
+        id: settings-account
+      notVisible:
+        id: settings-account
+        text: ".*@${SELF_HANDLE} .*"
+    file: sign-out.yaml
 - runFlow:
     when:
       visible:
@@ -23,7 +33,8 @@ appId: ${APP_ID}
           id: settings-sign-in
       - runFlow: sign-in-key.yaml
       - openLink: ${SCHEME}://settings
-      - extendedWaitUntil:
-          visible:
-            id: settings-account
-          timeout: 60000
+- extendedWaitUntil:
+    visible:
+      id: settings-account
+      text: ".*@${SELF_HANDLE} .*"
+    timeout: 60000

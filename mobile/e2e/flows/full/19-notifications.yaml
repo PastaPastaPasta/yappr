@@ -29,10 +29,22 @@ tags:
 - tapOn:
     id: notifications-filters-like
     optional: true
+- extendedWaitUntil:
+    visible:
+      id: "notifications-list|notifications-empty"
+    timeout: 30000
 - tapOn:
     id: notifications-filters-follow
+- extendedWaitUntil:
+    visible:
+      id: "notifications-list|notifications-empty"
+    timeout: 30000
 - tapOn:
     id: notifications-filters-all
+- extendedWaitUntil:
+    visible:
+      id: "notifications-list|notifications-empty"
+    timeout: 30000
 # The settings link opens the per-type switches.
 - tapOn:
     id: notifications-settings

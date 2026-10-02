@@ -34,9 +34,23 @@ appId: ${APP_ID}
           notVisible: "Sign out of .*"
           timeout: 10000
 # Signed out: Settings offers Sign in (the "Signed out" toast is too brief to wait for).
-- openLink: ${SCHEME}://settings
-- extendedWaitUntil:
-    visible:
-      id: settings-sign-in
-      enabled: true
-    timeout: 60000
+# Signing the last account out restarts the engine and takes the app Home, which can
+# swallow a link that lands meanwhile: open Settings again until it shows.
+- repeat:
+    times: 4
+    while:
+      notVisible:
+        id: settings-sign-in
+        enabled: true
+    commands:
+      - waitForAnimationToEnd
+      - openLink: ${SCHEME}://settings
+      - extendedWaitUntil:
+          visible:
+            id: settings-sign-in
+            enabled: true
+          timeout: 20000
+          optional: true
+- assertVisible:
+    id: settings-sign-in
+    enabled: true

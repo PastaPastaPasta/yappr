@@ -10,16 +10,20 @@ nightly (`.github/workflows/mobile-e2e.yml`).
 | `full` | `smoke`, then `flows/full/`: key exchange through the test-wallet responder, key sign-in, post (deleted again), like and unlike, reply, follow and unfollow, a DM round trip, block and unblock, report, notifications, sign out. | The devnet variant (sakura) and two pool personas |
 
 The full suite writes to sakura as pool personas (90–98; never 99, never
-testnet). Every flow cleans up after itself or ends where it began, and the
-text it writes carries the run id, so runs can repeat and don't collide.
-DM v5 messages and reports stay on chain (there is no cheap delete).
+testnet; 97 and 98 by default, since the engine's write suite uses 92–96).
+A flow that passes leaves nothing behind: it deletes what it posted, and a
+follow or a block ends undone (the next run also undoes one an interrupted
+run left). The peer deletes its posts when it stops, whatever happened. The
+text a flow writes carries the run id, so runs don't collide. DM v5 messages
+and reports stay on chain (there is no cheap delete), and a flow that fails
+half way can leave its own post behind.
 
 ## Running it
 
 ```bash
 # A dev client: Metro running with the same APP_VARIANT on <port>
 mobile/e2e/run.sh --platform ios --device <udid> --metro-port 8181 --suite smoke
-YAPPR_SAKURA_IDENTITIES=<identities.json> E2E_PERSONA=97 E2E_PEER_PERSONA=96 \
+YAPPR_SAKURA_IDENTITIES=<identities.json> E2E_PERSONA=97 E2E_PEER_PERSONA=98 \
   mobile/e2e/run.sh --platform android --device emulator-5554 --metro-port 8181 --suite full
 
 # A release build (no Metro): leave out --metro-port
@@ -48,11 +52,14 @@ Maestro's command logs and failure screenshots.
 The app's persona signs in with its AUTHENTICATION/HIGH key and unlocks
 messages with its ENCRYPTION key. `run.sh` reads them from `E2E_KEY_FILE` and
 `E2E_DM_KEY_FILE`, or writes them from the pool into a private temp dir
-(deleted on exit), and hands them to Maestro with `-e` only. Flows type them
-in 16-character parts (iOS can drop characters from one long secure-field
-input). Maestro echoes typed text in its output and debug files, so `run.sh`
-scrubs each key and each part from everything it writes. Never commit a key,
-and don't run a flow that types one outside `run.sh` on a shared machine.
+(deleted on exit). It hands each key to Maestro in four parts, as
+`MAESTRO_SIGN_IN_KEY_1..4` and `MAESTRO_DM_KEY_1..4` environment variables,
+which Maestro reads by itself, so no key is ever on a command line. The flows
+type the parts one by one (iOS can drop characters from one long input into a
+secure field). Maestro echoes typed text into its output and debug files,
+including `~/.maestro/tests`, so `run.sh` scrubs every key and every part from
+all of it, also when the run is interrupted. Never commit a key, and don't run
+a flow that types one outside `run.sh`.
 
 ## Writing flows
 
@@ -60,11 +67,12 @@ and don't run a flow that types one outside `run.sh` on a shared machine.
   app (and, with `CLEAR: 'true'`, clears its data). A dev client loads its
   bundle from Metro there and has its floating tools button turned off
   (`subflows/dev-client.yaml`); a release build skips that.
-- Signed-in flows call `subflows/ensure-signed-in.yaml` next, so each one
-  also runs alone.
+- Signed-in flows call `subflows/ensure-signed-in.yaml` next (it signs out
+  any account that isn't the run's persona), so each one also runs alone.
+  Flows that act on the peer call `subflows/peer-unblocked.yaml` too.
 - Flows get `APP_ID`, `SCHEME`, `DEV_CLIENT_URL` and `RUN` from `run.sh`, and
-  in the full suite `SELF_ID`, `PEER_ID`, `PEER_HANDLE`, `PEER_URL`,
-  `RESPONDER_URL`, `PERSONA`, `SIGN_IN_KEY` and `DM_KEY`.
+  in the full suite `SELF_ID`, `SELF_HANDLE`, `PEER_ID`, `PEER_HANDLE`,
+  `PEER_URL`, `RESPONDER_URL` and `PERSONA` (the keys come as `MAESTRO_*`).
 - Navigate with taps (`subflows/open-tab.yaml`, `subflows/back.yaml`) and
   web-form links (`${SCHEME}://post?id=…`, `user?id=`, `hashtag?tag=`,
   `settings?section=`), which every build accepts. App-route links such as

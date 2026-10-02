@@ -135,10 +135,17 @@ async function route(req: IncomingMessage): Promise<[number, unknown]> {
   const body = await readJson(req)
   switch (url.pathname) {
     case '/post': {
-      const ticket = await settled(await engine.api.posts.publish({ parts: [{ text: text(body.text, 'text') }] }))
+      const submitted = await engine.api.posts.publish({ parts: [{ text: text(body.text, 'text') }] })
+      let ticket = submitted
+      try {
+        ticket = await settled(submitted)
+      } finally {
+        // A post that may have landed unconfirmed is still deleted on shutdown.
+        const latest = (await engine.api.writes.get(ticket.id).catch(() => null)) ?? ticket
+        for (const doc of latest.documents) posted.add(doc.id)
+      }
       const id = ticket.documents.find(doc => doc.part === 0)?.id
       if (!id) throw new Error('The post has no document id')
-      posted.add(id)
       log(`posted ${id}`)
       return [200, { id }]
     }
@@ -192,15 +199,19 @@ const server = createServer((req, res) => {
 
 async function shutdown(): Promise<void> {
   server.close()
+  let failed = 0
   for (const id of posted) {
     await engine.api.posts
       .delete({ id, kind: 'post', ownerId: persona.identityId, rootPostId: null })
       .then(ticket => settled(ticket))
       .then(() => log(`cleaned up ${id}`))
-      .catch((error: unknown) => log(`cleanup of ${id} failed: ${error instanceof Error ? error.message : String(error)}`))
+      .catch((error: unknown) => {
+        failed++
+        log(`cleanup of ${id} failed: ${error instanceof Error ? error.message : String(error)}`)
+      })
   }
   await engine.api.session.signOut().catch(() => undefined)
-  process.exit(0)
+  process.exit(failed ? 1 : 0)
 }
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
@@ -208,8 +219,22 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   })
 }
 
-server.listen(Number(PORT), HOST, () => log(`listening on ${HOST}:${PORT}`))
-start().catch((error: unknown) => {
-  log(`start failed: ${error instanceof Error ? error.message : String(error)}`)
+server.on('error', (error: Error) => {
+  // EADDRINUSE and the like: never leave run.sh talking to whatever else holds the port.
+  log(`server error: ${error.message}`)
   process.exit(1)
 })
+server.listen(Number(PORT), HOST, () => log(`listening on ${HOST}:${PORT}`))
+/** Start, again on a failure: sakura's quorum list lags now and then ("Quorum not found in cache"). */
+async function startWithRetries(attempts = 10): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await start()
+    } catch (error) {
+      log(`start attempt ${attempt} failed: ${error instanceof Error ? error.message : String(error)}`)
+      if (attempt >= attempts) throw error
+      await new Promise(resolve => setTimeout(resolve, 10_000))
+    }
+  }
+}
+startWithRetries().catch(() => process.exit(1))

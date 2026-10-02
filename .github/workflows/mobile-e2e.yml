@@ -7,17 +7,22 @@ name: Mobile E2E
 #  - smoke (every run): the signed-out flows. Read only, no secrets.
 #  - full (manual "full", or nightly when the secret exists): smoke plus the
 #    signed-in flows, which WRITE to devnet sakura as two pool personas.
-#    Needs the repository secret YAPPR_E2E_PERSONAS_JSON: a subset of the
-#    sakura ops identities.json holding only the two personas, for example
+#    Needs the secret YAPPR_E2E_PERSONAS_JSON in the `mobile-e2e` environment
+#    (restrict that environment to master and staging, so a dispatch from any
+#    other branch can't read it): a subset of the sakura ops identities.json
+#    holding only the two personas, for example
 #      {"network": "devnet-sakura", "identities": [
-#        {"personaIdx": 96, "identityId": "...", "handle": "...", "identityKeys": [...]},
-#        {"personaIdx": 97, "identityId": "...", "handle": "...", "identityKeys": [...]}]}
+#        {"personaIdx": 97, "identityId": "...", "handle": "...", "identityKeys": [...]},
+#        {"personaIdx": 98, "identityId": "...", "handle": "...", "identityKeys": [...]}]}
 #    (personaIdx, identityId, handle and identityKeys, as in the full file; the
 #    full file is too big for a secret). E2E_PERSONA / E2E_PEER_PERSONA below
 #    pick them. The keys only ever reach run.sh, which scrubs them from its
 #    output; never print the secret in a step.
 #
 # Nightly on purpose, with no path filter: sakura changes under the app.
+# GitHub runs schedules from the default branch (master) only, so the nightly
+# starts once this file reaches master; until then, dispatch it by hand.
+# Not here yet: the engine's sakura write suite (it needs all ten pool personas).
 on:
   workflow_dispatch:
     inputs:
@@ -32,21 +37,23 @@ on:
 permissions:
   contents: read
 
+# One run at a time across all branches: every run signs in as the same personas.
 concurrency:
-  group: mobile-e2e-${{ github.ref }}
+  group: mobile-e2e
   cancel-in-progress: false
 
 env:
   APP_VARIANT: devnet
   MAESTRO_VERSION: '2.11.0'
   E2E_PERSONA: '97'
-  E2E_PEER_PERSONA: '96'
+  E2E_PEER_PERSONA: '98'
 
 jobs:
   ios:
     name: iOS simulator (${{ inputs.suite || 'nightly' }})
     runs-on: macos-26
     timeout-minutes: 120
+    environment: mobile-e2e
     env:
       # Only whether the secret exists; its value reaches the one step that writes it to a file.
       HAS_PERSONAS: ${{ secrets.YAPPR_E2E_PERSONAS_JSON != '' }}
@@ -107,8 +114,12 @@ jobs:
 
       - name: Boot a simulator and install the app
         run: |
+          # The newest installed iOS runtime that has an iPhone 17.
           runtime="$(xcrun simctl list runtimes -j | node -e '
-            const r = JSON.parse(require("fs").readFileSync(0, "utf8")).runtimes.filter(x => x.isAvailable && x.platform === "iOS");
+            const r = JSON.parse(require("fs").readFileSync(0, "utf8")).runtimes
+              .filter(x => x.isAvailable && x.platform === "iOS" && (x.supportedDeviceTypes || []).some(d => d.name === "iPhone 17"))
+              .sort((a, b) => a.version.localeCompare(b.version, undefined, { numeric: true }));
+            if (!r.length) { console.error("no iOS runtime with an iPhone 17"); process.exit(1); }
             console.log(r[r.length - 1].identifier)')"
           udid="$(xcrun simctl create "Yappr E2E" "iPhone 17" "$runtime")"
           xcrun simctl boot "$udid"
