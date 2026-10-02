@@ -1,6 +1,8 @@
 import { Tabs } from 'expo-router';
+import { Label, useTheme } from 'expo-router/react-navigation';
 import type { ComponentType } from 'react';
-import type { ColorValue } from 'react-native';
+import { Platform, useWindowDimensions, type ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   BellIcon as BellOutline,
   EnvelopeIcon as EnvelopeOutline,
@@ -24,6 +26,11 @@ import { colors, useIsDark } from '~/ui/tokens';
 type HeroIcon = ComponentType<{ size?: number; color?: ColorValue }>;
 
 const ICON_SIZE = 26;
+/** The navigator's tab bar height (UIKit's 49) before the bottom inset, and its label size. */
+const TAB_BAR_HEIGHT = 49;
+const LABEL_SIZE = 10;
+/** Tab labels stop growing at 1.5× (UX_SPEC §6.1). */
+const MAX_LABEL_SCALE = 1.5;
 
 function tabIcon(Outline: HeroIcon, Solid: HeroIcon) {
   function TabIcon({ focused, color }: { focused: boolean; color: ColorValue }) {
@@ -32,6 +39,45 @@ function tabIcon(Outline: HeroIcon, Solid: HeroIcon) {
   }
   return TabIcon;
 }
+
+/**
+ * Android's tab label, capped at 1.5× font scale and shrunk to
+ * fit its tab, so a large font scale doesn't clip it under the tab bar or cut
+ * "Notifications" short. iOS keeps the navigator's label, which doesn't scale
+ * (the Large Content Viewer shows it instead).
+ */
+function AndroidTabLabel({ color, children }: { color: ColorValue; children: string }) {
+  const { fonts } = useTheme();
+  return (
+    <Label
+      tintColor={color}
+      style={[{ fontSize: LABEL_SIZE }, fonts.medium]}
+      maxFontSizeMultiplier={MAX_LABEL_SCALE}
+      adjustsFontSizeToFit
+    >
+      {children}
+    </Label>
+  );
+}
+
+/**
+ * On Android the bar grows with its label (a 1.4 line height per scaled
+ * point), so a large font scale doesn't cut the descenders off.
+ */
+function useAndroidTabBarStyle() {
+  const { fontScale } = useWindowDimensions();
+  const { bottom } = useSafeAreaInsets();
+  if (Platform.OS !== 'android' || fontScale <= 1) return undefined;
+  const growth = Math.ceil(LABEL_SIZE * (Math.min(fontScale, MAX_LABEL_SCALE) - 1) * 1.4);
+  return { height: TAB_BAR_HEIGHT + growth + bottom };
+}
+
+const tabBarLabel =
+  Platform.OS === 'android'
+    ? ({ color, children }: { color: ColorValue; children: string }) => (
+        <AndroidTabLabel color={color}>{children}</AndroidTabLabel>
+      )
+    : undefined;
 
 /** A count of 0 shows no badge; past 99 it reads "99+" (NOTIF-03). */
 const badge = (count: number | undefined) => (count ? badgeLabel(count) : undefined);
@@ -45,11 +91,14 @@ const badge = (count: number | undefined) => (count ? badgeLabel(count) : undefi
 export default function TabLayout() {
   const dark = useIsDark();
   const badges = useTabBadges();
+  const tabBarStyle = useAndroidTabBarStyle();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
+        tabBarLabel,
+        tabBarStyle,
         tabBarActiveTintColor: dark ? colors.white : colors.black,
         tabBarInactiveTintColor: colors.gray500,
       }}
