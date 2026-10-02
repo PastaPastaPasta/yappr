@@ -11,7 +11,7 @@ import type { DmEngine } from '@/lib/services/dm-v5/engine'
 import type { MemoryChain } from '@/lib/services/dm-v5/test-chain'
 import type { Conversation, DirectMessage } from '@/lib/types'
 import type { AuthorDTO } from '../../src/api/dto'
-import type { LegacyDmService } from '../../src/dm/legacy'
+import type { LegacyDmService, LegacyReads } from '../../src/dm/legacy'
 import type { DmEvents, MessageDTO } from '../../src/dm/types'
 import type { WriteTicket } from '../../src/writes/types'
 import type { SessionEvents } from '../../src/api/session'
@@ -565,6 +565,7 @@ function fakeLegacy(me: string) {
   const conversations = new Map<string, Conversation>()
   const threads = new Map<string, DirectMessage[]>()
   let failList = false
+  const blocked = new Set<string>()
   const message = (conversationId: string, i: number, from: string, at: number): DirectMessage =>
     ({ id: `${conversationId}-${i}`, senderId: from, recipientId: from === me ? 'peer' : me, conversationId, content: `m${i}`, createdAt: new Date(at) })
   const service = {
@@ -584,9 +585,14 @@ function fakeLegacy(me: string) {
     getOrCreateConversation: vi.fn(async (_me: string, peer: string) => ({ conversationId: `conv-${peer}`, isNew: true })),
     getParticipantLastRead: vi.fn(async () => 1_500_000),
   } satisfies LegacyDmService
+  const reads = {
+    // A strict read: the invites are there whether or not lib's list read failed.
+    hasConversations: vi.fn(async () => conversations.size > 0),
+    blocked: vi.fn(async (_me: string, ids: string[]) => new Map(ids.map(id => [id, blocked.has(id)]))),
+  } satisfies LegacyReads
   return {
-    service, conversations, threads, message,
-    failLists: () => { failList = true },
+    service, reads, conversations, threads, message, blocked,
+    failLists: (fail = true) => { failList = fail },
     add(id: string, peer: string, count: number, unread = 0) {
       const list = Array.from({ length: count }, (_, i) => message(id, i, i % 2 ? me : peer, 1_000_000 + i * 1000))
       threads.set(id, list)
@@ -597,7 +603,7 @@ function fakeLegacy(me: string) {
 
 function legacyUser(me = alice) {
   const legacy = fakeLegacy(me)
-  const user = userOn(ledgerNow(), me, { backend: 'legacy', legacyService: legacy.service })
+  const user = userOn(ledgerNow(), me, { backend: 'legacy', legacyService: legacy.service, legacyReads: legacy.reads })
   return { ...user, legacy }
 }
 
@@ -704,6 +710,41 @@ describe('dm on legacy 1:1 (testnet)', () => {
     await vi.advanceTimersByTimeAsync(LEGACY_LIST_TTL_MS + 1_000)
     expect((await user.dm.conversations()).map(c => c.key)).toEqual(['l:C1'])
     expect((await user.dm.status()).error).toBe('Could not load conversations')
+  })
+
+  it('reports a failed first list read as an error, never an empty inbox, and reads again at once (SR-21)', async () => {
+    const user = legacyUser()
+    user.legacy.add('C1', bob, 1)
+    user.legacy.failLists()
+    await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(await user.dm.status()).toMatchObject({ ready: false, error: 'Could not load conversations' })
+    // A conversation opened by key (a link, a restored route) is not "unavailable": it can be retried.
+    await expect(user.dm.messages('l:C1')).rejects.toMatchObject({ code: 'NETWORK' })
+    user.legacy.failLists(false)
+    expect((await user.dm.conversations()).map(c => c.key)).toEqual(['l:C1'])
+    expect(await user.dm.status()).toMatchObject({ ready: true, error: null })
+  })
+
+  it('believes a first empty list once the strict read finds no conversation', async () => {
+    const user = legacyUser()
+    expect(await user.dm.conversations()).toEqual([])
+    expect(await user.dm.status()).toMatchObject({ ready: true, error: null })
+    expect(user.legacy.reads.hasConversations).toHaveBeenCalledWith(alice)
+  })
+
+  it('follows the account\'s blocks: flagged, nothing unread, no sending, and an unblock shows at once (SR-20, DM-10)', async () => {
+    useSettingsStore.getState().setSendReadReceipts(true)
+    const user = legacyUser()
+    user.legacy.add('C1', bob, 3, 2)
+    user.legacy.blocked.add(bob)
+    expect((await user.dm.conversations())[0]).toMatchObject({ unread: 0, flags: { blocked: true } })
+    expect(await user.dm.status()).toMatchObject({ unreadTotal: 0, unreadConversations: 0 })
+    await expect(user.dm.send('l:C1', 'hi')).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Unblock this person to message them.' })
+
+    user.legacy.blocked.delete(bob)
+    user.tickets.register('unblock', { run: async () => ({ state: 'confirmed' }) })
+    user.tickets.submit({ op: 'unblock', args: {} })
+    await vi.waitFor(async () => expect((await user.dm.conversations())[0]).toMatchObject({ unread: 2, flags: { blocked: false } }))
   })
 
   it('refuses the v5-only actions', async () => {

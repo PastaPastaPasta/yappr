@@ -16,7 +16,7 @@ import { RpcError } from '../protocol/envelope'
 import { badCursor, cursorInt, cursorString, decodeCursor } from '../dto/cursor'
 import { loadUserSummaries, notSupported } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
-import { createLegacyBackend, type LegacyDmService } from '../dm/legacy'
+import { createLegacyBackend, type LegacyDmService, type LegacyReads } from '../dm/legacy'
 import { createV5Backend, type DmEngineSource } from '../dm/v5'
 import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
@@ -56,6 +56,8 @@ export interface DmModuleOptions {
   v5Source?: DmEngineSource
   /** Default: lib's `directMessageService`. */
   legacyService?: LegacyDmService
+  /** Default: strict invite reads and lib's block status. */
+  legacyReads?: LegacyReads
   /** The engine's plain storage, where DM v5 keeps its per-device state. Default: `localStorage`. */
   storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
   /** Default: lib's signed-in identity. */
@@ -138,7 +140,11 @@ export function createDmModule(options: DmModuleOptions) {
   const { emit } = options
   const backend = (options.backend ?? (dmIsV5() ? 'v5' : 'legacy')) === 'v5'
     ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs, storage: options.storage })
-    : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs })
+    : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs, reads: options.legacyReads })
+  // Legacy messages follow the account's blocks (DM-10): a settled block or unblock re-reads them.
+  options.tickets.observe(ticket => {
+    if (backend.kind === 'legacy' && (ticket.op === 'block' || ticket.op === 'unblock') && ticket.state !== 'pending') backend.blocksChanged()
+  })
   const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
   const fetchAuthors = options.authors ?? loadAuthors
 
