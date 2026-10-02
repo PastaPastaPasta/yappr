@@ -35,32 +35,36 @@ type ListData = InfiniteData<Page<NotificationDTO>>;
 const refetchLists = () =>
   queryClient.invalidateQueries({ queryKey: queryKeys.notificationsAll }).catch(() => undefined);
 
-let polling: { viewer: string | null; done: Promise<number | null> } | null = null;
+let polling: { viewer: string | null; done: Promise<boolean> } | null = null;
 
 /**
  * One poll (`notifications.poll`) for `viewer`: merges what arrived since
  * the last one, updates the badge, and refetches the lists when something
- * new came. A poll already running for the same account is joined, not
- * repeated; one left over from another account is not. Resolves with how
- * many arrived (the lists are refetched by then), or null when it failed
- * or belongs to an account no longer polled.
+ * new came or a block or unblock changed what they show. A poll already
+ * running for the same account is joined, not repeated; one left over from
+ * another account is not. Resolves with whether it refetched the lists
+ * (done by then; false for an account no longer polled), and rejects when
+ * the poll failed.
  */
-export function pollNotifications(viewer: string | null): Promise<number | null> {
+export function pollNotifications(viewer: string | null): Promise<boolean> {
   if (polling?.viewer === viewer) return polling.done;
   const current = {
     viewer,
     done: engine.api.notifications
       .poll()
-      .then(async ({ added, unread }) => {
-        if (polling !== current) return null;
-        setUnread(unread);
-        if (added > 0) await refetchLists();
-        return added;
-      })
-      .catch((error: unknown) => {
-        appendLog('warn', 'host', `Notifications poll failed: ${errorMessage(error)}`);
-        return null;
-      })
+      .then(
+        async ({ added, unread, blockedChanged }) => {
+          if (polling !== current) return false;
+          setUnread(unread);
+          if (added === 0 && !blockedChanged) return false;
+          await refetchLists();
+          return true;
+        },
+        (error: unknown) => {
+          appendLog('warn', 'host', `Notifications poll failed: ${errorMessage(error)}`);
+          throw error;
+        },
+      )
       .finally(() => {
         if (polling === current) polling = null;
       }),
@@ -113,11 +117,18 @@ export function useSettings() {
   return useEngineQuery(queryKeys.settings, (api) => api.settings.get());
 }
 
-/** Marks these ids read in every cached list; returns how many were unread. */
-function patchRead(ids: ReadonlySet<string> | 'all'): number {
+/**
+ * Marks these ids read in every cached list; returns how many were unread.
+ * A list fetch already in flight may have read them unread, so it is
+ * cancelled (reverting to the data before it) and can't land over the mark;
+ * `cancelled` says to refetch once the engine holds the mark.
+ */
+function patchRead(ids: ReadonlySet<string> | 'all'): { unread: number; cancelled: boolean } {
   const changed = new Set<string>();
-  queryClient.setQueriesData<ListData>({ queryKey: queryKeys.notificationsAll }, (data) => {
-    if (!data) return data;
+  let cancelled = false;
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.notificationsAll })) {
+    const data = queryClient.getQueryData<ListData>(query.queryKey);
+    if (!data) continue;
     let touched = false;
     const pages = data.pages.map((page) => {
       if (!page.items.some((item) => !item.read && (ids === 'all' || ids.has(item.id)))) return page;
@@ -131,9 +142,14 @@ function patchRead(ids: ReadonlySet<string> | 'all'): number {
         }),
       };
     });
-    return touched ? { ...data, pages } : data;
-  });
-  return changed.size;
+    if (!touched) continue;
+    if (query.state.fetchStatus === 'fetching') {
+      cancelled = true;
+      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
+    }
+    queryClient.setQueryData<ListData>(query.queryKey, { ...data, pages }, { updatedAt: query.state.dataUpdatedAt });
+  }
+  return { unread: changed.size, cancelled };
 }
 
 /** After a refused read mark: the lists and badge go back to what the engine holds. */
@@ -152,12 +168,17 @@ function resyncAfterFailedMark(): void {
  */
 export function markNotificationsRead(ids: readonly string[]): void {
   if (ids.length === 0) return;
-  const unread = patchRead(new Set(ids));
+  const { unread, cancelled } = patchRead(new Set(ids));
   if (unread > 0) setUnread(useNotificationBadge.getState().unread - unread);
-  engine.api.notifications.markRead([...ids]).catch((error: unknown) => {
-    appendLog('warn', 'host', `Marking notifications read failed: ${errorMessage(error)}`);
-    resyncAfterFailedMark();
-  });
+  engine.api.notifications.markRead([...ids]).then(
+    () => {
+      if (cancelled) refetchLists();
+    },
+    (error: unknown) => {
+      appendLog('warn', 'host', `Marking notifications read failed: ${errorMessage(error)}`);
+      resyncAfterFailedMark();
+    },
+  );
 }
 
 /**
@@ -165,10 +186,11 @@ export function markNotificationsRead(ids: readonly string[]): void {
  * lists hold; disabled types stay unread for when they're turned back on.
  */
 export async function markAllNotificationsRead(): Promise<void> {
-  patchRead('all');
+  const { cancelled } = patchRead('all');
   setUnread(0);
   try {
     await engine.api.notifications.markVisibleRead();
+    if (cancelled) refetchLists();
   } catch (error) {
     appendLog('warn', 'host', `Mark all as read failed: ${errorMessage(error)}`);
     toast.error("Couldn't mark notifications as read. Try again.");
@@ -178,26 +200,36 @@ export async function markAllNotificationsRead(): Promise<void> {
 
 type Toggles = SettingsDTO['notificationSettings'];
 
+/** Settles toggle writes in order: only the latest change, overall and per type, lands its answer. */
+let toggleSeq = 0;
+const latestToggle = new Map<keyof Toggles, number>();
+
+function patchToggle(key: keyof Toggles, value: boolean): void {
+  queryClient.setQueryData<SettingsDTO>(queryKeys.settings, (data) =>
+    data ? { ...data, notificationSettings: { ...data.notificationSettings, [key]: value } } : data,
+  );
+}
+
 /**
  * Turns one notification type on or off (NOTIF-05). Applied at once; the
  * lists refetch without (or with) that type, and the engine recounts the
- * badge. A refused change is undone.
+ * badge. A refused change is undone, unless a newer change of that type
+ * has replaced it, and the settings are then read again.
  */
 export async function setNotificationToggle(key: keyof Toggles, value: boolean): Promise<void> {
+  const seq = ++toggleSeq;
+  latestToggle.set(key, seq);
   await queryClient.cancelQueries({ queryKey: queryKeys.settings });
-  const previous = queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
-  if (previous) {
-    queryClient.setQueryData<SettingsDTO>(queryKeys.settings, {
-      ...previous,
-      notificationSettings: { ...previous.notificationSettings, [key]: value },
-    });
-  }
+  const previous = queryClient.getQueryData<SettingsDTO>(queryKeys.settings)?.notificationSettings[key];
+  patchToggle(key, value);
   try {
     const next = await engine.api.settings.set({ notificationSettings: { [key]: value } });
-    queryClient.setQueryData(queryKeys.settings, next);
+    // A newer change is still on its way; its answer carries this one too.
+    if (seq === toggleSeq) queryClient.setQueryData(queryKeys.settings, next);
   } catch (error) {
     appendLog('warn', 'host', `Saving a notification setting failed: ${errorMessage(error)}`);
     toast.error("Couldn't save the setting. Try again.");
+    if (previous !== undefined && latestToggle.get(key) === seq) patchToggle(key, previous);
     queryClient.invalidateQueries({ queryKey: queryKeys.settings }).catch(() => undefined);
   } finally {
     refetchLists();

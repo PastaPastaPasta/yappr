@@ -205,6 +205,29 @@ describe('Notifications', () => {
     expect(screen.getAllByTestId('unread-dot')).toHaveLength(2);
   });
 
+  it('keeps a read mark when a list fetch already running lands after it', async () => {
+    signIn();
+    let landStale: (value: Page<NotificationDTO>) => void = () => undefined;
+    const marked = NOTIFICATIONS.map((n) => (n.type === 'like' ? { ...n, read: true } : n));
+    list()
+      .mockResolvedValueOnce(page(NOTIFICATIONS))
+      .mockReturnValueOnce(new Promise((resolve) => (landStale = resolve)))
+      .mockResolvedValue(page(marked));
+    await renderScreen();
+    expect(screen.getAllByTestId('unread-dot')).toHaveLength(2);
+
+    await act(async () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.notificationsAll }).catch(() => undefined);
+    });
+    expect(list()).toHaveBeenCalledTimes(2);
+    await act(async () => fireEvent.press(screen.getByTestId('notification-likes:my-post')));
+    // The fetch read the likes unread before the mark: it must not bring them back.
+    await act(async () => landStale(page(NOTIFICATIONS)));
+    expect(screen.getAllByTestId('unread-dot')).toHaveLength(1);
+    // What the cancelled fetch would have brought is read again once the engine holds the mark.
+    expect(list()).toHaveBeenCalledTimes(3);
+  });
+
   it('opens the actor from the avatar', async () => {
     signIn();
     list().mockResolvedValue(page(NOTIFICATIONS));
@@ -300,6 +323,17 @@ describe('Notifications', () => {
       await pull();
       expect(list()).toHaveBeenCalledTimes(3);
       expect(useToastStore.getState().current).toBeNull();
+    });
+
+    it('says so when the poll fails, even though the held list still reads', async () => {
+      signIn();
+      list().mockResolvedValue(page(NOTIFICATIONS));
+      await renderScreen();
+
+      fakeEngine.method('notifications.poll').mockRejectedValue(Object.assign(new Error('timeout'), { code: 'RPC_TIMEOUT' }));
+      await pull();
+      expect(useToastStore.getState().current?.message).toBe("Couldn't refresh notifications. Try again.");
+      expect(screen.getByText(/started following you$/)).toBeTruthy();
     });
 
     it('says so when the refresh fails', async () => {
@@ -434,10 +468,28 @@ describe('the tab badge (NOTIF-03)', () => {
   it('refetches the lists when a poll brings something new', async () => {
     signIn();
     queryClient.setQueryData(queryKeys.notifications('all'), { pages: [page([])], pageParams: [null] });
-    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 2, unread: 2 });
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 2, unread: 2, blockedChanged: false });
     renderHook(useNotificationsBadge, { wrapper });
     await act(async () => {});
     expect(queryClient.getQueryState(queryKeys.notifications('all'))?.isInvalidated).toBe(true);
+  });
+
+  it('refetches the lists when a block or unblock changed what they show (NOTIF-08)', async () => {
+    signIn();
+    queryClient.setQueryData(queryKeys.notifications('all'), { pages: [page([])], pageParams: [null] });
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 3, blockedChanged: true });
+    renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+    expect(queryClient.getQueryState(queryKeys.notifications('all'))?.isInvalidated).toBe(true);
+  });
+
+  it('leaves the lists alone when a poll changed nothing', async () => {
+    signIn();
+    queryClient.setQueryData(queryKeys.notifications('all'), { pages: [page([])], pageParams: [null] });
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 3, blockedChanged: false });
+    renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+    expect(queryClient.getQueryState(queryKeys.notifications('all'))?.isInvalidated).toBe(false);
   });
 });
 
@@ -469,5 +521,45 @@ describe('Settings → Notifications (NOTIF-05)', () => {
     await act(async () => fireEvent.press(screen.getByTestId('notification-toggle-follows')));
     expect(screen.getByLabelText('Follows')).toBeChecked();
     expect(useToastStore.getState().current?.message).toBe("Couldn't save the setting. Try again.");
+  });
+
+  it('undoes a refused change even when the settings can\'t be read again', async () => {
+    fakeEngine
+      .method('settings.get')
+      .mockResolvedValueOnce(settings())
+      .mockRejectedValue(new Error('offline'));
+    fakeEngine.method('settings.set').mockRejectedValue(new Error('nope'));
+    renderSettings();
+    await act(async () => {});
+
+    await act(async () => fireEvent.press(screen.getByTestId('notification-toggle-follows')));
+    expect(screen.getByLabelText('Follows')).toBeChecked();
+  });
+
+  it('settles toggles in order: an older answer never overrides a newer change', async () => {
+    fakeEngine
+      .method('settings.get')
+      .mockResolvedValueOnce(settings())
+      .mockRejectedValue(new Error('offline'));
+    let refuseFirst: (error: Error) => void = () => undefined;
+    let answerSecond: (value: SettingsDTO) => void = () => undefined;
+    fakeEngine
+      .method('settings.set')
+      .mockReturnValueOnce(new Promise((_resolve, reject) => (refuseFirst = reject)))
+      .mockReturnValueOnce(new Promise((resolve) => (answerSecond = resolve)))
+      .mockResolvedValueOnce(settings({ follows: false }));
+    renderSettings();
+    await act(async () => {});
+
+    // Off, on, off: the last one is what the user wants.
+    const toggle = () => act(async () => fireEvent.press(screen.getByTestId('notification-toggle-follows')));
+    await toggle();
+    await toggle();
+    await toggle();
+    expect(screen.getByLabelText('Follows')).not.toBeChecked();
+
+    await act(async () => refuseFirst(new Error('nope')));
+    await act(async () => answerSecond(settings({ follows: true })));
+    expect(screen.getByLabelText('Follows')).not.toBeChecked();
   });
 });

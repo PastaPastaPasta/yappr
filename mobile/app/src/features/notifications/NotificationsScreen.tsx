@@ -168,9 +168,9 @@ export function NotificationsScreen() {
       return;
     }
     setRefreshing(true);
-    // A poll that brought something has refetched the lists already.
+    // A poll that changed the lists has refetched them already; a failed one rejects (the toast below).
     pollNotifications(viewerId)
-      .then((added) => (added ? undefined : refetch()))
+      .then((refetched) => (refetched ? undefined : refetch()))
       .then(() => {
         if (queryClient.getQueryState(queryKeys.notifications(filter))?.status === 'error') {
           toast.error(REFRESH_FAILED);

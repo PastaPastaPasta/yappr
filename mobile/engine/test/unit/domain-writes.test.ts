@@ -638,13 +638,13 @@ describe('notifications', () => {
     // A failed block read keeps what was known rather than showing them again.
     m.blockService.checkBlockedBatch.mockRejectedValue(new Error('timeout'))
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [from('z', 'mention', 400, BLOCKED)], latestTimestamp: 400 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 1 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
 
-    // Unblocked: the next poll recounts the badge and the next first page shows them.
+    // Unblocked: the next poll recounts the badge, says the lists changed, and the next first page shows them.
     emitted = []
     m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, false], [AUTHOR, false]]))
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [], latestTimestamp: 400 })
-    expect(await notifications.poll()).toEqual({ added: 0, unread: 4 })
+    expect(await notifications.poll()).toEqual({ added: 0, unread: 4, blockedChanged: true })
     expect(emitted).toEqual([{ event: 'notifications.count', payload: { unread: 4 } }])
     expect((await notifications.list()).items.map(item => item.id)).toEqual(['z', 'x', 'a', 'y'])
 
@@ -658,9 +658,9 @@ describe('notifications', () => {
   it('polls from the watermark and merges what arrived', async () => {
     const notifications = createNotificationsModule(emit).api
     m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 1 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [notification('b', 'follow', 200)], latestTimestamp: 200 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 2 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 2, blockedChanged: false })
     expect(m.notificationService.pollNewNotifications).toHaveBeenCalledWith(VIEWER, 100, expect.any(Set))
     expect(emitted.at(-1)).toEqual({ event: 'notifications.count', payload: { unread: 2 } })
     m.viewer = null

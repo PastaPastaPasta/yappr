@@ -240,25 +240,26 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
     /**
      * Fetch what arrived since the last read (`pollNewNotifications`) and
      * merge it, as the sidebar's 30 s loop does; emits `notifications.count`.
+     * `blockedChanged`: a block or unblock changed which held ones are shown.
      */
-    async poll(): Promise<{ added: number; unread: number }> {
+    async poll(): Promise<{ added: number; unread: number; blockedChanged: boolean }> {
       const viewer = requireViewer('Notifications')
       if (loadedFor !== viewer) {
         const before = store().notifications.length
         await ensureLoaded(viewer)
-        return { added: store().notifications.length - before, unread: unreadCount() }
+        return { added: store().notifications.length - before, unread: unreadCount(), blockedChanged: false }
       }
       const result = await notificationService.pollNewNotifications(viewer, store().lastFetchTimestamp, store().getReadIdsSet())
-      if (viewerId() !== viewer) return { added: 0, unread: 0 }
+      if (viewerId() !== viewer) return { added: 0, unread: 0, blockedChanged: false }
       const before = store().notifications.length
       if (result.notifications.length > 0) store().addNotifications(result.notifications)
       store().setLastFetchTimestamp(result.latestTimestamp)
       const added = store().notifications.length - before
-      // A block or unblock since the last poll changes the badge too.
-      await refreshBlocked(viewer)
-      if (viewerId() !== viewer) return { added: 0, unread: 0 }
+      // A block or unblock since the last poll changes the list and the badge too.
+      const blockedChanged = await refreshBlocked(viewer)
+      if (viewerId() !== viewer) return { added: 0, unread: 0, blockedChanged: false }
       report()
-      return { added, unread: unreadCount() }
+      return { added, unread: unreadCount(), blockedChanged }
     },
 
     /** Mark notifications read (a tap on one, `markAsRead`). */
