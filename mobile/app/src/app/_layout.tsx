@@ -9,9 +9,12 @@ import { useColorScheme } from 'nativewind';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+import { SignInPromptHost } from '~/data/require-auth';
+import { startDataLayer } from '~/data/sync';
 import { EngineHost } from '~/engine/EngineHost';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { useAppearance } from '~/state/appearance';
+import { ActionSheetHost } from '~/ui/action-sheet';
 import { AvatarSvgProvider } from '~/ui/avatar-svg';
 import { MediaUrlProvider } from '~/ui/media-url';
 import { ToastHost } from '~/ui/ToastHost';
@@ -71,6 +74,8 @@ function useSplashUntilThemeSettles(): void {
 export default function RootLayout() {
   useSplashUntilThemeSettles();
   useUnsupportedEngineRoute();
+  // The session store, write tickets and created content follow the engine app-wide.
+  useEffect(() => startDataLayer(), []);
   const ipfsGateway = useIpfsGateway();
   const dark = useColorScheme().colorScheme === 'dark';
 
@@ -93,6 +98,8 @@ export default function RootLayout() {
                   <Stack.Screen name="profile/edit" options={{ presentation: 'modal' }} />
                   <Stack.Screen name="messages/new" options={{ presentation: 'modal' }} />
                   <Stack.Screen name="messages/new-group" options={{ presentation: 'modal' }} />
+                  <Stack.Screen name="block/[userId]" options={{ presentation: 'modal' }} />
+                  <Stack.Screen name="report/[postId]" options={{ presentation: 'modal' }} />
                   <Stack.Screen
                     name="media"
                     options={{
@@ -128,6 +135,8 @@ export default function RootLayout() {
                 </Stack>
                 {/* The engine's hidden WebView: one per app, never unmounted (ENGINE.md §1). */}
                 <EngineHost />
+                <SignInPromptHost />
+                <ActionSheetHost />
                 <ToastHost />
                 <StatusBar style="auto" />
               </BottomSheetModalProvider>

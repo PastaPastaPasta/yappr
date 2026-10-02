@@ -1,5 +1,6 @@
+import type { MenuComponentRef } from '@react-native-menu/menu';
 import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Pressable, View, type AccessibilityActionEvent, type TextLayoutEvent } from 'react-native';
+import { Platform, Pressable, View, type AccessibilityActionEvent, type TextLayoutEvent } from 'react-native';
 import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
@@ -13,20 +14,23 @@ import {
   truncateId,
 } from '~/lib-allowlist';
 
+import { showActionSheet } from '../action-sheet';
 import { Avatar } from '../Avatar';
+import { ContextMenu, type MenuItem } from '../ContextMenu';
 import { handleOf } from '../handle';
 import { IconButton } from '../IconButton';
 import { LinkText } from '../LinkText';
 import { RichText, type RichTextHandlers } from '../rich-text/RichText';
 import { Skeleton } from '../Skeleton';
+import { lightImpact } from '../haptics';
 import { Text } from '../Text';
 import { monoFont, tw, useColors, useLargeText } from '../tokens';
-import { safeExternalUrl } from '../media-url';
+import { useMediaUrls } from '../media-url';
 import { RelativeTime } from '../RelativeTime';
 import { displayText, inlineTargets, splitUrl, stripLink, type InlinePart } from '../rich-text/parse';
 import { WriteStatus, writeStatusLinks, type WriteStatusProps } from '../WriteStatus';
 import { LinkPreviewCard } from './LinkPreviewCard';
-import { MediaGrid } from './MediaGrid';
+import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
 import { PostActionBar } from './PostActionBar';
 import { DeletedLine, PostStub, stubText } from './PostStub';
@@ -43,7 +47,7 @@ export type PostCardVariant = 'feed' | 'detail' | 'compact' | 'optimistic';
 export interface PostCardActions extends RichTextHandlers {
   /** Open the post (feed) — the card's own tap. */
   onPress?: () => void;
-  /** The context menu (S5): iOS UIContextMenu, Android sheet. */
+  /** A long press, when there is no `menu`. */
   onLongPress?: () => void;
   onAuthorPress?: () => void;
   onReposterPress?: () => void;
@@ -89,8 +93,89 @@ export interface PostCardProps {
   canBookmark?: boolean;
   /** The optimistic variant's write status. */
   writeStatus?: WriteStatusProps;
+  /**
+   * The post's menu (PRD ENG-08): the "⋯" dropdown, also opened by a long
+   * press (Android) or shown as an action sheet (iOS long press, screen
+   * readers). Not a card-wide UIContextMenu: the iOS menu view is a
+   * UIButton, which would swallow every tap inside the card.
+   */
+  menu?: PostCardMenu;
   tagMaxLength?: number;
   actions?: PostCardActions;
+}
+
+export interface PostCardMenu {
+  items: MenuItem[];
+  onSelect: (id: string) => void;
+}
+
+const noop = () => undefined;
+
+/** Long press and the screen-reader "More": Android's "⋯" dropdown, or the action sheet. */
+function openPostMenu(menu: PostCardMenu, dropdown: MenuComponentRef | null) {
+  if (Platform.OS === 'android' && dropdown) {
+    lightImpact();
+    dropdown.show();
+  } else {
+    showMenuSheet(menu);
+  }
+}
+
+/** The menu as an action sheet (iOS long press, screen readers). */
+function showMenuSheet({ items, onSelect }: PostCardMenu) {
+  showActionSheet({
+    actions: items.map((item) => ({
+      label: item.title,
+      destructive: item.destructive,
+      onPress: () => onSelect(item.id),
+    })),
+  });
+}
+
+function MoreButton({
+  post,
+  menu,
+  menuRef,
+  onMore,
+}: {
+  post: CardPost;
+  menu?: PostCardMenu;
+  menuRef: (menu: MenuComponentRef | null) => void;
+  onMore?: () => void;
+}) {
+  const c = useColors();
+  const label = post.kind === 'reply' ? 'Reply options' : 'Post options';
+  const testID = `more-btn-${post.id}`;
+  if (!menu) {
+    return (
+      <IconButton
+        icon={EllipsisHorizontalIcon}
+        accessibilityLabel={label}
+        onPress={onMore}
+        testID={testID}
+        className="-my-1.5 -mr-2"
+      />
+    );
+  }
+  // The native menu opens on the tap. The touch's JS target is the menu view itself (on iOS a
+  // UIButton, which hides its children from React Native's hit test), so the no-op Pressable
+  // around it is what claims the press: without it the card's own press would open the post.
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={noop}
+      testID={testID}
+      // 44 pt, like IconButton's hit area (UX_SPEC §6.4), without growing the header.
+      className="-my-2.5 -mr-3 h-11 w-11"
+    >
+      <ContextMenu ref={menuRef} items={menu.items} onSelect={menu.onSelect} testID={`more-menu-${post.id}`}>
+        <View className="h-11 w-11 items-center justify-center">
+          <EllipsisHorizontalIcon size={20} color={c.textSecondary} />
+        </View>
+      </ContextMenu>
+    </Pressable>
+  );
 }
 
 function RepostBanner({
@@ -130,12 +215,13 @@ function RepostBanner({
 function Header({
   post,
   pending,
-  showMore,
+  more,
   actions,
 }: {
   post: CardPost;
   pending: boolean;
-  showMore: boolean;
+  /** The "⋯" button, when the card has one. */
+  more: ReactNode;
   actions: PostCardActions;
 }) {
   const c = useColors();
@@ -196,21 +282,18 @@ function Header({
           <LockClosedIcon size={16} color={c.private} />
         </View>
       ) : null}
-      {showMore ? (
-        <IconButton
-          icon={EllipsisHorizontalIcon}
-          accessibilityLabel={post.kind === 'reply' ? 'Reply options' : 'Post options'}
-          onPress={actions.onMore}
-          testID={`more-btn-${post.id}`}
-          className="-my-1.5 -mr-2"
-        />
-      ) : null}
+      {more}
     </View>
   );
 }
 
 /** Runs the handler a tap on that span would, normalized as RichText does. */
-function pressInline(target: InlinePart, actions: PostCardActions, tagMaxLength?: number) {
+function pressInline(
+  target: InlinePart,
+  actions: PostCardActions,
+  external: (url: string) => string | null,
+  tagMaxLength?: number,
+) {
   switch (target.type) {
     case 'mention':
       return actions.onMentionPress?.(normalizeDpnsUsername(target.value.slice(1)));
@@ -219,7 +302,7 @@ function pressInline(target: InlinePart, actions: PostCardActions, tagMaxLength?
     case 'cashtag':
       return actions.onCashtagPress?.(cashtagDisplayToStorage(target.value, tagMaxLength));
     case 'url': {
-      const url = safeExternalUrl(splitUrl(target.value).href);
+      const url = external(splitUrl(target.value).href);
       return url ? actions.onLinkPress?.(url) : undefined;
     }
   }
@@ -242,7 +325,10 @@ function postAccessibilityLabel(
     const hidden = extras.quoteCovered || quoted.encrypted || quoted.deleted;
     parts.push(`Quote: ${quoted.author.displayName}${hidden ? '' : `, ${quoted.content}`}.`);
   }
-  for (const media of post.media) parts.push(`Image: ${media.alt || 'image'}.`);
+  for (const media of post.media) {
+    const kind = mediaKindLabel(media.type);
+    parts.push(`${kind}: ${media.alt || kind.toLowerCase()}.`);
+  }
   const { replies, reposts, quotes, likes } = post.stats;
   parts.push(`${replies} replies, ${reposts + quotes} reposts, ${likes} likes.`);
   return parts.join(' ');
@@ -277,9 +363,13 @@ export const PostCard = memo(function PostCard({
   canBookmark = true,
   writeStatus,
   tagMaxLength,
+  menu,
   actions = {},
 }: PostCardProps) {
+  // The "⋯" dropdown, held in state (a callback ref) so long press can open it on Android.
+  const [dropdown, setDropdown] = useState<MenuComponentRef | null>(null);
   const [revealed, reveal] = useSensitiveReveal(post.id);
+  const { external } = useMediaUrls();
   // Whether the feed text overflowed, keyed by post so a recycled cell re-measures.
   const [clampedId, setClampedId] = useState<string>();
   const clamped = clampedId === post.id;
@@ -409,27 +499,40 @@ export const PostCard = memo(function PostCard({
       for (const target of inlineTargets(displayText(content, previewShown))) {
         const label = `Open ${target.type === 'url' ? splitUrl(target.value).display : target.value}`;
         if (!a11yActions.some((a) => a.name === label)) {
-          a11yActions.push({ name: label, label, run: () => pressInline(target, actions, tagMaxLength) });
+          a11yActions.push({
+            name: label,
+            label,
+            run: () => pressInline(target, actions, external, tagMaxLength),
+          });
         }
       }
       if (post.quoted)
         a11yActions.push({ name: 'quote', label: 'Open quoted post', run: actions.onQuotePress });
       const openPreview = actions.onLinkPreviewPress;
-      const previewUrl = typeof linkPreview === 'object' ? safeExternalUrl(linkPreview.url) : null;
+      const previewUrl = typeof linkPreview === 'object' ? external(linkPreview.url) : null;
       if (openPreview && previewUrl) {
         a11yActions.push({ name: 'preview', label: 'Open link preview', run: () => openPreview(previewUrl) });
       }
       const openMedia = actions.onMediaPress;
       if (!mediaGated && openMedia) {
-        post.media.forEach((_, i) =>
-          a11yActions.push({ name: `media-${i}`, label: `Open image ${i + 1}`, run: () => openMedia(i) }),
+        post.media.forEach((media, i) =>
+          a11yActions.push({
+            name: `media-${i}`,
+            label: `Open ${media.type === 'gif' ? 'GIF' : media.type} ${i + 1}`,
+            run: () => openMedia(i),
+          }),
         );
       }
     }
   }
+  const cardMenu = variant === 'compact' ? undefined : menu;
+  const onMore = variant === 'compact' ? undefined : actions.onMore;
+  // Long press and the screen-reader action. Android opens the "⋯" dropdown; iOS can't open a
+  // UIMenu from code, so it gets the same items as an action sheet.
+  const openMenu = cardMenu ? () => openPostMenu(cardMenu, dropdown) : undefined;
   a11yActions.push(
     { name: 'profile', label: 'Open profile', run: actions.onAuthorPress },
-    { name: 'more', label: 'More', run: variant === 'compact' ? undefined : actions.onMore },
+    { name: 'more', label: 'More', run: openMenu ?? onMore },
   );
   const available = a11yActions.filter((a) => a.run);
   const onAccessibilityAction = (e: AccessibilityActionEvent) => {
@@ -453,7 +556,7 @@ export const PostCard = memo(function PostCard({
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}
       onAccessibilityAction={onAccessibilityAction}
       onPress={actions.onPress}
-      onLongPress={actions.onLongPress}
+      onLongPress={openMenu ?? actions.onLongPress}
       testID={`post-card-${post.id}`}
       className={cn('px-4 pt-3', tw.pressed, variant === 'compact' ? 'pb-3' : cn('border-b pb-1', tw.border))}
     >
@@ -473,7 +576,9 @@ export const PostCard = memo(function PostCard({
           <Header
             post={post}
             pending={authorPending}
-            showMore={variant !== 'compact' && !!actions.onMore}
+            more={
+              cardMenu || onMore ? <MoreButton post={post} menu={cardMenu} menuRef={setDropdown} onMore={onMore} /> : null
+            }
             actions={actions}
           />
           {replyingTo ? (

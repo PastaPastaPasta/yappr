@@ -51,6 +51,11 @@ export function MediaGatePlaceholder({ onReveal, className }: { onReveal?: () =>
   );
 }
 
+/** How a media item is named in labels: "Image", "Video" or "GIF". */
+export function mediaKindLabel(type: CardMedia['type']): 'Image' | 'Video' | 'GIF' {
+  return type === 'video' ? 'Video' : type === 'gif' ? 'GIF' : 'Image';
+}
+
 /** A centered badge on video and GIF thumbnails: a play circle, or a "GIF" chip. */
 function PlayBadge({ gif }: { gif: boolean }) {
   return (
@@ -82,11 +87,12 @@ function MediaCell({
   const c = useColors();
   const urls = useMediaUrls();
   const [failedUrl, setFailedUrl] = useState<string>();
-  // 1.0 never plays video or GIF inline: thumbnails only (UX_SPEC 2.4.6).
-  const video = media.type === 'video';
-  const source = urls.media(video ? media.thumbnail : (media.thumbnail ?? media.url));
+  // 1.0 never plays video or GIF inline: thumbnails only (UX_SPEC 2.4.6). Without
+  // one, both show the placeholder (an animated GIF's own URL would play).
+  const still = media.type === 'image';
+  const source = urls.media(still ? (media.thumbnail ?? media.url) : media.thumbnail);
   const failed = !source || failedUrl === media.url;
-  const kind = video ? 'Video' : media.type === 'gif' ? 'GIF' : 'Image';
+  const kind = mediaKindLabel(media.type);
   return (
     <Pressable
       accessibilityRole="imagebutton"
@@ -97,13 +103,13 @@ function MediaCell({
     >
       {failed ? (
         <View className={cn('flex-1 items-center justify-center gap-1', tw.bgMuted)}>
-          {video ? (
-            <PlayIcon size={32} color={c.textSecondary} />
-          ) : (
+          {still ? (
             <PhotoIcon size={32} color={c.textSecondary} />
+          ) : (
+            <PlayIcon size={32} color={c.textSecondary} />
           )}
           <Text variant="caption" tone="secondary">
-            {video ? 'Video' : 'Image unavailable'}
+            {still ? 'Image unavailable' : kind}
           </Text>
         </View>
       ) : (

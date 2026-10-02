@@ -1,6 +1,7 @@
+import { parse, stringify } from '@engine/protocol/codec';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { defaultShouldDehydrateQuery, QueryClient } from '@tanstack/react-query';
-import type { PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
+import type { PersistedClient, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
 
 import { config } from '~/config';
 import { ENGINE_BUNDLE_HASH } from '~/engine/bundle-hash';
@@ -47,6 +48,9 @@ export const queryClient = new QueryClient({
 const persister = createAsyncStoragePersister({
   key: 'yappr-query-cache',
   storage: syncStorage,
+  // The engine's codec, so a restored post keeps its Dates (and bigints, Maps...).
+  serialize: stringify,
+  deserialize: (cache) => parse(cache) as PersistedClient,
 });
 
 /**
@@ -65,8 +69,12 @@ export const persistOptions: PersistQueryClientProviderProps['persistOptions'] =
   },
 };
 
-/** Drops every cached query, in memory and on disk. Call on sign-out and account switch. */
+/**
+ * Drops every cached query, in memory and on disk. Call on sign-out and
+ * account switch. Queries a screen is showing are reset rather than
+ * removed, so they refetch for the new account.
+ */
 export async function clearAccountCache(): Promise<void> {
-  queryClient.clear();
-  await persister.removeClient();
+  queryClient.removeQueries({ type: 'inactive' });
+  await Promise.all([persister.removeClient(), queryClient.resetQueries()]);
 }

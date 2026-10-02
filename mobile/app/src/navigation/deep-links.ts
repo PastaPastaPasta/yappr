@@ -57,6 +57,8 @@ const NEVER_FROM_OUTSIDE = [
   '/media',
   '/settings/app-lock',
   '/settings/accounts',
+  '/block',
+  '/report',
 ];
 
 type Query = Record<string, string>;

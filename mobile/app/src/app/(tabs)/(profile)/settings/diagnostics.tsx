@@ -5,7 +5,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Alert, Platform, Text as RNText, TextInput, View } from 'react-native';
 
 import { config } from '~/config';
-import { useEngineEvent, useEngineStatus } from '~/engine/hooks';
+import { useEngineEvent } from '~/data/events';
+import { useEngineStatus } from '~/engine/hooks';
 import { engine, engineNetworkKey, engineStorage, engineSupervisor, resetEngineData, simulateOnNextBoot } from '~/engine/index';
 import { getLogs, subscribeLogs } from '~/engine/logs';
 import type { EngineStatus } from '~/engine/supervisor';

@@ -24,5 +24,8 @@
     "getDerivedStateFromError",
     "componentDidCatch",
     "render"
+  ],
+  "ignore": [
+    "mobile/**"
   ]
 }
