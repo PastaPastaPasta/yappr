@@ -20,7 +20,7 @@ import { useColors } from '~/ui/tokens';
 import { ReplyBar, replyBlockOf } from './ReplyBar';
 import { buildThreadRows, threadRowType, type ThreadRow } from './thread-rows';
 import { ThreadRowView } from './ThreadRows';
-import { useParentPost, useSeedPost, useThread } from './use-thread';
+import { FocusUnavailableError, useParentPost, useSeedPost, useThread } from './use-thread';
 
 /** How many reply pages the screen reads on its own looking for a `?reply=` target. */
 const MAX_HIGHLIGHT_PAGES = 5;
@@ -84,6 +84,8 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const parentQuery = useParentPost(needsParent ? parentId : undefined);
 
   const repliesError = query.isError && !query.isFetchNextPageError ? readErrorMessage(query.error) : null;
+  // The last read lost a focus already shown: keep its replies, but never offer it as live.
+  const focusUnavailable = thread?.focus != null && query.error instanceof FocusUnavailableError;
   const rows = useMemo(
     () =>
       buildThreadRows({
@@ -92,10 +94,21 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
         parent: needsParent ? parentQuery.data : undefined,
         parentMissing: needsParent && parentQuery.isSuccess && parentQuery.data === null,
         focusRemoved,
+        focusUnavailable,
         highlightId,
         repliesError,
       }),
-    [thread, seed, needsParent, parentQuery.data, parentQuery.isSuccess, focusRemoved, highlightId, repliesError],
+    [
+      thread,
+      seed,
+      needsParent,
+      parentQuery.data,
+      parentQuery.isSuccess,
+      focusRemoved,
+      focusUnavailable,
+      highlightId,
+      repliesError,
+    ],
   );
 
   const [refreshing, setRefreshing] = useState(false);
@@ -194,7 +207,7 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
     );
   }
 
-  const block = replyBlockOf(focus ?? undefined, focusRemoved, thread !== undefined && !thread.focus);
+  const block = replyBlockOf(focus ?? undefined, focusRemoved, (thread !== undefined && !thread.focus) || focusUnavailable);
   const connecting = !thread && !seed && engineState !== 'ready';
 
   return (

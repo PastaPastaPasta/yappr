@@ -176,7 +176,7 @@ describe('ThreadScreen', () => {
     expect(fakeEngine.method('posts.thread')).not.toHaveBeenCalled();
   });
 
-  it('keeps a loaded thread when a refresh comes back without the post', async () => {
+  it('keeps the replies but marks the post unavailable when a refresh comes back without it', async () => {
     jest.useFakeTimers();
     try {
       fakeEngine.method('posts.thread').mockResolvedValueOnce(threadOf([reply('r1', 'First reply')]));
@@ -191,9 +191,20 @@ describe('ThreadScreen', () => {
         await jest.advanceTimersByTimeAsync(NOT_FOUND_RECHECK_MS);
       });
       expect(fakeEngine.method('posts.thread')).toHaveBeenCalledTimes(3);
-      expect(screen.getByText('The root post')).toBeTruthy();
       expect(screen.getByText('First reply')).toBeTruthy();
       expect(screen.queryByText('No replies yet. Be the first to reply!')).toBeNull();
+      // Never offered as live: the stub replaces it and the reply bar says why.
+      expect(screen.queryByText('The root post')).toBeNull();
+      expect(screen.getByTestId('thread-focus-stub')).toBeTruthy();
+      expect(screen.queryByTestId('reply-bar')).toBeNull();
+      expect(screen.getByText("This post is unavailable, so it can't be replied to.")).toBeTruthy();
+
+      // A later read that finds it again brings it back.
+      fakeEngine.method('posts.thread').mockResolvedValue(threadOf([reply('r1', 'First reply')]));
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: queryKeys.post.thread('root') });
+      });
+      expect(screen.getByText('The root post')).toBeTruthy();
       expect(screen.getByTestId('reply-bar')).toBeTruthy();
     } finally {
       jest.useRealTimers();

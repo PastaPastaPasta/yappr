@@ -63,6 +63,14 @@ describe('buildThreadRows', () => {
     expect(failed[1]).toMatchObject({ type: 'repliesError', message: 'Down' });
   });
 
+  it('keeps the replies under a focus a re-read lost, as the unavailable stub', () => {
+    const rows = buildThreadRows({ thread: thread({}, [reply('r1'), reply('r2')]), focusUnavailable: true });
+    expect(types(rows)).toEqual(['focusStub', 'reply', 'reply']);
+    expect(rows[0]).toMatchObject({ type: 'focusStub', state: 'unavailable', kind: 'post' });
+    // No replies read: a retry, never "No replies yet".
+    expect(types(buildThreadRows({ thread: thread(), focusUnavailable: true }))).toEqual(['focusStub', 'repliesError']);
+  });
+
   it('turns the focus into the deleted stub after the viewer deletes it here', () => {
     const rows = buildThreadRows({ thread: thread(), focusRemoved: true });
     expect(rows[0]).toMatchObject({ type: 'focusStub', state: 'deleted' });

@@ -51,6 +51,8 @@ export interface ThreadRowsInput {
   parentMissing?: boolean;
   /** The viewer deleted the focus on this device. */
   focusRemoved?: boolean;
+  /** A re-read lost the focus the thread holds: its replies stay, the focus shows as unavailable. */
+  focusUnavailable?: boolean;
   /** `?reply=`: the reply to highlight. */
   highlightId?: string;
   repliesError?: string | null;
@@ -102,6 +104,7 @@ export function buildThreadRows({
   parent,
   parentMissing = false,
   focusRemoved = false,
+  focusUnavailable = false,
   highlightId,
   repliesError,
 }: ThreadRowsInput): ThreadRow[] {
@@ -132,7 +135,7 @@ export function buildThreadRows({
   const shownParent = parentInChain ?? (parentId && parent?.id === parentId ? parent : undefined);
   if (focusRemoved) {
     rows.push({ type: 'focusStub', key: `focus:${focus.id}`, kind: focus.kind, state: 'deleted' });
-  } else if (thread && !thread.focus) {
+  } else if (thread && (!thread.focus || focusUnavailable)) {
     rows.push({ type: 'focusStub', key: `focus:${focus.id}`, kind: focus.kind, state: 'unavailable' });
   } else {
     rows.push({
@@ -160,8 +163,8 @@ export function buildThreadRows({
   const replies = thread.replies.items;
   if (replies.length === 0) {
     rows.push(
-      repliesError
-        ? { type: 'repliesError', key: 'replies-error', message: repliesError }
+      repliesError || focusUnavailable
+        ? { type: 'repliesError', key: 'replies-error', message: repliesError ?? GENERIC_MESSAGE }
         : { type: 'repliesEmpty', key: 'replies-empty' },
     );
     return rows;

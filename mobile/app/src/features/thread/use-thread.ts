@@ -9,6 +9,19 @@ import { persistedQuery, queryClient } from '~/state/query-client';
 /** How long to wait before re-reading a thread whose post came back missing. */
 export const NOT_FOUND_RECHECK_MS = 3000;
 
+/**
+ * A re-read that twice came back without a focus this device already showed.
+ * Thrown so the query keeps the thread it holds (lib answers a failed read as
+ * "absent", so it may be transient), while the screen marks the focus
+ * unavailable and takes no replies until a read finds it again.
+ */
+export class FocusUnavailableError extends Error {
+  constructor() {
+    super('The post could not be found');
+    this.name = 'FocusUnavailableError';
+  }
+}
+
 /** Whether this device already holds the thread with its focused post. */
 function hasLoadedFocus(id: string): boolean {
   const pages = queryClient.getQueryData<InfiniteData<ThreadDTO>>(queryKeys.post.thread(id))?.pages;
@@ -35,9 +48,10 @@ export function useThread(id: string) {
       await new Promise((resolve) => setTimeout(resolve, NOT_FOUND_RECHECK_MS));
       const second = await read();
       if (second.focus) return second;
-      // A thread already shown (or a later page, which only exists once the focus was read) stays
-      // on screen: a read that can't find it is treated as failed, and the query keeps its data.
-      if (pageParam !== null || hasLoadedFocus(id)) throw new Error('Thread unavailable');
+      // A thread already shown (or a later page, which only exists once the focus was read) keeps its
+      // replies on screen: the read fails, the query keeps its data, and the screen marks the focus
+      // unavailable (FocusUnavailableError).
+      if (pageParam !== null || hasLoadedFocus(id)) throw new FocusUnavailableError();
       return second;
     },
     initialPageParam: null,
