@@ -94,7 +94,7 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
       const accounts = read()
       const entry = accounts.find(account => account.identityId === identityId)
       if (entry) {
-        // A parked account signed in again (by wallet, while adding an account): it comes back as a switch would.
+        // A parked account signed in again (by its key, while adding an account): it comes back as a switch would.
         if (entry.savedSession !== undefined) unstash(identityId)
         entry.username = patch.username
         if (patch.method) entry.method = patch.method

@@ -113,20 +113,37 @@ async function refreshAccounts(): Promise<AccountDTO[]> {
  * engine has restarted as that account; false (with a toast) if it did not.
  */
 export async function switchAccount(account: { identityId: string; username: string | null }): Promise<boolean> {
-  const { identityId } = account;
-  if (useSessionStore.getState().session?.identityId === identityId) return true;
+  if (useSessionStore.getState().session?.identityId === account.identityId) return true;
+  return (await runSwitch(account, () => engine.api.session.switchAccount(account.identityId))) !== null;
+}
+
+/**
+ * A wallet sign-in during "Add account" answered for an account already on
+ * this device: the engine has prepared the switch to it (`status: 'switch'`),
+ * so restart into it. Resolves with its session, or null (with a toast).
+ */
+export function finishWalletSwitch(identityId: string): Promise<SessionDTO | null> {
+  const account = useSessionStore.getState().accounts.find((a) => a.identityId === identityId);
+  return runSwitch(account ?? { identityId, username: null }, async () => undefined);
+}
+
+/** `prepare` has the engine park the current account; then restart into `account`, behind the switch progress. */
+function runSwitch(
+  account: { identityId: string; username: string | null },
+  prepare: () => Promise<void>,
+): Promise<SessionDTO | null> {
   const name = accountName(account);
   return withTransition({ kind: 'switch', label: copy.accounts.switching(name) }, async () => {
     try {
-      await engine.api.session.switchAccount(identityId);
+      await prepare();
       const restored = await restartEngine('Switching accounts');
-      if (restored?.identityId !== identityId) throw new Error('The account did not restore');
+      if (restored?.identityId !== account.identityId) throw new Error('The account did not restore');
       toast.success(copy.accounts.switched(name));
-      return true;
+      return restored;
     } catch (error) {
       appendLog('warn', 'host', `Switching accounts failed: ${errorMessage(error)}`);
       toast.error(copy.accounts.switchFailed);
-      return false;
+      return null;
     }
   });
 }

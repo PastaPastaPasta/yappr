@@ -7,6 +7,7 @@ import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
+import { finishWalletSwitch } from './accounts';
 import { copy } from './copy';
 import { isTransient, walletErrorText } from './errors';
 import { networkName } from './onboarding';
@@ -113,6 +114,19 @@ async function handleStep(gen: number, step: KeyExchangeResultDTO): Promise<void
   }
   if (step.status === 'signed-in') {
     set({ phase: { name: 'signed-in', session: step.session }, request: null });
+    return;
+  }
+  if (step.status === 'switch') {
+    // The wallet chose an account already on this device: the engine restarts into it, keys and all.
+    // Busy meanwhile, with nothing to poll (a return to the app must not start a new request).
+    set({ phase: { name: 'starting' }, request: null });
+    const session = await finishWalletSwitch(step.identityId);
+    if (stale(gen)) return;
+    set({
+      phase: session
+        ? { name: 'signed-in', session }
+        : { name: 'error', title: copy.signin.failed, message: copy.accounts.switchFailed, retry: 'start' },
+    });
     return;
   }
   const request = get().request ?? { requestId: step.requestId, uri: step.uri, expiresAt: step.expiresAt };

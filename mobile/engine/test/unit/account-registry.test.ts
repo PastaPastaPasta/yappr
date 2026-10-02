@@ -28,9 +28,9 @@ describe('account registry', () => {
     expect(storage.getItem(NOTIFICATIONS)).toBeNull()
     expect(registry.get('alice')?.savedSession).toBeDefined()
 
-    // Signing in as alice again (a wallet sign-in during "Add account").
+    // Signing in as alice again (by key, during "Add account"; a wallet sign-in switches instead).
     signedInAs(storage, 'alice')
-    registry.upsert('alice', { username: 'alice', method: 'key-exchange' })
+    registry.upsert('alice', { username: 'alice', method: 'key' })
     expect(storage.getItem(NOTIFICATIONS)).toBe('alice-read-state')
     expect(registry.get('alice')?.savedSession).toBeUndefined()
   })

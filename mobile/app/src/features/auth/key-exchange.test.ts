@@ -3,6 +3,7 @@ import { Linking } from 'react-native';
 
 import { fakeEngine } from '~/data/testing/fake-engine';
 
+import { finishWalletSwitch } from './accounts';
 import {
   cancelKeyExchange,
   checkAgain,
@@ -19,6 +20,7 @@ import {
 } from './key-exchange';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+jest.mock('./accounts', () => ({ finishWalletSwitch: jest.fn() }));
 
 const NOW = Date.now();
 const request = (id = 'r1', expiresIn = 10 * 60_000): KeyExchangeRequestDTO => ({
@@ -166,6 +168,25 @@ describe('wallet sign-in', () => {
     await retry();
     expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledTimes(1);
     expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
+  it('switches to an account already on this device when the wallet answers for it', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({ status: 'switch', identityId: 'id1' });
+    jest.mocked(finishWalletSwitch).mockResolvedValueOnce(session).mockResolvedValueOnce(null);
+
+    await startKeyExchange('qr');
+    expect(finishWalletSwitch).toHaveBeenCalledWith('id1');
+    expect(phase()).toEqual({ name: 'signed-in', session });
+
+    await startKeyExchange('qr');
+    expect(phase()).toEqual({
+      name: 'error',
+      title: 'Sign-in failed',
+      message: "Couldn't switch accounts. Please try again.",
+      retry: 'start',
+    });
+    expect(useKeyExchange.getState().request).toBeNull();
   });
 
   it('ignores the answer of a poll that a newer one superseded', async () => {

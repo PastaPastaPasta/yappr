@@ -5,7 +5,15 @@ import { useSessionStore } from '~/data/session';
 import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
 import { useToastStore } from '~/ui/toast';
 
-import { accountName, addAccount, returnFromAddAccount, signOutAccount, switchAccount, useAccounts } from './accounts';
+import {
+  accountName,
+  addAccount,
+  finishWalletSwitch,
+  returnFromAddAccount,
+  signOutAccount,
+  switchAccount,
+  useAccounts,
+} from './accounts';
 import { useOnboarding } from './onboarding';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -81,6 +89,19 @@ it('reports a switch whose account did not come back', async () => {
 
   await expect(switchAccount({ identityId: 'bob', username: 'bob' })).resolves.toBe(false);
   expect(useToastStore.getState().current?.message).toBe("Couldn't switch accounts. Please try again.");
+});
+
+it('finishes a switch the engine prepared for a wallet sign-in as a parked account', async () => {
+  useSessionStore.setState({ status: 'signed-out', session: null, accounts: [account('bob')] });
+  bootsAs(session('bob', 'bob'));
+
+  const switching = finishWalletSwitch('bob');
+  expect(useAccounts.getState().transition).toEqual({ kind: 'switch', label: 'Switching to @bob…' });
+  await expect(switching).resolves.toEqual(session('bob', 'bob'));
+  // The engine already parked and prepared the switch: only the restart is left.
+  expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  expect(restart).toHaveBeenCalledTimes(1);
+  expect(useToastStore.getState().current?.message).toBe('Switched to @bob');
 });
 
 it('adds an account: parks the current one, restarts signed out, opens sign-in, and returns if abandoned', async () => {
