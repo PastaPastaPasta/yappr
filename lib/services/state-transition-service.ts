@@ -905,7 +905,11 @@ class StateTransitionService {
         identityKey
       );
 
-      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.replace({ document, identityKey: signingKey, signer }));
+      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.replace({ document, identityKey: signingKey, signer }), {
+        documentType,
+        documentId,
+        revision: newRevision,
+      });
       logger.debug('Document update submitted successfully');
 
       return {

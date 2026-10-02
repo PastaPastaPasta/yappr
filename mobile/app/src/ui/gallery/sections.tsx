@@ -376,6 +376,7 @@ function FeedbackSection() {
         <WriteStatus status={{ state: 'posting' }} />
         <WriteStatus status={{ state: 'threadProgress', index: 2, total: 5 }} />
         <WriteStatus status={{ state: 'unconfirmed' }} onCheckAgain={noop} />
+        <WriteStatus status={{ state: 'uncertain' }} onEdit={noop} />
         <WriteStatus status={{ state: 'failed' }} onRetry={noop} onEdit={noop} />
         <WriteStatus status={{ state: 'partial', posted: 2, total: 5 }} onRetryRest={noop} />
       </Section>
@@ -592,7 +593,7 @@ function PostCardsC() {
         <PostStub state="unavailable" />
         <PostStub state="blocked" kind="reply" />
       </Bleed>
-      <Bleed title="Optimistic: posting, not confirmed, failed">
+      <Bleed title="Optimistic: posting, not confirmed, can't confirm, failed">
         <PostCard
           post={POSTS.optimistic}
           variant="optimistic"
@@ -602,6 +603,11 @@ function PostCardsC() {
           post={{ ...POSTS.optimistic, id: 'opt-2' }}
           variant="optimistic"
           writeStatus={{ status: { state: 'unconfirmed' }, onCheckAgain: noop }}
+        />
+        <PostCard
+          post={{ ...POSTS.optimistic, id: 'opt-4' }}
+          variant="optimistic"
+          writeStatus={{ status: { state: 'uncertain' }, onEdit: noop }}
         />
         <PostCard
           post={{ ...POSTS.optimistic, id: 'opt-3' }}

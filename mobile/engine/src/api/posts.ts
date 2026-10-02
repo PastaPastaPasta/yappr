@@ -1,5 +1,5 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
-import { POLLR_CONTRACT_ID } from '@/lib/constants'
+import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, YAPPR_CONTRACT_ID } from '@/lib/constants'
 import {
   authorDeletesLeaveHoles, canRepost, deletesAreTombstones, hasFlatThreads, referencesMayDangle, repostsAreQuotes, targetKindOf,
   threadRootIdOf, type TargetKind,
@@ -12,17 +12,19 @@ import { pollrPollService, type Poll } from '@/lib/services/pollr-poll-service'
 import { pollrVoteService, type PollTally } from '@/lib/services/pollr-vote-service'
 import { postService, replyToPost } from '@/lib/services/post-service'
 import { replyService } from '@/lib/services/reply-service'
+import { base58ToBytes } from '@/lib/services/sdk-helpers'
 import { repostService } from '@/lib/services/repost-service'
 import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
 import {
-  enrichToDTOs, loadUserSummaries, notSupported, requireViewer, searchUserSummaries, toPostDTOs, viewerId, withLoadingAuthor,
+  enrichToDTOs, loadUserSummaries, notSupported, readFailure, requireViewer, searchUserSummaries, toPostDTOs, viewerId, withLoadingAuthor,
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
+import { RpcError } from '../protocol/envelope'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
 import { assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
-import { fromBoolean } from '../writes/lib-results'
+import { documentExists, fromBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO } from '../writes/publish'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
@@ -73,13 +75,48 @@ const replyPages = new TtlMap<string, { documents: Reply[]; nextCursor?: string 
 /** A deleted-reply stub has no author: nothing to name or render an avatar for. */
 const STUB_AUTHOR: AuthorDTO = { id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false }
 
-/** A post, or a reply as a Post, the way web's post page looks an id up. */
-async function load(id: string): Promise<Post | null> {
+/** A post, or a reply as a Post, the way web's post page looks an id up. lib answers a failed read as null too. */
+async function read(id: string): Promise<Post | null> {
   const post = await postService.getPostById(id, { skipEnrichment: true })
   if (post) return post
   // Replies are a separate doctype; web's usePostDetail falls back the same way.
   const reply = await replyService.getReplyById(id, { skipEnrichment: true })
   return reply ? replyToPost(reply) : null
+}
+
+/**
+ * Whether a document of one of `types` exists under `id`, by proved reads
+ * that throw when they cannot tell. Rejects with the read's failure
+ * (`readFailure`), so an unreadable post never reads as a missing one.
+ */
+async function existsAs(id: string, types: readonly string[], contractId: string): Promise<boolean> {
+  try {
+    const found = await Promise.all(types.map(type => documentExists({ contractId, type, id })))
+    return found.some(Boolean)
+  } catch (error) {
+    throw readFailure(error)
+  }
+}
+
+/**
+ * `reread` after lib answered null: `null` only when proved missing; the
+ * document when it is there after all (lib's read failed: a stale quorum, a
+ * lagging node) and a second read gets it; otherwise rejects `NETWORK`.
+ */
+async function provedMissing<T>(
+  id: string, types: readonly string[], reread: () => Promise<T | null>, contractId = YAPPR_CONTRACT_ID,
+): Promise<T | null> {
+  // No document has an id that is not 32 bytes: nothing to read (the SDK would refuse the id).
+  if (base58ToBytes(id)?.length !== 32) return null
+  if (!(await existsAs(id, types, contractId))) return null
+  const again = await reread()
+  if (again) return again
+  throw new RpcError(`This ${types[0]} could not be read. Try again.`, 'NETWORK')
+}
+
+/** `read`, with `null` kept for a post or reply proved missing; a failed read rejects. */
+async function load(id: string): Promise<Post | null> {
+  return (await read(id)) ?? provedMissing(id, ['post', 'reply'], () => read(id))
 }
 
 /** `load`, following a v10 bare repost to its target, as web's post page redirects to it. */
@@ -97,13 +134,16 @@ async function loadFocus(id: string): Promise<Post | null> {
 async function loadAncestors(focus: Post): Promise<{ chain: Post[]; removed: string[] }> {
   if (hasFlatThreads()) {
     const rootId = threadRootIdOf(focus)
-    const root = await postService.getPostById(rootId, { skipEnrichment: true })
+    const readRoot = () => postService.getPostById(rootId, { skipEnrichment: true })
+    // Only a proved absence is a removed root: a failed read rejects rather than claim a takedown.
+    const root = (await readRoot()) ?? await provedMissing(rootId, ['post'], readRoot)
     if (root) return { chain: [root], removed: [] }
     return { chain: [], removed: referencesMayDangle() ? [rootId] : [] }
   }
+  // The chain is context above the focus: an unreadable parent ends it, as on web.
   const chain: Post[] = []
   for (let parentId = focus.parentId; parentId && chain.length < MAX_ANCESTORS;) {
-    const parent = await load(parentId)
+    const parent = await read(parentId)
     if (!parent) break
     chain.unshift(parent)
     parentId = parent.parentId
@@ -218,8 +258,8 @@ export const posts = {
   /**
    * One post or reply with its author, stats and quoted post. A v10 bare
    * repost resolves to its target, as web's post page redirects to it.
-   * `null` when nothing exists under the id; lib's single-document reads also
-   * report a failed read as absent, so a `null` can mean a transport failure.
+   * `null` only when proved reads find nothing under the id; a read that
+   * fails rejects (`NETWORK`, `TIMEOUT` or `RATE_LIMITED`).
    */
   async get(id: string): Promise<PostDTO | null> {
     const post = await loadFocus(id)
@@ -234,7 +274,9 @@ export const posts = {
    * thread first. Flat threads (v9/v10) page their replies; pass the
    * returned cursor for more, and render the latest page (replies are
    * cumulative). v2 reads one level of replies plus the author's
-   * continuation, as web does.
+   * continuation, as web does. `focus: null` only when the post is proved
+   * missing; a failed read of the focus or of a thread root rejects, as
+   * `get` does (a root reported in `removedAncestorIds` was proved absent).
    */
   // TODO(post-1.0): each continuation redoes the whole thread so far (enrichment, the
   // focused reply's subtree walk, provenAbsent) and resends it; cache those per root
@@ -319,12 +361,13 @@ export const posts = {
    * `components/poll/poll-card.tsx` loads it: the poll, its tally and, signed
    * in, the viewer's choices. Each part degrades alone, as on web: an
    * unreadable tally is `totalVotes: null` (never zeros), unreadable choices
-   * `myVotes: null` (the ballot stays closed). `null` for a missing poll or
-   * an embed on another contract.
+   * `myVotes: null` (the ballot stays closed). `null` for a poll proved
+   * missing or an embed on another contract; an unreadable poll rejects.
    */
   async poll(embed: { contractId?: string; id: string }): Promise<PollDTO | null> {
     if (embed.contractId && embed.contractId !== POLLR_CONTRACT_ID) return null
-    const poll = await pollrPollService.getPoll(embed.id)
+    const readPoll = () => pollrPollService.getPoll(embed.id)
+    const poll = (await readPoll()) ?? await provedMissing(embed.id, [POLLR_DOCUMENT_TYPES.POLL], readPoll, POLLR_CONTRACT_ID)
     if (!poll) return null
     const viewer = viewerId()
     const [tally, myVotes] = await Promise.allSettled([

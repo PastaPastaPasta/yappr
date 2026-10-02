@@ -1,3 +1,5 @@
+import { useNotificationsBadge } from '~/features/notifications/notifications-data';
+
 export interface TabBadges {
   /** Unread notifications of the enabled types (NOTIF-03). */
   notifications?: number;
@@ -10,8 +12,10 @@ export interface TabBadges {
  * notifications and messages PRs fill in their count here without editing
  * the shared layout (EXECUTION §5.4).
  *
- * TODO(notifications PR, messages PR): return the real unread counts.
+ * TODO(messages PR): return the real unread conversation count.
  */
 export function useTabBadges(): TabBadges {
-  return {};
+  // Also runs the foreground notifications poll (every 30 s while signed in).
+  const notifications = useNotificationsBadge();
+  return { notifications };
 }

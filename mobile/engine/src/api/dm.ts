@@ -1,4 +1,4 @@
-import { dmIsV5, keyNetwork } from '@/lib/constants'
+import { YAPPR_DM_V5_CONTRACT_ID, dmIsV5, keyNetwork } from '@/lib/constants'
 import { deriveEncryptionKey, validateDerivedKeyMatchesIdentity } from '@/lib/crypto/key-derivation'
 import { validateEncryptionKey } from '@/lib/crypto/key-validation'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
@@ -6,6 +6,7 @@ import { getPrivateKey, storeEncryptionKey, storeEncryptionKeyType } from '@/lib
 import { getDmEngine, MAX_GROUP_MEMBERS, stopDmEngine } from '@/lib/services/dm-v5'
 import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
+import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { identityService } from '@/lib/services/identity-service'
 import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
@@ -190,9 +191,20 @@ export function createDmModule(options: DmModuleOptions) {
     return true
   }
 
-  /** Ticket runs refuse while stopped (a retry must never send on an outgoing account), and ask for a missing key. */
-  async function running<T>(work: () => Promise<T>): Promise<T> {
+  /**
+   * Ticket runs refuse while stopped (a retry must never send on an outgoing
+   * account), and ask for a missing key. Before a v5 write, an SDK-signed
+   * replace (a roster or self-state save) whose answer was lost but which the
+   * DM engine has since seen land stops holding writes back: lib keeps it
+   * pending for 15 minutes otherwise, and every DM write in between fails
+   * PENDING_WRITE (`settleSupersededReplaces`).
+   */
+  async function running<T>(identityId: string, work: () => Promise<T>): Promise<T> {
     if (halted) throw new NotSentError(new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED'))
+    if (backend.kind === 'v5') {
+      await settleSupersededReplaces(identityId, YAPPR_DM_V5_CONTRACT_ID)
+        .catch(error => logger.debug('DM: could not settle pending replaces:', error))
+    }
     try {
       return await work()
     } catch (error) {
@@ -204,7 +216,7 @@ export function createDmModule(options: DmModuleOptions) {
 
   options.tickets.register<SendArgs>('dm.send', {
     run: async (args, ctx) => {
-      const result = await running(() => backend.send(args.identityId, args.key, args.text))
+      const result = await running(args.identityId, () => backend.send(args.identityId, args.key, args.text))
       // Which of my messages this send made, so no other ticket's check counts them. Best effort:
       // the message is out, so a failed read here must never fail the ticket (or start an engine
       // while messages are stopping).
@@ -242,7 +254,7 @@ export function createDmModule(options: DmModuleOptions) {
   options.tickets.register<GroupArgs>('dm.group', {
     run: async ({ identityId, request }, ctx) => {
       try {
-        return await running(async () => {
+        return await running(identityId, async () => {
           const groups = v5('Groups')
           if (request.action !== 'create') return groups.group(identityId, request)
           createdGroups.set(ctx.ticket.id, await groups.createGroup(identityId, request.name, request.memberIds))

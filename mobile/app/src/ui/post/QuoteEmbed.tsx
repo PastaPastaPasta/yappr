@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
 import { Pressable, View } from 'react-native';
+import { PhotoIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 
@@ -9,7 +10,7 @@ import { handleOf } from '../handle';
 import { useMediaUrls } from '../media-url';
 import { Skeleton, SkeletonGroup } from '../Skeleton';
 import { Text } from '../Text';
-import { tw } from '../tokens';
+import { tw, useColors } from '../tokens';
 import { RelativeTime } from '../RelativeTime';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
@@ -23,8 +24,10 @@ export interface QuoteEmbedProps {
   post: CardPost;
   /** Cover the quoted content with the embedded NSFW gate. */
   nsfwGated?: boolean;
-  /** Hide the quoted media thumbnail (author media-gated). */
+  /** Hide the quoted media thumbnail (author media-gated) behind a "Show" tile. */
   mediaGated?: boolean;
+  /** The gated thumbnail's "Show": reveals the card's media. */
+  onRevealMedia?: () => void;
   onPress?: () => void;
 }
 
@@ -33,14 +36,14 @@ export interface QuoteEmbedProps {
  * a one-line author row, up to four lines of text and the first image as a
  * thumbnail. The whole frame opens the quoted post.
  */
-export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPress }: QuoteEmbedProps) {
+export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onRevealMedia, onPress }: QuoteEmbedProps) {
   const [revealed, reveal] = useSensitiveReveal(post.id);
+  const c = useColors();
   const handle = handleOf(post.author);
   const urls = useMediaUrls();
-  const first = mediaGated ? undefined : post.media[0];
-  const thumb = first
-    ? urls.media(first.thumbnail ?? (first.type === 'video' ? undefined : first.url))
-    : undefined;
+  const first = post.media[0];
+  const source = first ? (first.thumbnail ?? (first.type === 'video' ? undefined : first.url)) : undefined;
+  const thumb = source && !mediaGated ? urls.media(source) : undefined;
 
   return (
     <Pressable
@@ -80,6 +83,21 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onPres
                 recyclingKey={thumb}
                 accessible={false}
               />
+            ) : source && mediaGated ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Show media. Media from someone you don't follow."
+                onPress={onRevealMedia}
+                disabled={!onRevealMedia}
+                testID="quote-media-gate"
+                className={cn('items-center justify-center gap-0.5 rounded-lg', tw.bgMuted, tw.pressedMuted)}
+                style={{ width: 64, height: 64 }}
+              >
+                <PhotoIcon size={20} color={c.textSecondary} />
+                <Text variant="caption" tone="secondary">
+                  Show
+                </Text>
+              </Pressable>
             ) : null}
           </View>
         </SensitiveGate>

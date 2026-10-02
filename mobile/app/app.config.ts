@@ -62,6 +62,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         { faceIDPermission: 'Allow Yappr to use Face ID to unlock your accounts.' },
       ],
       ['./plugins/engine-assets', { variant }],
+      './plugins/wallet-schemes',
       [
         'expo-splash-screen',
         {
