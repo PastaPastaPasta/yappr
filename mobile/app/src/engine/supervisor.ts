@@ -69,7 +69,7 @@ export interface EngineStatus {
   info: EngineInfo | null;
   caps: HostCaps | null;
   timings: EngineTimings | null;
-  /** Crashes and hangs since launch. */
+  /** Automatic restarts since launch (crashes and hangs that were restarted). */
   restarts: number;
   /** Calls waiting for the engine. */
   queued: number;
@@ -98,16 +98,16 @@ export interface SupervisorOptions {
   /** Restart delays, by the restart's place in the current run (see `maxRestarts`). */
   backoffMs?: number[];
   /**
-   * Automatic restarts in one run of failures (PRD NET-04: 3). The next
+   * Automatic restarts allowed (PRD NET-04: 3 within 2 minutes); the next
    * failure stops in `failed` until "Try again". Every cause counts: a crash,
-   * a hang, a missed hello or boot deadline, a failed prepare.
+   * a hang, a missed hello or boot deadline, a failed prepare. Failures are
+   * counted two ways and the larger count decides:
+   * - every failure inside the sliding `failureWindowMs`;
+   * - epochs in a row that never came up (ready or degraded), however long
+   *   each took to fail: a 30 s hello or 90 s boot deadline must not outlast
+   *   the window and loop forever (SR-08). An epoch that comes up ends the run.
    */
   maxRestarts?: number;
-  /**
-   * A run of failures ends once the engine has stayed up (ready or degraded)
-   * this long. Failures that never got the engine up chain however slowly
-   * each one failed: a 90 s boot deadline must not outlast a 2-minute window.
-   */
   failureWindowMs?: number;
   /** No ready (or degraded) within this long in the foreground after mount → restart. */
   bootDeadlineMs?: number;
@@ -184,10 +184,10 @@ export class EngineSupervisor<Load = unknown> {
   /** Calls go straight to the client once boot has been sent; until then they wait here. */
   private accepting = false;
   private queue: Job[] = [];
-  /** Failures in the current run (see `failureWindowMs`); "Try again" resets it. */
-  private failures = 0;
-  /** When this epoch's engine came up (ready or degraded), or null while it has not. */
-  private upSince: number | null = null;
+  /** When each recent failure happened (see `maxRestarts`); "Try again" resets it. */
+  private crashes: number[] = [];
+  /** Epochs in a row that failed before coming up (ready or degraded); "Try again" resets it. */
+  private failedBoots = 0;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private missedPings = 0;
@@ -282,7 +282,8 @@ export class EngineSupervisor<Load = unknown> {
   /** "Restart engine" / "Try again": a fresh epoch, with the failure counter reset. */
   restart(reason = 'Restart requested'): void {
     this.log('info', `${reason}; restarting the engine`);
-    this.failures = 0;
+    this.crashes = [];
+    this.failedBoots = 0;
     this.teardown(reason);
     this.launch(this.status.epoch + 1);
   }
@@ -300,18 +301,20 @@ export class EngineSupervisor<Load = unknown> {
       return;
     }
     this.log('error', `Engine crashed: ${cause}`);
-    // An engine that stayed up through the window ends the run; one that never came up, or fell over
-    // soon after, extends it however long each attempt took to fail (SR-08: hello and boot deadlines
-    // fail slower than any fixed window over crash times, which then restarted such an engine forever).
-    if (this.upSince !== null && this.now() - this.upSince >= this.options.failureWindowMs) this.failures = 0;
-    this.failures += 1;
+    // A boot that never came up counts however long it took to fail (SR-08): a hello or boot
+    // deadline fails slower than the window, so the window alone would restart such an engine forever.
+    if (!['ready', 'degraded'].includes(this.status.state)) this.failedBoots += 1;
+    const now = this.now();
+    this.crashes = [...this.crashes.filter((at) => now - at < this.options.failureWindowMs), now];
+    const failures = Math.max(this.crashes.length, this.failedBoots);
     this.teardown(`Engine crashed: ${cause}`);
-    this.update({ state: 'crashed', reason: cause, restarts: this.status.restarts + 1 });
-    if (this.failures > this.options.maxRestarts) {
-      this.fail(`${this.failures} engine failures in a row; last: ${cause}`);
+    if (failures > this.options.maxRestarts) {
+      // No restart follows, so `restarts` stays as it was.
+      this.fail(`${failures} engine failures in a row; last: ${cause}`);
       return;
     }
-    const delay = this.options.backoffMs[Math.min(this.failures - 1, this.options.backoffMs.length - 1)];
+    this.update({ state: 'crashed', reason: cause, restarts: this.status.restarts + 1 });
+    const delay = this.options.backoffMs[Math.min(failures - 1, this.options.backoffMs.length - 1)];
     this.update({ state: 'restarting' });
     this.after(delay, () => this.launch(this.status.epoch + 1));
   }
@@ -345,7 +348,6 @@ export class EngineSupervisor<Load = unknown> {
   }
 
   private launch(epoch: number) {
-    this.upSince = null;
     this.update({ state: 'starting', epoch, ...FRESH_EPOCH });
     const started = this.now();
     this.deps
@@ -465,7 +467,7 @@ export class EngineSupervisor<Load = unknown> {
       const bootInfo = await booted;
       if (!current()) return;
       const readyAt = this.now();
-      this.upSince = readyAt;
+      this.failedBoots = 0;
       this.update({
         state: 'ready',
         reason: null,
@@ -487,7 +489,7 @@ export class EngineSupervisor<Load = unknown> {
         return;
       }
       // Offline or DAPI trouble: calls still go through; connectivity retries the boot.
-      this.upSince = this.now();
+      this.failedBoots = 0;
       this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);

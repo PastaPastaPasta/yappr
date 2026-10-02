@@ -199,7 +199,8 @@ describe('EngineSupervisor', () => {
     }
     await boot(s, 4);
     s.supervisor.crashed('crash 4');
-    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 4, epoch: 4 });
+    // Three restarts happened; the fourth failure is final, with no restart to count.
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 3, epoch: 4 });
     expect(s.supervisor.getStatus().reason).toContain('4 engine failures in a row');
     expect(s.supervisor.getMount()).toBeNull();
     await expect(s.supervisor.call('feed.home', [])).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
@@ -236,7 +237,7 @@ describe('EngineSupervisor', () => {
     await settle(500);
     await settle(1000);
     await settle(2000); // 4th failure
-    expect(supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 4, epoch: 4, queued: 0 });
+    expect(supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 3, epoch: 4, queued: 0 });
     expect(await queued).toMatchObject({ code: 'ENGINE_UNAVAILABLE', message: expect.stringContaining('Keychain is locked') });
   });
 
@@ -248,7 +249,7 @@ describe('EngineSupervisor', () => {
     s.supervisor.start();
     const queued = s.supervisor.call('feed.home', []).catch((error: unknown) => error);
     for (let i = 0; i < 20 && s.supervisor.getStatus().state !== 'failed'; i++) await settle(31_000);
-    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 4, epoch: 4, queued: 0 });
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 3, epoch: 4, queued: 0 });
     expect(await queued).toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
     await expect(s.supervisor.call('feed.home', [])).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
   });
@@ -265,25 +266,120 @@ describe('EngineSupervisor', () => {
       await settle(90_000);
       await settle(40);
     }
-    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 4 });
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 3 });
     expect(s.supervisor.getStatus().reason).toContain('no ready within 90 s');
   });
 
-  it('fails an engine that comes up and then hangs, each run lasting over a minute (SR-08)', async () => {
+  it('fails an engine that comes up and hangs, four times within two minutes (NET-04)', async () => {
     const s = setup({
-      supervisor: { pingIntervalMs: 30_000, pingTimeoutMs: 100 },
+      supervisor: { pingIntervalMs: 6_000, pingTimeoutMs: 100 },
       configure: (engine) => (engine.answerPings = false),
     });
     s.supervisor.start();
     for (let epoch = 1; epoch <= 4; epoch++) {
       await boot(s, epoch);
       expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', epoch });
-      // Three missed pings, 30 s apart: a crash about 90 s after ready, slower than 3 in any 2 minutes.
-      for (let ping = 0; ping < 3; ping++) await settle(30_100);
+      // Three missed pings, 6 s apart: a hang about 18 s after ready.
+      for (let ping = 0; ping < 3; ping++) await settle(6_100);
       await settle(40);
     }
-    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 4 });
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 3 });
     expect(s.deps.log).toHaveBeenCalledWith('error', 'host', 'Engine crashed: unresponsive (missed pings)');
+  });
+
+  it('judges engines that came up by the 2-minute window: crashes 1.9 minutes apart never trip it', async () => {
+    const s = setup({ supervisor: { pingIntervalMs: 600_000 } });
+    s.supervisor.start();
+    for (let epoch = 1; epoch <= 6; epoch++) {
+      await boot(s, epoch);
+      await settle(55_000);
+      s.supervisor.crashed(`crash ${epoch}`);
+      expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: epoch });
+      await settle(40);
+      await settle(59_000);
+    }
+    await boot(s, 7);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', epoch: 7 });
+    s.supervisor.stop();
+  });
+
+  it('counts a crash exactly the window old out of it', async () => {
+    const s = setup({ supervisor: { pingIntervalMs: 600_000, failureWindowMs: 1000, backoffMs: [0] } });
+    s.supervisor.start();
+    // Three crashes inside the window, then the fourth when the first is exactly 1000 ms old.
+    for (let epoch = 1; epoch <= 3; epoch++) {
+      await boot(s, epoch);
+      s.supervisor.crashed(`crash ${epoch}`);
+      await settle(epoch < 3 ? 400 : 200);
+    }
+    await boot(s, 4);
+    s.supervisor.crashed('crash 4');
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: 4 });
+    s.supervisor.stop();
+  });
+
+  it('counts a degraded engine as up: it ends a run of boots that never came up', async () => {
+    const s = setup({
+      supervisor: { pingIntervalMs: 600_000 },
+      configure: (engine, epoch) => {
+        // Epochs 1-3 never finish booting; epoch 4 comes up degraded (DAPI trouble).
+        if (epoch === 4) engine.handlers['engine.boot'] = () => { throw new RpcError('DAPI 504', 'NETWORK'); };
+        else if (epoch < 4) engine.hold.add('engine.boot');
+      },
+    });
+    s.supervisor.start();
+    for (let epoch = 1; epoch <= 3; epoch++) {
+      await boot(s, epoch);
+      await settle(90_000);
+      await settle(40);
+    }
+    expect(s.supervisor.getStatus()).toMatchObject({ restarts: 3, epoch: 4 });
+    await boot(s, 4);
+    expect(s.supervisor.getStatus().state).toBe('degraded');
+    // Past the window: only the run of failed boots could trip it, and coming up degraded ended it.
+    await settle(130_000);
+    s.supervisor.crashed('later crash');
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: 4 });
+    s.supervisor.stop();
+  });
+
+  it('gives a failed engine a fresh budget on return to the foreground', async () => {
+    const s = setup();
+    s.supervisor.start();
+    for (let epoch = 1; epoch <= 4; epoch++) {
+      await boot(s, epoch);
+      s.supervisor.crashed(`crash ${epoch}`);
+      await settle(40);
+    }
+    expect(s.supervisor.getStatus().state).toBe('failed');
+    s.supervisor.setForeground(false);
+    s.supervisor.setForeground(true);
+    await boot(s, 5);
+    s.supervisor.crashed('after the return');
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', epoch: 5 });
+    s.supervisor.stop();
+  });
+
+  it('does not count a start that failed in the background, and keeps its calls for the return', async () => {
+    let fail = true;
+    const deps: SupervisorDeps<string> = {
+      platform: 'ios',
+      prepare: () => (fail ? Promise.reject(new Error('the Keychain is locked')) : new Promise(() => undefined)),
+      onStorage: jest.fn(),
+      log: jest.fn(),
+    };
+    const supervisor = new EngineSupervisor(deps);
+    supervisor.setForeground(false);
+    supervisor.start();
+    const queued = supervisor.call('feed.home', []);
+    await settle();
+    expect(supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 0, queued: 1 });
+    fail = false;
+    supervisor.setForeground(true);
+    await settle();
+    expect(supervisor.getStatus()).toMatchObject({ state: 'starting', epoch: 2, queued: 1 });
+    supervisor.stop();
+    await expect(queued).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
   });
 
   it('does not give up on crashes spaced by more than two minutes of running', async () => {
