@@ -391,7 +391,7 @@ function AddItemPage() {
           const onChain = await itemDeliverableService.getForItem(savedItemId).catch(() => existingDeliverable)
           if (onChain && existingDeliverable && onChain.$revision !== existingDeliverable.$revision) {
             await loadKit(savedItemId, user.identityId)
-            setError('The product was saved, but its delivery content changed elsewhere (for example, a delivery used license keys) and was reloaded. Review it and save again.')
+            setError('The product was saved, but its delivery content changed elsewhere (for example, a delivery used unique codes) and was reloaded. Review it and save again.')
           } else if (kitError instanceof KitWriteUncertainError) {
             // It may yet land: the next save re-reads and replaces it rather than creating twice.
             setExistingDeliverable(onChain)

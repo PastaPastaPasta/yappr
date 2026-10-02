@@ -6,7 +6,7 @@ import { ArrowDownTrayIcon, ArrowTopRightOnSquareIcon, ClipboardIcon, DocumentIc
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { fetchDecryptedFile, formatFileSize, saveBlob, type DigitalFileAsset } from '@/lib/services/digital-file-service'
-import { isSafeDeliveryUrl } from '@/lib/services/digital-delivery-plan'
+import { splitPoolEntry } from '@/lib/services/digital-delivery-plan'
 import { getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
 import { formatDate } from '@/lib/utils/format'
 import type { OrderDelivery, OrderDeliveryPayload } from '@/lib/types'
@@ -47,11 +47,12 @@ function copy(text: string, label: string) {
     .catch(() => toast.error('Failed to copy'))
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+/** `label` names what is copied, in the toast; `name` tells this button apart from its neighbours. */
+function CopyButton({ text, label, name }: { text: string; label: string; name: string }) {
   return (
     <button
       type="button"
-      aria-label={`Copy ${label.toLowerCase()}`}
+      aria-label={`Copy ${name}`}
       onClick={() => copy(text, label)}
       className="p-1 text-gray-500 hover:text-yappr-500 flex-shrink-0"
     >
@@ -62,6 +63,8 @@ function CopyButton({ text, label }: { text: string; label: string }) {
 
 /** A link the buyer opens, with a copy button (and its access code, when it has one). */
 function LinkRow({ label, url, code }: { label: string; url: string; code?: string }) {
+  // A magnet link hands off to the torrent client; a new tab would stay blank.
+  const opensPage = !url.toLowerCase().startsWith('magnet:')
   return (
     <li className="space-y-1">
       <div className="flex items-center gap-2">
@@ -69,29 +72,46 @@ function LinkRow({ label, url, code }: { label: string; url: string; code?: stri
           // ipfs:// links open through a gateway (other URLs come back as themselves);
           // decodeDelivery already refused any scheme but http(s), magnet and ipfs.
           href={getAllGatewayUrls(url)[0]}
-          target="_blank"
+          {...(opensPage ? { target: '_blank' } : {})}
           rel="noopener noreferrer nofollow"
           className="inline-flex items-center gap-1.5 text-sm text-yappr-600 hover:underline break-all min-w-0"
         >
           <ArrowTopRightOnSquareIcon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
           {label}
         </a>
-        <CopyButton text={url} label="Link" />
+        <CopyButton text={url} label="Link" name={`link to ${label}`} />
       </div>
-      {code && <CodeRow label="Access code" code={code} />}
+      {code && <CodeRow label="Access code" code={code} name={`access code for ${label}`} />}
     </li>
   )
 }
 
 /** Text to copy: an access code, a voucher, a license key. */
-function CodeRow({ label, code }: { label: string; code: string }) {
+function CodeRow({ label, code, name = label }: { label: string; code: string; name?: string }) {
   return (
     <div className="flex items-center gap-2">
       <KeyIcon className="h-4 w-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
       <span className="text-xs text-gray-500 flex-shrink-0">{label}:</span>
       <code className="flex-1 min-w-0 text-sm font-mono break-all">{code}</code>
-      <CopyButton text={code} label={label} />
+      <CopyButton text={code} label={label} name={name} />
     </div>
+  )
+}
+
+/** The buyer's own codes (one per unit): links, links with their own code, or codes. */
+function UniqueCodes({ entries }: { entries: string[] }) {
+  const parsed = entries.map(splitPoolEntry)
+  const codeCount = parsed.filter((entry) => !entry.url).length
+  let codeNumber = 0
+  return (
+    <ul className="space-y-1">
+      {parsed.map((entry, index) => {
+        if (entry.url) return <LinkRow key={index} label={entry.url} url={entry.url} code={entry.code} />
+        codeNumber++
+        const label = codeCount === 1 ? 'Your code' : `Code ${codeNumber}`
+        return <li key={index}><CodeRow label={label} code={entry.code ?? ''} /></li>
+      })}
+    </ul>
   )
 }
 
@@ -114,15 +134,7 @@ function DeliveryBody({ payload }: { payload: OrderDeliveryPayload }) {
               })}
             </ul>
           )}
-          {item.licenseKeys && item.licenseKeys.length > 0 && (
-            <ul className="space-y-1">
-              {item.licenseKeys.map((entry, keyIndex) => isSafeDeliveryUrl(entry) ? (
-                <LinkRow key={keyIndex} label={entry} url={entry} />
-              ) : (
-                <li key={keyIndex}><CodeRow label={item.licenseKeys?.length === 1 ? 'Your code' : `Code ${keyIndex + 1}`} code={entry} /></li>
-              ))}
-            </ul>
-          )}
+          {item.licenseKeys && item.licenseKeys.length > 0 && <UniqueCodes entries={item.licenseKeys} />}
           {item.instructions && (
             <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{item.instructions}</p>
           )}
