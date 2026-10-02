@@ -1,0 +1,398 @@
+import type { CapabilitiesDTO, Page, PostDTO, RankedUserDTO, SessionDTO, TagDTO, UserSummaryDTO } from '@engine/api';
+import NetInfo from '@react-native-community/netinfo';
+import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
+import { Stack } from 'expo-router';
+import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { ActionSheetIOS } from 'react-native';
+
+import HashtagRoute from '~/app/(tabs)/(home,explore,notifications,messages,profile)/hashtag/[tag]';
+import SearchResultsRoute from '~/app/(tabs)/(explore)/explore/search/[kind]';
+import SearchRoute from '~/app/(tabs)/(explore)/explore/search/index';
+import { useSignInPrompt } from '~/data/require-auth';
+import { useSessionStore } from '~/data/session';
+import { fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { queryClient } from '~/state/query-client';
+import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
+import { useToastStore } from '~/ui/toast';
+
+import { ExploreScreen } from './ExploreScreen';
+import { useExplorePrefs } from './explore-prefs';
+import { clearRecent, getRecent } from './recent-searches';
+
+jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+jest.mock('react-native-safe-area-context', () => jest.requireActual('react-native-safe-area-context/jest/mock').default);
+
+// FlashList's own Jest setup (@shopify/flash-list/jestSetup): fixed layouts, so cells render.
+jest.mock('@shopify/flash-list/dist/recyclerview/utils/measureLayout', () => {
+  const layout = { x: 0, y: 0, width: 400, height: 900 };
+  return {
+    ...jest.requireActual('@shopify/flash-list/dist/recyclerview/utils/measureLayout'),
+    measureParentSize: () => layout,
+    measureFirstChildLayout: () => layout,
+    measureItemLayout: () => ({ x: 0, y: 0, width: 400, height: 100 }),
+  };
+});
+
+const DEV = {
+  rankings: true,
+  windowedRankings: true,
+  prefixRankings: true,
+  repostsAreQuotes: true,
+  repostable: { post: true, reply: true },
+  bookmarkable: { post: true, reply: false },
+} as CapabilitiesDTO;
+const V2 = { ...DEV, rankings: false, windowedRankings: false, prefixRankings: false } as CapabilitiesDTO;
+
+const viewer: SessionDTO = {
+  identityId: AUTHORS.alice.id,
+  network: 'devnet',
+  username: 'alice',
+  credits: 1n,
+  hasEncryptionKey: true,
+  method: 'key',
+};
+
+const tag = (name: string, count: number, countKind: TagDTO['countKind'] = 'likes'): TagDTO => ({
+  tag: name,
+  kind: name.endsWith('_cashtag') ? 'cashtag' : 'hashtag',
+  display: name.endsWith('_cashtag') ? `$${name.replace('_cashtag', '').toUpperCase()}` : `#${name}`,
+  count,
+  countKind,
+});
+const user = (key: keyof typeof AUTHORS, extra: Partial<UserSummaryDTO> = {}): UserSummaryDTO => ({
+  ...AUTHORS[key],
+  ...extra,
+});
+const post = (id: string, content: string) => fixturePost({ id, content }) as PostDTO;
+const page = (items: PostDTO[], hasMore = false): Page<PostDTO> => ({ items, cursor: hasMore ? 'next' : null, hasMore });
+
+function Layout() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Stack />
+    </QueryClientProvider>
+  );
+}
+
+const Blank = () => null;
+
+async function renderAt(url: string) {
+  const app = renderRouter(
+    {
+      _layout: Layout,
+      'explore/index': ExploreScreen,
+      'explore/search/index': SearchRoute,
+      'explore/search/[kind]': SearchResultsRoute,
+      'hashtag/[tag]': HashtagRoute,
+      'user/[id]': Blank,
+      'post/[id]': Blank,
+    },
+    { initialUrl: url },
+  );
+  await act(async () => {});
+  return app;
+}
+
+/** Waits out the search debounce (300 ms) and the reads it starts. */
+async function settle() {
+  await act(async () => {
+    jest.advanceTimersByTime(400);
+  });
+  await act(async () => {});
+}
+
+beforeAll(() => {
+  notifyManager.setScheduler((callback) => callback());
+  queryClient.setDefaultOptions({ queries: { ...queryClient.getDefaultOptions().queries, retry: false } });
+});
+afterEach(() => {
+  queryClient.clear();
+  jest.useRealTimers();
+});
+
+beforeEach(() => {
+  fakeEngine.reset();
+  queryClient.clear();
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: DEV } });
+  useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+  useExplorePrefs.setState({ segment: 'trending', trendingWindow: 'today', topWindow: 'all' });
+  useSignInPrompt.setState({ open: false });
+  useToastStore.setState({ current: null });
+  clearRecent('signed-out');
+  clearRecent(viewer.identityId);
+  jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: true } as ReturnType<typeof NetInfo.useNetInfo>);
+});
+
+describe('Explore', () => {
+  it('ranks trending tags with their like counts, on the 24h window (EXPL-02)', async () => {
+    fakeEngine.method('explore.trending').mockResolvedValue([tag('mobile', 6), tag('dash_cashtag', 1)]);
+    const app = await renderAt('/explore');
+
+    expect(fakeEngine.method('explore.trending')).toHaveBeenCalledWith({ window: 'today' });
+    expect(screen.getByText('#mobile')).toBeTruthy();
+    expect(screen.getByText('6 likes')).toBeTruthy();
+    expect(screen.getByText('$DASH')).toBeTruthy();
+    expect(screen.getByText('1 like')).toBeTruthy();
+    expect(screen.getByTestId('compose-fab')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('trending-dash_cashtag'));
+    await act(async () => {});
+    expect(app.getPathname()).toBe('/hashtag/dash_cashtag');
+  });
+
+  it('shows only Trending, counting posts, on v2 (EXPL-01)', async () => {
+    fakeEngine.setStatus({ info: { capabilities: V2 } });
+    fakeEngine.method('explore.trending').mockResolvedValue([tag('dash', 12, 'posts')]);
+    await renderAt('/explore');
+
+    expect(fakeEngine.method('explore.trending')).toHaveBeenCalledWith({ window: 'all' });
+    expect(screen.queryByTestId('explore-segments')).toBeNull();
+    expect(screen.queryByTestId('explore-trending-window')).toBeNull();
+    expect(screen.getByText('12 posts')).toBeTruthy();
+  });
+
+  it('says when nothing is trending, and offers a retry when the read fails', async () => {
+    fakeEngine.method('explore.trending').mockResolvedValueOnce([]);
+    await renderAt('/explore');
+    expect(screen.getByText('No trending tags yet')).toBeTruthy();
+    expect(screen.getByText('Post with #hashtags or $cashtags to see them here!')).toBeTruthy();
+
+    fakeEngine.method('explore.trending').mockRejectedValue(Object.assign(new Error('down'), { code: 'UNAVAILABLE' }));
+    act(() => useExplorePrefs.setState({ trendingWindow: 'all' }));
+    await act(async () => {});
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(screen.getByText(/temporarily unavailable/)).toBeTruthy();
+    expect(screen.getByText('Try again')).toBeTruthy();
+  });
+
+  it('lists Top posts on the post window (EXPL-03)', async () => {
+    useExplorePrefs.setState({ segment: 'top' });
+    fakeEngine.method('explore.topPosts').mockResolvedValue([post('t1', 'most liked post')]);
+    await renderAt('/explore');
+
+    expect(fakeEngine.method('explore.topPosts')).toHaveBeenCalledWith({ window: 'all' });
+    expect(screen.getByText('most liked post')).toBeTruthy();
+  });
+
+  it('ranks creators with follow buttons; signed out, Follow asks to sign in (EXPL-04, G-8)', async () => {
+    useExplorePrefs.setState({ segment: 'creators' });
+    const ranked: RankedUserDTO[] = [
+      { user: user('bob'), count: 2400, by: 'likes' },
+      { user: user('carol'), count: 3, by: 'followers' },
+    ];
+    fakeEngine.method('explore.topCreators').mockResolvedValue(ranked);
+    await renderAt('/explore');
+
+    expect(screen.getByText('Top creators by likes received')).toBeTruthy();
+    expect(screen.getByText('Most followed')).toBeTruthy();
+    expect(screen.getByText('2.4K likes')).toBeTruthy();
+    expect(screen.getByText('3 followers')).toBeTruthy();
+    expect(fakeEngine.method('graph.status')).not.toHaveBeenCalled();
+
+    fireEvent.press(screen.getByTestId('creator-likes-bob-follow'));
+    expect(useSignInPrompt.getState().open).toBe(true);
+  });
+
+  it('reads the viewer’s follows for the leaderboard and follows optimistically', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    useExplorePrefs.setState({ segment: 'creators' });
+    fakeEngine.method('explore.topCreators').mockResolvedValue([
+      { user: user('alice'), count: 9, by: 'likes' },
+      { user: user('bob'), count: 5, by: 'likes' },
+      { user: user('carol'), count: 4, by: 'likes' },
+    ]);
+    fakeEngine.method('graph.status').mockResolvedValue({ [AUTHORS.bob.id]: false, [AUTHORS.carol.id]: true });
+    fakeEngine.method('graph.follow').mockResolvedValue(ticket({ op: 'follow' }));
+    await renderAt('/explore');
+
+    // The viewer's own row has no button; the others show what the viewer does.
+    expect(fakeEngine.method('graph.status')).toHaveBeenCalledWith([AUTHORS.bob.id, AUTHORS.carol.id]);
+    expect(screen.queryByTestId('creator-likes-alice-follow')).toBeNull();
+    expect(screen.getByLabelText('Following Carol')).toBeTruthy();
+
+    fireEvent.press(screen.getByTestId('creator-likes-bob-follow'));
+    await act(async () => {});
+    expect(fakeEngine.method('graph.follow')).toHaveBeenCalledWith(AUTHORS.bob.id);
+    expect(screen.getByLabelText('Following Bob Builder')).toBeTruthy();
+  });
+
+  it('asks before unfollowing (PD-6)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    useExplorePrefs.setState({ segment: 'creators' });
+    fakeEngine.method('explore.topCreators').mockResolvedValue([{ user: user('carol'), count: 4, by: 'likes' }]);
+    fakeEngine.method('graph.status').mockResolvedValue({ [AUTHORS.carol.id]: true });
+    const sheet = jest.spyOn(ActionSheetIOS, 'showActionSheetWithOptions').mockImplementation(() => undefined);
+    await renderAt('/explore');
+
+    fireEvent.press(screen.getByTestId('creator-likes-carol-follow'));
+    expect(sheet).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Unfollow @carol?', options: ['Unfollow', 'Cancel'] }),
+      expect.any(Function),
+    );
+    expect(fakeEngine.method('graph.unfollow')).not.toHaveBeenCalled();
+    sheet.mockRestore();
+  });
+
+  it('opens search from the field', async () => {
+    fakeEngine.method('explore.trending').mockResolvedValue([]);
+    const app = await renderAt('/explore');
+
+    fireEvent.press(screen.getByTestId('explore-search'));
+    await act(async () => {});
+    expect(app.getPathname()).toBe('/explore/search');
+    expect(screen.getByText('Find people, hashtags and recent posts.')).toBeTruthy();
+  });
+});
+
+describe('Search', () => {
+  beforeEach(() => jest.useFakeTimers());
+
+  it('searches tags and posts only below 3 characters (EXPL-05)', async () => {
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([post('s1', 'about dash')]);
+    await renderAt('/explore/search');
+
+    fireEvent.changeText(screen.getByTestId('search-input'), 'da');
+    expect(fakeEngine.method('explore.searchPosts')).not.toHaveBeenCalled();
+    await settle();
+
+    expect(fakeEngine.method('explore.searchPosts')).toHaveBeenCalledWith('da');
+    expect(fakeEngine.method('explore.searchUsers')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('explore.searchHashtags')).not.toHaveBeenCalled();
+    expect(screen.getByText('Type at least 3 characters to search for people')).toBeTruthy();
+    expect(screen.getByText('about dash')).toBeTruthy();
+  });
+
+  it('groups people, hashtags and recent posts, three each with See all (EXPL-05, EXPL-06)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    const people = [user('bob'), user('carol'), user('nameless'), user('alice')];
+    fakeEngine.method('explore.searchUsers').mockResolvedValue(people);
+    fakeEngine.method('graph.status').mockResolvedValue({ [AUTHORS.bob.id]: true });
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([tag('bobsburgers', 12, 'posts')]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    const app = await renderAt('/explore/search?q=bob');
+    await settle();
+
+    expect(fakeEngine.method('explore.searchUsers')).toHaveBeenCalledWith('bob');
+    expect(screen.getByText('People')).toBeTruthy();
+    expect(screen.getByText('Bob Builder')).toBeTruthy();
+    expect(screen.queryByText('Alice')).toBeNull(); // the 4th row waits for See all
+    expect(screen.getByText('#bobsburgers')).toBeTruthy();
+    expect(screen.getByText('12 posts')).toBeTruthy();
+    expect(screen.queryByText('Recent posts')).toBeNull();
+    // Previews carry no follow button.
+    expect(screen.queryByTestId('search-user-bob-follow')).toBeNull();
+
+    fireEvent.press(screen.getByTestId('search-see-all-people'));
+    await act(async () => {});
+    expect(app.getPathname()).toBe('/explore/search/people');
+    expect(screen.getByText('Alice')).toBeTruthy();
+    expect(screen.getByLabelText('Following Bob Builder')).toBeTruthy();
+    expect(screen.queryByTestId('search-user-alice-follow')).toBeNull();
+  });
+
+  it('finds a cashtag by its ticker and remembers opened tags (EXPL-08)', async () => {
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([tag('dash_cashtag', 2)]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    const app = await renderAt('/explore/search');
+
+    fireEvent.changeText(screen.getByTestId('search-input'), '$DASH');
+    await settle();
+    expect(fakeEngine.method('explore.searchHashtags')).toHaveBeenCalledWith('DASH');
+
+    fireEvent.press(screen.getByTestId('search-tag-dash_cashtag'));
+    await act(async () => {});
+    expect(app.getPathname()).toBe('/hashtag/dash_cashtag');
+    expect(getRecent('signed-out')).toEqual([{ kind: 'tag', tag: 'dash_cashtag' }]);
+  });
+
+  it('says when nothing matches', async () => {
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    await renderAt('/explore/search?q=zzqx');
+    await settle();
+
+    expect(screen.getByText('No results for "zzqx"')).toBeTruthy();
+    expect(screen.getByText('Try searching for something else')).toBeTruthy();
+  });
+
+  it('keeps submitted queries as recent searches, removable and clearable (EXPL-08)', async () => {
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    await renderAt('/explore/search');
+
+    for (const q of ['first', 'second']) {
+      fireEvent.changeText(screen.getByTestId('search-input'), q);
+      fireEvent(screen.getByTestId('search-input'), 'submitEditing');
+      await settle();
+    }
+    fireEvent.press(screen.getByTestId('search-clear'));
+    await act(async () => {});
+
+    expect(screen.getByText('Recent')).toBeTruthy();
+    expect(screen.getByText('second')).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Remove second'));
+    expect(screen.queryByText('second')).toBeNull();
+    expect(screen.getByText('first')).toBeTruthy();
+
+    // Tapping a recent query searches it again.
+    fireEvent.press(screen.getByTestId('recent-first'));
+    await settle();
+    expect(screen.getByTestId('search-input').props.value).toBe('first');
+
+    fireEvent.press(screen.getByTestId('search-clear'));
+    fireEvent.press(screen.getByTestId('recent-clear'));
+    expect(screen.getByText('Find people, hashtags and recent posts.')).toBeTruthy();
+  });
+});
+
+describe('Hashtag page', () => {
+  it('lists the tag’s latest posts under its title, with Top where supported (EXPL-07)', async () => {
+    fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'tagged #mobile')]));
+    await renderAt('/hashtag/mobile');
+
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledWith({
+      tag: 'mobile',
+      sort: 'recent',
+      window: 'all',
+      cursor: null,
+    });
+    expect(screen.getByText('tagged #mobile')).toBeTruthy();
+
+    fireEvent(screen.getByTestId('hashtag-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
+    await act(async () => {});
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith({
+      tag: 'mobile',
+      sort: 'top',
+      window: 'all',
+      cursor: null,
+    });
+    expect(screen.getByTestId('hashtag-window')).toBeTruthy();
+  });
+
+  it('reads a cashtag link in storage form and shows the empty state', async () => {
+    fakeEngine.method('feed.hashtag').mockResolvedValue(page([]));
+    await renderAt('/hashtag/$dash');
+
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledWith(expect.objectContaining({ tag: 'dash_cashtag' }));
+    expect(screen.getByText('No posts yet')).toBeTruthy();
+  });
+
+  it('has no sort control on v2', async () => {
+    fakeEngine.setStatus({ info: { capabilities: V2 } });
+    fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'v2 post')]));
+    await renderAt('/hashtag/dash');
+
+    expect(screen.queryByTestId('hashtag-sort')).toBeNull();
+    expect(screen.getByText('v2 post')).toBeTruthy();
+  });
+
+  it('rejects a link that is not a tag', async () => {
+    await renderAt('/hashtag/not%20a%20tag');
+
+    expect(screen.getByText('Not a hashtag')).toBeTruthy();
+    expect(fakeEngine.method('feed.hashtag')).not.toHaveBeenCalled();
+  });
+});
