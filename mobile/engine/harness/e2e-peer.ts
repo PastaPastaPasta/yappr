@@ -38,6 +38,8 @@ if (HOST !== '127.0.0.1' && HOST !== 'localhost') throw new Error('E2E_PEER_ADDR
 const { writeSuiteSkipReason, retryQuorum, pollSettled } = await import('../test/contract/write/env')
 const skip = writeSuiteSkipReason()
 if (skip) throw new Error(`The peer cannot run: ${skip}`)
+// The SDK's WASM from the package, as the write suite's setupFiles install it (vite-node runs none).
+await import('../test/setup/wasm')
 await import('../test/contract/write/setup')
 // lib's DM v5 flush listens on `document` (the WebView's); Node has none.
 if (typeof document === 'undefined') {
