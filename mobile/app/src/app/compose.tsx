@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { ComposeScreen } from '~/features/compose/ComposeScreen';
 
-export default function ComposeScreen() {
-  return <Placeholder title="New post" comingIn="the compose PR" />;
-}
+export default ComposeScreen;

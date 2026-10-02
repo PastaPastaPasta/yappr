@@ -1,8 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { Placeholder } from '~/ui/Placeholder';
+import { SearchScreen } from '~/features/explore/SearchScreen';
 
-export default function SearchScreen() {
+export default function SearchRoute() {
   const { q } = useLocalSearchParams<{ q?: string }>();
-  return <Placeholder title="Search" detail={`q: ${q ?? ''}`} comingIn="the explore and search PR" />;
+  // A link with another query, while search is open, starts that search.
+  return <SearchScreen key={q ?? ''} initialQuery={q ?? ''} />;
 }

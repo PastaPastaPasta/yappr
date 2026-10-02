@@ -66,7 +66,12 @@ export const engineModule = {
       return () => set.delete(listener);
     },
   },
+  engineStorage: {
+    idle: async () => undefined,
+  },
   engineSupervisor: {
+    /** An engine restart; tests drive the next session by hand (`fakeEngine.emit('session.changed', …)`). */
+    restart: jest.fn(),
     getStatus: () => status,
     subscribeStatus(listener: () => void) {
       statusListeners.add(listener);

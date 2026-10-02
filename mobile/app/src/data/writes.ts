@@ -36,6 +36,18 @@ export interface WriteSpec<V> {
   announceUnconfirmed?: boolean;
   onConfirmed?: (ticket: WriteTicket, vars: V) => void;
   /**
+   * The failure toast for a ticket, when the write has something more
+   * specific to say than the engine's message (a partly posted thread);
+   * null falls back to the default.
+   */
+  failureText?: (ticket: WriteTicket, vars: V) => string | null;
+  /**
+   * The latest write for its key failed, after its optimistic change was
+   * undone: for a failure that changed state anyway (an unblock that deleted
+   * the own block, but a followed block list still blocks).
+   */
+  onFailed?: (ticket: WriteTicket, vars: V) => void;
+  /**
    * What the write asks for (`like ? 'liked' : 'unliked'`). A write made
    * while one with the same key is pending is queued; if it asks for what
    * the pending one asked, the queue is dropped instead (a like, unlike,
@@ -48,6 +60,12 @@ export interface WriteSpec<V> {
    * next boot), so the tracker can follow it again.
    */
   matches?: (ticket: WriteTicket, vars: V) => boolean;
+  /**
+   * The tracker adopted `ticket` for this cut-short write (`matches`): for a
+   * screen that keeps its own record of the write, so it can follow the
+   * ticket from here (a DM's outbox bubble).
+   */
+  onAdopted?: (ticket: WriteTicket, vars: V) => void;
   /**
    * The engine refused the call itself (validation, `NOT_SUPPORTED`,
    * `QUOTE_HAS_TEXT`, ...): no ticket was made. Return true when handled;
@@ -203,7 +221,8 @@ function settle(ticket: WriteTicket): void {
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
       if (!latest) return;
       undo(entry);
-      fail(failureText(ticket.error, spec.failureMessage), retry);
+      spec.onFailed?.(ticket, entry.vars);
+      fail(spec.failureText?.(ticket, entry.vars) ?? failureText(ticket.error, spec.failureMessage), retry);
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
       return;
@@ -252,6 +271,7 @@ function adopt(ticket: WriteTicket): void {
     const latest = latestId === undefined ? undefined : useWriteTickets.getState().byId[latestId];
     if (!latest || time(latest.createdAt) < orphan.at) latestByKey.set(orphan.key, ticket.id);
   }
+  orphan.spec.onAdopted?.(ticket, orphan.vars);
 }
 
 function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {

@@ -131,11 +131,11 @@ describe('toProfileDTO', () => {
     const dto = toProfileDTO({
       id: author.id, avatar: { uri: 'https://img/a.png', dicebear: null },
       profile: { ...author, bio: 'hi', website: '', socialLinks: [{ platform: 'github', handle: 'a' }], paymentUris: [{ scheme: 'dash:', uri: 'dash:X' }] },
-      usernames: ['alice.dash'], stats, viewer: { follows: true, blocks: false, isSelf: false },
+      usernames: ['alice.dash'], stats, viewer: { follows: true, blocks: false, blockedBy: null, isSelf: false },
     })
     expect(dto).toMatchObject({
       displayName: 'Alice', hasProfile: true, bio: 'hi', socialLinks: [{ platform: 'github', handle: 'a' }],
-      paymentUris: [{ scheme: 'dash:', uri: 'dash:X' }], viewer: { follows: true, blocks: false, isSelf: false },
+      paymentUris: [{ scheme: 'dash:', uri: 'dash:X' }], viewer: { follows: true, blocks: false, blockedBy: null, isSelf: false },
     })
     expect('website' in dto).toBe(false)
     expect(validate(profileDTO, dto)).toEqual([])

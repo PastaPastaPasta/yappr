@@ -39,6 +39,8 @@ export const queryKeys = {
     /** `feed.hashtag` (storage-form tag). */
     hashtag: (q: { tag: string; sort?: Sort; window?: RankingWindow }) =>
       [...root, 'feed', 'hashtag', sorted(q)] as const,
+    /** `feed.checkNew`: posts newer than `since` (epoch ms) for the new-posts pill. Never persisted. */
+    newPosts: (tab: FeedTab, since: number) => [...root, 'feed', 'newPosts', { tab, since }] as const,
   },
 
   post: {
@@ -55,6 +57,8 @@ export const queryKeys = {
     stats: (id: string) => [...root, 'post', id, 'stats'] as const,
     /** `posts.poll`. */
     poll: (pollId: string) => [...root, 'poll', pollId] as const,
+    /** `safety.ownReport`: the viewer's report on this post or reply. */
+    ownReport: (id: string) => [...root, 'post', id, 'ownReport'] as const,
   },
 
   profile: {
@@ -75,6 +79,8 @@ export const queryKeys = {
     topPosts: (window: RankingWindow = 'all') => [...root, 'explore', 'topPosts', window] as const,
     topCreators: (window: RankingWindow = 'all') => [...root, 'explore', 'topCreators', window] as const,
     search: (kind: 'users' | 'hashtags' | 'posts', q: string) => [...root, 'explore', 'search', kind, q] as const,
+    /** `posts.mentionCandidates` (compose's @-suggestions). */
+    mentions: (prefix: string) => [...root, 'explore', 'mentions', prefix.toLowerCase()] as const,
   },
 
   /** `engage.bookmarks`. */
@@ -82,9 +88,15 @@ export const queryKeys = {
 
   /** `notifications.list`. Never persisted. */
   notifications: (filter: NotificationFilter = 'all') => [...root, 'notifications', filter] as const,
+  /** Every `notifications.list` filter: a prefix of the key above. */
+  notificationsAll: [...root, 'notifications'] as const,
 
   /** `safety.blocked`. */
   blocked: [...root, 'blocked'] as const,
+  /** `safety.isBlocked` for one account (batched by the caller). */
+  blockStatus: (userId: string) => [...root, 'blockStatus', userId] as const,
+  /** Every `blockStatus`: a prefix of the key above. */
+  blockStatusAll: [...root, 'blockStatus'] as const,
 
   /** `settings.get`. */
   settings: [...root, 'settings'] as const,
@@ -95,5 +107,7 @@ export const queryKeys = {
     status: [...root, 'dm', 'status'] as const,
     conversations: [...root, 'dm', 'conversations'] as const,
     messages: (key: string) => [...root, 'dm', 'messages', key] as const,
+    /** `profiles.batch` for conversation members and blocked people, in the order given. */
+    people: (ids: readonly string[]) => [...root, 'dm', 'people', ids.join(',')] as const,
   },
 } as const;

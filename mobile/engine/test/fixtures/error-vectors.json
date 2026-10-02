@@ -1,5 +1,5 @@
 {
-  "$comment": "classify() vectors (ENGINE.md 7.3). Messages are quoted from rs-dpp and the SDK as pinned in lib/error-utils.test.ts. userMessage is categorizeError() under the testnet build (topology v2). When web adds a predicate, add its vector here in the same PR.",
+  "$comment": "classify() vectors (ENGINE.md 7.3). Messages are quoted from rs-dpp and the SDK as pinned in lib/error-utils.test.ts. userMessage is categorizeError() under the testnet build (topology v2). When web adds a predicate, add its vector here in the same PR. expect.state is ticketStateFor(): the state the error leaves a ticket in when it ends a run() that may have broadcast (only a verdict is failed).",
   "vectors": [
     {
       "name": "moderation ban (41107 prose)",
@@ -537,7 +537,7 @@
         "consensusCode": null,
         "outcome": "not-sent",
         "retryable": true,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
       }
     },
@@ -579,7 +579,7 @@
         "consensusCode": null,
         "outcome": "not-sent",
         "retryable": true,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
       }
     },
@@ -593,7 +593,7 @@
         "consensusCode": null,
         "outcome": "not-sent",
         "retryable": true,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
       }
     },
@@ -607,7 +607,7 @@
         "consensusCode": null,
         "outcome": "not-sent",
         "retryable": true,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Failed to create post: invalid quorum: Quorum not found in cache for hash: 00000abc"
       }
     },
@@ -621,7 +621,7 @@
         "consensusCode": null,
         "outcome": "not-sent",
         "retryable": true,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Network error. Please check your connection and try again."
       }
     },
@@ -677,7 +677,7 @@
         "consensusCode": null,
         "outcome": "unknown",
         "retryable": false,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Failed to create post: Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)"
       }
     },
@@ -707,8 +707,50 @@
         "consensusCode": null,
         "outcome": "unknown",
         "retryable": false,
-        "state": "failed",
+        "state": "unconfirmed",
         "userMessage": "Failed to create post: something unexpected happened"
+      }
+    },
+    {
+      "name": "wasm transport error (fetch failed, Chromium)",
+      "error": {
+        "message": "transport error: grpc error: code: 'Internal error', message: \"Failed to call gRPC service: JS API error: TypeError: Failed to fetch\""
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "unconfirmed",
+        "userMessage": "Failed to create post: transport error: grpc error: code: 'Internal error', message: \"Failed to call gRPC service: JS API error: TypeError: Failed to fetch\""
+      }
+    },
+    {
+      "name": "wasm transport error, every address tried (fetch failed)",
+      "error": {
+        "message": "no available addresses to retry, last error: grpc error: code: 'Internal error', message: \"Failed to call gRPC service: JS API error: TypeError: Failed to fetch\""
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "unconfirmed",
+        "userMessage": "Dash Platform is temporarily unavailable. Please try again in a few moments."
+      }
+    },
+    {
+      "name": "wasm transport error (fetch failed, WebKit)",
+      "error": {
+        "message": "transport error: grpc error: code: 'Internal error', message: \"Failed to call gRPC service: JS API error: TypeError: Load failed\""
+      },
+      "expect": {
+        "code": "NETWORK",
+        "consensusCode": null,
+        "outcome": "not-sent",
+        "retryable": true,
+        "state": "unconfirmed",
+        "userMessage": "Failed to create post: transport error: grpc error: code: 'Internal error', message: \"Failed to call gRPC service: JS API error: TypeError: Load failed\""
       }
     }
   ]

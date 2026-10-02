@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { MessageSettingsScreen } from '~/features/messages/MessageSettingsScreen';
 
-export default function MessageSettingsScreen() {
-  return <Placeholder title="Message settings" comingIn="the messages PR" />;
-}
+export default MessageSettingsScreen;

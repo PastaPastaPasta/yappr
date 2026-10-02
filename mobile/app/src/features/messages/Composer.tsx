@@ -1,0 +1,99 @@
+import { useState } from 'react';
+import { TextInput, View, useWindowDimensions } from 'react-native';
+import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
+
+import { cn } from '~/lib-allowlist';
+import { ScalePressable } from '~/ui/ScalePressable';
+import { Text } from '~/ui/Text';
+import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
+
+const LINE = 22;
+const MAX_LINES = 5;
+
+export interface ComposerProps {
+  value: string;
+  onChangeText: (text: string) => void;
+  onSend: () => void;
+  disabled?: boolean;
+}
+
+/**
+ * The message composer (UX_SPEC §4.20, PRD DM-04): "Type a message...",
+ * growing to 5 lines then scrolling, and a round send button enabled when
+ * there is visible text. The screen pads it above the keyboard or the
+ * home indicator.
+ */
+export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
+  const c = useColors();
+  const scale = useWindowDimensions().fontScale;
+  const [focused, setFocused] = useState(false);
+  const canSend = !disabled && value.trim().length > 0;
+
+  return (
+    <View
+      className={cn('flex-row items-end gap-2 border-t px-3 py-2', tw.border, tw.bg)}
+    >
+      <View
+        className={cn(
+          'flex-1 justify-center rounded-3xl border px-4',
+          focused ? 'border-yappr-500' : tw.borderStrong,
+          tw.bg,
+        )}
+      >
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder="Type a message..."
+          placeholderTextColor={c.textPlaceholder}
+          accessibilityLabel="Message"
+          multiline
+          editable={!disabled}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          cursorColor={c.accent}
+          selectionColor={c.accent}
+          className="text-gray-900 dark:text-gray-100"
+          style={{
+            fontSize: 16,
+            lineHeight: LINE * scale,
+            minHeight: 40,
+            maxHeight: LINE * scale * MAX_LINES + 16,
+            paddingTop: 9,
+            paddingBottom: 9,
+            textAlignVertical: 'center',
+          }}
+          testID="dm-composer"
+        />
+      </View>
+      <ScalePressable
+        accessibilityRole="button"
+        accessibilityLabel="Send message"
+        accessibilityState={{ disabled: !canSend }}
+        disabled={!canSend}
+        onPress={onSend}
+        hitSlop={hitSlopFor(40)}
+        className={cn(
+          'mb-0.5 h-10 w-10 items-center justify-center rounded-full',
+          canSend ? tw.accentFill : 'bg-gray-200 dark:bg-gray-800',
+        )}
+        testID="dm-send"
+      >
+        <PaperAirplaneIcon size={18} color={canSend ? colors.white : c.textDisabled} />
+      </ScalePressable>
+    </View>
+  );
+}
+
+/** Shown instead of the composer (the screen adds the bottom inset) when the user can't send (DM-08, DM-10): `bg.muted`, centered `subhead`. */
+export function ComposerBanner({ text }: { text: string }) {
+  return (
+    <View
+      className={cn('items-center border-t px-6 py-4', tw.border, tw.bgMuted)}
+      testID="dm-composer-banner"
+    >
+      <Text variant="subhead" tone="secondary" className="text-center">
+        {text}
+      </Text>
+    </View>
+  );
+}

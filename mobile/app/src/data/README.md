@@ -80,8 +80,9 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   - `confirmed`: the change stays, and `onConfirmed` runs.
   - `failed`: the change is undone, an error haptic fires, and a toast shows
     the engine's `categorizeError` text (or `failureMessage` when the engine
-    has nothing specific). The toast offers **Retry** when the engine allows
-    one.
+    has nothing specific, or the spec's `failureText` for the ticket). The
+    toast offers **Retry** when the engine allows one. `onFailed` runs after
+    the undo, for a failure that changed state anyway.
   - `unconfirmed`: the write may have landed, so the change stays (PRD G-3).
     A "Not confirmed yet" toast offers **Check again**. If the check proves
     the write absent, the change is undone and the toast offers **Retry**.
@@ -100,7 +101,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
 - **The engine cut the call short.** `ENGINE_RESTARTED`, `ENGINE_DISCONNECTED`,
   `RPC_TIMEOUT` and `ENGINE_TIMEOUT` mean the write may have run (an account
   switch is an engine restart). No failure toast: give the spec `matches`, so
-  the tracker can follow the restored ticket.
+  the tracker can follow the restored ticket. `onAdopted` tells a spec that
+  keeps its own record of the write (a DM's outbox bubble) which ticket that is.
   - Signing out or switching accounts forgets every tracked write.
 - **When the engine refuses the call itself.** No ticket is made, and the
   change is undone. `NOT_SIGNED_IN` opens the sign-in sheet. `onRejected`
@@ -175,8 +177,10 @@ useEngineEvent('notifications.count', ({ unread }) => setBadge(unread));
   unsubscribe.
 - These are already handled app-wide: `session.changed` (the session store
   and cache resets), `write.status` (the write tracker) and
-  `content.created` (it seeds the new post and invalidates the feeds, the
-  author's profile, and the thread or quoted post).
+  `content.created` (it seeds the new post, puts a post on top of the
+  loaded Recent home feeds, marks every feed stale without refetching it,
+  since an infinite query's refetch re-reads every page it holds, and
+  refetches the author's profile and the thread or quoted post).
 
 ## Gotcha: React Compiler and closures
 

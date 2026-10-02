@@ -141,6 +141,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       ],
       ['./plugins/engine-assets', { variant }],
       './plugins/release-hardening',
+      './plugins/wallet-schemes',
       [
         'expo-splash-screen',
         {

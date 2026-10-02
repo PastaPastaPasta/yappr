@@ -1,0 +1,136 @@
+# Profiles and the social graph (PRD PROF-01 – PROF-08; EXECUTION S6):
+# a profile, follow and unfollow, the following list, and editing the
+# display name (then putting it back).
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test \
+#     -e KEY=<pool identity private key> \
+#     -e SELF=<that identity's id> -e NAME=<its current display name> \
+#     -e TARGET=<another pool identity's id> \
+#     mobile/e2e/flows/profiles.yaml
+# KEY is a sakura pool identity's authentication key, never committed; this
+# flow WRITES (a follow, an unfollow, two profile edits) as that identity,
+# so use only your own pool personas. Maestro records command values, KEY
+# included, in its logs and debug artifacts (~/.maestro/tests/...): never
+# upload or attach those from a run with KEY, and delete them afterwards.
+appId: pr.yap.app.dev
+---
+# Sign in with the dev quick sign-in (Settings > Diagnostics, devnet dev builds).
+- openLink: yappr-dev:///settings/diagnostics
+- scrollUntilVisible:
+    element:
+      id: dev-sign-in-key
+    direction: DOWN
+    timeout: 30000
+- tapOn:
+    id: dev-sign-in-key
+- inputText: ${KEY}
+- scrollUntilVisible:
+    element:
+      id: dev-sign-in
+    direction: DOWN
+- tapOn:
+    id: dev-sign-in
+- extendedWaitUntil:
+    visible: "Signed in as.*"
+    timeout: 60000
+
+# Someone else's profile: header, tabs, the first page of posts.
+- openLink: yappr-dev:///user/${TARGET}
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+    timeout: 60000
+- assertVisible:
+    id: profile-message
+- assertVisible: "Posts"
+- assertVisible: "Mentions"
+
+# Already following: unfollow first (it asks), so the run ends where it began.
+- runFlow:
+    when:
+      visible:
+        id: profile-follow
+        text: "Following .*"
+    commands:
+      - tapOn:
+          id: profile-follow
+      - tapOn: "Unfollow"
+      - extendedWaitUntil:
+          visible:
+            id: profile-follow
+            text: "Follow [^i].*"
+          timeout: 10000
+# Follow: optimistic, the button flips at once.
+- tapOn:
+    id: profile-follow
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Following .*"
+    timeout: 10000
+# Unfollow asks first (PRD PD-6).
+- tapOn:
+    id: profile-follow
+- tapOn: "Unfollow"
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Follow [^i].*"
+    timeout: 10000
+# And follow again, leaving the follow in place.
+- tapOn:
+    id: profile-follow
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Following .*"
+    timeout: 10000
+
+# The own profile and its following list.
+- openLink: yappr-dev:///user/${SELF}/following
+- extendedWaitUntil:
+    visible:
+      id: "user-row-.*"
+    timeout: 60000
+
+# Edit the display name, then put it back.
+- openLink: yappr-dev:///profile
+- extendedWaitUntil:
+    visible:
+      id: profile-edit
+    timeout: 60000
+- tapOn:
+    id: profile-edit
+- extendedWaitUntil:
+    visible:
+      id: edit-name
+    timeout: 30000
+- tapOn:
+    id: edit-name
+- eraseText: 40
+- inputText: "Maestro Name"
+- tapOn:
+    id: edit-save
+- extendedWaitUntil:
+    visible:
+      id: profile-name
+      text: "Maestro Name"
+    timeout: 120000
+- tapOn:
+    id: profile-edit
+- extendedWaitUntil:
+    visible:
+      id: edit-name
+    timeout: 30000
+- tapOn:
+    id: edit-name
+- eraseText: 40
+- inputText: ${NAME}
+- tapOn:
+    id: edit-save
+- extendedWaitUntil:
+    visible:
+      id: profile-name
+      text: ${NAME}
+    timeout: 120000

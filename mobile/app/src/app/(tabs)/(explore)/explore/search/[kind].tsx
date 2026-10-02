@@ -1,8 +1,8 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { Placeholder } from '~/ui/Placeholder';
+import { SearchResultsScreen } from '~/features/explore/SearchResultsScreen';
 
-export default function SearchResultsScreen() {
-  const { kind } = useLocalSearchParams<{ kind?: string }>();
-  return <Placeholder title="Search results" detail={`kind: ${kind ?? ''}`} comingIn="the explore and search PR" />;
+export default function SearchResultsRoute() {
+  const { kind, q } = useLocalSearchParams<{ kind?: string; q?: string }>();
+  return <SearchResultsScreen kind={kind} query={q ?? ''} />;
 }
