@@ -49,10 +49,11 @@ function undoOf(from: SettingsDTO, patch: SettingsPatch): SettingsPatch {
  * fields this patch changed, so a later change to another field survives.
  */
 export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
-  const before = queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
-  await queryClient.cancelQueries({ queryKey: queryKeys.settings });
-  if (before) queryClient.setQueryData<SettingsDTO>(queryKeys.settings, applyPatch(before, patch));
   selectionTick();
+  // Read after the cancel: a change made while it waited must stay under this one.
+  await queryClient.cancelQueries({ queryKey: queryKeys.settings });
+  const before = queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
+  if (before) queryClient.setQueryData<SettingsDTO>(queryKeys.settings, applyPatch(before, patch));
   try {
     const saved = await engine.api.settings.set(patch);
     // The cache already shows this patch, and any later one still in flight: keep it.

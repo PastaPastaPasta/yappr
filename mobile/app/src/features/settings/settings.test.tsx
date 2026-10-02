@@ -204,6 +204,22 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
     expect(cachedSettings()).toMatchObject({ linkPreviewsEnabled: true, gateMediaFromNonFollowed: false });
   });
 
+  it('keeps both of two quick changes while a fetch is cancelled', async () => {
+    fakeEngine.method('settings.set').mockImplementation(async (patch: Partial<SettingsDTO>) => ({ ...SETTINGS, ...patch }));
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+    // A refetch in flight: each change waits for its cancel.
+    fakeEngine.method('settings.get').mockImplementation(() => new Promise(() => {}));
+    queryClient.invalidateQueries({ queryKey: queryKeys.settings }).catch(() => undefined);
+
+    await act(async () => {
+      fireEvent.press(byId('privacy-link-previews'));
+      fireEvent.press(byId('privacy-media-gate'));
+    });
+
+    expect(cachedSettings()).toMatchObject({ linkPreviewsEnabled: false, gateMediaFromNonFollowed: false });
+  });
+
   it('shows the media gate on, and blocked accounts and read receipts only where they apply', async () => {
     renderScreen(<PrivacySettingsScreen />);
     await settle();
