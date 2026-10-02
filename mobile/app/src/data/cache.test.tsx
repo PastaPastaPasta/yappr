@@ -208,8 +208,12 @@ describe('deletes', () => {
     queryClient.setQueryData<InfiniteData<Page<PostDTO>>>(posts, { pages: [page([repost, other])], pageParams: [null] });
     const thread = { pages: [{ focus: target, ancestors: [], removedAncestorIds: [], replies: [] }], pageParams: [null] };
     queryClient.setQueryData(queryKeys.post.thread('target'), thread);
+    // A notification that shares the post's id (a reply notification is the reply's id) is not a post.
+    const notifications = { pages: [page([{ id: 'target', type: 'reply', target: { id: 'target', kind: 'post' } }])], pageParams: [null] };
+    queryClient.setQueryData(queryKeys.notifications(), notifications);
 
     dropFromLists('target');
+    expect(queryClient.getQueryData(queryKeys.notifications())).toBe(notifications);
     expect(feed().pages.map((p) => p.items.map((item) => item.id))).toEqual([['other'], ['quoting']]);
     expect(queryClient.getQueryData<InfiniteData<Page<PostDTO>>>(posts)!.pages[0].items.map((item) => item.id)).toEqual(['other']);
     expect(queryClient.getQueryData(queryKeys.post.thread('target'))).toBe(thread);

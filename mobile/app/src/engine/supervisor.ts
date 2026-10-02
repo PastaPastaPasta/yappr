@@ -443,6 +443,9 @@ export class EngineSupervisor<Load = unknown> {
       }
       if (this.options.engineLogLevel !== 'info') await client.api.engine.setLogLevel(this.options.engineLogLevel);
       if (!this.online) await client.api.engine.connectivity(false);
+      // Started in the background (a background launch, a restart while suspended): `background()`
+      // only reaches an engine that accepts calls, so say it here, before its polling starts.
+      if (!this.foreground) await client.api.engine.lifecycle('background');
       const bootStarted = this.now();
       const booted = client.api.engine.boot();
       // Queued calls go out after boot, so the SDK is initializing before any of them runs.

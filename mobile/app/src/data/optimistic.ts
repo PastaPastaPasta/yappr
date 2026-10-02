@@ -225,7 +225,11 @@ const isPostPages = (data: unknown): data is { pages: Page<PostDTO>[] } =>
  * keep their copy, which `markPostDeleted` turns into the "deleted" line.
  */
 export function dropFromLists(postId: string): void {
-  const gone = (item: PostDTO) => item.id === postId || (item.bareRepost && item.quotedPostId === postId);
+  // Posts only (`stats.likes`): a notification or user row may share the id or carry the post.
+  const gone = (item: unknown) =>
+    isPlainObject(item) &&
+    isCachedPost(item) &&
+    (item.id === postId || (item.bareRepost === true && item.quotedPostId === postId));
   for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.all })) {
     const data = query.state.data;
     if (!isPostPages(data) || !data.pages.some((page) => page.items.some(gone))) continue;

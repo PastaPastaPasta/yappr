@@ -120,8 +120,9 @@ const BALANCE_REFRESH_MS = 300_000
 /**
  * The controller's balance refresh, in the foreground only (PRD NET-08):
  * platform-auth's own `setInterval` keeps running in a backgrounded Android
- * WebView. Every `intervalMs` while signed in and active; the engine's
- * `lifecycle` drives `lifecycle()`.
+ * WebView. Every `intervalMs` while signed in and active, and at once on
+ * return to the foreground when the last read is older than that; the
+ * engine's `lifecycle` drives `lifecycle()`.
  */
 export function foregroundBalanceRefresh(
   controller: {
@@ -133,12 +134,16 @@ export function foregroundBalanceRefresh(
 ) {
   let foreground = true
   let timer: ReturnType<typeof setInterval> | null = null
+  /** When the balance was last read here (the controller reads it itself on sign-in and restore). */
+  let lastRead = Date.now()
+  const refresh = () => {
+    lastRead = Date.now()
+    controller.refreshBalance().catch(error => logger.warn('Balance refresh failed:', error))
+  }
   const sync = () => {
     const run = foreground && controller.getState().user !== null
     if (run && !timer) {
-      timer = setInterval(() => {
-        controller.refreshBalance().catch(error => logger.warn('Balance refresh failed:', error))
-      }, intervalMs)
+      timer = setInterval(refresh, intervalMs)
     } else if (!run && timer) {
       clearInterval(timer)
       timer = null
@@ -148,7 +153,9 @@ export function foregroundBalanceRefresh(
   return {
     lifecycle(state: AppLifecycleState): void {
       if (state === 'inactive') return
+      const back = state === 'active' && !foreground
       foreground = state === 'active'
+      if (back && controller.getState().user !== null && Date.now() - lastRead >= intervalMs) refresh()
       sync()
     },
   }

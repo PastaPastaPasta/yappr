@@ -579,14 +579,26 @@ describe('foregroundBalanceRefresh (SR-30, NET-08)', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(refreshBalance).toHaveBeenCalledTimes(2)
 
+    // Back after longer than the interval: read at once, then on the timer again.
     balance.lifecycle('inactive')
     balance.lifecycle('active')
-    await vi.advanceTimersByTimeAsync(1000)
     expect(refreshBalance).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refreshBalance).toHaveBeenCalledTimes(4)
+
+    // Back after a moment: the last read is recent enough, so the timer decides.
+    balance.lifecycle('background')
+    await vi.advanceTimersByTimeAsync(500)
+    balance.lifecycle('active')
+    expect(refreshBalance).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refreshBalance).toHaveBeenCalledTimes(5)
 
     user = null
     listeners.forEach(listener => listener())
     await vi.advanceTimersByTimeAsync(5000)
-    expect(refreshBalance).toHaveBeenCalledTimes(3)
+    balance.lifecycle('background')
+    balance.lifecycle('active')
+    expect(refreshBalance).toHaveBeenCalledTimes(5)
   })
 })

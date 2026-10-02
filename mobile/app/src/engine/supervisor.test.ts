@@ -278,6 +278,22 @@ describe('EngineSupervisor', () => {
     s.supervisor.stop();
   });
 
+  it('tells an engine that boots in the background that it is in the background', async () => {
+    const s = setup();
+    s.supervisor.setForeground(false);
+    s.supervisor.start();
+    await boot(s);
+    expect(s.supervisor.getStatus().state).toBe('ready');
+    expect(s.engines[1].calls).toEqual(['engine.info', 'engine.lifecycle', 'engine.boot']);
+
+    // In the foreground it is not told anything.
+    s.supervisor.setForeground(true);
+    s.supervisor.restart();
+    await boot(s, 2);
+    expect(s.engines[2].calls).toEqual(['engine.info', 'engine.boot']);
+    s.supervisor.stop();
+  });
+
   it('still restarts an engine that never says hello in the foreground', async () => {
     const s = setup({ configure: (engine, epoch) => (engine.answerPings = epoch !== 1) });
     s.supervisor.start();

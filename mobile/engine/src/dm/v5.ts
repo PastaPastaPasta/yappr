@@ -76,6 +76,8 @@ function view(engine: DmEngine): DmView {
 export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit; coalesceMs?: number }) {
   const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
+  /** The app is in the background: an engine started now (a session restored there) starts paused. */
+  let backgrounded = false
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
   function engineOf(identityId: string): DmEngine | null {
@@ -94,6 +96,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     const unsubscribe = engine.subscribe(() => tracker.changed(() => (current?.engine === engine ? view(engine) : null)))
     current = { identityId, engine, unsubscribe }
     engine.start().catch(error => logger.warn('DM v5 engine failed to start:', error))
+    if (backgrounded) engine.pause()
     return engine
   }
 
@@ -149,6 +152,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      * now and on the schedule again.
      */
     async lifecycle(state: AppLifecycleState): Promise<void> {
+      if (state !== 'inactive') backgrounded = state === 'background'
       const running = current?.engine
       if (!running) return
       if (state === 'background') {
