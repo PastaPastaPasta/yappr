@@ -34,13 +34,12 @@ export const resolveAvatarSvg = (identityId: string, style: string, seed: string
 export function useUnsupportedEngineRoute(): void {
   const { state, unsupported } = useEngineStatus();
   const pathname = usePathname();
-  // Once per unsupported episode: leaving the screen ("Browse saved posts") is the user's choice.
+  // Once until the engine comes up: leaving the screen ("Browse saved posts") is the user's choice, and a
+  // foreground retry that ends unsupported again leaves them browsing (the banner leads back).
   const routed = useRef(false);
   useEffect(() => {
-    if (state !== 'unsupported' || !unsupported) {
-      routed.current = false;
-      return;
-    }
+    if (state === 'ready' || state === 'degraded') routed.current = false;
+    if (state !== 'unsupported' || !unsupported) return;
     if (routed.current) return;
     routed.current = true;
     const route = unsupported === 'lockdown' ? '/lockdown' : '/webview-update';

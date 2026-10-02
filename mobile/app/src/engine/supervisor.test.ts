@@ -209,6 +209,104 @@ describe('EngineSupervisor', () => {
     s.supervisor.stop();
   });
 
+  it('fails an engine that never says hello, however slowly each attempt fails (SR-08)', async () => {
+    const s = setup({
+      supervisor: { backoffMs: [500, 1000, 2000, 4000, 8000, 30_000], pingIntervalMs: 600_000 },
+      configure: (engine) => (engine.answerPings = false),
+    });
+    s.supervisor.start();
+    // Each epoch waits out the 30 s hello deadline: never five crashes inside the 2-minute window.
+    for (let i = 0; i < 20 && s.supervisor.getStatus().state !== 'failed'; i++) await settle(31_000);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 5, epoch: 5 });
+    await expect(s.supervisor.call('feed.home', [])).rejects.toMatchObject({ code: 'ENGINE_UNAVAILABLE' });
+  });
+
+  it('fails an engine that says hello but never boots (SR-08)', async () => {
+    const s = setup({
+      supervisor: { pingIntervalMs: 600_000 },
+      configure: (engine) => engine.hold.add('engine.boot'),
+    });
+    s.supervisor.start();
+    for (let epoch = 1; epoch <= 5; epoch++) {
+      await boot(s, epoch);
+      expect(s.supervisor.getStatus()).toMatchObject({ state: 'booting', epoch });
+      await settle(90_000);
+      await settle(40);
+    }
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'failed', restarts: 5 });
+  });
+
+  it('counts a boot that came up as the end of a run of failed boots', async () => {
+    const s = setup({ supervisor: { pingIntervalMs: 600_000, failureWindowMs: 1 } });
+    s.supervisor.start();
+    for (let epoch = 1; epoch <= 8; epoch++) {
+      await boot(s, epoch);
+      expect(s.supervisor.getStatus().state).toBe('ready');
+      s.supervisor.crashed(`crash ${epoch}`);
+      await settle(40);
+    }
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', epoch: 9 });
+    s.supervisor.stop();
+  });
+
+  it('does not count background time toward the hello and boot deadlines (SR-29)', async () => {
+    const s = setup({
+      supervisor: { pingIntervalMs: 600_000 },
+      configure: (engine) => {
+        engine.answerPings = false;
+        engine.hold.add('engine.boot');
+      },
+    });
+    s.supervisor.start();
+    await settle();
+    await settle(10_000);
+    // Suspended for two minutes before saying hello: neither deadline has run out in foreground time.
+    s.supervisor.setForeground(false);
+    await settle(120_000);
+    s.supervisor.setForeground(true);
+    await settle();
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'handshaking', epoch: 1, restarts: 0 });
+    s.engines[1].hello();
+    await settle();
+    expect(s.supervisor.getStatus().state).toBe('booting');
+    // 10 s were spent before the background stretch; the boot deadline has 80 s of foreground left.
+    await settle(79_000);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'booting', epoch: 1 });
+    await settle(1000);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: 1 });
+    expect(s.deps.log).toHaveBeenCalledWith('error', 'host', 'Engine crashed: no ready within 90 s');
+    s.supervisor.stop();
+  });
+
+  it('still restarts an engine that never says hello in the foreground', async () => {
+    const s = setup({ configure: (engine, epoch) => (engine.answerPings = epoch !== 1) });
+    s.supervisor.start();
+    await settle(30_000);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: 1 });
+    expect(s.deps.log).toHaveBeenCalledWith(
+      'error',
+      'host',
+      'Engine crashed: handshake failed: Engine did not say hello within 30000 ms',
+    );
+    s.supervisor.stop();
+  });
+
+  it('retries an unsupported engine on return to the foreground (SR-27)', async () => {
+    let wasm = false;
+    const s = setup({ configure: (engine) => (engine.handlers['engine.info'] = () => ({ webAssembly: wasm })) });
+    s.supervisor.start();
+    await boot(s);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'unsupported', unsupported: 'lockdown', epoch: 1 });
+
+    // The user excluded Yappr from Lockdown Mode in Settings and came back.
+    wasm = true;
+    s.supervisor.setForeground(false);
+    s.supervisor.setForeground(true);
+    await boot(s, 2);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', epoch: 2, unsupported: null });
+    s.supervisor.stop();
+  });
+
   it('ignores a crash report from an older epoch', async () => {
     const s = setup();
     s.supervisor.start();
