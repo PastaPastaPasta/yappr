@@ -164,6 +164,14 @@ describe('release-ios.sh variant guard', () => {
   });
 });
 
+describe('Android predictive back', () => {
+  // Opting in on React Native 0.86 sends Back past JS on Android 13-15 and closes the app
+  // (react/react-native#58407). Re-check on Android 13-15 before turning it on.
+  it.each(Object.keys(VARIANTS) as Variant[])('stays off for %s (enableOnBackInvokedCallback)', (variant) => {
+    expect(configFor(variant).android?.predictiveBackGestureEnabled).toBe(false);
+  });
+});
+
 describe('screen capture blocking (AUTH-12)', () => {
   it('links expo-screen-capture on iOS only', () => {
     // On Android it registers a screenshot callback at startup, so Android 14+ would say

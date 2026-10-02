@@ -138,6 +138,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // opts out of Android 12+ device-to-device transfer, which allowBackup does not cover).
       allowBackup: false,
       blockedPermissions: BLOCKED_ANDROID_PERMISSIONS,
+      // Predictive back (`android:enableOnBackInvokedCallback`) stays off: on React Native 0.86 it
+      // breaks Back on Android 13-15. Opted in, those versions stop calling onBackPressed(), and
+      // ReactActivity registers its OnBackPressedCallback only on Android 16+ (with targetSdk 36),
+      // so Back never reaches JS (no stack pop, sheet or BackHandler) and closes the app
+      // (react/react-native#58407, open). Android 16+ takes back through that callback either
+      // way. Turning this on would buy no animation yet: React Native always holds an enabled
+      // callback, so the system never shows its back-to-home preview.
       predictiveBackGestureEnabled: false,
     },
     plugins: [
