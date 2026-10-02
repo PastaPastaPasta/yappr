@@ -19,11 +19,16 @@ import type {
 import type { DmIdentity } from './types'
 import { EpochKeys, directKey, groupKey, hexId, includesId, pointerKey, sameEpoch } from './util'
 
-/** A stale tag (§6.3): an old week's or epoch's next tag, polled until `until` (chain time). */
+/**
+ * A stale tag (§6.3): an old week's or epoch's next tag, or the slot of my
+ * message held on trust (`HeldMessage.local`), polled until `until` (chain time).
+ */
 export interface StaleTag {
   w: number
   j: number
   until: number
+  /** The slot of my message held on trust: dropped once a poll has read the slot. */
+  held?: true
 }
 
 export interface StreamState {
@@ -53,8 +58,13 @@ export interface HeldMessage {
   createdAt: number
   content: DmContent
   prev: MessagePointer | null
-  /** Sent from this device and not yet read back from the chain. */
+  /**
+   * Sent from this device on trust (its create never confirmed, its slot read
+   * empty) and not yet read back from the chain. A confirmed send is not local.
+   */
   local?: boolean
+  /** A local message's sealed body: only a document with exactly these bytes reads it back. */
+  body?: Uint8Array
 }
 
 interface ConvBase {

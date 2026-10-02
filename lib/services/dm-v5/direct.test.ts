@@ -11,7 +11,7 @@ import { pollOnce } from './loop'
 import { sendContent } from './sender'
 import { stream, timeline } from './conversation'
 import { MapKv, MemoryLedger, makeContext } from './test-chain'
-import { splitText, MAX_TEXT_BYTES } from './util'
+import { splitText, MAX_TEXT_BYTES, STALE_WINDOW_MS, pointerKey } from './util'
 import { MAX_NONCE_RETRIES, classifyWriteFailure, nonceBackoffMs, withNonceRetry } from './write-failure'
 
 const texts = (ctx: DmContext, peer: Uint8Array) =>
@@ -469,6 +469,97 @@ describe('sender', () => {
     alice.chain.unconfirmed = 1
     await sendContent(alice.ctx, conv, { type: 'text', text: 'x' })
     expect(ledger.messages).toHaveLength(1)
+  })
+
+  it('holds a confirmed send, or an uncertain one read back from its slot, as on the chain (not local)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    const confirmed = await sendContent(alice.ctx, conv, { type: 'text', text: 'confirmed' })
+    alice.chain.unconfirmed = 1
+    const readBack = await sendContent(alice.ctx, conv, { type: 'text', text: 'read back' })
+    expect(confirmed.local).toBeUndefined()
+    expect(readBack.local).toBeUndefined()
+    expect(stream(conv, ALICE_ID, readBack.pointer)?.stale).toEqual([])
+  })
+
+  it('keeps a message held on trust local until a poll reads its slot back, even with the thread closed', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    // Both broadcasts time out and nothing is visible: held on trust. The first one lands later.
+    const create = alice.chain.createMessage.bind(alice.chain)
+    const landing: { late?: () => Promise<unknown> } = {}
+    alice.chain.createMessage = async (tag, body) => {
+      landing.late ??= () => create(tag, body)
+      return { ok: true, id: 'timed-out', confirmed: false }
+    }
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'on trust' })
+    alice.chain.createMessage = create
+    expect(held.local).toBe(true)
+    expect(ledger.messages).toHaveLength(0)
+
+    // Nothing there yet: still local. The cursor is already past the slot, so only the stale tag asks for it.
+    await pollOnce(alice.ctx)
+    expect(conv.held.get(pointerKey(ALICE_ID, held.pointer))?.local).toBe(true)
+
+    await landing.late?.()
+    await pollOnce(alice.ctx)
+    const [doc] = ledger.messages
+    const readBack = conv.held.get(pointerKey(ALICE_ID, held.pointer))
+    expect(readBack).toMatchObject({ docId: doc.id, createdAt: doc.createdAt, content: { type: 'text', text: 'on trust' } })
+    expect(readBack?.local).toBeUndefined()
+    // Its slot is no longer polled once read.
+    expect(stream(conv, ALICE_ID, held.pointer)?.stale).toEqual([])
+    // The next send goes to the next slot and links back to it.
+    const next = await sendContent(alice.ctx, conv, { type: 'text', text: 'next' })
+    expect(next.pointer.j).toBe(held.pointer.j + 1)
+    expect(next.prev).toEqual(held.pointer)
+  })
+
+  it('never reads a message held on trust back from my other device\'s message in its slot', async () => {
+    const ledger = new MemoryLedger()
+    const phone = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    const laptop = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(phone.ctx, BOB_ID)
+    await ensureStarted(phone.ctx, conv)
+    // Both of the phone's broadcasts are lost: held on trust at j = 0.
+    phone.chain.hook = (method) => (method === 'createMessage' ? { ok: true, id: 'lost', confirmed: false } : null)
+    const held = await sendContent(phone.ctx, conv, { type: 'text', text: 'from phone' })
+    phone.chain.hook = null
+    expect(held.local).toBe(true)
+    // The laptop then writes its own message at that slot.
+    const laptopConv = await openDirect(laptop.ctx, BOB_ID)
+    laptopConv.draft = false
+    expect((await sendContent(laptop.ctx, laptopConv, { type: 'text', text: 'from laptop' })).pointer).toEqual(held.pointer)
+
+    await pollOnce(phone.ctx)
+    const now = conv.held.get(pointerKey(ALICE_ID, held.pointer))
+    expect(now?.content).toEqual({ type: 'text', text: 'from laptop' })
+    expect(now?.local).toBeUndefined()
+    expect(texts(phone.ctx, BOB_ID)).toEqual(['from laptop'])
+  })
+
+  it('stops polling the slot of a message held on trust after the stale window, leaving it local', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    alice.chain.hook = (method) => (method === 'createMessage' ? { ok: true, id: 'lost', confirmed: false } : null)
+    const held = await sendContent(alice.ctx, conv, { type: 'text', text: 'lost' })
+    alice.chain.hook = null
+    const st = stream(conv, ALICE_ID, held.pointer)
+    expect(st?.stale).toEqual([{ w: held.pointer.w, j: held.pointer.j, until: expect.any(Number), held: true }])
+    ledger.time += STALE_WINDOW_MS
+    await pollOnce(alice.ctx)
+    expect(st?.stale).toEqual([])
+    expect(conv.held.get(pointerKey(ALICE_ID, held.pointer))?.local).toBe(true)
   })
 
   it('links prev to the newest own message, across a week rollover', async () => {

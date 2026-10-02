@@ -7,7 +7,8 @@
  * Streams are polled for their NEXT tag. A hit pulls the rest of that week
  * (DRAIN). A message whose `prev` points strictly backwards at something not
  * held triggers a walk back along `prev` (BACKFILL). An old week's or epoch's
- * next tag stays polled for the 10-minute stale window.
+ * next tag, and the slot of my message held on trust, stay polled for the
+ * 10-minute stale window.
  */
 
 import { bytesEqual, hexToBytes } from '@/lib/bytes'
@@ -212,9 +213,15 @@ export async function receive(
   const pointer: MessagePointer = { w, j, b: st.epoch.b, r: st.epoch.r }
   const key = pointerKey(st.sender, pointer)
   const existing = conv.held.get(key)
+  if (existing && !existing.local) return null
   if (existing) {
-    if (existing.local) conv.held.set(key, { ...existing, docId: doc.id, createdAt: doc.createdAt, local: false })
-    return null
+    // My message held on trust: read back only by its own bytes. My other device's message in
+    // the slot means mine never landed there: the chain's message replaces it.
+    if (!existing.body || bytesEqual(doc.body, existing.body)) {
+      conv.held.set(key, { sender: existing.sender, pointer, docId: doc.id, createdAt: doc.createdAt, content: existing.content, prev: existing.prev })
+      return null
+    }
+    conv.held.delete(key)
   }
   const message = await tryDecryptMessage({ streamKey: st.key, senderId: st.sender, w, j }, doc.body)
   if (!message) return null
@@ -330,7 +337,9 @@ async function drain(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: 
 function advance(ctx: DmContext, st: StreamState, want: Want, last: number): void {
   if (want.kind === 'stale') {
     const entry = st.stale.find((s) => s.w === want.w && s.j === want.j)
-    if (entry) entry.j = last + 1
+    // A held slot's job is done once it was read (whatever holds it); the stream's own tags go on.
+    if (entry?.held) st.stale.splice(st.stale.indexOf(entry), 1)
+    else if (entry) entry.j = last + 1
     return
   }
   const cur = st.cur

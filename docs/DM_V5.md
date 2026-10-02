@@ -597,6 +597,7 @@ SEND(c, text):
   broadcast dmMessage{tag[curWeek, j], body(prev = my newest message in c, 0x01, text)}
   if the broadcast result is uncertain (timeout): it landed only if the tag holds exactly this body
     (my other device writes the same tags); someone else's document there → j += 1; nothing → broadcast the same body again
+    still nothing → hold it on trust as "sending", and poll its tag for the 10-minute stale window until it is read back
 ```
 
 - **Every `in` query needs an `orderBy` on its `in` field** (Drive refuses it

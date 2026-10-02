@@ -21,7 +21,7 @@ import { curWeek, type DmContext } from './context'
 import { applyGroups, isFresh } from './group-apply'
 import { fetchWants, historyWants, receive, streamWants } from './poller'
 import type { ChainMessage } from './types'
-import { MAX_LOOKBACK_WEEKS, hexId, pointerKey } from './util'
+import { MAX_LOOKBACK_WEEKS, STALE_WINDOW_MS, hexId, pointerKey } from './util'
 import { withNonceRetry } from './write-failure'
 
 const MAX_J_ATTEMPTS = 20
@@ -103,7 +103,7 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
       if (slot.state === 'empty') {
         // Nothing there yet: broadcast the same bytes once more, so a late landing reads as `landed`.
         // A second uncertain result with nothing visible is taken on trust (the DAPI quirk).
-        if (retriedUncertain) return hold(ctx, conv, st, pointer, outcome.id, content, prev)
+        if (retriedUncertain) return hold(ctx, conv, st, pointer, outcome.id, content, prev, body)
         retriedUncertain = true
         attempt--
         continue
@@ -132,10 +132,30 @@ async function adopt(ctx: DmContext, conv: Conv, st: StreamState, w: number, j: 
   if (bytesEqual(doc.ownerId, ctx.me.id)) await receive(ctx, conv, st, w, j, doc, { backfilling: true })
 }
 
-function hold(ctx: DmContext, conv: Conv, st: StreamState, pointer: MessagePointer, docId: string, content: DmContent, prev: MessagePointer | null): HeldMessage {
-  const held: HeldMessage = { sender: ctx.me.id, pointer, docId, createdAt: ctx.chain.now(), content, prev, local: true }
+/**
+ * Hold my message at `pointer`. A confirmed create, or a slot read that found
+ * this very body, is on the chain. One held on trust (two uncertain
+ * broadcasts, the slot empty after each; `trustBody` is what they sent) is
+ * not known to be: it stays `local` until a poll reads exactly that body
+ * back. The cursor moves past it all the same (the next send must not reuse
+ * its slot), so its slot is polled as a stale tag for the stale window: the
+ * stream's next tag never asks for it again.
+ */
+function hold(
+  ctx: DmContext,
+  conv: Conv,
+  st: StreamState,
+  pointer: MessagePointer,
+  docId: string,
+  content: DmContent,
+  prev: MessagePointer | null,
+  trustBody?: Uint8Array
+): HeldMessage {
+  const trust = trustBody ? { local: true, body: trustBody } : {}
+  const held: HeldMessage = { sender: ctx.me.id, pointer, docId, createdAt: ctx.chain.now(), content, prev, ...trust }
   conv.held.set(pointerKey(ctx.me.id, pointer), held)
   if (!st.cur || pointer.w > st.cur.w || (pointer.w === st.cur.w && pointer.j > st.cur.j)) st.cur = { w: pointer.w, j: pointer.j }
+  if (trustBody) st.stale.push({ w: pointer.w, j: pointer.j, until: ctx.chain.now() + STALE_WINDOW_MS, held: true })
   ctx.cache.noteHead(conv.key, hexId(ctx.me.id), pointer)
   if (content.type === 'text') ctx.cache.noteText(conv.key)
   // Sending is reading: my own message moves the read position past everything before it.
