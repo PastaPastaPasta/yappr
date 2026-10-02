@@ -236,7 +236,7 @@ describe('safety', () => {
     })
   })
 
-  it('a transport failure the handler proves unsent stays failed and retryable', async () => {
+  it('a transport failure the handler proves unsent stays failed and retryable; waiting-parent proves only that', async () => {
     const { store } = setup()
     store.register('like', { async run() { throw new NotSentError(new Error('transport error: grpc error: Failed to fetch')) } })
     store.register('unlike', { async run(_args, ctx) { ctx.stage('waiting-parent'); throw new Error('something unexpected happened') } })
@@ -244,7 +244,8 @@ describe('safety', () => {
     store.submit({ op: 'unlike', args: null })
     await settle()
     expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
-    expect(store.get('t2')).toMatchObject({ state: 'failed', retryable: false, error: { code: 'UNKNOWN', outcome: 'not-sent' } })
+    // 'waiting-parent' proves a transport failure unsent, but not an error with no verdict: it stays a maybe.
+    expect(store.get('t2')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'UNKNOWN', outcome: 'unknown' } })
   })
 
   it('does not honour a not-sent claim once the ticket names an unconfirmed document', async () => {

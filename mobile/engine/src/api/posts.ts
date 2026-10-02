@@ -140,9 +140,10 @@ async function loadAncestors(focus: Post): Promise<{ chain: Post[]; removed: str
     if (root) return { chain: [root], removed: [] }
     return { chain: [], removed: referencesMayDangle() ? [rootId] : [] }
   }
+  // The chain is context above the focus: an unreadable parent ends it, as on web.
   const chain: Post[] = []
   for (let parentId = focus.parentId; parentId && chain.length < MAX_ANCESTORS;) {
-    const parent = await load(parentId)
+    const parent = await read(parentId)
     if (!parent) break
     chain.unshift(parent)
     parentId = parent.parentId

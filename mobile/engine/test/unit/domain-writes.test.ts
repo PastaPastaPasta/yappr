@@ -358,6 +358,15 @@ describe('graph and safety writes', () => {
     m.blockService.query.mockResolvedValue({ documents: many(30) })
     expect((await safety.blocked(again.cursor)).items).toEqual([])
 
+    // An unblock a followed list overrides still deleted the own block: the held list drops too.
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const held = await safety.blocked()
+    m.blockService.unblockUser.mockResolvedValue({ success: true })
+    m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
+    expect(await outcome(safety.unblock(id('B2')))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
+    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    expect((await safety.blocked(held.cursor)).items).toHaveLength(1)
+
     m.blockService.query.mockRejectedValue(new Error('no available addresses to retry'))
     await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
   })

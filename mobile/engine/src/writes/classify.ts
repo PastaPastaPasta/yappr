@@ -103,7 +103,9 @@ const RULES: readonly Rule[] = [
   // Substring rules: a refusal that carries a consensus code is Platform's verdict, whatever its prose says.
   // 'transport error' / 'Failed to fetch' / 'Load failed': wasm-sdk's gRPC-web call failing in fetch()
   // (Chromium's and WebKit's TypeError text), with or without the "no available addresses" wrapper.
+  // An engine read that failed (`readFailure`) carries the code itself.
   ['NETWORK', 'not-sent', true, (error, message) => consensusCodeOf(error) === null && (
+    readCode(error) === 'NETWORK' ||
     evoSdkService.isConnectionError(error) ||
     ['no available addresses', 'Missing response message', 'Network', 'connection', 'transport error', 'Failed to fetch', 'Load failed']
       .some(marker => message.includes(marker)))],
@@ -145,10 +147,11 @@ export function classify(error: unknown): EngineErrorData {
 const LIB_NOT_SENT: ReadonlySet<EngineErrorCode> = new Set<EngineErrorCode>(['PENDING_WRITE', 'STORAGE', 'NO_KEY'])
 
 /**
- * Whether a classified error proves the write never executed: a consensus
- * refusal, a create proved absent, the engine's own refusal, or one of lib's
+ * Whether a classified error is a verdict that ends a write `failed`: a
+ * consensus refusal, a create proved absent, the engine's own refusal (or
+ * its own reading of what lib did, as `STILL_BLOCKED`), or one of lib's
  * pre-signing errors. Anything else (a transport failure, a timeout, an
- * unrecognised error) carries no verdict.
+ * unrecognised error) carries no verdict: the write may have landed.
  */
 export function provesNotApplied(error: EngineErrorData): boolean {
   switch (error.outcome) {

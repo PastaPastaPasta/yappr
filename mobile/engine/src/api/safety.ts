@@ -72,11 +72,12 @@ export function createSafetyModule(tickets: TicketStore) {
   // The block document itself: lib's block status answers from a cache its own write fills, even unconfirmed.
   const ownBlock = (expected: boolean) => relationProbe<BlockArgs>(({ viewer, ticket }) => ownBlockExists(viewer, ticketIdentity(ticket)), expected)
 
-  // A block or unblock that took (or may have taken) effect makes the viewer's cached list stale:
-  // drop it, so the next page read (any cursor) re-reads the list.
+  // A settled block or unblock may have changed the viewer's list (an unblock that ends
+  // STILL_BLOCKED did delete the own block): drop it, so the next page read (any cursor) re-reads it.
   tickets.observe(ticket => {
-    if ((ticket.op === 'block' || ticket.op === 'unblock') && ticket.identityId &&
-      (ticket.state === 'confirmed' || ticket.state === 'unconfirmed')) blockLists.delete(ticket.identityId)
+    if ((ticket.op === 'block' || ticket.op === 'unblock') && ticket.identityId && ticket.state !== 'pending') {
+      blockLists.delete(ticket.identityId)
+    }
   })
 
   tickets.register<BlockArgs>('block', {
@@ -137,8 +138,8 @@ export function createSafetyModule(tickets: TicketStore) {
     /**
      * The accounts the viewer blocked (up to 100, as the web settings page),
      * 30 a page, each with the message given. Rejects when the list cannot be
-     * read (never an empty list). A block or unblock that confirms (or may
-     * have landed) drops the list held for paging, so no page is stale.
+     * read (never an empty list). A block or unblock that settles drops the
+     * list held for paging, so no page is stale.
      */
     async blocked(cursor?: string | null): Promise<Page<BlockedUserDTO>> {
       const viewer = requireViewer('The blocked list')

@@ -174,13 +174,14 @@ describe('settleSupersededReplaces: an SDK-signed replace Platform shows superse
     return settled
   }
 
-  it('stores what the replace writes with its pending entry, for every tab', async () => {
+  it('stores what the replace writes, and the nonce Platform reported before it, with its pending entry, for every tab', async () => {
     await lostReplace()
-    expect(loadReservation(OWNER, CONTRACT)?.pending[0].replaces).toEqual(REPLACE)
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ replaces: REPLACE, signedAfter: n(100) })
   })
 
-  it('releases it once the document is at its revision or later, and the next SDK-signed write runs', async () => {
+  it('releases it once the document is at its revision or later and the next nonce is consumed, and the next SDK-signed write runs', async () => {
     await lostReplace()
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
     sdk.documents.get.mockResolvedValue({ $revision: 3 })
     expect(await settle()).toBe(1)
     expect(sdk.documents.get).toHaveBeenCalledWith(CONTRACT, 'dmSelfState', 'doc-1')
@@ -189,12 +190,21 @@ describe('settleSupersededReplaces: an SDK-signed replace Platform shows superse
     expect(await runSdkWrite(next)).toEqual({ ok: true, value: 'sent' })
 
     await lostReplace()
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
     sdk.documents.get.mockResolvedValue({ $revision: 5 })
     expect(await settle()).toBe(1)
   })
 
+  it('keeps it pending while the nonce after the reported one is unconsumed: a stale-revision replace may still execute', async () => {
+    await lostReplace()
+    sdk.documents.get.mockResolvedValue({ $revision: 3 })
+    expect(await settle()).toBe(0)
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+  })
+
   it('keeps it pending while it may still execute, or when nothing can be proved', async () => {
     await lostReplace()
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
     for (const answer of [
       () => sdk.documents.get.mockResolvedValue({ $revision: 2 }),
       () => sdk.documents.get.mockResolvedValue(undefined),

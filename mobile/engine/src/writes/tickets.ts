@@ -262,9 +262,16 @@ export function createTicketStore(options: TicketStoreOptions) {
     if (claimedNotSent && partlySent) {
       data = { ...classified, outcome: 'unknown', retryable: false }
       state = 'unconfirmed'
-    } else if (claimedNotSent) {
+    } else if (notSent) {
       // Proved never sent: a would-be "maybe landed" is plainly failed, and a transient one may be retried.
       if (classified.outcome === 'unknown') data = { ...classified, outcome: 'not-sent', retryable: transient }
+    } else if (claimedNotSent) {
+      // 'waiting-parent': before lib's write call, so a transport failure there (outcome not-sent)
+      // stays failed and retryable; a timeout or a nonce refusal may still be the write's, as before.
+      if (classified.outcome === 'unknown') {
+        state = 'unconfirmed'
+        data = { ...classified, retryable: false }
+      }
     } else {
       // Past any pre-broadcast stage, only a verdict (a consensus refusal, a proved absence, or one
       // of lib's pre-signing errors) makes it failed. Anything else (a transport failure such as
