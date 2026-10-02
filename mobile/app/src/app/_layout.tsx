@@ -12,6 +12,7 @@ import { SignInPromptHost } from '~/data/require-auth';
 import { startDataLayer } from '~/data/sync';
 import { EngineHost } from '~/engine/EngineHost';
 import { AuthGates } from '~/features/auth/AuthGates';
+import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { useAppearance } from '~/state/appearance';
 import { ActionSheetHost } from '~/ui/action-sheet';
@@ -77,6 +78,8 @@ export default function RootLayout() {
   useUnsupportedEngineRoute();
   // The session store, write tickets and created content follow the engine app-wide.
   useEffect(() => startDataLayer(), []);
+  // A signed-out account's recent searches go with it (AUTH-11).
+  useEffect(() => startRecentSearchCleanup(), []);
   const ipfsGateway = useIpfsGateway();
   const dark = useColorScheme().colorScheme === 'dark';
 

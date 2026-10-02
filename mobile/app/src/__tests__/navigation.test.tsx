@@ -116,9 +116,9 @@ describe('app shell', () => {
   // in-app, since links may not open some of them (+native-intent).
   it.each([
     ['/', null],
-    ['/explore', 'explore and search'],
-    ['/explore/search?q=dash', 'explore and search'],
-    ['/explore/search/people?q=dash', 'explore and search'],
+    ['/explore', null],
+    ['/explore/search?q=dash', null],
+    ['/explore/search/people?q=dash', null],
     ['/notifications', null],
     ['/messages', 'messages'],
     ['/messages/settings', 'messages'],
@@ -133,7 +133,7 @@ describe('app shell', () => {
     ['/user/abc123', 'profiles'],
     ['/user/abc123/followers', 'profiles'],
     ['/user/abc123/following', 'profiles'],
-    ['/hashtag/dash', 'explore and search'],
+    ['/hashtag/dash', null],
     ['/bookmarks', 'settings and bookmarks'],
     ['/settings', null],
     ['/settings/account', null],
