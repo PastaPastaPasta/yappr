@@ -36,7 +36,7 @@ import { ComposeAccessoryBar } from './ComposeAccessoryBar';
 import { ComposePart } from './ComposePart';
 import { contextKey, deleteDraft, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
 import { FALLBACK_LIMITS, hasVisibleContent, isOverContentLimit } from './limits';
-import { MentionSuggestions } from './MentionSuggestions';
+import { MentionSuggestions, useDebounced } from './MentionSuggestions';
 import { discardPending, publishPost, viewerAuthor } from './pending-posts';
 import { insertMention, mentionAt, tagMaxLength } from './text';
 
@@ -48,6 +48,7 @@ const SAVE_DELAY_MS = 500;
 const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/;
 
 const EMPTY_PART: DraftPart = { text: '', postedId: null };
+const PREVIEW_DELAY_MS = 400;
 
 function contextOf(params: { replyTo?: string; quote?: string }): ComposeContext {
   if (params.replyTo) return { mode: 'reply', targetId: params.replyTo };
@@ -355,7 +356,9 @@ function Composer({ identityId, username, context }: ComposerProps) {
     if (mediaOpen) setMediaUrl('');
     setMediaOpen(!mediaOpen);
   };
-  const previewUri = mediaValid && mediaUrl.trim() ? media(mediaUrl.trim()) : undefined;
+  // The preview follows the URL once typing pauses, not on every keystroke.
+  const previewUrl = useDebounced(mediaValid ? mediaUrl.trim() : '', PREVIEW_DELAY_MS);
+  const previewUri = previewUrl ? media(previewUrl) : undefined;
   const replyHandle = targetPost?.author.username ?? targetPost?.author.displayName;
 
   return (
@@ -448,14 +451,19 @@ function Composer({ identityId, username, context }: ComposerProps) {
                 </Text>
               ) : null}
               {previewUri ? (
-                <Image
-                  source={{ uri: previewUri }}
-                  contentFit="cover"
-                  accessibilityLabel="Image preview"
-                  className={cn('mt-2 rounded-xl border', tw.border)}
-                  style={{ width: '100%', aspectRatio: 16 / 9, borderRadius: 12 }}
+                <View
+                  className={cn('mt-2 overflow-hidden rounded-xl border', tw.border)}
+                  style={{ aspectRatio: 16 / 9 }}
                   testID="compose-media-preview"
-                />
+                >
+                  <Image
+                    source={{ uri: previewUri }}
+                    style={{ flex: 1 }}
+                    contentFit="cover"
+                    recyclingKey={previewUri}
+                    accessibilityLabel="Image preview"
+                  />
+                </View>
               ) : null}
             </View>
           ) : null}

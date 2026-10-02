@@ -16,7 +16,7 @@ const MAX_RESULTS = 8;
 const ROW_HEIGHT = 56;
 const DEBOUNCE_MS = 250;
 
-function useDebounced(value: string, ms: number): string {
+export function useDebounced(value: string, ms: number): string {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
     const timer = setTimeout(() => setDebounced(value), ms);
