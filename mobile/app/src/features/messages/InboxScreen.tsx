@@ -247,6 +247,16 @@ export function InboxScreen() {
     empty = <InboxSkeleton />;
   } else if (query.trim() && all.length > 0) {
     empty = <EmptyState title="No conversations match your search" icon={MagnifyingGlassIcon} testID="messages-no-match" />;
+  } else if (hiddenCount > 0) {
+    // Every conversation is deleted (DM-09): not a first visit, so no welcome. The footer brings them back.
+    empty = (
+      <EmptyState
+        icon={ChatBubbleLeftRightIcon}
+        title="No conversations to show"
+        description="Deleted conversations come back if a new message arrives."
+        testID="messages-all-deleted"
+      />
+    );
   } else {
     empty = (
       <EmptyState

@@ -1,7 +1,7 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
-import { Alert, Platform } from 'react-native';
+import { Alert, AppState, Platform, type AppStateStatus } from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -221,6 +221,16 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     expect(screen.getByText('Welcome to Messages')).toBeTruthy();
     expect(screen.getByText('New message')).toBeTruthy();
   });
+
+  it('when every conversation is deleted, says so instead of welcoming a first visit (SR-41)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: 'd:gone', flags: { ...FLAGS, hidden: true } })]);
+    await renderAt('/messages');
+    expect(screen.queryByText('Welcome to Messages')).toBeNull();
+    expect(screen.getByTestId('messages-all-deleted')).toBeTruthy();
+    expect(screen.getByText('Show 1 deleted conversation')).toBeTruthy();
+  });
 });
 
 describe('Messages badge (DM-13)', () => {
@@ -298,6 +308,31 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('hey, coming?')).toBeTruthy();
     expect(fakeEngine.method('dm.open')).toHaveBeenCalledWith(KEY);
     expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+  });
+
+  it('marks messages that arrive in the background read only once the app is back (SR-19)', async () => {
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    // Swapped, not spied: jest-expo's AppState is a mock whose restore would drop its implementation.
+    const original = AppState.addEventListener;
+    AppState.addEventListener = ((_type: string, listener: (state: AppStateStatus) => void) => {
+      listeners.push(listener);
+      return { remove: () => undefined };
+    }) as unknown as typeof AppState.addEventListener;
+    try {
+      await openConversation();
+      await act(async () => listeners.forEach((listener) => listener('background')));
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, unread: 1 })]);
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations });
+      });
+      expect(fakeEngine.method('dm.markRead')).not.toHaveBeenCalled();
+      await act(async () => listeners.forEach((listener) => listener('active')));
+      expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+      rendered?.unmount();
+      rendered = null;
+    } finally {
+      AppState.addEventListener = original;
+    }
   });
 
   it('keeps the conversation out of Android Recents and screenshots while it is open', async () => {
@@ -403,6 +438,19 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.queryByTestId('dm-composer')).toBeNull();
   });
 
+  it('on legacy, follows the account\'s block: the banner, and Unblock in the menu (SR-20)', async () => {
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { dm: 'legacy' } as never } });
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy', retention: null }));
+    fakeEngine.method('settings.get').mockResolvedValue({ sendReadReceipts: false } as never);
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: 'l:C1', backend: 'legacy', flags: { ...FLAGS, blocked: true } })]);
+    fakeEngine.method('dm.messages').mockResolvedValue(page([theirs]));
+    await renderAt(`/messages/${encodeURIComponent('l:C1')}`);
+    expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+    const actions = screen.getByTestId('dm-conversation-menu').props.actions as { id: string; title: string }[];
+    expect(actions.map((a) => a.title)).toEqual(['View profile', 'Unblock']);
+  });
+
   it('shows an error with Retry when the status read fails, instead of loading forever', async () => {
     signIn();
     fakeEngine.method('dm.status').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));
@@ -474,6 +522,84 @@ describe('Conversation (DM-03, DM-04)', () => {
     fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
     await act(async () => {});
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(restored.id);
+  });
+
+  it('puts the text of a send the engine never took back in the composer, once it has no ticket for it (SR-16)', async () => {
+    await openConversation();
+    fakeEngine.method('dm.send').mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'did it go?');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    fakeEngine.method('writes.list').mockResolvedValue([]);
+
+    // Just cut short: the engine may still make its ticket.
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(useToastStore.getState().current?.message).toBe('Still checking. Tap again in a moment.');
+    expect(screen.getByTestId('dm-composer').props.value).toBe('');
+
+    // Later, still no ticket: it never went out.
+    jest.setSystemTime(Date.now() + 61_000);
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+    expect(screen.queryByText('Not confirmed · Tap to check')).toBeNull();
+    expect(useToastStore.getState().current?.message).toBe("This message wasn't sent. It's back in the message box.");
+  });
+
+  it('never takes a later send that landed for the ticket of one the engine never took', async () => {
+    await openConversation();
+    fakeEngine.method('dm.send').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'did it go?');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+
+    // A second send in the same conversation lands, and its bubble gives way to the engine's message.
+    const later = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(later);
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'and this');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValue(page([dmMessage('m2', { text: 'and this', own: true, sender: VIEWER, at: new Date() }), theirs]));
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(later, { state: 'confirmed' }));
+    });
+    await act(async () => {});
+    expect(useOutbox.getState().entries.map((e) => e.text)).toEqual(['did it go?']);
+
+    // The engine still lists the landed send's ticket; the first send has none.
+    fakeEngine.method('writes.list').mockResolvedValue([advance(later, { state: 'confirmed' })]);
+    jest.setSystemTime(Date.now() + 61_000);
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+  });
+
+  it('puts back only the parts a long send did not deliver when it fails part way (SR-18)', async () => {
+    await openConversation();
+    const first = 'a'.repeat(4081);
+    const rest = `${'b'.repeat(4081)}${'c'.repeat(10)}`;
+    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    fireEvent.changeText(screen.getByTestId('dm-composer'), `${first}${rest}`);
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    // The first part landed, then the send was refused for good.
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValue(page([dmMessage('p1', { text: first, own: true, sender: VIEWER, at: new Date() }), theirs]));
+    await act(async () => {
+      fakeEngine.emit(
+        'write.status',
+        advance(sent, { state: 'failed', retryable: false, error: { code: 'FEE_UNPAYABLE', userMessage: 'No credits.' } as never }),
+      );
+    });
+    await act(async () => {});
+    fireEvent.press(screen.getByText('Failed · Tap to edit'));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-composer').props.value).toBe(rest);
   });
 
   it('shows the empty conversation copy', async () => {
@@ -612,6 +738,13 @@ describe('New message (DM-05)', () => {
     expect(useToastStore.getState().current?.message).toBe('No user found with this identity ID');
     expect(screen.queryByTestId('new-message-opening')).toBeNull();
     expect(screen.getByTestId('picker-search').props.value).toBe(BOB_ID);
+  });
+
+  it('says why when the person has no encryption key, not that nobody was found (SR-40)', async () => {
+    const reason = 'This account has no encryption key yet, so it cannot receive encrypted messages.';
+    fakeEngine.method('dm.startDirect').mockRejectedValue(Object.assign(new Error(reason), { code: 'BAD_REQUEST' }));
+    await renderAt(`/messages/new?with=${BOB_ID}`);
+    expect(useToastStore.getState().current?.message).toBe(reason);
   });
 
   it("refuses to message yourself without asking the engine", async () => {
@@ -822,6 +955,24 @@ describe('Message settings (DM-12)', () => {
     expect(fakeEngine.method('dm.setRetention')).toHaveBeenCalledWith('30d');
     expect(queryClient.getQueryData<DmStatusDTO>(queryKeys.dm.status)?.retention).toBe('never');
     expect(useToastStore.getState().current?.message).toBe("Couldn't save the setting. Try again.");
+  });
+
+  it('says to unlock, instead of loading forever, while messages are locked (SR-42)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true, ready: false, retention: null }));
+    await renderAt('/messages/settings');
+    expect(screen.getByText('Unlock your messages to change this setting.')).toBeTruthy();
+    expect(screen.getByTestId('dm-blocked-locked')).toBeTruthy();
+  });
+
+  it('says the saved state failed to load, instead of loading forever', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ ready: false, retention: null, error: 'Failed to fetch' }));
+    await renderAt('/messages/settings');
+    expect(screen.getByTestId('dm-settings-error')).toBeTruthy();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ retention: 'never' }));
+    fireEvent.press(screen.getByText('Try again'));
+    expect(await screen.findByTestId('dm-retention')).toBeTruthy();
   });
 
   it('has nothing to set on legacy (DM-11)', async () => {

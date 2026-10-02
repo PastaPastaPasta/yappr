@@ -1,9 +1,11 @@
+import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type EngineSnapshot, type MessageView } from '@/lib/services/dm-v5'
 import { GroupError } from '@/lib/services/dm-v5/groups'
 import { logger } from '@/lib/logger'
+import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
-import type { ProbeResult, WriteResult } from '../writes/tickets'
+import { NotSentError, type ProbeResult, type WriteResult } from '../writes/tickets'
 import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit, type DmView } from './changes'
 import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
 
@@ -18,6 +20,59 @@ export interface DmEngineSource {
    */
   release(identityId: string, engine: DmEngine): void
 }
+
+type KeyValueArea = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+/**
+ * What DM v5 keeps in the engine's plain storage for an identity: lib's
+ * per-device cache (`lib/services/dm-v5/index.ts` names it), which holds who
+ * the account talks to, its blocks and read positions. Sign-out removes it
+ * (PRD AUTH-11).
+ */
+export function dmLocalKeys(identityId: string): string[] {
+  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId)]
+}
+
+/**
+ * A "Reclaim message fees" choice made here and not saved yet. lib keeps
+ * blocks and read positions in its cache until they are saved, but not
+ * this, so a save that fails before the app is killed would lose it (SR-23).
+ */
+const retentionKey = (identityId: string) => scopedKey(`yappr_engine_dm_retention:${identityId}`)
+
+interface PendingRetention {
+  retention: RetentionSetting
+  updatedAt: number
+}
+
+const RETENTIONS: readonly RetentionSetting[] = ['30d', '90d', '1y', 'never']
+
+function readPendingRetention(storage: KeyValueArea, identityId: string): PendingRetention | null {
+  try {
+    const value = JSON.parse(storage.getItem(retentionKey(identityId)) ?? 'null') as Partial<PendingRetention> | null
+    if (value && RETENTIONS.includes(value.retention as RetentionSetting) && Number.isSafeInteger(value.updatedAt)) {
+      return { retention: value.retention as RetentionSetting, updatedAt: value.updatedAt as number }
+    }
+  } catch {
+    // Unreadable: nothing to restore.
+  }
+  return null
+}
+
+/** A send in progress: its broadcasts, and my messages the conversation held at the latest one. */
+interface SendAttempt {
+  key: string
+  broadcasts: number
+  heldAtBroadcast: number
+}
+
+/** One engine's sends, run one at a time, and the one in progress. */
+interface SendLane {
+  queue: Promise<unknown>
+  attempt: SendAttempt | null
+}
+
+const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
 
 function toMessageDTO(view: MessageView): MessageDTO {
   return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.createdAt), own: view.own, pending: view.pending }
@@ -73,9 +128,42 @@ function view(engine: DmEngine): DmView {
  * maps its views to DTOs and its notifications to events, and stops it with
  * a flush when the session ends. Mirrors `components/messages/messages-v5.tsx`.
  */
-export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit; coalesceMs?: number }) {
+export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit; coalesceMs?: number; storage?: KeyValueArea }) {
   const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
+  const storage = (): KeyValueArea => options.storage ?? localStorage
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
+  /** Saves still running for engines already stopped: their end rewrites lib's cache. */
+  const flushes = new Map<string, Promise<unknown>>()
+  /**
+   * Each engine's sends, one at a time, so a broadcast seen during one is its
+   * own (or, harmlessly, a group write's). Per engine: a send hanging on an
+   * old account's engine never holds up the next account's.
+   */
+  const lanes = new WeakMap<DmEngine, SendLane>()
+
+  /**
+   * The engine's send lane, which counts `createMessage` broadcasts on its
+   * chain for the send in progress. lib sends a long text part by part inside
+   * one call and reports a failure without saying whether the failing part
+   * was broadcast; this tells (SR-17).
+   */
+  function laneOf(running: DmEngine): SendLane {
+    const known = lanes.get(running)
+    if (known) return known
+    const lane: SendLane = { queue: Promise.resolve(), attempt: null }
+    lanes.set(running, lane)
+    const { chain } = running.ctx
+    const createMessage = chain.createMessage.bind(chain)
+    chain.createMessage = (tag, body) => {
+      const { attempt } = lane
+      if (attempt) {
+        attempt.broadcasts += 1
+        attempt.heldAtBroadcast = ownMessages(running, attempt.key)
+      }
+      return createMessage(tag, body)
+    }
+    return lane
+  }
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
   function engineOf(identityId: string): DmEngine | null {
@@ -91,10 +179,42 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     }
     if (!engine || current) return engine
     tracker.reset()
-    const unsubscribe = engine.subscribe(() => tracker.changed(() => (current?.engine === engine ? view(engine) : null)))
+    let loaded = false
+    const restoreOnceLoaded = () => {
+      if (loaded || !engine.getSnapshot().ready) return
+      loaded = true
+      restoreRetention(identityId, engine)
+    }
+    const unsubscribe = engine.subscribe(() => {
+      restoreOnceLoaded()
+      tracker.changed(() => (current?.engine === engine ? view(engine) : null))
+    })
     current = { identityId, engine, unsubscribe }
+    restoreOnceLoaded()
     engine.start().catch(error => logger.warn('DM v5 engine failed to start:', error))
     return engine
+  }
+
+  /** Save the retention setting; once the saved state is current, the local copy has done its job. */
+  function saveRetention(identityId: string, running: DmEngine): void {
+    running.flush()
+      .then(saved => {
+        const pending = readPendingRetention(storage(), identityId)
+        if (saved && pending && pending.updatedAt <= running.ctx.store.state.settings.updatedAt) storage().removeItem(retentionKey(identityId))
+      })
+      .catch(error => logger.warn('DM v5: saving retention failed:', error))
+  }
+
+  /** Once the saved state has loaded: re-apply a retention choice this device made but never saved, unless a newer one won. */
+  function restoreRetention(identityId: string, running: DmEngine): void {
+    const pending = readPendingRetention(storage(), identityId)
+    if (!pending) return
+    if (pending.updatedAt <= running.ctx.store.state.settings.updatedAt) {
+      storage().removeItem(retentionKey(identityId))
+      return
+    }
+    running.ctx.store.setRetention(pending.retention, pending.updatedAt)
+    saveRetention(identityId, running)
   }
 
   function engine(identityId: string): DmEngine {
@@ -139,18 +259,43 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       stopping.unsubscribe()
       stopping.engine.stop()
       options.source.release(stopping.identityId, stopping.engine)
-      await stopping.engine.flush()
+      const saving = stopping.engine.flush()
+      const { identityId } = stopping
+      flushes.set(identityId, saving)
+      try {
+        await saving
+      } finally {
+        if (flushes.get(identityId) === saving) flushes.delete(identityId)
+      }
     },
 
     /**
-     * Background: resolve once the self-state flush lib starts on `pagehide`
-     * is done (a flush queues behind it). Active: poll now, not at the next tick.
+     * The identity signed out: remove what DM v5 keeps for it on this
+     * device. A save still running for it (sign-out waits for it only so
+     * long) rewrites lib's cache as it ends, so that is removed again then.
+     */
+    forget(identityId: string): void {
+      const remove = () => {
+        for (const key of dmLocalKeys(identityId)) storage().removeItem(key)
+      }
+      remove()
+      flushes.get(identityId)?.finally(remove).catch(() => undefined)
+    },
+
+    /**
+     * Background: stop polling (Android keeps the WebView's timers running,
+     * and nothing but the DM flush may run there, PRD NET-08), and resolve
+     * once the self-state flush lib starts on `pagehide` is done (a flush
+     * queues behind it). Active: poll now, and on the cadence again.
      */
     async lifecycle(state: AppLifecycleState): Promise<void> {
       const running = current?.engine
       if (!running) return
-      if (state === 'background') await running.flush()
-      if (state === 'active') running.tick().catch(error => logger.warn('DM v5 poll failed:', error))
+      if (state === 'background') {
+        running.pause()
+        await running.flush()
+      }
+      if (state === 'active') running.resume().catch(error => logger.warn('DM v5 poll failed:', error))
     },
 
     async status(identityId: string): Promise<DmStatusDTO> {
@@ -192,6 +337,15 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       holding(identityId, key).hide(key)
     },
 
+    /** "Reclaim message fees": applied at once and saved now, kept on the device until the save lands. */
+    setRetention(identityId: string, retention: RetentionSetting): void {
+      const running = engine(identityId)
+      running.setRetention(retention)
+      const { updatedAt } = running.ctx.store.state.settings
+      storage().setItem(retentionKey(identityId), JSON.stringify({ retention, updatedAt } satisfies PendingRetention))
+      saveRetention(identityId, running)
+    },
+
     /** Re-read my own messages in `key` from the chain, on the engine's queue ("check again"). */
     async readBack(identityId: string, key: string): Promise<void> {
       await holding(identityId, key).pollOwn(key)
@@ -210,10 +364,29 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     /**
      * `DmEngine.send` settles uncertain broadcasts itself (it reads the slot
      * back), so a resolve is `confirmed` and a reject is classified
-     * (ENGINE.md §7.1). Long text goes out as several messages (§5.7).
+     * (ENGINE.md §7.1). Long text goes out as several messages (§5.7). A
+     * failure before the failing part was broadcast (a read, the group's
+     * state) is a `NotSentError`: nothing of that part can land, so it is
+     * failed, not "maybe sent".
      */
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
-      await engine(identityId).send(key, text)
+      const running = engine(identityId)
+      const lane = laneOf(running)
+      const turn = lane.queue.then(async () => {
+        const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0 }
+        lane.attempt = current
+        try {
+          await running.send(key, text)
+        } catch (error) {
+          // No broadcast at all, or the part last broadcast is held (it landed) and the next failed before its own.
+          if (current.broadcasts === 0 || ownMessages(running, key) > current.heldAtBroadcast) throw new NotSentError(error)
+          throw error
+        } finally {
+          if (lane.attempt === current) lane.attempt = null
+        }
+      })
+      lane.queue = turn.catch(() => undefined)
+      await turn
       return { state: 'confirmed' }
     },
 

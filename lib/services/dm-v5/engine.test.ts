@@ -2,7 +2,7 @@ import bs58 from 'bs58'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { bytesEqual, bytesToHex } from '@/lib/bytes'
 import { ALICE_ID, ALICE_PRIV, BOB_ID, BOB_PRIV, CAROL_ID, CAROL_PRIV } from '@/lib/dm/test-fixtures'
-import { DmEngine } from './engine'
+import { BACKGROUND_POLL_MS, DmEngine } from './engine'
 import type { KeyValueStore } from './types'
 import { MapKv, MemoryChain, MemoryLedger, makeContext, manualScheduler } from './test-chain'
 
@@ -223,5 +223,26 @@ describe('DmEngine self-state edits across a reload (§5.5)', () => {
     kv.set('dm', JSON.stringify({ blocks: { zz: alice, '': alice, [bytesToHex(ALICE_ID)]: alice } }))
     const bob = await started(engine(ledger, BOB_ID, BOB_PRIV, kv))
     expect(bob.getSnapshot().blocked).toEqual([alice58])
+  })
+})
+
+describe('DmEngine.pause', () => {
+  it('stops the poll cadence until resume, which polls at once and re-arms it', async () => {
+    vi.useFakeTimers()
+    try {
+      const ledger = new MemoryLedger()
+      const alice = engine(ledger, ALICE_ID, ALICE_PRIV)
+      await alice.start()
+      const tick = vi.spyOn(alice, 'tick')
+      alice.pause()
+      await vi.advanceTimersByTimeAsync(BACKGROUND_POLL_MS * 3)
+      expect(tick).not.toHaveBeenCalled()
+      await alice.resume()
+      expect(tick).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(BACKGROUND_POLL_MS + 10)
+      expect(tick).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

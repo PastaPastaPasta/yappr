@@ -11,7 +11,7 @@ import type { DmEngine } from '@/lib/services/dm-v5/engine'
 import type { MemoryChain } from '@/lib/services/dm-v5/test-chain'
 import type { Conversation, DirectMessage } from '@/lib/types'
 import type { AuthorDTO } from '../../src/api/dto'
-import type { LegacyDmService } from '../../src/dm/legacy'
+import type { LegacyDmService, LegacyReads } from '../../src/dm/legacy'
 import type { DmEvents, MessageDTO } from '../../src/dm/types'
 import type { WriteTicket } from '../../src/writes/types'
 import type { SessionEvents } from '../../src/api/session'
@@ -45,7 +45,12 @@ const authorOf = (id: string): AuthorDTO => ({ id, username: `u${id.slice(0, 4)}
 
 function memoryStorage() {
   const items = new Map<string, string>()
-  return { items, getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } }
+  return {
+    items,
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => { items.set(key, value) },
+    removeItem: (key: string) => { items.delete(key) },
+  }
 }
 
 /** A ledger whose block time is now, so its messages count as new for `dm.message`. */
@@ -71,6 +76,8 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
 function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}) {
   const events: Event[] = []
   const storage = memoryStorage()
+  /** The engine's plain storage, where DM v5 keeps its per-device state. */
+  const local = memoryStorage()
   const emit = (event: string, payload: unknown) => { events.push({ event, payload }) }
   let signedIn: string | null = me
   const keyRequired = vi.fn()
@@ -92,13 +99,15 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
     release: vi.fn(),
   }
   const authors = vi.fn(async (ids: string[]) => new Map(ids.map(id => [id, authorOf(id)])))
-  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, ...extra })
+  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, storage: local, ...extra })
   dm.hooks.sessionChanged(started(me))
   cleanups.push(() => dm.hooks.stop())
   return {
-    dm: dm.api, hooks: dm.hooks, events, storage, source, authors, tickets, keyRequired,
+    dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
+    /** Signs in as `id` without a sign-out (`hooks.sessionChanged` starts its messages). */
+    switchTo: (id: string) => { signedIn = id },
     /** Whether this device holds no encryption key (the engine source answers null). */
     setLocked: (value: boolean) => { locked = value },
     /** The ticket's last `write.status`, once settled. */
@@ -149,13 +158,42 @@ describe('dm on DM v5: session lifecycle', () => {
     await stopping
   })
 
-  it('saves the self-state before a background lifecycle resolves', async () => {
+  it('removes the account\'s DM cache on sign-out, again after a save that outlived the sign-out (SR-10)', async () => {
     const user = await ready(userOn(ledgerNow(), alice))
-    const flush = vi.spyOn(user.engine(), 'flush')
+    const cacheKey = `yappr_dm_v5:${alice}`
+    user.local.setItem(cacheKey, '{"convs":{}}')
+    user.local.setItem(`yappr_dm_v5:${bob}`, '{"convs":{}}')
+    let finish = () => undefined as void
+    // lib's save ends with a write of its cache (DmEngine.emit persists it).
+    vi.spyOn(user.engine(), 'flush').mockReturnValue(new Promise(resolve => {
+      finish = () => {
+        user.local.setItem(cacheKey, '{"convs":{"rewritten":{}}}')
+        resolve(true)
+      }
+    }))
+    const stopping = user.hooks.stop()
+    user.hooks.forget(alice)
+    expect(user.local.getItem(cacheKey)).toBeNull()
+    finish()
+    await stopping
+    await settle()
+    expect(user.local.getItem(cacheKey)).toBeNull()
+    // Another account's cache stays.
+    expect(user.local.getItem(`yappr_dm_v5:${bob}`)).not.toBeNull()
+  })
+
+  it('stops polling in the background and saves the self-state before it resolves; polls again on return (SR-19)', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    const engine = user.engine()
+    const flush = vi.spyOn(engine, 'flush')
+    const pause = vi.spyOn(engine, 'pause')
     await user.hooks.lifecycle('background')
+    expect(pause).toHaveBeenCalledTimes(1)
     expect(flush).toHaveBeenCalledTimes(1)
-    const tick = vi.spyOn(user.engine(), 'tick')
+    const resume = vi.spyOn(engine, 'resume')
+    const tick = vi.spyOn(engine, 'tick')
     await user.hooks.lifecycle('active')
+    expect(resume).toHaveBeenCalledTimes(1)
     expect(tick).toHaveBeenCalledTimes(1)
   })
 
@@ -314,6 +352,147 @@ describe('dm on DM v5: 1:1', () => {
     expect(a.keyRequired).toHaveBeenCalledWith(alice)
   })
 
+  it('fails a send whose read before the broadcast failed, retryably, and sends it on retry (SR-17)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    const written = ledger.messages.length
+    vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(new Error('transport error: grpc error: Failed to fetch'))
+    const ticket = await a.settled(await a.dm.send(key, 'second'))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+    expect(ledger.messages).toHaveLength(written)
+    await a.tickets.retry(ticket.id)
+    expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+    expect(ledger.messages).toHaveLength(written + 1)
+  })
+
+  it('confirms a send that failed after its message was out, so a retry never sends it twice', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const engine = a.engine()
+    const send = engine.send.bind(engine)
+    const written = ledger.messages.length
+    // lib throws after the message was broadcast and held (saving its cache, say).
+    vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text) => {
+      await send(conversation, text)
+      throw new Error('The quota has been exceeded')
+    })
+    expect(await a.settled(await a.dm.send(key, 'once'))).toMatchObject({ state: 'confirmed', error: null })
+    expect(ledger.messages).toHaveLength(written + 1)
+  })
+
+  it('refuses a send still before its ticket after 45 s, so none shows after the host gave the text back', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    const engine = a.engine()
+    const messages = engine.messages.bind(engine)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // The reads before the ticket take 46 s.
+    vi.spyOn(engine, 'messages').mockImplementationOnce(conversation => {
+      vi.setSystemTime(Date.now() + 46_000)
+      return messages(conversation)
+    })
+    const written = ledger.messages.length
+    await expect(a.dm.send(key, 'late')).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(a.tickets.list().filter(t => t.op === 'dm.send')).toEqual([])
+    expect(ledger.messages).toHaveLength(written)
+  })
+
+  it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    vi.spyOn(a.engine(), 'send').mockReturnValue(new Promise<void>(() => undefined))
+    await a.dm.send(key, 'stuck')
+    await a.hooks.stop()
+    a.switchTo(carol)
+    a.hooks.sessionChanged(started(carol))
+    await ready(a)
+    const toBob = await a.dm.startDirect(bob)
+    expect(await a.settled(await a.dm.send(toBob, 'from carol'))).toMatchObject({ state: 'confirmed' })
+  })
+
+  describe('a long send (several messages) that fails part way (SR-18)', () => {
+    const PART = 4081
+    const text = `${'a'.repeat(PART)}${'b'.repeat(PART)}${'c'.repeat(100)}`
+
+    async function sending() {
+      const ledger = ledgerNow()
+      const a = await ready(userOn(ledger, alice))
+      const b = await ready(userOn(ledger, bob))
+      const key = await a.dm.startDirect(bob)
+      await a.settled(await a.dm.send(key, 'hi'))
+      return { ledger, a, b, key, chain: a.engine().ctx.chain as MemoryChain }
+    }
+
+    /** What Bob reads: each part once, in order. */
+    async function bobReads(b: Awaited<ReturnType<typeof sending>>['b']) {
+      await b.engine().tick()
+      const [conversation] = await b.dm.conversations()
+      await b.engine().pollOwn(conversation.key)
+      await b.dm.open(conversation.key)
+      return (await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()
+    }
+
+    it('retries only the parts that did not go out after a refusal', async () => {
+      const { a, b, key, chain } = await sending()
+      let writes = 0
+      chain.hook = method => (method === 'createMessage' && ++writes === 2
+        ? { ok: false, failure: 'other', error: 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.' }
+        : null)
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'PENDING_WRITE' }) })
+      chain.hook = null
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('confirms a long send that failed after its last part was out', async () => {
+      const { a, b, key } = await sending()
+      const engine = a.engine()
+      const send = engine.send.bind(engine)
+      vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, parts) => {
+        await send(conversation, parts)
+        throw new Error('The quota has been exceeded')
+      })
+      expect(await a.settled(await a.dm.send(key, text))).toMatchObject({ state: 'confirmed', error: null })
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('fails a part whose read before its broadcast failed as not sent, and retries the rest', async () => {
+      const { a, b, key, chain } = await sending()
+      let broadcasts = 0
+      let failed = false
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      const read = chain.messagesByTags.bind(chain)
+      vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+        if (broadcasts === 1 && !failed) {
+          failed = true
+          throw new Error('transport error: grpc error: Failed to fetch')
+        }
+        return read(tags)
+      })
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+  })
+
   it('pages messages newest first, 50 at a time, with a cursor tied to the conversation', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))
@@ -355,6 +534,42 @@ describe('dm on DM v5: 1:1', () => {
     await b.dm.setRetention('90d')
     expect((await b.dm.status()).retention).toBe('90d')
     await expect(b.dm.setRetention('forever' as never)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+})
+
+describe('dm on DM v5: Message settings', () => {
+  const pendingKey = `yappr_engine_dm_retention:${alice}`
+
+  it('keeps a retention choice whose save failed on the device, and saves it on the next start (SR-23)', async () => {
+    const ledger = ledgerNow()
+    const first = await ready(userOn(ledger, alice))
+    const chain = first.engine().ctx.chain as MemoryChain
+    chain.hook = method => (method === 'createSelfState' || method === 'replaceSelfState'
+      ? { ok: false, failure: 'transport', error: 'transport error: grpc error: Failed to fetch' }
+      : null)
+    await first.dm.setRetention('90d')
+    expect((await first.dm.status()).retention).toBe('90d')
+    await settle()
+    expect(first.local.getItem(pendingKey)).not.toBeNull()
+
+    // Killed before a retry: the next engine loads the saved state, which still says 30 days.
+    const next = await ready(userOn(ledger, alice, { storage: first.local }))
+    await vi.waitFor(async () => expect((await next.dm.status()).retention).toBe('90d'))
+    await vi.waitFor(() => expect(first.local.getItem(pendingKey)).toBeNull())
+    const reloaded = await ready(userOn(ledger, alice))
+    expect((await reloaded.dm.status()).retention).toBe('90d')
+  })
+
+  it('drops the device copy once the save lands, and never restores one a newer choice overtook', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    await user.dm.setRetention('1y')
+    await vi.waitFor(() => expect(user.local.getItem(pendingKey)).toBeNull())
+
+    user.local.setItem(pendingKey, JSON.stringify({ retention: 'never', updatedAt: 1 }))
+    const next = await ready(userOn(ledger, alice, { storage: user.local }))
+    await vi.waitFor(() => expect(user.local.getItem(pendingKey)).toBeNull())
+    expect((await next.dm.status()).retention).toBe('1y')
   })
 })
 
@@ -416,6 +631,7 @@ function fakeLegacy(me: string) {
   const conversations = new Map<string, Conversation>()
   const threads = new Map<string, DirectMessage[]>()
   let failList = false
+  const blocked = new Set<string>()
   const message = (conversationId: string, i: number, from: string, at: number): DirectMessage =>
     ({ id: `${conversationId}-${i}`, senderId: from, recipientId: from === me ? 'peer' : me, conversationId, content: `m${i}`, createdAt: new Date(at) })
   const service = {
@@ -435,9 +651,14 @@ function fakeLegacy(me: string) {
     getOrCreateConversation: vi.fn(async (_me: string, peer: string) => ({ conversationId: `conv-${peer}`, isNew: true })),
     getParticipantLastRead: vi.fn(async () => 1_500_000),
   } satisfies LegacyDmService
+  const reads = {
+    // A strict read: the invites are there whether or not lib's list read failed.
+    hasConversations: vi.fn(async () => conversations.size > 0),
+    blocked: vi.fn(async (_me: string, ids: string[]) => new Map(ids.map(id => [id, blocked.has(id)]))),
+  } satisfies LegacyReads
   return {
-    service, conversations, threads, message,
-    failLists: () => { failList = true },
+    service, reads, conversations, threads, message, blocked,
+    failLists: (fail = true) => { failList = fail },
     add(id: string, peer: string, count: number, unread = 0) {
       const list = Array.from({ length: count }, (_, i) => message(id, i, i % 2 ? me : peer, 1_000_000 + i * 1000))
       threads.set(id, list)
@@ -448,7 +669,7 @@ function fakeLegacy(me: string) {
 
 function legacyUser(me = alice) {
   const legacy = fakeLegacy(me)
-  const user = userOn(ledgerNow(), me, { backend: 'legacy', legacyService: legacy.service })
+  const user = userOn(ledgerNow(), me, { backend: 'legacy', legacyService: legacy.service, legacyReads: legacy.reads })
   return { ...user, legacy }
 }
 
@@ -555,6 +776,41 @@ describe('dm on legacy 1:1 (testnet)', () => {
     await vi.advanceTimersByTimeAsync(LEGACY_LIST_TTL_MS + 1_000)
     expect((await user.dm.conversations()).map(c => c.key)).toEqual(['l:C1'])
     expect((await user.dm.status()).error).toBe('Could not load conversations')
+  })
+
+  it('reports a failed first list read as an error, never an empty inbox, and reads again at once (SR-21)', async () => {
+    const user = legacyUser()
+    user.legacy.add('C1', bob, 1)
+    user.legacy.failLists()
+    await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(await user.dm.status()).toMatchObject({ ready: false, error: 'Could not load conversations' })
+    // A conversation opened by key (a link, a restored route) is not "unavailable": it can be retried.
+    await expect(user.dm.messages('l:C1')).rejects.toMatchObject({ code: 'NETWORK' })
+    user.legacy.failLists(false)
+    expect((await user.dm.conversations()).map(c => c.key)).toEqual(['l:C1'])
+    expect(await user.dm.status()).toMatchObject({ ready: true, error: null })
+  })
+
+  it('believes a first empty list once the strict read finds no conversation', async () => {
+    const user = legacyUser()
+    expect(await user.dm.conversations()).toEqual([])
+    expect(await user.dm.status()).toMatchObject({ ready: true, error: null })
+    expect(user.legacy.reads.hasConversations).toHaveBeenCalledWith(alice)
+  })
+
+  it('follows the account\'s blocks: flagged, nothing unread, no sending, and an unblock shows at once (SR-20, DM-10)', async () => {
+    useSettingsStore.getState().setSendReadReceipts(true)
+    const user = legacyUser()
+    user.legacy.add('C1', bob, 3, 2)
+    user.legacy.blocked.add(bob)
+    expect((await user.dm.conversations())[0]).toMatchObject({ unread: 0, flags: { blocked: true } })
+    expect(await user.dm.status()).toMatchObject({ unreadTotal: 0, unreadConversations: 0 })
+    await expect(user.dm.send('l:C1', 'hi')).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Unblock this person to message them.' })
+
+    user.legacy.blocked.delete(bob)
+    user.tickets.register('unblock', { run: async () => ({ state: 'confirmed' }) })
+    user.tickets.submit({ op: 'unblock', args: {} })
+    await vi.waitFor(async () => expect((await user.dm.conversations())[0]).toMatchObject({ unread: 2, flags: { blocked: false } }))
   })
 
   it('refuses the v5-only actions', async () => {

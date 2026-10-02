@@ -522,6 +522,28 @@ describe('direct messages around sign-out and account changes', () => {
     await restarted.signOut({ identityId: id })
   })
 
+  it('forgets what DMs keep on the device for every account that signs out (SR-10)', async () => {
+    const keyA = secp256k1.utils.randomSecretKey()
+    const keyB = secp256k1.utils.randomSecretKey()
+    const idA = addIdentity([{ id: 2, purpose: AUTH, securityLevel: HIGH, privateKey: keyA }])
+    const idB = addIdentity([{ id: 2, purpose: AUTH, securityLevel: HIGH, privateKey: keyB }])
+    const forgetDm = vi.fn()
+    const open = () => createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable(), forgetDm })
+    const session = open()
+    await session.restore()
+    await session.signInWithKey({ key: bytesToHex(keyA) })
+    await session.prepareAddAccount()
+    const next = open()
+    await next.restore()
+    await next.signInWithKey({ key: bytesToHex(keyB) })
+    // B is active: signing A out from the switcher, then B itself.
+    await next.signOut({ identityId: idA })
+    expect(forgetDm).toHaveBeenLastCalledWith(idA)
+    await next.signOut()
+    expect(forgetDm).toHaveBeenLastCalledWith(idB)
+    expect(forgetDm).toHaveBeenCalledTimes(2)
+  })
+
   it('stops DMs, and waits for their save, while the keys are still there', async () => {
     const key = secp256k1.utils.randomSecretKey()
     const id = addIdentity([{ id: 2, purpose: AUTH, securityLevel: HIGH, privateKey: key }])
