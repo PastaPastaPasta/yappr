@@ -14,6 +14,7 @@ import type {
   StoreItem,
   StoreItemDocument,
   StoreItemStatus,
+  ItemFulfillment,
   ItemVariants,
   VariantAxis,
   VariantCombination
@@ -82,7 +83,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       weight: data.weight,
       stockQuantity: data.stockQuantity,
       sku: data.sku,
-      variants: parseJsonObject<ItemVariants>(data.variants, 'variants')
+      variants: parseJsonObject<ItemVariants>(data.variants, 'variants'),
+      fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined
     };
   }
 
@@ -212,6 +214,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity?: number;
       sku?: string;
       variants?: ItemVariants;
+      fulfillment?: ItemFulfillment;
     }
   ): Promise<StoreItem> {
     const documentData: Record<string, unknown> = {
@@ -232,6 +235,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.stockQuantity !== undefined) documentData.stockQuantity = data.stockQuantity;
     if (data.sku) documentData.sku = data.sku;
     if (data.variants) documentData.variants = JSON.stringify(data.variants);
+    // Absent means shipped, so a physical product writes exactly what v5 accepts.
+    if (data.fulfillment === 'digital') documentData.fulfillment = 'digital';
 
     return this.create(ownerId, documentData);
   }
@@ -258,6 +263,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity: number;
       sku: string;
       variants: ItemVariants;
+      fulfillment: ItemFulfillment;
     }>
   ): Promise<StoreItem> {
     // Fetch existing item to preserve required fields
@@ -287,6 +293,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('stockQuantity' in data) documentData.stockQuantity = data.stockQuantity;
     if ('sku' in data) documentData.sku = data.sku;
     if ('variants' in data) documentData.variants = data.variants && JSON.stringify(data.variants);
+    if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
 
     return this.update(itemId, ownerId, documentData);
   }

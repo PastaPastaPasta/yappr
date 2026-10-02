@@ -151,7 +151,8 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       variantKey: item.variantKey,
       quantity: item.quantity,
       unitPrice: item.unitPrice,
-      imageUrl: item.imageUrl
+      imageUrl: item.imageUrl,
+      ...(item.fulfillment === 'digital' ? { fulfillment: 'digital' as const } : {})
     }));
 
     const subtotal = cartItems.reduce(

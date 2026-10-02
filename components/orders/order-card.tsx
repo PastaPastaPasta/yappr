@@ -2,13 +2,16 @@
 
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
-import { ChevronDownIcon, ChevronUpIcon, BuildingStorefrontIcon, StarIcon } from '@heroicons/react/24/outline'
+import { ChevronDownIcon, ChevronUpIcon, BuildingStorefrontIcon, StarIcon, CloudArrowDownIcon } from '@heroicons/react/24/outline'
 import { OrderStatusBadge } from '@/components/store/order-status-badge'
+import { DigitalBadge } from '@/components/store/digital-badge'
+import { DeliveryContents } from '@/components/digital'
+import { hasDigitalLines } from '@/lib/services/digital-delivery-plan'
 import { OrderItemsList } from './order-items-list'
 import { Button } from '@/components/ui/button'
 import { formatPrice, formatDate, formatOrderId } from '@/lib/utils/format'
 import { orderStatusService } from '@/lib/services/order-status-service'
-import type { StoreOrder, OrderPayload, OrderStatusUpdate, Store } from '@/lib/types'
+import type { StoreOrder, OrderPayload, OrderStatusUpdate, Store, OrderDelivery } from '@/lib/types'
 
 interface OrderCardProps {
   order: StoreOrder
@@ -20,6 +23,8 @@ interface OrderCardProps {
   index?: number
   canReview?: boolean
   onLeaveReview?: () => void
+  /** Digital deliveries for this order (storefront v6); undefined when digital delivery is off. */
+  deliveries?: OrderDelivery[]
 }
 
 export function OrderCard({
@@ -31,9 +36,11 @@ export function OrderCard({
   onToggle,
   index = 0,
   canReview = false,
-  onLeaveReview
+  onLeaveReview,
+  deliveries
 }: OrderCardProps) {
   const router = useRouter()
+  const isDigitalOrder = deliveries !== undefined && hasDigitalLines(payload)
 
   const handleStoreClick = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -83,8 +90,9 @@ export function OrderCard({
                 Order #{formatOrderId(order.id)}
                 {payload && <span className="ml-2">{formatPrice(payload.total, payload.currency)}</span>}
               </p>
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-gray-400 mt-1 flex items-center gap-2">
                 {formatDate(order.createdAt)}
+                {isDigitalOrder && <DigitalBadge />}
               </p>
             </div>
           </div>
@@ -119,6 +127,22 @@ export function OrderCard({
                 {payload.shippingAddress.name}, {payload.shippingAddress.city}, {payload.shippingAddress.country}
               </p>
             </div>
+          )}
+        </div>
+      )}
+
+      {isDigitalOrder && expanded && (
+        <div className="mt-3 p-3 bg-sky-50 dark:bg-sky-900/20 rounded-lg space-y-2">
+          <p className="text-sm font-medium flex items-center gap-2">
+            <CloudArrowDownIcon className="h-4 w-4" aria-hidden="true" />
+            Your digital items
+          </p>
+          {deliveries?.length ? (
+            <DeliveryContents deliveries={deliveries} />
+          ) : (
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Waiting for the seller to deliver. They appear here, and in your library, as soon as they do.
+            </p>
           )}
         </div>
       )}

@@ -7,7 +7,8 @@ import { motion } from 'framer-motion'
 import {
   ArrowLeftIcon,
   ShoppingCartIcon,
-  BuildingStorefrontIcon
+  BuildingStorefrontIcon,
+  CloudArrowDownIcon
 } from '@heroicons/react/24/outline'
 import { CheckIcon } from '@heroicons/react/24/solid'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
@@ -333,6 +334,15 @@ function ItemDetailContent() {
             <p className="text-2xl font-bold text-yappr-600">
               {formatPrice(currentPrice, item.currency)}
             </p>
+
+            {item.fulfillment === 'digital' && (
+              <div className="flex items-start gap-2 p-3 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-lg text-sm text-sky-800 dark:text-sky-200">
+                <CloudArrowDownIcon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                <span>
+                  <span className="font-medium">Digital product.</span> Nothing ships: the seller delivers it encrypted to you on Dash Platform, and it appears under My Orders → Library.
+                </span>
+              </div>
+            )}
 
             {/* Category */}
             {(item.section || item.category) && (

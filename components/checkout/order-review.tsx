@@ -1,6 +1,7 @@
 import { LockClosedIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService } from '@/lib/services/cart-service'
+import { DigitalBadge } from '@/components/store/digital-badge'
 import type { CartItem, ShippingAddress, Store } from '@/lib/types'
 
 interface OrderReviewProps {
@@ -56,6 +57,7 @@ export function OrderReview({
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-medium truncate">{item.title}</p>
+              {item.fulfillment === 'digital' && <DigitalBadge className="mt-0.5" />}
               {item.variantKey && (
                 <p className="text-sm text-gray-500">{cartService.getVariantDisplay(item.variantKey)}</p>
               )}

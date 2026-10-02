@@ -24,10 +24,23 @@ export function getCartCurrency(items: readonly CartItem[]): string | null {
 }
 
 export interface CartItemAvailability {
+  /** The cart line, with its fulfillment brought up to date when the item could be read. */
   item: CartItem;
   maxQuantity: number;
   reason?: string;
 }
+
+/** A cart line carrying `fulfillment` (absent means shipped). */
+function withFulfillment(line: CartItem, fulfillment: CartItem['fulfillment']): CartItem {
+  if (line.fulfillment === fulfillment) return line;
+  const next = { ...line };
+  if (fulfillment) next.fulfillment = fulfillment;
+  else delete next.fulfillment;
+  return next;
+}
+
+/** Lines that must be shipped: everything not explicitly digital. */
+export const shippableItems = (items: readonly CartItem[]) => items.filter(item => item.fulfillment !== 'digital');
 
 class CartService {
   private cart: Cart | null = null;
@@ -146,6 +159,7 @@ class CartService {
     unitPrice: number;
     imageUrl?: string;
     currency: string;
+    fulfillment?: CartItem['fulfillment'];
   }): void {
     const cart = this.getCart();
 
@@ -208,7 +222,8 @@ class CartService {
       quantity,
       unitPrice: price,
       imageUrl: variantImageUrl,
-      currency
+      currency,
+      ...(storeItem.fulfillment === 'digital' ? { fulfillment: 'digital' as const } : {})
     });
   }
 
@@ -276,11 +291,11 @@ class CartService {
   }
 
   /**
-   * Get total weight (for shipping calculation)
+   * Get total weight (for shipping calculation). Digital lines weigh nothing.
    * Note: This requires fetching items from the service
    */
   async getTotalWeight(storeId?: string): Promise<number> {
-    const items = storeId ? this.getItemsForStore(storeId) : this.getItems();
+    const items = shippableItems(storeId ? this.getItemsForStore(storeId) : this.getItems());
     let totalWeight = 0;
 
     for (const cartItem of items) {
@@ -307,7 +322,11 @@ class CartService {
     return this.getStoreIds().length > 1;
   }
 
-  /** Read current inventory without the document cache or modifying the cart. */
+  /**
+   * Read current inventory without the document cache. The one write: a line
+   * whose product the seller switched to (or from) digital is updated in the
+   * stored cart, and returned updated, so it checks out the way it now ships.
+   */
   async getAvailability(items: CartItem[] = this.getItems()): Promise<CartItemAvailability[]> {
     return Promise.all(items.map(async (cartItem) => {
       try {
@@ -323,9 +342,11 @@ class CartService {
         if (item.variants && !storeItemService.getCombination(item, cartItem.variantKey || '')) {
           return { item: cartItem, maxQuantity: 0, reason: 'Selected option is no longer available' };
         }
+        const synced = withFulfillment(cartItem, item.fulfillment === 'digital' ? 'digital' : undefined);
+        if (synced !== cartItem) this.syncFulfillment(synced);
         const stock = storeItemService.getStock(item, cartItem.variantKey);
         return {
-          item: cartItem,
+          item: synced,
           maxQuantity: stock,
           reason: stock < cartItem.quantity
             ? stock === 0 ? 'Out of stock' : `Only ${stock} available`
@@ -339,6 +360,13 @@ class CartService {
         };
       }
     }));
+  }
+
+  /** Store `line`'s fulfillment on every stored line of the same item. */
+  private syncFulfillment(line: CartItem): void {
+    const cart = this.getCart();
+    cart.items = cart.items.map(stored => stored.itemId === line.itemId ? withFulfillment(stored, line.fulfillment) : stored);
+    this.saveCart();
   }
 
   /** Validate a checkout snapshot, including only the selected store's items. */

@@ -17,7 +17,7 @@ import {
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner } from '@/components/store'
+import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuth } from '@/contexts/auth-context'
@@ -658,6 +658,7 @@ function StoreDetailContent() {
                                 <span className="text-white font-medium">Out of Stock</span>
                               </div>
                             )}
+                            {item.fulfillment === 'digital' && <DigitalBadge className="absolute top-2 left-2 shadow" />}
                           </div>
                           <div className="mt-2">
                             <h3 className="font-medium truncate">{item.title}</h3>

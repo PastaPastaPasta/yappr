@@ -1,0 +1,138 @@
+'use client'
+
+import { logger } from '@/lib/logger'
+import { useState } from 'react'
+import { ArrowDownTrayIcon, ArrowTopRightOnSquareIcon, ClipboardIcon, DocumentIcon, KeyIcon } from '@heroicons/react/24/outline'
+import toast from 'react-hot-toast'
+import { Button } from '@/components/ui/button'
+import { fetchDecryptedFile, formatFileSize, saveBlob, type DigitalFileAsset } from '@/lib/services/digital-file-service'
+import { getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
+import { formatDate } from '@/lib/utils/format'
+import type { OrderDelivery, OrderDeliveryPayload } from '@/lib/types'
+
+function FileRow({ asset }: { asset: DigitalFileAsset }) {
+  const [isDownloading, setIsDownloading] = useState(false)
+
+  const handleDownload = async () => {
+    setIsDownloading(true)
+    try {
+      saveBlob(await fetchDecryptedFile(asset), asset.name)
+    } catch (error) {
+      logger.error('Digital file download failed:', error)
+      toast.error(error instanceof Error ? error.message : 'Download failed')
+    } finally {
+      setIsDownloading(false)
+    }
+  }
+
+  return (
+    <li className="flex items-center gap-3">
+      <DocumentIcon className="h-5 w-5 text-gray-400 flex-shrink-0" aria-hidden="true" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{asset.name}</p>
+        <p className="text-xs text-gray-500">{formatFileSize(asset.size)}</p>
+      </div>
+      <Button size="sm" variant="outline" onClick={() => { handleDownload().catch((error) => logger.error(error)) }} disabled={isDownloading}>
+        <ArrowDownTrayIcon className="h-4 w-4 mr-1" />
+        {isDownloading ? 'Decrypting…' : 'Download'}
+      </Button>
+    </li>
+  )
+}
+
+function copy(text: string, label: string) {
+  navigator.clipboard.writeText(text)
+    .then(() => toast.success(`${label} copied`))
+    .catch(() => toast.error('Failed to copy'))
+}
+
+/** One delivery's goods: downloads, links, license keys and the seller's notes. */
+function DeliveryBody({ payload }: { payload: OrderDeliveryPayload }) {
+  return (
+    <div className="space-y-3">
+      {payload.items.map((item, index) => (
+        <div key={`${item.itemId}-${item.variantKey ?? ''}-${index}`} className="space-y-2">
+          <p className="text-sm font-medium">
+            {item.itemTitle}
+            {item.variantKey && <span className="text-gray-500 font-normal"> ({item.variantKey.replace(/\|/g, ' / ')})</span>}
+          </p>
+          {item.assets.length > 0 && (
+            <ul className="space-y-2">
+              {item.assets.map((asset, assetIndex) => asset.kind === 'file' ? (
+                <FileRow key={assetIndex} asset={asset} />
+              ) : (
+                <li key={assetIndex}>
+                  <a
+                    // ipfs:// links open through a gateway (other URLs come back as themselves);
+                    // decodeDelivery already refused any scheme but http(s) and ipfs.
+                    href={getAllGatewayUrls(asset.url)[0]}
+                    target="_blank"
+                    rel="noopener noreferrer nofollow"
+                    className="inline-flex items-center gap-1.5 text-sm text-yappr-600 hover:underline break-all"
+                  >
+                    <ArrowTopRightOnSquareIcon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                    {asset.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+          {item.licenseKeys && item.licenseKeys.length > 0 && (
+            <ul className="space-y-1">
+              {item.licenseKeys.map((key, keyIndex) => (
+                <li key={keyIndex} className="flex items-center gap-2">
+                  <KeyIcon className="h-4 w-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
+                  <code className="flex-1 min-w-0 text-sm font-mono break-all">{key}</code>
+                  <button
+                    type="button"
+                    aria-label="Copy license key"
+                    onClick={() => copy(key, 'License key')}
+                    className="p-1 text-gray-500 hover:text-yappr-500"
+                  >
+                    <ClipboardIcon className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {item.instructions && (
+            <p className="text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{item.instructions}</p>
+          )}
+        </div>
+      ))}
+      {payload.message && (
+        <p className="text-sm italic text-gray-600 dark:text-gray-400 whitespace-pre-wrap border-t border-gray-200 dark:border-gray-800 pt-2">
+          {payload.message}
+        </p>
+      )}
+    </div>
+  )
+}
+
+interface DeliveryContentsProps {
+  /** Deliveries for one order, oldest first; only decrypted ones are shown. */
+  deliveries: OrderDelivery[]
+}
+
+/** Everything delivered for an order, newest first. */
+export function DeliveryContents({ deliveries }: DeliveryContentsProps) {
+  const readable = deliveries
+    .filter((delivery): delivery is OrderDelivery & { payload: OrderDeliveryPayload } => delivery.payload !== undefined)
+    .reverse()
+  const unreadable = deliveries.length - readable.length
+  return (
+    <div className="space-y-4">
+      {readable.map((delivery) => (
+        <div key={delivery.id} className="space-y-2">
+          {readable.length > 1 && <p className="text-xs text-gray-500">Delivered {formatDate(delivery.createdAt)}</p>}
+          <DeliveryBody payload={delivery.payload} />
+        </div>
+      ))}
+      {unreadable > 0 && (
+        <p className="text-sm text-yellow-700 dark:text-yellow-300">
+          {unreadable === 1 ? 'One delivery' : `${unreadable} deliveries`} could not be decrypted on this device. Add your encryption key to read {unreadable === 1 ? 'it' : 'them'}; if it is already here, the seller may have changed their key, so ask them to send again.
+        </p>
+      )}
+    </div>
+  )
+}
