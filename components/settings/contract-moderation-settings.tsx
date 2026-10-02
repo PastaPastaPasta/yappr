@@ -11,7 +11,7 @@ import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/c
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 import { ReportQueue } from '@/components/moderation/report-queue'
 import { TeamActionsPanel } from '@/components/moderation/team-actions-panel'
-import { contractTakesReports, type TargetKind } from '@/lib/contract-topology'
+import { contractTakesReports, deletesAreTombstones, type TargetKind } from '@/lib/contract-topology'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 import {
   moderationService,
@@ -246,8 +246,9 @@ export function ContractModerationSettings() {
           <CardTitle>Contract Moderation</CardTitle>
           <CardDescription>
             A banned identity cannot write anything to the social contract until unbanned; a suspended one until the
-            suspension lapses. Both refusals are recorded with your reason, which anyone can read. Only deletes,
-            transfers and purchases still go through for them.
+            suspension lapses. Both refusals are recorded with your reason, which anyone can read. Only deleting their
+            own documents (an unlike, an unfollow) still goes through for them
+            {deletesAreTombstones() ? ': a post or reply is deleted by blanking it, which is an edit, so they cannot take those down.' : '.'}
             {canWarn && ' A warning bars nothing: it is a public, reasoned note, and at most 16 accumulate until cleared.'}
           </CardDescription>
         </CardHeader>

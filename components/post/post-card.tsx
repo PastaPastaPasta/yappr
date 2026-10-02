@@ -34,6 +34,8 @@ import { quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { isBareRepost, type OwnQuote } from '@/lib/feed/quote-reposts'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
 import { logger } from '@/lib/logger'
+import { categorizeError } from '@/lib/error-utils'
+import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { stopPropagation } from '@/lib/utils/events'
 import { IconButton } from '@/components/ui/icon-button'
 import { UserAvatar } from '@/components/ui/avatar-image'
@@ -84,6 +86,12 @@ interface PostCardProps {
   onDelete?: (postId: string) => void
   /** Let a saved-post list coordinate removal with its other bookmark mutations. */
   bookmarkAction?: { active: boolean; loading: boolean; onClick: () => void }
+  /**
+   * Why nothing on this card can be replied to, when nothing can: a reply names
+   * its thread's root, and consensus refuses one naming a root a moderator
+   * removed (40120, paid). Set by a thread page whose root is gone.
+   */
+  replyBlockedReason?: string
 }
 
 /**
@@ -180,7 +188,8 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
       onDelete?.(post.id)
     } catch (error) {
       logger.error('Remove repost failed:', error)
-      toast.error('Failed to remove the repost. Please try again.')
+      // A banned or suspended author is refused the tombstone (41107/41108): say why.
+      if (!reportBarredWrite(error, viewerId)) toast.error('Failed to remove the repost. Please try again.')
     } finally {
       setRemoving(false)
     }
@@ -245,6 +254,7 @@ function PostCardView({
   missingParent,
   onDelete,
   bookmarkAction,
+  replyBlockedReason,
 }: PostCardProps) {
   const router = useRouter()
   const { user } = useAuth()
@@ -429,6 +439,10 @@ function PostCardView({
   }
   const handleReply = () => {
     if (isTombstoned || !requireAuth()) return
+    if (replyBlockedReason) {
+      toast.error(replyBlockedReason)
+      return
+    }
     if (!canReplyToPrivate) {
       toast.error(cantReplyReason || "Can't reply to this post")
       return
@@ -447,14 +461,27 @@ function PostCardView({
     if (!authedUser) return
     openDeleteModal(post, async () => {
       let ok: boolean
-      if (isReply) {
-        const { replyService } = await import('@/lib/services/reply-service')
-        ok = await replyService.deleteOwnReply(post.id, authedUser.identityId)
-      } else {
-        const { postService } = await import('@/lib/services/post-service')
-        ok = await postService.deleteOwnPost(post.id, authedUser.identityId)
+      try {
+        if (isReply) {
+          const { replyService } = await import('@/lib/services/reply-service')
+          ok = await replyService.deleteOwnReply(post.id, authedUser.identityId)
+        } else {
+          const { postService } = await import('@/lib/services/post-service')
+          ok = await postService.deleteOwnPost(post.id, authedUser.identityId)
+        }
+      } catch (error) {
+        // v9/v11 delete by tombstone, a replace: a banned or suspended author
+        // is refused it (41107/41108), so say that, with the moderators' reason,
+        // and close the dialog: every retry would be another paid refusal.
+        if (reportBarredWrite(error, authedUser.identityId)) return
+        toast.error(categorizeError(error))
+        throw error
       }
-      if (!ok) throw new Error('Delete operation failed')
+      if (!ok) {
+        // The modal only logs a rejection; without this the user saw nothing.
+        toast.error(`Could not delete this ${isReply ? 'reply' : 'post'}. Please try again.`)
+        throw new Error('Delete operation failed')
+      }
       toast.success(isReply ? 'Reply deleted' : 'Post deleted')
       // Detail and thread callers pass no onDelete, so the card must flip its
       // own rendering, or the pre-delete content would stay until a reload.
@@ -696,8 +723,8 @@ function PostCardView({
             deleted={isTombstoned}
             reply={{
               count: stats.replies,
-              enabled: canReplyToPrivate && !isTombstoned,
-              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : cantReplyReason,
+              enabled: canReplyToPrivate && !isTombstoned && !replyBlockedReason,
+              reason: isTombstoned ? `This ${isReply ? 'reply' : 'post'} was deleted` : replyBlockedReason ?? cantReplyReason,
               onClick: handleReply,
             }}
             repost={{

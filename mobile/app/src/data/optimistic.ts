@@ -61,6 +61,8 @@ function mapObjects(value: unknown, visit: (object: Json) => Json): unknown {
  * those named), and returns the hashes of the queries it changed. A changed
  * query keeps its age, so stale data still refetches, and a fetch already in
  * flight is cancelled, so it can't land the pre-write state over the change.
+ * The cancel reverts the query to its state before that fetch (so it stays
+ * `success`, never a `CancelledError`), and the patch then applies on top.
  */
 function updateCache(visit: (object: Json) => Json, only?: ReadonlySet<string>): Set<string> {
   const changed = new Set<string>();
@@ -71,7 +73,7 @@ function updateCache(visit: (object: Json) => Json, only?: ReadonlySet<string>):
     if (next === data) continue;
     changed.add(query.queryHash);
     if (query.state.fetchStatus === 'fetching') {
-      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }, { revert: false }).catch(() => undefined);
+      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
     }
     queryClient.setQueryData(query.queryKey, next, { updatedAt: query.state.dataUpdatedAt });
   }
@@ -106,17 +108,24 @@ export type ViewerPatch = Partial<Pick<ViewerStateDTO, 'liked' | 'reposted' | 'b
 const FLAGS = ['liked', 'reposted', 'bookmarked'] as const;
 const COUNTED: Partial<Record<(typeof FLAGS)[number], 'likes' | 'reposts'>> = { liked: 'likes', reposted: 'reposts' };
 
+/**
+ * Changes only the patched marks; fields the copy doesn't know stay unknown.
+ * Counts move only where the copy knew the mark before, since otherwise the
+ * previous state, and so the right count, is unknown.
+ */
 function applyViewerPatch(post: CachedPost, patch: ViewerPatch): CachedPost {
-  const viewer = { ...EMPTY_VIEWER, ...post.viewer };
+  const known = post.viewer;
+  const viewer: Partial<ViewerStateDTO> = { ...known };
   const stats = { ...post.stats };
   let changed = false;
   for (const flag of FLAGS) {
     const value = patch[flag];
     if (value === undefined || viewer[flag] === value) continue;
+    const knewIt = typeof known?.[flag] === 'boolean';
     viewer[flag] = value;
     changed = true;
     const count = COUNTED[flag];
-    if (count) stats[count] = Math.max(0, stats[count] + (value ? 1 : -1));
+    if (count && knewIt) stats[count] = Math.max(0, stats[count] + (value ? 1 : -1));
   }
   if (patch.ownQuoteId !== undefined && viewer.ownQuoteId !== patch.ownQuoteId) {
     viewer.ownQuoteId = patch.ownQuoteId;
@@ -128,11 +137,13 @@ function applyViewerPatch(post: CachedPost, patch: ViewerPatch): CachedPost {
 /**
  * Sets the viewer's marks on every cached copy of a post, moving the like and
  * repost counts with the flags (a copy already in that state is left alone).
- * The undo puts back what it changed, in the queries it changed.
+ * The undo sets the opposite marks on every copy, including copies cached
+ * since (a detail screen seeded from a patched card), and refetches the
+ * post's detail family so a copy that was already right comes back right.
  */
 export function setViewerState(postId: string, patch: ViewerPatch): () => void {
   let previousQuote: string | null | undefined;
-  const changed = updateCachedPosts(postId, (post) => {
+  updateCachedPosts(postId, (post) => {
     previousQuote ??= post.viewer?.ownQuoteId ?? null;
     return applyViewerPatch(post, patch);
   });
@@ -142,7 +153,8 @@ export function setViewerState(postId: string, patch: ViewerPatch): () => void {
   }
   if (patch.ownQuoteId !== undefined) undo.ownQuoteId = previousQuote ?? null;
   return () => {
-    updateCachedPosts(postId, (post) => applyViewerPatch(post, undo), changed);
+    updateCachedPosts(postId, (post) => applyViewerPatch(post, undo));
+    queryClient.invalidateQueries({ queryKey: queryKeys.post.detail(postId) }).catch(() => undefined);
   };
 }
 
@@ -152,11 +164,11 @@ export function setViewerState(postId: string, patch: ViewerPatch): () => void {
  * count) and user rows (`viewerFollows`). Returns the undo.
  */
 export function setFollowing(authorId: string, follows: boolean): () => void {
-  const apply = (value: boolean, only?: ReadonlySet<string>) =>
+  const apply = (value: boolean) =>
     updateCache((object) => {
       if (isCachedPost(object)) {
         if (object.author?.id !== authorId || object.viewer?.followsAuthor === value) return object;
-        return { ...object, viewer: { ...EMPTY_VIEWER, ...object.viewer, followsAuthor: value } };
+        return { ...object, viewer: { ...object.viewer, followsAuthor: value } };
       }
       if (object.id !== authorId) return object;
       const viewer = object.viewer as { follows?: boolean } | undefined;
@@ -175,10 +187,11 @@ export function setFollowing(authorId: string, follows: boolean): () => void {
         return { ...object, viewerFollows: value };
       }
       return object;
-    }, only);
-  const changed = apply(follows);
+    });
+  apply(follows);
   return () => {
-    apply(!follows, changed);
+    apply(!follows);
+    queryClient.invalidateQueries({ queryKey: queryKeys.profile.detail(authorId) }).catch(() => undefined);
   };
 }
 

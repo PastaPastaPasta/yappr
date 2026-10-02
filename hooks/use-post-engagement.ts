@@ -141,7 +141,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       setReposted(true)
       setReposts(prevReposts)
       logger.error('Repost error:', error)
-      toast.error('Failed to update repost. Please try again.')
+      // Undo is a tombstone (a replace), refused to a banned or suspended author.
+      if (!reportBarredWrite(error, viewerId)) toast.error('Failed to update repost. Please try again.')
     } finally {
       setRepostLoading(false)
     }

@@ -21,7 +21,7 @@
 
 import { logger } from '@/lib/logger';
 import { clearableReferencesFor, tombstoneKeepsEmptyContent, type TombstonePreservation } from '@/lib/contract-topology';
-import { isImmutablePropertyChangedError, isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
+import { isBarredFromContractError, isImmutablePropertyChangedError, isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
@@ -83,6 +83,12 @@ function tombstoneBase(): Record<string, unknown> {
  * beside it must be left alone.) `quotedPostOwnerId` is not a reference and
  * stays. A rejection whose path cannot be read, or that names a property the
  * contract does not let go, is reported rather than guessed at.
+ *
+ * THROWS the refusal when the author is banned or suspended from the contract
+ * (41107/41108): Drive lets a barred identity delete but refuses it every
+ * replace, a tombstone included, so on a `canBeDeleted: false` type a barred
+ * author cannot take its own post down at all. The caller says so (with the
+ * moderators' reason, `reportBarredWrite`) instead of a silent "failed".
  */
 export async function tombstoneDocument(params: TombstoneParams): Promise<boolean> {
   const { contractId, documentType, documentId, ownerId } = params;
@@ -148,6 +154,9 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       result = await replace(attempt);
     }
 
+    if (!result.success && isBarredFromContractError(result.error)) {
+      throw typeof result.error === 'string' ? new Error(result.error) : result.error;
+    }
     if (!result.success) {
       // 40128 here means the preserve set above is missing a property the
       // contract freezes — a contract/descriptor drift bug, not a user or
@@ -166,6 +175,7 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     }
     return true;
   } catch (error) {
+    if (isBarredFromContractError(error)) throw error;
     logger.error(`Error tombstoning ${documentType} ${documentId}:`, error);
     return false;
   }

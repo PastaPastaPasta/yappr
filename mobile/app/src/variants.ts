@@ -26,6 +26,8 @@ export const VARIANTS = {
     name: 'Yappr',
     applicationId: 'pr.yap.app',
     scheme: 'yappr',
+    // TODO(launch): yap.pr's root serves testnet today, so production share links would open the
+    // wrong network. Point this at the mainnet deployment's prefix before production ships.
     webBasePath: '',
     network: 'mainnet',
   },

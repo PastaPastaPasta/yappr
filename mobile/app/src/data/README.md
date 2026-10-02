@@ -12,7 +12,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `events.ts` | `useEngineEvent(name, handler)`, `onEngineEvent`: typed engine events |
 | `session.ts` | `useSession()`, `useViewerId()`, `useCapabilities()` |
 | `require-auth.tsx` | `requireAuth(action)` / `useRequireAuth()`, and the "Sign in to continue" sheet |
-| `writes.ts` | `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
+| `writes.ts` | `runWrite`, `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
 | `optimistic.ts` | `setViewerState`, `setFollowing`, `hidePost`, `markPostDeleted`, `updateCachedPosts` |
 | `sync.ts` | `startDataLayer()`: the root layout starts the app-wide subscriptions once |
 | `testing/fake-engine.ts` | A fake `~/engine` for Jest |
@@ -60,11 +60,19 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
 ```
 
 - **In a list cell:** `sendWrite(likeWrite, vars, 'Reposted!')` (the toast
-  is optional and shows once the engine has taken the write), or
-  `submitWrite(spec, vars)`, which resolves with the ticket, or null if it
-  was skipped or refused. Neither subscribes.
+  is optional and shows once the engine has taken the write). Neither of
+  the functions below subscribes either:
+  - `runWrite(spec, vars)` resolves with a `WriteResult`:
+    - `{ status: 'submitted', ticket }`;
+    - `{ status: 'queued' }`: a write with the same key was pending;
+    - `{ status: 'refused', error }`: undone, and the user was told;
+    - `{ status: 'unknown', error }`: the engine restarted or timed out
+      under the call. The change stays, and the tracker adopts the ticket
+      the engine restores on its next boot (with the spec's `matches`).
+  - `submitWrite(spec, vars)` is the older form: the ticket, or null for
+    anything but `submitted`.
 - **On a screen that shows the status:** `const w = useWrite(spec)`, then
-  `w.run(vars)`. Read `w.status` (`idle` / `pending` / `confirmed` /
+  `w.run(vars)` (ticket or null) or `w.send(vars)` (a `WriteResult`). Read `w.status` (`idle` / `pending` / `confirmed` /
   `unconfirmed` / `failed`) and `w.ticket`; `w.check()` and `w.retry()` act
   on it.
 - **What happens to the ticket.** The tracker handles every outcome; screens
@@ -80,7 +88,19 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     Engagements set `announceUnconfirmed: false`: G-3 counts them as done,
     with no toast.
   - Nothing is retried automatically. Retry applies only to the latest write
-    for a key, and never while another is in flight.
+    for a key, and never while another is in flight. A failure of an older
+    write for a key says nothing: the newer write decides the state.
+- **One write per key at a time.** A write made while one with its key is
+  pending is queued with its optimistic change shown at once (only the latest
+  queued write is kept). It is sent when the pending one confirms, or might
+  have landed, and dropped when the pending one fails, since that failure's
+  undo restored the very state a toggle back asked for. With `intent` on the
+  spec, a queued write that asks for what the pending one asked is dropped
+  too, so a like, unlike, like run sends one like.
+- **The engine cut the call short.** `ENGINE_RESTARTED`, `ENGINE_DISCONNECTED`,
+  `RPC_TIMEOUT` and `ENGINE_TIMEOUT` mean the write may have run (an account
+  switch is an engine restart). No failure toast: give the spec `matches`, so
+  the tracker can follow the restored ticket.
   - Signing out or switching accounts forgets every tracked write.
 - **When the engine refuses the call itself.** No ticket is made, and the
   change is undone. `NOT_SIGNED_IN` opens the sign-in sheet. `onRejected`
@@ -104,10 +124,16 @@ covered without registering it.
   (and its follower count) and user rows.
 - `hidePost(id)` removes a post from every `PostItem` at once.
   `markPostDeleted(id)` turns every cached copy into the "deleted" line.
-- Each helper returns its undo, which puts back only what it changed.
-  Untouched objects keep their identity, so memoized cells don't
-  re-render. A patched query keeps its age (stale data still refetches),
-  and a fetch already in flight for it is cancelled, so it can't land the
+- **Patches change only the patched marks.** A copy's unknown fields stay
+  unknown, and counts move only where the copy knew the old mark.
+- **Each helper returns its undo.** The undo applies to every copy,
+  including copies cached after the change (a detail screen seeded from a
+  patched card). It also refetches the post's (or the author's profile's)
+  detail family, so a copy that was already right comes back right.
+- **Patches don't disturb queries.** Untouched objects keep their identity,
+  so memoized cells don't re-render. A patched query keeps its age, so stale
+  data still refetches. A fetch already in flight is cancelled with a
+  revert, so the query stays `success` and the old fetch can't land the
   pre-write state over the change.
 - Render posts from the cache (a query's data), not from a copy in local
   state, or the optimistic change won't show.
@@ -175,7 +201,17 @@ design system's `PostCard` with all of these wired:
   external links.
 
 Render `<PostItem post={post} />` with the post from a query, and pass card
-props (`variant`, `replyingTo`) through. Navigation helpers (`openPost`,
+props (`variant`, `replyingTo`) through.
+
+- **`removal`:** a post this device deleted leaves lists at once
+  (`removal="hide"`, the default). Threads and detail screens pass
+  `removal="stub"`, which shows the "deleted" line in its place, so replies
+  below it keep their parent. A detail screen whose root was deleted should
+  pop: `usePostRemoved(id)`.
+- **Bare reposts:** a bare repost's like, repost and bookmark wait for its
+  `engage.stats` marks. A tap before they arrive says "Loading this post."
+
+Navigation helpers (`openPost`,
 `openUser`, `postWebUrl`, `sharePost`) are in `post-navigation.ts`.
 
 ## Tests

@@ -29,7 +29,11 @@ function seed() {
     pageParams: [null, 'c1'],
   });
   queryClient.setQueryData(queryKeys.post.detail('target'), target);
-  queryClient.setQueryData(queryKeys.post.stats('target'), { id: 'target', stats: target.stats });
+  queryClient.setQueryData(queryKeys.post.stats('target'), {
+    id: 'target',
+    stats: target.stats,
+    viewer: { liked: false, reposted: false, bookmarked: false, ownQuoteId: null },
+  });
   // Another network's cache is never touched.
   queryClient.setQueryData(['engine', 'testnet', 'post', 'target'], target);
 }
@@ -68,16 +72,54 @@ describe('setViewerState', () => {
     expect(feed().pages[1].items[0].quoted).toMatchObject({ stats: { likes: 5 } });
   });
 
-  it('undoes only the copies it changed', () => {
-    const stale = fixturePost({ id: 'both' });
-    const fresh = fixturePost({ id: 'both', stats: { ...stale.stats, likes: 49 }, viewer: { ...stale.viewer!, liked: true } });
-    queryClient.setQueryData(queryKeys.feed.home({ tab: 'forYou' }), { pages: [page([stale])], pageParams: [null] });
-    queryClient.setQueryData(queryKeys.post.detail('both'), fresh);
-    const undo = setViewerState('both', { liked: true });
-    expect(queryClient.getQueryData(queryKeys.post.detail('both'))).toBe(fresh);
+  it('undoes on every copy, including ones cached after the change, and refetches the detail', () => {
+    queryClient.setQueryData(queryKeys.post.detail('late'), fixturePost({ id: 'late' }));
+    const undo = setViewerState('late', { liked: true });
+    // A detail screen seeded from the patched card after the change.
+    queryClient.setQueryData(queryKeys.post.thread('late'), {
+      focus: queryClient.getQueryData(queryKeys.post.detail('late')),
+    });
     undo();
-    expect(queryClient.getQueryData(queryKeys.post.detail('both'))).toBe(fresh);
-    expect(feed().pages[0].items[0]).toMatchObject({ stats: { likes: 48 }, viewer: { liked: false } });
+    expect(queryClient.getQueryData<{ focus: PostDTO }>(queryKeys.post.thread('late'))?.focus).toMatchObject({
+      stats: { likes: 48 },
+      viewer: { liked: false },
+    });
+    expect(queryClient.getQueryState(queryKeys.post.detail('late'))?.isInvalidated).toBe(true);
+  });
+
+  it('changes only the patched marks, and moves counts only where the mark was known', () => {
+    const quoted = { ...fixturePost({ id: 'q' }), viewer: undefined };
+    const statsEntry = { id: 'q', stats: quoted.stats, viewer: { liked: false } };
+    queryClient.setQueryData(queryKeys.post.detail('q'), quoted);
+    queryClient.setQueryData(queryKeys.post.stats('q'), statsEntry);
+    setViewerState('q', { liked: true });
+    // No follow or block state invented, and no count moved without knowing the old mark.
+    expect(queryClient.getQueryData(queryKeys.post.detail('q'))).toMatchObject({ stats: { likes: 48 }, viewer: { liked: true } });
+    expect((queryClient.getQueryData(queryKeys.post.detail('q')) as PostDTO).viewer).toEqual({ liked: true });
+    expect(queryClient.getQueryData(queryKeys.post.stats('q'))).toEqual({
+      id: 'q',
+      stats: { ...quoted.stats, likes: 49 },
+      viewer: { liked: true },
+    });
+  });
+
+  it('keeps a query fetching underneath a patch successful (the cancelled fetch reverts, then the patch applies)', async () => {
+    queryClient.setQueryData(queryKeys.post.detail('busy'), fixturePost({ id: 'busy' }));
+    let finish: (post: PostDTO) => void = () => undefined;
+    const fetching = queryClient
+      .fetchQuery({
+        queryKey: queryKeys.post.detail('busy'),
+        queryFn: () => new Promise<PostDTO>((resolve) => (finish = resolve)),
+        staleTime: 0,
+      })
+      .catch(() => undefined);
+    setViewerState('busy', { liked: true });
+    finish(fixturePost({ id: 'busy' }));
+    await fetching;
+    const state = queryClient.getQueryState(queryKeys.post.detail('busy'));
+    expect(state?.status).toBe('success');
+    expect(state?.fetchStatus).toBe('idle');
+    expect(queryClient.getQueryData(queryKeys.post.detail('busy'))).toMatchObject({ viewer: { liked: true } });
   });
 
   it('keeps a query stale: an optimistic change is not fresh data', () => {
