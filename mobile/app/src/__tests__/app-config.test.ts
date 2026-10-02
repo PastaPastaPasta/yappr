@@ -81,6 +81,51 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
   });
 });
 
+describe('iOS App Transport Security (SR-46)', () => {
+  it('keeps the template ATS (local networking for the dev client) outside release builds', () => {
+    expect(configFor('devnet').ios?.infoPlist).toBeUndefined();
+  });
+
+  it.each(Object.keys(VARIANTS) as Variant[])('drops the local-networking exception from %s release builds', (variant) => {
+    expect(configFor(variant, { YAPPR_RELEASE: '1' }).ios?.infoPlist?.NSAppTransportSecurity).toEqual({
+      NSAllowsArbitraryLoads: false,
+    });
+  });
+
+  it('marks every EAS store profile, and release-ios.sh, as a release build', () => {
+    const eas = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'eas.json'), 'utf8')) as {
+      build: Record<string, { distribution?: string; env?: Record<string, string> }>;
+    };
+    const store = Object.values(eas.build).filter((profile) => profile.distribution === 'store');
+    expect(store.length).toBeGreaterThan(0);
+    for (const profile of store) expect(profile.env?.YAPPR_RELEASE).toBe('1');
+    expect(eas.build.development?.env?.YAPPR_RELEASE).toBeUndefined();
+    expect(fs.readFileSync(path.join(APP_DIR, 'scripts/release-ios.sh'), 'utf8')).toMatch(/^export YAPPR_RELEASE=1$/m);
+  });
+
+  const plistBuddy = '/usr/libexec/PlistBuddy';
+  (fs.existsSync(plistBuddy) ? it : it.skip)('release-ios.sh strips the exception from a reused dev prebuild', () => {
+    const script = fs.readFileSync(path.join(APP_DIR, 'scripts/release-ios.sh'), 'utf8');
+    const strip = /^strip_dev_launcher_keys\(\) \{[\s\S]*?^\}$/m.exec(script)?.[0];
+    expect(strip).toBeDefined();
+    const app = fs.mkdtempSync(path.join(os.tmpdir(), 'release-ios-ats-'));
+    const plist = path.join(app, 'Info.plist');
+    fs.writeFileSync(
+      plist,
+      '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>NSAppTransportSecurity</key><dict>' +
+        '<key>NSAllowsArbitraryLoads</key><false/><key>NSAllowsLocalNetworking</key><true/></dict></dict></plist>',
+    );
+    try {
+      execFileSync('bash', ['-c', `${strip}\nstrip_dev_launcher_keys "$0"`, app]);
+      const ats = execFileSync(plistBuddy, ['-c', 'Print :NSAppTransportSecurity', plist], { encoding: 'utf8' });
+      expect(ats).toContain('NSAllowsArbitraryLoads');
+      expect(ats).not.toContain('NSAllowsLocalNetworking');
+    } finally {
+      fs.rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('release-ios.sh variant guard', () => {
   const script = fs.readFileSync(path.join(APP_DIR, 'scripts/release-ios.sh'), 'utf8');
   const guard = /^bundle_id_matches\(\) \{[\s\S]*?^\}$/m.exec(script)?.[0];

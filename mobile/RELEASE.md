@@ -65,7 +65,11 @@ dark surface (`#171717`) in dark mode.
     keys (`NSLocalNetworkUsageDescription`, `NSBonjourServices`) are removed
     from Release builds by its own script phase. That phase can be skipped on
     an incremental build, so `release-ios.sh` removes them as well.
-  - ATS blocks `http://` loads, as on Android.
+  - ATS blocks `http://` loads to host names, as on Android. Release builds
+    (`YAPPR_RELEASE=1`, set by `release-ios.sh` and the EAS store profiles)
+    drop the template's `NSAllowsLocalNetworking`, which only the dev client
+    needs, so `.local` and unqualified hosts are blocked too. iOS never
+    applies ATS to IP literals, so `http://192.168.x.x` still loads.
   - Known leftover: expo-dev-client registers the `exp+yappr` scheme in every
     build and every variant. The dev-client workflow (mobile/CLAUDE.md)
     depends on it. It is harmless in Release, where the launcher is not

@@ -19,6 +19,8 @@ what="${1:-}"
 case "$what" in simulator | archive) ;; *) echo "usage: $0 simulator|archive" >&2; exit 2 ;; esac
 
 export APP_VARIANT="${APP_VARIANT:-devnet}"
+# app.config.ts: the release Info.plist (no ATS local-networking exception).
+export YAPPR_RELEASE=1
 build_number="${YAPPR_BUILD_NUMBER:-1}"
 version="$(node -p "require('./package.json').version")"
 out="$PWD/build/release"
@@ -48,9 +50,14 @@ fi
 
 # expo-dev-launcher strips its local-network keys from Release builds in a script phase that
 # declares no inputs, so an incremental build can skip it. Strip them here too (the products
-# are unsigned, so editing the Info.plist is safe). The app sets no keys of its own.
+# are unsigned, so editing the Info.plist is safe). The app sets no keys of its own. A project
+# reused with YAPPR_SKIP_PREBUILD may come from a dev prebuild, so drop the ATS local-networking
+# exception as well (app.config.ts leaves it out of release prebuilds).
 strip_dev_launcher_keys() {
   local plist="$1/Info.plist"
+  if /usr/libexec/PlistBuddy -c 'Print :NSAppTransportSecurity:NSAllowsLocalNetworking' "$plist" >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c 'Delete :NSAppTransportSecurity:NSAllowsLocalNetworking' "$plist"
+  fi
   if /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' "$plist" 2>/dev/null | grep -q 'Expo Dev Launcher'; then
     /usr/libexec/PlistBuddy -c 'Delete :NSLocalNetworkUsageDescription' "$plist"
   fi
