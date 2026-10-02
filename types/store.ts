@@ -542,4 +542,6 @@ export interface OrderDelivery {
   nonce: Uint8Array
   /** Decrypted content, when the reader is the buyer or the seller. */
   payload?: OrderDeliveryPayload
+  /** Seller side only: broadcast this session but not yet seen on chain. */
+  unconfirmed?: boolean
 }

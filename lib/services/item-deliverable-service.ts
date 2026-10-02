@@ -14,6 +14,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../cons
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { decryptForSelf, encryptForSelf } from '../crypto/digital-delivery';
+import { bytesEqual } from '../bytes';
 import { decodeKit, encodeKit } from './digital-delivery-plan';
 import type { ItemDeliverable, ItemDeliverableDocument, ItemDeliverablePayload } from '../../types';
 
@@ -21,7 +22,6 @@ import type { ItemDeliverable, ItemDeliverableDocument, ItemDeliverablePayload }
 const RECONCILE_ATTEMPTS = 3;
 const RECONCILE_DELAY_MS = 1500;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const canonical = (kit: ItemDeliverablePayload) => JSON.stringify(decodeKit(encodeKit(kit)));
 
 /** A kit write whose response failed and whose outcome the chain could not confirm either way. */
 export class KitWriteUncertainError extends Error {
@@ -107,61 +107,57 @@ class ItemDeliverableService extends BaseDocumentService<ItemDeliverable> {
     sellerPrivateKey: Uint8Array,
     existing: ItemDeliverable | null
   ): Promise<ItemDeliverable> {
+    // ECIES draws a fresh ephemeral key per encryption, so these bytes are
+    // unique to this attempt: the way to recognise it on chain afterwards.
+    const encryptedPayload = await encryptForSelf(encodeKit(kit), sellerPrivateKey, itemId);
     try {
-      return await this.writeKit(ownerId, itemId, kit, sellerPrivateKey, existing);
+      return await this.writeKit(ownerId, itemId, encryptedPayload, existing);
     } catch (error) {
       // A failed response is not a failed write: a broadcast can land after
       // its response times out. Decide from the chain, or callers would
       // restore pools that were never taken (or skip ones that were).
-      const outcome = await this.reconcile(itemId, kit, sellerPrivateKey, existing);
-      if (outcome === 'absent') throw error;
+      const outcome = await this.reconcile(itemId, encryptedPayload, existing);
+      if (outcome === 'refused') throw error;
       if (outcome === 'unknown') throw new KitWriteUncertainError(itemId, { cause: error });
       return outcome;
     }
   }
 
   /**
-   * Whether the attempted write is on chain: the kit document when it is (one
-   * revision past `existing`, or newly created, decrypting to exactly `kit`),
-   * `absent` when the chain shows it did not land (still at the old revision
-   * after the retries, or a different write took the revision), and `unknown`
-   * when the chain could not be read to tell.
+   * Whether this attempt's write is on chain. Returns:
+   * - the kit document when it holds exactly this attempt's ciphertext (a
+   *   plaintext match would also accept another tab's identical reservation);
+   * - `refused` when a different write holds the revision this one needed,
+   *   which is the definite stale-write refusal;
+   * - `unknown` when the document is still at the old revision (the write may
+   *   yet land, or may have been refused) or the chain cannot be read.
    */
   private async reconcile(
     itemId: string,
-    kit: ItemDeliverablePayload,
-    sellerPrivateKey: Uint8Array,
+    attempted: Uint8Array,
     existing: ItemDeliverable | null
-  ): Promise<ItemDeliverable | 'absent' | 'unknown'> {
-    const expectedRevision = existing ? (existing.$revision ?? 0) + 1 : 1;
-    let readOnce = false;
+  ): Promise<ItemDeliverable | 'refused' | 'unknown'> {
+    const neededRevision = existing ? (existing.$revision ?? 0) + 1 : 1;
     for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
       if (attempt > 0) await sleep(RECONCILE_DELAY_MS);
       try {
         const current = await this.getForItem(itemId);
-        readOnce = true;
-        if (!current || (current.$revision ?? 0) < expectedRevision) continue;
-        if (current.$revision !== expectedRevision) return 'absent';
-        const onChain = await this.decryptKit(current, sellerPrivateKey);
-        return JSON.stringify(onChain) === canonical(kit) ? current : 'absent';
+        if (current && bytesEqual(current.encryptedPayload, attempted)) return current;
+        if (current && (current.$revision ?? 0) >= neededRevision) return 'refused';
       } catch (error) {
         logger.warn(`Could not reconcile the delivery kit for item ${itemId}:`, error);
       }
     }
-    return readOnce ? 'absent' : 'unknown';
+    return 'unknown';
   }
 
   private async writeKit(
     ownerId: string,
     itemId: string,
-    kit: ItemDeliverablePayload,
-    sellerPrivateKey: Uint8Array,
+    encryptedPayload: Uint8Array,
     existing: ItemDeliverable | null
   ): Promise<ItemDeliverable> {
-    const data = {
-      itemId: identifierStringToDocumentBytes(itemId),
-      encryptedPayload: await encryptForSelf(encodeKit(kit), sellerPrivateKey, itemId),
-    };
+    const data = { itemId: identifierStringToDocumentBytes(itemId), encryptedPayload };
     if (!existing) {
       // A mutable document starts at revision 1; the create path may not echo it.
       const created = await this.create(ownerId, data);

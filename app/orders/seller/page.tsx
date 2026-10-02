@@ -635,8 +635,8 @@ function SellerOrdersPage() {
                             </p>
                             {lastDelivery ? (
                               <>
-                                <p className="text-sm text-green-700 dark:text-green-300">
-                                  Delivered {formatDate(lastDelivery.createdAt)}
+                                <p className={`text-sm ${lastDelivery.unconfirmed ? 'text-yellow-700 dark:text-yellow-300' : 'text-green-700 dark:text-green-300'}`}>
+                                  {lastDelivery.unconfirmed ? 'Sent, awaiting confirmation. Check before sending again.' : `Delivered ${formatDate(lastDelivery.createdAt)}`}
                                   {orderDeliveries.length > 1 && ` (${orderDeliveries.length} deliveries)`}
                                 </p>
                                 <details>

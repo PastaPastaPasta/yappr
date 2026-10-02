@@ -33,6 +33,7 @@ import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, 
 import { normalizeBytes } from '@/lib/bytes'
 
 const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.'
+const FULFILLMENT_CHANGED_MESSAGE = 'The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before continuing.'
 
 /**
  * The seller's encryption public key as bytes, or null if the identity key
@@ -158,18 +159,31 @@ function CheckoutPage() {
 
   /**
    * Check the lines against current inventory. Resolves to the lines as they
-   * now check out (fulfillment brought up to date), or null when any is
-   * unavailable or the check was superseded.
+   * now check out, or null when any is unavailable or the check was superseded.
+   *
+   * A product switched to or from digital changes whether it ships, and with
+   * it the address, shipping cost and total the buyer reviewed. Unless
+   * `requireReview` is off (the first load, before anything was reviewed),
+   * such a change also resolves null and sends the buyer back to the details
+   * step, so no later step proceeds on the old shipping.
    */
-  const validateCartAvailability = useCallback(async (items: CartItem[]): Promise<CartItem[] | null> => {
+  const validateCartAvailability = useCallback(async (
+    items: CartItem[],
+    { requireReview = true }: { requireReview?: boolean } = {}
+  ): Promise<CartItem[] | null> => {
     const request = ++availabilityRequest.current
     setIsCheckingAvailability(true)
     try {
       const availability = await cartService.getAvailability(items)
       if (request !== availabilityRequest.current || currentStoreId.current !== storeId) return null
-      // A product the seller switched to (or from) digital checks out the way it ships now.
       const current = availability.map(result => result.item)
+      const fulfillmentChanged = current.some((item, index) => item.fulfillment !== items[index]?.fulfillment)
       if (current.some((item, index) => item !== items[index])) setCartItems(current)
+      if (fulfillmentChanged && requireReview) {
+        setError(FULFILLMENT_CHANGED_MESSAGE)
+        setStep('details')
+        return null
+      }
       const unavailable = availability.filter(result => result.reason)
       const message = unavailable.length > 0
         ? unavailable.map(result => `${result.item.title}: ${result.reason}`).join(' ')
@@ -295,7 +309,7 @@ function CheckoutPage() {
 
         setStore(storeData)
         setCartItems(items)
-        await validateCartAvailability(items)
+        await validateCartAvailability(items, { requireReview: false })
         setStorePolicies(parseStorePolicies(storeData.policies))
 
         // Select first payment URI by default
@@ -695,22 +709,15 @@ function CheckoutPage() {
   }
 
   const handlePlaceOrder = async () => {
-    if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || stockError) return
+    // A quote being recalculated reads as 0 until it settles: never place on it.
+    if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || isCalculatingShipping || stockError) return
 
     setIsSubmitting(true)
     setError(null)
 
     try {
-      const checkedItems = await validateCartAvailability(cartItems)
-      if (!checkedItems) return
-      // A product switched to or from digital since the buyer reviewed the order
-      // changes whether it ships, and so the address, shipping cost and total
-      // this handler captured. Send the buyer back to review instead of placing it.
-      if (checkedItems.some((item, index) => item.fulfillment !== cartItems[index]?.fulfillment)) {
-        setError('The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before placing it.')
-        setStep('details')
-        return
-      }
+      // Resolves null (and returns the buyer to review) if any line's fulfillment changed.
+      if (!await validateCartAvailability(cartItems)) return
 
       const payload = storeOrderService.buildOrderPayload(
         cartItems,
@@ -1053,7 +1060,7 @@ function CheckoutPage() {
                 <Button
                   className="w-full"
                   onClick={handlePlaceOrder}
-                  disabled={isSubmitting || isCheckingAvailability || Boolean(stockError) || !selectedPaymentUri}
+                  disabled={isSubmitting || isCheckingAvailability || isCalculatingShipping || Boolean(stockError) || !selectedPaymentUri}
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
                 </Button>

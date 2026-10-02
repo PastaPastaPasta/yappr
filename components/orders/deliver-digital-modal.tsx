@@ -112,7 +112,8 @@ export function DeliverDigitalModal({
         markDelivered,
         sellerPrivateKey,
       })
-      toast.success('Delivered')
+      if (result.pending) toast('Sent, awaiting confirmation')
+      else toast.success('Delivered')
       for (const warning of result.warnings) toast.error(warning, { duration: 10_000 })
       onDelivered(result)
       onClose()

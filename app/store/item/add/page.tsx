@@ -496,7 +496,7 @@ function AddItemPage() {
                   ] as const).map(({ value, label, hint, Icon }) => (
                     <label
                       key={value}
-                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                      className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${isKitUploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'} ${
                         fulfillment === value
                           ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
                           : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
@@ -508,6 +508,8 @@ function AddItemPage() {
                         value={value}
                         checked={fulfillment === value}
                         onChange={() => setFulfillment(value)}
+                        // Switching away unmounts the kit editor, which would drop an in-flight upload's key.
+                        disabled={isKitUploading}
                         className="sr-only"
                       />
                       <Icon className="h-5 w-5 mt-0.5 text-yappr-500 flex-shrink-0" aria-hidden="true" />
