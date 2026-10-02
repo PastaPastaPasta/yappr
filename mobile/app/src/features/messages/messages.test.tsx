@@ -221,6 +221,16 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     expect(screen.getByText('Welcome to Messages')).toBeTruthy();
     expect(screen.getByText('New message')).toBeTruthy();
   });
+
+  it('when every conversation is deleted, says so instead of welcoming a first visit (SR-41)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: 'd:gone', flags: { ...FLAGS, hidden: true } })]);
+    await renderAt('/messages');
+    expect(screen.queryByText('Welcome to Messages')).toBeNull();
+    expect(screen.getByTestId('messages-all-deleted')).toBeTruthy();
+    expect(screen.getByText('Show 1 deleted conversation')).toBeTruthy();
+  });
 });
 
 describe('Messages badge (DM-13)', () => {
