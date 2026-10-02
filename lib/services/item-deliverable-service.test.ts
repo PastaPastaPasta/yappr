@@ -30,8 +30,8 @@ afterEach(() => {
 })
 
 /** Run `saveKit`, skipping its reconciliation waits. */
-async function save() {
-  const promise = itemDeliverableService.saveKit(seller, itemId, kit, sellerKey, existing)
+async function save(from: ItemDeliverable | null = existing) {
+  const promise = itemDeliverableService.saveKit(seller, itemId, kit, sellerKey, from)
   promise.catch(() => undefined)
   await vi.runAllTimersAsync()
   return promise
@@ -73,6 +73,21 @@ describe('saveKit', () => {
     failingReplace('gateway timeout')
     query.mockResolvedValue([await onChain(4, kit)])
     await expect(save()).rejects.toBeInstanceOf(KitWriteUncertainError)
+  })
+
+  it('does not take an unconfirmed create for saved until the chain shows it', async () => {
+    const create = vi.spyOn(itemDeliverableService, 'create')
+    const attempt: { bytes?: Uint8Array } = {}
+    create.mockImplementation(async (...args: unknown[]) => {
+      attempt.bytes = (args[1] as { encryptedPayload: Uint8Array }).encryptedPayload
+      return { id: 'kit-doc', ownerId: seller, itemId, createdAt: new Date(0), encryptedPayload: attempt.bytes, __createConfirmed: false } as ItemDeliverable
+    })
+    query.mockResolvedValue([])
+    await expect(save(null)).rejects.toBeInstanceOf(KitWriteUncertainError)
+
+    query.mockImplementation(async () => [{ ...(await onChain(1, kit)), encryptedPayload: attempt.bytes }])
+    expect((await save(null)).$revision).toBe(1)
+    create.mockRestore()
   })
 
   it('reports an unknown outcome when the chain cannot be read', async () => {

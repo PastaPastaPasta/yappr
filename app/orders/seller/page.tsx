@@ -21,7 +21,8 @@ import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { fulfillOrder, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planBlockers, planDelivery } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
@@ -41,6 +42,12 @@ interface DigitalState {
   deliveries: Map<string, OrderDelivery[]>
   kits: Map<string, SellerKit>
   /**
+   * The seller's current listing of each item the page's digital orders name.
+   * Order lines are buyer-written; only these say an item is digital, and in
+   * which store.
+   */
+  listings: Map<string, ItemListing>
+  /**
    * Orders whose deliveries could not be read. A failed read must never pass
    * for "nothing delivered yet", or "Deliver all" would send them again.
    */
@@ -49,7 +56,8 @@ interface DigitalState {
 
 /**
  * Deliveries already sent for the page's digital orders (decrypted, so the
- * seller can see what went out) and the seller's kits for the items in them.
+ * seller can see what went out), and the seller's kits and listings for the
+ * items in them.
  * Empty below storefront v6 and for pages with no digital order.
  */
 async function loadDigitalState(
@@ -59,13 +67,13 @@ async function loadDigitalState(
 ): Promise<DigitalState> {
   const orders = storefrontSupportsDigital() ? digitalOrders(pageOrders, payloads) : []
   const uncertain = new Set<string>()
-  if (orders.length === 0) return { deliveries: new Map(), kits: new Map(), uncertain }
+  if (orders.length === 0) return { deliveries: new Map(), kits: new Map(), listings: new Map(), uncertain }
 
   const itemIds = orders.flatMap((order) => {
     const payload = payloads.get(order.id)
     return payload ? digitalLines(payload).map((line) => line.itemId) : []
   })
-  const [deliveries, kits] = await Promise.all([
+  const [deliveries, kits, listings] = await Promise.all([
     orderDeliveryService.loadDecrypted(orders, (delivery, order) => {
       if (!sellerPrivateKey) throw new Error('No key on this device to decrypt the delivery')
       return orderDeliveryService.decryptAsSeller(delivery, order, sellerPrivateKey)
@@ -80,9 +88,16 @@ async function loadDigitalState(
           return new Map<string, SellerKit>()
         })
       : Promise.resolve(new Map<string, SellerKit>()),
+    // An item that cannot be read has no listing, so it is never delivered in bulk.
+    storeItemService.getMany(itemIds)
+      .then((items) => new Map(items.map((item): [string, ItemListing] => [item.id, { storeId: item.storeId, fulfillment: item.fulfillment }])))
+      .catch((e) => {
+        logger.error('Failed to load listings for digital orders:', e)
+        return new Map<string, ItemListing>()
+      }),
   ])
 
-  return { deliveries, kits, uncertain }
+  return { deliveries, kits, listings, uncertain }
 }
 
 /**
@@ -150,6 +165,7 @@ function SellerOrdersPage() {
   const supportsDigital = storefrontSupportsDigital()
   const [deliveries, setDeliveries] = useState<Map<string, OrderDelivery[]>>(new Map())
   const [kits, setKits] = useState<Map<string, SellerKit>>(new Map())
+  const [listings, setListings] = useState<Map<string, ItemListing>>(new Map())
   const [deliverContext, setDeliverContext] = useState<{ orderId: string; sellerPrivateKey: Uint8Array } | null>(null)
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
 
@@ -164,6 +180,7 @@ function SellerOrdersPage() {
   const mergeDigitalState = useCallback((digital: DigitalState, replace = false) => {
     setDeliveries(prev => replace ? digital.deliveries : new Map([...prev, ...digital.deliveries]))
     setKits(prev => replace ? digital.kits : new Map([...digital.kits, ...prev]))
+    setListings(prev => replace ? digital.listings : new Map([...prev, ...digital.listings]))
     setUncertainOrders(prev => {
       const next = replace ? new Set<string>() : new Set(prev)
       for (const orderId of digital.deliveries.keys()) next.delete(orderId)
@@ -271,9 +288,16 @@ function SellerOrdersPage() {
     ? orders.filter((order) => {
         const payload = orderPayloads.get(order.id)
         return payload !== undefined && !uncertainOrders.has(order.id) &&
-          isReadyForBulkDelivery(payload, orderStatuses.get(order.id)?.status, (deliveries.get(order.id)?.length ?? 0) > 0, kitPayloads)
+          isReadyForBulkDelivery({
+            payload,
+            storeId: order.storeId,
+            latestStatus: orderStatuses.get(order.id)?.status,
+            alreadyDelivered: (deliveries.get(order.id)?.length ?? 0) > 0,
+            kits: kitPayloads,
+            listings,
+          })
       })
-    : [], [supportsDigital, orders, orderPayloads, orderStatuses, deliveries, kitPayloads, uncertainOrders])
+    : [], [supportsDigital, orders, orderPayloads, orderStatuses, deliveries, kitPayloads, listings, uncertainOrders])
 
   /** Fold a fulfilment into the page: its delivery, its status, and the kits it drew on. */
   const applyFulfillment = useCallback((orderId: string, result: FulfillOrderResult) => {

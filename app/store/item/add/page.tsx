@@ -24,7 +24,7 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeService } from '@/lib/services/store-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
-import { itemDeliverableService } from '@/lib/services/item-deliverable-service'
+import { itemDeliverableService, KitWriteUncertainError } from '@/lib/services/item-deliverable-service'
 import { DigitalKitEditor } from '@/components/digital'
 import { storefrontSupportsDigital } from '@/lib/constants'
 import { encodeKit } from '@/lib/services/digital-delivery-plan'
@@ -392,6 +392,10 @@ function AddItemPage() {
           if (onChain && existingDeliverable && onChain.$revision !== existingDeliverable.$revision) {
             await loadKit(savedItemId, user.identityId)
             setError('The product was saved, but its delivery content changed elsewhere (for example, a delivery used license keys) and was reloaded. Review it and save again.')
+          } else if (kitError instanceof KitWriteUncertainError) {
+            // It may yet land: the next save re-reads and replaces it rather than creating twice.
+            setExistingDeliverable(onChain)
+            setError('The product was saved. Its delivery content was sent but is not confirmed yet; wait a moment, then save again to make sure it is stored.')
           } else {
             setExistingDeliverable(onChain)
             setError(`The product was saved, but its delivery content was not: ${kitError instanceof Error ? kitError.message : 'unknown error'}. Save again to retry.`)

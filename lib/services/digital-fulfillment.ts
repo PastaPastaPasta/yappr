@@ -4,9 +4,11 @@ import { logger } from '@/lib/logger';
  * pool, publish the encrypted delivery, and optionally mark the order
  * delivered.
  *
- * The pools are saved FIRST, each at the revision it was read
- * (`saveKit`), so a key is never handed out twice: a stale pool (another tab
- * delivered meanwhile) refuses the write and nothing is sent.
+ * The delivery is sealed before anything is written, so a delivery that
+ * cannot be built takes no keys. The pools are then saved BEFORE it is
+ * published, each at the revision it was read (`saveKit`), so a key is never
+ * handed out twice: a stale pool (another tab delivered meanwhile) refuses
+ * the write and nothing is sent.
  *
  * Every write whose response failed is reconciled against the chain, since a
  * broadcast can land after its response times out. Once keys are reserved
@@ -138,7 +140,12 @@ async function findDelivery(orderId: string, sealed: SealedDelivery): Promise<Or
 export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrderResult> {
   const { sellerId, order, sellerPrivateKey } = input;
 
-  // 1. Take the keys out of the pools. A failure here sends nothing.
+  // 1. Seal first: everything that can fail without a write (size, key
+  // derivation) fails here, before a single key leaves its pool. Sealed once,
+  // so this attempt is recognisable on chain by its nonce.
+  const sealed = orderDeliveryService.seal(order, input.delivery, sellerPrivateKey);
+
+  // 2. Take the keys out of the pools. A failure here sends nothing.
   const updatedKits = new Map<string, SellerKit>();
   for (const [itemId, kit] of kitsAfterDelivery(toKitPayloads(input.kits), input.consumedKeys)) {
     // kitsAfterDelivery only answers items present in input.kits.
@@ -156,8 +163,7 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
     }
   }
 
-  // 2. Deliver, sealed once so this attempt is recognisable on chain by its nonce.
-  const sealed = orderDeliveryService.seal(order, input.delivery, sellerPrivateKey);
+  // 3. Deliver.
   const reserved = () => [...updatedKits.keys()].map((itemId) => keysTaken(input, itemId));
   let delivery: OrderDelivery;
   let pending = false;

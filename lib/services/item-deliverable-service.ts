@@ -159,8 +159,12 @@ class ItemDeliverableService extends BaseDocumentService<ItemDeliverable> {
   ): Promise<ItemDeliverable> {
     const data = { itemId: identifierStringToDocumentBytes(itemId), encryptedPayload };
     if (!existing) {
-      // A mutable document starts at revision 1; the create path may not echo it.
       const created = await this.create(ownerId, data);
+      // Broadcast but not seen by a query: not saved until reconciliation finds it.
+      if ((created as { __createConfirmed?: boolean }).__createConfirmed === false) {
+        throw new Error('The delivery content was sent but not confirmed.');
+      }
+      // A mutable document starts at revision 1; the create path may not echo it.
       return { ...created, $revision: created.$revision ?? 1 };
     }
     if (existing.$revision === undefined) throw new Error('The delivery content has no known revision. Reload and try again.');

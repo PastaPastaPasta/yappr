@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { saveKit, publish, findSealed, createStatusUpdate, KitWriteUncertainError } = vi.hoisted(() => ({
+const { seal, saveKit, publish, findSealed, createStatusUpdate, KitWriteUncertainError } = vi.hoisted(() => ({
+  seal: vi.fn(),
   saveKit: vi.fn(),
   publish: vi.fn(),
   findSealed: vi.fn(),
@@ -9,7 +10,7 @@ const { saveKit, publish, findSealed, createStatusUpdate, KitWriteUncertainError
 }))
 vi.mock('./item-deliverable-service', () => ({ itemDeliverableService: { saveKit }, KitWriteUncertainError }))
 vi.mock('./order-delivery-service', () => ({
-  orderDeliveryService: { seal: () => SEALED, publish, findSealed },
+  orderDeliveryService: { seal, publish, findSealed },
 }))
 vi.mock('./order-status-service', () => ({ orderStatusService: { createStatusUpdate } }))
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderInput } from './digital-fulfillment'
@@ -33,6 +34,8 @@ const input = (overrides: Partial<FulfillOrderInput> = {}): FulfillOrderInput =>
 
 beforeEach(() => {
   vi.useFakeTimers()
+  seal.mockReset()
+  seal.mockReturnValue(SEALED)
   saveKit.mockReset()
   publish.mockReset()
   findSealed.mockReset()
@@ -72,6 +75,13 @@ describe('fulfillOrder', () => {
     expect(result.pending).toBe(false)
     expect(result.updatedKits.get('game')?.deliverable.$revision).toBe(5)
     expect(result.warnings).toEqual([])
+  })
+
+  it('reserves nothing when the delivery cannot be sealed (too large, or no key to derive)', async () => {
+    seal.mockImplementation(() => { throw new Error('This delivery is too large') })
+    await expect(run()).rejects.toThrow(/too large/)
+    expect(saveKit).not.toHaveBeenCalled()
+    expect(publish).not.toHaveBeenCalled()
   })
 
   it('sends nothing when the pool cannot be reserved (e.g. it changed elsewhere)', async () => {
