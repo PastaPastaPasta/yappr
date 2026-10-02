@@ -1,0 +1,44 @@
+# Signed-out browse, a profile (PRD PROF-01, PROF-02, PROF-05; ADR E8): the
+# first post's author opens their profile, with its header, tabs and posts,
+# and the followers list. Read only.
+appId: ${APP_ID}
+tags:
+  - smoke
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: home
+- extendedWaitUntil:
+    visible:
+      id: "avatar-.*"
+    timeout: 90000
+- tapOn:
+    id: "avatar-.*"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: profile-header
+    timeout: 60000
+- assertVisible:
+    id: profile-tabs
+- assertVisible:
+    id: profile-follow
+- extendedWaitUntil:
+    visible:
+      id: "profile-list-posts|profile-empty-posts"
+    timeout: 60000
+- takeScreenshot: profile
+# The followers list.
+- tapOn:
+    id: profile-followers-count
+- extendedWaitUntil:
+    visible:
+      id: "user-row-.*|connections-empty"
+    timeout: 60000
+- runFlow: ../../subflows/back.yaml
+- extendedWaitUntil:
+    visible:
+      id: profile-header
+    timeout: 15000

@@ -1,0 +1,109 @@
+# A direct-message round trip (PRD DM-01 – DM-05; ADR E8) with the peer
+# persona: messages unlock with the encryption key when the device has none
+# (DM_KEY, from `-e` only), the new-message picker finds the peer, the app
+# sends a message that reaches "Sent", and the peer (the engine in Node,
+# mobile/engine/harness/e2e-peer.ts) answers it; the answer shows up live.
+# DM v5 messages stay on chain (there is no cheap delete); RUN keeps each
+# run's text unique.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow: ../../subflows/peer-unblocked.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: messages
+# Locked: automatic recovery first, then the key by hand.
+- extendedWaitUntil:
+    visible:
+      id: "messages-list|messages-locked|messages-empty"
+    timeout: 120000
+- runFlow:
+    when:
+      visible:
+        id: messages-locked
+    commands:
+      - tapOn: "Enter encryption key"
+      - extendedWaitUntil:
+          visible:
+            id: dm-unlock-key
+          timeout: 60000
+      - tapOn:
+          id: dm-unlock-key
+      - inputText: ${DM_KEY.substring(0, 16)}
+      - inputText: ${DM_KEY.substring(16, 32)}
+      - inputText: ${DM_KEY.substring(32, 48)}
+      - inputText: ${DM_KEY.substring(48)}
+      - tapOn:
+          id: dm-unlock-save
+      - extendedWaitUntil:
+          notVisible:
+            id: dm-unlock-key
+          timeout: 60000
+- extendedWaitUntil:
+    visible:
+      id: "messages-list|messages-empty"
+    timeout: 120000
+- extendedWaitUntil:
+    notVisible:
+      id: messages-loading
+    timeout: 120000
+
+# New message: the picker finds the peer by name and opens the 1:1.
+# The compose button opens a menu (New message / New group) where DM v5 has groups.
+- tapOn:
+    id: "messages-new|messages-new-menu"
+- runFlow:
+    when:
+      notVisible:
+        id: picker-search
+    commands:
+      # The menu's item (an open iOS menu hides the screen behind it from Maestro).
+      - tapOn: "New message"
+- extendedWaitUntil:
+    visible:
+      id: picker-search
+    timeout: 20000
+- tapOn:
+    id: picker-search
+- inputText: ${PEER_HANDLE}
+- pressKey: Enter
+- extendedWaitUntil:
+    visible:
+      id: picker-user-${PEER_ID}
+    timeout: 60000
+- tapOn:
+    id: picker-user-${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: dm-composer
+    timeout: 60000
+
+# The peer waits for this message, then answers it.
+- runScript:
+    file: ../../scripts/peer.js
+    env:
+      PEER_OP: answer
+      PEER_FROM: ${SELF_ID}
+      PEER_EXPECT: "Maestro DM ${RUN} ping"
+      PEER_REPLY: "Maestro DM ${RUN} pong"
+- tapOn:
+    id: dm-composer
+- inputText: "Maestro DM ${RUN} ping"
+- tapOn:
+    id: dm-send
+# A bubble reads as one element ("You, <text>, <time>, <status>"), so match inside it.
+- assertVisible: ".*Maestro DM ${RUN} ping.*"
+- extendedWaitUntil:
+    visible:
+      id: dm-status
+      text: "Sent"
+    timeout: 120000
+# The answer arrives live (an open conversation polls every 4 s).
+- extendedWaitUntil:
+    visible: ".*Maestro DM ${RUN} pong.*"
+    timeout: 300000
+- takeScreenshot: dm-round-trip

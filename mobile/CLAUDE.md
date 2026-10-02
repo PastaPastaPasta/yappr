@@ -250,6 +250,12 @@ also prebuild and build on **both** platforms (see Run).
 The root `npm run lint`, `npm run test` and `npm run build` don't look at
 `mobile/`. Run them anyway if you touched a root file.
 
+**UI end to end (Maestro):** `mobile/e2e/run.sh` runs the regression suite
+on one device: `--suite smoke` (signed out, read only) or `--suite full`
+(signed-in flows that write to sakura as pool personas). See
+`mobile/e2e/README.md`. A screen PR extends the suite's flows for its screen,
+and gives new tappable elements a `testID`.
+
 ## Release builds
 
 See `mobile/RELEASE.md`. `APP_VARIANT=devnet npm run release:android` writes a

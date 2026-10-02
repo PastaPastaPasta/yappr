@@ -1,0 +1,8 @@
+# The peer persona deletes the post subflows/peer-post.yaml made.
+appId: ${APP_ID}
+---
+- runScript:
+    file: ../scripts/peer.js
+    env:
+      PEER_OP: delete
+      PEER_POST_ID: ${output.peerPostId}

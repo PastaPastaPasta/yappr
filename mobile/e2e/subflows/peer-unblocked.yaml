@@ -1,0 +1,22 @@
+# The peer persona is not blocked: a block an interrupted run left (17-block)
+# would hide the peer's posts and messages from the flows that use them.
+appId: ${APP_ID}
+---
+- openLink: ${SCHEME}://user?id=${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: "profile-follow|profile-blocked"
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        id: profile-blocked
+    commands:
+      - tapOn:
+          id: profile-menu
+      - tapOn: "Unblock .*"
+      - extendedWaitUntil:
+          visible:
+            id: profile-follow
+          timeout: 60000
+- runFlow: back.yaml

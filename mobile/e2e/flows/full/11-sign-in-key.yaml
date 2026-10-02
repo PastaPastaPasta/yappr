@@ -1,0 +1,47 @@
+# Sign in with a private key (PRD AUTH-01, AUTH-08, AUTH-09; ADR E8), from a
+# cleared install: Welcome, Sign in, Other ways, the key (SIGN_IN_KEY, typed
+# from `-e`), "Identity found", the terms gate, Home. The account stays signed
+# in for the flows after this one.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow:
+    file: ../../subflows/launch.yaml
+    env:
+      CLEAR: 'true'
+      WELCOME: sign-in
+- runFlow: ../../subflows/sign-in-key.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: home
+- runFlow: ../../subflows/engine-ready.yaml
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 90000
+# Signed in, Following is a feed rather than a prompt.
+- tapOn:
+    id: home-tabs-following
+- extendedWaitUntil:
+    visible:
+      id: feed-following
+    timeout: 30000
+- assertNotVisible:
+    id: signed-out-following
+- tapOn:
+    id: home-tabs-forYou
+- takeScreenshot: signed-in-home
+# The own profile.
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: profile
+- extendedWaitUntil:
+    visible:
+      id: profile-header
+    timeout: 60000
+- assertVisible:
+    id: profile-edit
+- takeScreenshot: own-profile

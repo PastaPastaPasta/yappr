@@ -1,0 +1,42 @@
+# Sign the current account out (PRD AUTH-11) through Settings > Account, when
+# one is signed in. Ends on Settings, signed out.
+appId: ${APP_ID}
+---
+- openLink: ${SCHEME}://settings
+- extendedWaitUntil:
+    visible:
+      id: "settings-account|settings-sign-in"
+      enabled: true
+    timeout: 90000
+- runFlow:
+    when:
+      visible:
+        id: settings-account
+    commands:
+      - tapOn:
+          id: settings-account
+      - scrollUntilVisible:
+          element:
+            id: account-sign-out
+          direction: DOWN
+          timeout: 20000
+      - tapOn:
+          id: account-sign-out
+      - extendedWaitUntil:
+          visible: "Sign out of .*"
+          timeout: 10000
+      # The alert's confirm button, beside Cancel (the row behind the alert reads the same;
+      # Android's alert buttons are upper case).
+      - tapOn:
+          text: "Sign out|SIGN OUT"
+          rightOf: "Cancel|CANCEL"
+      - extendedWaitUntil:
+          notVisible: "Sign out of .*"
+          timeout: 10000
+# Signed out: Settings offers Sign in (the "Signed out" toast is too brief to wait for).
+- openLink: ${SCHEME}://settings
+- extendedWaitUntil:
+    visible:
+      id: settings-sign-in
+      enabled: true
+    timeout: 60000

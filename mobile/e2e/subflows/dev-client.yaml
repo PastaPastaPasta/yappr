@@ -1,0 +1,72 @@
+# Dev client only: load the bundle from Metro (METRO_URL, DEV_CLIENT_URL), get past the
+# dev menu's one-time introduction, and turn its floating "Tools button" off.
+# The button floats over the top-right corner (profile menus, search's Cancel)
+# and takes the taps meant for the app. The setting lasts until the app's data
+# is cleared, so this only acts on the first load after a cleared state.
+appId: ${APP_ID}
+---
+# The launcher, or the app when the dev client reopened its most recent bundle by itself.
+- extendedWaitUntil:
+    visible: "Development Build|DEVELOPMENT SERVERS|Development servers|Runtime version.*|Continue|Browse without signing in|For You|I agree"
+    timeout: 60000
+- evalScript: ${output.devClientLoaded = false}
+- runFlow:
+    when:
+      notVisible: "Development Build|DEVELOPMENT SERVERS|Development servers"
+    commands:
+      - evalScript: ${output.devClientLoaded = true}
+# The launcher's "Recently opened" entry for this Metro, when there is one: loading from
+# it hands over a link that started the app (a cold deep link), which loading by URL drops.
+- runFlow:
+    when:
+      visible: ${METRO_URL}
+      true: ${!output.devClientLoaded}
+    commands:
+      - tapOn: ${METRO_URL}
+      - evalScript: ${output.devClientLoaded = true}
+- runFlow:
+    when:
+      true: ${!output.devClientLoaded}
+    commands:
+      - openLink: ${DEV_CLIENT_URL}
+- extendedWaitUntil:
+    notVisible: "Development Build|DEVELOPMENT SERVERS|Development servers"
+    timeout: 120000
+# After a cleared state the dev menu opens by itself, once the bundle is up.
+- runFlow:
+    when:
+      true: ${CLEAR == 'true'}
+    commands:
+      - extendedWaitUntil:
+          visible: "Runtime version.*|Continue"
+          timeout: 20000
+          optional: true
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+- runFlow:
+    when:
+      visible: "Runtime version.*"
+    commands:
+      - tapOn: "Close"
+      - waitForAnimationToEnd
+# The floating button opens the menu; flip "Tools button" there. Its accessibility
+# element is the gear's symbol name on iOS and "Tools" on Android.
+- repeat:
+    times: 3
+    while:
+      visible:
+        id: "gearshape.fill"
+    commands:
+      - tapOn:
+          id: "gearshape.fill"
+      - runFlow: dev-tools-off.yaml
+- repeat:
+    times: 3
+    while:
+      visible: "Tools"
+    commands:
+      - tapOn: "Tools"
+      - runFlow: dev-tools-off.yaml

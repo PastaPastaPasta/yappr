@@ -1,0 +1,50 @@
+# Deep links (UX_SPEC §3.5; EXECUTION M8): web-form links, which every build
+# accepts, open their screen from a cold start and while the app runs; a
+# malformed one lands on Home. Read only.
+#   TAG         the hashtag the cold link opens
+#   PROFILE_ID  optional: an identity id the warm profile link opens
+appId: ${APP_ID}
+tags:
+  - smoke
+env:
+  TAG: ${TAG || 'mobile'}
+  PROFILE_ID: ${PROFILE_ID || ''}
+---
+# Cold: the app is stopped and the link starts it. A dev client first has to
+# load its bundle from Metro; it hands the link over once the app is up.
+- runFlow: ../../subflows/launch.yaml
+- stopApp
+- openLink: ${SCHEME}://hashtag?tag=${TAG}
+- runFlow:
+    when:
+      true: ${DEV_CLIENT_URL != ''}
+    file: ../../subflows/dev-client.yaml
+- extendedWaitUntil:
+    visible:
+      id: "hashtag-posts|hashtag-posts-empty|hashtag-posts-loading"
+    timeout: 120000
+- assertVisible: "#${TAG}"
+- takeScreenshot: deep-link-cold-hashtag
+
+# Warm: links push onto the running app.
+- openLink: ${SCHEME}://settings?section=appearance
+- extendedWaitUntil:
+    visible:
+      id: appearance-settings
+    timeout: 30000
+- runFlow:
+    when:
+      true: ${PROFILE_ID != ''}
+    commands:
+      - openLink: ${SCHEME}://user?id=${PROFILE_ID}
+      - extendedWaitUntil:
+          visible:
+            id: profile-header
+          timeout: 60000
+      - takeScreenshot: deep-link-warm-profile
+# A malformed id is refused: Home, not an error screen.
+- openLink: ${SCHEME}://post?id=not-a-post-id
+- extendedWaitUntil:
+    visible:
+      id: home-header
+    timeout: 30000

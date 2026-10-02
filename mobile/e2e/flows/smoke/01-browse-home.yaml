@@ -1,0 +1,67 @@
+# Signed-out browse, Home (PRD AUTH-01, AUTH-02, FEED-01 – FEED-04; ADR E8).
+# From a cleared install: Welcome, "Browse without signing in", the engine
+# comes up, the For You feed loads, scrolls and refreshes, and Following asks
+# to sign in. Read only.
+appId: ${APP_ID}
+tags:
+  - smoke
+---
+- runFlow:
+    file: ../../subflows/launch.yaml
+    env:
+      CLEAR: 'true'
+      WELCOME: stay
+- assertVisible:
+    id: welcome-sign-in
+- takeScreenshot: welcome
+- tapOn:
+    id: welcome-browse
+- runFlow: ../../subflows/engine-ready.yaml
+# The first page: real posts (each card has a "⋯" button).
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 90000
+- takeScreenshot: home
+- assertVisible:
+    id: compose-fab
+
+# Infinite scroll, then back to the top and pull to refresh.
+- scroll
+- scroll
+- scrollUntilVisible:
+    element:
+      id: home-tabs-forYou
+    direction: UP
+    timeout: 20000
+- swipe:
+    start: "50%, 35%"
+    end: "50%, 85%"
+    duration: 600
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 60000
+
+# Following needs an account.
+- tapOn:
+    id: home-tabs-following
+- extendedWaitUntil:
+    visible:
+      id: signed-out-following
+    timeout: 30000
+- tapOn:
+    id: home-tabs-forYou
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 30000
+
+# Signed out, acting opens the sign-in sheet: the compose button.
+- tapOn:
+    id: compose-fab
+- extendedWaitUntil:
+    visible:
+      id: "sign-in-screen|sign-in-prompt|compose-signed-out"
+    timeout: 15000
+- takeScreenshot: home-sign-in-prompt

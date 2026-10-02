@@ -1,0 +1,17 @@
+# The peer persona publishes a post (PEER_TEXT), and the app opens it.
+# Sets output.peerPostId; delete it with subflows/peer-delete.yaml.
+appId: ${APP_ID}
+---
+- runScript:
+    file: ../scripts/peer.js
+    env:
+      PEER_OP: post
+- openLink: ${SCHEME}://post?id=${output.peerPostId}
+- extendedWaitUntil:
+    visible:
+      id: thread-focus
+    timeout: 90000
+- extendedWaitUntil:
+    visible:
+      id: action-bar-${output.peerPostId}
+    timeout: 60000

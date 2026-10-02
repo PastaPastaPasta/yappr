@@ -1,0 +1,89 @@
+# Post, then clean up (PRD COMP-01 – COMP-03, COMP-10, ENG-06; ADR E8): Post
+# stays disabled until there is text, the post is at the top of Home at once
+# and confirms, it opens as a thread, and deleting it takes it off Home.
+# Writes as the signed-in persona; RUN makes the text unique per run.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: home
+- tapOn:
+    id: compose-fab
+- extendedWaitUntil:
+    visible:
+      id: compose-screen
+    timeout: 15000
+# Start clean: a draft an earlier run left behind is deleted.
+- runFlow:
+    when:
+      visible:
+        id: compose-post
+        enabled: true
+    commands:
+      - tapOn:
+          id: compose-close
+      - tapOn: "Delete draft|DELETE DRAFT"
+      - tapOn:
+          id: compose-fab
+      - extendedWaitUntil:
+          visible:
+            id: compose-screen
+          timeout: 15000
+- assertVisible:
+    id: compose-post
+    enabled: false
+- tapOn:
+    id: compose-input-0
+- inputText: "Maestro post ${RUN} #maestro"
+- assertVisible:
+    id: compose-post
+    enabled: true
+- takeScreenshot: compose
+- tapOn:
+    id: compose-post
+- extendedWaitUntil:
+    notVisible:
+      id: compose-screen
+    timeout: 15000
+- extendedWaitUntil:
+    visible: ".*Maestro post ${RUN}.*"
+    timeout: 30000
+# Confirmed: the write-status row gives way to the action bar.
+- extendedWaitUntil:
+    notVisible:
+      id: write-status
+    timeout: 120000
+- takeScreenshot: posted
+
+# It opens as a thread; delete it from its menu.
+- tapOn: ".*Maestro post ${RUN}.*"
+- extendedWaitUntil:
+    visible:
+      id: thread-focus
+    timeout: 60000
+# The thread is a flat list: a root post in focus is its first card.
+- tapOn:
+    id: "more-btn-.*"
+    index: 0
+- tapOn: "Delete post"
+- extendedWaitUntil:
+    visible: "Delete post\\?"
+    timeout: 10000
+- tapOn:
+    text: "Delete|DELETE"
+    rightOf: "Cancel|CANCEL"
+- extendedWaitUntil:
+    visible: "Post deleted"
+    timeout: 120000
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: home
+- extendedWaitUntil:
+    notVisible: ".*Maestro post ${RUN}.*"
+    timeout: 30000

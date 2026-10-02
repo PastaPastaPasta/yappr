@@ -1,0 +1,56 @@
+# Notifications, signed in (PRD NOTIF-01 – NOTIF-05, NOTIF-09): the list
+# loads, the filters switch, the settings link opens the per-type switches,
+# and "Mark all as read" leaves no unread row. Nothing here writes to chain.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: notifications
+- extendedWaitUntil:
+    visible:
+      id: notifications-filters
+    timeout: 30000
+# The first load reads the last 7 days.
+- extendedWaitUntil:
+    notVisible:
+      id: notifications-loading
+    timeout: 90000
+- extendedWaitUntil:
+    visible:
+      id: "notifications-list|notifications-empty"
+    timeout: 30000
+- takeScreenshot: notifications
+# Filters, each with its list or its empty copy. Likes is absent when turned off in Settings.
+- tapOn:
+    id: notifications-filters-like
+    optional: true
+- tapOn:
+    id: notifications-filters-follow
+- tapOn:
+    id: notifications-filters-all
+# The settings link opens the per-type switches.
+- tapOn:
+    id: notifications-settings
+- extendedWaitUntil:
+    visible: "In-app notifications"
+    timeout: 20000
+- assertVisible:
+    id: notification-toggle-likes
+# The switches live under Settings (the Profile tab): go back by the Notifications tab.
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: notifications
+# Mark all as read: no unread row is left.
+- tapOn:
+    id: notifications-mark-all
+    optional: true
+- extendedWaitUntil:
+    notVisible:
+      id: unread-dot
+    timeout: 20000

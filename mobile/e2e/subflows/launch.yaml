@@ -1,0 +1,59 @@
+# Launch the app under test from a stopped state, for any variant and build.
+#
+#   APP_ID          pr.yap.app.dev | pr.yap.app.beta | pr.yap.app
+#   DEV_CLIENT_URL  a dev client's Metro link (yappr-dev://expo-development-client/?url=...);
+#                   empty for a release build, which needs no Metro
+#   CLEAR           'true': clear the app's data first (a fresh install: Welcome shows)
+#   WELCOME         on Welcome: 'browse' (default) taps "Browse without signing in",
+#                   'sign-in' taps "Sign in", 'stay' leaves it up
+#
+# It returns once the app's first screen is up: Welcome, Home or the terms gate.
+appId: ${APP_ID}
+---
+- runFlow:
+    when:
+      true: ${CLEAR == 'true'}
+    commands:
+      - launchApp:
+          appId: ${APP_ID}
+          clearState: true
+          stopApp: true
+- runFlow:
+    when:
+      true: ${CLEAR != 'true'}
+    commands:
+      - launchApp:
+          appId: ${APP_ID}
+          stopApp: true
+- runFlow:
+    when:
+      true: ${DEV_CLIENT_URL != ''}
+    file: dev-client.yaml
+- extendedWaitUntil:
+    visible:
+      id: "welcome|home-header|terms-gate"
+    timeout: 120000
+- runFlow:
+    when:
+      visible:
+        id: welcome
+      true: ${WELCOME != 'stay' && WELCOME != 'sign-in'}
+    commands:
+      - tapOn:
+          id: welcome-browse
+      - extendedWaitUntil:
+          visible:
+            id: home-header
+          timeout: 30000
+- runFlow:
+    when:
+      visible:
+        id: welcome
+      true: ${WELCOME == 'sign-in'}
+    commands:
+      - tapOn:
+          id: welcome-sign-in
+      - extendedWaitUntil:
+          visible:
+            id: sign-in-screen
+          timeout: 30000

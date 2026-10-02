@@ -1,0 +1,84 @@
+# Sign in with a private key (PRD AUTH-08), from the open sign-in sheet
+# (sign-in-screen), through the terms gate when it shows (AUTH-09).
+#   SIGN_IN_KEY  a devnet pool persona's AUTHENTICATION/HIGH key (WIF or hex).
+#                It only ever comes from `-e` (run.sh reads it from a key file);
+#                never commit or print one.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: sign-in-other-ways
+    timeout: 30000
+- tapOn:
+    id: sign-in-other-ways
+- tapOn:
+    id: sign-in-private-key
+- extendedWaitUntil:
+    visible:
+      id: key-input
+    timeout: 15000
+- tapOn:
+    id: key-input
+# In parts: iOS can drop characters from one long input into a secure field.
+- inputText: ${SIGN_IN_KEY.substring(0, 16)}
+- inputText: ${SIGN_IN_KEY.substring(16, 32)}
+- inputText: ${SIGN_IN_KEY.substring(32, 48)}
+- inputText: ${SIGN_IN_KEY.substring(48)}
+# Sakura's quorum list lags now and then ("temporarily unavailable"): look the key up again.
+- repeat:
+    times: 3
+    while:
+      notVisible:
+        id: key-found
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: "key-found|key-retry"
+          timeout: 60000
+      - tapOn:
+          id: key-retry
+          optional: true
+- assertVisible:
+    id: key-found
+- tapOn:
+    id: key-sign-in
+- extendedWaitUntil:
+    visible:
+      id: "terms-agree|home-header|settings-root|key-retry"
+    timeout: 120000
+# Signing in can meet the same lag ("Dash Platform is temporarily unavailable"):
+# "Try again" looks the key up again, then sign in again, as a user would.
+- repeat:
+    times: 3
+    while:
+      visible:
+        id: key-retry
+    commands:
+      - tapOn:
+          id: key-retry
+      - extendedWaitUntil:
+          visible:
+            id: "key-found|key-retry"
+          timeout: 60000
+      - runFlow:
+          when:
+            visible:
+              id: key-found
+          commands:
+            - tapOn:
+                id: key-sign-in
+            - extendedWaitUntil:
+                visible:
+                  id: "terms-agree|home-header|settings-root|key-retry"
+                timeout: 120000
+- runFlow:
+    when:
+      visible:
+        id: terms-agree
+    commands:
+      - tapOn:
+          id: terms-agree
+- extendedWaitUntil:
+    notVisible:
+      id: "sign-in-screen|terms-gate|key-input"
+    timeout: 30000

@@ -1,0 +1,48 @@
+# Like and unlike (PRD ENG-01; ADR E8) on a fresh post by the peer persona:
+# the heart flips at once, the like is still there when the post is opened
+# again, and unliking takes it back. The peer deletes its post afterwards.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow: ../../subflows/peer-unblocked.yaml
+- runFlow:
+    file: ../../subflows/peer-post.yaml
+    env:
+      PEER_TEXT: "Maestro like target ${RUN}"
+- assertVisible:
+    id: like-btn-${output.peerPostId}
+    text: "Like, 0 likes"
+- tapOn:
+    id: like-btn-${output.peerPostId}
+- extendedWaitUntil:
+    visible:
+      id: like-btn-${output.peerPostId}
+      text: "Unlike, 1 like"
+    timeout: 10000
+- takeScreenshot: liked
+# Kept: open the post again, from the network.
+- runFlow: ../../subflows/back.yaml
+- openLink: ${SCHEME}://post?id=${output.peerPostId}
+- extendedWaitUntil:
+    visible:
+      id: like-btn-${output.peerPostId}
+      text: "Unlike, 1 like"
+    timeout: 90000
+- tapOn:
+    id: like-btn-${output.peerPostId}
+- extendedWaitUntil:
+    visible:
+      id: like-btn-${output.peerPostId}
+      text: "Like, 0 likes"
+    timeout: 10000
+- runFlow: ../../subflows/back.yaml
+- openLink: ${SCHEME}://post?id=${output.peerPostId}
+- extendedWaitUntil:
+    visible:
+      id: like-btn-${output.peerPostId}
+      text: "Like, 0 likes"
+    timeout: 90000
+- runFlow: ../../subflows/peer-delete.yaml

@@ -1,0 +1,75 @@
+# Key exchange with a wallet on another device (PRD AUTH-04, AUTH-06; ADR E5.4,
+# E8), answered by the test-wallet responder (mobile/tools), which run.sh
+# starts on RESPONDER_URL: the QR's dash-key: link goes to the responder as
+# PERSONA; a first login also answers the dash-st: key registration. From a
+# cleared install, through the terms gate, the account switcher, then signed
+# out again. Devnet (sakura) only: the responder refuses any other network.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow:
+    file: ../../subflows/launch.yaml
+    env:
+      CLEAR: 'true'
+      WELCOME: sign-in
+- extendedWaitUntil:
+    visible: "Sign in with your Dash wallet"
+    timeout: 15000
+- takeScreenshot: sign-in-methods
+- tapOn:
+    id: sign-in-other-device
+- extendedWaitUntil:
+    visible:
+      id: kx-qr
+    timeout: 60000
+- takeScreenshot: sign-in-qr
+- copyTextFrom:
+    text: "dash-key:.*"
+- runScript: ../../scripts/respond.js
+- extendedWaitUntil:
+    visible:
+      id: "terms-agree|kx-register-qr|home-header|kx-signed-in"
+    timeout: 180000
+# A first login on this app contract registers the derived keys (dash-st:).
+- runFlow:
+    when:
+      visible:
+        id: kx-register-qr
+    commands:
+      - takeScreenshot: sign-in-register
+      - copyTextFrom:
+          text: "dash-st:.*"
+      - runScript: ../../scripts/respond.js
+- extendedWaitUntil:
+    visible:
+      id: "terms-agree|home-header"
+    timeout: 180000
+- runFlow:
+    when:
+      visible:
+        id: terms-agree
+    commands:
+      - takeScreenshot: sign-in-terms
+      - tapOn:
+          id: terms-agree
+- extendedWaitUntil:
+    visible:
+      id: home-header
+    timeout: 30000
+
+# The account switcher on the Profile tab (AUTH-10).
+- longPressOn:
+    id: tab-profile
+- extendedWaitUntil:
+    visible: "Add account"
+    timeout: 15000
+- takeScreenshot: sign-in-switcher
+- tapOn: "Manage accounts"
+- extendedWaitUntil:
+    visible:
+      id: "account-menu-.*"
+    timeout: 15000
+
+# Sign out (AUTH-11), so the key sign-in that follows starts clean.
+- runFlow: ../../subflows/sign-out.yaml

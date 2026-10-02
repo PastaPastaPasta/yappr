@@ -1,0 +1,151 @@
+name: Mobile E2E
+
+# The Maestro regression suite (mobile/e2e, ADR-001 E8) on an iOS simulator.
+# It builds the devnet variant in the Release configuration (no Metro, no dev
+# menu), boots a simulator and runs mobile/e2e/run.sh.
+#
+#  - smoke (every run): the signed-out flows. Read only, no secrets.
+#  - full (manual "full", or nightly when the secret exists): smoke plus the
+#    signed-in flows, which WRITE to devnet sakura as two pool personas.
+#    Needs the repository secret YAPPR_E2E_PERSONAS_JSON: a subset of the
+#    sakura ops identities.json holding only the two personas, for example
+#      {"network": "devnet-sakura", "identities": [
+#        {"personaIdx": 96, "identityId": "...", "handle": "...", "identityKeys": [...]},
+#        {"personaIdx": 97, "identityId": "...", "handle": "...", "identityKeys": [...]}]}
+#    (personaIdx, identityId, handle and identityKeys, as in the full file; the
+#    full file is too big for a secret). E2E_PERSONA / E2E_PEER_PERSONA below
+#    pick them. The keys only ever reach run.sh, which scrubs them from its
+#    output; never print the secret in a step.
+#
+# Nightly on purpose, with no path filter: sakura changes under the app.
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: 'smoke: signed out, read only. full: also the signed-in flows (needs YAPPR_E2E_PERSONAS_JSON).'
+        type: choice
+        options: [smoke, full]
+        default: smoke
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_VARIANT: devnet
+  MAESTRO_VERSION: '2.11.0'
+  E2E_PERSONA: '97'
+  E2E_PEER_PERSONA: '96'
+
+jobs:
+  ios:
+    name: iOS simulator (${{ inputs.suite || 'nightly' }})
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      # Only whether the secret exists; its value reaches the one step that writes it to a file.
+      HAS_PERSONAS: ${{ secrets.YAPPR_E2E_PERSONAS_JSON != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/engine/package-lock.json
+            mobile/app/package-lock.json
+            mobile/tools/package-lock.json
+
+      - name: Pick the suite
+        env:
+          REQUESTED: ${{ inputs.suite }}
+        run: |
+          suite="${REQUESTED:-smoke}"
+          # Nightly: the full suite when the personas are configured.
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$HAS_PERSONAS" = true ]; then suite=full; fi
+          if [ "$suite" = full ] && [ "$HAS_PERSONAS" != true ]; then
+            echo "::error::The full suite needs the YAPPR_E2E_PERSONAS_JSON secret (see the header of this workflow)."
+            exit 1
+          fi
+          echo "E2E_SUITE=$suite" >> "$GITHUB_ENV"
+
+      # The engine bundle (built at prebuild) needs the root and engine dependencies;
+      # the full suite's responder and peer harness need the root and tools ones.
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix mobile/engine
+          npm ci --prefix mobile/app
+          npm ci --prefix mobile/tools
+
+      # The Maestro CLI runs on the JVM.
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Install Maestro
+        run: |
+          curl -fsSL "https://get.maestro.mobile.dev" | MAESTRO_VERSION="$MAESTRO_VERSION" bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Build the app (Release, simulator)
+        working-directory: mobile/app
+        run: scripts/release-ios.sh simulator
+
+      - name: Boot a simulator and install the app
+        run: |
+          runtime="$(xcrun simctl list runtimes -j | node -e '
+            const r = JSON.parse(require("fs").readFileSync(0, "utf8")).runtimes.filter(x => x.isAvailable && x.platform === "iOS");
+            console.log(r[r.length - 1].identifier)')"
+          udid="$(xcrun simctl create "Yappr E2E" "iPhone 17" "$runtime")"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl install "$udid" mobile/app/build/release/*-simulator.app
+          echo "E2E_UDID=$udid" >> "$GITHUB_ENV"
+
+      - name: Personas (full suite)
+        if: env.E2E_SUITE == 'full'
+        env:
+          PERSONAS_JSON: ${{ secrets.YAPPR_E2E_PERSONAS_JSON }}
+        run: |
+          file="$RUNNER_TEMP/personas/identities.json"
+          mkdir -p "$(dirname "$file")" && chmod 700 "$(dirname "$file")"
+          (umask 077 && printf '%s' "$PERSONAS_JSON" > "$file")
+          echo "YAPPR_SAKURA_IDENTITIES=$file" >> "$GITHUB_ENV"
+
+      - name: Run the suite
+        run: |
+          mobile/e2e/run.sh --platform ios --device "$E2E_UDID" --variant "$APP_VARIANT" \
+            --suite "$E2E_SUITE" --out "$RUNNER_TEMP/e2e"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/e2e/summary.md" ]; then cat "$RUNNER_TEMP/e2e/summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
+          rm -rf "$RUNNER_TEMP/personas"
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-ios-${{ env.E2E_SUITE }}-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/e2e/junit.xml
+            ${{ runner.temp }}/e2e/summary.md
+            ${{ runner.temp }}/e2e/junit/
+            ${{ runner.temp }}/e2e/screenshots/
+            ${{ runner.temp }}/e2e/logs/
+          if-no-files-found: warn

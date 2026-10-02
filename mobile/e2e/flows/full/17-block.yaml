@@ -1,0 +1,87 @@
+# Block and unblock (PRD SAFE-01 – SAFE-03; ADR E8) the peer persona from its
+# profile menu: the sheet asks first, the profile turns to "You blocked …",
+# the Blocked list has it, and unblocking takes it off. Ends unblocked,
+# whatever it started from.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- openLink: ${SCHEME}://user?id=${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: profile-menu
+    timeout: 60000
+- extendedWaitUntil:
+    visible:
+      id: "profile-follow|profile-blocked"
+    timeout: 60000
+# An earlier run that stopped half way left the block in place: undo it first.
+- runFlow:
+    when:
+      visible:
+        id: profile-blocked
+    commands:
+      - tapOn:
+          id: profile-menu
+      - tapOn: "Unblock .*"
+      - extendedWaitUntil:
+          visible:
+            id: profile-follow
+          timeout: 30000
+
+- tapOn:
+    id: profile-menu
+- tapOn: "Block .*"
+- extendedWaitUntil:
+    visible:
+      id: block-confirm
+    timeout: 60000
+- assertVisible: "Block .*\\?"
+- takeScreenshot: block-sheet
+- tapOn:
+    id: block-confirm
+- extendedWaitUntil:
+    visible:
+      id: profile-blocked
+    timeout: 60000
+- takeScreenshot: blocked-profile
+
+# The Blocked list (Settings > Privacy & Safety) has them.
+- openLink: ${SCHEME}://settings?section=privacy
+- extendedWaitUntil:
+    visible:
+      id: privacy-blocked
+    timeout: 30000
+- tapOn:
+    id: privacy-blocked
+- extendedWaitUntil:
+    visible:
+      id: blocked-${PEER_ID}
+    timeout: 90000
+- takeScreenshot: blocked-list
+
+# Unblock from the profile's menu (on iOS the list row's Unblock button is the
+# row's VoiceOver action, not an element of its own), and the row goes.
+- openLink: ${SCHEME}://user?id=${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: profile-blocked
+    timeout: 60000
+- tapOn:
+    id: profile-menu
+- tapOn: "Unblock .*"
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+    timeout: 60000
+- openLink: ${SCHEME}://settings?section=privacy
+- tapOn:
+    id: privacy-blocked
+- extendedWaitUntil:
+    visible:
+      id: "blocked-list|blocked-empty"
+    timeout: 90000
+- assertNotVisible:
+    id: blocked-${PEER_ID}

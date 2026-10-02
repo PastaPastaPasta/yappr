@@ -1,0 +1,29 @@
+# Signed in as the run's persona, whatever the app's state: Settings shows the
+# account, or "Sign in" leads through the private-key sign-in (SIGN_IN_KEY).
+# Ends on Settings. Needs a launched app (subflows/launch.yaml).
+appId: ${APP_ID}
+---
+- openLink: ${SCHEME}://settings
+- extendedWaitUntil:
+    visible:
+      id: settings-root
+    timeout: 30000
+# While the engine restores a session, Sign in is disabled: wait for one or the other.
+- extendedWaitUntil:
+    visible:
+      id: "settings-account|settings-sign-in"
+      enabled: true
+    timeout: 90000
+- runFlow:
+    when:
+      visible:
+        id: settings-sign-in
+    commands:
+      - tapOn:
+          id: settings-sign-in
+      - runFlow: sign-in-key.yaml
+      - openLink: ${SCHEME}://settings
+      - extendedWaitUntil:
+          visible:
+            id: settings-account
+          timeout: 60000

@@ -153,7 +153,7 @@ The common definition of done (§4) applies to every PR in addition to its row.
 Every Wave 3 screen PR:
 - uses only the `EngineApi` through TanStack Query hooks in its own feature folder (`mobile/app/src/features/<feature>/**`);
 - fills in its own stub route files;
-- adds or extends its **Maestro flow** under `mobile/e2e/flows/<feature>.yaml` (seeded by S1; shared harness from M9);
+- adds or extends its **Maestro flow** under `mobile/e2e/flows/smoke/` (signed out, read only) or `mobile/e2e/flows/full/` (signed in, sakura writes), built on the shared subflows (`mobile/e2e/README.md`);
 - carries iOS and Android screenshots in light and dark, plus a side-by-side with the matching web page at a 390 px viewport (Playwright).
 
 | ID | Title | Scope | Deps | Exit checks (in addition to §4) |
