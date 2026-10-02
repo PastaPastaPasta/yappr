@@ -81,8 +81,10 @@ export interface ProfileTopBarProps {
 export function ProfileTopBar({ title, overBanner, right }: ProfileTopBarProps) {
   const insets = useSafeAreaInsets();
   // This stack's own history: a tab root has no Back, whatever other tabs hold.
+  // (`canGoBack()` also asks the parents, and the tab navigator can go back to
+  // the previous tab.)
   const navigation = useNavigation();
-  const canGoBack = navigation.canGoBack();
+  const canGoBack = (navigation.getState()?.index ?? 0) > 0;
   return (
     <View
       className={cn('absolute left-0 right-0 top-0 z-10', !overBanner && cn(tw.bg, 'border-b', tw.border))}
