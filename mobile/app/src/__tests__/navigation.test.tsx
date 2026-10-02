@@ -1,6 +1,7 @@
 import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
+import { useSignInPrompt } from '~/data/require-auth';
 import { useOnboarding } from '~/features/auth/onboarding';
 
 // Resolved against Jest's cwd, mobile/app.
@@ -37,7 +38,7 @@ describe('app shell', () => {
     const app = await renderApp('/');
 
     expect(app.getPathname()).toBe('/');
-    expect(screen.getByText('Coming in the feed PR')).toBeTruthy();
+    expect(screen.getByTestId('home-header')).toBeTruthy();
     for (const name of TABS) expect(tab(name)).toBeTruthy();
   });
 
@@ -50,11 +51,14 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/messages');
   });
 
-  it('opens compose from the floating button', async () => {
+  // Signed in, the button opens /compose (features/home/HomeScreen.test.tsx).
+  it('asks a signed-out reader to sign in from the floating button (G-8)', async () => {
     const app = await renderApp('/');
 
     fireEvent.press(screen.getByTestId('compose-fab'));
-    expect(app.getPathname()).toBe('/compose');
+    expect(useSignInPrompt.getState().open).toBe(true);
+    expect(app.getPathname()).toBe('/');
+    act(() => useSignInPrompt.setState({ open: false }));
   });
 
   it('pushes shared detail screens onto the current tab and keeps each tab’s history', async () => {
@@ -111,7 +115,7 @@ describe('app shell', () => {
   // Every 1.0 screen has a reachable stub (EXECUTION M1 exit check). Reached
   // in-app, since links may not open some of them (+native-intent).
   it.each([
-    ['/', 'feed'],
+    ['/', null],
     ['/explore', 'explore and search'],
     ['/explore/search?q=dash', 'explore and search'],
     ['/explore/search/people?q=dash', 'explore and search'],

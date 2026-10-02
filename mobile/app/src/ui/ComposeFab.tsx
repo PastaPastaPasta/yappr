@@ -8,12 +8,13 @@ import { colors } from './tokens';
 /**
  * The floating compose button (ADR-001 E4) on Home, Explore and Profile: the
  * web's 56px accent circle (yappr-600 in light mode, OQ-2) with `shadow-yappr-lg`. Render it as the
- * last child of the screen so it floats over the content.
+ * last child of the screen so it floats over the content. `onPress` replaces
+ * the default navigation to the composer (e.g. to gate it behind sign-in).
  */
-export function ComposeFab() {
+export function ComposeFab({ onPress: action = () => router.push('/compose') }: { onPress?: () => void }) {
   const onPress = () => {
     lightImpact();
-    router.push('/compose');
+    action();
   };
 
   return (
