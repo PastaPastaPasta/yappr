@@ -5,6 +5,7 @@ import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
+import { useRipple } from './ripple';
 
 export interface RadioOption<T extends string> {
   value: T;
@@ -50,12 +51,14 @@ export function RadioGroup<T extends string>({
   const c = useColors();
   const ios = Platform.OS === 'ios';
 
+  const ripple = useRipple();
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel} testID={testID}>
       {options.map((option, index) => {
         const selected = option.value === value;
         return (
           <Pressable
+            android_ripple={ripple}
             key={option.value}
             accessibilityRole="radio"
             accessibilityLabel={option.title}

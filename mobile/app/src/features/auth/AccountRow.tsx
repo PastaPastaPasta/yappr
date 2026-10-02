@@ -13,6 +13,7 @@ import { monoFont, tw, useColors } from '~/ui/tokens';
 
 import { accountName } from './accounts';
 import { networkName as networkLabel } from './onboarding';
+import { useRipple } from '~/ui/ripple';
 
 /**
  * One signed-in account (UX_SPEC §4.26 "Accounts"): avatar, display name or
@@ -41,10 +42,12 @@ export function AccountRow({
   const name = profile && (profile.hasProfile || profile.username) ? profile.displayName : handle;
   const showHandle = name !== handle;
 
+  const ripple = useRipple();
   return (
     // The menu sits beside the row, not inside it: an iOS button hides the controls it contains.
     <View className={cn('flex-row items-center', trailing ? 'pr-2' : null)}>
       <ScalePressable
+        android_ripple={ripple}
         wrapperStyle={{ flex: 1 }}
         accessibilityRole="button"
         accessibilityLabel={[name, showHandle ? handle : null, networkLabel, account.active ? 'current account' : null]

@@ -6,6 +6,7 @@ import { ChevronRightIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 import { Text } from '~/ui/Text';
 import { colors, tw, useColors, useIsDark, useLargeText, type IconComponent } from '~/ui/tokens';
+import { useRipple } from '~/ui/ripple';
 
 /**
  * The settings list (UX_SPEC §2.9, §4.25): an inset grouped list on iOS
@@ -159,6 +160,7 @@ export function SettingsRow({
   testID,
 }: SettingsRowProps) {
   const c = useColors();
+  const ripple = useRipple();
   const large = useLargeText();
   const centered = destructive && ios && !Icon;
   const tone = destructive ? 'destructive' : link ? 'link' : 'primary';
@@ -216,6 +218,7 @@ export function SettingsRow({
   }
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole={accessibilityRole}
       accessibilityLabel={accessibilityLabel ?? [label, value].filter(Boolean).join(', ')}
       accessibilityHint={accessibilityHint ?? description}

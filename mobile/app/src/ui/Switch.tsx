@@ -10,6 +10,7 @@ import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
 import { colors, tw, useColors } from './tokens';
+import { useRipple } from './ripple';
 
 export type SwitchProps = Omit<RNSwitchProps, 'trackColor' | 'thumbColor' | 'ios_backgroundColor'>;
 
@@ -42,8 +43,10 @@ export interface SwitchRowProps {
 
 /** A settings row whose whole area toggles the switch (UX_SPEC §2.9). */
 export function SwitchRow({ label, description, value, onValueChange, disabled, testID }: SwitchRowProps) {
+  const ripple = useRipple();
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="switch"
       accessibilityLabel={label}
       accessibilityHint={description}

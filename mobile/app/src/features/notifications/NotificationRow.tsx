@@ -21,6 +21,7 @@ import { Text } from '~/ui/Text';
 import { colors, tw, type IconComponent } from '~/ui/tokens';
 
 import { phraseOf, type NotificationRowModel, type NotificationType } from './notification-model';
+import { useRipple } from '~/ui/ripple';
 
 /**
  * Type icons and their decorative colors (UX_SPEC §1.2: the phrase carries
@@ -103,8 +104,10 @@ export const NotificationRow = memo(function NotificationRow({
     .filter(Boolean)
     .join(' ');
 
+  const ripple = useRipple();
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityActions={actorId ? [{ name: 'profile', label: `Open ${name}'s profile` }] : undefined}

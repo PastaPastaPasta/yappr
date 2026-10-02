@@ -6,6 +6,7 @@ import { requireAuth } from '~/data/require-auth';
 
 import { lightImpact } from './haptics';
 import { colors } from './tokens';
+import { useRipple } from './ripple';
 
 const openCompose = () => requireAuth(() => router.push('/compose'));
 
@@ -22,13 +23,15 @@ export function ComposeFab({ onPress: action = openCompose }: { onPress?: () => 
     action();
   };
 
+  const ripple = useRipple('fill');
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel="New post"
       testID="compose-fab"
       onPress={onPress}
-      className="absolute bottom-4 right-4 h-14 w-14 items-center justify-center rounded-full bg-yappr-600 shadow-yappr-lg active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600"
+      className="absolute bottom-4 right-4 h-14 w-14 items-center justify-center rounded-full bg-yappr-600 android:overflow-hidden shadow-yappr-lg active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600"
     >
       <PlusIcon size={28} color={colors.white} strokeWidth={2} />
     </Pressable>

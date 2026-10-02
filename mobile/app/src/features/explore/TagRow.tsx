@@ -6,6 +6,7 @@ import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
 import { tagCountLabel } from './tags';
+import { useRipple } from '~/ui/ripple';
 
 export interface TagRowProps {
   tag: TagDTO;
@@ -18,8 +19,10 @@ export interface TagRowProps {
 /** A trending or search tag (UX_SPEC §4.15): rank caption, `#tag` or `$TAG`, and its count. */
 export function TagRow({ tag, rank, onPress, testID }: TagRowProps) {
   const count = tagCountLabel(tag);
+  const ripple = useRipple();
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel={[rank !== undefined && `Number ${rank}`, tag.display, count].filter(Boolean).join(', ')}
       onPress={() => onPress(tag)}

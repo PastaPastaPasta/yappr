@@ -26,6 +26,7 @@ import { cn, formatNumber } from '~/lib-allowlist';
 import { Text } from '../Text';
 import { lightImpact } from '../haptics';
 import { hitSlopFor, motion, useColors, useLargeText, type IconComponent } from '../tokens';
+import { useRipple } from '../ripple';
 
 const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : ShareIcon;
 
@@ -80,8 +81,10 @@ function Action({
   const color = active ? c[tone] : c.textSecondary;
   const Glyph = active ? ActiveIcon : Icon;
 
+  const ripple = useRipple('icon');
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityState={{ selected: active, disabled: !!disabled }}

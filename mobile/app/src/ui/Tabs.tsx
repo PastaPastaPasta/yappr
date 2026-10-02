@@ -8,6 +8,7 @@ import { CountBadge } from './Badge';
 import { selectionTick } from './haptics';
 import { Text } from './Text';
 import { hitSlopFor, tw, useColors } from './tokens';
+import { useRipple } from './ripple';
 
 export interface TabOption<T extends string> {
   value: T;
@@ -33,12 +34,14 @@ function select<T extends string>(next: T, current: T, onChange: (value: T) => v
  * equal-width labels, a 4 pt `accent` bar 56 wide under the active one.
  */
 export function TopTabs<T extends string>({ options, value, onChange, testID }: SelectProps<T>) {
+  const ripple = useRipple();
   return (
     <View accessibilityRole="tablist" testID={testID} className={cn('flex-row border-b', tw.border)}>
       {options.map((option) => {
         const active = option.value === value;
         return (
           <Pressable
+            android_ripple={ripple}
             key={option.value}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
@@ -70,6 +73,7 @@ export function TopTabs<T extends string>({ options, value, onChange, testID }: 
  */
 export function SegmentedControl<T extends string>({ options, value, onChange, testID }: SelectProps<T>) {
   const c = useColors();
+  const ripple = useRipple();
   if (Platform.OS === 'ios') {
     return (
       <NativeSegmentedControl
@@ -96,6 +100,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, t
         const active = option.value === value;
         return (
           <Pressable
+            android_ripple={ripple}
             key={option.value}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
@@ -131,6 +136,7 @@ export function FilterChips<T extends string>({
   onChange,
   testID,
 }: Omit<SelectProps<T>, 'options'> & { options: readonly FilterChipOption<T>[] }) {
+  const ripple = useRipple();
   return (
     <ScrollView
       horizontal
@@ -142,6 +148,7 @@ export function FilterChips<T extends string>({
         const active = option.value === value;
         return (
           <Pressable
+            android_ripple={ripple}
             key={option.value}
             accessibilityRole="button"
             accessibilityState={{ selected: active }}
@@ -149,7 +156,7 @@ export function FilterChips<T extends string>({
             onPress={() => select(option.value, value, onChange)}
             testID={testID ? `${testID}-${option.value}` : undefined}
             className={cn(
-              'h-8 flex-row items-center gap-1.5 rounded-full border px-3',
+              'h-8 flex-row items-center gap-1.5 rounded-full border px-3 android:overflow-hidden',
               active ? cn(tw.bgSelected, 'border-yappr-500') : cn(tw.bgMuted, 'border-transparent'),
             )}
           >
