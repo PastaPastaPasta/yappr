@@ -141,6 +141,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   const newId = options.newId ?? (() => crypto.randomUUID())
   const handlers = new Map<WriteOp, WriteHandler>()
   const records = new Map<string, TicketRecord>()
+  const observers = new Set<(ticket: WriteTicket) => void>()
   const absenceRecheckMs = options.absenceRecheckMs ?? 2_000
 
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
@@ -205,6 +206,13 @@ export function createTicketStore(options: TicketStoreOptions) {
     persist()
     const ticket = clone(record.ticket)
     options.emit('write.status', ticket)
+    for (const observer of observers) {
+      try {
+        observer(clone(ticket))
+      } catch {
+        // An observer's failure never costs the write its report.
+      }
+    }
     return ticket
   }
 
@@ -360,6 +368,16 @@ export function createTicketStore(options: TicketStoreOptions) {
     /** Register how `op` runs; M7b's write methods each register one. */
     register<A>(op: WriteOp, handler: WriteHandler<A>): void {
       handlers.set(op, handler)
+    },
+
+    /**
+     * Call `observer` with every ticket transition the store reports
+     * (`write.status`), for engine-side caches a write makes stale. Returns
+     * the unsubscribe.
+     */
+    observe(observer: (ticket: WriteTicket) => void): () => void {
+      observers.add(observer)
+      return () => { observers.delete(observer) }
     },
 
     /**
