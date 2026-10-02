@@ -1,5 +1,6 @@
 import { Image } from 'expo-image';
-import { router } from 'expo-router';
+import { router, useNavigation } from 'expo-router';
+import { useEffect } from 'react';
 import { View } from 'react-native';
 import Animated, { Keyframe } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -38,6 +39,10 @@ export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
   const dark = useIsDark();
   const chipState = useChipState();
+  const navigation = useNavigation();
+
+  // Leaving by any route (Android back included) counts as "Browse": Welcome is shown once.
+  useEffect(() => navigation.addListener('beforeRemove', () => setWelcomed(true)), [navigation]);
 
   const leave = (next: 'sign-in' | 'browse') => {
     setWelcomed(true);

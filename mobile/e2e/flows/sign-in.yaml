@@ -6,6 +6,10 @@
 #   METHOD=key     private key: Welcome → Other ways → key (typed from -e
 #                  SIGN_IN_KEY, a pool persona's AUTHENTICATION/HIGH key; never
 #                  committed) → "Identity found" → terms gate → Home.
+#                  Maestro echoes inputText to its console and to
+#                  ~/.maestro/tests/*/maestro.log: use only a devnet pool
+#                  persona's key (never a testnet or mainnet one), and delete
+#                  that run's logs afterwards if the machine is shared.
 #   METHOD=wallet  wallet key exchange across devices: the QR screen's dash-key:
 #                  link goes to the test-wallet responder as PERSONA; a first
 #                  login also answers the dash-st: key registration.
