@@ -256,7 +256,8 @@ States: `starting → handshaking → booting → ready ⇄ degraded → crashed
 
 **Restarts:**
 - **Remount.** A restart remounts the WebView with a new `key` and a new `sid`, and increments `epoch`.
-- **Backoff.** 0.5 s, 1 s, 2 s, 4 s, 8 s, then 30 s. Five failed boots inside 2 minutes move the supervisor to `failed`. The diagnostics screen then shows the last error and a "Restart engine" button that resets the counter.
+- **Backoff.** 0.5 s, 1 s, 2 s, 4 s, 8 s, then 30 s.
+- **Giving up (PRD NET-04).** At most 3 restarts in one run of failures; the next failure moves the supervisor to `failed`, and every queued call rejects with `ENGINE_UNAVAILABLE`. Every cause counts: a crash, a hang, a missed hello or boot deadline, a failed prepare. A run ends once an engine has stayed up (ready or degraded) for 2 minutes, so occasional crashes never add up, while an engine that never comes up, or falls over soon after, fails after 3 restarts however slowly each attempt fails. Home and Notifications then show the "Couldn't connect to Dash Platform." banner with "Try again"; it, and the diagnostics screen's "Restart engine", reset the budget. A return to the foreground also retries.
 - **Clean storage.** Storage is rehydrated from MMKV on every boot. Write-through (§9.1) keeps MMKV current to within one event-loop turn, so a crash loses at most the batch in flight.
 
 **Replay after a restart:**
