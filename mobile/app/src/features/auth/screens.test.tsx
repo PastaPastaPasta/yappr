@@ -26,6 +26,7 @@ jest.mock('expo-router', () => ({
     addListener: () => () => undefined,
   }),
   useLocalSearchParams: () => ({}),
+  useIsFocused: () => true,
 }));
 
 const KEY = 'cR4tFakeTestKeyThatIsNotRealAtAll1234567890abcdefghijk';
@@ -77,6 +78,15 @@ describe('private key sign-in (AUTH-08)', () => {
     });
     expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
     expect(mockGoBack).toHaveBeenCalled();
+  });
+
+  it('keeps the key out of screenshots while the screen is open', () => {
+    // Focus is mocked as always true here; the blur release is covered in src/ui/screen-capture.test.tsx.
+    const native = jest.requireMock<{ isCaptureBlocked: () => boolean }>('../../../modules/secure-window');
+    const view = render(<KeySignInScreen />);
+    expect(native.isCaptureBlocked()).toBe(true);
+    view.unmount();
+    expect(native.isCaptureBlocked()).toBe(false);
   });
 
   it('shows the engine’s reason and keeps Sign in disabled', async () => {

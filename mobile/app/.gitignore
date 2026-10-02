@@ -47,3 +47,7 @@ yarn-error.*
 *.aab
 *.ipa
 *.xcarchive
+
+# Gradle output of local Expo modules
+modules/*/android/build/
+modules/*/android/.cxx/

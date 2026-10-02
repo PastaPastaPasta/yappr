@@ -111,3 +111,15 @@ describe('release-ios.sh variant guard', () => {
     expect(matches('pr.yap.app.dev', 'prXyapXappXdev')).toBe(false);
   });
 });
+
+describe('screen capture blocking (AUTH-12)', () => {
+  it('links expo-screen-capture on iOS only', () => {
+    // On Android it registers a screenshot callback at startup, so Android 14+ would say
+    // "Yappr detected this screenshot" on every screen; modules/secure-window sets FLAG_SECURE instead.
+    expect(pkg.expo.autolinking.android.exclude).toContain('expo-screen-capture');
+    const secureWindow = JSON.parse(
+      fs.readFileSync(path.join(APP_DIR, 'modules/secure-window/expo-module.config.json'), 'utf8'),
+    ) as { platforms: string[] };
+    expect(secureWindow.platforms).toEqual(['android']);
+  });
+});
