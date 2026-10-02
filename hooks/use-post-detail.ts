@@ -42,6 +42,13 @@ interface UsePostDetailResult {
    * above the chain.
    */
   removedChainIds: string[]
+  /**
+   * True while a reply is on screen (e.g. from cached navigation data) but its
+   * thread's root has not been looked up yet, or the lookup failed: whether the
+   * thread can still be replied to is not known, so nothing should be offered
+   * to reply to.
+   */
+  replyRootPending: boolean
   /** Whether initial load is in progress (false if using cached data) */
   isLoading: boolean
   /** Whether replies are still loading (separate from main post) */
@@ -326,6 +333,10 @@ export function usePostDetail({
 
   const [error, setError] = useState<string | null>(null)
   const [removedChainIds, setRemovedChainIds] = useState<string[]>([])
+  // The post id whose thread root has been looked up: a refresh of the same post
+  // keeps its answer instead of blocking replies again. A failed load leaves it
+  // unset, so replies stay blocked until a reload verifies the root.
+  const [rootCheckedFor, setRootCheckedFor] = useState<string | null>(null)
 
   // Track loaded post to prevent duplicate loads
   const loadedPostIdRef = useRef<string | null>(null)
@@ -494,6 +505,7 @@ export function usePostDetail({
       } else {
         setRemovedChainIds([])
       }
+      setRootCheckedFor(postId)
 
       // Show the main post as soon as it's available
       setState({ post: loadedPost, replies: [], replyThreads: [], replyChain })
@@ -762,6 +774,7 @@ export function usePostDetail({
     replyThreads: state.replyThreads,
     replyChain: state.replyChain,
     removedChainIds,
+    replyRootPending: state.post !== null && targetKindOf(state.post) === 'reply' && rootCheckedFor !== postId,
     isLoading,
     isLoadingReplies,
     hasMoreReplies,

@@ -17,6 +17,7 @@ import { AUTHORS, POSTS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { PostItem } from './PostItem';
+import { likeWrite } from './post-writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }));
@@ -272,7 +273,48 @@ describe('PostItem menu', () => {
   });
 });
 
+describe('post write specs', () => {
+  it('recognise a restored ticket only for the op they asked for', () => {
+    const post = POSTS.basic;
+    const target = { id: post.id, kind: 'post' as const, ownerId: post.author.id, rootPostId: null };
+    expect(likeWrite.matches?.(ticket({ op: 'like', target }), { post, like: true })).toBe(true);
+    expect(likeWrite.matches?.(ticket({ op: 'unlike', target }), { post, like: true })).toBe(false);
+    expect(likeWrite.matches?.(ticket({ op: 'like', target: { ...target, id: 'other' } }), { post, like: true })).toBe(false);
+  });
+});
+
+describe('PostItem removal', () => {
+  it("shows a deleted post as the deleted line with removal='stub' (threads, detail)", () => {
+    useRemovedPosts.setState({ ids: new Set(['gone']) });
+    queryClient.setQueryData(queryKeys.post.detail('gone'), fixturePost({ id: 'gone', author: AUTHORS.alice }));
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PostItem post={fixturePost({ id: 'gone', author: AUTHORS.alice })} removal="stub" />
+        <PostItem post={fixturePost({ id: 'gone', author: AUTHORS.alice })} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByTestId('post-card-gone')).toHaveLength(1);
+    expect(screen.getByText('This post was deleted by its author.')).toBeTruthy();
+  });
+});
+
 describe('PostItem bare reposts', () => {
+  it("doesn't act on a bare repost's marks before they load", async () => {
+    let answer: (stats: object) => void = () => undefined;
+    fakeEngine.method('engage.stats').mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const target = fixturePost({ id: 'tgt', author: AUTHORS.carol, viewer: undefined });
+    renderPost(fixturePost({ id: 'br', content: '', bareRepost: true, quoted: target, quotedPostId: 'tgt' }));
+    fireEvent.press(byId('like-btn-tgt'));
+    expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
+    expect(toastMessage()).toBe('Loading this post. Try again in a moment.');
+
+    // Signed out, the sign-in sheet comes first.
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    fireEvent.press(byId('like-btn-tgt'));
+    expect(useSignInPrompt.getState().open).toBe(true);
+    await act(async () => answer({}));
+  });
+
   it("shows the reposted post under the reposter's banner, with its own fresh counts", async () => {
     const target = fixturePost({ id: 'target', author: AUTHORS.carol, content: 'The original', viewer: undefined });
     const bare = fixturePost({

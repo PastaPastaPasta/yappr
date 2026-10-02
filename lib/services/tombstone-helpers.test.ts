@@ -255,3 +255,29 @@ describe('the v11 tombstone (design M)', () => {
     expect(attempt(0)).toEqual({ content: '', deleted: true, language: 'en' })
   })
 })
+
+describe('a banned or suspended author (QA 2026-10-01, sakura)', () => {
+  // Drive lets a barred identity DELETE but refuses it every replace, so on v11 the
+  // tombstone of its own post is a paid 41107/41108. Live: "Identity H9RC… is banned on
+  // contract GTNS… and can not act on its documents" (code 41107).
+  const BANNED = { code: 41107, name: 'Protocol', message: 'Identity H9RC is banned on contract GTNS and can not act on its documents' }
+  const SUSPENDED = 'Identity 6HUE is suspended on contract GTNS until 1790888901919 and can not act on its documents (code=41108)'
+
+  it('throws a ban refusal (the write path reports it as text) instead of a silent false', async () => {
+    updateDocument.mockResolvedValueOnce({ success: false, error: `${BANNED.message} (code=41107)` })
+    await expect(tombstone('v11')).rejects.toThrow(/is banned on contract GTNS/)
+    expect(updateDocument).toHaveBeenCalledTimes(1)
+  })
+
+  it('throws a suspension refusal, and passes an error object through as it is', async () => {
+    updateDocument.mockResolvedValueOnce({ success: false, error: SUSPENDED })
+    await expect(tombstone('v11')).rejects.toThrow(/is suspended on contract GTNS/)
+    updateDocument.mockResolvedValueOnce({ success: false, error: BANNED })
+    await expect(tombstone('v11')).rejects.toBe(BANNED)
+  })
+
+  it('still answers false for any other refusal', async () => {
+    updateDocument.mockResolvedValueOnce({ success: false, error: 'insufficient balance' })
+    await expect(tombstone('v11')).resolves.toBe(false)
+  })
+})
