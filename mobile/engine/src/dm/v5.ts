@@ -74,6 +74,12 @@ interface SendLane {
 
 const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
 
+/** My messages in `key` held on trust and not read back yet (`MessageView.pending`), counted without building the views. */
+function pendingIn(engine: DmEngine, key: string): number {
+  const conv = engine.ctx.convs.get(key)
+  return conv ? Array.from(conv.held.values()).filter(held => held.local === true).length : 0
+}
+
 function toMessageDTO(view: MessageView): MessageDTO {
   return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.createdAt), own: view.own, pending: view.pending }
 }
@@ -118,6 +124,7 @@ function view(engine: DmEngine): DmView {
     ready: snapshot.ready,
     error: snapshot.error,
     messages: key => engine.messages(key).map(toMessageDTO),
+    pendingIn: key => pendingIn(engine, key),
   }
 }
 
