@@ -214,6 +214,19 @@ describe('ProfileScreen', () => {
     expect(screen.queryByTestId('profile-tabs')).toBeNull();
   });
 
+  it('says when the block comes from a followed block list, with no Unblock (PROF-11)', async () => {
+    fakeEngine
+      .method('profiles.get')
+      .mockResolvedValue(profile({ viewer: { follows: false, blocks: true, blockedBy: 'list', isSelf: false } }));
+    renderProfile();
+    await flush();
+
+    expect(screen.getByText('This user is blocked')).toBeTruthy();
+    expect(screen.getByText("Blocked by a block list you follow. You won't see their posts in your feeds")).toBeTruthy();
+    expect(screen.queryByText('Unblock')).toBeNull();
+    expect(screen.queryByTestId('profile-tabs')).toBeNull();
+  });
+
   it('treats the Profile tab as the viewer’s own while the session restores', async () => {
     useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
     fakeEngine.method('profiles.get').mockResolvedValue(

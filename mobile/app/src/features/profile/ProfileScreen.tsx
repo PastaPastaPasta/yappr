@@ -285,6 +285,8 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   // A block or unblock made on this device counts at once (features/safety); while the session restores, the engine's word.
   const blockedHere = useAuthorBlocked(profile?.id, profile?.viewer?.blocks);
   const blocked = !isSelf && (viewerId ? blockedHere : profile?.viewer?.blocks === true);
+  // Blocked only through a followed block list (PROF-11): managed on web, so no Unblock here.
+  const blockedByList = blocked && profile?.viewer?.blockedBy === 'list';
   const following = profile?.viewer?.follows === true;
   // Gated until the setting says otherwise (the engine's default is on): not while it loads, nor if it can't be read.
   const bannerGated = !isSelf && !following && settings.data?.gateMediaFromNonFollowed !== false;
@@ -315,9 +317,13 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   const otherMenu: MenuItem[] = [
     { id: 'share', title: 'Share profile', systemImage: 'square.and.arrow.up' },
     { id: 'copy', title: 'Copy profile link', systemImage: 'link' },
-    blocked
-      ? { id: 'unblock', title: `Unblock ${handle}`, systemImage: 'checkmark.circle' }
-      : { id: 'block', title: `Block ${handle}`, systemImage: 'nosign', destructive: true },
+    ...(blockedByList
+      ? []
+      : [
+          blocked
+            ? { id: 'unblock', title: `Unblock ${handle}`, systemImage: 'checkmark.circle' }
+            : { id: 'block', title: `Block ${handle}`, systemImage: 'nosign', destructive: true },
+        ]),
   ];
   // The shared unblock: it also brings back the author's posts hidden elsewhere (SAFE-02).
   const unblock = () =>
@@ -477,14 +483,22 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
         <FlashList
           data={[0]}
           renderItem={() => (
-            <EmptyState
-              title="You blocked this user"
-              description="You won't see their posts in your feeds"
-              icon={NoSymbolIcon}
-              // A block from a followed block list can't be undone here: the unblock fails with STILL_BLOCKED.
-              action={{ label: 'Unblock', onPress: unblock }}
-              testID="profile-blocked"
-            />
+            blockedByList ? (
+              <EmptyState
+                title="This user is blocked"
+                description="Blocked by a block list you follow. You won't see their posts in your feeds"
+                icon={NoSymbolIcon}
+                testID="profile-blocked"
+              />
+            ) : (
+              <EmptyState
+                title="You blocked this user"
+                description="You won't see their posts in your feeds"
+                icon={NoSymbolIcon}
+                action={{ label: 'Unblock', onPress: unblock }}
+                testID="profile-blocked"
+              />
+            )
           )}
           ListHeaderComponent={header}
           onScroll={onScroll}
