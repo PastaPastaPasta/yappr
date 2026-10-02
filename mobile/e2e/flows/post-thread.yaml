@@ -1,0 +1,87 @@
+# S3: post detail, thread and engagements (PRD POST-01 – POST-06, POST-10).
+#
+# Read-only and signed out: it writes nothing. Runs against a dev build of the
+# devnet variant with Metro attached, because it opens the dev gallery's live
+# feed (`yappr-dev:///__gallery`) until the Home feed lands.
+#
+#   maestro --device <udid|serial> test mobile/e2e/flows/post-thread.yaml
+#   maestro --device <udid|serial> test -e POST_ID=<id of a post with replies> mobile/e2e/flows/post-thread.yaml
+#
+# Start the dev client against Metro first (see mobile/CLAUDE.md, Run).
+# Without POST_ID it opens the first post of the live feed. With POST_ID (a
+# post that has replies and likes) it also checks the replies and engagements.
+appId: pr.yap.app.dev
+---
+# A dev client keeps the bundle it loaded from Metro only while it runs.
+- launchApp:
+    stopApp: false
+- runFlow:
+    when:
+      true: ${typeof POST_ID == 'undefined' || POST_ID == ''}
+    commands:
+      # Open a thread from the feed.
+      - openLink: yappr-dev:///__gallery?section=live
+      - extendedWaitUntil:
+          visible:
+            id: post-card-.*
+          timeout: 60000
+      - tapOn:
+          id: post-card-.*
+          index: 0
+- runFlow:
+    when:
+      true: ${typeof POST_ID != 'undefined' && POST_ID != ''}
+    commands:
+      - openLink: yappr-dev:///post/${POST_ID}
+- extendedWaitUntil:
+    visible:
+      id: thread-focus
+    timeout: 60000
+- assertVisible:
+    id: thread-list
+# The replies, or the empty state, replace "Loading replies…".
+- extendedWaitUntil:
+    notVisible:
+      id: replies-loading
+    timeout: 60000
+# Signed out, the docked bar asks to sign in (POST-10).
+- assertVisible: Sign in to reply
+- runFlow:
+    when:
+      true: ${typeof POST_ID != 'undefined' && POST_ID != ''}
+    commands:
+      # Paginate: scroll the replies to the end; the engine adds pages as the list nears it.
+      - scrollUntilVisible:
+          element:
+            id: thread-reply-.*
+          direction: DOWN
+          timeout: 30000
+      - repeat:
+          times: 3
+          commands:
+            - swipe:
+                direction: UP
+                duration: 400
+      - assertNotVisible:
+          id: replies-error
+      # Back to the top, then the counts row opens Likes (POST-06).
+      - repeat:
+          times: 4
+          commands:
+            - swipe:
+                direction: DOWN
+                duration: 400
+      - tapOn:
+          id: count-likes
+      - extendedWaitUntil:
+          visible:
+            id: engagements-list-likes
+          timeout: 30000
+      - assertVisible:
+          id: engagement-user-.*
+      - tapOn:
+          id: engagement-tabs-quotes
+      - extendedWaitUntil:
+          visible:
+            id: engagements-list-quotes
+          timeout: 30000

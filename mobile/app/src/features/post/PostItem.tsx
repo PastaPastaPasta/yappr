@@ -14,7 +14,13 @@ import type { MenuItem } from '~/ui/ContextMenu';
 import { confirmAlert } from '~/ui/Dialog';
 import { lightImpact, mediumImpact } from '~/ui/haptics';
 import { useMediaUrls } from '~/ui/media-url';
-import { PostCard, type PostCardActions, type PostCardMenu, type PostCardProps } from '~/ui/post/PostCard';
+import {
+  PostCard,
+  type EngagementCountTab,
+  type PostCardActions,
+  type PostCardMenu,
+  type PostCardProps,
+} from '~/ui/post/PostCard';
 import type { CardPoll, Loadable } from '~/ui/post/types';
 import { toast } from '~/ui/toast';
 
@@ -221,6 +227,7 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
   const { external } = useMediaUrls();
 
   const own = viewerId !== null && viewerId === post.author.id;
+  const detail = cardProps.variant === 'detail';
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
   const followKnown =
     viewerId === null || !listed.bareRepost || typeof listed.quoted?.viewer?.followsAuthor === 'boolean';
@@ -270,10 +277,12 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
       });
 
     const openOnWeb = () => openExternal(postWebUrl(post));
+    const openEngagements = (tab?: EngagementCountTab) =>
+      router.push({ pathname: '/post/[id]/engagements', params: { id: post.id, kind: post.kind, ...(tab ? { tab } : {}) } });
 
     const menuActions: Record<string, () => void> = {
       follow,
-      engagements: () => router.push({ pathname: '/post/[id]/engagements', params: { id: post.id, kind: post.kind } }),
+      engagements: () => openEngagements(),
       'copy-link': () => copyText(postWebUrl(post), 'Link copied to clipboard'),
       share: () => sharePost(post),
       delete: () => {
@@ -293,7 +302,9 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
     const reposterId = post.repostedBy?.id;
     const quoted = post.quoted;
     const actions: PostCardActions = {
-      onPress: () => openPost(post),
+      // The detail card is the open post: tapping it again would push it twice.
+      onPress: detail ? undefined : () => openPost(post),
+      onCountPress: openEngagements,
       onAuthorPress: () => openUser(post.author.id),
       onReposterPress: reposterId ? () => openUser(reposterId) : undefined,
       onCopyId: () => copyText(post.author.id, 'Identity ID copied'),
@@ -323,7 +334,7 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
     };
     const menu: PostCardMenu = { items: menuItems(post, own, followKnown), onSelect };
     return { actions, menu };
-  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external]);
+  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail]);
 
   if ((removed && !asStub) || safety.hidden) return null;
 
