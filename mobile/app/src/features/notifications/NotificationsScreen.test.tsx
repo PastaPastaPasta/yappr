@@ -251,6 +251,23 @@ describe('Notifications', () => {
     expect(screen.queryByTestId('notifications-mark-all')).toBeNull();
   });
 
+  it('keeps mark all as read when the first list fetch lands after it', async () => {
+    signIn();
+    useNotificationBadge.setState({ unread: 3 });
+    let landStale: (value: Page<NotificationDTO>) => void = () => undefined;
+    const allRead = NOTIFICATIONS.map((n) => ({ ...n, read: true }));
+    list()
+      .mockReturnValueOnce(new Promise((resolve) => (landStale = resolve)))
+      .mockResolvedValue(page(allRead));
+    await renderScreen();
+
+    // Nothing is cached yet, but the badge already offers the action.
+    await act(async () => fireEvent.press(screen.getByTestId('notifications-mark-all')));
+    await act(async () => landStale(page(NOTIFICATIONS)));
+    expect(screen.queryAllByTestId('unread-dot')).toHaveLength(0);
+    expect(list()).toHaveBeenCalledTimes(2);
+  });
+
   it('says so and restores the badge when mark all as read is refused', async () => {
     signIn();
     useNotificationBadge.setState({ unread: 3 });

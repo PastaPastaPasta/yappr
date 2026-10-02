@@ -115,14 +115,19 @@ export function useNotificationList(filter: MobileFilter, enabled: boolean) {
 
 /**
  * Marks these ids read in every cached list; returns how many were unread.
- * A list fetch already in flight may have read them unread, so it is
- * cancelled (reverting to the data before it) and can't land over the mark;
- * `cancelled` says to refetch once the engine holds the mark.
+ * Any list fetch in flight, a first one with nothing cached included, may
+ * have read them unread, so it is cancelled (reverting to the data before
+ * it) and can't land over the mark; `cancelled` says to refetch once the
+ * engine holds the mark.
  */
 function patchRead(ids: ReadonlySet<string> | 'all'): { unread: number; cancelled: boolean } {
   const changed = new Set<string>();
   let cancelled = false;
   for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.notificationsAll })) {
+    if (query.state.fetchStatus === 'fetching') {
+      cancelled = true;
+      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
+    }
     const data = queryClient.getQueryData<ListData>(query.queryKey);
     if (!data) continue;
     let touched = false;
@@ -139,10 +144,6 @@ function patchRead(ids: ReadonlySet<string> | 'all'): { unread: number; cancelle
       };
     });
     if (!touched) continue;
-    if (query.state.fetchStatus === 'fetching') {
-      cancelled = true;
-      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
-    }
     queryClient.setQueryData<ListData>(query.queryKey, { ...data, pages }, { updatedAt: query.state.dataUpdatedAt });
   }
   return { unread: changed.size, cancelled };
