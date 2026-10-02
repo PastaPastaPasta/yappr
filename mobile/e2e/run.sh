@@ -205,11 +205,12 @@ if [ "$suite" = full ]; then
   curl -sf --max-time 2 "http://$peer_addr/health" | grep -q "\"identityId\":\"$peer_id\"" || die "the peer on $peer_addr is not persona $peer_persona"
 
   # Release builds show the wallet link only as a QR code: the bridge reads it off this
-  # device's screen (macOS: Core Image). Bound to this device, so never reused.
+  # device's screen (macOS: Core Image) and hands it to the responder. Bound to this
+  # device, so never reused.
   bridge_addr="${E2E_BRIDGE_ADDR:-127.0.0.1:8791}"
   curl -s --max-time 2 "http://$bridge_addr/health" >/dev/null && die "something already listens on $bridge_addr (E2E_BRIDGE_ADDR)"
   node "$here/host/qr-bridge.mjs" --platform "$platform" --device "$device" --listen "$bridge_addr" \
-    >"$out/logs/qr-bridge.log" 2>&1 &
+    --responder "http://$responder_addr" >"$out/logs/qr-bridge.log" 2>&1 &
   pids+=($!)
   wait_up "http://$bridge_addr/health" 300 "QR bridge" "$out/logs/qr-bridge.log" "$!" || exit 1
 
@@ -230,8 +231,7 @@ if [ "$suite" = full ]; then
   unset value chunk
 
   env_args+=(-e "PERSONA=$persona" -e "SELF_ID=$self_id" -e "SELF_HANDLE=$self_handle"
-    -e "PEER_ID=$peer_id" -e "PEER_HANDLE=$peer_handle" -e "PEER_URL=http://$peer_addr" -e "RESPONDER_URL=http://$responder_addr"
-    -e "BRIDGE_URL=http://$bridge_addr")
+    -e "PEER_ID=$peer_id" -e "PEER_HANDLE=$peer_handle" -e "PEER_URL=http://$peer_addr" -e "BRIDGE_URL=http://$bridge_addr")
 fi
 
 # --- Flows -------------------------------------------------------------------------------------

@@ -1,21 +1,26 @@
 #!/usr/bin/env node
-// Reads the wallet sign-in QR code off the device under test, for the Maestro suite
-// (mobile/e2e). Release builds show the dash-key: / dash-st: request only as a QR code
-// and a "Copy link" button, never as text (KeyExchangeParts' DevWalletUri is __DEV__
-// only), and Maestro can neither read the device clipboard nor decode an image. So
-// scripts/respond.js asks this loopback server, which takes a screenshot of the device
-// (adb screencap / simctl io), decodes it (Core Image, qr-decode.swift) and returns the
-// link, which respond.js hands to the test-wallet responder. The same path works for
-// dev clients. run.sh starts one per run (it is bound to one device).
+// The wallet side of the sign-in for the Maestro suite (mobile/e2e). Release builds show
+// the dash-key: / dash-st: request only as a QR code and a "Copy link" button, never as
+// text (KeyExchangeParts' DevWalletUri is __DEV__ only), and Maestro can neither read
+// the device clipboard nor decode an image. So scripts/respond.js asks this loopback
+// server, which takes a screenshot of the device (adb screencap / simctl io), decodes
+// the QR code (Core Image, qr-decode.swift) and hands the link to the test-wallet
+// responder (mobile/tools), as a wallet scanning it would. The same path works for dev
+// clients. run.sh starts one per run (it is bound to one device).
 //
-//   node mobile/e2e/host/qr-bridge.mjs --platform ios|android --device <udid|serial> --listen 127.0.0.1:8791
+//   node mobile/e2e/host/qr-bridge.mjs --platform ios|android --device <udid|serial> \
+//     --listen 127.0.0.1:8791 --responder http://127.0.0.1:8789
 //
-//   GET /health                    {ok: true} once the decoder is built
-//   GET /qr?scheme=dash-key|dash-st  {uri} of the QR code on screen with that scheme,
-//                                  404 {error} when none shows within a few tries
+//   GET  /health        {ok: true} once the decoder is built
+//   POST /respond {scheme: "dash-key"|"dash-st", persona, keyIndex?}
+//        reads the QR code with that scheme off the screen (404 when none shows within a
+//        few tries) and answers the responder's reply. When the responder fails on
+//        sakura's lag (quorum not in its cache, every DAPI address banned), it waits
+//        RETRY_PAUSE_MS before answering 503 {retry: true}, so respond.js can call again
+//        without a busy wait (Maestro's JavaScript has no timers).
 //
-// A QR code is not secret (anyone who sees the screen can scan it), and nothing else
-// passes through here. macOS only (Core Image), like the iOS simulator.
+// A QR code is not secret (anyone who sees the screen can scan it), and no key passes
+// through here. macOS only (Core Image), like the iOS simulator.
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs'
@@ -29,6 +34,9 @@ import { parseArgs } from 'node:util'
 const TRIES = 5
 const TRY_GAP_MS = 1500
 const SCHEMES = new Set(['dash-key', 'dash-st'])
+const RETRY_PAUSE_MS = 15_000
+/** The responder's failures that pass once sakura catches up (the SDK bans nodes for a while). */
+const TRANSIENT = /Quorum not found|no available addresses|timed? ?out|unavailable|ECONNRESET/i
 
 const log = (message) => console.error(`[qr-bridge] ${new Date().toISOString()} ${message}`)
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -44,11 +52,20 @@ const run = (file, args, options = {}) =>
   })
 
 const { values } = parseArgs({
-  options: { platform: { type: 'string' }, device: { type: 'string' }, listen: { type: 'string' } },
+  options: {
+    platform: { type: 'string' },
+    device: { type: 'string' },
+    listen: { type: 'string' },
+    responder: { type: 'string' },
+  },
 })
 const { platform, device } = values
 if (platform !== 'ios' && platform !== 'android') throw new Error('--platform must be ios or android')
 if (!device) throw new Error('--device is required')
+const responder = new URL(values.responder ?? 'http://127.0.0.1:8789')
+if (responder.hostname !== '127.0.0.1' && responder.hostname !== 'localhost') {
+  throw new Error('--responder must be a loopback URL')
+}
 const [host, portText] = (values.listen ?? '127.0.0.1:8791').split(':')
 const port = Number(portText)
 if (host !== '127.0.0.1' && host !== 'localhost') throw new Error('--listen must be a loopback address')
@@ -104,26 +121,54 @@ const reply = (res, status, body) => {
   res.end(JSON.stringify(body))
 }
 
+async function readBody(req) {
+  let body = ''
+  for await (const chunk of req) {
+    body += chunk
+    if (body.length > 10_000) throw new Error('body too large')
+  }
+  return JSON.parse(body)
+}
+
+/** One answer: the link on screen to the responder; a transient failure pauses, then says retry. */
+async function respond({ scheme, persona, keyIndex }) {
+  if (!SCHEMES.has(scheme)) return [400, { error: 'scheme must be dash-key or dash-st' }]
+  const uri = await findLink(scheme)
+  log(`read a ${scheme}: QR code`)
+  const answer = await fetch(new URL('/respond', responder), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(keyIndex === undefined ? { uri, persona } : { uri, persona, keyIndex }),
+  })
+  const text = await answer.text()
+  if (answer.ok) return [200, JSON.parse(text)]
+  if (TRANSIENT.test(text)) {
+    log(`the responder answered ${answer.status} (transient): ${text.slice(0, 200)}; pausing before a retry`)
+    await sleep(RETRY_PAUSE_MS)
+    return [503, { retry: true, error: text }]
+  }
+  return [answer.status, { error: text }]
+}
+
 const server = createServer((req, res) => {
   // Loopback only, and never for a web page in a local browser (DNS rebinding, cross-site requests).
   if (req.headers.origin !== undefined || req.headers.host !== `${host}:${port}`) {
     return reply(res, 403, { error: 'loopback requests only' })
   }
-  const url = new URL(req.url ?? '/', `http://${host}:${port}`)
-  if (req.method === 'GET' && url.pathname === '/health') return reply(res, 200, { ok: true })
-  if (req.method !== 'GET' || url.pathname !== '/qr') return reply(res, 404, { error: 'GET /qr?scheme= or GET /health' })
-  const scheme = url.searchParams.get('scheme') ?? ''
-  if (!SCHEMES.has(scheme)) return reply(res, 400, { error: 'scheme must be dash-key or dash-st' })
-  findLink(scheme).then(
-    (uri) => {
-      log(`read a ${scheme}: QR code`)
-      reply(res, 200, { uri })
-    },
-    (error) => {
-      log(error.message)
-      reply(res, error.status ?? 500, { error: error.message })
-    },
-  )
+  if (req.method === 'GET' && req.url === '/health') return reply(res, 200, { ok: true })
+  if (req.method !== 'POST' || req.url !== '/respond') return reply(res, 404, { error: 'POST /respond or GET /health' })
+  if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+    return reply(res, 403, { error: 'Content-Type must be application/json' })
+  }
+  readBody(req)
+    .then(respond)
+    .then(
+      ([status, body]) => reply(res, status, body),
+      (error) => {
+        log(error.message)
+        reply(res, error.status ?? 500, { error: error.message })
+      },
+    )
 })
 await new Promise((resolve, reject) => {
   server.once('error', reject)
