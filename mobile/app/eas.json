@@ -25,19 +25,19 @@
       "extends": "base",
       "distribution": "store",
       "autoIncrement": true,
-      "env": { "APP_VARIANT": "devnet" }
+      "env": { "APP_VARIANT": "devnet", "YAPPR_RELEASE": "1" }
     },
     "beta": {
       "extends": "base",
       "distribution": "store",
       "autoIncrement": true,
-      "env": { "APP_VARIANT": "testnet" }
+      "env": { "APP_VARIANT": "testnet", "YAPPR_RELEASE": "1" }
     },
     "production": {
       "extends": "base",
       "distribution": "store",
       "autoIncrement": true,
-      "env": { "APP_VARIANT": "production" }
+      "env": { "APP_VARIANT": "production", "YAPPR_RELEASE": "1" }
     }
   },
   "submit": {

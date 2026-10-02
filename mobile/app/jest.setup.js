@@ -63,12 +63,18 @@ jest.mock('expo-secure-store', () => {
 // FLAG_SECURE on Android, expo-screen-capture on iOS. Tests read `isCaptureBlocked()` and the call log.
 jest.mock('./modules/secure-window', () => {
   let blocked = false;
+  let switcher = false;
   return {
     setCaptureBlocked: jest.fn(async (on) => {
       blocked = on;
       return true;
     }),
     isCaptureBlocked: () => blocked,
+    setSwitcherProtected: jest.fn(async (on) => {
+      switcher = on;
+      return true;
+    }),
+    isSwitcherProtected: () => switcher,
   };
 });
 jest.mock('expo-file-system', () => ({

@@ -210,6 +210,20 @@ export function utf8Length(text: string): number {
   return bytes;
 }
 
+/** A group name: 1 to 100 characters, and at most 200 UTF-8 bytes (the engine's `dm.ts` limits). */
+export const GROUP_NAME_MAX = 100;
+const GROUP_NAME_MAX_BYTES = 200;
+
+/**
+ * Why the engine would refuse this group name, or undefined. The field caps
+ * characters itself, but CJK or emoji pass that cap and still exceed the
+ * byte limit, which the engine refuses with no reason the user sees.
+ */
+export function groupNameError(name: string): string | undefined {
+  if (utf8Length(name.trim()) <= GROUP_NAME_MAX_BYTES) return undefined;
+  return 'This is too long for the network once emoji and special characters are counted. Shorten it and try again.';
+}
+
 /**
  * Whether `message` (mine, from the engine) is part of a send of `text`:
  * the same text, or for a send v5 split into parts, one of its parts.

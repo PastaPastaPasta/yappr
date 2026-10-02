@@ -1,4 +1,4 @@
-import { FALLBACK_ROUTE, toAppRoute, type LinkOptions } from './deep-links';
+import { FALLBACK_ROUTE, resolveLink, toAppRoute, type LinkOptions } from './deep-links';
 
 const X = '4EfA9Jrvv3nnCFdSf7fad59851iiTRZ6Wcu6YVJ4iSeF';
 const Y = 'GWRSAVFMjXx8HpQFaNJMqBV7MBgMK4br5UESsB4S31Ec';
@@ -146,5 +146,68 @@ describe('toAppRoute: web base paths', () => {
     expect(toAppRoute(`https://yap.pr/testing/post?id=${X}`, devnet)).toBe(FALLBACK_ROUTE);
     expect(toAppRoute(`https://yap.pr/devnet/post?id=${X}`, release)).toBe(FALLBACK_ROUTE);
     expect(toAppRoute(`https://yap.pr/testing/user?id=${X}`, release)).toBe(FALLBACK_ROUTE);
+  });
+});
+
+describe('resolveLink: what a link does beyond its route (SR-13, PRD NET-11)', () => {
+  const signedIn: LinkOptions = { ...release, viewerId: X };
+
+  it.each([
+    ['yappr://dpns/register', 'https://yap.pr/dpns/register'],
+    ['yappr://store', 'https://yap.pr/store'],
+    ['https://yap.pr/store/view?id=1', 'https://yap.pr/store/view?id=1'],
+    ['yappr://blog/hello-world', 'https://yap.pr/blog/hello-world'],
+    ['yappr://terms', 'https://yap.pr/terms'],
+    ['yappr://about/team', 'https://yap.pr/about/team'],
+    ['yappr://embed?post=1', 'https://yap.pr/embed?post=1'],
+  ])('opens the web-only page %s in the in-app browser', (url, page) => {
+    expect(resolveLink(url, release)).toEqual({ kind: 'browser', url: page });
+  });
+
+  it("opens web-only pages on this build's own deployment", () => {
+    expect(resolveLink('yappr-dev://dpns/register', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/dpns/register' });
+    expect(resolveLink('https://yap.pr/devnet/blog', devnet)).toEqual({ kind: 'browser', url: 'https://yap.pr/devnet/blog' });
+  });
+
+  it.each([
+    ['yappr://does-not-exist', 'https://yap.pr/does-not-exist'],
+    ['yappr://post?id=bad', 'https://yap.pr/post?id=bad'],
+    ['yappr-dev:///__gallery', 'https://yap.pr/__gallery'],
+  ])('sends the unknown link %s home with "Open in browser"', (url, page) => {
+    expect(resolveLink(url, release)).toEqual({ kind: 'unsupported', url: page });
+  });
+
+  it("offers another deployment's link at its own address", () => {
+    expect(resolveLink(`https://yap.pr/testing/post?id=${X}`, devnet)).toEqual({
+      kind: 'unsupported',
+      url: `https://yap.pr/testing/post?id=${X}`,
+    });
+  });
+
+  it('never points the browser anywhere but yap.pr', () => {
+    for (const url of ['yappr://%2F%2Fevil.example', 'yappr://a/../../x', 'yappr://x@evil.example/y']) {
+      const target = resolveLink(url, release);
+      expect(target.kind === 'browser' || target.kind === 'unsupported' ? target.url : '').toMatch(/^https:\/\/yap\.pr\//);
+    }
+  });
+
+  it('ignores /login while signed in, and opens sign-in when signed out', () => {
+    expect(resolveLink('yappr://login', signedIn)).toEqual({ kind: 'ignore' });
+    expect(resolveLink('yappr://login', release)).toEqual({ kind: 'route', route: '/sign-in' });
+  });
+
+  it("opens the viewer's own profile on the Profile tab, and edit=true opens Edit profile", () => {
+    expect(toAppRoute(`yappr://user?id=${X}`, signedIn)).toBe('/profile');
+    expect(toAppRoute(`yappr://user?id=${X}&edit=true`, signedIn)).toBe('/profile/edit');
+    // Someone else's profile ignores edit=true.
+    expect(toAppRoute(`yappr://user?id=${Y}&edit=true`, signedIn)).toBe(`/user/${Y}`);
+    expect(toAppRoute(`yappr://user?id=${X}&edit=true`, release)).toBe(`/user/${X}`);
+  });
+
+  it('defaults a missing followers/following id to the viewer', () => {
+    expect(toAppRoute('yappr://followers', signedIn)).toBe(`/user/${X}/followers`);
+    expect(toAppRoute('yappr://following', signedIn)).toBe(`/user/${X}/following`);
+    expect(resolveLink('yappr://followers', release).kind).toBe('unsupported');
+    expect(resolveLink('yappr://followers?id=bad', signedIn).kind).toBe('unsupported');
   });
 });

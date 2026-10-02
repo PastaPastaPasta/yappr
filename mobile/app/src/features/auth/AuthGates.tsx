@@ -7,12 +7,14 @@ import { engine, engineNetworkKey } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { cn } from '~/lib-allowlist';
+import { useInboundLinkEffects } from '~/navigation/inbound-links';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { returnFromAddAccount, useAccounts } from './accounts';
+import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
 import { useOnboarding } from './onboarding';
@@ -92,6 +94,12 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
       .pendingKeyExchange()
       .then((pending) => {
         if (!pending || signingIn()) return;
+        // The lock came up while the engine answered: try again once it opens.
+        const lock = useLockState.getState();
+        if (lock.locked || lock.covered) {
+          checked.current = false;
+          return;
+        }
         router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`));
@@ -124,12 +132,16 @@ function AccountTransitionOverlay() {
  * account switcher and its progress, and the app lock.
  */
 export function AuthGates() {
-  const ready = !!useRootNavigationState()?.key;
+  // Nothing opens while the app lock is up: on iOS a modal presented over the lock screen draws
+  // above it and takes touches (the terms gate's "Not now" would sign the account out).
+  const lockUp = useLockState((s) => s.locked || s.covered);
+  const ready = !!useRootNavigationState()?.key && !lockUp;
   const pathname = usePathname();
   useWelcomeOnFirstLaunch(ready);
   useTermsGate(ready, pathname);
   useSignInExit(pathname);
   useResumeWalletSignIn(ready, pathname);
+  useInboundLinkEffects(ready);
   return (
     <>
       <AccountSwitcherSheet />

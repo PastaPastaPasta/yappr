@@ -87,6 +87,15 @@ const BLOCKED_ANDROID_PERMISSIONS = [
   'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
 ];
 
+/**
+ * Release builds (scripts/release-ios.sh and the EAS store profiles set
+ * YAPPR_RELEASE=1) drop the template's `NSAllowsLocalNetworking`: it lets
+ * cleartext http:// load from `.local` and unqualified hosts, which only the
+ * dev client needs (Metro and the dev launcher on the LAN). The Info.plist
+ * merge is shallow, so this replaces the whole ATS dictionary.
+ */
+const RELEASE_ATS = { NSAppTransportSecurity: { NSAllowsArbitraryLoads: false } };
+
 export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = resolveVariant(process.env.APP_VARIANT);
   const v = VARIANTS[variant];
@@ -115,6 +124,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (COMPLIANCE.md, Encryption export).
       config: { usesNonExemptEncryption: true },
       privacyManifests: PRIVACY_MANIFEST,
+      ...(process.env.YAPPR_RELEASE === '1' ? { infoPlist: RELEASE_ATS } : null),
     },
     android: {
       package: v.applicationId,

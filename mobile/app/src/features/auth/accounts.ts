@@ -212,6 +212,13 @@ export async function signOutAccount(identityId: string): Promise<boolean> {
       queueMicrotask(() => {
         switchAccount(next).catch(() => undefined);
       });
+    } else if (active) {
+      // This engine booted with the account's keys in its page (and RN holds that page's source):
+      // only a fresh engine drops them (ENGINE.md §11.1). A switch above restarts anyway.
+      engineStorage
+        .idle()
+        .then(() => engineSupervisor.restart('Signed out'))
+        .catch((error: unknown) => appendLog('warn', 'host', `Restarting after sign-out failed: ${errorMessage(error)}`));
     }
     return true;
   });

@@ -835,6 +835,17 @@ export function startPendingPosts(): () => void {
   const stopSignOut = onEngineEvent('session.changed', ({ reason }) => {
     if (reason === 'signed-out') forgetSignedOut(seen);
   });
+  // Signing out another account changes no session, so the engine announces nothing: the account
+  // leaving the device's list is the cue (AUTH-11).
+  const stopAccounts = useSessionStore.subscribe((state, previous) => {
+    if (state.accounts === previous.accounts) return;
+    const kept = new Set(state.accounts.map((account) => account.identityId));
+    for (const { identityId } of previous.accounts) {
+      if (kept.has(identityId)) continue;
+      forgetAccount(identityId);
+      seen.delete(identityId);
+    }
+  });
   // A post deleted while pinned must not come back with the pin.
   const stopRemoved = useRemovedPosts.subscribe(({ ids }) => {
     for (const entry of Object.values(usePendingPosts.getState().entries)) {
@@ -848,6 +859,7 @@ export function startPendingPosts(): () => void {
     stopSession();
     stopSeen();
     stopSignOut();
+    stopAccounts();
     stopRemoved();
   };
 }

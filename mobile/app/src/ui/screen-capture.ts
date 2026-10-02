@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 
 import { appendLog, errorMessage } from '~/engine/logs';
 
-import { setCaptureBlocked } from '../../modules/secure-window';
+import { setCaptureBlocked, setSwitcherProtected } from '../../modules/secure-window';
 
 /**
  * Keeps what is on screen out of screenshots, screen recordings and, on
@@ -61,4 +61,25 @@ export function useBlockScreenCapture(scope: CaptureScope, active = true): void 
     hold(id);
     return () => release(id);
   }, [id, on]);
+}
+
+/**
+ * iOS: blur the app natively as it leaves the foreground, while `active`
+ * (the app lock is on). The lock screen's own cover is a JS render, which a
+ * busy JS thread can deliver after iOS has taken the app-switcher snapshot
+ * (AUTH-12). Android needs nothing: FLAG_SECURE already blanks Recents.
+ */
+export function useAppSwitcherProtection(active: boolean): void {
+  const on = active && Platform.OS === 'ios';
+  useEffect(() => {
+    if (!on) return;
+    const set = (value: boolean) =>
+      setSwitcherProtected(value).catch((error: unknown) => {
+        appendLog('warn', 'host', `${value ? 'Enabling' : 'Disabling'} app-switcher protection failed: ${errorMessage(error)}`);
+      });
+    set(true);
+    return () => {
+      set(false);
+    };
+  }, [on]);
 }

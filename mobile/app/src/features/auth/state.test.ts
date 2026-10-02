@@ -1,4 +1,12 @@
-import { appStateChanged, lockLabel, setAppLockEnabled, useAppLockSettings, useLockState } from './app-lock';
+import {
+  appStateChanged,
+  lockLabel,
+  setAppLockEnabled,
+  unlock,
+  untilUnlocked,
+  useAppLockSettings,
+  useLockState,
+} from './app-lock';
 import { isTransient, keyErrorText, walletErrorText } from './errors';
 import { acceptTerms, hasAcceptedTerms, TERMS_VERSION, useTermsStore } from './terms';
 
@@ -86,6 +94,24 @@ describe('app lock (AUTH-12)', () => {
     LocalAuthentication.authenticateAsync.mockClear();
     await setAppLockEnabled(false);
     expect(LocalAuthentication.authenticateAsync).not.toHaveBeenCalled();
+  });
+
+  it('holds the engine\'s secret hydration until the owner unlocks (SR-39, ENGINE.md §9.2)', async () => {
+    const settled = jest.fn();
+    untilUnlocked().then(settled, settled);
+    await Promise.resolve();
+    expect(settled).toHaveBeenCalledTimes(1);
+
+    useLockState.setState({ locked: true });
+    settled.mockClear();
+    untilUnlocked().then(settled, settled);
+    LocalAuthentication.authenticateAsync.mockResolvedValueOnce({ success: false });
+    await unlock();
+    expect(settled).not.toHaveBeenCalled();
+
+    await unlock();
+    await Promise.resolve();
+    expect(settled).toHaveBeenCalledTimes(1);
   });
 
   it('names the biometric the device has', () => {

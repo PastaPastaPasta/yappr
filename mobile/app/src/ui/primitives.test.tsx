@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
@@ -357,6 +358,31 @@ describe('toasts', () => {
     act(() => jest.advanceTimersByTime(3000));
     expect(useToastStore.getState().current).toBeNull();
     jest.useRealTimers();
+  });
+
+  it('on iOS, lifts each toast into a window overlay above modals, unless told not to (SR-33)', () => {
+    const metrics = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } };
+    const view = render(
+      <SafeAreaProvider initialMetrics={metrics}>
+        <ToastHost aboveModals />
+      </SafeAreaProvider>,
+    );
+    expect(view.UNSAFE_queryAllByType(FullWindowOverlay)).toHaveLength(0);
+    act(() => {
+      toast.error('Failed to update profile');
+    });
+    const [overlay] = view.UNSAFE_getAllByType(FullWindowOverlay);
+    expect(overlay?.props.unstable_accessibilityContainerViewIsModal).toBe(false);
+    expect(screen.getByText('Failed to update profile')).toBeTruthy();
+
+    // While the app lock is up the toast stays in the root view, under the lock screen.
+    view.rerender(
+      <SafeAreaProvider initialMetrics={metrics}>
+        <ToastHost aboveModals={false} />
+      </SafeAreaProvider>,
+    );
+    expect(view.UNSAFE_queryAllByType(FullWindowOverlay)).toHaveLength(0);
+    expect(screen.getByText('Failed to update profile')).toBeTruthy();
   });
 });
 

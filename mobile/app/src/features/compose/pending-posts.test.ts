@@ -1,4 +1,4 @@
-import type { CapabilitiesDTO, EngineErrorData, Page, PostDTO, SessionDTO, ThreadDTO, WriteTicket } from '@engine/api';
+import type { AccountDTO, CapabilitiesDTO, EngineErrorData, Page, PostDTO, SessionDTO, ThreadDTO, WriteTicket } from '@engine/api';
 import { notifyManager, type InfiniteData } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -580,6 +580,44 @@ it("signing out deletes the account's drafts and pending posts", async () => {
   await settle();
   expect(usePendingPosts.getState().entries).toEqual({});
   expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+});
+
+it("signing out another account deletes that account's drafts and pending posts (SR-09, AUTH-11)", async () => {
+  const OTHER = 'other-account';
+  const account = (identityId: string, active: boolean): AccountDTO => ({
+    identityId,
+    username: null,
+    method: 'key',
+    lastUsedAt: new Date(0),
+    active,
+  });
+  const draft = (text: string) => ({ context: POST, parts: parts(text), sensitive: false, mediaUrl: '', updatedAt: Date.now() });
+  fakeEngine.method('posts.publish').mockResolvedValue(ticket({ op: 'post.publish', identityId: OTHER }));
+  // A post the other account left on its way while it was active.
+  publishPost(
+    {
+      identityId: OTHER,
+      context: POST,
+      parts: parts('Theirs'),
+      sensitive: false,
+      mediaUrl: null,
+      target: null,
+      author: viewerAuthor(OTHER, null),
+    },
+    hasVisibleContent,
+  );
+  await settle();
+  saveDraft(OTHER, draft('SR-draft'));
+  saveDraft(VIEWER_ID, draft('Mine'));
+  act(() => useSessionStore.setState({ accounts: [account(VIEWER_ID, true), account(OTHER, false)] }));
+  expect(Object.values(usePendingPosts.getState().entries).map((e) => e.identityId)).toEqual([OTHER]);
+
+  // The engine announces no session change for a non-active account; only the list shrinks.
+  act(() => useSessionStore.setState({ accounts: [account(VIEWER_ID, true)] }));
+
+  expect(loadDraft(OTHER, POST)).toBeNull();
+  expect(usePendingPosts.getState().entries).toEqual({});
+  expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Mine');
 });
 
 it('a post deleted while pinned does not come back with the pin', async () => {
