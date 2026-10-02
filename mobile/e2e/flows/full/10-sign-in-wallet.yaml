@@ -1,10 +1,10 @@
 # Key exchange with a wallet on another device (PRD AUTH-04, AUTH-06; ADR E5.4,
-# E8), answered by the test-wallet responder (mobile/tools), which run.sh
-# starts on RESPONDER_URL: the QR's dash-key: link, read off the screen by the
-# QR bridge (BRIDGE_URL; release builds show the link only as a QR code), goes
-# to the responder as PERSONA; a first login also answers the dash-st: key
-# registration. From a cleared install, through the terms gate, the account
-# switcher, then signed out again. Devnet (sakura) only: the responder refuses any other network.
+# E8), answered by the test-wallet responder (mobile/tools) as PERSONA: the QR
+# bridge (BRIDGE_URL; release builds show the link only as a QR code) reads the
+# dash-key: link off the screen and hands it to the responder; a first login
+# also answers the dash-st: key registration. From a cleared install, through
+# the terms gate, the account switcher, then signed out again. Devnet (sakura)
+# only: the responder refuses any other network.
 appId: ${APP_ID}
 tags:
   - full

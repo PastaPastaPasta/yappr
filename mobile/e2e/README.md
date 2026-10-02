@@ -77,7 +77,7 @@ a flow that types one outside `run.sh`.
   Flows that act on the peer call `subflows/peer-unblocked.yaml` too.
 - Flows get `APP_ID`, `SCHEME`, `DEV_CLIENT_URL` and `RUN` from `run.sh`, and
   in the full suite `SELF_ID`, `SELF_HANDLE`, `PEER_ID`, `PEER_HANDLE`,
-  `PEER_URL`, `RESPONDER_URL` and `PERSONA` (the keys come as `MAESTRO_*`).
+  `PEER_URL`, `BRIDGE_URL` and `PERSONA` (the keys come as `MAESTRO_*`).
 - Navigate with taps (`subflows/open-tab.yaml`, `subflows/back.yaml`) and
   links through `subflows/open-link.yaml` (iOS 27 asks before it opens one; never
   `openLink` directly): web-form links (`${SCHEME}://post?id=…`, `user?id=`, `hashtag?tag=`,
