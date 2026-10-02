@@ -159,7 +159,7 @@ export function NotificationsScreen() {
       return;
     }
     setRefreshing(true);
-    pollNotifications()
+    pollNotifications(viewerId)
       .then(() => refetch())
       .catch(() => undefined)
       .finally(() => setRefreshing(false));

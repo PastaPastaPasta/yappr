@@ -35,26 +35,32 @@ type ListData = InfiniteData<Page<NotificationDTO>>;
 const refetchLists = () =>
   queryClient.invalidateQueries({ queryKey: queryKeys.notificationsAll }).catch(() => undefined);
 
-let polling: Promise<void> | null = null;
+let polling: { viewer: string | null; done: Promise<void> } | null = null;
 
 /**
- * One poll (`notifications.poll`): merges what arrived since the last one,
- * updates the badge, and refetches the lists when something new came. A
- * poll already running is joined, not repeated.
+ * One poll (`notifications.poll`) for `viewer`: merges what arrived since
+ * the last one, updates the badge, and refetches the lists when something
+ * new came. A poll already running for the same account is joined, not
+ * repeated; one left over from another account is not.
  */
-export function pollNotifications(): Promise<void> {
-  polling ??= engine.api.notifications
-    .poll()
-    .then(({ added, unread }) => {
-      setUnread(unread);
-      if (added > 0) return refetchLists();
-      return undefined;
-    })
-    .catch((error: unknown) => appendLog('warn', 'host', `Notifications poll failed: ${errorMessage(error)}`))
-    .finally(() => {
-      polling = null;
-    });
-  return polling;
+export function pollNotifications(viewer: string | null): Promise<void> {
+  if (polling?.viewer === viewer) return polling.done;
+  const current = {
+    viewer,
+    done: engine.api.notifications
+      .poll()
+      .then(({ added, unread }) => {
+        if (polling !== current) return undefined;
+        setUnread(unread);
+        return added > 0 ? refetchLists() : undefined;
+      })
+      .catch((error: unknown) => appendLog('warn', 'host', `Notifications poll failed: ${errorMessage(error)}`))
+      .finally(() => {
+        if (polling === current) polling = null;
+      }),
+  };
+  polling = current;
+  return current.done;
 }
 
 /**
@@ -76,9 +82,9 @@ export function useNotificationsBadge(): number {
 
   useEffect(() => {
     if (!viewerId || !active) return undefined;
-    pollNotifications().catch(() => undefined);
+    pollNotifications(viewerId).catch(() => undefined);
     const timer = setInterval(() => {
-      pollNotifications().catch(() => undefined);
+      pollNotifications(viewerId).catch(() => undefined);
     }, POLL_INTERVAL_MS);
     return () => clearInterval(timer);
   }, [viewerId, active]);

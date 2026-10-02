@@ -317,6 +317,25 @@ describe('the tab badge (NOTIF-03)', () => {
     expect(fakeEngine.method('notifications.poll')).toHaveBeenCalledTimes(3);
   });
 
+  it('polls the next account at once, even while the last one’s poll is running', async () => {
+    signIn();
+    let finish: (value: { added: number; unread: number }) => void = () => undefined;
+    fakeEngine
+      .method('notifications.poll')
+      .mockReturnValueOnce(new Promise((resolve) => (finish = resolve)))
+      .mockResolvedValue({ added: 0, unread: 7 });
+    const { result } = renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+
+    act(() => useSessionStore.setState({ session: { ...viewer, identityId: AUTHORS.bob.id } }));
+    await act(async () => {});
+    expect(fakeEngine.method('notifications.poll')).toHaveBeenCalledTimes(2);
+    expect(result.current).toBe(7);
+    // The old account's answer lands late and changes nothing.
+    await act(async () => finish({ added: 0, unread: 0 }));
+    expect(result.current).toBe(7);
+  });
+
   it('refetches the lists when a poll brings something new', async () => {
     signIn();
     queryClient.setQueryData(queryKeys.notifications('all'), { pages: [page([])], pageParams: [null] });
