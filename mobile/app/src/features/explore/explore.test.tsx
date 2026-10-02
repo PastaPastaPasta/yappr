@@ -412,6 +412,8 @@ describe('Search', () => {
   });
 });
 
+const scrolledTo = (y: number) => ({ nativeEvent: { contentOffset: { x: 0, y } } });
+
 describe('Hashtag page', () => {
   it('lists the tag’s latest posts under its title, with Top where supported (EXPL-07)', async () => {
     fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'tagged #mobile')]));
@@ -471,9 +473,18 @@ describe('Hashtag page', () => {
     });
     expect(calls()).toBe(4);
 
-    // A new drag is a new ask: paging resumes (one page, then three automatic ones again).
+    // A pull to refresh starts as a drag too, but one toward the top is no ask for more.
     await act(async () => {
-      fireEvent(screen.getByTestId('hashtag-posts'), 'scrollBeginDrag');
+      fireEvent(screen.getByTestId('hashtag-posts'), 'scrollBeginDrag', scrolledTo(0));
+      fireEvent(screen.getByTestId('hashtag-posts'), 'scrollEndDrag', scrolledTo(-80));
+    });
+    await act(async () => {});
+    expect(calls()).toBe(4);
+
+    // A new drag toward the end is a new ask: paging resumes (one page, then three automatic ones again).
+    await act(async () => {
+      fireEvent(screen.getByTestId('hashtag-posts'), 'scrollBeginDrag', scrolledTo(100));
+      fireEvent(screen.getByTestId('hashtag-posts'), 'scrollEndDrag', scrolledTo(300));
     });
     await act(async () => {});
     expect(calls()).toBe(8);

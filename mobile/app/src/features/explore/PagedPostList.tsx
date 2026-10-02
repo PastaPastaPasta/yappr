@@ -2,7 +2,7 @@ import type { Page, PostDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
 import { hashKey, useIsRestoring, type InfiniteData, type QueryKey } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactElement } from 'react';
-import { RefreshControl, View } from 'react-native';
+import { RefreshControl, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
 import { useEngineInfiniteQuery } from '~/data/queries';
 import { PostItem } from '~/features/post/PostItem';
@@ -35,6 +35,9 @@ function firstPageOnly(data: PagedData | undefined): PagedData | undefined {
     ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) }
     : data;
 }
+
+type ScrollEvent = NativeSyntheticEvent<NativeScrollEvent>;
+const offsetOf = (e: ScrollEvent): number => e.nativeEvent.contentOffset.y;
 
 /**
  * A new visit starts from the first saved page, as Home does on a cold start
@@ -116,10 +119,18 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
     autoPages.current += 1;
     fetchNextPage().catch(() => undefined);
   };
-  // A new scroll by the reader counts as asking for more (FEED-07): it resumes paused paging.
-  const onScrollBeginDrag = () => {
-    if (paused && hasNextPage && !isFetchingNextPage) loadMore();
-    else autoPages.current = 0;
+  // A new scroll by the reader counts as asking for more (FEED-07): it resumes paused paging
+  // once the drag ends. A pull to refresh starts as a drag too, so a drag that ends at the top,
+  // pulled up, doesn't: a next page fetched then would read on from the old cursor under the refresh.
+  const dragStart = useRef(0);
+  const onScrollBeginDrag = (e: ScrollEvent) => {
+    dragStart.current = offsetOf(e);
+    if (!paused) autoPages.current = 0;
+  };
+  const onScrollEndDrag = (e: ScrollEvent) => {
+    const end = offsetOf(e);
+    const pulledAtTop = end <= 0 && end <= dragStart.current;
+    if (paused && hasNextPage && !isFetchingNextPage && !pulledAtTop) loadMore();
   };
 
   let footer = null;
@@ -170,6 +181,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
       onEndReached={onEndReached}
       onEndReachedThreshold={END_THRESHOLD}
       onScrollBeginDrag={onScrollBeginDrag}
+      onScrollEndDrag={onScrollEndDrag}
       contentInsetAdjustmentBehavior="automatic"
       keyboardDismissMode="on-drag"
       refreshControl={
