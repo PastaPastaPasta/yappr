@@ -42,6 +42,7 @@ const boundaryOptions = {
 const TOOLING = [
   'app.config.ts',
   'plugins/**',
+  'scripts/**',
   'babel.config.js',
   'eslint.config.js',
   'eslint/**',
@@ -56,7 +57,7 @@ const TESTS = ['**/*.test.{js,jsx,ts,tsx}'];
 const config = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/*', 'ios/*', 'android/*', '.expo/*'],
+    ignores: ['dist/*', 'ios/*', 'android/*', '.expo/*', 'build/*'],
   },
   {
     files: TOOLING,
