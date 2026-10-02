@@ -1,5 +1,4 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { BlockedAccountsScreen } from '~/features/safety/BlockedAccountsScreen';
 
-export default function BlockedAccountsScreen() {
-  return <Placeholder title="Blocked accounts" comingIn="the safety PR" />;
-}
+/** Settings → Privacy & Safety → Blocked accounts (PRD SAFE-03). */
+export default BlockedAccountsScreen;

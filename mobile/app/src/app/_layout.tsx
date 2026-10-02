@@ -4,7 +4,6 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'nativewind';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -12,6 +11,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SignInPromptHost } from '~/data/require-auth';
 import { startDataLayer } from '~/data/sync';
 import { EngineHost } from '~/engine/EngineHost';
+import { AuthGates } from '~/features/auth/AuthGates';
+import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { startPendingPosts } from '~/features/compose/pending-posts';
 import { useAppearance } from '~/state/appearance';
@@ -21,6 +22,7 @@ import { MediaUrlProvider } from '~/ui/media-url';
 import { ToastHost } from '~/ui/ToastHost';
 import { persistOptions, queryClient } from '~/state/query-client';
 import { stackScreenOptions } from '~/ui/stack-options';
+import { ThemedStatusBar } from '~/ui/ThemedStatusBar';
 import { navigationTheme } from '~/ui/tokens';
 
 /** Deep links into a modal or a tab still have the tabs underneath. */
@@ -79,6 +81,8 @@ export default function RootLayout() {
   useEffect(() => startDataLayer(), []);
   // Compose's posts on their way to the chain (their optimistic cards and write status).
   useEffect(() => startPendingPosts(), []);
+  // A signed-out account's recent searches go with it (AUTH-11).
+  useEffect(() => startRecentSearchCleanup(), []);
   const ipfsGateway = useIpfsGateway();
   const dark = useColorScheme().colorScheme === 'dark';
 
@@ -114,7 +118,7 @@ export default function RootLayout() {
                   <Stack.Screen name="welcome" options={{ ...FULL_SCREEN, headerShown: false }} />
                   <Stack.Screen
                     name="terms-gate"
-                    options={{ ...FULL_SCREEN, gestureEnabled: false }}
+                    options={{ ...FULL_SCREEN, gestureEnabled: false, headerShown: false }}
                   />
                   <Stack.Screen
                     name="lockdown"
@@ -142,7 +146,9 @@ export default function RootLayout() {
                 <SignInPromptHost />
                 <ActionSheetHost />
                 <ToastHost />
-                <StatusBar style="auto" />
+                {/* Welcome, the terms gate, the account switcher and the app lock (S1); the lock stays on top. */}
+                <AuthGates />
+                <ThemedStatusBar />
               </BottomSheetModalProvider>
             </AvatarSvgProvider>
           </MediaUrlProvider>

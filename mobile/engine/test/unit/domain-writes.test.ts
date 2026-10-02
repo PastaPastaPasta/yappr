@@ -42,7 +42,9 @@ const m = vi.hoisted(() => ({
   },
   replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
-  blockService: { blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn() },
+  blockService: {
+    blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
+  },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
@@ -184,8 +186,9 @@ describe('engage writes', () => {
     // waiting-parent is left before lib's write, so a transport failure there is never "proved not sent".
     expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'signing', null])
 
+    // lib's boolean `false` carries no verdict (it swallows the error): it may have landed.
     m.likeService.likePost.mockResolvedValue(false)
-    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'failed', error: { code: 'UNKNOWN' } })
+    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'UNKNOWN', outcome: 'unknown' } })
   })
 
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
@@ -302,8 +305,8 @@ describe('graph and safety writes', () => {
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.followService.getFollowing).toHaveBeenCalledWith(VIEWER, { throwOnError: true })
 
-    m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance' })
-    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed' })
+    m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance (code=30000)' })
+    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed', error: { outcome: 'refused' } })
     await expect(graph.follow(VIEWER)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
@@ -315,10 +318,11 @@ describe('graph and safety writes', () => {
     expect(await outcome(safety.block(AUTHOR, { message: '  spam  ' }))).toMatchObject({ state: 'confirmed' })
     expect(m.blockService.blockUser).toHaveBeenCalledWith(VIEWER, AUTHOR, 'spam')
 
-    m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }])
+    m.blockService.query.mockResolvedValue({ documents: [{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }] })
     const blocked = await safety.blocked()
     expect(validate(page(blockedUserDTO), blocked)).toEqual([])
     expect(blocked.items.map(item => [item.id, item.message])).toEqual([[AUTHOR, 'spam'], [id('Other'), null]])
+    expect(m.blockService.query).toHaveBeenCalledWith({ where: [['$ownerId', '==', VIEWER]], limit: 100 })
 
     // check reads the block document itself, never lib's optimistic block cache.
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block'), confirmed: false })
@@ -331,6 +335,50 @@ describe('graph and safety writes', () => {
     m.blockService.unblockUser.mockResolvedValue({ success: true })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
     expect(await outcome(safety.unblock(AUTHOR))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED', outcome: 'local' } })
+  })
+
+  it('re-reads the blocked list after a block or unblock lands, on every page, and rejects an unreadable list', async () => {
+    const { outcome, safety } = engine()
+    const many = (count: number) => Array.from({ length: count }, (_, n) => ({ blockedId: id(`B${n + 1}`) }))
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const first = await safety.blocked()
+    // A continuation reads from the list held for paging...
+    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    expect((await safety.blocked(first.cursor)).items).toHaveLength(10)
+    // ...until a block lands: then even a continuation re-reads.
+    m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
+    expect(await outcome(safety.block(AUTHOR))).toMatchObject({ state: 'confirmed' })
+    expect((await safety.blocked(first.cursor)).items).toHaveLength(1)
+
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const again = await safety.blocked()
+    m.blockService.unblockUser.mockResolvedValue({ success: true, confirmed: false })
+    m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    expect(await outcome(safety.unblock(id('B1')))).toMatchObject({ state: 'unconfirmed' })
+    m.blockService.query.mockResolvedValue({ documents: many(30) })
+    expect((await safety.blocked(again.cursor)).items).toEqual([])
+
+    // An unblock a followed list overrides still deleted the own block: the held list drops too.
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const held = await safety.blocked()
+    m.blockService.unblockUser.mockResolvedValue({ success: true })
+    m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
+    expect(await outcome(safety.unblock(id('B2')))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
+    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    expect((await safety.blocked(held.cursor)).items).toHaveLength(1)
+
+    m.blockService.query.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  it('tells an own block from one only a followed block list makes', async () => {
+    const { safety } = engine()
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[AUTHOR, true], [id('Listed'), true]]))
+    m.blockService.getBlockSourcesBatch.mockResolvedValue(new Map([[AUTHOR, 'own'], [id('Listed'), 'inherited']]))
+    const ids = [AUTHOR, id('Listed'), id('Free')]
+    expect(await safety.isBlocked(ids)).toEqual({ [AUTHOR]: true, [id('Listed')]: true, [id('Free')]: false })
+    expect(await safety.blockedBy(ids)).toEqual({ [AUTHOR]: 'self', [id('Listed')]: 'list', [id('Free')]: null })
+    expect(m.blockService.getBlockSourcesBatch).toHaveBeenCalledWith(VIEWER, ids)
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {
@@ -556,6 +604,7 @@ describe('notifications', () => {
   beforeEach(() => {
     useNotificationStore.setState({ notifications: [], readIds: [], lastFetchTimestamp: 0 })
     useSettingsStore.getState().setNotificationSettings({ likes: true, follows: true })
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map())
   })
 
   it('loads once per account, filters by tab, pages by keyset and marks the visible ones read', async () => {
@@ -608,12 +657,76 @@ describe('notifications', () => {
     expect(m.notificationService.getInitialNotifications).toHaveBeenLastCalledWith(id('Other'), new Set())
   })
 
+  it('carries a v11 aggregated like\'s liker count and its noticed time (NOTIF-06)', async () => {
+    const notifications = createNotificationsModule(emit).api
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [
+        { ...notification('batch', 'like', 300), likerCount: 4, timeless: true },
+        { ...notification('single', 'like', 200), likerCount: 1, timeless: true },
+        notification('timed', 'like', 100),
+      ],
+      latestTimestamp: 100,
+    })
+    const { items } = await notifications.list({ filter: 'like' })
+    expect(validate(page(notificationDTO), { items, cursor: null, hasMore: false })).toEqual([])
+    expect(items.map(({ likers, noticed }) => ({ likers, noticed }))).toEqual([
+      { likers: 4, noticed: true },
+      { likers: undefined, noticed: true },
+      { likers: undefined, noticed: undefined },
+    ])
+  })
+
+  it('says "your reply" only when the topology tells what a reply answered', async () => {
+    const notifications = createNotificationsModule(emit).api
+    const reply = (key: string, at: number, targetKind?: 'post' | 'reply') =>
+      ({ ...notification(key, 'reply', at), post: { ...post(id(`N${key}`)), targetKind: 'reply' }, ...(targetKind ? { targetKind } : {}) })
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [reply('v2', 300), reply('toPost', 200, 'post'), reply('toReply', 100, 'reply')],
+      latestTimestamp: 300,
+    })
+    const { items } = await notifications.list({ filter: 'reply' })
+    expect(items.map(item => item.target?.kind)).toEqual(['post', 'post', 'reply'])
+  })
+
+  it('drops blocked actors from the list and the badge, and follows a block or unblock (NOTIF-08)', async () => {
+    const BLOCKED = id('Blocked')
+    const from = (key: string, type: string, at: number, actor: string) => ({ ...notification(key, type, at), from: { ...user(actor), displayName: 'B' } })
+    const notifications = createNotificationsModule(emit).api
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [from('x', 'like', 300, BLOCKED), notification('a', 'like', 200), from('y', 'follow', 100, BLOCKED)],
+      latestTimestamp: 300,
+    })
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, true], [AUTHOR, false]]))
+    expect((await notifications.list()).items.map(item => item.id)).toEqual(['a'])
+    expect(m.blockService.checkBlockedBatch).toHaveBeenCalledWith(VIEWER, [BLOCKED, AUTHOR])
+    expect(await notifications.unreadCount()).toBe(1)
+
+    // A failed block read keeps what was known rather than showing them again.
+    m.blockService.checkBlockedBatch.mockRejectedValue(new Error('timeout'))
+    m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [from('z', 'mention', 400, BLOCKED)], latestTimestamp: 400 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
+
+    // Unblocked: the next poll recounts the badge, says the lists changed, and the next first page shows them.
+    emitted = []
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, false], [AUTHOR, false]]))
+    m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [], latestTimestamp: 400 })
+    expect(await notifications.poll()).toEqual({ added: 0, unread: 4, blockedChanged: true })
+    expect(emitted).toEqual([{ event: 'notifications.count', payload: { unread: 4 } }])
+    expect((await notifications.list()).items.map(item => item.id)).toEqual(['z', 'x', 'a', 'y'])
+
+    // Blocked again, seen first by a list read: the badge follows.
+    emitted = []
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, true], [AUTHOR, false]]))
+    expect((await notifications.list()).items.map(item => item.id)).toEqual(['a'])
+    expect(emitted).toEqual([{ event: 'notifications.count', payload: { unread: 1 } }])
+  })
+
   it('polls from the watermark and merges what arrived', async () => {
     const notifications = createNotificationsModule(emit).api
     m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 1 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [notification('b', 'follow', 200)], latestTimestamp: 200 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 2 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 2, blockedChanged: false })
     expect(m.notificationService.pollNewNotifications).toHaveBeenCalledWith(VIEWER, 100, expect.any(Set))
     expect(emitted.at(-1)).toEqual({ event: 'notifications.count', payload: { unread: 2 } })
     m.viewer = null

@@ -34,6 +34,9 @@ describe('method kinds', () => {
     ['session.awaitKeyRegistration', 'session', 310_000],
     ['posts.publish', 'write', 15_000],
     ['something.new', 'write', 15_000],
+    ['notifications.list', 'read', 30_000],
+    ['notifications.poll', 'read', 30_000],
+    ['notifications.markRead', 'write', 15_000],
   ])('%s is a %s with a %i ms deadline', (path, kind, timeout) => {
     expect(methodKind(path)).toBe(kind);
     expect(methodTimeoutMs(path)).toBe(timeout);

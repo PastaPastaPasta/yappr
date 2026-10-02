@@ -1,0 +1,155 @@
+# Explore, search and hashtags (PRD EXPL-01 – EXPL-08; EXECUTION S7).
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test mobile/e2e/flows/explore.yaml
+#   maestro --device <udid|serial> test -e QUERY=<name prefix> -e TAG=<hashtag> mobile/e2e/flows/explore.yaml
+# QUERY must find at least one person (default "sigrid") and TAG must have
+# posts (default "mobile"); both are live sakura data. Nothing here writes.
+appId: pr.yap.app.dev
+env:
+  QUERY: ${QUERY || 'sigrid'}
+  TAG: ${TAG || 'mobile'}
+---
+- openLink: yappr-dev:///explore
+- extendedWaitUntil:
+    visible:
+      id: explore-search
+    timeout: 60000
+# Trending tags (every build). The segment is remembered for the session.
+- runFlow:
+    when:
+      visible:
+        id: explore-segments
+    commands:
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            - tapOn:
+                id: explore-segments-trending
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - tapOn:
+                text: "Trending"
+- extendedWaitUntil:
+    visible:
+      id: "trending-.*|explore-trending-empty"
+    timeout: 90000
+
+# Top posts and Creators where the contract ranks likes (devnet).
+- runFlow:
+    when:
+      visible: "Creators"
+    commands:
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            - tapOn:
+                id: explore-segments-top
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - tapOn:
+                text: "Top"
+      - extendedWaitUntil:
+          visible:
+            id: "more-btn-.*|explore-top-empty"
+          timeout: 90000
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            - tapOn:
+                id: explore-segments-creators
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - tapOn:
+                text: "Creators"
+      - extendedWaitUntil:
+          visible: "Top creators by likes received|No ranked creators yet"
+          timeout: 90000
+
+# Search a user and open the profile.
+- tapOn:
+    id: explore-search
+- extendedWaitUntil:
+    visible:
+      id: search-input
+    timeout: 10000
+- inputText: ${QUERY}
+- pressKey: Enter
+- extendedWaitUntil:
+    visible:
+      id: search-section-people
+    timeout: 60000
+- extendedWaitUntil:
+    notVisible:
+      id: search-searching
+    timeout: 60000
+- tapOn:
+    id: "search-user-.*"
+    index: 0
+- extendedWaitUntil:
+    notVisible:
+      id: search-input
+    timeout: 10000
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      # The header's back button is named after the previous screen.
+      - tapOn: "Search"
+
+# The query is a recent search now. (Erase rather than the clear button: the
+# dev client's floating menu button sits over it on Android.)
+- tapOn:
+    id: search-input
+- eraseText: 40
+- extendedWaitUntil:
+    visible: "Recent"
+    timeout: 10000
+- tapOn:
+    id: search-cancel
+    optional: true
+- tapOn:
+    id: search-back
+    optional: true
+
+# Open a hashtag page; Latest, then Top where supported.
+- openLink: yappr-dev:///hashtag/${TAG}
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 90000
+- runFlow:
+    when:
+      visible:
+        id: hashtag-sort
+    commands:
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            - tapOn:
+                id: hashtag-sort-top
+      - runFlow:
+          when:
+            platform: iOS
+          commands:
+            - tapOn:
+                text: "Top"
+      - extendedWaitUntil:
+          visible:
+            id: "more-btn-.*|hashtag-posts-empty"
+          timeout: 90000
