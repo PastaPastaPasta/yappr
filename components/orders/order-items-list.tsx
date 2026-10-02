@@ -1,5 +1,7 @@
 'use client'
 
+import { DigitalBadge } from '@/components/store/digital-badge'
+import { isDigitalOnly } from '@/lib/services/digital-delivery-plan'
 import { formatPrice } from '@/lib/utils/format'
 import type { OrderPayload } from '@/lib/types'
 
@@ -22,6 +24,7 @@ export function OrderItemsList({ items, currency, subtotal, shippingCost, total 
               {item.itemTitle}
               {item.variantKey && <span className="text-gray-500"> ({item.variantKey.replace(/\|/g, ' / ')})</span>}
               <span className="text-gray-500"> x{item.quantity}</span>
+              {item.fulfillment === 'digital' && <DigitalBadge className="ml-2 align-middle" />}
             </span>
             <span>{formatPrice(item.unitPrice * item.quantity, currency)}</span>
           </div>
@@ -32,10 +35,12 @@ export function OrderItemsList({ items, currency, subtotal, shippingCost, total 
           <span>Subtotal</span>
           <span>{formatPrice(subtotal, currency)}</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span>Shipping</span>
-          <span>{formatPrice(shippingCost, currency)}</span>
-        </div>
+        {!(isDigitalOnly(items) && shippingCost === 0) && (
+          <div className="flex justify-between text-sm">
+            <span>Shipping</span>
+            <span>{formatPrice(shippingCost, currency)}</span>
+          </div>
+        )}
         <div className="flex justify-between font-medium mt-1">
           <span>Total</span>
           <span>{formatPrice(total, currency)}</span>

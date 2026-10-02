@@ -293,9 +293,18 @@
           "position": 14,
           "maxLength": 10000,
           "description": "JSON object with axes and combinations for product variants"
+        },
+        "fulfillment": {
+          "type": "string",
+          "enum": [
+            "shipped",
+            "digital"
+          ],
+          "position": 15,
+          "description": "How the product reaches the buyer: `shipped` (a physical parcel; also what an absent value means) or `digital` (delivered on chain as an encrypted orderDelivery, no address or shipping)"
         }
       },
-      "description": "A product listing with optional embedded variants. Permanent so orders and item reviews can reference it; status `deleted` is the tombstone. Only the store owner can create or edit one, and storeId is frozen.",
+      "description": "A product listing with optional embedded variants. Permanent so orders and item reviews can reference it; status `deleted` is the tombstone. Only the store owner can create or edit one, and storeId is frozen. `fulfillment` marks a digital product, whose files/links/keys the seller keeps in an itemDeliverable.",
       "additionalProperties": false,
       "canBeDeleted": false,
       "immutable": [
@@ -458,6 +467,56 @@
           ]
         }
       }
+    },
+    "itemDeliverable": {
+      "type": "object",
+      "description": "The seller's private delivery kit for a digital storeItem: files (encrypted on IPFS, with their keys), links, license keys and instructions, ECIES-encrypted to the seller's OWN encryption key so any of their devices can fulfil an order. One per item; only the item's owner may write it, and itemId is frozen. Mutable because each sale consumes license keys.",
+      "properties": {
+        "itemId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "ID of the digital item this kit fulfils; only that item's owner may write it",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeItem",
+            "where": {
+              "$ownerId": "$ownerId"
+            }
+          }
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 16000,
+          "position": 1,
+          "description": "ECIES (secp256k1 + XChaCha20-Poly1305) ciphertext of the kit, encrypted to the seller's own encryption key"
+        }
+      },
+      "required": [
+        "$createdAt",
+        "itemId",
+        "encryptedPayload"
+      ],
+      "indices": [
+        {
+          "name": "itemDeliverable",
+          "unique": true,
+          "properties": [
+            {
+              "itemId": "asc"
+            }
+          ]
+        }
+      ],
+      "immutable": [
+        "itemId"
+      ],
+      "additionalProperties": false
     },
     "storeOrder": {
       "type": "object",
@@ -708,6 +767,88 @@
       "description": "A status update for an order (append-only history). Only the order's SELLER can write one — consensus gates the writer against the order's sellerId — so there is nothing left for the app to second-guess. buyerId is bound to the order's owner so buyers keep a status feed.",
       "additionalProperties": false,
       "documentsMutable": false
+    },
+    "orderDelivery": {
+      "type": "object",
+      "description": "Digital goods the seller delivered for an order (file keys, links, license keys, a message). Only the order's SELLER can write one (writer gate against the order's sellerId) and buyerId is bound to the order's owner, so the buyer's library feed carries only real deliveries. Encrypted under a key both parties derive from the order's own ECDH secret; permanent and append-only, so a delivery is a receipt.",
+      "properties": {
+        "orderId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 0,
+          "description": "ID of the order being fulfilled; only its seller may write this",
+          "refersTo": {
+            "type": "permanentDocument",
+            "documentType": "storeOrder",
+            "where": {
+              "$ownerId": "buyerId",
+              "sellerId": "$ownerId"
+            }
+          }
+        },
+        "buyerId": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 32,
+          "maxItems": 32,
+          "contentMediaType": "application/x.dash.dpp.identifier",
+          "position": 1,
+          "description": "Buyer identity, consensus-bound to the order's $ownerId (for the buyer's library feed)"
+        },
+        "encryptedPayload": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 1,
+          "maxItems": 16000,
+          "position": 2,
+          "description": "XChaCha20-Poly1305 ciphertext of the delivery, keyed from the order's buyer/seller ECDH secret"
+        },
+        "nonce": {
+          "type": "array",
+          "byteArray": true,
+          "minItems": 24,
+          "maxItems": 24,
+          "position": 3,
+          "description": "24-byte nonce for XChaCha20-Poly1305 encryption"
+        }
+      },
+      "required": [
+        "$createdAt",
+        "orderId",
+        "buyerId",
+        "encryptedPayload",
+        "nonce"
+      ],
+      "indices": [
+        {
+          "name": "orderDeliveries",
+          "properties": [
+            {
+              "orderId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "buyerDeliveries",
+          "properties": [
+            {
+              "buyerId": "asc"
+            },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false,
+      "documentsMutable": false,
+      "canBeDeleted": false
     },
     "storeReview": {
       "type": "object",
