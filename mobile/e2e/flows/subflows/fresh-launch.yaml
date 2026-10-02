@@ -1,0 +1,30 @@
+# A fresh install's first launch: app data cleared, the dev client pointed at
+# Metro, the dev menu (which a fresh dev client opens once the bundle loads)
+# closed, then Welcome (AUTH-01).
+appId: ${APP_ID}
+---
+- launchApp:
+    appId: ${APP_ID}
+    clearState: true
+    stopApp: true
+- waitForAnimationToEnd
+- openLink: ${DEV_CLIENT_URL}
+# A link that lands while the launcher is still starting can be dropped: send it again.
+- runFlow:
+    when:
+      visible: "Development Build|DEVELOPMENT SERVERS|Development servers"
+    commands:
+      - openLink: ${DEV_CLIENT_URL}
+- extendedWaitUntil:
+    visible: "Runtime version.*|Browse without signing in"
+    timeout: 120000
+- tapOn:
+    text: "Continue"
+    optional: true
+- tapOn:
+    text: "Close"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: welcome-sign-in
+    timeout: 30000

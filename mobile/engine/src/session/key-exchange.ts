@@ -57,6 +57,11 @@ export type KeyExchangeStep<S> =
   | { status: 'pending'; requestId: string; expiresAt: Date }
   | { status: 'signed-in'; session: S }
   | { status: 'needs-registration'; requestId: string; uri: string; expiresAt: Date; keys: KeyToRegister[] }
+  /** The wallet answered for an account already on this device: the host restarts the engine to switch to it. */
+  | { status: 'switch'; identityId: string }
+
+/** How a wallet approval ends: a sign-in, or a switch to the account already on this device. */
+export type KeyExchangeDone<S> = Extract<KeyExchangeStep<S>, { status: 'signed-in' | 'switch' }>
 
 interface Approval {
   identityId: string
@@ -88,7 +93,7 @@ export interface KeyExchangeOptions<S> {
   controller: PlatformAuthController
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
   /** Sign in with the wallet's login key (the controller's `completeYapprKeyExchangeLogin` plus the engine's bookkeeping). */
-  complete(identityId: string, loginKey: Uint8Array, keyIndex: number): Promise<S>
+  complete(identityId: string, loginKey: Uint8Array, keyIndex: number): Promise<KeyExchangeDone<S>>
   now?(): number
   newId?(): string
 }
@@ -209,9 +214,9 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
     finishing = options.complete(approval.identityId, loginKey, approval.keyIndex)
       .finally(() => clearSensitiveBytes(loginKey))
       .then(
-        (session): KeyExchangeStep<S> => {
+        (done): KeyExchangeStep<S> => {
           wipe(request)
-          return { status: 'signed-in', session }
+          return done
         },
         (error: unknown) => {
           finishing = null

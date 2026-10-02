@@ -1,6 +1,9 @@
 import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
+import { useSignInPrompt } from '~/data/require-auth';
+import { useOnboarding } from '~/features/auth/onboarding';
+
 // Resolved against Jest's cwd, mobile/app.
 const APP_DIR = './src/app';
 const TABS = ['Home', 'Explore', 'Notifications', 'Messages', 'Profile'];
@@ -18,11 +21,24 @@ async function renderApp(initialUrl: string) {
 const tab = (name: string) => screen.getByLabelText(new RegExp(`^${name}, tab`));
 
 describe('app shell', () => {
+  // Past Welcome, as every launch after the first (the fresh install is tested below).
+  beforeEach(() => useOnboarding.setState({ welcomed: true }));
+
+  it('opens Welcome on a fresh install (AUTH-01)', async () => {
+    useOnboarding.setState({ welcomed: false });
+    const app = await renderApp('/');
+
+    expect(app.getPathname()).toBe('/welcome');
+    fireEvent.press(screen.getByTestId('welcome-browse'));
+    expect(app.getPathname()).toBe('/');
+    expect(useOnboarding.getState().welcomed).toBe(true);
+  });
+
   it('opens on Home with the five labelled tabs (ADR-001 E4)', async () => {
     const app = await renderApp('/');
 
     expect(app.getPathname()).toBe('/');
-    expect(screen.getByText('Coming in the feed PR')).toBeTruthy();
+    expect(screen.getByTestId('home-header')).toBeTruthy();
     for (const name of TABS) expect(tab(name)).toBeTruthy();
   });
 
@@ -35,11 +51,14 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/messages');
   });
 
-  it('opens compose from the floating button', async () => {
+  // Signed in, the button opens /compose (features/home/HomeScreen.test.tsx).
+  it('asks a signed-out reader to sign in from the floating button (G-8)', async () => {
     const app = await renderApp('/');
 
     fireEvent.press(screen.getByTestId('compose-fab'));
-    expect(app.getPathname()).toBe('/compose');
+    expect(useSignInPrompt.getState().open).toBe(true);
+    expect(app.getPathname()).toBe('/');
+    act(() => useSignInPrompt.setState({ open: false }));
   });
 
   it('pushes shared detail screens onto the current tab and keeps each tab’s history', async () => {
@@ -96,11 +115,11 @@ describe('app shell', () => {
   // Every 1.0 screen has a reachable stub (EXECUTION M1 exit check). Reached
   // in-app, since links may not open some of them (+native-intent).
   it.each([
-    ['/', 'feed'],
+    ['/', null],
     ['/explore', null],
     ['/explore/search?q=dash', null],
     ['/explore/search/people?q=dash', null],
-    ['/notifications', 'notifications'],
+    ['/notifications', null],
     ['/messages', 'messages'],
     ['/messages/settings', 'messages'],
     ['/messages/c1', 'messages'],
@@ -109,37 +128,37 @@ describe('app shell', () => {
     ['/messages/new-group', 'messages'],
     ['/profile', 'profiles'],
     ['/profile/edit', 'profiles'],
-    ['/post/abc123', 'post detail'],
-    ['/post/abc123/engagements?kind=post', 'post detail'],
+    ['/post/abc123', null],
+    ['/post/abc123/engagements?kind=post', null],
     ['/user/abc123', 'profiles'],
     ['/user/abc123/followers', 'profiles'],
     ['/user/abc123/following', 'profiles'],
     ['/hashtag/dash', null],
     ['/bookmarks', 'settings and bookmarks'],
-    ['/settings', 'settings and bookmarks'],
-    ['/settings/account', 'settings and bookmarks'],
-    ['/settings/accounts', 'sign-in'],
-    ['/settings/app-lock', 'sign-in'],
-    ['/settings/notifications', 'notifications'],
-    ['/settings/privacy', 'settings and bookmarks'],
-    ['/settings/blocked', 'safety'],
-    ['/settings/appearance', 'settings and bookmarks'],
-    ['/settings/about', 'settings and bookmarks'],
+    ['/settings', null],
+    ['/settings/account', null],
+    ['/settings/accounts', null],
+    ['/settings/app-lock', null],
+    ['/settings/notifications', null],
+    ['/settings/privacy', null],
+    ['/settings/blocked', null],
+    ['/settings/appearance', null],
+    ['/settings/about', null],
     ['/settings/diagnostics', null],
     ['/compose', 'compose'],
-    ['/media?postId=abc123&index=0', 'post detail'],
-    ['/terms-gate', 'safety'],
+    ['/media?postId=abc123&index=0', null],
+    ['/terms-gate', null],
     ['/lockdown', null],
     ['/webview-update', null],
-    ['/sign-in', 'sign-in'],
-    ['/sign-in/wallet', 'sign-in'],
-    ['/sign-in/qr', 'sign-in'],
-    ['/sign-in/register', 'sign-in'],
-    ['/sign-in/key', 'sign-in'],
-    ['/welcome', 'sign-in'],
+    ['/sign-in', null],
+    ['/sign-in/wallet', null],
+    ['/sign-in/qr', null],
+    ['/sign-in/register', null],
+    ['/sign-in/key', null],
+    ['/welcome', null],
     ['/__gallery', null],
-    ['/block/abc123', 'safety'],
-    ['/report/abc123?kind=post', 'safety'],
+    ['/block/abc123', null],
+    ['/report/abc123?kind=post', null],
   ])('%s has a stub', async (url, pr) => {
     const app = await renderApp('/');
     act(() => router.push(url as Href));
