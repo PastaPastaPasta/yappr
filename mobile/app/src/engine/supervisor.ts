@@ -351,7 +351,6 @@ export class EngineSupervisor<Load = unknown> {
     const client = createEngineClient<EngineApi>(transport, {
       timeoutMs: 0, // deadlines are per method kind, here
       helloTimeoutMs: 0, // counted in foreground time, here
-
       // Also filtered here: the engine forwards `info` until boot lowers its level.
       onLog: (level, message) => {
         if (LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(this.options.engineLogLevel)) {

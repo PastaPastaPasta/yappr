@@ -115,7 +115,7 @@ export function createMobileAuthController(): PlatformAuthController {
 }
 
 /** How often the signed-in balance is read while the app is in the foreground (platform-auth's default). */
-export const BALANCE_REFRESH_MS = 300_000
+const BALANCE_REFRESH_MS = 300_000
 
 /**
  * The controller's balance refresh, in the foreground only (PRD NET-08):

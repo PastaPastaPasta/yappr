@@ -62,7 +62,7 @@ export function useAuthorBlocked(authorId: string | undefined, fallback?: boolea
   return decided ?? fallback === true;
 }
 
-/** How often a failed block-status read is asked again (about 2.5 minutes in all). */
+/** How often a failed block-status read is asked again (5, 10, 20 and 40 s apart). */
 const BLOCK_STATUS_RETRIES = 4;
 
 /** The engine's cap on one `safety.isBlocked` call. */

@@ -232,7 +232,9 @@ export function dropFromLists(postId: string): void {
     if (query.state.fetchStatus === 'fetching') {
       queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
     }
-    const pages = data.pages.map((page) => (page.items.some(gone) ? { ...page, items: page.items.filter((item) => !gone(item)) } : page));
+    const pages = data.pages.map((page) =>
+      page.items.some(gone) ? { ...page, items: page.items.filter((item) => !gone(item)) } : page,
+    );
     queryClient.setQueryData(query.queryKey, { ...data, pages }, { updatedAt: query.state.dataUpdatedAt });
   }
 }
