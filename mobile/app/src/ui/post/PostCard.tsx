@@ -24,7 +24,7 @@ import { RichText, type RichTextHandlers } from '../rich-text/RichText';
 import { Skeleton } from '../Skeleton';
 import { lightImpact } from '../haptics';
 import { Text } from '../Text';
-import { monoFont, tw, useColors, useLargeText } from '../tokens';
+import { hitSlopFor, monoFont, tw, useColors, useLargeText } from '../tokens';
 import { useMediaUrls } from '../media-url';
 import { RelativeTime } from '../RelativeTime';
 import { displayText, inlineTargets, splitUrl, stripLink, type InlinePart } from '../rich-text/parse';
@@ -64,7 +64,12 @@ export interface PostCardActions extends RichTextHandlers {
   onLinkPreviewPress?: (url: string) => void;
   onVotePress?: () => void;
   onOpenPrivate?: () => void;
+  /** Detail only: a count in the counts row, to open that engagements tab (UX_SPEC §4.9). */
+  onCountPress?: (tab: EngagementCountTab) => void;
 }
+
+/** The counts row's entries, by the engagements tab each one opens. */
+export type EngagementCountTab = 'reposts' | 'quotes' | 'likes';
 
 export interface PostCardProps {
   post: CardPost;
@@ -464,7 +469,7 @@ export const PostCard = memo(function PostCard({
             onPress={actions.onLinkPreviewPress}
           />
         ) : null}
-        {detail ? <DetailMeta post={post} /> : null}
+        {detail ? <DetailMeta post={post} onCountPress={actions.onCountPress} /> : null}
       </>
     );
   }
@@ -487,6 +492,10 @@ export const PostCard = memo(function PostCard({
         },
         { name: 'share', label: 'Share', run: actions.onShare },
       );
+    }
+    const openCounts = actions.onCountPress;
+    if (detail && openCounts && !post.deleted) {
+      a11yActions.push({ name: 'engagements', label: 'View post engagements', run: () => openCounts('likes') });
     }
     if (variant === 'optimistic' && writeStatus) {
       for (const link of writeStatusLinks(writeStatus))
@@ -620,30 +629,50 @@ export const PostCard = memo(function PostCard({
   );
 });
 
-/** Detail only: the absolute time and the counts row (UX_SPEC §2.4.4). */
-function DetailMeta({ post }: { post: CardPost }) {
+/** Detail only: the absolute time and the counts row, non-zero counts only (UX_SPEC §2.4.4, §4.9). */
+function DetailMeta({ post, onCountPress }: { post: CardPost; onCountPress?: (tab: EngagementCountTab) => void }) {
   const date = post.createdAt;
   const when = `${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-  const counts = [
-    [post.stats.reposts, 'Repost', 'Reposts'],
-    [post.stats.quotes, 'Quote', 'Quotes'],
-    [post.stats.likes, 'Like', 'Likes'],
-  ] as const;
+  const counts = (
+    [
+      [post.stats.reposts, 'Repost', 'Reposts', 'reposts'],
+      [post.stats.quotes, 'Quote', 'Quotes', 'quotes'],
+      [post.stats.likes, 'Like', 'Likes', 'likes'],
+    ] as const
+  ).filter(([n]) => n > 0);
   return (
     <View className="mt-3 gap-3">
       <Text variant="subhead" tone="secondary">
         {when}
       </Text>
-      <View className={cn('flex-row flex-wrap gap-x-4 gap-y-1 border-y py-3', tw.border)}>
-        {counts.map(([n, one, many]) => (
-          <Text key={many} variant="subhead" tone="secondary">
-            <Text variant="subheadStrong" tabular>
-              {formatNumber(n)}
-            </Text>{' '}
-            {n === 1 ? one : many}
-          </Text>
-        ))}
-      </View>
+      {counts.length > 0 ? (
+        <View className={cn('flex-row flex-wrap gap-x-4 gap-y-1 border-y py-3', tw.border)}>
+          {counts.map(([n, one, many, tab]) => {
+            const label = (
+              <Text variant="subhead" tone="secondary">
+                <Text variant="subheadStrong" tabular>
+                  {formatNumber(n)}
+                </Text>{' '}
+                {n === 1 ? one : many}
+              </Text>
+            );
+            return onCountPress ? (
+              <Pressable
+                key={tab}
+                accessibilityRole="link"
+                accessibilityLabel={`${formatNumber(n)} ${n === 1 ? one : many}`}
+                hitSlop={hitSlopFor(20)}
+                onPress={() => onCountPress(tab)}
+                testID={`count-${tab}`}
+              >
+                {({ pressed }) => <View className={pressed ? 'opacity-60' : undefined}>{label}</View>}
+              </Pressable>
+            ) : (
+              <View key={tab}>{label}</View>
+            );
+          })}
+        </View>
+      ) : null}
     </View>
   );
 }
