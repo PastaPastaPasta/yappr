@@ -10,6 +10,7 @@
  * retention sweep would reclaim them; it is off for test runs).
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import { loadPoolPersonas, type PoolPersona } from '../../../harness/pool'
 import type { ConversationDTO, DmEvents, WriteTicket } from '../../../src/api'
 import { connectEngine } from '../engine'
@@ -129,15 +130,32 @@ describe.skipIf(skip !== null)(`dm on sakura${skip ? ` (skipped: ${skip})` : ''}
     expect(page.items.slice(0, 2).map(m => [m.text, m.own])).toEqual([[`reply ${RUN}`, false], [HELLO, true]])
   })
 
-  it('group: create, rename, add a member, a member leaves', async () => {
+  it('group: create, rename (its answer lost after the broadcast), add a member, a member leaves', async () => {
     await become(alice)
     const creating = await settled(await engine.api.dm.createGroup(`Mobile engine ${RUN}`, [bob.identityId]))
     expect(creating).toMatchObject({ op: 'dm.group', state: 'confirmed' })
     const created = await engine.api.dm.createdGroup(creating.id)
     expect(created?.failed).toEqual([])
     const key = created?.key ?? ''
-    expect(await settled(await engine.api.dm.renameGroup(key, `Renamed ${RUN}`))).toMatchObject({ state: 'confirmed' })
-    expect(await settled(await engine.api.dm.addMember(key, carol.identityId))).toMatchObject({ state: 'confirmed' })
+    // The rename's replace lands, but its answer is lost, as a WebView's "Failed to fetch" after the
+    // broadcast: lib keeps that SDK-signed transition pending. The DM engine sees the rename land, so
+    // the next group change must go through, not fail PENDING_WRITE for 15 minutes.
+    const sdk = await getEvoSdk()
+    const replace = sdk.documents.replace.bind(sdk.documents)
+    let lost = false
+    sdk.documents.replace = (async (...args: Parameters<typeof replace>) => {
+      const result = await replace(...args)
+      if (lost) return result
+      lost = true
+      throw new Error('transport error: grpc error: code: \'Internal error\', message: "Failed to call gRPC service: JS API error: TypeError: Failed to fetch"')
+    }) as typeof replace
+    try {
+      expect(await settled(await engine.api.dm.renameGroup(key, `Renamed ${RUN}`))).toMatchObject({ state: 'confirmed' })
+      expect(lost).toBe(true)
+      expect(await settled(await engine.api.dm.addMember(key, carol.identityId))).toMatchObject({ state: 'confirmed' })
+    } finally {
+      sdk.documents.replace = replace
+    }
     const owned = (await engine.api.dm.conversations()).find(c => c.key === key)
     expect(owned).toMatchObject({ kind: 'group', isOwner: true, name: `Renamed ${RUN}` })
     expect([...(owned?.members ?? [])].sort()).toEqual([alice.identityId, bob.identityId, carol.identityId].sort())
