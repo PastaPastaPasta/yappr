@@ -163,8 +163,9 @@ same `APP_VARIANT`, or the app refuses to start (`src/config.ts`).
 - The config plugin `plugins/engine-assets` builds `mobile/engine` for the
   variant at prebuild (root `npm ci` first; `YAPPR_ENGINE_SKIP_BUILD=1` to
   reuse `dist/`) and ships it: `engine.inline.html` on iOS (loaded with an
-  https base URL), `engine.js` behind a small loader page on Android, whose
-  WebView silently loads nothing for inline HTML over about 15 MB.
+  https base URL), and on Android `engine.js` and its sidecars
+  (`engine.wasm.js`, `engine.avatars.js`) behind a small loader page, since
+  that WebView silently loads nothing for inline HTML over about 15 MB.
 - Dev builds of the devnet variant have a quick sign-in on the diagnostics
   screen (paste a WIF or hex key), for testing signed-in screens.
 - **Engine changes without a native rebuild (dev):** rebuild the engine, run

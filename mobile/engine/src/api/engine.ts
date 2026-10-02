@@ -14,6 +14,7 @@ import { PROTOCOL_VERSION, RpcError, type LogLevel } from '../protocol/envelope'
 import { ENGINE_BUILD, bundleHash } from '../build-info'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import { platformInfo, type PlatformInfoDTO } from '../dto/capabilities'
+import { avatarStylesReady } from '../avatar-styles'
 
 /**
  * Host-specific hooks the API needs. The WebView entry wires the real shims;
@@ -92,8 +93,12 @@ export function createEngineModule(runtime: EngineRuntime) {
       if (!booting) {
         bootAttempted = true
         const started = performance.now()
-        booting = evoSdkService
-          .initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID })
+        booting = Promise.all([
+          evoSdkService.initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID }),
+          // lib draws default avatars while it enriches reads: have the styles in by then. Their
+          // failure is not the SDK's; profiles.avatarSvg reports it.
+          avatarStylesReady().then(() => undefined, () => undefined),
+        ])
           .then(() => {
             bootMs ??= Math.round(performance.now() - started)
           })

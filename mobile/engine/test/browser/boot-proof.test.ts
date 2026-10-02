@@ -8,8 +8,10 @@
  *
  * Two origins: `file://` (the html shipped in the app bundle, origin `null`)
  * and a custom https base (`https://engine.yap.pr/`, served by route
- * interception, as `source={{ html, baseUrl }}` would). For each it records
- * cold boot, first/second feed page, a post and a profile, and the DAPI
+ * interception, as `source={{ html, baseUrl }}` would), the latter both with
+ * engine.html loading the scripts beside it and with engine.inline.html (iOS)
+ * as the page. For each it records cold boot, first/second feed page, a post,
+ * a profile and an avatar, and the DAPI
  * responses' CORS headers. Results go to $EVIDENCE_DIR (default
  * mobile/engine/test-results/, gitignored).
  *
@@ -29,7 +31,8 @@ const EVIDENCE_DIR = process.env.EVIDENCE_DIR ?? path.resolve(__dirname, '../../
 const RUNS = Number(process.env.RUNS ?? 2)
 const HTTPS_BASE = 'https://engine.yap.pr/'
 
-type Mode = 'file' | 'https'
+/** `inline`: engine.inline.html as the page itself, as iOS loads it; nothing else is served from the base. */
+type Mode = 'file' | 'https' | 'inline'
 
 interface RunResult {
   browser: string
@@ -157,9 +160,11 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
       result.failedRequests.push({ url: request.url(), error: request.failure()?.errorText ?? 'unknown' })
     })
 
-    if (mode === 'https') {
+    if (mode !== 'file') {
       await page.route(`${HTTPS_BASE}**`, async (route) => {
-        const file = path.join(DIST, new URL(route.request().url()).pathname.replace(/^\//, ''))
+        const { pathname } = new URL(route.request().url())
+        if (mode === 'inline' && pathname !== '/') return route.fulfill({ status: 404, body: 'the inline page loads nothing else' })
+        const file = path.join(DIST, mode === 'inline' ? 'engine.inline.html' : pathname.replace(/^\//, ''))
         if (!existsSync(file)) return route.fulfill({ status: 404, body: 'not found' })
         await route.fulfill({
           status: 200,
@@ -174,7 +179,7 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
       onLog: (level, message) => { if (level === 'error') result.engineErrors.push(message.slice(0, 500)) },
     })
 
-    const url = mode === 'file' ? pathToFileURL(path.join(DIST, 'engine.html')).href : `${HTTPS_BASE}engine.html`
+    const url = mode === 'file' ? pathToFileURL(path.join(DIST, 'engine.html')).href : mode === 'inline' ? HTTPS_BASE : `${HTTPS_BASE}engine.html`
     const t0 = performance.now()
     await page.goto(url)
     await client.ready
@@ -217,6 +222,10 @@ async function runOnce(browser: Browser, browserName: string, mode: Mode, run: n
     result.profileGetMs = profileGetMs
     expect(profile?.id).toBe(sample.author.id)
 
+    // The DiceBear styles arrive in a sidecar script (engine.avatars.js), not in engine.js.
+    const avatar = await client.api.profiles.avatarSvg(sample.author.id, 'thumbs', 'boot-proof')
+    expect(avatar).toMatch(/^<svg/)
+
     result.ok = true
     client.close()
   } catch (error) {
@@ -239,7 +248,7 @@ describe.skipIf(!existsSync(path.join(DIST, 'engine.html')))('engine boots in a 
   }
 
   for (const [name, type] of engines) {
-    for (const mode of ['file', 'https'] as Mode[]) {
+    for (const mode of ['file', 'https', 'inline'] as Mode[]) {
       it(`${name} over ${mode}`, () => withBrowser(type, browser => runAll(browser, name, mode)()))
     }
   }

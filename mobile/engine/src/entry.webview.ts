@@ -1,11 +1,17 @@
 // Must stay the first import: it swaps in the storage shim before lib loads.
 import { engineStorage, misroutedStorageKeys } from './install-shims'
+// Second: installs the WASM source before any SDK code can ask for it.
+import { initWasm } from './wasm-source'
 import { createEngineApi } from './api'
 import { createDispatcher } from './rpc/dispatcher'
 import { createWebViewTransport } from './rpc/transport'
 import { dispatchConnectivity, dispatchLifecycle } from './shims/lifecycle'
 import { bundleHash } from './build-info'
 import { LOG_LEVELS, type LogLevel } from './protocol/envelope'
+import { setAvatarStylesReady } from './avatar-styles'
+import { installAvatarStyles } from './avatars/collection-shim'
+import { loadSidecar, SIDECARS } from './sidecar'
+import { preconnectQuorumService } from './preconnect'
 
 /**
  * The engine inside the hidden WebView. Serves the API over the
@@ -72,3 +78,17 @@ for (const [method, level] of Object.entries(levels) as [keyof typeof levels, Lo
 }
 
 dispatcher.hello({ bundleHash: bundleHash() })
+
+// Start on the WASM now rather than at engine.boot(): it streams in and compiles
+// while the hello crosses the bridge and the host answers. boot() joins this
+// init; a failed one is forgotten and boot() tries again (and reports why).
+initWasm().catch((error: unknown) => dispatcher.log('warn', `WASM preload failed: ${describe(error)}`))
+preconnectQuorumService()
+
+const avatarStyles = loadSidecar(SIDECARS.avatars, () => {
+  const styles = window.__YAPPR_ENGINE_AVATARS__
+  delete window.__YAPPR_ENGINE_AVATARS__
+  return styles
+}).then(installAvatarStyles)
+setAvatarStylesReady(avatarStyles)
+avatarStyles.catch((error: unknown) => dispatcher.log('error', `Avatar styles did not load: ${describe(error)}`))

@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs'
 import { ENGINE_ALIASES } from './aliases.mjs'
 
 const root = path.resolve(__dirname, '../..')
+/** The SDK's WASM for Node: the bundle's shim inlines none (src/shims/wasm-sdk.ts). */
+const WASM_SETUP = 'test/setup/wasm.ts'
 const evoSdkVersion = JSON.parse(readFileSync(path.join(root, 'node_modules/@dashevo/evo-sdk/package.json'), 'utf8')).version
 
 /**
@@ -30,7 +32,7 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: 'unit', environment: 'node', include: ['test/unit/**/*.test.ts'] },
+        test: { name: 'unit', environment: 'node', include: ['test/unit/**/*.test.ts'], setupFiles: [WASM_SETUP] },
       },
       {
         extends: true,
@@ -39,7 +41,7 @@ export default defineConfig({
           environment: 'node',
           include: ['test/contract/**/*.test.ts'],
           exclude: ['test/contract/write/**'],
-          setupFiles: ['test/setup/node-engine.ts'],
+          setupFiles: [WASM_SETUP, 'test/setup/node-engine.ts'],
           testTimeout: 120_000,
           hookTimeout: 120_000,
           // DAPI flakiness: an unhealthy testnet node can fail a single read.
@@ -54,7 +56,7 @@ export default defineConfig({
           name: 'contract-write',
           environment: 'node',
           include: ['test/contract/write/**/*.test.ts'],
-          setupFiles: ['test/contract/write/setup.ts'],
+          setupFiles: [WASM_SETUP, 'test/contract/write/setup.ts'],
           // One process, one file at a time: the personas' nonces must never race.
           pool: 'forks',
           poolOptions: { forks: { singleFork: true } },

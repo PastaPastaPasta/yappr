@@ -53,6 +53,8 @@ export function EngineHost() {
         style={styles.hidden}
         source={load.source}
         allowFileAccess={load.allowFileAccess}
+        allowingReadAccessToURL={load.allowingReadAccessToURL}
+        injectedJavaScriptBeforeContentLoaded={load.injectedJavaScriptBeforeContentLoaded}
         // Everything goes through onShouldStartLoadWithRequest: react-native-webview hands a
         // non-whitelisted URL to Linking.openURL without asking, which would let the engine open apps.
         originWhitelist={['*']}

@@ -5,9 +5,11 @@
  *   node mobile/engine/build.mjs --variant testnet|devnet [--sourcemap] [--outdir dir]
  *
  * Outputs (default `mobile/engine/dist/<variant>/`):
- *   engine.js           the IIFE bundle: evo-sdk (wasm inlined, gzip+base64), lib/, the API
- *   engine.html         loads engine.js from the same directory (file:// or a custom base URL)
- *   engine.inline.html  the same with engine.js inlined, for `source={{ html, baseUrl }}`
+ *   engine.js           the IIFE bundle: evo-sdk and its wasm-bindgen glue, lib/, the API
+ *   engine.wasm.js      the SDK's WASM, gzip + base64, as `window.__YAPPR_ENGINE_WASM__ = "…"`
+ *   engine.avatars.js   the DiceBear styles, as `window.__YAPPR_ENGINE_AVATARS__`
+ *   engine.html         loads the three, in that order, from the same directory (file:// or a custom base URL)
+ *   engine.inline.html  the same with all three inlined, for `source={{ html, baseUrl }}`
  *   selftest.html       engine + an in-page host that runs boot/feed/post/profile and prints timings
  *   manifest.json       sha256, sizes, versions, network wiring
  *   meta.json           esbuild metafile (inspect with https://esbuild.github.io/analyze/)
@@ -80,6 +82,26 @@ function variantEnv(variant) {
   }
 }
 
+/**
+ * engine.js only: the DiceBear styles ship in engine.avatars.js (src/avatars/).
+ * Not in ENGINE_ALIASES, so the Node harness draws avatars with the real ones.
+ */
+const BUNDLE_ALIASES = {
+  ...ENGINE_ALIASES,
+  '@dicebear/collection': path.join(here, 'src/avatars/collection-shim.ts'),
+}
+
+/** Module substitutions, each matching its exact specifier only (as vitest.config.ts does; esbuild's `alias` would also remap subpaths). */
+function engineAliasPlugin(aliases) {
+  const pattern = new RegExp(`^(${Object.keys(aliases).map(name => name.replace(/[/.]/g, '\\$&')).join('|')})$`)
+  return {
+    name: 'engine-alias',
+    setup(pluginBuild) {
+      pluginBuild.onResolve({ filter: pattern }, args => ({ path: aliases[args.path] }))
+    },
+  }
+}
+
 /** `@/x` → `<repo>/x`, for files outside lib's own tsconfig too. */
 const rootAliasPlugin = {
   name: 'root-alias',
@@ -146,33 +168,57 @@ async function main() {
     legalComments: 'none',
     metafile: true,
     define,
-    alias: ENGINE_ALIASES,
-    plugins: [rootAliasPlugin],
+    plugins: [engineAliasPlugin(BUNDLE_ALIASES), rootAliasPlugin],
   })
   const buildMs = Date.now() - started
   assertInputsWatched(result.metafile)
 
-  const js = readFileSync(path.join(outdir, 'engine.js'))
-  // engine.inline.html puts the bundle inside <script>: either sequence would end or corrupt it.
-  for (const forbidden of [/<\/script/i, /<!--/]) {
-    if (forbidden.test(js.toString('latin1'))) throw new Error(`engine.js contains ${forbidden}; it cannot be inlined into engine.inline.html`)
+  // The sidecar scripts (src/sidecar.ts), each one global assignment.
+  // engine.avatars.js: the real DiceBear styles, which engine.js only stands in for.
+  const avatars = await build({
+    ...common,
+    entryPoints: [path.join(here, 'src/avatars/entry.ts')],
+    outfile: path.join(outdir, 'engine.avatars.js'),
+    legalComments: 'none',
+    metafile: true,
+  })
+  assertInputsWatched(avatars.metafile)
+  // engine.wasm.js: the SDK's WASM (src/wasm-source.ts), gzip + base64 in one string literal, so it parses in one scan.
+  const wasm = readFileSync(path.join(root, 'node_modules/@dashevo/wasm-sdk/dist/raw/wasm_sdk_bg.wasm'))
+  const wasmGzip = gzipSync(wasm, { level: 9 })
+  writeFileSync(path.join(outdir, 'engine.wasm.js'), `window.__YAPPR_ENGINE_WASM__=${JSON.stringify(wasmGzip.toString('base64'))};\n`)
+
+  // engine.js first, then the sidecars: every page runs them in this order (src/sidecar.ts).
+  const scripts = ['engine.js', 'engine.wasm.js', 'engine.avatars.js'].map(name => ({ name, source: readFileSync(path.join(outdir, name)) }))
+  // engine.inline.html puts each script inside <script>: either sequence would end or corrupt it.
+  for (const { name, source } of scripts) {
+    for (const forbidden of [/<\/script/i, /<!--/]) {
+      if (forbidden.test(source.toString('latin1'))) throw new Error(`${name} contains ${forbidden}; it cannot be inlined into engine.inline.html`)
+    }
   }
-  const hash = sha256(js)
+  // One hash over all three: a new SDK or style set must never meet a cached page of the old one.
+  const bundle = createHash('sha256')
+  for (const { source } of scripts) bundle.update(source)
+  const hash = bundle.digest('hex')
   const hashScript = `<script>globalThis.__YAPPR_ENGINE_BUNDLE_HASH__=${JSON.stringify(hash)}</script>`
   const head = `<!doctype html><html><head><meta charset="utf-8"><title>yappr engine</title>${hashScript}`
-  writeFileSync(path.join(outdir, 'engine.html'), `${head}<script src="engine.js"></script></head><body></body></html>\n`)
-  writeFileSync(path.join(outdir, 'engine.inline.html'), `${head}<script>${js}</script></head><body></body></html>\n`)
+  const scriptTags = scripts.map(({ name }) => `<script src="${name}"></script>`).join('')
+  writeFileSync(path.join(outdir, 'engine.html'), `${head}${scriptTags}</head><body></body></html>\n`)
+  writeFileSync(path.join(outdir, 'engine.inline.html'), `${head}${scripts.map(({ source }) => `<script>${source}</script>`).join('')}</head><body></body></html>\n`)
   writeFileSync(path.join(outdir, 'meta.json'), JSON.stringify(result.metafile))
 
   // Diagnostics page: an in-page host for browsers nothing can drive (see src/selftest.ts).
   await build({ ...common, entryPoints: [path.join(here, 'src/selftest.ts')], outfile: path.join(outdir, 'selftest.js') })
-  writeFileSync(path.join(outdir, 'selftest.html'), `${head}<meta name="viewport" content="width=device-width"></head><body><pre id="out" style="white-space:pre-wrap;font:14px monospace"></pre><script src="selftest.js"></script><script src="engine.js"></script></body></html>\n`)
+  writeFileSync(path.join(outdir, 'selftest.html'), `${head}<meta name="viewport" content="width=device-width"></head><body><pre id="out" style="white-space:pre-wrap;font:14px monospace"></pre><script src="selftest.js"></script>${scriptTags}</body></html>\n`)
 
+  const [js, wasmJs, avatarsJs] = scripts.map(({ source }) => source)
   const manifest = {
     ...engineBuild,
     sha256: hash,
     bytes: js.length,
     gzipBytes: gzipSync(js).length,
+    wasm: { sha256: sha256(wasm), bytes: wasm.length, gzipBytes: wasmGzip.length, scriptBytes: wasmJs.length },
+    avatars: { bytes: avatarsJs.length, gzipBytes: gzipSync(avatarsJs).length },
     buildMs,
     network: env.NEXT_PUBLIC_NETWORK ?? 'testnet (default)',
     contractId: env.NEXT_PUBLIC_YAPPR_CONTRACT_ID ?? 'lib/constants default',
@@ -185,7 +231,7 @@ async function main() {
     .map(([file, { bytes }]) => [file, bytes])
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
-  console.log(`engine ${args.variant}: ${(js.length / 1e6).toFixed(2)} MB (${(manifest.gzipBytes / 1e6).toFixed(2)} MB gzip), sha256 ${hash.slice(0, 12)}, ${buildMs} ms → ${path.relative(process.cwd(), outdir)}`)
+  console.log(`engine ${args.variant}: ${(js.length / 1e6).toFixed(2)} MB (${(manifest.gzipBytes / 1e6).toFixed(2)} MB gzip) + engine.wasm.js ${(wasmJs.length / 1e6).toFixed(2)} MB + engine.avatars.js ${(avatarsJs.length / 1e6).toFixed(2)} MB, sha256 ${hash.slice(0, 12)}, ${buildMs} ms → ${path.relative(process.cwd(), outdir)}`)
   for (const [file, bytes] of top) console.log(`  ${(bytes / 1e6).toFixed(2)} MB  ${file}`)
 }
 

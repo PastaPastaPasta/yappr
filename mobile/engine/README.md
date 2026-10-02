@@ -12,10 +12,11 @@ mobile/engine/
   src/dm/                the DM backends (v5, legacy), their DTOs and the event diff
   src/dto/               cursors, paging, enrichment pipeline, thread port, capabilities, DTO validators
   src/entry.webview.ts   the WebView entry; src/install-shims.ts runs before lib loads
+  src/sidecar.ts         engine.wasm.js and engine.avatars.js, the scripts beside engine.js (wasm-source.ts, avatars/)
   src/selftest.ts        selftest.html: engine + in-page host, for browsers nothing can drive
   test/unit/             codec, RPC, shims, DTO mappers (offline)
   test/contract/read/    the read API in Node against testnet, one file per module (ENGINE_VARIANT=devnet: sakura)
-  test/browser/          the built bundle in Playwright WebKit + Chromium, file:// and https origins
+  test/browser/          the built bundle in Playwright WebKit + Chromium, file:// and https origins, and engine.inline.html
 ```
 
 ## Commands
@@ -24,7 +25,7 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 
 | Command | What it does |
 | --- | --- |
-| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}` |
+| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.wasm.js, engine.avatars.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}` |
 | `npm run typecheck` | `tsc` over src, tests and the lib files they reach |
 | `npm run lint` | ESLint with the engine's own config (`.eslintrc.cjs`; the root config ignores `mobile/**`) |
 | `npm test` | Unit tests (offline) |
@@ -44,12 +45,16 @@ CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint
 
 ## How the wasm loads
 
-- **No separate wasm file.** evo-sdk's `dist/evo-sdk.module.js` is a self-contained webpack bundle. It carries its own wasm-bindgen glue and the gzip+base64 wasm inline (the `@dashevo/wasm-sdk/compressed` format). Nothing fetches a `.wasm` file, so the engine works from `file://` with no web server and no COOP/COEP headers.
+- **Three scripts, not one.** `engine.js` (1.5 MB) is the bundle: evo-sdk's unbundled entry (`dist/sdk.js`, aliased; the published `dist/evo-sdk.module.js` inlines its own glue and the WASM as 11 MB of base64), one copy of the wasm-bindgen glue, `lib/` and the API. Two **sidecar** scripts (`src/sidecar.ts`) each set one `window` global:
+  - `engine.wasm.js` (11.4 MB): the SDK's WASM, gzip + base64 in a single string literal (`__YAPPR_ENGINE_WASM__`);
+  - `engine.avatars.js` (2.0 MB): the DiceBear styles (`__YAPPR_ENGINE_AVATARS__`). In `engine.js`, `@dicebear/collection` is a stand-in (`src/avatars/collection-shim.ts`) whose styles read the real ones at call time.
+- **Order.** Every page runs `engine.js` first, so the engine says hello while the sidecars are still being read: `engine.inline.html` (iOS) inlines all three in that order; `engine.html` and the Android loader page load them by URL, in order and in parallel. A page without them gets them injected from beside the page.
 - **The init path:**
-  1. `EvoSDK.connect()` decodes the base64.
-  2. It compiles in a blob `Worker` (with `DecompressionStream`).
-  3. If the worker fails, it falls back to decompressing and compiling on the main thread.
-- **How compilation is cheap:** V8 and JSC compile lazily, so the main-thread `WebAssembly.compile`/`instantiate` calls measure in tens of milliseconds, not seconds.
+  1. The entry starts the WASM right after its hello, not at `engine.boot()`: decode the base64 (`Uint8Array.fromBase64`, else `atob`), decompress with `DecompressionStream`, and `WebAssembly.instantiateStreaming` the decompressed stream, which compiles off the main thread while it streams. `boot()` joins that init (`src/shims/wasm-sdk.ts`, which every `@dashevo/wasm-sdk` import shares: one glue module, one instance). A failed preload is forgotten, so `boot()` tries again.
+  2. It also preconnects to the quorum service the SDK reads first in `connect()` (`src/preconnect.ts`), so DNS and TLS overlap the compile.
+  3. `boot()` waits for the avatar styles too (lib draws default avatars while it enriches reads), and `profiles.avatarSvg` waits for them.
+- **No `.wasm` fetch.** Nothing fetches a binary, so the engine works from `file://` with no web server, no native asset handler and no COOP/COEP headers. A binary sidecar served by a native request interceptor would save the base64 scan and decode, which measured at tens of milliseconds (README Measurements), against a native module and a dev-client rebuild.
+- **Node** (the test harness) gets the WASM from the package file instead (`test/setup/wasm.ts`), and the real DiceBear styles (the stand-in is aliased in `build.mjs` only).
 - **`target: safari16.4, chrome110`:** `DecompressionStream` needs iOS 16.4 or later.
 
 ## Shims and stubs inventory
@@ -88,7 +93,8 @@ No `next/*` module is reached. If a future lib change pulls in something browser
 - **Console:** forwarded to the host as `log` envelopes at or above a level (default `info`; `engine.setLogLevel('debug')` for diagnostics), filtered before formatting because devnet builds log at debug. tslog's `%c` styling is stripped.
 - **IndexedDB:** `window.indexedDB` is set to `undefined` (ENGINE.md §9.1). Nothing in lib uses it and nothing on the host backs it up, so an unexpected user fails loudly.
 - **`react-hot-toast`** (esbuild alias): lib's toasts become `engine.notice {level, message}` events.
-- **`@dashevo/wasm-sdk/compressed`** (esbuild alias, same in vitest): re-exports evo-sdk's own copy, so the first-login key-registration builder (`lib/services/identity-update-builder.ts`, reached through `lib/auth/platform-auth-adapters`) shares evo-sdk's WASM instance. Without it the bundle carries a second 11.2 MB WASM payload (26.3 MB instead of 15.0 MB).
+- **`@dashevo/evo-sdk`, `@dashevo/wasm-sdk` and `@dashevo/wasm-sdk/compressed`** (exact-match aliases in `aliases.mjs`, the same in vitest): evo-sdk's unbundled entry, and one shim (`src/shims/wasm-sdk.ts`) for both wasm-sdk entries, which re-exports the shared glue and loads the WASM from a source the host page or the harness installs. evo-sdk, `lib/utils/username.ts` (so its contested-name check works) and the first-login key-registration builder (`lib/services/identity-update-builder.ts`) share one WASM instance, and the bundle carries no WASM at all.
+- **`@dicebear/collection`** (`build.mjs` only): `src/avatars/collection-shim.ts`, filled from `engine.avatars.js` (above).
 - **Early error reporter:** `install-shims.ts` posts uncaught errors and unhandled rejections straight to the bridge. If a lib module throws while loading, the bundle stops before the dispatcher exists, and that log line plus the client's hello timeout are what the host sees.
 
 ## RPC
@@ -319,5 +325,4 @@ On v5, a call naming a conversation before the saved state has loaded (`status()
 - Not in the read API yet: `explore.welcome` (signed-out homepage) and blog results in search (blogs are not in 1.0).
 - Testnet holds 2 `en` posts since the August rollback, so the contract suite cannot exercise a second page, rankings (v2 has none), trending or a native poll there; those paths run live only once sakura's contracts are published (the thread builders and cursors have unit tests).
 - The devnet variant can't boot until `.env.devnet` moves to sakura.
-- The bundle carries all 30 `@dicebear` styles (about 2 MB) because `unified-profile-service` imports the collection. Trimming it would need an alias.
 - **Not yet done** (they belong to M4, the EngineHost): the encrypted-MMKV and Keychain/Keystore write-through on the host side, the supervisor and replay of reads, and memory numbers on devices.

@@ -1,0 +1,3 @@
+{
+  "policy": "default-src 'none'; script-src 'self' file: 'unsafe-inline' 'unsafe-eval'; connect-src https:; img-src https: data: blob:; base-uri 'none'; form-action 'none'"
+}

@@ -3,9 +3,11 @@
  * (ENGINE.md §2.3; src/engine/page.ts says how each platform loads it).
  *
  * At prebuild it builds the engine for the app's variant (skip with
- * YAPPR_ENGINE_SKIP_BUILD=1 when dist/ is already built) and copies it:
- *   iOS      engine.inline.html into <app>/engine/, a folder reference in Copy Bundle Resources
- *   Android  engine.js into app/src/main/assets/engine/
+ * YAPPR_ENGINE_SKIP_BUILD=1 when dist/ is already built) and copies engine.js
+ * and its sidecars (engine.wasm.js, engine.avatars.js):
+ *   iOS      into <app>/engine/, a folder reference in Copy Bundle Resources,
+ *            with index.html: engine.html plus the host's CSP (src/engine/csp.json)
+ *   Android  into app/src/main/assets/engine/
  *
  * app.config.ts also calls `engineExtra()` so the JS bundle knows the engine
  * it was built against (`config.engine`): its hash busts the persisted query
@@ -19,7 +21,8 @@ const { IOSConfig, withDangerousMod, withXcodeProject } = require('expo/config-p
 const ENGINE_DIR = path.resolve(__dirname, '../../../engine');
 const FOLDER = 'engine';
 
-const FILES = { ios: ['engine.inline.html', 'manifest.json'], android: ['engine.js', 'manifest.json'] };
+const FILES = ['engine.js', 'engine.wasm.js', 'engine.avatars.js', 'manifest.json'];
+const CSP = require('../../src/engine/csp.json').policy;
 
 /** @param {string} engineVariant */
 const distDir = (engineVariant) => path.join(ENGINE_DIR, 'dist', engineVariant);
@@ -73,13 +76,25 @@ function ensureBuilt(engineVariant) {
 
 /**
  * @param {string} engineVariant
- * @param {'ios' | 'android'} platform
  * @param {string} target
  */
-function copyEngine(engineVariant, platform, target) {
+function copyEngine(engineVariant, target) {
   fs.rmSync(target, { recursive: true, force: true });
   fs.mkdirSync(target, { recursive: true });
-  for (const name of FILES[platform]) fs.copyFileSync(path.join(distDir(engineVariant), name), path.join(target, name));
+  for (const name of FILES) fs.copyFileSync(path.join(distDir(engineVariant), name), path.join(target, name));
+}
+
+/**
+ * iOS loads the page by file URL, so the CSP has to be in it, first in <head>
+ * (Android's loader page carries its own).
+ * @param {string} engineVariant
+ * @param {string} target
+ */
+function writeIosPage(engineVariant, target) {
+  const html = fs.readFileSync(path.join(distDir(engineVariant), 'engine.html'), 'utf8');
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${CSP}">`;
+  if (!html.includes('<head>')) throw new Error('engine.html has no <head>');
+  fs.writeFileSync(path.join(target, 'index.html'), html.replace('<head>', `<head>${meta}`));
 }
 
 /** @param {{ modRequest: { projectName?: string; projectRoot: string } }} cfg */
@@ -94,7 +109,9 @@ const withEngineAssets = (config, { variant }) => {
     'ios',
     async (cfg) => {
       ensureBuilt(engineVariant);
-      copyEngine(engineVariant, 'ios', path.join(cfg.modRequest.platformProjectRoot, iosProjectName(cfg), FOLDER));
+      const target = path.join(cfg.modRequest.platformProjectRoot, iosProjectName(cfg), FOLDER);
+      copyEngine(engineVariant, target);
+      writeIosPage(engineVariant, target);
       return cfg;
     },
   ]);
@@ -120,7 +137,7 @@ const withEngineAssets = (config, { variant }) => {
     'android',
     async (cfg) => {
       ensureBuilt(engineVariant);
-      copyEngine(engineVariant, 'android', path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/assets', FOLDER));
+      copyEngine(engineVariant, path.join(cfg.modRequest.platformProjectRoot, 'app/src/main/assets', FOLDER));
       return cfg;
     },
   ]);
