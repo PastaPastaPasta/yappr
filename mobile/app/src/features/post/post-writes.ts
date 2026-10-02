@@ -1,4 +1,4 @@
-import type { PostDTO, TargetRef } from '@engine/api';
+import type { PostDTO, TargetRef, WriteTicket } from '@engine/api';
 
 import { hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
 import { errorCode, type WriteSpec } from '~/data/writes';
@@ -11,6 +11,15 @@ import { errorCode, type WriteSpec } from '~/data/writes';
  * that show posts (thread, bookmarks, profile) reuse these.
  */
 
+/**
+ * A restored ticket for this write (after an engine restart cut the call
+ * short): the op this write asked for (`on` or `off`), on this post.
+ */
+const ticketOnPost =
+  <V extends { post: PostDTO }>(on: string, off: string, isOn: (vars: V) => boolean) =>
+  (ticket: WriteTicket, vars: V): boolean =>
+    ticket.op === (isOn(vars) ? on : off) && (ticket.target as { id?: string } | null)?.id === vars.post.id;
+
 /** The engine's reference to a post or reply. */
 export function targetOf(post: PostDTO): TargetRef {
   return { id: post.id, kind: post.kind, ownerId: post.author.id, rootPostId: post.rootPostId ?? null };
@@ -20,6 +29,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   key: ({ post }) => `like:${post.id}`,
   submit: (api, { post, like }) => (like ? api.engage.like(targetOf(post)) : api.engage.unlike(targetOf(post))),
   optimistic: ({ post, like }) => setViewerState(post.id, { liked: like }),
+  intent: ({ like }) => like,
+  matches: ticketOnPost('like', 'unlike', ({ like }: { post: PostDTO; like: boolean }) => like),
   noun: 'like',
   announceUnconfirmed: false,
   failureMessage: 'Failed to update like. Please try again.',
@@ -37,6 +48,8 @@ export const repostWrite: WriteSpec<RepostVars> = {
   submit: (api, { post, repost }) => (repost ? api.engage.repost(targetOf(post)) : api.engage.unrepost(targetOf(post))),
   // Undoing a v10 repost deletes the bare quote, which frees the slot.
   optimistic: ({ post, repost }) => setViewerState(post.id, repost ? { reposted: true } : { reposted: false, ownQuoteId: null }),
+  intent: ({ repost }) => repost,
+  matches: ticketOnPost('repost', 'unrepost', ({ repost }: RepostVars) => repost),
   noun: 'repost',
   announceUnconfirmed: false,
   failureMessage: 'Failed to update repost. Please try again.',
@@ -52,6 +65,8 @@ export const bookmarkWrite: WriteSpec<{ post: PostDTO; bookmark: boolean }> = {
   submit: (api, { post, bookmark }) =>
     bookmark ? api.engage.bookmark(targetOf(post)) : api.engage.unbookmark(targetOf(post)),
   optimistic: ({ post, bookmark }) => setViewerState(post.id, { bookmarked: bookmark }),
+  intent: ({ bookmark }) => bookmark,
+  matches: ticketOnPost('bookmark', 'unbookmark', ({ bookmark }: { post: PostDTO; bookmark: boolean }) => bookmark),
   noun: 'bookmark',
   announceUnconfirmed: false,
   failureMessage: 'Failed to update bookmark. Please try again.',
@@ -61,6 +76,10 @@ export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
   key: ({ authorId }) => `follow:${authorId}`,
   submit: (api, { authorId, follow }) => (follow ? api.graph.follow(authorId) : api.graph.unfollow(authorId)),
   optimistic: ({ authorId, follow }) => setFollowing(authorId, follow),
+  intent: ({ follow }) => follow,
+  matches: (ticket, { authorId, follow }) =>
+    ticket.op === (follow ? 'follow' : 'unfollow') &&
+    (ticket.target as { identityId?: string } | null)?.identityId === authorId,
   noun: 'follow',
   announceUnconfirmed: false,
   failureMessage: 'Failed to update follow status',
@@ -84,6 +103,7 @@ export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }
     };
   },
   onConfirmed: (_ticket, { target }) => markPostDeleted(target.id),
+  matches: (ticket, { target }) => ticket.op === 'post.delete' && (ticket.target as { id?: string } | null)?.id === target.id,
   noun: 'delete',
   failureMessage: 'Failed to delete. Please try again.',
 };

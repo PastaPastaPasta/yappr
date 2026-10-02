@@ -1,13 +1,14 @@
 import type { ContentCreatedEvent } from '@engine/api';
 
-import { startPendingPosts } from '~/features/compose/pending-posts';
+import { engineSupervisor } from '~/engine';
+import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
 
 import { onEngineEvent } from './events';
 import { queryKeys } from './keys';
 import { useRemovedPosts } from './optimistic';
 import { startSessionSync, useSessionStore } from './session';
-import { resetWriteTracking, startWriteTracking } from './writes';
+import { adoptRestoredWrites, resetWriteTracking, startWriteTracking } from './writes';
 
 /**
  * A post or reply this device published: seed its detail and refetch what
@@ -38,13 +39,22 @@ export function startDataLayer(): () => void {
       useRemovedPosts.setState({ ids: new Set() });
     }
   });
+  // A new engine restores the tickets of writes its predecessor's restart cut short.
+  let epoch = engineSupervisor.getStatus().epoch;
+  const stopRestored = engineSupervisor.subscribeStatus(() => {
+    const status = engineSupervisor.getStatus();
+    if (status.epoch === epoch || (status.state !== 'ready' && status.state !== 'degraded')) return;
+    epoch = status.epoch;
+    adoptRestoredWrites().catch((error: unknown) =>
+      appendLog('warn', 'host', `Reading restored writes failed: ${errorMessage(error)}`),
+    );
+  });
   const stops = [
     startSessionSync(),
     startWriteTracking(),
     onEngineEvent('content.created', contentCreated),
-    // Compose's posts on their way to the chain (their optimistic cards and write status).
-    startPendingPosts(),
     stopAccount,
+    stopRestored,
   ];
   return () => stops.forEach((stop) => stop());
 }

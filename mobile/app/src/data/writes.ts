@@ -42,6 +42,19 @@ export interface WriteSpec<V> {
    */
   failureText?: (ticket: WriteTicket, vars: V) => string | null;
   /**
+   * What the write asks for (`like ? 'liked' : 'unliked'`). A write made
+   * while one with the same key is pending is queued; if it asks for what
+   * the pending one asked, the queue is dropped instead (a like, unlike,
+   * like run sends one like).
+   */
+  intent?: (vars: V) => unknown;
+  /**
+   * Recognises this write's ticket after an engine restart or timeout cut
+   * the call short (the engine restores the ticket as `unconfirmed` on its
+   * next boot), so the tracker can follow it again.
+   */
+  matches?: (ticket: WriteTicket, vars: V) => boolean;
+  /**
    * The engine refused the call itself (validation, `NOT_SUPPORTED`,
    * `QUOTE_HAS_TEXT`, ...): no ticket was made. Return true when handled;
    * otherwise a failure toast shows. `NOT_SIGNED_IN` opens the sign-in sheet.
@@ -58,10 +71,61 @@ interface Tracked {
   handled: string;
 }
 
+/**
+ * What `runWrite` did:
+ * - `submitted`: the engine took it (`ticket` follows it from here);
+ * - `queued`: a write with the same key was pending; this one is sent once
+ *   that settles (or dropped, if it asked for the same thing);
+ * - `refused`: the engine refused the call; the change was undone and the
+ *   user told (or `onRejected` / the sign-in sheet handled it);
+ * - `unknown`: the engine restarted or timed out under the call, so it may
+ *   have landed. The change stays, and the tracker adopts the ticket the
+ *   engine restores on its next boot.
+ */
+export type WriteResult =
+  | { status: 'submitted'; ticket: WriteTicket }
+  | { status: 'queued' }
+  | { status: 'refused'; error: unknown }
+  | { status: 'unknown'; error: unknown };
+
 const tracked = new Map<string, Tracked>();
 const latestByKey = new Map<string, string>();
-/** Keys whose submit or retry hasn't answered yet. */
-const submitting = new Set<string>();
+/**
+ * Keys whose submit or retry hasn't answered yet, with what they ask for.
+ * Each call marks its key with its own token and clears only that mark: a
+ * queued write released while the call settles marks the key itself.
+ */
+const submitting = new Map<string, { token: symbol; intent: unknown }>();
+
+/** Marks `key` busy for one call; the result clears the mark if it is still that call's. */
+function markSubmitting(key: string | undefined, intent: unknown): () => void {
+  if (key === undefined) return () => undefined;
+  const token = Symbol(key);
+  submitting.set(key, { token, intent });
+  return () => {
+    if (submitting.get(key)?.token === token) submitting.delete(key);
+  };
+}
+
+interface Waiting {
+  spec: WriteSpec<unknown>;
+  vars: unknown;
+  key: string | undefined;
+  /** Its optimistic change, applied when it was made. */
+  undo: (() => void) | null;
+  at: number;
+}
+
+/** The latest write per key made while another with that key was pending. */
+const queued = new Map<string, Waiting>();
+/** Writes whose call an engine restart or timeout cut short, until their ticket shows up. */
+let orphans: Waiting[] = [];
+const ORPHAN_MS = 10 * 60_000;
+/** A restored ticket was made by the call that was cut short, so not long before it (clock skew). */
+const ORPHAN_SKEW_MS = 5_000;
+
+/** The engine went away under the call: it may or may not have run. */
+const OUTCOME_UNKNOWN = new Set(['ENGINE_RESTARTED', 'ENGINE_DISCONNECTED', 'ENGINE_TIMEOUT', 'RPC_TIMEOUT']);
 
 /** Every ticket this app has seen, by id. */
 const useWriteTickets = create<{ byId: Record<string, WriteTicket> }>()(() => ({ byId: {} }));
@@ -137,25 +201,67 @@ function settle(ticket: WriteTicket): void {
       entry.undo = null;
       tracked.delete(ticket.id);
       spec.onConfirmed?.(ticket, entry.vars);
+      if (latest) release(entry.key, true);
       return;
     case 'failed':
-      if (latest) undo(entry);
+      // Final unless the engine allows a retry.
+      if (!ticket.retryable) tracked.delete(ticket.id);
+      // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
+      if (!latest) return;
+      undo(entry);
       fail(spec.failureText?.(ticket, entry.vars) ?? failureText(ticket.error, spec.failureMessage), retry);
+      // The undo restored what a queued write (the opposite toggle) asked for.
+      release(entry.key, false);
       return;
     case 'unconfirmed':
+      if (!latest) return;
       if (ticket.retryable) {
         // A check proved it did not land.
-        if (latest) undo(entry);
+        undo(entry);
         fail(`Your ${spec.noun} didn't go through. Try again.`, retry);
-      } else if (spec.announceUnconfirmed !== false) {
-        toast('Not confirmed yet', {
-          action: { label: 'Check again', onPress: () => checkWrite(ticket.id) },
-        });
+        release(entry.key, false);
+      } else {
+        if (spec.announceUnconfirmed !== false) {
+          toast('Not confirmed yet', {
+            action: { label: 'Check again', onPress: () => checkWrite(ticket.id) },
+          });
+        }
+        // It may have landed: send the newer intent, which is harmless if it did not.
+        release(entry.key, true);
       }
   }
 }
 
+/** The pending write for `key` settled: send the write queued behind it, or drop it. */
+function release(key: string | undefined, send: boolean): void {
+  if (key === undefined) return;
+  const next = queued.get(key);
+  if (!next) return;
+  queued.delete(key);
+  if (send) runQueued(next).catch(() => undefined);
+}
+
+/** An untracked ticket (restored after an engine restart): follow it if a cut-short write recognises it. */
+function adopt(ticket: WriteTicket): void {
+  if (tracked.has(ticket.id)) return;
+  const now = Date.now();
+  orphans = orphans.filter((o) => now - o.at < ORPHAN_MS);
+  const orphan = orphans.find(
+    (o) => time(ticket.createdAt) >= o.at - ORPHAN_SKEW_MS && o.spec.matches?.(ticket, o.vars) === true,
+  );
+  if (!orphan) return;
+  orphans = orphans.filter((o) => o !== orphan);
+  tracked.set(ticket.id, { spec: orphan.spec, vars: orphan.vars, key: orphan.key, undo: orphan.undo, handled: '' });
+  if (orphan.key !== undefined) {
+    // Still the latest write for its key unless one was made after it.
+    const latestId = latestByKey.get(orphan.key);
+    const latest = latestId === undefined ? undefined : useWriteTickets.getState().byId[latestId];
+    if (!latest || time(latest.createdAt) < orphan.at) latestByKey.set(orphan.key, ticket.id);
+  }
+}
+
 function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
+  if (orphans.length > 0) adopt(ticket);
   const current = record(ticket, from);
   settle(current);
   return current;
@@ -180,47 +286,106 @@ export function startWriteTracking(): () => void {
 export function resetWriteTracking(): void {
   tracked.clear();
   latestByKey.clear();
+  queued.clear();
+  orphans = [];
   useWriteTickets.setState({ byId: {} });
 }
 
-function inFlight(key: string): boolean {
-  if (submitting.has(key)) return true;
+const NO_INTENT = Symbol('no intent');
+
+/** What the write pending for `key` asks for, `NO_INTENT` when none is pending. */
+function pendingIntent(key: string): unknown {
+  const marked = submitting.get(key);
+  if (marked) return marked.intent;
   const id = latestByKey.get(key);
-  return id !== undefined && useWriteTickets.getState().byId[id]?.state === 'pending';
+  const entry = id === undefined ? undefined : tracked.get(id);
+  if (!entry || useWriteTickets.getState().byId[id!]?.state !== 'pending') return NO_INTENT;
+  return entry.spec.intent?.(entry.vars);
 }
 
+const inFlight = (key: string) => pendingIntent(key) !== NO_INTENT;
+
 /**
- * Submits a write outside React (a list cell's handler). Resolves with the
- * ticket, or null when it was skipped (same key in flight) or refused (the
- * change was undone and the user told).
+ * Submits a write outside React (a list cell's handler) and says what
+ * happened (`WriteResult`). A write whose key is pending is queued behind
+ * it, with its optimistic change applied at once.
  */
-export async function submitWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteTicket | null> {
+export async function runWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteResult> {
   startWriteTracking();
   const key = spec.key?.(vars);
   if (key !== undefined) {
-    if (inFlight(key)) return null;
-    submitting.add(key);
+    const pending = pendingIntent(key);
+    if (pending !== NO_INTENT) {
+      const undoQueued = spec.optimistic?.(vars) ?? null;
+      if (spec.intent && pending !== undefined && spec.intent(vars) === pending) {
+        // Back to what the pending write asks for: nothing more to send.
+        queued.delete(key);
+      } else {
+        queued.set(key, { spec: spec as WriteSpec<unknown>, vars, key, undo: undoQueued, at: Date.now() });
+      }
+      return { status: 'queued' };
+    }
   }
-  let revert: (() => void) | null = null;
+  return send({ spec: spec as WriteSpec<unknown>, vars, key, undo: null, at: Date.now() });
+}
+
+function runQueued(waiting: Waiting): Promise<WriteResult> {
+  return send(waiting);
+}
+
+/** Sends a write; `waiting.undo` set means its optimistic change is already applied. */
+async function send(waiting: Waiting): Promise<WriteResult> {
+  const { spec, vars, key } = waiting;
+  const done = markSubmitting(key, spec.intent?.(vars));
+  let revert = waiting.undo;
   try {
-    revert = spec.optimistic?.(vars) ?? null;
+    revert ??= spec.optimistic?.(vars) ?? null;
     const ticket = await spec.submit(engine.api, vars);
-    tracked.set(ticket.id, { spec: spec as WriteSpec<unknown>, vars, key, undo: revert, handled: '' });
+    tracked.set(ticket.id, { spec, vars, key, undo: revert, handled: '' });
     if (key !== undefined) latestByKey.set(key, ticket.id);
+    done();
     // `write.status` may have overtaken the call's answer: settle on the newest copy.
-    return receive(ticket, 'call');
+    return { status: 'submitted', ticket: receive(ticket, 'call') };
   } catch (error) {
+    if (OUTCOME_UNKNOWN.has(errorCode(error) ?? '')) {
+      // It may have run (PRD G-3): keep the change, say nothing, and follow the ticket the engine restores.
+      appendLog('warn', 'host', `Write cut short: ${errorMessage(error)}`);
+      orphans.push({ spec, vars, key, undo: revert, at: Date.now() });
+      done();
+      release(key, true);
+      return { status: 'unknown', error };
+    }
     revert?.();
+    done();
+    release(key, false);
     if (errorCode(error) === 'NOT_SIGNED_IN') {
       promptSignIn();
     } else if (!spec.onRejected?.(error, vars)) {
       appendLog('warn', 'host', `Write refused: ${errorMessage(error)}`);
       fail(spec.failureMessage);
     }
-    return null;
+    return { status: 'refused', error };
   } finally {
-    if (key !== undefined) submitting.delete(key);
+    done();
   }
+}
+
+/**
+ * `runWrite`, answering with the ticket, or null when the write was queued,
+ * refused or cut short. Use `runWrite` to tell those apart.
+ */
+export async function submitWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteTicket | null> {
+  const result = await runWrite(spec, vars);
+  return result.status === 'submitted' ? result.ticket : null;
+}
+
+/**
+ * After an engine boot: follow the tickets it restored for writes a restart
+ * cut short (`writes.list`). Called by the data layer on every new engine.
+ */
+export async function adoptRestoredWrites(): Promise<void> {
+  if (orphans.length === 0) return;
+  for (const ticket of await engine.api.writes.list()) receive(ticket, 'call');
 }
 
 /** "Check again" for an unconfirmed write (`writes.check`); its `write.status` says the outcome. */
@@ -247,7 +412,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     toast('Already updated');
     return null;
   }
-  if (key !== undefined) submitting.add(key);
+  const done = markSubmitting(key, entry.spec.intent?.(entry.vars));
   try {
     if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
     return receive(await engine.api.writes.retry(ticketId), 'call');
@@ -257,7 +422,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     fail(entry.spec.failureMessage);
     return null;
   } finally {
-    if (key !== undefined) submitting.delete(key);
+    done();
   }
 }
 
@@ -267,8 +432,10 @@ export function useWriteTicket(ticketId: string | null): WriteTicket | null {
 }
 
 export interface UseWrite<V> {
-  /** Submit (see `submitWrite`); resolves with the ticket, or null when skipped or refused. */
+  /** Submit (see `submitWrite`); resolves with the ticket, or null when queued, refused or cut short. */
   run: (vars: V) => Promise<WriteTicket | null>;
+  /** Submit and say what happened (see `runWrite`). */
+  send: (vars: V) => Promise<WriteResult>;
   /** The last ticket this hook submitted, kept current by `write.status`. */
   ticket: WriteTicket | null;
   status: 'idle' | WriteState;
@@ -293,15 +460,22 @@ export function useWrite<V>(spec: WriteSpec<V>): UseWrite<V> {
     latest.current = spec;
   });
 
-  const run = useCallback(async (vars: V) => {
-    const submitted = await submitWrite(latest.current, vars);
-    if (submitted) setTicketId(submitted.id);
-    return submitted;
+  const send = useCallback(async (vars: V) => {
+    const result = await runWrite(latest.current, vars);
+    if (result.status === 'submitted') setTicketId(result.ticket.id);
+    return result;
   }, []);
+  const run = useCallback(
+    async (vars: V) => {
+      const result = await send(vars);
+      return result.status === 'submitted' ? result.ticket : null;
+    },
+    [send],
+  );
   const check = useCallback(async () => (ticketId ? checkWrite(ticketId) : null), [ticketId]);
   const retry = useCallback(async () => (ticketId ? retryWrite(ticketId) : null), [ticketId]);
 
-  return { run, ticket, status: ticket?.state ?? 'idle', check, retry };
+  return { run, send, ticket, status: ticket?.state ?? 'idle', check, retry };
 }
 
 /**
@@ -309,9 +483,9 @@ export function useWrite<V>(spec: WriteSpec<V>): UseWrite<V> {
  * taken it ("Reposted!"). Failures are the tracker's to report.
  */
 export function sendWrite<V>(spec: WriteSpec<V>, vars: V, submitted?: string): void {
-  submitWrite(spec, vars)
-    .then((ticket) => {
-      if (ticket && submitted) toast.success(submitted);
+  runWrite(spec, vars)
+    .then((result) => {
+      if (result.status === 'submitted' && submitted) toast.success(submitted);
     })
     .catch((error: unknown) => appendLog('warn', 'host', `Write failed: ${errorMessage(error)}`));
 }

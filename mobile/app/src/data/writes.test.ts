@@ -5,7 +5,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { useSignInPrompt } from './require-auth';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
-import { checkWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { adoptRestoredWrites, checkWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 
@@ -175,18 +175,98 @@ describe('submitWrite', () => {
     expect(confirmed).toHaveBeenCalledTimes(1);
   });
 
-  it('skips a second write with the same key while the first is pending', async () => {
-    const pending = await submitPending();
-    await expect(submitWrite(spec, target)).resolves.toBeNull();
-    expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+  it('queues a write made while its key is pending, and sends it once that confirms', async () => {
+    const toggle: WriteSpec<{ target: TargetRef; on: boolean }> = {
+      key: ({ target: t }) => `like:${t.id}`,
+      submit: (api, { target: t, on }) => (on ? api.engage.like(t) : api.engage.unlike(t)),
+      optimistic: apply,
+      intent: ({ on }) => on,
+      noun: 'like',
+      failureMessage: 'Failed to update like. Please try again.',
+    };
+    const like = ticket();
+    fakeEngine.method('engage.like').mockResolvedValueOnce(like);
+    await expect(runWrite(toggle, { target, on: true })).resolves.toMatchObject({ status: 'submitted' });
 
-    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
-    await submitPending();
+    // Unlike while the like is pending: applied at once, sent later.
+    await expect(runWrite(toggle, { target, on: false })).resolves.toEqual({ status: 'queued' });
+    expect(apply).toHaveBeenCalledTimes(2);
+    expect(fakeEngine.method('engage.unlike')).not.toHaveBeenCalled();
+
+    fakeEngine.method('engage.unlike').mockResolvedValueOnce(ticket({ op: 'unlike' }));
+    await act(async () => fakeEngine.emit('write.status', advance(like, { state: 'confirmed' })));
+    expect(fakeEngine.method('engage.unlike')).toHaveBeenCalledWith(target);
+    // Its optimistic change was applied when it was made, not again.
+    expect(apply).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a released queued write busy when the confirmation beats the call’s answer', async () => {
+    const toggle: WriteSpec<{ on: boolean }> = {
+      key: () => `like:${target.id}`,
+      submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
+      intent: ({ on }) => on,
+      noun: 'like',
+      failureMessage: 'x',
+    };
+    const like = ticket();
+    let answer: (t: WriteTicket) => void = () => undefined;
+    fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const first = runWrite(toggle, { on: true });
+    await expect(runWrite(toggle, { on: false })).resolves.toEqual({ status: 'queued' });
+
+    // The unlike, once released, stays in flight.
+    fakeEngine.method('engage.unlike').mockImplementationOnce(() => new Promise(() => undefined));
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(like, { state: 'confirmed' }));
+      answer(like);
+      await first;
+    });
+    expect(fakeEngine.method('engage.unlike')).toHaveBeenCalledTimes(1);
+    await expect(runWrite(toggle, { on: true })).resolves.toEqual({ status: 'queued' });
+    expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a queued write that asks for what the pending one asked (like, unlike, like)', async () => {
+    const toggle: WriteSpec<{ on: boolean }> = {
+      key: () => `like:${target.id}`,
+      submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
+      optimistic: apply,
+      intent: ({ on }) => on,
+      noun: 'like',
+      failureMessage: 'x',
+    };
+    const like = ticket();
+    fakeEngine.method('engage.like').mockResolvedValueOnce(like);
+    await runWrite(toggle, { on: true });
+    await runWrite(toggle, { on: false });
+    await runWrite(toggle, { on: true });
+    await act(async () => fakeEngine.emit('write.status', advance(like, { state: 'confirmed' })));
+    expect(fakeEngine.method('engage.unlike')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the change when the engine restarts under the call, then adopts the restored ticket', async () => {
+    const matching = { ...spec, matches: (t: WriteTicket, vars: TargetRef) => t.op === 'like' && t.target === vars };
+    fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    const result = await runWrite(matching, target);
+    expect(result.status).toBe('unknown');
+    expect(undo).not.toHaveBeenCalled();
+    expect(currentToast()).toBeNull();
+
+    // The next engine restores it as unconfirmed, then a check proves it absent.
+    const restored = ticket({ state: 'unconfirmed', target });
+    fakeEngine.method('writes.list').mockResolvedValueOnce([restored]);
+    await act(async () => {
+      await adoptRestoredWrites();
+    });
+    act(() => fakeEngine.emit('write.status', advance(restored, { retryable: true, lastCheckedAt: new Date() })));
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(currentToast()).toMatchObject({ message: "Your like didn't go through. Try again." });
   });
 
   it('undoes and toasts a refused call, and asks to sign in for NOT_SIGNED_IN', async () => {
     fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('bad'), { code: 'BAD_REQUEST' }));
-    await expect(submitWrite(spec, target)).resolves.toBeNull();
+    await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused' });
     expect(undo).toHaveBeenCalledTimes(1);
     expect(currentToast()).toMatchObject({ kind: 'error', message: 'Failed to update like. Please try again.' });
 

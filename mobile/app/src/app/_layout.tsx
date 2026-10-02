@@ -13,6 +13,7 @@ import { SignInPromptHost } from '~/data/require-auth';
 import { startDataLayer } from '~/data/sync';
 import { EngineHost } from '~/engine/EngineHost';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
+import { startPendingPosts } from '~/features/compose/pending-posts';
 import { useAppearance } from '~/state/appearance';
 import { ActionSheetHost } from '~/ui/action-sheet';
 import { AvatarSvgProvider } from '~/ui/avatar-svg';
@@ -76,6 +77,8 @@ export default function RootLayout() {
   useUnsupportedEngineRoute();
   // The session store, write tickets and created content follow the engine app-wide.
   useEffect(() => startDataLayer(), []);
+  // Compose's posts on their way to the chain (their optimistic cards and write status).
+  useEffect(() => startPendingPosts(), []);
   const ipfsGateway = useIpfsGateway();
   const dark = useColorScheme().colorScheme === 'dark';
 
