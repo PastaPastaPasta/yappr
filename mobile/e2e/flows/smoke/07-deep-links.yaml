@@ -37,10 +37,37 @@ env:
       true: ${PROFILE_ID != ''}
     commands:
       - openLink: ${SCHEME}://user?id=${PROFILE_ID}
+      # The link opened the profile screen; its data comes from sakura, which fails a
+      # read now and then ("Something went wrong", profile-error). Then, as a user
+      # would: wait a moment and "Try again" (a refetch keeps the error up until it
+      # lands, so wait for the header itself). Only the header passes.
       - extendedWaitUntil:
           visible:
-            id: profile-header
+            id: "profile-header|profile-error"
           timeout: 60000
+      - repeat:
+          times: 3
+          while:
+            visible:
+              id: profile-error
+          commands:
+            - takeScreenshot: deep-link-warm-profile-error
+            - extendedWaitUntil:
+                visible:
+                  id: profile-header
+                timeout: 10000
+                optional: true
+            - tapOn:
+                text: "Try again"
+                childOf:
+                  id: profile-error
+            - extendedWaitUntil:
+                visible:
+                  id: profile-header
+                timeout: 60000
+                optional: true
+      - assertVisible:
+          id: profile-header
       - takeScreenshot: deep-link-warm-profile
 # A malformed id is refused: Home, not an error screen.
 - openLink: ${SCHEME}://post?id=not-a-post-id
