@@ -43,6 +43,8 @@ export interface OutboxEntry {
 export const useOutbox = create<{ entries: OutboxEntry[] }>()(() => ({ entries: [] }));
 
 let nextId = 1;
+/** Bumped by `clearLocalMessages`: a send that settles after it belongs to a session that is gone. */
+let generation = 0;
 
 function update(id: string, patch: Partial<OutboxEntry>): void {
   useOutbox.setState(({ entries }) => ({ entries: entries.map((e) => (e.id === id ? { ...e, ...patch } : e)) }));
@@ -134,9 +136,12 @@ export async function sendMessage(identityId: string, key: string, text: string)
     state: 'sending',
     retryable: false,
   };
+  const sentIn = generation;
   useOutbox.setState(({ entries }) => ({ entries: [...entries, entry] }));
   lightImpact();
   const result = await runWrite(sendSpec, { entryId: entry.id, key, text });
+  // Signed out or switched accounts meanwhile: the plaintext must not come back.
+  if (sentIn !== generation) return;
   switch (result.status) {
     case 'submitted':
       applyTicket(entry.id, result.ticket);
@@ -186,6 +191,7 @@ export async function resolveFailed(entryId: string): Promise<void> {
 
 /** Forgets every local send and draft (sign-out): their plaintext must not outlive the session. */
 export function clearLocalMessages(): void {
+  generation += 1;
   useOutbox.setState({ entries: [] });
   useDrafts.getState().clearAll();
 }
@@ -203,39 +209,70 @@ function statusOf(entry: OutboxEntry): OutboxStatus {
   }
 }
 
+/** Which entries claim engine messages first: one that went out before one that may not have. */
+const CLAIM_ORDER: Record<OutboxState, number> = { confirmed: 0, sending: 1, unconfirmed: 2, failed: 3 };
+
+/**
+ * The engine messages that make up a send of `text`: the same text, or for a
+ * send v5 split into parts, parts that put together give the whole text.
+ * `complete` is false while a part is missing (one landed, a later one failed).
+ */
+function partsOfSend(candidates: readonly TimelineMessage[], text: string): { taken: TimelineMessage[]; complete: boolean } {
+  const sent = text.trim();
+  const pool = candidates.filter((m) => isPartOfSend(m, text));
+  const taken: TimelineMessage[] = [];
+  let cursor = 0;
+  while (cursor < sent.length) {
+    const index = pool.findIndex((m) => m.text.length > 0 && sent.startsWith(m.text, cursor));
+    if (index < 0) break;
+    const [part] = pool.splice(index, 1);
+    taken.push(part);
+    cursor += part.text.length;
+  }
+  return { taken, complete: cursor === sent.length };
+}
+
+/** A send the engine's own messages now show, and the messages that are it. */
+export interface LandedSend {
+  id: string;
+  messageIds: string[];
+}
+
 /**
  * The conversation with this device's sends merged in: a send the engine
  * already holds (the same text, mine, not there when it was sent) shows as
- * the engine's message; the rest show as local bubbles after them. `sending`
- * is true while any send is on its way.
+ * the engine's message; the rest show as local bubbles after them. A send
+ * that failed or is unconfirmed stays a local bubble until every part of it
+ * is there. `sending` is true while any send is on its way.
  */
 export function mergeOutbox(
   messages: readonly TimelineMessage[],
   entries: readonly OutboxEntry[],
-): { messages: TimelineMessage[]; sending: boolean; landed: string[] } {
+): { messages: TimelineMessage[]; sending: boolean; landed: LandedSend[] } {
   const claimed = new Set<string>();
-  const local: TimelineMessage[] = [];
-  const landed: string[] = [];
-  let sending = false;
-  for (const entry of entries) {
+  const shown = new Set<string>();
+  const landed: LandedSend[] = [];
+  const sending = entries.some((e) => e.state === 'sending');
+  const byClaimOrder = [...entries].sort((a, b) => CLAIM_ORDER[a.state] - CLAIM_ORDER[b.state]);
+  for (const entry of byClaimOrder) {
     const before = new Set(entry.before);
-    const matches = messages.filter(
-      (m) =>
-        m.own &&
-        !m.outbox &&
-        !before.has(m.id) &&
-        !claimed.has(m.id) &&
-        m.at.getTime() >= entry.after &&
-        isPartOfSend(m, entry.text),
+    const { taken, complete } = partsOfSend(
+      messages.filter(
+        (m) => m.own && !m.outbox && !before.has(m.id) && !claimed.has(m.id) && m.at.getTime() >= entry.after,
+      ),
+      entry.text,
     );
-    if (matches.length > 0) {
-      for (const m of matches) claimed.add(m.id);
-      if (entry.state === 'sending') sending = true;
-      else landed.push(entry.id);
-      continue;
+    for (const m of taken) claimed.add(m.id);
+    if (complete && entry.state !== 'sending') {
+      landed.push({ id: entry.id, messageIds: taken.map((m) => m.id) });
     }
-    if (entry.state === 'sending') sending = true;
-    local.push({
+    // On its way or out: the engine's messages stand for it. Failed or unconfirmed: only all of it does.
+    const covered = taken.length > 0 && (complete || entry.state === 'sending' || entry.state === 'confirmed');
+    if (covered) shown.add(entry.id);
+  }
+  const local: TimelineMessage[] = entries
+    .filter((entry) => !shown.has(entry.id))
+    .map((entry) => ({
       id: entry.id,
       sender: entry.identityId,
       text: entry.text.trim(),
@@ -243,8 +280,7 @@ export function mergeOutbox(
       own: true,
       pending: entry.state === 'sending',
       outbox: statusOf(entry),
-    });
-  }
+    }));
   return { messages: [...messages, ...local], sending, landed };
 }
 
@@ -257,11 +293,30 @@ export function useOutboxFor(identityId: string | null, key: string): OutboxEntr
   );
 }
 
-/** Forgets sends the engine's own messages now show (called after a merge). */
-export function forgetLanded(ids: readonly string[]): void {
-  if (ids.length === 0) return;
-  const gone = new Set(ids);
-  useOutbox.setState(({ entries }) => ({ entries: entries.filter((e) => !gone.has(e.id)) }));
+/**
+ * Forgets sends the engine's own messages now show (called after a merge).
+ * Their messages stay theirs: the conversation's other sends count them as
+ * there before, so a later merge never hands them to a second identical send.
+ */
+export function forgetLanded(landed: readonly LandedSend[]): void {
+  if (landed.length === 0) return;
+  const gone = new Map(landed.map((l) => [l.id, l.messageIds]));
+  const conversationOf = (e: OutboxEntry) => `${e.identityId}\u0000${e.key}`;
+  useOutbox.setState(({ entries }) => {
+    const taken = new Map<string, string[]>();
+    for (const e of entries) {
+      const ids = gone.get(e.id);
+      if (ids) taken.set(conversationOf(e), [...(taken.get(conversationOf(e)) ?? []), ...ids]);
+    }
+    return {
+      entries: entries
+        .filter((e) => !gone.has(e.id))
+        .map((e) => {
+          const ids = taken.get(conversationOf(e));
+          return ids ? { ...e, before: [...e.before, ...ids] } : e;
+        }),
+    };
+  });
 }
 
 /** Logs and swallows: sends report their own failures on the bubble and in a toast. */

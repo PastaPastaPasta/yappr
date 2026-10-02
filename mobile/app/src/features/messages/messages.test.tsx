@@ -21,7 +21,7 @@ import { NewMessageScreen } from './NewMessageScreen';
 import { useMessagesBadge } from './dm-data';
 import { useDraft, useDrafts } from './drafts';
 import { InboxScreen } from './InboxScreen';
-import { mergeOutbox, useOutbox, type OutboxEntry } from './outbox';
+import { clearLocalMessages, forgetLanded, mergeOutbox, sendMessage, useOutbox, type OutboxEntry } from './outbox';
 import { BOB_ID, conversation, dmMessage, FLAGS } from './test-fixtures';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -341,6 +341,25 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(useToastStore.getState().current?.message).toBe('Unblock this person to message them.');
   });
 
+  it('does not put the text back when the account signed out while the send was pending', async () => {
+    signIn();
+    let refuse: (error: Error) => void = () => undefined;
+    fakeEngine.method('dm.send').mockReturnValue(
+      new Promise((_, reject) => {
+        refuse = reject;
+      }),
+    );
+    const sending = sendMessage(VIEWER, KEY, 'secret');
+    await act(async () => {});
+    clearLocalMessages();
+    refuse(Object.assign(new Error('Unblock this person to message them.'), { code: 'BAD_REQUEST' }));
+    await act(async () => {
+      await sending;
+    });
+    expect(useDrafts.getState().byKey).toEqual({});
+    expect(useOutbox.getState().entries).toEqual([]);
+  });
+
   it('replaces the composer when the user blocked the peer (DM-10)', async () => {
     await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
     expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
@@ -423,12 +442,58 @@ describe('mergeOutbox', () => {
       [own('old', 'hi', 900), own('new', 'hi', 2000)],
       [entry({ state: 'confirmed' }), entry({ id: 'local:2', state: 'failed', retryable: true })],
     );
-    expect(merged.landed).toEqual(['local:1']);
+    expect(merged.landed).toEqual([{ id: 'local:1', messageIds: ['new'] }]);
     expect(merged.messages.map((m) => [m.id, m.outbox])).toEqual([
       ['old', undefined],
       ['new', undefined],
       ['local:2', 'failed-retry'],
     ]);
+  });
+
+  it('lets a send that went out claim before an identical one that failed', () => {
+    const merged = mergeOutbox(
+      [own('new', 'hi', 2000)],
+      [entry({ state: 'failed', retryable: true }), entry({ id: 'local:2', state: 'confirmed' })],
+    );
+    expect(merged.landed).toEqual([{ id: 'local:2', messageIds: ['new'] }]);
+    expect(merged.messages.map((m) => [m.id, m.outbox])).toEqual([
+      ['new', undefined],
+      ['local:1', 'failed-retry'],
+    ]);
+  });
+
+  it('keeps a landed send’s message its own on the next merge', () => {
+    useOutbox.setState({
+      entries: [entry({ state: 'confirmed' }), entry({ id: 'local:2', state: 'failed', retryable: true })],
+    });
+    const messages = [own('old', 'hi', 900), own('new', 'hi', 2000)];
+    forgetLanded(mergeOutbox(messages, useOutbox.getState().entries).landed);
+    expect(useOutbox.getState().entries.map((e) => e.id)).toEqual(['local:2']);
+
+    const again = mergeOutbox(messages, useOutbox.getState().entries);
+    expect(again.landed).toEqual([]);
+    expect(again.messages.map((m) => [m.id, m.outbox])).toEqual([
+      ['old', undefined],
+      ['new', undefined],
+      ['local:2', 'failed-retry'],
+    ]);
+  });
+
+  it('keeps a long send that failed part way until every part is there', () => {
+    const first = 'a'.repeat(4081);
+    const rest = 'b'.repeat(100);
+    const long = entry({ text: first + rest, state: 'failed', retryable: false });
+    const partial = mergeOutbox([own('p1', first, 2000)], [long]);
+    expect(partial.landed).toEqual([]);
+    expect(partial.messages.map((m) => [m.id, m.outbox])).toEqual([
+      ['p1', undefined],
+      ['local:1', 'failed-edit'],
+    ]);
+
+    // Both parts there (in any order): the send went out after all.
+    const whole = mergeOutbox([own('p2', rest, 2001), own('p1', first, 2001)], [long]);
+    expect(whole.landed).toEqual([{ id: 'local:1', messageIds: ['p1', 'p2'] }]);
+    expect(whole.messages.map((m) => m.id)).toEqual(['p2', 'p1']);
   });
 });
 
@@ -509,6 +574,32 @@ describe('New group (DM-06)', () => {
     expect(fakeEngine.method('dm.createdGroup')).toHaveBeenCalledWith(created.id);
     expect(pathname()).toBe('/messages/g:builders');
     expect(useToastStore.getState().current?.message).toBe('1 member(s) did not get the group key yet.');
+  });
+
+  it('creates once when Create is tapped again before the engine answers', async () => {
+    await fillForm();
+    const created = ticket({ op: 'dm.group' });
+    let answer: (t: typeof created) => void = () => undefined;
+    fakeEngine.method('dm.createGroup').mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    // The handler itself, twice in one tick, then a tap after the re-render.
+    const onCreate = screen.UNSAFE_getAllByProps({ testID: 'new-group-create' })[0].props.onPress as () => void;
+    await act(async () => {
+      onCreate();
+      onCreate();
+    });
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {
+      answer(created);
+    });
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(created, { state: 'confirmed' }));
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
   });
 
   it('keeps Create locked while the creation is unconfirmed, until a check finds the group', async () => {

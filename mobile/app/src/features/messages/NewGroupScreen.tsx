@@ -1,5 +1,5 @@
 import { router, Stack } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { XMarkIcon } from 'react-native-heroicons/outline';
@@ -67,7 +67,11 @@ export function NewGroupScreen() {
   // did not land comes back retryable, and the tracker says "Try again".
   const unconfirmed = create.status === 'unconfirmed' && create.ticket?.retryable !== true;
   const [checking, setChecking] = useState(false);
-  const busy = create.status === 'pending' || unconfirmed;
+  // The status stays idle until the engine answers with a ticket: a second tap meanwhile would
+  // queue a second creation behind the first (a second group), so the form locks at the tap.
+  const submitting = useRef(false);
+  const [awaitingTicket, setAwaitingTicket] = useState(false);
+  const busy = awaitingTicket || create.status === 'pending' || unconfirmed;
   const canCreate = !busy && name.trim().length > 0 && members.length > 0;
   const selected = new Set(members.map((m) => m.id));
 
@@ -83,7 +87,9 @@ export function NewGroupScreen() {
   };
 
   const submit = () => {
-    if (!canCreate) return;
+    if (!canCreate || submitting.current) return;
+    submitting.current = true;
+    setAwaitingTicket(true);
     create
       .send({ name: name.trim(), memberIds: members.map((m) => m.id) })
       .then((result) => {
@@ -93,7 +99,11 @@ export function NewGroupScreen() {
           router.dismissTo('/messages');
         }
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        submitting.current = false;
+        setAwaitingTicket(false);
+      });
   };
 
   const check = () => {
@@ -132,7 +142,7 @@ export function NewGroupScreen() {
       label="Create group"
       size={Platform.OS === 'ios' ? 'sm' : 'block'}
       disabled={!canCreate}
-      loading={create.status === 'pending'}
+      loading={awaitingTicket || create.status === 'pending'}
       onPress={submit}
       testID="new-group-create"
     />
