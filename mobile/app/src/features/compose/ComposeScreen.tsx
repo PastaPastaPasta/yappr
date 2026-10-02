@@ -13,7 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { PencilSquareIcon, XMarkIcon } from 'react-native-heroicons/outline';
+import { ExclamationTriangleIcon, PencilSquareIcon, XMarkIcon } from 'react-native-heroicons/outline';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -25,6 +25,7 @@ import { Button } from '~/ui/Button';
 import { EmptyState } from '~/ui/EmptyState';
 import { successFeedback } from '~/ui/haptics';
 import { IconButton } from '~/ui/IconButton';
+import { LinkText } from '~/ui/LinkText';
 import { useMediaUrls } from '~/ui/media-url';
 import { PostCard } from '~/ui/post/PostCard';
 import { PostStub } from '~/ui/post/PostStub';
@@ -34,10 +35,18 @@ import { tw, useColors } from '~/ui/tokens';
 
 import { ComposeAccessoryBar } from './ComposeAccessoryBar';
 import { ComposePart } from './ComposePart';
-import { contextKey, deleteDraft, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
+import {
+  contextKey,
+  deleteDraft,
+  deleteOwnDraft,
+  loadDraft,
+  saveDraft,
+  type ComposeContext,
+  type DraftPart,
+} from './drafts';
 import { FALLBACK_LIMITS, hasVisibleContent, isOverContentLimit } from './limits';
 import { MentionSuggestions, useDebounced } from './MentionSuggestions';
-import { discardPending, publishPost, viewerAuthor } from './pending-posts';
+import { discardPending, pendingDraft, publishPost, viewerAuthor } from './pending-posts';
 import { insertMention, mentionAt, tagMaxLength } from './text';
 
 /** `compose-modal.tsx` `canAddThread`: a thread holds at most 10 posts. */
@@ -50,10 +59,11 @@ const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/;
 const EMPTY_PART: DraftPart = { text: '', postedId: null };
 const PREVIEW_DELAY_MS = 400;
 
-function contextOf(params: { replyTo?: string; quote?: string }): ComposeContext {
-  if (params.replyTo) return { mode: 'reply', targetId: params.replyTo };
-  if (params.quote) return { mode: 'quote', targetId: params.quote };
-  return { mode: 'post', targetId: null };
+function contextOf(params: { replyTo?: string; quote?: string; pending?: string }): ComposeContext {
+  const pending = params.pending ? { pendingId: params.pending } : {};
+  if (params.replyTo) return { mode: 'reply', targetId: params.replyTo, ...pending };
+  if (params.quote) return { mode: 'quote', targetId: params.quote, ...pending };
+  return { mode: 'post', targetId: null, ...pending };
 }
 
 function placeholderFor(context: ComposeContext, index: number): string {
@@ -93,6 +103,23 @@ function NsfwToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
   );
 }
 
+/** The post replied to or quoted could not be read (not the same as deleted): retry the read. */
+function TargetUnread({ onRetry, inset = true }: { onRetry: () => void; inset?: boolean }) {
+  const c = useColors();
+  return (
+    <View className={cn('flex-row flex-wrap items-center gap-1.5', inset && 'px-4')} testID="compose-target-unread">
+      <ExclamationTriangleIcon size={16} color={c.textSecondary} />
+      <Text variant="subhead" tone="secondary">
+        Couldn&apos;t load the post
+      </Text>
+      <Text variant="subhead" tone="decorative">
+        ·
+      </Text>
+      <LinkText label="Retry" onPress={onRetry} variant="subhead" role="button" />
+    </View>
+  );
+}
+
 function useKeyboardShown(): boolean {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -108,11 +135,12 @@ function useKeyboardShown(): boolean {
 
 /**
  * Compose (PRD COMP-01 – COMP-12, UX_SPEC §4.11): a full-screen modal for
- * a post, a reply (`?replyTo=<id>`) or a quote (`?quote=<id>`). Signed out
+ * a post, a reply (`?replyTo=<id>`) or a quote (`?quote=<id>`); with
+ * `&pending=<localId>`, a post that did not go through (Edit). Signed out
  * it asks for sign-in; the editor itself is `Composer`.
  */
 export function ComposeScreen() {
-  const params = useLocalSearchParams<{ replyTo?: string; quote?: string }>();
+  const params = useLocalSearchParams<{ replyTo?: string; quote?: string; pending?: string }>();
   const context = contextOf(params);
   const { status, session } = useSession();
   // While the engine restores the session, whoever was signed in last counts (PRD G-2).
@@ -164,7 +192,10 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const tagMax = tagMaxLength(inlineHints);
   const { media } = useMediaUrls();
 
-  const [initial] = useState(() => loadDraft(identityId, context));
+  // Editing a post that did not go through opens its own slot, else the post's text.
+  const [initial] = useState(
+    () => loadDraft(identityId, context) ?? (context.pendingId ? pendingDraft(context.pendingId) : null),
+  );
   const [parts, setParts] = useState<DraftPart[]>(() => (initial?.parts.length ? initial.parts : [EMPTY_PART]));
   const [sensitive, setSensitive] = useState(initial?.sensitive ?? false);
   const [mediaUrl, setMediaUrl] = useState(initial?.mediaUrl ?? '');
@@ -182,7 +213,9 @@ function Composer({ identityId, username, context }: ComposerProps) {
     persist: true,
   });
   const targetPost: PostDTO | null = target.data ?? null;
-  const targetGone = context.mode !== 'post' && target.isSuccess && (target.data === null || target.data.deleted);
+  // Only a tombstone is gone: `posts.get` also answers null when the read failed.
+  const targetGone = context.mode !== 'post' && targetPost?.deleted === true;
+  const targetUnread = context.mode !== 'post' && !target.isFetching && targetPost === null && (target.isSuccess || target.isError);
   const profile = useEngineQuery(queryKeys.profile.detail(identityId), (api) => api.profiles.get(identityId), {
     persist: true,
   });
@@ -226,7 +259,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
         ...(unedited ? { fromPending: initial.fromPending } : {}),
       });
     } else if (!now.parts.some((p) => p.postedId)) {
-      deleteDraft(identityId, context);
+      deleteOwnDraft(identityId, context, initial?.fromPending);
     }
   }, [identityId, context, initial]);
 
@@ -271,6 +304,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
             onPress: () => {
               posted.current = true;
               deleteDraft(identityId, context);
+              // Deleting the text of a post that did not go through drops its card too.
+              if (context.pendingId) discardPending(context.pendingId);
               leaving.current = true;
               leave();
             },
@@ -300,7 +335,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
     posted.current = true;
     leaving.current = true;
     // This draft came back from a failed post: posting it again replaces that card, never doubles it.
-    if (initial?.fromPending) discardPending(initial.fromPending);
+    const replaced = context.pendingId ?? initial?.fromPending;
+    if (replaced) discardPending(replaced);
     publishPost(
       {
         identityId,
@@ -332,7 +368,11 @@ function Composer({ identityId, username, context }: ComposerProps) {
     setParts((current) => [...current, EMPTY_PART]);
   };
   const removePart = (index: number) => {
-    focusNext.current = Math.max(firstOpen, index - 1);
+    const next = Math.max(firstOpen, index - 1);
+    focusNext.current = next;
+    // The suggestions and the counter follow the part that takes the focus.
+    setActive(next);
+    setCaret(parts[next]?.text.length ?? 0);
     setParts((current) => current.filter((_, i) => i !== index));
   };
   useEffect(() => {
@@ -399,6 +439,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
                     This post was deleted, so it can&apos;t be replied to.
                   </Text>
                 </View>
+              ) : targetUnread ? (
+                <TargetUnread onRetry={() => target.refetch()} />
               ) : (
                 <View className="px-4">
                   <QuoteSkeleton />
@@ -474,6 +516,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
                 <QuoteEmbed post={targetPost} nsfwGated={targetPost.sensitive} />
               ) : targetGone ? (
                 <PostStub state="deleted" variant="embed" />
+              ) : targetUnread ? (
+                <TargetUnread onRetry={() => target.refetch()} inset={false} />
               ) : (
                 <QuoteSkeleton />
               )}

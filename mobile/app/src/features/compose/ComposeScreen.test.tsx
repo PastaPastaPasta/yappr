@@ -286,3 +286,70 @@ it('posting a draft that came back from a failed post replaces that card', async
   expect(Object.keys(usePendingPosts.getState().entries)).toHaveLength(1);
   jest.useRealTimers();
 });
+
+it('removing the focused part moves the counter to the part that takes the focus', async () => {
+  await renderCompose();
+  type('one');
+  fireEvent.press(byId('compose-add-part'));
+  fireEvent(byId('compose-input-1'), 'focus');
+  type('a longer second part', 1);
+  expect(byId('compose-counter')).toHaveAccessibleName('20 of 20 characters');
+
+  fireEvent.press(byId('compose-remove-1'));
+  expect(byId('compose-counter')).toHaveAccessibleName('3 of 20 characters');
+});
+
+it('a target that could not be read is not "deleted": it offers Retry', async () => {
+  fakeEngine.method('posts.get').mockResolvedValue(null);
+  jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-3' });
+  await renderCompose();
+  expect(byId('compose-target-unread')).toHaveTextContent("Couldn't load the post", { exact: false });
+  expect(screen.queryByText("This post was deleted, so it can't be replied to.")).toBeNull();
+  type('hi');
+  expect(postButton()).toBeDisabled();
+
+  const target = fixturePost({ id: 'target-3', author: AUTHORS.bob });
+  fakeEngine.method('posts.get').mockResolvedValue(target);
+  await act(async () => fireEvent.press(screen.getByText('Retry')));
+  expect(screen.queryByTestId('compose-target-unread')).toBeNull();
+  expect(postButton()).toBeEnabled();
+});
+
+it('a deleted target says so', async () => {
+  fakeEngine.method('posts.get').mockResolvedValue(fixturePost({ id: 'target-4', deleted: true }));
+  jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-4' });
+  await renderCompose();
+  expect(screen.getByText("This post was deleted, so it can't be replied to.")).toBeTruthy();
+});
+
+it("edits a failed post on a slot of its own, leaving the context's draft alone", async () => {
+  jest.useFakeTimers();
+  fakeEngine.method('posts.publish').mockResolvedValue(ticket({ op: 'post.publish' }));
+  usePendingPosts.setState({
+    entries: {
+      'pending-a': {
+        localId: 'pending-a',
+        identityId: VIEWER_ID,
+        context: POST,
+        draft: { parts: [{ text: 'Post A' }], sensitive: false, mediaUrl: null, resume: null },
+        ticket: null,
+        ticketId: null,
+        refused: true,
+      } as never,
+    },
+  });
+  saveDraft(VIEWER_ID, { context: POST, parts: [{ text: 'Draft B', postedId: null }], sensitive: false, mediaUrl: '', updatedAt: Date.now() });
+  jest.mocked(useLocalSearchParams).mockReturnValue({ pending: 'pending-a' });
+  await renderCompose();
+  expect(byId('compose-input-0').props.value ?? byId('compose-input-0').props.children).toBe('Post A');
+  type('Post A, edited');
+  act(() => jest.advanceTimersByTime(600));
+  expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Draft B');
+
+  await act(async () => fireEvent.press(postButton()));
+  expect(usePendingPosts.getState().entries['pending-a']).toBeUndefined();
+  expect(fakeEngine.method('posts.publish')).toHaveBeenCalledWith(expect.objectContaining({ parts: [{ text: 'Post A, edited' }] }));
+  expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Draft B');
+  expect(loadDraft(VIEWER_ID, { ...POST, pendingId: 'pending-a' })).toBeNull();
+  jest.useRealTimers();
+});

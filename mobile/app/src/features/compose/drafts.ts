@@ -13,6 +13,11 @@ export interface ComposeContext {
   mode: ComposeMode;
   /** The post replied to or quoted; null for a new post. */
   targetId: string | null;
+  /**
+   * Editing a post that did not go through while another draft holds its
+   * context: its text gets a slot of its own, so neither overwrites the other.
+   */
+  pendingId?: string;
 }
 
 export interface DraftPart {
@@ -40,7 +45,8 @@ const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 const storageKey = (identityId: string) => `yappr.compose.drafts.${identityId}`;
 
-export function contextKey({ mode, targetId }: ComposeContext): string {
+export function contextKey({ mode, targetId, pendingId }: ComposeContext): string {
+  if (pendingId) return `pending:${pendingId}`;
   return mode === 'post' ? 'post' : `${mode}:${targetId ?? ''}`;
 }
 
@@ -91,4 +97,19 @@ export function deleteDraft(identityId: string, context: ComposeContext, onlyFro
   if (onlyFromPending !== undefined && draft.fromPending !== onlyFromPending) return;
   delete all[key];
   writeAll(identityId, all);
+}
+
+/**
+ * An emptied composer's delete: it leaves alone a draft that another post
+ * brought back meanwhile (a failure while this composer was open).
+ */
+export function deleteOwnDraft(identityId: string, context: ComposeContext, ownPending: string | undefined): void {
+  const fromPending = loadDraft(identityId, context)?.fromPending;
+  if (fromPending !== undefined && fromPending !== ownPending) return;
+  deleteDraft(identityId, context);
+}
+
+/** Signing out deletes the account's drafts (PRD AUTH-11). */
+export function forgetDrafts(identityId: string): void {
+  syncStorage.removeItem(storageKey(identityId));
 }

@@ -8,15 +8,23 @@ import { engine, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import { EMPTY_VIEWER, updateCachedPosts } from '~/data/optimistic';
+import { EMPTY_VIEWER, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
 import { useSessionStore } from '~/data/session';
-import { checkWrite, submitWrite, type WriteSpec } from '~/data/writes';
+import { checkWrite, runWrite, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { toast } from '~/ui/toast';
 import type { WriteState as CardWriteState, WriteStatusProps } from '~/ui/WriteStatus';
 
-import { deleteDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
+import {
+  deleteDraft,
+  forgetDrafts,
+  loadDraft,
+  saveDraft,
+  type ComposeContext,
+  type ComposeDraft,
+  type DraftPart,
+} from './drafts';
 
 /**
  * Posts on their way to the chain (PRD COMP-10, PD-3). Compose closes on
@@ -47,6 +55,16 @@ export interface PendingPost {
   ticket: WriteTicket | null;
   /** The engine refused the call itself (no ticket): nothing was sent. */
   refused: boolean;
+  /**
+   * The call was cut short (an engine restart or timeout, or the app was
+   * killed) before it named its ticket: it may have gone out. Followed again
+   * once the engine shows a ticket that matches it, never re-sent.
+   */
+  orphaned?: boolean;
+  /** An orphan "Check again" found no ticket for: it cannot be proved either way. */
+  lost?: boolean;
+  /** When the last call went out (a retry's republish is later than `createdAt`). */
+  submittedAt?: number;
   createdAt: number;
   /**
    * When the ticket confirmed. The entry then holds the real post for a
@@ -76,9 +94,9 @@ function restore(): Record<string, PendingPost> {
     const raw = syncStorage.getItem(STORAGE_KEY);
     const parsed = raw ? (parse(raw) as Record<string, PendingPost>) : {};
     // A post killed between submit and the engine's answer never got its ticket id: it may or may
-    // not have gone out, so it is offered as failed (Edit), never re-sent on its own.
+    // not have gone out, so it reads "Not confirmed yet" until its ticket shows up, never re-sent.
     for (const entry of Object.values(parsed)) {
-      if (!entry.ticketId) entry.refused = true;
+      if (!entry.ticketId && !entry.refused && !entry.confirmedAt) entry.orphaned = true;
     }
     return parsed;
   } catch {
@@ -113,14 +131,24 @@ function dropEntry(localId: string): void {
 // Status
 // ---------------------------------------------------------------------------
 
-/** Part index → the id it was posted under: the submitted `resume`, then what the ticket names. */
+/**
+ * Part index → the id it was posted under: the submitted `resume`, then what
+ * the ticket names. A document the engine proved absent (a retryable
+ * ticket's unconfirmed one, which `writes.retry` drops too) never landed.
+ */
 export function postedIds(entry: PendingPost): (string | null)[] {
   const posted = entry.draft.parts.map((_, i) => entry.draft.resume?.postedIds[i] ?? null);
-  for (const doc of entry.ticket?.documents ?? []) {
+  const ticket = entry.ticket;
+  for (const doc of ticket?.documents ?? []) {
+    if (ticket?.retryable && !doc.confirmed) continue;
     if (doc.action === 'create' && doc.part !== undefined && doc.part < posted.length) posted[doc.part] = doc.id;
   }
   return posted;
 }
+
+/** A failure that may have landed anyway (a transport error after the broadcast): never re-sent. */
+const mayHaveLanded = (ticket: WriteTicket) =>
+  ticket.state === 'failed' && !ticket.retryable && ticket.error?.outcome === 'unknown';
 
 /** The write-status row for an entry (UX_SPEC §2.4.11); null once confirmed. */
 export function pendingStatus(entry: PendingPost): CardWriteState | null {
@@ -131,12 +159,14 @@ export function pendingStatus(entry: PendingPost): CardWriteState | null {
   const ticket = entry.ticket;
   if (entry.confirmedAt) return null;
   if (entry.refused) return failed;
+  if (!entry.ticketId && entry.orphaned) return entry.lost ? { state: 'uncertain' } : { state: 'unconfirmed' };
   if (!ticket || ticket.state === 'pending') {
     const progress = ticket?.progress;
     return total > 1 && progress
       ? { state: 'threadProgress', index: Math.min(progress.done + 1, total), total }
       : { state: 'posting' };
   }
+  if (mayHaveLanded(ticket)) return { state: 'uncertain' };
   if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) return failed;
   if (ticket.state === 'unconfirmed') return { state: 'unconfirmed' };
   return null;
@@ -330,6 +360,22 @@ function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): st
   return `Thread partly posted. ${partText(failedAt)} failed: ${reason}`;
 }
 
+/**
+ * A cut-short call's ticket was made by it: a publish for the same target,
+ * created as the call reached the engine (just after it was sent).
+ */
+const ORPHAN_SKEW_MS = 5_000;
+const ORPHAN_WINDOW_MS = 60_000;
+function ticketMatches(entry: PendingPost, ticket: WriteTicket): boolean {
+  if (ticket.op !== 'post.publish' || (ticket.identityId ?? entry.identityId) !== entry.identityId) return false;
+  const sent = entry.submittedAt ?? entry.createdAt;
+  const at = new Date(ticket.createdAt).getTime();
+  if (at < sent - ORPHAN_SKEW_MS || at > sent + ORPHAN_WINDOW_MS) return false;
+  const want = (entry.draft.replyTo ?? entry.draft.quote)?.id ?? null;
+  const got = ticket.target && 'id' in ticket.target ? ticket.target.id : null;
+  return want === got;
+}
+
 export const publishWrite: WriteSpec<PublishVars> = {
   key: ({ localId }) => `publish:${localId}`,
   submit: (api, { localId, retry }) => {
@@ -341,6 +387,10 @@ export const publishWrite: WriteSpec<PublishVars> = {
   noun: 'post',
   failureMessage: "Couldn't post. Please try again.",
   failureText: (ticket, { localId }) => failureTextFor(ticket, getEntry(localId)),
+  matches: (ticket, { localId }) => {
+    const entry = getEntry(localId);
+    return entry !== undefined && ticketMatches(entry, ticket);
+  },
 };
 
 /** The draft a pending post came from, for Edit and for a failure (PRD G-4: text is never lost). */
@@ -349,29 +399,72 @@ function draftPartsOf(entry: PendingPost): DraftPart[] {
   return entry.draft.parts.map((part, i) => ({ text: part.text, postedId: posted[i] ?? null }));
 }
 
-function returnToDraft(entry: PendingPost): void {
-  saveDraft(entry.identityId, {
+/** The composer draft a pending post holds, marked as coming from it. */
+export function pendingDraft(localId: string): ComposeDraft | null {
+  const entry = getEntry(localId);
+  if (!entry) return null;
+  return {
     context: entry.context,
     parts: draftPartsOf(entry),
     sensitive: entry.draft.sensitive === true,
     mediaUrl: entry.draft.mediaUrl ?? '',
     updatedAt: Date.now(),
     fromPending: entry.localId,
-  });
+  };
 }
 
+/** Whether the post's own context has room for its text: no draft there, or the one it brought back. */
+function draftSlotFree(entry: PendingPost): boolean {
+  const existing = loadDraft(entry.identityId, entry.context);
+  return !existing || existing.fromPending === entry.localId;
+}
+
+/**
+ * A failed post's text back in its context's draft (PRD G-4). Never over
+ * another draft: then the text stays with the card, and Edit opens it on a
+ * slot of its own. Returns whether the draft now holds it.
+ */
+function returnToDraft(entry: PendingPost): boolean {
+  if (!draftSlotFree(entry)) return false;
+  const draft = pendingDraft(entry.localId);
+  if (draft) saveDraft(entry.identityId, draft);
+  return draft !== null;
+}
+
+/** Submit calls still waiting for their ticket: while one is, a stray ticket may be its own, not an orphan's. */
+let submitting = 0;
+
 async function submit(localId: string, retry: boolean): Promise<void> {
-  const ticket = await submitWrite(publishWrite, { localId, retry });
+  patchEntry(localId, { submittedAt: Date.now() });
+  submitting++;
+  let result: Awaited<ReturnType<typeof runWrite>>;
+  try {
+    result = await runWrite(publishWrite, { localId, retry });
+  } finally {
+    submitting--;
+  }
   const entry = getEntry(localId);
   if (!entry) return;
-  if (ticket) {
-    patchEntry(localId, { ticketId: ticket.id, refused: false });
-    receiveTicket(ticket);
-  } else if (!retry) {
-    // Refused before any ticket (or skipped): nothing went out.
+  if (result.status === 'submitted') {
+    patchEntry(localId, { ticketId: result.ticket.id, refused: false });
+    receiveTicket(result.ticket);
+  } else if (result.status === 'unknown' && !retry) {
+    // Cut short: it may have run. It waits for its ticket (PRD COMP-10), never re-sent.
+    patchEntry(localId, { orphaned: true, lost: false });
+  } else if (result.status === 'refused' && !retry) {
+    // Refused before any ticket: nothing went out.
     patchEntry(localId, { refused: true });
-    returnToDraft(entry);
+    settleFailure({ ...entry, refused: true });
   }
+  adoptOrphans().catch(() => undefined);
+}
+
+/**
+ * A post that will not land as it stands: its text back to the draft. One
+ * with no card (a resumed thread) then goes, its text safe in the draft.
+ */
+function settleFailure(entry: PendingPost): void {
+  if (returnToDraft(entry) && entry.placement === 'none') discardPending(entry.localId);
 }
 
 export interface PublishInput {
@@ -431,13 +524,15 @@ export function publishPost(input: PublishInput, hasContent: (text: string) => b
     replyTo: reply ? targetRef(target) : null,
     quote: mode === 'quote' && target ? targetRef(target) : null,
     sensitive: input.sensitive,
-    mediaUrl: input.mediaUrl || null,
+    // The image went with the first part: a resume past it must not put it on the next one.
+    mediaUrl: firstOpen === 0 ? input.mediaUrl || null : null,
     resume: postedIdList.some(Boolean) ? { postedIds: postedIdList } : null,
   };
   const entry: PendingPost = {
     localId,
     identityId: input.identityId,
-    context: input.context,
+    // A post edited on a slot of its own belongs to its context again.
+    context: { mode, targetId: input.context.targetId },
     draft,
     post,
     placement: firstOpen !== 0 ? 'none' : reply ? 'thread' : 'feed',
@@ -454,13 +549,38 @@ export function publishPost(input: PublishInput, hasContent: (text: string) => b
   return localId;
 }
 
-/** "Check again" on an unconfirmed post. */
+/**
+ * "Check again" on an unconfirmed post. An orphan first looks for its
+ * ticket; with none, it cannot be proved either way (Edit only).
+ */
 export function checkPending(localId: string): void {
-  const ticketId = getEntry(localId)?.ticketId;
-  if (!ticketId) return;
-  checkWrite(ticketId)
-    .then((ticket) => ticket && receiveTicket(ticket))
-    .catch(() => undefined);
+  const run = async () => {
+    const entry = getEntry(localId);
+    if (entry?.orphaned && !entry.ticketId) {
+      await adoptOrphans();
+      const after = getEntry(localId);
+      if (after && !after.ticketId) {
+        patchEntry(localId, { lost: true });
+        if (after.placement === 'none') settleFailure(after);
+        return;
+      }
+    }
+    const ticketId = getEntry(localId)?.ticketId;
+    if (!ticketId) return;
+    const ticket = await checkWrite(ticketId);
+    if (ticket) receiveTicket(ticket);
+  };
+  run().catch((error: unknown) => appendLog('warn', 'host', `Checking a post failed: ${errorMessage(error)}`));
+}
+
+/** Follows each orphan whose ticket the engine now lists (`writes.list`), oldest orphan first. */
+async function adoptOrphans(): Promise<void> {
+  const orphans = () => Object.values(usePendingPosts.getState().entries).filter((e) => e.orphaned && !e.ticketId);
+  if (orphans().length === 0) return;
+  const tickets = await engine.api.writes.list();
+  for (const ticket of [...tickets].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())) {
+    receiveTicket(ticket);
+  }
 }
 
 /**
@@ -482,7 +602,12 @@ export function retryPending(localId: string): void {
   }
   const posted = postedIds(entry);
   patchEntry(localId, {
-    draft: { ...entry.draft, resume: posted.some(Boolean) ? { postedIds: posted } : null },
+    draft: {
+      ...entry.draft,
+      resume: posted.some(Boolean) ? { postedIds: posted } : null,
+      // The image went with the first part: a resume past it must not put it on the next one.
+      mediaUrl: posted[0] ? null : (entry.draft.mediaUrl ?? null),
+    },
     ticketId: null,
     ticket: null,
     refused: false,
@@ -491,15 +616,24 @@ export function retryPending(localId: string): void {
   submit(localId, false).catch(() => undefined);
 }
 
-/** "Edit": the card goes, and compose opens on its draft. */
+/**
+ * "Edit": compose opens on the post's text. With its context free, the
+ * text goes back to that draft and the card goes; when another draft holds
+ * the context, compose opens on a slot of its own and the card stays until
+ * that is posted or deleted.
+ */
 export function editPending(localId: string): void {
   const entry = getEntry(localId);
   if (!entry) return;
-  returnToDraft(entry);
-  discardPending(localId);
   const { mode, targetId } = entry.context;
   const params = mode === 'reply' ? { replyTo: targetId ?? '' } : mode === 'quote' ? { quote: targetId ?? '' } : {};
-  router.push({ pathname: '/compose', params });
+  const ownSlot = loadDraft(entry.identityId, { ...entry.context, pendingId: localId }) !== null;
+  if (!ownSlot && returnToDraft(entry)) {
+    discardPending(localId);
+    router.push({ pathname: '/compose', params });
+  } else {
+    router.push({ pathname: '/compose', params: { ...params, pending: localId } });
+  }
 }
 
 /** Forgets a pending post and its card (compose posts its returned draft anew, or Edit). */
@@ -528,12 +662,28 @@ function confirmed(entry: PendingPost, ticket: WriteTicket): void {
   else dropEntry(entry.localId);
   replaceInCaches(entry.localId, post);
   deleteDraft(entry.identityId, entry.context, entry.localId);
+  deleteDraft(entry.identityId, { ...entry.context, pendingId: entry.localId });
   const total = entry.draft.parts.length;
   toast.success(total > 1 ? `Thread with ${total} posts created!` : SUCCESS[entry.context.mode]);
 }
 
+/** The orphan a ticket the app has not followed belongs to, oldest first; none while a submit still waits for its own. */
+function orphanFor(ticket: WriteTicket, entries: PendingPost[]): PendingPost | undefined {
+  if (submitting > 0) return undefined;
+  return entries
+    .filter((e) => e.orphaned && !e.ticketId && ticketMatches(e, ticket))
+    .sort((a, b) => a.createdAt - b.createdAt)[0];
+}
+
 /** A ticket update for a pending post: track it, finish it, or bring its text back to the draft. */
 function receiveTicket(ticket: WriteTicket): void {
+  const entries = Object.values(usePendingPosts.getState().entries);
+  if (entries.some((e) => e.ticketId === ticket.id) === false) {
+    // Not ours yet: a cut-short call's ticket, restored by the engine.
+    const orphan = orphanFor(ticket, entries);
+    if (!orphan) return;
+    patchEntry(orphan.localId, { ticketId: ticket.id, orphaned: false, lost: false });
+  }
   const entry = Object.values(usePendingPosts.getState().entries).find((e) => e.ticketId === ticket.id);
   if (!entry || entry.confirmedAt) return;
   const before = pendingStatus(entry)?.state;
@@ -544,7 +694,10 @@ function receiveTicket(ticket: WriteTicket): void {
   }
   patchEntry(entry.localId, { ticket });
   const after = pendingStatus(next)?.state;
-  if ((after === 'failed' || after === 'partial') && before !== after) returnToDraft(next);
+  if (before === after) return;
+  if (after === 'failed' || after === 'partial') settleFailure(next);
+  // Unprovable: the text stays with the card for Edit, unless there is no card.
+  else if (after === 'uncertain' && next.placement === 'none') settleFailure(next);
 }
 
 /**
@@ -574,8 +727,9 @@ function reconcile(identityId: string): void {
     engine.api.writes
       .get(entry.ticketId)
       .then((ticket) => {
+        const state = pendingStatus(entry)?.state;
         if (ticket) receiveTicket(ticket);
-        else if (pendingStatus(entry)?.state !== 'failed' && pendingStatus(entry)?.state !== 'partial') {
+        else if (state !== 'failed' && state !== 'partial' && state !== 'uncertain') {
           // Pruned by the engine: it confirmed long ago. The next refresh shows the real post.
           dropEntry(entry.localId);
           replaceInCaches(entry.localId, null);
@@ -583,11 +737,47 @@ function reconcile(identityId: string): void {
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending post failed: ${errorMessage(error)}`));
   }
+  // Calls a restart cut short: their tickets, if the engine made them.
+  adoptOrphans()
+    .then(() => {
+      // A resumed thread has no card to check again from: with no ticket, its text returns to the draft.
+      for (const entry of Object.values(usePendingPosts.getState().entries)) {
+        if (entry.identityId !== identityId || !entry.orphaned || entry.ticketId || entry.placement !== 'none') continue;
+        patchEntry(entry.localId, { lost: true });
+        settleFailure(entry);
+      }
+    })
+    .catch((error: unknown) => appendLog('warn', 'host', `Reading restored posts failed: ${errorMessage(error)}`));
+}
+
+/** Signing out deletes the account's drafts and the posts it had on their way (PRD AUTH-11). */
+function forgetAccount(identityId: string): void {
+  forgetDrafts(identityId);
+  for (const entry of Object.values(usePendingPosts.getState().entries)) {
+    if (entry.identityId === identityId) dropEntry(entry.localId);
+  }
+}
+
+/** After a sign-out: every account seen here that is no longer on the device loses its compose data. */
+function forgetSignedOut(seen: Set<string>): void {
+  engine.api.session
+    .accounts()
+    .then((accounts) => {
+      const kept = new Set(accounts.map((a) => a.identityId));
+      const owners = Object.values(usePendingPosts.getState().entries).map((e) => e.identityId);
+      for (const id of new Set([...seen, ...owners])) {
+        if (!kept.has(id)) {
+          forgetAccount(id);
+          seen.delete(id);
+        }
+      }
+    })
+    .catch((error: unknown) => appendLog('warn', 'host', `Clearing signed-out drafts failed: ${errorMessage(error)}`));
 }
 
 /**
  * Starts following pending posts: their tickets, the lists that should show
- * them, and the account. Started once by `startDataLayer`; returns the stop.
+ * them, and the account. The root layout starts it once; returns the stop.
  */
 export function startPendingPosts(): () => void {
   const stopTickets = onEngineEvent('write.status', receiveTicket);
@@ -610,11 +800,30 @@ export function startPendingPosts(): () => void {
   };
   const stopSession = useSessionStore.subscribe(onSession);
   onSession();
+  // The accounts signed in here, for sign-out to clear.
+  const seen = new Set<string>();
+  const stopSeen = useSessionStore.subscribe(({ session }) => {
+    if (session) seen.add(session.identityId);
+  });
+  const signedIn = useSessionStore.getState().session?.identityId;
+  if (signedIn) seen.add(signedIn);
+  const stopSignOut = onEngineEvent('session.changed', ({ reason }) => {
+    if (reason === 'signed-out') forgetSignedOut(seen);
+  });
+  // A post deleted while pinned must not come back with the pin.
+  const stopRemoved = useRemovedPosts.subscribe(({ ids }) => {
+    for (const entry of Object.values(usePendingPosts.getState().entries)) {
+      if (entry.confirmedAt && ids.has(entry.post.id)) dropEntry(entry.localId);
+    }
+  });
   return () => {
     stopTickets();
     stopCreated();
     stopCache();
     stopSession();
+    stopSeen();
+    stopSignOut();
+    stopRemoved();
   };
 }
 

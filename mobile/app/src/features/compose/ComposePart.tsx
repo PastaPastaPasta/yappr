@@ -67,6 +67,9 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
   const { text } = part;
   const overflowAt = overflowOffset(text, limits);
   const spans = useMemo(() => editorSpans(text, tagMax, overflowAt), [text, tagMax, overflowAt]);
+  // Plain text goes in as plain text: spans rebuilt on every keystroke break IME composition
+  // (CJK, iOS marked text) and slow long pastes; only highlighted text needs them.
+  const plain = spans.every((span) => span.style === 'plain' && !span.over);
   const hints = useMemo(() => composeHints(text, tagMax), [text, tagMax]);
   const { bytesOver } = contentOverage(text, limits);
   const overBg = dark ? 'rgba(127,29,29,0.45)' : '#fee2e2';
@@ -115,18 +118,20 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
               className="min-h-12 flex-1 p-0 pt-1 text-[17px] leading-[26px]"
               style={{ color: c.textPrimary }}
             >
-              {spans.map((span, i) => (
-                <RNText
-                  key={i}
-                  style={{
-                    color: span.style === 'plain' ? c.textPrimary : span.style === 'link' ? c.link : c.error,
-                    textDecorationLine: span.style === 'tagTooLong' ? 'underline' : 'none',
-                    backgroundColor: span.over ? overBg : undefined,
-                  }}
-                >
-                  {span.text}
-                </RNText>
-              ))}
+              {plain
+                ? text
+                : spans.map((span, i) => (
+                    <RNText
+                      key={i}
+                      style={{
+                        color: span.style === 'plain' ? c.textPrimary : span.style === 'link' ? c.link : c.error,
+                        textDecorationLine: span.style === 'tagTooLong' ? 'underline' : 'none',
+                        backgroundColor: span.over ? overBg : undefined,
+                      }}
+                    >
+                      {span.text}
+                    </RNText>
+                  ))}
             </TextInput>
             {removable ? (
               <IconButton
