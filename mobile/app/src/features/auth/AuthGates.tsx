@@ -7,6 +7,7 @@ import { engine, engineNetworkKey } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { cn } from '~/lib-allowlist';
+import { useInboundLinkEffects } from '~/navigation/inbound-links';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
@@ -130,6 +131,7 @@ export function AuthGates() {
   useTermsGate(ready, pathname);
   useSignInExit(pathname);
   useResumeWalletSignIn(ready, pathname);
+  useInboundLinkEffects(ready);
   return (
     <>
       <AccountSwitcherSheet />

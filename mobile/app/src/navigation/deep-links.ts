@@ -5,13 +5,17 @@
  *
  * Inbound links are untrusted (any web page or QR code can produce one), so
  * only known web routes and validated path-form detail routes are accepted.
- * Everything else lands on FALLBACK_ROUTE.
+ * Web-only pages open in the in-app browser; anything else lands on
+ * FALLBACK_ROUTE with "This link isn't supported in the app" (PRD NET-11).
  *
  * Pure (no React Native imports) so it is unit-tested in isolation.
  */
 
-/** Where unsupported or malformed links land. TODO(shell PR): toast + "Open in browser". */
+/** Where unsupported or malformed links land (with a toast, `src/navigation/inbound-links.ts`). */
 export const FALLBACK_ROUTE = '/';
+
+/** The web app, whose pages the in-app browser opens. */
+const WEB_ORIGIN = 'https://yap.pr';
 
 export interface LinkOptions {
   /**
@@ -30,10 +34,44 @@ export interface LinkOptions {
    * for screenshots). Routes in NEVER_FROM_OUTSIDE stay refused even then.
    */
   allowAppRoutes: boolean;
+  /**
+   * The signed-in viewer (before the engine restores, whoever was signed in
+   * last), or null: `/login` is then ignored, and `/user`, `/followers` and
+   * `/following` resolve the viewer's own profile.
+   */
+  viewerId?: string | null;
 }
+
+/** What an inbound link does. */
+export type LinkTarget =
+  /** Navigate to an app route. */
+  | { kind: 'route'; route: string }
+  /** A web-only page (store, blog, DPNS registration, the legal pages): the in-app browser. */
+  | { kind: 'browser'; url: string }
+  /** Home, with "This link isn't supported in the app" and "Open in browser" for `url`. */
+  | { kind: 'unsupported'; url: string }
+  /** Nothing to do (sign-in while signed in). */
+  | { kind: 'ignore' };
 
 /** Web deployments that serve the app's paths under a prefix. */
 const WEB_BASE_PATHS = ['/devnet', '/testing'];
+
+/** Web pages the app does not have in 1.0 (UX_SPEC §3.5); each covers its sub-paths. */
+const WEB_ONLY = [
+  '/terms',
+  '/privacy',
+  '/about',
+  '/cookies',
+  '/contract',
+  '/dpns/register',
+  '/store',
+  '/item',
+  '/cart',
+  '/checkout',
+  '/orders',
+  '/blog',
+  '/embed',
+];
 
 /** Identity and document ids: base58, 43–44 characters. */
 const ID = /^[1-9A-HJ-NP-Za-km-z]{43,44}$/;
@@ -106,12 +144,20 @@ function withQuery(path: string, query: Record<string, string | undefined>): str
   return parts.length ? `${path}?${parts.join('&')}` : path;
 }
 
-/** Web route → app route; null for a web route with invalid parameters. */
-const WEB_ROUTES: Record<string, (q: Query) => string | null> = {
+/** The viewer's own followers or following list when `id` is left out (web's default). */
+function listOf(q: Query, viewerId: string | null, list: 'followers' | 'following'): string | null {
+  const who = q.id === undefined ? viewerId : id(q.id);
+  return who ? `/user/${who}/${list}` : null;
+}
+
+/** A web route with nothing to open (sign-in while signed in). */
+const IGNORE = '';
+/** Web route → app route; null for a web route with invalid parameters, IGNORE for a no-op. */
+const WEB_ROUTES: Record<string, (q: Query, viewerId: string | null) => string | null> = {
   '/': () => '/',
   '/feed': () => '/',
   '/welcome': () => '/',
-  '/login': () => '/sign-in',
+  '/login': (_q, viewerId) => (viewerId ? IGNORE : '/sign-in'),
   '/explore': () => '/explore',
   '/notifications': () => '/notifications',
   '/messages': (q) => {
@@ -133,12 +179,15 @@ const WEB_ROUTES: Record<string, (q: Query) => string | null> = {
     if (!post || (q.kind && !ENGAGEMENT_KINDS.has(q.kind))) return null;
     return withQuery(`/post/${post}/engagements`, { kind: q.kind });
   },
-  // TODO(profiles PR): the viewer's own id → /profile, and `edit=true` → /profile/edit.
-  '/user': (q) => (id(q.id) ? `/user/${q.id}` : null),
+  '/user': (q, viewerId) => {
+    const user = id(q.id);
+    if (!user) return null;
+    if (user !== viewerId) return `/user/${user}`;
+    return q.edit === 'true' ? '/profile/edit' : '/profile';
+  },
   '/mentions': (q) => (id(q.user) ? withQuery(`/user/${q.user}`, { tab: 'mentions' }) : null),
-  // TODO(profiles PR): a missing `id` means the viewer.
-  '/followers': (q) => (id(q.id) ? `/user/${q.id}/followers` : null),
-  '/following': (q) => (id(q.id) ? `/user/${q.id}/following` : null),
+  '/followers': (q, viewerId) => listOf(q, viewerId, 'followers'),
+  '/following': (q, viewerId) => listOf(q, viewerId, 'following'),
   '/hashtag': (q) => {
     const t = tag(q.tag);
     return t ? `/hashtag/${encodeURIComponent(t)}` : null;
@@ -187,23 +236,34 @@ const SHARED_ROUTE = /^\/(post|user|hashtag)\//;
 /** The dev client's own launch link (`exp+yappr://expo-development-client/?url=...`). */
 const DEV_CLIENT = '/expo-development-client';
 
+/** The web page for a path: the in-app browser opens only yap.pr, with a path of plain characters. */
+function webUrl(path: string, query: Query): string {
+  const safe = /^[\w./-]*$/.test(path) && !path.includes('..') ? path : '/';
+  return withQuery(`${WEB_ORIGIN}${safe}`, query);
+}
+
 /**
- * The app route for an inbound URL: a translated web route, a validated
- * path-form detail route, or (dev builds only) another app route.
- * Anything else is FALLBACK_ROUTE.
+ * What an inbound URL does: a translated web route, a validated path-form
+ * detail route, or (dev builds only) another app route; a web-only page in
+ * the in-app browser; or Home with the unsupported-link toast.
  */
-export function toAppRoute(url: string, options: LinkOptions): string {
+export function resolveLink(url: string, options: LinkOptions): LinkTarget {
   const parsed = parse(url);
   let { path } = parsed;
 
   if (options.webBasePath && matchesPrefix(path, options.webBasePath)) {
     path = path.slice(options.webBasePath.length) || '/';
   } else if (WEB_BASE_PATHS.some((b) => matchesPrefix(path, b))) {
-    return FALLBACK_ROUTE; // Another deployment's link; its ids belong to another network.
+    // Another deployment's link; its ids belong to another network.
+    return { kind: 'unsupported', url: webUrl(path, parsed.query) };
   }
+  // The same page on this build's web deployment.
+  const page = webUrl(`${options.webBasePath}${path === '/' ? '' : path}` || '/', parsed.query);
+
+  if (WEB_ONLY.some((p) => matchesPrefix(path, p))) return { kind: 'browser', url: page };
 
   const web = WEB_ROUTES[path];
-  let route = web ? web(parsed.query) : pathFormRoute(path, parsed.query);
+  let route = web ? web(parsed.query, options.viewerId ?? null) : pathFormRoute(path, parsed.query);
   if (route === undefined) {
     const allowed =
       options.allowAppRoutes &&
@@ -211,6 +271,13 @@ export function toAppRoute(url: string, options: LinkOptions): string {
       !NEVER_FROM_OUTSIDE.some((p) => matchesPrefix(path, p));
     route = allowed ? withQuery(path, parsed.query) : null;
   }
-  if (route === null) return FALLBACK_ROUTE;
-  return options.initial && SHARED_ROUTE.test(route) ? `/(home)${route}` : route;
+  if (route === IGNORE) return { kind: 'ignore' };
+  if (route === null) return { kind: 'unsupported', url: page };
+  return { kind: 'route', route: options.initial && SHARED_ROUTE.test(route) ? `/(home)${route}` : route };
+}
+
+/** The app route for an inbound URL, or FALLBACK_ROUTE for anything that is not one. */
+export function toAppRoute(url: string, options: LinkOptions): string {
+  const target = resolveLink(url, options);
+  return target.kind === 'route' ? target.route : FALLBACK_ROUTE;
 }
