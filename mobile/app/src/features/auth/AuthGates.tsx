@@ -14,6 +14,7 @@ import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { returnFromAddAccount, useAccounts } from './accounts';
+import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
 import { useOnboarding } from './onboarding';
@@ -125,7 +126,10 @@ function AccountTransitionOverlay() {
  * account switcher and its progress, and the app lock.
  */
 export function AuthGates() {
-  const ready = !!useRootNavigationState()?.key;
+  // Nothing opens while the app lock is up: on iOS a modal presented over the lock screen draws
+  // above it and takes touches (the terms gate's "Not now" would sign the account out).
+  const lockUp = useLockState((s) => s.locked || s.covered);
+  const ready = !!useRootNavigationState()?.key && !lockUp;
   const pathname = usePathname();
   useWelcomeOnFirstLaunch(ready);
   useTermsGate(ready, pathname);

@@ -6,6 +6,7 @@ import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
 import { useAccounts } from './accounts';
+import { useAppLockSettings, useLockState } from './app-lock';
 import { AuthGates } from './AuthGates';
 import { useKeyExchange } from './key-exchange';
 import { useOnboarding } from './onboarding';
@@ -48,6 +49,8 @@ beforeEach(() => {
   useTermsStore.setState({ accepted: {} });
   useAccounts.setState({ transition: null, returnTo: null });
   useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [] });
+  useAppLockSettings.setState({ enabled: false });
+  useLockState.setState({ locked: false, covered: false, authenticating: false, backgroundAt: null });
   fakeEngine.method('session.cancelKeyExchange').mockResolvedValue(undefined);
 });
 
@@ -67,6 +70,19 @@ describe('terms gate (AUTH-09)', () => {
     act(() => acceptTerms('devnet-test', 'alice'));
     act(() => useAccounts.setState({ transition: null }));
     expect(router.push).not.toHaveBeenCalled();
+  });
+  it('never opens over the app lock, where iOS would draw it above the lock screen (SR-01)', () => {
+    useAppLockSettings.setState({ enabled: true });
+    useLockState.setState({ locked: true });
+    mount('/');
+    expect(router.push).not.toHaveBeenCalled();
+
+    // The lock screen covering an inactive app holds it too.
+    act(() => useLockState.setState({ locked: false, covered: true }));
+    expect(router.push).not.toHaveBeenCalled();
+
+    act(() => useLockState.setState({ covered: false }));
+    expect(router.push).toHaveBeenCalledWith('/terms-gate');
   });
 });
 
