@@ -891,7 +891,7 @@ As a user, I want what I sent to stay sent when I switch apps, so that nothing i
 
 #### SAFE-01 · Block someone · P0 · all
 As a user, I want to block an account, so that I stop seeing it.
-- "Block @x" (post menu, profile menu, conversation menu) opens a confirmation sheet: "Block @x? / You won't see their posts, replies or messages, and they won't be able to message you. Blocks are public on Dash Platform." with an optional "Add a note (optional)" field (≤ 280 characters, note "Visible to anyone on Dash Platform"), "Block" (destructive) and "Cancel" (PD-5).
+- "Block @x" (post menu, profile menu, conversation menu) opens a confirmation sheet: "Block @x?" with a body that promises only what the block enforces on that network's Messages (UX_SPEC §5.9 `block.body*`; a block never stops anyone sending a message), with an optional "Add a note (optional)" field (≤ 280 characters, note "Visible to anyone on Dash Platform"), "Block" (destructive) and "Cancel" (PD-5).
 - On confirm: the author's content disappears from every list, thread, notification and cache at once (G-6); toast "User blocked" ("User blocked and private feed access revoked" when the engine reports it).
 - Blocking yourself is impossible ("You cannot block yourself").
 
