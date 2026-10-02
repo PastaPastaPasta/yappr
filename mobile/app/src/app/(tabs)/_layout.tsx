@@ -16,6 +16,7 @@ import {
   UserIcon as UserSolid,
 } from 'react-native-heroicons/solid';
 
+import { openAccountSwitcher } from '~/features/auth/AccountSwitcher';
 import { useTabBadges } from '~/state/tab-badges';
 import { badgeLabel } from '~/ui/Badge';
 import { colors, useIsDark } from '~/ui/tokens';
@@ -80,6 +81,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="(profile)"
         options={{ title: 'Profile', tabBarIcon: tabIcon(UserOutline, UserSolid) }}
+        // Long-press opens the account switcher (PRD AUTH-10).
+        listeners={{ tabLongPress: openAccountSwitcher }}
       />
     </Tabs>
   );

@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { EditProfileScreen } from '~/features/profile/EditProfileScreen';
 
-export default function EditProfileScreen() {
-  return <Placeholder title="Edit profile" comingIn="the profiles PR" />;
-}
+export default EditProfileScreen;

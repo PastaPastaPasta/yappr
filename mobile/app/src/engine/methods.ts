@@ -32,6 +32,10 @@ const READS = new Set([
   'writes.list',
   'writes.get',
   'settings.get',
+  // Engine-local after the first load per account; a replayed poll only merges what arrived since its watermark.
+  'notifications.list',
+  'notifications.poll',
+  'notifications.unreadCount',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

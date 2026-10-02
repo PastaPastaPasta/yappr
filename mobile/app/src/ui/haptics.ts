@@ -18,6 +18,11 @@ export function mediumImpact() {
   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(ignore);
 }
 
+/** A post, reply or quote sent: compose closes (UX_SPEC §1.9). */
+export function successFeedback() {
+  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(ignore);
+}
+
 /** A failed write, with its error toast (UX_SPEC §1.9). */
 export function errorFeedback() {
   Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(ignore);

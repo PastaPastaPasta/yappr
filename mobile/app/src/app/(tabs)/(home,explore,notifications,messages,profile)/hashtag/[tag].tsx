@@ -1,8 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { Placeholder } from '~/ui/Placeholder';
+import { HashtagScreen } from '~/features/explore/HashtagScreen';
 
-export default function HashtagScreen() {
+export default function HashtagRoute() {
   const { tag } = useLocalSearchParams<{ tag?: string }>();
-  return <Placeholder title="Hashtag" detail={`tag: ${tag ?? ''}`} comingIn="the explore and search PR" />;
+  // A link to another tag reuses this screen: start it fresh (Latest, at the top).
+  return <HashtagScreen key={tag ?? ''} tagParam={tag} />;
 }

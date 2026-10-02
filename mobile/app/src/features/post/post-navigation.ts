@@ -31,7 +31,8 @@ export function postWebUrl(post: Pick<PostDTO, 'id' | 'kind' | 'rootPostId'> | s
 /** Opens a post. The card's data seeds the detail screen, which refetches at once. */
 export function openPost(post: PostDTO | string): void {
   const id = typeof post === 'string' ? post : post.id;
-  if (typeof post !== 'string' && queryClient.getQueryData(queryKeys.post.detail(id)) === undefined) {
+  // A cached `null` may be a failed read (lib answers one as "absent"): the card proves the post exists.
+  if (typeof post !== 'string' && queryClient.getQueryData(queryKeys.post.detail(id)) == null) {
     // A bare repost's card shows its target under the reposter's banner; the detail is the target alone.
     const { repostedBy: _banner, repostTimestamp: _at, ...detail } = post;
     queryClient.setQueryData(queryKeys.post.detail(id), detail, { updatedAt: 0 });

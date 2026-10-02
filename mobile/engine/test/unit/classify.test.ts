@@ -76,6 +76,10 @@ describe('classify() for engine errors', () => {
     })
   })
 
+  it('reads an engine read failure (readFailure\'s NETWORK) as NETWORK, whatever its message', () => {
+    expect(classify(new RpcError('This post could not be read. Try again.', 'NETWORK'))).toMatchObject({ code: 'NETWORK', outcome: 'not-sent', retryable: true })
+  })
+
   it('does not read an unknown string code as an engine code', () => {
     expect(classify({ code: 'ECONNRESET', message: 'socket hang up' }).code).toBe('UNKNOWN')
   })

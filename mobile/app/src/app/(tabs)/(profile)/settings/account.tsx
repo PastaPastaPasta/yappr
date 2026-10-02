@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { AccountSettingsScreen } from '~/features/settings/AccountSettingsScreen';
 
-export default function AccountSettingsScreen() {
-  return <Placeholder title="Account" comingIn="the settings and bookmarks PR" />;
-}
+export default AccountSettingsScreen;

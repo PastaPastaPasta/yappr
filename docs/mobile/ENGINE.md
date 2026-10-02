@@ -636,7 +636,7 @@ interface ProfileDTO {
   paymentUris: { scheme: string; uri: string; label: string | null }[]   // display only in 1.0 (tips deferred)
   usernames: string[]; joinedAt: Date | null
   stats: { posts: number; followers: number; following: number }
-  viewer: { follows: boolean; blocks: boolean; isSelf: boolean } | null
+  viewer: { follows: boolean; blocks: boolean | null; blockedBy: 'self' | 'list' | null; isSelf: boolean } | null
   hasProfileDocument: boolean
 }
 type ProfilePatchDTO = Partial<{
@@ -730,6 +730,7 @@ interface MessageDTO { id: string; sender: Id; text: string; at: Date; own: bool
 | `block` / `unblock` | `(targetId: Id, opts?: { message?: string }) => Promise<WriteTicket>` | `blockService.blockUser(viewer, target, message?)` (`block-service.ts:140`; message ≤ 280) / `unblockUser` (:239) |
 | `blocked` | `(cursor?: Cursor) => Promise<Page<AuthorDTO & { message: string \| null }>>` | `getUserBlocks(userId)` (:294) + `loadIdentityBatch` |
 | `isBlocked` | `(ids: Id[]) => Promise<Record<Id, boolean>>` | `checkBlockedBatch(viewer, ids)` (:735) |
+| `blockedBy` | `(ids: Id[]) => Promise<Record<Id, 'self' \| 'list' \| null>>` | `getBlockSourcesBatch(viewer, ids)` (:716): the viewer's own block (`'self'`, which `unblock` deletes) vs. only a followed block list (`'list'`) |
 | `report` | `(target: TargetRef, reason: number, note?: string) => Promise<WriteTicket>` | `reportService.fileReport(viewer, {kind, targetId, targetOwnerId, reason, note})` (`lib/services/report-service.ts:89`). `REPORT_REASONS` and codes 0–8 come from `lib/reports.ts:37`, which RN imports directly (allow-listed). Code 8 needs a note of up to 500 characters. Gated by `capabilities.reports`. |
 | `ownReport` | `(target: TargetRef) => Promise<{ reason: number; status: 1 \| 2 \| 3 \| null; resolution: string \| null } \| null>` | `reportService.getOwnReport` (:78) |
 
