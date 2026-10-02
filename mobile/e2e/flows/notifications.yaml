@@ -1,0 +1,126 @@
+# Notifications tab (PRD NOTIF-01 – NOTIF-05, NOTIF-09; EXECUTION S8).
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test mobile/e2e/flows/notifications.yaml
+#   maestro --device <udid|serial> test -e KEY=<receiver's key> mobile/e2e/flows/notifications.yaml
+#   maestro --device <udid|serial> test -e KEY=<receiver's key> -e LIKED=1 mobile/e2e/flows/notifications.yaml
+# Without KEY it checks the signed-out placeholder. With KEY (a sakura pool
+# identity's authentication key, never committed) it signs in through the dev
+# quick sign-in when nobody is signed in (an account already signed in is
+# kept), reads the list, walks the filters and the settings link, and marks
+# everything read. With LIKED=1 it first waits for a like from another
+# pool identity to arrive (made beforehand, e.g. by the engine's write
+# harness, after this device has looked once: v11 likes are announced only
+# when they appear after the device's first look), opens it, and checks it
+# was marked read. Nothing here writes to chain.
+# Maestro records command values, KEY included, in its logs and debug
+# artifacts (~/.maestro/tests/...): never upload or attach those from a run
+# with KEY, and delete them afterwards.
+appId: pr.yap.app.dev
+---
+- openLink: yappr-dev:///notifications
+
+# Signed out: the placeholder, and no list.
+- runFlow:
+    when:
+      true: ${typeof KEY != 'string' || KEY.length == 0}
+    commands:
+      - extendedWaitUntil:
+          visible: "Sign in to see your notifications"
+          timeout: 30000
+      - assertVisible: "Likes, replies, follows and mentions show up here."
+      - assertNotVisible:
+          id: notifications-list
+
+# Signed in, or about to be: the dev quick sign-in, only when nobody is signed in. An account
+# already signed in is kept: signing out drops its read state and its v11 like baseline.
+- runFlow:
+    when:
+      true: ${typeof KEY == 'string' && KEY.length > 0}
+    commands:
+      - openLink: yappr-dev:///settings/diagnostics
+      - scrollUntilVisible:
+          element:
+            id: dev-sign-in-key
+          direction: DOWN
+          timeout: 20000
+      - runFlow:
+          when:
+            visible: "nobody"
+          commands:
+            - tapOn:
+                id: dev-sign-in-key
+            - inputText: ${KEY}
+            # Return closes the keyboard (Maestro's hideKeyboard is unreliable on iOS).
+            - pressKey: Enter
+            - tapOn:
+                id: dev-sign-in
+            - extendedWaitUntil:
+                visible: "Sign out"
+                timeout: 60000
+      - openLink: yappr-dev:///notifications
+      - extendedWaitUntil:
+          visible:
+            id: notifications-filters
+          timeout: 30000
+      # The first load reads the last 7 days.
+      - extendedWaitUntil:
+          notVisible:
+            id: notifications-loading
+          timeout: 90000
+
+      # A like from another pool identity: it appears, opens its post, and is read.
+      - runFlow:
+          when:
+            true: ${typeof LIKED == 'string' && LIKED.length > 0}
+          commands:
+            - extendedWaitUntil:
+                visible: ".*liked your (post|reply).*"
+                timeout: 90000
+            - assertVisible: "Unread\\. .*liked your (post|reply).*"
+            - tapOn: ".*liked your (post|reply).*"
+            - extendedWaitUntil:
+                notVisible:
+                  id: notifications-filters
+                timeout: 20000
+            # Back to the list (the post opened on the Notifications stack).
+            - openLink: yappr-dev:///notifications
+            - extendedWaitUntil:
+                visible:
+                  id: notifications-filters
+                timeout: 20000
+            # Opening it marked it read (the row's label starts "Unread." while unread).
+            - assertNotVisible: "Unread\\. .*liked your (post|reply).*"
+
+      # Filters, each with its list or its empty copy.
+      # Likes is absent when turned off in Settings.
+      - tapOn:
+          id: notifications-filters-like
+          optional: true
+      - tapOn:
+          id: notifications-filters-follow
+      - tapOn:
+          id: notifications-filters-all
+
+      # The settings link opens the per-type switches.
+      - tapOn:
+          id: notifications-settings
+      - extendedWaitUntil:
+          visible: "In-app notifications"
+          timeout: 20000
+      - assertVisible:
+          id: notification-toggle-likes
+      - openLink: yappr-dev:///notifications
+      - extendedWaitUntil:
+          visible:
+            id: notifications-filters
+          timeout: 20000
+
+      # Mark all as read: no unread row is left.
+      - tapOn:
+          id: notifications-mark-all
+          optional: true
+      - extendedWaitUntil:
+          notVisible:
+            id: unread-dot
+          timeout: 20000
