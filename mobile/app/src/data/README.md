@@ -101,7 +101,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
 - **The engine cut the call short.** `ENGINE_RESTARTED`, `ENGINE_DISCONNECTED`,
   `RPC_TIMEOUT` and `ENGINE_TIMEOUT` mean the write may have run (an account
   switch is an engine restart). No failure toast: give the spec `matches`, so
-  the tracker can follow the restored ticket.
+  the tracker can follow the restored ticket. `onAdopted` tells a spec that
+  keeps its own record of the write (a DM's outbox bubble) which ticket that is.
   - Signing out or switching accounts forgets every tracked write.
 - **When the engine refuses the call itself.** No ticket is made, and the
   change is undone. `NOT_SIGNED_IN` opens the sign-in sheet. `onRejected`

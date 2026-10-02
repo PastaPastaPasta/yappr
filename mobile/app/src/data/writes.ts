@@ -61,6 +61,12 @@ export interface WriteSpec<V> {
    */
   matches?: (ticket: WriteTicket, vars: V) => boolean;
   /**
+   * The tracker adopted `ticket` for this cut-short write (`matches`): for a
+   * screen that keeps its own record of the write, so it can follow the
+   * ticket from here (a DM's outbox bubble).
+   */
+  onAdopted?: (ticket: WriteTicket, vars: V) => void;
+  /**
    * The engine refused the call itself (validation, `NOT_SUPPORTED`,
    * `QUOTE_HAS_TEXT`, ...): no ticket was made. Return true when handled;
    * otherwise a failure toast shows. `NOT_SIGNED_IN` opens the sign-in sheet.
@@ -265,6 +271,7 @@ function adopt(ticket: WriteTicket): void {
     const latest = latestId === undefined ? undefined : useWriteTickets.getState().byId[latestId];
     if (!latest || time(latest.createdAt) < orphan.at) latestByKey.set(orphan.key, ticket.id);
   }
+  orphan.spec.onAdopted?.(ticket, orphan.vars);
 }
 
 function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {

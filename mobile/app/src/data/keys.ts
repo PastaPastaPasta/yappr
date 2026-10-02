@@ -107,5 +107,7 @@ export const queryKeys = {
     status: [...root, 'dm', 'status'] as const,
     conversations: [...root, 'dm', 'conversations'] as const,
     messages: (key: string) => [...root, 'dm', 'messages', key] as const,
+    /** `profiles.batch` for conversation members and blocked people, in the order given. */
+    people: (ids: readonly string[]) => [...root, 'dm', 'people', ids.join(',')] as const,
   },
 } as const;

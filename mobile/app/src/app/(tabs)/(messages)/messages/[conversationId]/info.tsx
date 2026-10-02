@@ -1,8 +1,3 @@
-import { useLocalSearchParams } from 'expo-router';
+import { GroupInfoScreen } from '~/features/messages/GroupInfoScreen';
 
-import { Placeholder } from '~/ui/Placeholder';
-
-export default function ConversationInfoScreen() {
-  const { conversationId } = useLocalSearchParams<{ conversationId?: string }>();
-  return <Placeholder title="Conversation info" detail={`conversationId: ${conversationId ?? ''}`} comingIn="the messages PR" />;
-}
+export default GroupInfoScreen;
