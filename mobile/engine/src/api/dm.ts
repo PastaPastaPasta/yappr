@@ -468,7 +468,7 @@ export function createDmModule(options: DmModuleOptions) {
     /** v5 "Reclaim message fees" (PRD DM-12). */
     async setRetention(retention: DmRetention): Promise<void> {
       if (!RETENTIONS.includes(retention)) throw new RpcError(`retention is one of ${RETENTIONS.join(', ')}`, 'BAD_REQUEST')
-      v5('Reclaiming message fees').engine(session()).setRetention(retention)
+      v5('Reclaiming message fees').setRetention(session(), retention)
     },
 
     /**

@@ -389,6 +389,42 @@ describe('dm on DM v5: 1:1', () => {
   })
 })
 
+describe('dm on DM v5: Message settings', () => {
+  const pendingKey = `yappr_engine_dm_retention:${alice}`
+
+  it('keeps a retention choice whose save failed on the device, and saves it on the next start (SR-23)', async () => {
+    const ledger = ledgerNow()
+    const first = await ready(userOn(ledger, alice))
+    const chain = first.engine().ctx.chain as MemoryChain
+    chain.hook = method => (method === 'createSelfState' || method === 'replaceSelfState'
+      ? { ok: false, failure: 'transport', error: 'transport error: grpc error: Failed to fetch' }
+      : null)
+    await first.dm.setRetention('90d')
+    expect((await first.dm.status()).retention).toBe('90d')
+    await settle()
+    expect(first.local.getItem(pendingKey)).not.toBeNull()
+
+    // Killed before a retry: the next engine loads the saved state, which still says 30 days.
+    const next = await ready(userOn(ledger, alice, { storage: first.local }))
+    await vi.waitFor(async () => expect((await next.dm.status()).retention).toBe('90d'))
+    await vi.waitFor(() => expect(first.local.getItem(pendingKey)).toBeNull())
+    const reloaded = await ready(userOn(ledger, alice))
+    expect((await reloaded.dm.status()).retention).toBe('90d')
+  })
+
+  it('drops the device copy once the save lands, and never restores one a newer choice overtook', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    await user.dm.setRetention('1y')
+    await vi.waitFor(() => expect(user.local.getItem(pendingKey)).toBeNull())
+
+    user.local.setItem(pendingKey, JSON.stringify({ retention: 'never', updatedAt: 1 }))
+    const next = await ready(userOn(ledger, alice, { storage: user.local }))
+    await vi.waitFor(() => expect(user.local.getItem(pendingKey)).toBeNull())
+    expect((await next.dm.status()).retention).toBe('1y')
+  })
+})
+
 describe('dm on DM v5: groups', () => {
   it('create, rename, add, then a member leaves; owner-only actions are refused to members', async () => {
     const ledger = ledgerNow()

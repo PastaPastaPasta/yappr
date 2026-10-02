@@ -1,3 +1,4 @@
+import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type EngineSnapshot, type MessageView } from '@/lib/services/dm-v5'
 import { GroupError } from '@/lib/services/dm-v5/groups'
 import { logger } from '@/lib/logger'
@@ -29,7 +30,33 @@ type KeyValueArea = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
  * (PRD AUTH-11).
  */
 export function dmLocalKeys(identityId: string): string[] {
-  return [scopedKey(`yappr_dm_v5:${identityId}`)]
+  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId)]
+}
+
+/**
+ * A "Reclaim message fees" choice made here and not saved yet. lib keeps
+ * blocks and read positions in its cache until they are saved, but not
+ * this, so a save that fails before the app is killed would lose it (SR-23).
+ */
+const retentionKey = (identityId: string) => scopedKey(`yappr_engine_dm_retention:${identityId}`)
+
+interface PendingRetention {
+  retention: RetentionSetting
+  updatedAt: number
+}
+
+const RETENTIONS: readonly RetentionSetting[] = ['30d', '90d', '1y', 'never']
+
+function readPendingRetention(storage: KeyValueArea, identityId: string): PendingRetention | null {
+  try {
+    const value = JSON.parse(storage.getItem(retentionKey(identityId)) ?? 'null') as Partial<PendingRetention> | null
+    if (value && RETENTIONS.includes(value.retention as RetentionSetting) && Number.isSafeInteger(value.updatedAt)) {
+      return { retention: value.retention as RetentionSetting, updatedAt: value.updatedAt as number }
+    }
+  } catch {
+    // Unreadable: nothing to restore.
+  }
+  return null
 }
 
 function toMessageDTO(view: MessageView): MessageDTO {
@@ -107,10 +134,41 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     }
     if (!engine || current) return engine
     tracker.reset()
-    const unsubscribe = engine.subscribe(() => tracker.changed(() => (current?.engine === engine ? view(engine) : null)))
+    let loaded = false
+    const onChange = () => {
+      if (!loaded && engine.getSnapshot().ready) {
+        loaded = true
+        restoreRetention(identityId, engine)
+      }
+      tracker.changed(() => (current?.engine === engine ? view(engine) : null))
+    }
+    const unsubscribe = engine.subscribe(onChange)
     current = { identityId, engine, unsubscribe }
+    onChange()
     engine.start().catch(error => logger.warn('DM v5 engine failed to start:', error))
     return engine
+  }
+
+  /** Save the retention setting; once the saved state is current, the local copy has done its job. */
+  function saveRetention(identityId: string, running: DmEngine): void {
+    running.flush()
+      .then(saved => {
+        const pending = readPendingRetention(storage(), identityId)
+        if (saved && pending && pending.updatedAt <= running.ctx.store.state.settings.updatedAt) storage().removeItem(retentionKey(identityId))
+      })
+      .catch(error => logger.warn('DM v5: saving retention failed:', error))
+  }
+
+  /** Once the saved state has loaded: re-apply a retention choice this device made but never saved, unless a newer one won. */
+  function restoreRetention(identityId: string, running: DmEngine): void {
+    const pending = readPendingRetention(storage(), identityId)
+    if (!pending) return
+    if (pending.updatedAt <= running.ctx.store.state.settings.updatedAt) {
+      storage().removeItem(retentionKey(identityId))
+      return
+    }
+    running.ctx.store.setRetention(pending.retention, pending.updatedAt)
+    saveRetention(identityId, running)
   }
 
   function engine(identityId: string): DmEngine {
@@ -226,6 +284,15 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
 
     async hide(identityId: string, key: string): Promise<void> {
       holding(identityId, key).hide(key)
+    },
+
+    /** "Reclaim message fees": applied at once and saved now, kept on the device until the save lands. */
+    setRetention(identityId: string, retention: RetentionSetting): void {
+      const running = engine(identityId)
+      running.setRetention(retention)
+      const { updatedAt } = running.ctx.store.state.settings
+      storage().setItem(retentionKey(identityId), JSON.stringify({ retention, updatedAt } satisfies PendingRetention))
+      saveRetention(identityId, running)
     },
 
     /** Re-read my own messages in `key` from the chain, on the engine's queue ("check again"). */
