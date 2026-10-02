@@ -28,6 +28,7 @@ import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR, isConsensusRefusal, isIdentityN
 import { allocateIdentityContractNonce, identityContractNonceConsumed } from '@/lib/document-id';
 import { withIdentityWriteLock } from '@/lib/identity-write-lock';
 import { getEvoSdk } from './evo-sdk-service';
+import { documentToPlainObject } from './sdk-helpers';
 
 /**
  * A signed transition that may still execute. `nonce` is null when the SDK
@@ -37,6 +38,22 @@ export interface PendingTransition {
   id: string;
   nonce: bigint | null;
   expiresAt: number | null;
+  /** The document replace an SDK-signed transition makes, when its caller named it (see {@link settleSupersededReplaces}). */
+  replaces?: DocumentReplace;
+  /** With `replaces`: the raw contract nonce Platform reported before it was signed; it carries a later one. */
+  signedAfter?: bigint;
+}
+
+/** A document replace: `revision` is the one the transition writes. */
+export interface DocumentReplace {
+  documentType: string;
+  documentId: string;
+  revision: number;
+}
+
+function isDocumentReplace(value: unknown): value is DocumentReplace {
+  const r = value as Partial<DocumentReplace> | null;
+  return typeof r === 'object' && r !== null && typeof r.documentType === 'string' && typeof r.documentId === 'string' && Number.isInteger(r.revision);
 }
 
 export interface NonceReservation {
@@ -58,6 +75,9 @@ export interface NonceReservation {
  * nonce (building these transitions like creates) is what removes the bound.
  */
 const PENDING_LIFETIME_MS = 15 * 60 * 1000;
+
+/** The sequence part of an identity contract nonce (the upper 24 bits are its missing-revision set). */
+const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1);
 
 /** How long an SDK-signed write waits for pending transitions to settle before it gives up. */
 const PENDING_POLLS = 5;
@@ -90,12 +110,22 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
   try {
     const raw = localStorage.getItem(reservationKey(ownerId, contractId));
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { mark: string; pending: { id: string; nonce: string | null; expiresAt: number | null }[] };
+    const parsed = JSON.parse(raw) as {
+      mark: string;
+      pending: { id: string; nonce: string | null; expiresAt: number | null; replaces?: unknown; signedAfter?: unknown }[];
+    };
     return {
       mark: BigInt(parsed.mark),
       pending: parsed.pending
         .filter((p) => !released.has(p.id))
-        .map((p) => ({ id: p.id, nonce: p.nonce === null ? null : BigInt(p.nonce), expiresAt: p.expiresAt })),
+        .map((p) => ({
+          id: p.id,
+          nonce: p.nonce === null ? null : BigInt(p.nonce),
+          expiresAt: p.expiresAt,
+          ...(isDocumentReplace(p.replaces) && typeof p.signedAfter === 'string' && /^\d+$/.test(p.signedAfter)
+            ? { replaces: p.replaces, signedAfter: BigInt(p.signedAfter) }
+            : {}),
+        })),
     };
   } catch (error) {
     logger.warn('Could not read nonce reservations:', error);
@@ -106,7 +136,12 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
 /** Throws {@link NONCE_STORE_ERROR} when localStorage refuses the write (blocked or full). */
 function saveReservation(ownerId: string, contractId: string, reservation: NonceReservation): void {
   try {
-    const pending = reservation.pending.map((p) => ({ id: p.id, nonce: p.nonce === null ? null : p.nonce.toString(), expiresAt: p.expiresAt }));
+    const pending = reservation.pending.map((p) => ({
+      id: p.id,
+      nonce: p.nonce === null ? null : p.nonce.toString(),
+      expiresAt: p.expiresAt,
+      ...(p.replaces && p.signedAfter !== undefined ? { replaces: p.replaces, signedAfter: p.signedAfter.toString() } : {}),
+    }));
     localStorage.setItem(reservationKey(ownerId, contractId), JSON.stringify({ mark: reservation.mark.toString(), pending }));
   } catch (error) {
     logger.warn('Could not store nonce reservations:', error);
@@ -147,10 +182,21 @@ export function allocateNonce(current: bigint | undefined | null, reservation: N
  * {@link NONCE_STORE_ERROR} when localStorage cannot hold it, and the
  * transition must then not be sent.
  */
-export function reserveNonce(ownerId: string, contractId: string, nonce: bigint | null, current: bigint | undefined | null): PendingTransition {
+export function reserveNonce(
+  ownerId: string,
+  contractId: string,
+  nonce: bigint | null,
+  current: bigint | undefined | null,
+  replaces?: DocumentReplace
+): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   // Unique across tabs: releasing one must never release another.
-  const entry = { id: crypto.randomUUID(), nonce, expiresAt: nonce === null ? Date.now() + PENDING_LIFETIME_MS : null };
+  const entry: PendingTransition = {
+    id: crypto.randomUUID(),
+    nonce,
+    expiresAt: nonce === null ? Date.now() + PENDING_LIFETIME_MS : null,
+    ...(replaces ? { replaces, signedAfter: current ?? BigInt(0) } : {}),
+  };
   const mark = previous?.mark ?? BigInt(0);
   saveReservation(ownerId, contractId, {
     mark: nonce !== null && nonce > mark ? nonce : mark,
@@ -201,8 +247,12 @@ function isVerdict(error: unknown): boolean {
  *
  * While a pending transition may still execute this waits briefly, then fails
  * without sending anything.
+ *
+ * `replaces` names the document replace the write makes, stored with its
+ * pending entry, so that {@link settleSupersededReplaces} can later prove it
+ * can no longer execute. It changes nothing else.
  */
-export async function withSdkSignedWrite<T>(ownerId: string, contractId: string, write: () => Promise<T>): Promise<T> {
+export async function withSdkSignedWrite<T>(ownerId: string, contractId: string, write: () => Promise<T>, replaces?: DocumentReplace): Promise<T> {
   return withIdentityWriteLock(ownerId, contractId, async () => {
     const sdk = await getEvoSdk();
     const reservation = loadReservation(ownerId, contractId);
@@ -217,7 +267,7 @@ export async function withSdkSignedWrite<T>(ownerId: string, contractId: string,
       current = await sdk.identities.contractNonce(ownerId, contractId);
     }
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-    const entry = reserveNonce(ownerId, contractId, null, current);
+    const entry = reserveNonce(ownerId, contractId, null, current, replaces);
     try {
       const result = await write();
       releaseNonce(ownerId, contractId, entry);
@@ -226,5 +276,59 @@ export async function withSdkSignedWrite<T>(ownerId: string, contractId: string,
       if (isVerdict(error)) releaseNonce(ownerId, contractId, entry);
       throw error;
     }
+  });
+}
+
+/**
+ * Release every SDK-signed transition pending for the identity on the
+ * contract that is a document replace Platform shows settled, by two proofs:
+ *  - the document is at the revision it writes, or later: a replace changes a
+ *    document only from the revision before its own, and revisions never go
+ *    back, so it can no longer change it;
+ *  - the nonce after the one Platform reported before it was signed is
+ *    consumed: a replace refused for a stale revision still executes as a paid
+ *    error and takes a nonce, so the revision alone does not show that the
+ *    next write cannot meet it. The SDK signed past that reported nonce.
+ * No nonce is guessed. A document read as absent, a lower revision, an
+ * unconsumed nonce or a failed read proves nothing, and the entry stays
+ * pending (an absence may be a node that is behind the document's creation).
+ *
+ * Runs under the write lock, so no write is in flight while it reads, and
+ * resolves to the number of entries it released. Nothing in lib calls it: a
+ * caller that saw such a write land (the mobile engine, before its next DM
+ * write) uses it instead of waiting out {@link PENDING_LIFETIME_MS}.
+ */
+export async function settleSupersededReplaces(ownerId: string, contractId: string): Promise<number> {
+  return withIdentityWriteLock(ownerId, contractId, async () => {
+    const now = Date.now();
+    const candidates = (loadReservation(ownerId, contractId)?.pending ?? [])
+      .filter((p) => p.nonce === null && p.replaces && p.signedAfter !== undefined && (p.expiresAt === null || p.expiresAt > now));
+    if (candidates.length === 0) return 0;
+    const sdk = await getEvoSdk();
+    let tip: bigint | undefined;
+    try {
+      tip = await sdk.identities.contractNonce(ownerId, contractId);
+    } catch (error) {
+      logger.debug('Could not read the contract nonce to settle pending replaces:', error);
+      return 0;
+    }
+    let settled = 0;
+    for (const entry of candidates) {
+      const { documentType, documentId, revision } = entry.replaces as DocumentReplace;
+      const after = (entry.signedAfter ?? BigInt(0)) & NONCE_SEQUENCE_MASK;
+      if (!identityContractNonceConsumed(tip, after + BigInt(1))) continue;
+      let current: number | null = null;
+      try {
+        const document = await sdk.documents.get(contractId, documentType, documentId);
+        current = document ? Number(documentToPlainObject(document).$revision ?? NaN) : null;
+      } catch (error) {
+        logger.debug(`Could not read ${documentType} ${documentId} to settle a pending replace:`, error);
+      }
+      if (current !== null && Number.isFinite(current) && current >= revision) {
+        releaseNonce(ownerId, contractId, entry);
+        settled++;
+      }
+    }
+    return settled;
   });
 }

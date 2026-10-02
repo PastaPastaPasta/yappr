@@ -42,7 +42,9 @@ const m = vi.hoisted(() => ({
   },
   replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
-  blockService: { blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn() },
+  blockService: {
+    blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
+  },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
@@ -184,8 +186,9 @@ describe('engage writes', () => {
     // waiting-parent is left before lib's write, so a transport failure there is never "proved not sent".
     expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'signing', null])
 
+    // lib's boolean `false` carries no verdict (it swallows the error): it may have landed.
     m.likeService.likePost.mockResolvedValue(false)
-    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'failed', error: { code: 'UNKNOWN' } })
+    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'UNKNOWN', outcome: 'unknown' } })
   })
 
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
@@ -302,8 +305,8 @@ describe('graph and safety writes', () => {
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.followService.getFollowing).toHaveBeenCalledWith(VIEWER, { throwOnError: true })
 
-    m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance' })
-    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed' })
+    m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance (code=30000)' })
+    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed', error: { outcome: 'refused' } })
     await expect(graph.follow(VIEWER)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
@@ -315,10 +318,11 @@ describe('graph and safety writes', () => {
     expect(await outcome(safety.block(AUTHOR, { message: '  spam  ' }))).toMatchObject({ state: 'confirmed' })
     expect(m.blockService.blockUser).toHaveBeenCalledWith(VIEWER, AUTHOR, 'spam')
 
-    m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }])
+    m.blockService.query.mockResolvedValue({ documents: [{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }] })
     const blocked = await safety.blocked()
     expect(validate(page(blockedUserDTO), blocked)).toEqual([])
     expect(blocked.items.map(item => [item.id, item.message])).toEqual([[AUTHOR, 'spam'], [id('Other'), null]])
+    expect(m.blockService.query).toHaveBeenCalledWith({ where: [['$ownerId', '==', VIEWER]], limit: 100 })
 
     // check reads the block document itself, never lib's optimistic block cache.
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block'), confirmed: false })
@@ -331,6 +335,50 @@ describe('graph and safety writes', () => {
     m.blockService.unblockUser.mockResolvedValue({ success: true })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
     expect(await outcome(safety.unblock(AUTHOR))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED', outcome: 'local' } })
+  })
+
+  it('re-reads the blocked list after a block or unblock lands, on every page, and rejects an unreadable list', async () => {
+    const { outcome, safety } = engine()
+    const many = (count: number) => Array.from({ length: count }, (_, n) => ({ blockedId: id(`B${n + 1}`) }))
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const first = await safety.blocked()
+    // A continuation reads from the list held for paging...
+    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    expect((await safety.blocked(first.cursor)).items).toHaveLength(10)
+    // ...until a block lands: then even a continuation re-reads.
+    m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
+    expect(await outcome(safety.block(AUTHOR))).toMatchObject({ state: 'confirmed' })
+    expect((await safety.blocked(first.cursor)).items).toHaveLength(1)
+
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const again = await safety.blocked()
+    m.blockService.unblockUser.mockResolvedValue({ success: true, confirmed: false })
+    m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    expect(await outcome(safety.unblock(id('B1')))).toMatchObject({ state: 'unconfirmed' })
+    m.blockService.query.mockResolvedValue({ documents: many(30) })
+    expect((await safety.blocked(again.cursor)).items).toEqual([])
+
+    // An unblock a followed list overrides still deleted the own block: the held list drops too.
+    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    const held = await safety.blocked()
+    m.blockService.unblockUser.mockResolvedValue({ success: true })
+    m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
+    expect(await outcome(safety.unblock(id('B2')))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
+    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    expect((await safety.blocked(held.cursor)).items).toHaveLength(1)
+
+    m.blockService.query.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  it('tells an own block from one only a followed block list makes', async () => {
+    const { safety } = engine()
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[AUTHOR, true], [id('Listed'), true]]))
+    m.blockService.getBlockSourcesBatch.mockResolvedValue(new Map([[AUTHOR, 'own'], [id('Listed'), 'inherited']]))
+    const ids = [AUTHOR, id('Listed'), id('Free')]
+    expect(await safety.isBlocked(ids)).toEqual({ [AUTHOR]: true, [id('Listed')]: true, [id('Free')]: false })
+    expect(await safety.blockedBy(ids)).toEqual({ [AUTHOR]: 'self', [id('Listed')]: 'list', [id('Free')]: null })
+    expect(m.blockService.getBlockSourcesBatch).toHaveBeenCalledWith(VIEWER, ids)
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {

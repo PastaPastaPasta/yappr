@@ -1,6 +1,8 @@
 import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
+import { useOnboarding } from '~/features/auth/onboarding';
+
 // Resolved against Jest's cwd, mobile/app.
 const APP_DIR = './src/app';
 const TABS = ['Home', 'Explore', 'Notifications', 'Messages', 'Profile'];
@@ -18,6 +20,19 @@ async function renderApp(initialUrl: string) {
 const tab = (name: string) => screen.getByLabelText(new RegExp(`^${name}, tab`));
 
 describe('app shell', () => {
+  // Past Welcome, as every launch after the first (the fresh install is tested below).
+  beforeEach(() => useOnboarding.setState({ welcomed: true }));
+
+  it('opens Welcome on a fresh install (AUTH-01)', async () => {
+    useOnboarding.setState({ welcomed: false });
+    const app = await renderApp('/');
+
+    expect(app.getPathname()).toBe('/welcome');
+    fireEvent.press(screen.getByTestId('welcome-browse'));
+    expect(app.getPathname()).toBe('/');
+    expect(useOnboarding.getState().welcomed).toBe(true);
+  });
+
   it('opens on Home with the five labelled tabs (ADR-001 E4)', async () => {
     const app = await renderApp('/');
 
@@ -116,27 +131,27 @@ describe('app shell', () => {
     ['/user/abc123/following', 'profiles'],
     ['/hashtag/dash', 'explore and search'],
     ['/bookmarks', 'settings and bookmarks'],
-    ['/settings', 'settings and bookmarks'],
-    ['/settings/account', 'settings and bookmarks'],
-    ['/settings/accounts', 'sign-in'],
-    ['/settings/app-lock', 'sign-in'],
-    ['/settings/notifications', 'notifications'],
-    ['/settings/privacy', 'settings and bookmarks'],
+    ['/settings', null],
+    ['/settings/account', null],
+    ['/settings/accounts', null],
+    ['/settings/app-lock', null],
+    ['/settings/notifications', null],
+    ['/settings/privacy', null],
     ['/settings/blocked', null],
-    ['/settings/appearance', 'settings and bookmarks'],
-    ['/settings/about', 'settings and bookmarks'],
+    ['/settings/appearance', null],
+    ['/settings/about', null],
     ['/settings/diagnostics', null],
     ['/compose', 'compose'],
     ['/media?postId=abc123&index=0', 'post detail'],
-    ['/terms-gate', 'safety'],
+    ['/terms-gate', null],
     ['/lockdown', null],
     ['/webview-update', null],
-    ['/sign-in', 'sign-in'],
-    ['/sign-in/wallet', 'sign-in'],
-    ['/sign-in/qr', 'sign-in'],
-    ['/sign-in/register', 'sign-in'],
-    ['/sign-in/key', 'sign-in'],
-    ['/welcome', 'sign-in'],
+    ['/sign-in', null],
+    ['/sign-in/wallet', null],
+    ['/sign-in/qr', null],
+    ['/sign-in/register', null],
+    ['/sign-in/key', null],
+    ['/welcome', null],
     ['/__gallery', null],
     ['/block/abc123', null],
     ['/report/abc123?kind=post', null],

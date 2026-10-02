@@ -214,12 +214,36 @@ export function createSessionModule(options: SessionModuleOptions) {
     return session
   }
 
+  /** Park the active account (if any) and put `identityId`'s session in place; the host restarts the engine next. */
+  async function switchNow(identityId: string): Promise<void> {
+    await stopDm()
+    assertUsable()
+    registry.switchTo(identityId)
+    requireRestart()
+  }
+
+  /** An account parked on this device (by "Add account") while the session slot is empty. */
+  function isParked(identityId: string): boolean {
+    return registry.activeIdentityId() === null && registry.get(identityId)?.savedSession !== undefined
+  }
+
   const keyExchange = createKeyExchange<SessionDTO>({
     controller,
     storage,
     async complete(identityId, loginKey, keyIndex) {
       assertUsable()
-      return exclusiveSignIn(identityId, () => controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex }), 'key-exchange')
+      return exclusive(async () => {
+        // The wallet answered for an account parked here: switch to it with its saved keys. Logging
+        // in again would put them at risk: a failed login-key login clears the identity's keys by
+        // name, and the host then purges the parked account's secrets it never hydrated.
+        if (isParked(identityId)) {
+          await switchNow(identityId)
+          return { status: 'switch', identityId }
+        }
+        assertSlotFree(identityId)
+        await controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex })
+        return { status: 'signed-in', session: await signedIn(identityId, 'key-exchange') }
+      })
     },
   })
 
@@ -361,10 +385,7 @@ export function createSessionModule(options: SessionModuleOptions) {
         await restored()
         if (!registry.get(identityId)) throw new RpcError('That account is not signed in on this device', 'BAD_REQUEST')
         if (registry.activeIdentityId() === identityId) return
-        await stopDm()
-        assertUsable()
-        registry.switchTo(identityId)
-        requireRestart()
+        await switchNow(identityId)
       })
     },
 

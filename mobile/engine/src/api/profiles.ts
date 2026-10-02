@@ -4,7 +4,7 @@ import { likesAreIndexOnly, repostsAreQuotes } from '@/lib/contract-topology'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
 import { generateAvatarSvg } from '@/lib/services/avatar-generator'
-import { blockService } from '@/lib/services/block-service'
+import { blockService, type BlockProvenance } from '@/lib/services/block-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
 import { identityService } from '@/lib/services/identity-service'
@@ -28,7 +28,7 @@ import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import {
   toProfileDTO,
-  type Page, type PostDTO, type ProfileDTO, type ProfileReplyDTO, type RankingWindow, type UserSummaryDTO,
+  type BlockSourceDTO, type Page, type PostDTO, type ProfileDTO, type ProfileReplyDTO, type RankingWindow, type UserSummaryDTO,
 } from './dto'
 
 export type ProfileTab = 'posts' | 'replies' | 'top' | 'mentions'
@@ -128,6 +128,15 @@ function mentionsTab(id: string, cursor: string | null | undefined): Promise<Pag
   })
 }
 
+const NOT_BLOCKED: BlockProvenance = { isBlocked: false, isOwnBlock: false, inheritedFrom: null }
+
+/** `ProfileDTO.viewer`'s block fields from lib's provenance (`null`: unreadable). */
+function viewerBlock(provenance: BlockProvenance | null): { blocks: boolean | null; blockedBy: BlockSourceDTO | null } {
+  if (!provenance) return { blocks: null, blockedBy: null }
+  const blockedBy = provenance.isOwnBlock ? 'self' : provenance.isBlocked ? 'list' : null
+  return { blocks: provenance.isBlocked, blockedBy }
+}
+
 export const profiles = {
   /**
    * A profile by identity id or DPNS name (`alice`, `alice.dash`, `@alice`),
@@ -145,13 +154,13 @@ export const profiles = {
     if (!id) return null
     const viewer = viewerId()
     const other = viewer && viewer !== id ? viewer : null
-    const [stats, profile, usernames, follows, blocks] = await Promise.all([
+    const [stats, profile, usernames, follows, provenance] = await Promise.all([
       loadUserStats(id),
       unifiedProfileService.getProfile(id),
       dpnsService.getAllUsernamesSorted(id),
       other ? followService.isFollowing(id, other) : false,
       // The block status decorates the header; an unreadable block list is `null`, not a failed profile.
-      other ? blockService.isBlocked(id, other).catch(() => null) : false,
+      other ? blockService.getBlockProvenance(id, other).catch(() => null) : NOT_BLOCKED,
     ])
     if (!profile) {
       // getProfile reports a failed read as null too: ask strictly (profileExists rejects on failure).
@@ -164,7 +173,7 @@ export const profiles = {
       avatar: await avatarOf(id),
       usernames,
       stats,
-      ...(viewer ? { viewer: { follows, blocks, isSelf: viewer === id } } : {}),
+      ...(viewer ? { viewer: { follows, ...viewerBlock(provenance), isSelf: viewer === id } } : {}),
     })
   },
 

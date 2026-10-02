@@ -96,7 +96,7 @@ function profileOf(blocks: boolean): ProfileDTO {
     avatar: BOB.avatar,
     hasProfile: true,
     stats: { posts: 3, followers: 1, following: 2 },
-    viewer: { follows: false, blocks, isSelf: false },
+    viewer: { follows: false, blocks, blockedBy: blocks ? 'self' : null, isSelf: false },
   };
 }
 

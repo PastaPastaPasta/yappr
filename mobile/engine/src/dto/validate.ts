@@ -136,7 +136,7 @@ export const profileDTO = object(
     bio: str, location: str, website: str, pronouns: str, bannerUrl: str, nsfw: bool, joinedAt: date,
     socialLinks: array(object({ platform: str, handle: str })),
     paymentUris: array(object({ scheme: str, uri: str }, { label: str })),
-    viewer: object({ follows: bool, blocks: nullable(bool), isSelf: bool }),
+    viewer: object({ follows: bool, blocks: nullable(bool), blockedBy: nullable(literal('self', 'list')), isSelf: bool }),
   },
 )
 

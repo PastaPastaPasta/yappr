@@ -176,8 +176,10 @@ useEngineEvent('notifications.count', ({ unread }) => setBadge(unread));
   unsubscribe.
 - These are already handled app-wide: `session.changed` (the session store
   and cache resets), `write.status` (the write tracker) and
-  `content.created` (it seeds the new post and invalidates the feeds, the
-  author's profile, and the thread or quoted post).
+  `content.created` (it seeds the new post, puts a post on top of the
+  loaded Recent home feeds, marks every feed stale without refetching it,
+  since an infinite query's refetch re-reads every page it holds, and
+  refetches the author's profile and the thread or quoted post).
 
 ## Gotcha: React Compiler and closures
 
