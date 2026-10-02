@@ -48,12 +48,18 @@ export interface PagedPostListProps {
 export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, testID }: PagedPostListProps) {
   const c = useColors();
   const [refreshing, setRefreshing] = useState(false);
+  // Automatic paging pauses after MAX_AUTO_PAGES until the reader asks for more.
+  const autoPages = useRef(0);
+  const [paused, setPaused] = useState(false);
   const onRefresh = () => {
     if (offline) {
       toast(OFFLINE_REFRESH_MESSAGE);
       return;
     }
     setRefreshing(true);
+    // Back to one page, so automatic paging starts over too.
+    autoPages.current = 0;
+    setPaused(false);
     // A refetch re-reads every page it holds: start again from the first.
     queryClient.setQueryData<InfiniteData<Page<PostDTO>, string | null>>(queryKey, (data) =>
       data && data.pages.length > 1 ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) } : data,
@@ -69,8 +75,6 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
       .finally(() => setRefreshing(false));
   };
 
-  const autoPages = useRef(0);
-  const [paused, setPaused] = useState(false);
   const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = query;
   const loadMore = () => {
     autoPages.current = 0;
