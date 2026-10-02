@@ -183,6 +183,20 @@ const requireAuth = useRequireAuth();
   sheet instead of running the action; it leads to `reauthenticate` (the
   auth feature, registered by `AuthGates`). A fresh sign-in of the account
   (`session.changed` `signed-in`) or signing it out clears the mark.
+  - In the account list, tapping a marked account that is not the current
+    one switches to it for reading; its "Sign in again" button opens its
+    sign-in. One whose key is gone cannot be opened: its sign-in opens
+    instead, and abandoning it returns to the account that was current.
+  - The marks, not the flow, decide that a sign-in for a marked account
+    logs in afresh: the key screen never offers to switch to it, and every
+    wallet request names the marked accounts (`startKeyExchange({ reauth })`).
+  - The engine that signs a marked account in was booted without its other
+    stored keys, so the sign-in flow then restarts into it
+    (`loadSignedInAgain`), reading the mark before the sign-in clears it.
+  - The encryption key: a wallet sign-in stores the wallet-derived one, as
+    web does, replacing an imported key; a key sign-in keeps the stored one.
+  - A wallet whose key is disabled on the identity fails the sign-in
+    (`KEY_DISABLED`), and the account stays marked.
 
 Other session hooks:
 - `useSession()`: `status` (`unknown` / `signed-out` / `signed-in`),

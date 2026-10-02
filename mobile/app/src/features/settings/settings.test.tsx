@@ -483,20 +483,80 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(useAccounts.getState().transition).toBeNull();
   });
 
-  it('marks an account whose key stopped working "Sign in again", and opens its sign-in on tap (AUTH-14)', async () => {
-    useExpiredSessions.setState({ ids: [ALICE] });
+  describe('accounts marked "Sign in again" (AUTH-14)', () => {
     const accounts = [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)];
-    fakeEngine.method('session.prepareAddAccount').mockReturnValue(new Promise(() => undefined));
-    renderScreen(<AccountList accounts={accounts} manage />);
-    await settle();
+    const pending = () => new Promise<never>(() => undefined);
 
-    expect(byId(`account-${ALICE}-sign-in-again`)).toHaveTextContent('Sign in again');
-    expect(byId(`account-${ALICE}`)).toHaveAccessibleName(/, Sign in again$/);
-    expect(screen.queryByTestId(`account-${BOB}-sign-in-again`)).toBeNull();
-    await act(async () => fireEvent.press(byId(`account-${ALICE}`)));
-    expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
-    expect(useAccounts.getState().transition?.label).toBe('Getting ready to sign in again…');
-    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    it('marks an account whose key stopped working, and opens its sign-in from its "Sign in again"', async () => {
+      useExpiredSessions.setState({ ids: [ALICE] });
+      fakeEngine.method('session.prepareAddAccount').mockReturnValue(pending());
+      renderScreen(<AccountList accounts={accounts} manage />);
+      await settle();
+
+      expect(byId(`account-${ALICE}-sign-in-again`)).toHaveTextContent('Sign in again');
+      expect(byId(`account-${ALICE}-sign-in-again`)).toHaveAccessibleName('Sign in again: @alice');
+      expect(byId(`account-${ALICE}`)).toHaveAccessibleName(/, Sign in again$/);
+      expect(screen.queryByTestId(`account-${BOB}-sign-in-again`)).toBeNull();
+      await act(async () => fireEvent.press(byId(`account-${ALICE}-sign-in-again`)));
+      expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
+      expect(useAccounts.getState().transition?.label).toBe('Getting ready to sign in again…');
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    });
+
+    it('opens the sign-in of the current account on tap: there is nothing to switch to', async () => {
+      useExpiredSessions.setState({ ids: [ALICE] });
+      fakeEngine.method('session.prepareAddAccount').mockReturnValue(pending());
+      renderScreen(<AccountList accounts={accounts} manage />);
+      await settle();
+
+      await act(async () => fireEvent.press(byId(`account-${ALICE}`)));
+      expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
+    });
+
+    it('switches to a marked account on tap, for reading: reads keep working', async () => {
+      useExpiredSessions.setState({ ids: [BOB] });
+      fakeEngine.method('session.switchAccount').mockReturnValue(pending());
+      renderScreen(<AccountList accounts={accounts} manage />);
+      await settle();
+
+      await act(async () => fireEvent.press(byId(`account-${BOB}`)));
+      expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(BOB);
+      expect(useAccounts.getState().transition?.label).toBe('Switching to @bob…');
+      expect(fakeEngine.method('session.prepareAddAccount')).not.toHaveBeenCalled();
+    });
+
+    it('opens the sign-in of a marked account whose key is gone, coming back here if abandoned', async () => {
+      useExpiredSessions.setState({ ids: [BOB] });
+      fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+      // The engine switched, but the restored boot has no key for the account: nobody is signed in.
+      fakeEngine.method('session.current').mockResolvedValue(null);
+      jest.mocked(engineSupervisor.restart).mockImplementation(() => {
+        fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+        useSessionStore.setState({ status: 'signed-out', session: null });
+      });
+      renderScreen(<AccountList accounts={accounts} manage />);
+      await settle();
+
+      await act(async () => fireEvent.press(byId(`account-${BOB}`)));
+      await settle();
+      expect(router.push).toHaveBeenCalledWith('/sign-in');
+      expect(useAccounts.getState()).toMatchObject({ reauth: BOB, returnTo: ALICE, transition: null });
+      // What happens next is the sign-in, not "Couldn't switch accounts".
+      expect(toastMessage()).toBeUndefined();
+    });
+
+    it('opens the sign-in of a marked account the engine would not switch to', async () => {
+      useExpiredSessions.setState({ ids: [BOB] });
+      fakeEngine.method('session.switchAccount').mockRejectedValue(Object.assign(new Error('nope'), { code: 'BAD_REQUEST' }));
+      fakeEngine.method('session.prepareAddAccount').mockReturnValue(pending());
+      renderScreen(<AccountList accounts={accounts} manage />);
+      await settle();
+
+      await act(async () => fireEvent.press(byId(`account-${BOB}`)));
+      await settle();
+      expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
+      expect(useAccounts.getState().transition?.label).toBe('Getting ready to sign in again…');
+    });
   });
 
   it('links to the accounts on this device, and to app lock', async () => {

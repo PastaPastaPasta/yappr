@@ -51,6 +51,7 @@ export function walletErrorText(error: unknown, network: string): string {
   const code = errorCode(error);
   const text = message(error);
   if (code === 'BAD_REQUEST' && /signed in/i.test(text)) return copy.signin.alreadySignedIn;
+  if (code === 'KEY_DISABLED') return copy.signin.walletKeyDisabled;
   if (/different network|wrong network|network mismatch/i.test(text)) return copy.signin.wrongNetwork(network);
   if (code === 'IDENTITY_NOT_FOUND' || /identity.*not found|no identity/i.test(text)) return copy.signin.noIdentity(network);
   if (isTransient(error)) return copy.signin.unavailable;

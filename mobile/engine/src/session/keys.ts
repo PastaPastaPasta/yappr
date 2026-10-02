@@ -1,3 +1,4 @@
+import { clearSensitiveBytes, decodeYapprIdentityId, deriveYapprAuthKeyFromLogin } from 'platform-auth'
 import { keyNetwork } from '@/lib/constants'
 import { matchIdentityKey, publicKeyHashFromWif, type IdentityKeyLike, type KeyMatchResult } from '@/lib/crypto/keys'
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys'
@@ -76,4 +77,35 @@ export async function verifySignInKey(input: string): Promise<VerifiedKey> {
   // Found by its hash, yet no enabled key matches: the key was disabled.
   const disabled = matchIdentityKey(wif, keys.map(key => ({ ...key, disabledAt: undefined })), { network, purpose: KeyPurpose.AUTHENTICATION })
   throw new RpcError(disabled.ok ? 'This key has been disabled on this identity' : 'Private key does not match this identity', 'KEY_NOT_ON_IDENTITY')
+}
+
+/** UX_SPEC §5.1 `signin.walletKeyDisabled`; the host shows its own copy for the code. */
+const WALLET_KEY_DISABLED = 'The key this wallet uses for Yappr has been disabled on this identity'
+
+/**
+ * Before a wallet login (PRD AUTH-14): the auth key it would store, the one
+ * `loginWithLoginKey` derives from the wallet's login key, must not be
+ * disabled on the identity. Neither `checkKeysRegistered` nor
+ * `loginWithLoginKey` looks at `disabledAt`, so such a login would succeed
+ * and every write would then fail `KEY_REVOKED`; and as the key is on the
+ * identity, no key registration is offered either. Reads the identity
+ * afresh. Throws KEY_DISABLED; a key that is not on the identity at all is
+ * left to the login.
+ */
+export async function assertWalletKeyEnabled(identityId: string, loginKey: Uint8Array): Promise<void> {
+  const network = keyNetwork()
+  const authKey = deriveYapprAuthKeyFromLogin(loginKey, decodeYapprIdentityId(identityId))
+  let wif: string
+  try {
+    wif = privateKeyToWif(authKey, network, true)
+  } finally {
+    clearSensitiveBytes(authKey)
+  }
+  identityService.clearCache(identityId)
+  const identity = await identityService.getIdentity(identityId)
+  if (!identity) throw new RpcError('Identity not found', 'IDENTITY_NOT_FOUND')
+  const keys = identity.publicKeys as IdentityKeyLike[]
+  if (matchIdentityKey(wif, keys, { network, purpose: KeyPurpose.AUTHENTICATION }).ok) return
+  const disabled = matchIdentityKey(wif, keys.map(key => ({ ...key, disabledAt: undefined })), { network, purpose: KeyPurpose.AUTHENTICATION })
+  if (disabled.ok) throw new RpcError(WALLET_KEY_DISABLED, 'KEY_DISABLED')
 }

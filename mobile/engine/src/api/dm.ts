@@ -70,6 +70,12 @@ export interface DmModuleOptions {
   viewer?: () => string | null
   /** Names and avatars for peers. Default: `loadUserSummaries`. */
   authors?: (ids: string[]) => Promise<Map<string, AuthorDTO>>
+  /**
+   * The session module's identities whose stored secrets this engine never
+   * hydrated (`SessionModuleOptions.unhydrated`): unlocking one never derives
+   * a key over an encryption key it cannot see; the key must be entered.
+   */
+  unhydrated?: ReadonlySet<string>
   coalesceMs?: number
 }
 
@@ -545,6 +551,7 @@ export function createDmModule(options: DmModuleOptions) {
       if (!identity) throw new RpcError('The identity was not found', 'IDENTITY_NOT_FOUND')
       if (!hasEncryptionKeyOnIdentity(identity.publicKeys)) return { unlocked: false, reason: 'no-key-on-identity' }
       if (input?.key === undefined) {
+        if (options.unhydrated?.has(identityId)) return { unlocked: false, reason: 'not-derivable' }
         const authKey = getPrivateKey(identityId)
         if (!authKey) return { unlocked: false, reason: 'not-derivable' }
         const derived = deriveEncryptionKey(parsePrivateKey(authKey).privateKey, identityId)

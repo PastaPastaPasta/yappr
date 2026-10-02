@@ -54,6 +54,9 @@ export const copy = {
     noIdentity: (network: string) => `No identity was found for this wallet on ${network}.`,
     unavailable: 'Dash Platform is temporarily unavailable. Please try again in a few moments.',
     alreadySignedIn: 'Another account is signed in. Add this account from Settings → Accounts.',
+    /** AUTH-14: the auth key the wallet's login key derives is disabled on the identity (engine `KEY_DISABLED`). */
+    walletKeyDisabled:
+      'The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead.',
   },
   keyreg: {
     title: 'First time login',
@@ -108,6 +111,8 @@ export const copy = {
     signInAgain: 'Sign in again',
     reauthing: 'Getting ready to sign in again…',
     reauthFailed: "Couldn't start signing in again. Please try again.",
+    /** AUTH-14: the engine restarts into the account just signed in again, to load its other keys. */
+    loadingAgain: (name: string) => `Signing in as ${name}…`,
   },
   signout: {
     title: (name: string) => `Sign out of ${name}?`,

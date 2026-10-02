@@ -1,9 +1,11 @@
 import type { KeyExchangeRequestDTO, SessionDTO } from '@engine/api';
+import { waitFor } from '@testing-library/react-native';
 import { Linking } from 'react-native';
 
+import { useExpiredSessions } from '~/data/session-expiry';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
-import { finishWalletSwitch, reauthTarget } from './accounts';
+import { finishWalletSwitch, loadSignedInAgain } from './accounts';
 import {
   cancelKeyExchange,
   checkAgain,
@@ -20,7 +22,7 @@ import {
 } from './key-exchange';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
-jest.mock('./accounts', () => ({ finishWalletSwitch: jest.fn(), reauthTarget: jest.fn(() => null) }));
+jest.mock('./accounts', () => ({ finishWalletSwitch: jest.fn(), loadSignedInAgain: jest.fn() }));
 
 const NOW = Date.now();
 const request = (id = 'r1', expiresIn = 10 * 60_000): KeyExchangeRequestDTO => ({
@@ -52,6 +54,8 @@ let openURL: jest.SpyInstance;
 
 beforeEach(() => {
   fakeEngine.reset();
+  useExpiredSessions.setState({ ids: [] });
+  jest.mocked(loadSignedInAgain).mockReset();
   cancelKeyExchange();
   openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
   fakeEngine.method('session.cancelKeyExchange').mockResolvedValue(undefined);
@@ -66,21 +70,73 @@ describe('wallet sign-in', () => {
 
     await startKeyExchange('wallet');
 
-    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledWith({ reauth: null });
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledWith({ reauth: [] });
     expect(openURL).toHaveBeenCalledWith('dash-key:r1?n=d&v=1');
     expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledWith('r1', { waitMs: POLL_MS });
     expect(phase()).toEqual({ name: 'signed-in', session });
+    expect(loadSignedInAgain).not.toHaveBeenCalled();
   });
 
-  it('asks the engine to log in afresh the account being signed in again (AUTH-14)', async () => {
-    jest.mocked(reauthTarget).mockReturnValueOnce('id1');
+  it('asks the engine to log in afresh every account marked "Sign in again", then restarts into it (AUTH-14)', async () => {
+    useExpiredSessions.setState({ ids: ['other', 'id1'] });
+    const restored = { ...session, username: 'alice (restored)' };
+    const loading = deferred<SessionDTO>();
+    jest.mocked(loadSignedInAgain).mockReturnValue(loading.promise);
     fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
-    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({ status: 'signed-in', session });
+    fakeEngine.method('session.awaitKeyExchange').mockImplementation(async () => {
+      // The sign-in's session.changed clears the mark before the answer arrives.
+      useExpiredSessions.setState({ ids: ['other'] });
+      return { status: 'signed-in', session };
+    });
+
+    const done = startKeyExchange('qr');
+    await waitFor(() => expect(loadSignedInAgain).toHaveBeenCalledWith(session));
+
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledWith({ reauth: ['other', 'id1'] });
+    // Busy while the engine restarts, with no request left to poll.
+    expect(useKeyExchange.getState()).toMatchObject({ phase: { name: 'starting' }, request: null });
+    loading.resolve(restored);
+    await done;
+    expect(phase()).toEqual({ name: 'signed-in', session: restored });
+  });
+
+  it('restarts into an account signed in again after its key registration too (AUTH-14)', async () => {
+    useExpiredSessions.setState({ ids: ['id1'] });
+    jest.mocked(loadSignedInAgain).mockImplementation(async (s) => s);
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({
+      status: 'needs-registration',
+      requestId: 'r1',
+      uri: 'dash-st:abc',
+      expiresAt: request().expiresAt,
+      keys: [],
+    });
+    fakeEngine.method('session.awaitKeyRegistration').mockImplementation(async () => {
+      useExpiredSessions.setState({ ids: [] });
+      return { status: 'signed-in', session };
+    });
+
+    await startKeyExchange('wallet');
+    await continueRegistration();
+
+    expect(loadSignedInAgain).toHaveBeenCalledWith(session);
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
+  it('says so when the wallet\'s key is disabled on the identity, and starts over on retry (AUTH-14)', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockRejectedValue(remoteError('KEY_DISABLED', 'engine text'));
 
     await startKeyExchange('qr');
 
-    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledWith({ reauth: 'id1' });
-    expect(phase()).toEqual({ name: 'signed-in', session });
+    expect(phase()).toEqual({
+      name: 'error',
+      title: 'Sign-in failed',
+      message:
+        'The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead.',
+      retry: 'start',
+      registration: undefined,
+    });
   });
 
   it('shows the QR without opening anything', async () => {

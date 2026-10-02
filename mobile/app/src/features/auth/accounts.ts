@@ -4,7 +4,7 @@ import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
 import { useSessionStore } from '~/data/session';
-import { clearSessionExpired, isSessionExpired, useSessionExpired } from '~/data/session-expiry';
+import { clearSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { handleOf } from '~/ui/handle';
@@ -22,7 +22,8 @@ import { setWelcomed } from './onboarding';
  */
 
 export interface AccountTransition {
-  kind: 'switch' | 'add' | 'sign-out';
+  /** `reload`: the restart after signing an account in again (`loadSignedInAgain`). */
+  kind: 'switch' | 'add' | 'sign-out' | 'reload';
   label: string;
 }
 
@@ -116,9 +117,12 @@ async function refreshAccounts(): Promise<AccountDTO[]> {
  * Switch to another account signed in on this device. Resolves true once the
  * engine has restarted as that account; false (with a toast) if it did not.
  */
-export async function switchAccount(account: { identityId: string; username: string | null }): Promise<boolean> {
+export async function switchAccount(
+  account: { identityId: string; username: string | null },
+  { quiet = false }: { quiet?: boolean } = {},
+): Promise<boolean> {
   if (useSessionStore.getState().session?.identityId === account.identityId) return true;
-  return (await runSwitch(account, () => engine.api.session.switchAccount(account.identityId))) !== null;
+  return (await runSwitch(account, () => engine.api.session.switchAccount(account.identityId), { quiet })) !== null;
 }
 
 /**
@@ -131,10 +135,15 @@ export function finishWalletSwitch(identityId: string): Promise<SessionDTO | nul
   return runSwitch(account ?? { identityId, username: null }, async () => undefined);
 }
 
-/** `prepare` has the engine park the current account; then restart into `account`, behind the switch progress. */
+/**
+ * `prepare` has the engine park the current account; then restart into
+ * `account`, behind the switch progress. `quiet`: no toast on failure (the
+ * caller says what happens next).
+ */
 function runSwitch(
   account: { identityId: string; username: string | null },
   prepare: () => Promise<void>,
+  { quiet = false }: { quiet?: boolean } = {},
 ): Promise<SessionDTO | null> {
   const name = accountName(account);
   return withTransition({ kind: 'switch', label: copy.accounts.switching(name) }, async () => {
@@ -146,8 +155,30 @@ function runSwitch(
       return restored;
     } catch (error) {
       appendLog('warn', 'host', `Switching accounts failed: ${errorMessage(error)}`);
-      toast.error(copy.accounts.switchFailed);
+      if (!quiet) toast.error(copy.accounts.switchFailed);
       return null;
+    }
+  });
+}
+
+/**
+ * After a sign-in that logged in afresh an account marked "Sign in again"
+ * (AUTH-14; the caller reads the mark before signing in, since the sign-in
+ * clears it): that account was parked, so the engine that signed it in was
+ * booted without its other stored secrets (its encryption and transfer
+ * keys). Restart into it, as a switch does, so they load. Resolves with the
+ * restored session, or with `session` if the restart failed: the sign-in
+ * itself is durable, and the next boot loads the secrets.
+ */
+export function loadSignedInAgain(session: SessionDTO): Promise<SessionDTO> {
+  return withTransition({ kind: 'reload', label: copy.accounts.loadingAgain(accountName(session)) }, async () => {
+    try {
+      const restored = await restartEngine('Signed in again');
+      if (restored?.identityId !== session.identityId) throw new Error('The account did not restore');
+      return restored;
+    } catch (error) {
+      appendLog('warn', 'host', `Reloading the account after signing in again failed: ${errorMessage(error)}`);
+      return session;
     }
   });
 }
@@ -161,14 +192,17 @@ async function signInBesideCurrent({
   label,
   failed,
   reauth,
+  returnTo = null,
 }: {
   label: string;
   failed: string;
   reauth: string | null;
+  /** Signed out: the account to return to if the sign-in is abandoned (a switch away from it just failed). */
+  returnTo?: string | null;
 }): Promise<void> {
   const from = useSessionStore.getState().session?.identityId ?? null;
   if (!from) {
-    useAccounts.setState({ reauth });
+    useAccounts.setState({ reauth, returnTo });
     router.push('/sign-in');
     return;
   }
@@ -198,20 +232,21 @@ export function addAccount(): Promise<void> {
  * stores the new key instead of switching back to the old one. Abandoning
  * it returns to the account that was active, still marked "Sign in again".
  */
-export function reauthenticate(identityId: string): Promise<void> {
-  return signInBesideCurrent({ label: copy.accounts.reauthing, failed: copy.accounts.reauthFailed, reauth: identityId });
+export function reauthenticate(identityId: string, { returnTo }: { returnTo?: string | null } = {}): Promise<void> {
+  return signInBesideCurrent({
+    label: copy.accounts.reauthing,
+    failed: copy.accounts.reauthFailed,
+    reauth: identityId,
+    returnTo,
+  });
 }
 
 /**
- * The account the sign-in flow is signing in again, while it still needs it
- * (marked "Sign in again"): a leftover target never changes a later sign-in.
+ * The account the sign-in flow is signing in again (its sign-in screen says
+ * so), while it still needs it (marked "Sign in again"): a leftover target
+ * never shows. Which sign-ins log in afresh rather than switch back follows
+ * the marks alone, so a plain "Add account" for a marked account does too.
  */
-export function reauthTarget(): string | null {
-  const { reauth } = useAccounts.getState();
-  return isSessionExpired(reauth) ? reauth : null;
-}
-
-/** `reauthTarget`, re-rendering when it changes. */
 export function useReauthTarget(): string | null {
   const reauth = useAccounts((s) => s.reauth);
   return useSessionExpired(reauth) ? reauth : null;

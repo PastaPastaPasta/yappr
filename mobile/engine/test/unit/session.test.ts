@@ -57,6 +57,7 @@ const { keyExchangeService } = await import('@/lib/services/key-exchange-service
 const { privateKeyToWif } = await import('@/lib/crypto/wif')
 const { hash160 } = await import('@/lib/crypto/hash')
 const { bytesToHex } = await import('@/lib/bytes')
+const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
 const { useLoginModal } = await import('@/hooks/use-login-modal')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
 
@@ -86,15 +87,33 @@ const emit = (event: string, payload: unknown) => { emitted.push({ event, payloa
 
 /** A fresh engine boot over the same storage: a new controller and module, as after a restart. */
 function boot(): Session {
+  const unhydrated = new Set<string>()
   return createSessionModule({
     emit,
-    controller: createMobileAuthController(),
+    controller: createMobileAuthController({ unhydrated }),
+    unhydrated,
     secureDurable: () => engineStorage.secureDurable(),
     holdSecure: matches => engineStorage.holdSecure(matches),
   })
 }
 
 const secureKeys = () => Object.keys(engineStorage.snapshot().secure)
+
+/** Restart the engine without `identityId`'s secrets, as the host hydrates a boot with that account parked. */
+function bootWithout(identityId: string): Session {
+  const { local, secure } = engineStorage.snapshot()
+  engineStorage.hydrate({ local, secure: Object.fromEntries(Object.entries(secure).filter(([key]) => !key.endsWith(identityId))) })
+  return boot()
+}
+
+/** What the host was asked to write or delete for `identityId`'s secrets. */
+const secureChangesOf = (identityId: string) => changes.filter(c => c.area === 'secure' && c.key.endsWith(identityId))
+
+/** Lets lib's background tasks after a login (the encryption-key auto-derive) run, then waits for the host. */
+async function settle(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 20))
+  await engineStorage.secureDurable()
+}
 
 beforeAll(() => {
   vi.spyOn(evoSdkService, 'initialize').mockResolvedValue(undefined)
@@ -263,6 +282,52 @@ describe('accounts: sign in, add, switch, restore, sign out', () => {
     expect(results[1]).toMatchObject({ reason: { code: 'BAD_REQUEST' } })
     expect((await session.current())?.identityId).toBe(idA)
     expect((await session.accounts()).map(a => a.identityId)).toEqual([idA])
+    await session.signOut()
+  })
+
+  it('signing a parked account in again by key keeps its stored encryption key (AUTH-14)', async () => {
+    // The new key derives the identity's on-chain encryption key, so lib's auto-derive would store it.
+    const oldKey = secp256k1.utils.randomSecretKey()
+    const newKey = secp256k1.utils.randomSecretKey()
+    const withKeys = (id: string, auth: Uint8Array[]) => {
+      const encryption = deriveEncryptionKey(auth[auth.length - 1], id)
+      identities.set(id, {
+        id,
+        balance: 1,
+        publicKeys: [
+          ...auth.map((key, i) => ({ id: 2 + i, type: SECP256K1, purpose: AUTH, securityLevel: HIGH, data: secp256k1.getPublicKey(key, true), readOnly: false })),
+          { id: 9, type: SECP256K1, purpose: ENCRYPTION, securityLevel: MEDIUM, data: secp256k1.getPublicKey(encryption, true), readOnly: false },
+        ],
+      } as unknown as IdentityInfo)
+    }
+    // Control: a first sign-in with such a key does store the derived key.
+    const freshKey = secp256k1.utils.randomSecretKey()
+    const fresh = randomId()
+    withKeys(fresh, [freshKey])
+    session = boot()
+    await session.restore()
+    await session.signInWithKey({ key: bytesToHex(freshKey) })
+    await settle()
+    expect(secureKeys()).toContain(`yappr_secure_ek_${fresh}`)
+    await session.signOut()
+
+    const id = randomId()
+    withKeys(id, [oldKey, newKey])
+    await session.signInWithKey({ key: bytesToHex(oldKey) })
+    // An imported encryption key (for legacy messages), which the engine will not be given while A is parked.
+    localStorage.setItem(`yappr_secure_ek_${id}`, JSON.stringify(privateKeyToWif(secp256k1.utils.randomSecretKey(), 'testnet')))
+    localStorage.setItem(`yappr_secure_ekt_${id}`, '"imported"')
+    await settle()
+    await session.prepareAddAccount()
+    session = bootWithout(id)
+    expect(await session.restore()).toBeNull()
+    changes.length = 0
+
+    const signedIn = await session.signInWithKey({ key: bytesToHex(newKey) })
+    await settle()
+    expect(signedIn).toMatchObject({ identityId: id, hasEncryptionKey: false })
+    // The new auth key is stored; the encryption key and its type are left to the stored ones.
+    expect(secureChangesOf(id).map(c => c.key)).toEqual([`yappr_secure_pk_${id}`])
     await session.signOut()
   })
 
@@ -459,7 +524,8 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(await session.restore()).toBeNull()
     const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
     changes.length = 0
-    const request = await session.startKeyExchange()
+    // Only the accounts the host names as signed in again log in afresh.
+    const request = await session.startKeyExchange({ reauth: [randomId()] })
     await walletApproves(request.uri, identityId, loginKey)
     expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toEqual({ status: 'switch', identityId })
     // No login ran, so nothing could clear the parked account's keys, and the engine waits for its restart.
@@ -489,7 +555,7 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     session = boot()
     expect(await session.restore()).toBeNull()
     const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
-    const request = await session.startKeyExchange({ reauth: identityId })
+    const request = await session.startKeyExchange({ reauth: [identityId] })
     await walletApproves(request.uri, identityId, loginKey)
     expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({
       status: 'signed-in',
@@ -499,7 +565,9 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     login.mockRestore()
     expect(localStorage.getItem(`yappr_secure_pk_${identityId}`)).not.toBe('broken')
     expect(await session.accounts()).toEqual([expect.objectContaining({ identityId, active: true })])
-    await expect(session.startKeyExchange({ reauth: 42 as unknown as string })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    for (const reauth of [identityId, [42]] as unknown as string[][]) {
+      await expect(session.startKeyExchange({ reauth })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    }
   })
 
   it('keeps the parked account\'s stored secrets when signing it in again fails (AUTH-14)', async () => {
@@ -515,13 +583,11 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
 
     await session.prepareAddAccount()
     // The restarted engine is not given the parked account's secrets.
-    const { local, secure } = engineStorage.snapshot()
-    engineStorage.hydrate({ local, secure: Object.fromEntries(Object.entries(secure).filter(([key]) => !key.endsWith(identityId))) })
-    session = boot()
+    session = bootWithout(identityId)
     expect(await session.restore()).toBeNull()
     changes.length = 0
     const login = vi.spyOn(auth.PlatformAuthController.prototype, 'loginWithAuthKey').mockRejectedValueOnce(new Error('Network error'))
-    const request = await session.startKeyExchange({ reauth: identityId })
+    const request = await session.startKeyExchange({ reauth: [identityId] })
     await walletApproves(request.uri, identityId, loginKey)
     await expect(session.awaitKeyExchange(request.requestId, { waitMs: 1 })).rejects.toThrow()
     login.mockRestore()
@@ -529,6 +595,79 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     // lib cleared the identity's keys by name, but the host heard nothing: its stored secrets stay.
     expect(changes.filter(c => c.area === 'secure' && c.key.endsWith(identityId))).toEqual([])
     expect(secureKeys().filter(key => key.endsWith(identityId))).toEqual([])
+  })
+
+  /** An account signed in by wallet, then parked by "Add account", with the engine restarted signed out. */
+  async function parkedWalletAccount(): Promise<{ identityId: string; loginKey: Uint8Array }> {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const first = await session.startKeyExchange()
+    await walletApproves(first.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(first.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in' })
+    await session.prepareAddAccount()
+    session = bootWithout(identityId)
+    expect(await session.restore()).toBeNull()
+    return { identityId, loginKey }
+  }
+
+  it('still signs the account in again when the engine restarts while the wallet is out (AUTH-14)', async () => {
+    const { identityId, loginKey } = await parkedWalletAccount()
+    const request = await session.startKeyExchange({ reauth: [identityId] })
+    // The engine restarts; the host polls the same persisted request on the new one.
+    session = boot()
+    expect(await session.pendingKeyExchange()).toEqual(request)
+    const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
+    await walletApproves(request.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
+    expect(login).toHaveBeenCalledTimes(1)
+    login.mockRestore()
+  })
+
+  it('refuses a wallet sign-in whose key is disabled on the identity, keeping the parked account (AUTH-14)', async () => {
+    const { identityId, loginKey } = await parkedWalletAccount()
+    // Platform disabled the key the wallet's login key derives; the wallet answers with it again.
+    const identity = identities.get(identityId)
+    if (!identity) throw new Error('no identity')
+    identities.set(identityId, { ...identity, publicKeys: identity.publicKeys.map(key => ({ ...key, disabledAt: 1_790_000_000_000 })) } as IdentityInfo)
+    changes.length = 0
+    const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
+    const request = await session.startKeyExchange({ reauth: [identityId] })
+    await walletApproves(request.uri, identityId, loginKey)
+    await expect(session.awaitKeyExchange(request.requestId, { waitMs: 1 })).rejects.toMatchObject({
+      code: 'KEY_DISABLED',
+      message: 'The key this wallet uses for Yappr has been disabled on this identity',
+    })
+    expect(login).not.toHaveBeenCalled()
+    login.mockRestore()
+    await engineStorage.secureDurable()
+    expect(secureChangesOf(identityId)).toEqual([])
+    expect(await session.current()).toBeNull()
+    expect(await session.accounts()).toContainEqual(expect.objectContaining({ identityId, active: false }))
+    // Nothing to retry with that approval: the request is gone.
+    await expect(session.awaitKeyExchange(request.requestId, { waitMs: 1 })).rejects.toMatchObject({ code: 'KEY_EXCHANGE_TIMEOUT' })
+  })
+
+  it('keeps the approval for a retry when the key check cannot read the identity', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const request = await session.startKeyExchange()
+    await walletApproves(request.uri, identityId, loginKey)
+    vi.mocked(identityService.getIdentity).mockRejectedValueOnce(new Error('Network error'))
+    await expect(session.awaitKeyExchange(request.requestId, { waitMs: 1 })).rejects.toThrow('Network error')
+    expect(await session.current()).toBeNull()
+    expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in', session: { identityId } })
+  })
+
+  it('refuses a first wallet sign-in with a disabled key too', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const identity = identities.get(identityId)
+    if (!identity) throw new Error('no identity')
+    identities.set(identityId, { ...identity, publicKeys: identity.publicKeys.map(key => ({ ...key, disabledAt: 1 })) } as IdentityInfo)
+    const request = await session.startKeyExchange()
+    await walletApproves(request.uri, identityId, loginKey)
+    await expect(session.awaitKeyExchange(request.requestId, { waitMs: 1 })).rejects.toMatchObject({ code: 'KEY_DISABLED' })
+    expect(await session.current()).toBeNull()
   })
 
   it('cancels a waiting poll', async () => {
