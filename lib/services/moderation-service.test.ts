@@ -28,7 +28,7 @@ const sdk = vi.hoisted(() => ({
     teamActionSigners: vi.fn(),
     moderationActionCounts: vi.fn(),
   },
-  documents: { get: vi.fn() },
+  documents: { get: vi.fn(), query: vi.fn() },
   identities: { fetch: vi.fn() },
   moderationCharters: { team: vi.fn() },
 }))
@@ -38,6 +38,8 @@ const topology = vi.hoisted(() => ({
   resolvesReports: false, recordless: [] as string[],
   /** v11: a week's window on post and reply, then the leader plus two members. */
   v11: false,
+  /** v10: authors delete for real, so a missing post may be the author's delete. */
+  authorsDelete: false,
 }))
 const SETTLED_RULE = { windowSeconds: 604800, leaderRequired: true, approvals: 3 }
 const fromBytes = vi.hoisted(() => vi.fn(() => ({ restored: true })))
@@ -56,7 +58,7 @@ vi.mock('@dashevo/evo-sdk', () => ({
 vi.mock('@/lib/contract-topology', () => ({
   contractIsModerated: () => topology.moderated,
   // The moderated cut these tests model is v9: posts tombstone, so an absence is a takedown.
-  authorDeletesLeaveHoles: () => false,
+  authorDeletesLeaveHoles: () => topology.authorsDelete,
   moderationListsKept: () => (topology.moderated ? topology.lists : []),
   contractKeepsWarnings: () => topology.moderated && topology.lists.includes('warnings'),
   moderatorDeletableTypes: () => (topology.moderated ? topology.deletable : []),
@@ -78,7 +80,7 @@ vi.stubGlobal('localStorage', {
 })
 
 import {
-  SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities,
+  SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
   postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
@@ -93,6 +95,7 @@ beforeEach(() => {
   topology.resolvesReports = false
   topology.recordless = []
   topology.v11 = false
+  topology.authorsDelete = false
   for (const group of [sdk.contracts, sdk.documents, sdk.identities, sdk.moderationCharters]) {
     for (const fn of Object.values(group)) fn.mockReset()
   }
@@ -898,5 +901,72 @@ describe('refusals and unverified answers seen live on sakura (QA 2026-10-01)', 
     expect(sdk.identities.fetch).not.toHaveBeenCalled()
     expect(sdk.contracts.banUser).not.toHaveBeenCalled()
     expect(sdk.contracts.moderatorDeleteDocument).not.toHaveBeenCalled()
+  })
+})
+
+describe('team actions that can never run (QA 2026-10-01, sakura)', () => {
+  // Live: a second proposal for the same post was accepted; once the first ran, approving the
+  // second was a paid 40101, and an action whose post its author tombstoned after the proposal
+  // was a paid 41211 on every approval. Neither lapses: both stayed `active`.
+  beforeEach(() => {
+    topology.v11 = true
+    sdk.contracts.fetch.mockResolvedValue({
+      ownerId: { toBase58: () => OWNER },
+      config: { moderation: { moderators: { ...elected({ $type: 'contractOwner' }), maxAddedModerators: 2 } } },
+    })
+    sdk.moderationCharters.team.mockResolvedValue({
+      leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [], seats: () => 5, free: vi.fn(),
+    })
+  })
+  const entry = (actionId: string, documentId: string, lastModified: number) => ({
+    actionId, proposerId: MEMBER, proposedAt: BigInt(20), approvalCount: 1,
+    event: { type: 'deleteSettledDocument' as const, documentTypeName: 'post', documentId, documentLastModifiedAt: BigInt(lastModified), reason: { text: 'spam', reasonDocumentId: 'RD1' } },
+  })
+  const doc = (updatedAt: number) => ({ updatedAt: BigInt(updatedAt), createdAt: BigInt(5) })
+
+  it('places a document against the action: live, changed after the proposal, or gone', () => {
+    expect(teamActionTargetState({ documentLastModifiedAt: 10 }, { updatedAt: BigInt(10), createdAt: BigInt(5) })).toBe('live')
+    expect(teamActionTargetState({ documentLastModifiedAt: 10 }, { updatedAt: BigInt(11), createdAt: BigInt(5) })).toBe('changed')
+    expect(teamActionTargetState({ documentLastModifiedAt: 5 }, { createdAt: BigInt(5) })).toBe('live')
+    expect(teamActionTargetState({ documentLastModifiedAt: 10 }, null)).toBe('gone')
+  })
+
+  it('reads every action\'s document in one proved $id-in query and claims nothing when it fails', async () => {
+    sdk.documents.query.mockResolvedValueOnce(new Map([['P1', doc(10)], ['P2', doc(99)]]))
+    const actions = [entry('A1', 'P1', 10), entry('A2', 'P2', 10), entry('A3', 'P3', 10)].map((e) => toTeamAction(e, 'active', 5))
+    const states = await moderationService.readTeamActionTargets(actions)
+    expect(Object.fromEntries(states)).toEqual({ A1: 'live', A2: 'changed', A3: 'gone' })
+    expect(sdk.documents.query).toHaveBeenCalledWith(expect.objectContaining({ documentTypeName: 'post', where: [['$id', 'in', ['P1', 'P2', 'P3']]], limit: 3 }))
+    sdk.documents.query.mockRejectedValueOnce(new Error('invalid quorum'))
+    expect((await moderationService.readTeamActionTargets(actions)).size).toBe(0)
+  })
+
+  it('offers the proposal that can still run, never a dead one, for the modal to approve', async () => {
+    sdk.contracts.teamActions.mockResolvedValue({ actions: [entry('OLD', 'P1', 10), entry('NEW', 'P1', 50)] })
+    sdk.documents.query.mockResolvedValue(new Map([['P1', doc(50)]]))
+    await expect(moderationService.findActiveTeamAction('P1')).resolves.toMatchObject({ actionId: 'NEW' })
+    // Only a dead proposal: the modal offers a fresh one instead of a paid 41211.
+    sdk.contracts.teamActions.mockResolvedValue({ actions: [entry('OLD', 'P1', 10)] })
+    await expect(moderationService.findActiveTeamAction('P1')).resolves.toBeNull()
+    // The document could not be read: the first proposal, as before.
+    sdk.documents.query.mockRejectedValue(new Error('offline'))
+    await expect(moderationService.findActiveTeamAction('P1')).resolves.toMatchObject({ actionId: 'OLD' })
+  })
+
+  it('says what a 41211 means on v11: the author changed it, and one moderator may remove it again', async () => {
+    sdk.contracts.moderatorApproveTeamAction.mockRejectedValue({ code: 41211, message: 'Document D1 changed since team action A1 on contract C proposed its deletion' })
+    const result = await moderationService.approveTeamAction(LEADER, 'A1')
+    expect(result).toMatchObject({ success: false, errorCode: 'TEAM_ACTION_DOCUMENT_CHANGED' })
+    expect(result.error).toMatch(/one moderator removes it alone/)
+    expect(result.error).not.toMatch(/week/)
+  })
+
+  it('blames the author for a gone document only where authors delete (v10), never on v11', async () => {
+    sdk.contracts.moderatorApproveTeamAction.mockRejectedValue({ code: 40101, message: 'P1 document not found' })
+    const v11 = await moderationService.approveTeamAction(LEADER, 'A1')
+    expect(v11).toMatchObject({ success: false, errorCode: 'DOCUMENT_GONE' })
+    expect(v11.error).not.toMatch(/author deleted/)
+    topology.authorsDelete = true
+    expect((await moderationService.approveTeamAction(LEADER, 'A1')).error).toMatch(/or its author deleted it/)
   })
 })

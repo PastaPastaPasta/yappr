@@ -9,9 +9,8 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { logger } from '@/lib/logger'
 import { dpnsService } from '@/lib/services/dpns-service'
-import type { TargetKind } from '@/lib/contract-topology'
-import { provenAbsent } from '@/lib/feed/prove-absent'
-import { countedSigners, moderationService, teamCanApprove, type SeatedTeamSeats, type TeamAction } from '@/lib/services/moderation-service'
+import { authorDeletesLeaveHoles } from '@/lib/contract-topology'
+import { countedSigners, moderationService, teamCanApprove, type SeatedTeamSeats, type TeamAction, type TeamActionTargetState } from '@/lib/services/moderation-service'
 import type { SeatedReasonsState } from './charter-reason-picker'
 
 const shortId = (id: string) => `${id.slice(0, 8)}…`
@@ -21,8 +20,6 @@ const ACTIVE_SHOWN = 20
 const CLOSED_SHOWN = 10
 /** One page of closed actions: their ids are hashes, so more pages would not make the sample any more recent. */
 const CLOSED_READ = 100
-
-const isTargetKind = (type: string): type is TargetKind => type === 'post' || type === 'reply'
 
 interface TeamActionsState {
   /** The newest {@link ACTIVE_SHOWN} active actions. */
@@ -35,27 +32,22 @@ interface TeamActionsState {
   closedSample: boolean
   /** Who approved each shown active action, by action id; absent when the read failed. */
   signers: ReadonlyMap<string, string[]>
-  /** Shown active actions whose document is proved gone: they can never run. */
-  gone: ReadonlySet<string>
+  /**
+   * Shown active actions that can never run, by action id: their document is
+   * proved gone, or it changed after the proposal (on v11 its author's
+   * tombstone), which Drive refuses every approval of (41211). Neither lapses.
+   */
+  dead: ReadonlyMap<string, Exclude<TeamActionTargetState, 'live'>>
   seated: SeatedTeamSeats | null
 }
 
-/** Proves which of `actions`' documents are gone, one batch per type; a failed proof marks nothing. */
-async function goneActions(actions: readonly TeamAction[]): Promise<Set<string>> {
-  const byKind = new Map<TargetKind, TeamAction[]>()
-  for (const action of actions) {
-    if (isTargetKind(action.documentTypeName)) byKind.set(action.documentTypeName, [...(byKind.get(action.documentTypeName) ?? []), action])
+/** The shown actions that can never run; an action whose document could not be read is not claimed dead. */
+async function deadActions(actions: readonly TeamAction[]): Promise<Map<string, Exclude<TeamActionTargetState, 'live'>>> {
+  const dead = new Map<string, Exclude<TeamActionTargetState, 'live'>>()
+  for (const [actionId, state] of await moderationService.readTeamActionTargets(actions)) {
+    if (state !== 'live') dead.set(actionId, state)
   }
-  const gone = new Set<string>()
-  await Promise.all([...byKind].map(async ([kind, group]) => {
-    try {
-      const absent = await provenAbsent(kind, group.map((action) => action.documentId))
-      for (const action of group) if (absent.has(action.documentId)) gone.add(action.actionId)
-    } catch (error) {
-      logger.warn('TeamActionsPanel: document liveness check failed', error)
-    }
-  }))
-  return gone
+  return dead
 }
 
 /**
@@ -90,7 +82,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
       // The exact approvals of an active action are its signers still on the
       // team; `approvalCount` alone may count a member who left. Read only for
       // the rows shown.
-      const [signerPairs, gone] = await Promise.all([
+      const [signerPairs, dead] = await Promise.all([
         Promise.all(shown.map(async (action) => {
           try {
             return [action.actionId, await moderationService.teamActionSigners(action.actionId, 'active')] as const
@@ -99,7 +91,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
             return null
           }
         })),
-        goneActions(shown),
+        deadActions(shown),
       ])
       const signers = new Map(signerPairs.filter((pair) => pair !== null))
       const recentClosed = [...closed.actions].sort((a, b) => b.proposedAt - a.proposedAt).slice(0, CLOSED_SHOWN)
@@ -110,7 +102,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
         closed: recentClosed,
         closedSample: closed.truncated,
         signers,
-        gone,
+        dead,
         seated,
       })
       const people = [...shown, ...recentClosed].map((action) => action.proposerId)
@@ -152,9 +144,10 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
     setApproving(null)
     if (result.errorCode === 'MAYBE_APPLIED') {
       toast(result.error ?? 'Your approval may have gone through. Check again before retrying.', { duration: 8000 })
-    } else if (result.errorCode === 'DOCUMENT_GONE') {
-      toast.error(result.error ?? 'The document is already gone')
-      setState((previous) => previous && { ...previous, gone: new Set([...previous.gone, action.actionId]) })
+    } else if (result.errorCode === 'DOCUMENT_GONE' || result.errorCode === 'TEAM_ACTION_DOCUMENT_CHANGED') {
+      toast.error(result.error ?? 'This proposal can no longer run')
+      const state: Exclude<TeamActionTargetState, 'live'> = result.errorCode === 'DOCUMENT_GONE' ? 'gone' : 'changed'
+      setState((previous) => previous && { ...previous, dead: new Map([...previous.dead, [action.actionId, state]]) })
       return
     } else if (!result.success) {
       toast.error(result.error || 'Approval failed')
@@ -209,9 +202,10 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
               const have = counted ? counted.length : action.approvalCount
               const leaderSigned = !!seated && !!counted?.includes(seated.leaderId)
               const mine = !!me && (action.proposerId === me || !!signed?.includes(me))
-              const gone = state.gone.has(action.actionId)
+              const deadAs = state.dead.get(action.actionId)
+              const dead = deadAs !== undefined
               return (
-                <li key={action.actionId} data-testid={`team-action-${action.actionId}`} className={`rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-1${gone ? ' opacity-60' : ''}`}>
+                <li key={action.actionId} data-testid={`team-action-${action.actionId}`} className={`rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-1${dead ? ' opacity-60' : ''}`}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-medium">
                       Remove {action.documentTypeName}{' '}
@@ -227,9 +221,16 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
                     {action.leaderRequired && leaderSigned && ' · the leader approved'}
                   </p>
                   <p>Reason: {reasonLabel(action)}</p>
-                  {gone && (
+                  {deadAs === 'gone' && (
                     <p data-testid={`team-action-gone-${action.actionId}`} className="italic text-gray-500 dark:text-gray-400">
-                      Its {action.documentTypeName} is already gone (another proposal removed it, or its author deleted it), so this proposal can never run.
+                      Its {action.documentTypeName} is already gone (another proposal removed it{authorDeletesLeaveHoles() ? ', or its author deleted it' : ''}), so this proposal can never run.
+                    </p>
+                  )}
+                  {deadAs === 'changed' && (
+                    <p data-testid={`team-action-changed-${action.actionId}`} className="italic text-gray-500 dark:text-gray-400">
+                      Its {action.documentTypeName} changed after this proposal (its author deleted or re-saved it), so this proposal can
+                      never run. If its author deleted it, nothing is left to remove; otherwise the change restarted its window, in which
+                      one moderator removes it alone, and after that it can be proposed again.
                     </p>
                   )}
                   {signed && (
@@ -237,7 +238,7 @@ export function TeamActionsPanel({ seatedReasons, onChanged }: { seatedReasons: 
                       Signed by {signed.length === 0 ? 'nobody' : signed.map((id) => `${nameOf(id)}${seated?.leaderId === id ? ' (leader)' : ''}${counted?.includes(id) ? '' : ' (left the team)'}`).join(', ')}
                     </p>
                   )}
-                  {onTeam && !gone && (
+                  {onTeam && !dead && (
                     <div className="pt-1">
                       {mine ? (
                         <span className="inline-flex items-center gap-1 text-green-600 dark:text-green-400"><CheckIcon className="h-4 w-4" /> You approved</span>
