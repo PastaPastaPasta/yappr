@@ -1,0 +1,295 @@
+import type { KeyExchangeRequestDTO, SessionDTO } from '@engine/api';
+import { Linking } from 'react-native';
+
+import { fakeEngine } from '~/data/testing/fake-engine';
+
+import {
+  cancelKeyExchange,
+  checkAgain,
+  checkRegistrationNow,
+  continueRegistration,
+  currentWalletUri,
+  POLL_MS,
+  retry,
+  startKeyExchange,
+  takeWalletReturnLink,
+  useKeyExchange,
+} from './key-exchange';
+
+jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+
+const NOW = Date.now();
+const request = (id = 'r1', expiresIn = 10 * 60_000): KeyExchangeRequestDTO => ({
+  requestId: id,
+  uri: `dash-key:${id}?n=d&v=1`,
+  expiresAt: new Date(NOW + expiresIn),
+});
+const session: SessionDTO = {
+  identityId: 'id1',
+  network: 'devnet',
+  username: 'alice',
+  credits: 1n,
+  hasEncryptionKey: true,
+  method: 'key-exchange',
+};
+const remoteError = (code: string, message = code) => Object.assign(new Error(message), { code });
+const phase = () => useKeyExchange.getState().phase;
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
+let openURL: jest.SpyInstance;
+
+beforeEach(() => {
+  fakeEngine.reset();
+  cancelKeyExchange();
+  openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+  fakeEngine.method('session.cancelKeyExchange').mockResolvedValue(undefined);
+});
+
+afterEach(() => openURL.mockRestore());
+
+describe('wallet sign-in', () => {
+  it('opens the wallet on this device and polls one run of the platform-auth timeout', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({ status: 'signed-in', session });
+
+    await startKeyExchange('wallet');
+
+    expect(openURL).toHaveBeenCalledWith('dash-key:r1?n=d&v=1');
+    expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledWith('r1', { waitMs: POLL_MS });
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
+  it('shows the QR without opening anything', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
+
+    startKeyExchange('qr').catch(() => undefined);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(openURL).not.toHaveBeenCalled();
+    expect(phase()).toEqual({ name: 'waiting', request: request() });
+    expect(currentWalletUri(useKeyExchange.getState())).toBe('dash-key:r1?n=d&v=1');
+  });
+
+  it('turns a silent timeout into "Check again", which polls the same request while it lives', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({
+      status: 'pending',
+      requestId: 'r1',
+      expiresAt: request().expiresAt,
+    });
+
+    await startKeyExchange('qr');
+    expect(phase().name).toBe('no-response');
+
+    await checkAgain(NOW);
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledTimes(2);
+  });
+
+  it('makes a fresh request on "Check again" once the old one is about to expire', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValueOnce(request('r1', 5_000)).mockResolvedValueOnce(request('r2'));
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({ status: 'pending', requestId: 'x', expiresAt: new Date() });
+
+    await startKeyExchange('qr');
+    await checkAgain(NOW);
+
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledTimes(2);
+    expect(useKeyExchange.getState().request?.requestId).toBe('r2');
+  });
+
+  it('treats an expired request as "no response" with nothing to poll', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockRejectedValue(remoteError('KEY_EXCHANGE_TIMEOUT'));
+
+    await startKeyExchange('qr');
+
+    expect(phase()).toEqual({ name: 'no-response', request: null });
+  });
+
+  it('resumes the request the engine still holds after a kill, without reopening the wallet', async () => {
+    fakeEngine.method('session.pendingKeyExchange').mockResolvedValue(request('kept'));
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
+
+    startKeyExchange('wallet', { resume: true }).catch(() => undefined);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    expect(fakeEngine.method('session.startKeyExchange')).not.toHaveBeenCalled();
+    expect(openURL).not.toHaveBeenCalled();
+    expect(useKeyExchange.getState().request?.requestId).toBe('kept');
+  });
+
+  it('notes when no app opened the wallet link (AUTH-05)', async () => {
+    openURL.mockRejectedValue(new Error('No app'));
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
+
+    startKeyExchange('wallet').catch(() => undefined);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+
+    expect(useKeyExchange.getState().walletOpenFailed).toBe(true);
+  });
+
+  it('reports a request that could not be created', async () => {
+    fakeEngine.method('session.startKeyExchange').mockRejectedValue(remoteError('RPC_TIMEOUT'));
+
+    await startKeyExchange('wallet');
+
+    expect(phase()).toMatchObject({ name: 'error', title: "Couldn't reach your wallet", retry: 'start' });
+  });
+
+  it('keeps the approval for "Try again" when Platform is unavailable (AUTH-07)', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine
+      .method('session.awaitKeyExchange')
+      .mockRejectedValueOnce(remoteError('RPC_TIMEOUT', 'timed out'))
+      .mockResolvedValueOnce({ status: 'signed-in', session });
+
+    await startKeyExchange('wallet');
+    expect(phase()).toMatchObject({
+      name: 'error',
+      message: 'Dash Platform is temporarily unavailable. Please try again in a few moments.',
+      retry: 'poll',
+    });
+
+    await retry();
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledTimes(1);
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
+  it('ignores the answer of a poll that a newer one superseded', async () => {
+    const first = deferred<unknown>();
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine
+      .method('session.awaitKeyExchange')
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce({ status: 'pending', requestId: 'r1', expiresAt: request().expiresAt });
+
+    const started = startKeyExchange('qr');
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    await checkAgain(NOW);
+    first.reject(remoteError('KEY_EXCHANGE_CANCELLED'));
+    await started;
+
+    expect(phase().name).toBe('no-response');
+  });
+
+  it('cancels the request in the engine', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
+    startKeyExchange('qr').catch(() => undefined);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    cancelKeyExchange();
+
+    expect(fakeEngine.method('session.cancelKeyExchange')).toHaveBeenCalledWith('r1');
+    expect(phase()).toEqual({ name: 'idle' });
+  });
+});
+
+describe('first-login key registration (AUTH-06)', () => {
+  const needsRegistration = {
+    status: 'needs-registration' as const,
+    requestId: 'r1',
+    uri: 'dash-st:abc?n=d&v=1',
+    expiresAt: request().expiresAt,
+    keys: [
+      { keyId: 5, purpose: 'authentication' as const, securityLevel: 'high' as const },
+      { keyId: 6, purpose: 'encryption' as const, securityLevel: 'medium' as const },
+    ],
+  };
+
+  it('waits for "Continue in wallet" on this device, then opens dash-st: and checks', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue(needsRegistration);
+    fakeEngine
+      .method('session.awaitKeyRegistration')
+      .mockResolvedValueOnce({ status: 'pending', requestId: 'r1', expiresAt: request().expiresAt })
+      .mockResolvedValueOnce({ status: 'signed-in', session });
+
+    await startKeyExchange('wallet');
+    expect(phase()).toMatchObject({ name: 'registration', uri: 'dash-st:abc?n=d&v=1' });
+    expect(currentWalletUri(useKeyExchange.getState())).toBe('dash-st:abc?n=d&v=1');
+
+    await continueRegistration();
+
+    expect(openURL).toHaveBeenLastCalledWith('dash-st:abc?n=d&v=1');
+    expect(fakeEngine.method('session.awaitKeyRegistration')).toHaveBeenCalledTimes(2);
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
+  it('shows the registration as a QR across devices and checks at once, "still confirming" after a minute', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue(needsRegistration);
+    const second = deferred<unknown>();
+    fakeEngine
+      .method('session.awaitKeyRegistration')
+      .mockResolvedValueOnce({ status: 'pending', requestId: 'r1', expiresAt: request().expiresAt })
+      .mockReturnValueOnce(second.promise);
+
+    const started = startKeyExchange('qr');
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(phase()).toMatchObject({ name: 'registering', slow: true });
+    second.resolve({ status: 'signed-in', session });
+    await started;
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
+  it('fails into "Sign-in failed" when the request expires during registration', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue(needsRegistration);
+    fakeEngine.method('session.awaitKeyRegistration').mockRejectedValue(remoteError('KEY_REGISTRATION_TIMEOUT', 'This sign-in request expired. Start a new one.'));
+
+    await startKeyExchange('qr');
+
+    expect(phase()).toMatchObject({
+      name: 'error',
+      title: 'Sign-in failed',
+      message: 'This sign-in request expired. Start a new one.',
+      retry: 'start',
+    });
+  });
+
+  it('"Check now" polls the registration again', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue(needsRegistration);
+    fakeEngine.method('session.awaitKeyRegistration').mockReturnValue(new Promise(() => undefined));
+    startKeyExchange('qr').catch(() => undefined);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+
+    checkRegistrationNow().catch(() => undefined);
+    await Promise.resolve();
+
+    expect(fakeEngine.method('session.awaitKeyRegistration')).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('wallet return links', () => {
+  it('keeps a waiting sign-in on screen and polls at once', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
+    startKeyExchange('wallet').catch(() => undefined);
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+
+    expect(takeWalletReturnLink('yappr-dev://', false)).toBe(true);
+    expect(takeWalletReturnLink('yappr-dev://sign-in?done=1', false)).toBe(true);
+    expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledTimes(3);
+    // Links elsewhere still navigate, and a cold launch link is never taken.
+    expect(takeWalletReturnLink('yappr-dev://post?id=abc', false)).toBe(false);
+    expect(takeWalletReturnLink('yappr-dev://', true)).toBe(false);
+  });
+
+  it('takes nothing when no sign-in is waiting', () => {
+    expect(takeWalletReturnLink('yappr-dev://', false)).toBe(false);
+  });
+});
