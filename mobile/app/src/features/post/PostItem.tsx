@@ -8,6 +8,7 @@ import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
+import { usePostSafety } from '~/features/safety/use-post-safety';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
 import type { MenuItem } from '~/ui/ContextMenu';
 import { confirmAlert } from '~/ui/Dialog';
@@ -211,8 +212,11 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
   const shownRemoved = usePostRemoved(shownPost.id);
   const removed = listedRemoved || shownRemoved;
   const asStub = removed && removal === 'stub';
-  const post = useMemo(() => (asStub ? { ...shownPost, deleted: true } : shownPost), [asStub, shownPost]);
   const viewerId = useViewerId();
+  // Blocks, the NSFW mode and the media gate (PRD G-6, SAFE-06, SAFE-07).
+  const safety = usePostSafety(listed, shownPost, removal, viewerId);
+  const safePost = safety.post;
+  const post = useMemo(() => (asStub ? { ...safePost, deleted: true } : safePost), [asStub, safePost]);
   const capabilities = useCapabilities();
   const { external } = useMediaUrls();
 
@@ -276,8 +280,13 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
         confirmDelete(targetOf(post), post.kind, capabilities).catch(() => undefined);
       },
       block: () => requireAuth(() => router.push({ pathname: '/block/[userId]', params: { userId: post.author.id } })),
-      report: () =>
-        requireAuth(() => router.push({ pathname: '/report/[postId]', params: { postId: post.id, kind: post.kind } })),
+      report: () => {
+        const openReport = () =>
+          router.push({ pathname: '/report/[postId]', params: { postId: post.id, kind: post.kind } });
+        // Where the contract takes no reports, the sheet offers an email, which needs no account (PRD SAFE-05).
+        if (capabilities?.reports === false) openReport();
+        else requireAuth(openReport);
+      },
     };
     const onSelect = (id: string) => menuActions[id]?.();
 
@@ -316,10 +325,11 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
     return { actions, menu };
   }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external]);
 
-  if (removed && !asStub) return null;
+  if ((removed && !asStub) || safety.hidden) return null;
 
   return (
     <PostCard
+      {...safety.gates}
       {...cardProps}
       post={post}
       viewerId={viewerId ?? undefined}

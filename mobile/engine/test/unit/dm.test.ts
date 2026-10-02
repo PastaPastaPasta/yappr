@@ -16,6 +16,10 @@ import type { DmEvents, MessageDTO } from '../../src/dm/types'
 import type { WriteTicket } from '../../src/writes/types'
 import type { SessionEvents } from '../../src/api/session'
 
+// The settle before each v5 write reads lib's nonce reservations; here it only records its calls.
+const settleSupersededReplaces = vi.hoisted(() => vi.fn(async () => 0))
+vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settleSupersededReplaces }))
+
 // lib/store's persisted settings (read receipts) need the engine's storage before lib loads.
 const { createEngineStorage, installEngineStorage } = await import('../../src/shims/storage')
 installEngineStorage(createEngineStorage())
@@ -198,9 +202,12 @@ describe('dm on DM v5: 1:1', () => {
     expect((await a.dm.conversations()).map(c => [c.key, c.flags.draft])).toEqual([[key, true]])
     await expect(a.dm.send(key, '   ')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
 
+    settleSupersededReplaces.mockClear()
     const ticket = await a.dm.send(key, 'hello bob')
     expect(ticket).toMatchObject({ op: 'dm.send', state: 'pending', identityId: alice, target: { conversationKey: key } })
     expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed', error: null })
+    // A lost-but-landed roster or self-state replace never holds this send back (PENDING_WRITE).
+    expect(settleSupersededReplaces).toHaveBeenCalledWith(alice, expect.any(String))
     // The text never reaches the persisted tickets.
     expect(a.storage.items.get(WRITES_STORAGE_KEY)).not.toContain('hello bob')
     const [mine] = (await a.dm.messages(key)).items
@@ -392,9 +399,15 @@ describe('dm on DM v5: groups', () => {
     const ticket = await a.settled(await a.dm.createGroup('Team', [bob]))
     const key = (await a.dm.createdGroup(ticket.id))?.key ?? ''
     const chain = (a.engine().ctx.chain as MemoryChain)
-    chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'Insufficient identity balance' } : null)
+    chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'Insufficient identity balance (code=30000)' } : null)
     const failed = await a.settled(await a.dm.renameGroup(key, 'Nope'))
-    expect(failed).toMatchObject({ state: 'failed', error: expect.objectContaining({ code: expect.any(String) }) })
+    expect(failed).toMatchObject({ state: 'failed', error: expect.objectContaining({ code: expect.any(String), outcome: 'refused' }) })
+
+    // A transport failure carries no verdict: the rename may have landed, so it is checked, never retried blind.
+    // ('other' so lib's owner loop gives up at once instead of backing off for its transport retries.)
+    chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'transport error: grpc error: Failed to fetch' } : null)
+    const uncertain = await a.settled(await a.dm.renameGroup(key, 'Maybe'))
+    expect(uncertain).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ code: 'NETWORK', outcome: 'unknown' }) })
   })
 })
 
@@ -469,8 +482,10 @@ describe('dm on legacy 1:1 (testnet)', () => {
     expect(await user.dm.conversations()).toEqual([])
     await user.dm.open(key)
     expect((await user.dm.conversations())[0].flags.draft).toBe(true)
+    settleSupersededReplaces.mockClear()
     const ticket = await user.settled(await user.dm.send(key, 'hey'))
     expect(ticket).toMatchObject({ state: 'confirmed', documents: [{ type: 'directMessage', id: 'sent-hey', action: 'create', confirmed: true }] })
+    expect(settleSupersededReplaces).not.toHaveBeenCalled()
     expect(user.legacy.service.sendMessage).toHaveBeenCalledWith(alice, carol, 'hey')
     expect((await user.dm.conversations())[0]).toMatchObject({ lastMessage: { text: 'hey', own: true }, flags: { draft: false } })
   })

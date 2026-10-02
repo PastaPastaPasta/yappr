@@ -441,6 +441,36 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in' })
   })
 
+  it('switches to an account parked by "Add account" instead of logging it in again', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const first = await session.startKeyExchange()
+    await walletApproves(first.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(first.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in' })
+    const savedKey = localStorage.getItem(`yappr_secure_pk_${identityId}`)
+
+    await session.prepareAddAccount()
+    session = boot()
+    expect(await session.restore()).toBeNull()
+    const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
+    changes.length = 0
+    const request = await session.startKeyExchange()
+    await walletApproves(request.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toEqual({ status: 'switch', identityId })
+    // No login ran, so nothing could clear the parked account's keys, and the engine waits for its restart.
+    expect(login).not.toHaveBeenCalled()
+    login.mockRestore()
+    expect(changes.filter(c => c.area === 'secure' && c.key.endsWith(identityId))).toEqual([])
+    await expect(session.current()).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+    await expect(session.awaitKeyExchange(request.requestId)).rejects.toMatchObject({ code: 'RESTART_REQUIRED' })
+
+    session = boot()
+    const restored = await session.restore()
+    expect(restored?.identityId).toBe(identityId)
+    expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: restored, reason: 'switched' } })
+    expect(localStorage.getItem(`yappr_secure_pk_${identityId}`)).toBe(savedKey)
+  })
+
   it('cancels a waiting poll', async () => {
     const request = await session.startKeyExchange()
     const waiting = session.awaitKeyExchange(request.requestId, { waitMs: 5_000 })
@@ -457,7 +487,7 @@ describe('key exchange request lifetime', () => {
     const kx = createKeyExchange({
       controller: createMobileAuthController(),
       storage: localStorage,
-      complete: async () => 'signed-in',
+      complete: async () => ({ status: 'signed-in' as const, session: 'signed-in' }),
       now: () => clock,
     })
     const request = kx.start()

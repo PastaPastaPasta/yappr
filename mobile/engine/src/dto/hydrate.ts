@@ -1,4 +1,5 @@
 import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment'
+import { extractErrorMessage, isRateLimitedError, isTimeoutError } from '@/lib/error-utils'
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
 import { blockService } from '@/lib/services/block-service'
@@ -43,6 +44,17 @@ export function notSupported(what: string): RpcError {
 
 export function badRequest(message: string): RpcError {
   return new RpcError(message, 'BAD_REQUEST')
+}
+
+/**
+ * A read that failed, as the host sees it: `RATE_LIMITED`, `TIMEOUT` or else
+ * `NETWORK`, with the original message (a stale-quorum failure must keep its
+ * text for `retryReadsOnStaleQuorum`). An `RpcError` passes through.
+ */
+export function readFailure(error: unknown): RpcError {
+  if (error instanceof RpcError) return error
+  const code = isRateLimitedError(error) ? 'RATE_LIMITED' : isTimeoutError(error) ? 'TIMEOUT' : 'NETWORK'
+  return Object.assign(new RpcError(extractErrorMessage(error), code), { cause: error })
 }
 
 /** Base58 of 32 bytes: 43 or 44 characters. */

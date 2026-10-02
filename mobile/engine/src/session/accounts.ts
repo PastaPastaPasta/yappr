@@ -48,6 +48,14 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
     return typeof session?.user?.identityId === 'string' ? session.user.identityId : null
   }
 
+  /** Put an account's stashed per-identity stores back in lib's live keys. */
+  function unstash(identityId: string): void {
+    for (const [name, key] of Object.entries(STASHED_KEYS)) {
+      const value = storage.getItem(stashKey(identityId, name))
+      if (value !== null) storage.setItem(key, value)
+    }
+  }
+
   /** The account is in lib's slot now: it was just used, and has no parked session. */
   function touch(entry: AccountRecord): void {
     entry.lastUsedAt = now()
@@ -86,6 +94,8 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
       const accounts = read()
       const entry = accounts.find(account => account.identityId === identityId)
       if (entry) {
+        // A parked account signed in again (by its key, while adding an account): it comes back as a switch would.
+        if (entry.savedSession !== undefined) unstash(identityId)
         entry.username = patch.username
         if (patch.method) entry.method = patch.method
         touch(entry)
@@ -111,10 +121,7 @@ export function createAccountRegistry(storage: Pick<Storage, 'getItem' | 'setIte
           touch(entry)
           write(accounts)
         }
-        for (const [name, key] of Object.entries(STASHED_KEYS)) {
-          const value = storage.getItem(stashKey(target, name))
-          if (value !== null) storage.setItem(key, value)
-        }
+        unstash(target)
       }
       storage.setItem(SWITCH_MARKER_KEY, '1')
     },

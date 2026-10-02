@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { AboutScreen } from '~/features/settings/AboutScreen';
 
-export default function AboutScreen() {
-  return <Placeholder title="About" comingIn="the settings and bookmarks PR" />;
-}
+export default AboutScreen;
