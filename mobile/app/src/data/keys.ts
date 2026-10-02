@@ -39,6 +39,8 @@ export const queryKeys = {
     /** `feed.hashtag` (storage-form tag). */
     hashtag: (q: { tag: string; sort?: Sort; window?: RankingWindow }) =>
       [...root, 'feed', 'hashtag', sorted(q)] as const,
+    /** `feed.checkNew`: posts newer than `since` (epoch ms) for the new-posts pill. Never persisted. */
+    newPosts: (tab: FeedTab, since: number) => [...root, 'feed', 'newPosts', { tab, since }] as const,
   },
 
   post: {

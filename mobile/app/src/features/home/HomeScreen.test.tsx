@@ -1,0 +1,233 @@
+import type { CapabilitiesDTO, Page, PostDTO, SessionDTO } from '@engine/api';
+import NetInfo from '@react-native-community/netinfo';
+import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
+import { Stack } from 'expo-router';
+import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { RefreshControl } from 'react-native';
+
+import { useSessionStore } from '~/data/session';
+import { fakeEngine } from '~/data/testing/fake-engine';
+import { queryClient } from '~/state/query-client';
+import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
+import { useToastStore } from '~/ui/toast';
+
+import { useHomePrefsStore } from './home-prefs';
+import { HomeScreen } from './HomeScreen';
+import { useOwnPosts } from './own-posts';
+
+jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+
+// FlashList's own Jest setup (@shopify/flash-list/jestSetup): fixed layouts, so cells render.
+jest.mock('@shopify/flash-list/dist/recyclerview/utils/measureLayout', () => {
+  const layout = { x: 0, y: 0, width: 400, height: 900 };
+  return {
+    ...jest.requireActual('@shopify/flash-list/dist/recyclerview/utils/measureLayout'),
+    measureParentSize: () => layout,
+    measureFirstChildLayout: () => layout,
+    measureItemLayout: () => ({ x: 0, y: 0, width: 400, height: 100 }),
+  };
+});
+
+const CAPABILITIES = {
+  rankings: true,
+  windowedRankings: true,
+  repostsAreQuotes: true,
+  repostable: { post: true, reply: true },
+  bookmarkable: { post: true, reply: false },
+} as CapabilitiesDTO;
+
+const viewer: SessionDTO = {
+  identityId: AUTHORS.alice.id,
+  network: 'devnet',
+  username: 'alice',
+  credits: 1n,
+  hasEncryptionKey: true,
+  method: 'key',
+};
+
+const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000);
+const post = (id: string, content: string, minutesAgo: number) =>
+  fixturePost({ id, content, createdAt: at(minutesAgo) }) as PostDTO;
+const page = (items: PostDTO[], hasMore = false): Page<PostDTO> => ({
+  items,
+  cursor: hasMore ? 'next' : null,
+  hasMore,
+});
+
+const home = () => fakeEngine.method('feed.home');
+const checkNew = () => fakeEngine.method('feed.checkNew');
+
+function Layout() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <Stack />
+    </QueryClientProvider>
+  );
+}
+
+async function renderHome() {
+  renderRouter({ _layout: Layout, index: HomeScreen }, { initialUrl: '/' });
+  // The pager lays out, then its pages mount.
+  act(() => {
+    fireEvent(screen.getByTestId('home-pager'), 'layout', { nativeEvent: { layout: { width: 400, height: 800 } } });
+  });
+  await act(async () => {});
+}
+
+beforeAll(() => {
+  notifyManager.setScheduler((callback) => callback());
+  // No UI-level retry, so a failed read shows at once.
+  queryClient.setDefaultOptions({ queries: { ...queryClient.getDefaultOptions().queries, retry: false } });
+});
+afterAll(() => queryClient.clear());
+
+beforeEach(() => {
+  jest.useRealTimers();
+  fakeEngine.reset();
+  queryClient.clear();
+  fakeEngine.setStatus({ state: 'ready', info: { capabilities: CAPABILITIES } });
+  useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+  useHomePrefsStore.setState({ accounts: {} });
+  useOwnPosts.setState({ ids: [] });
+  useToastStore.setState({ current: null });
+  checkNew().mockResolvedValue({ count: 0, posts: [] });
+  jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: true } as ReturnType<typeof NetInfo.useNetInfo>);
+});
+
+describe('Home', () => {
+  it('shows For You, with the header chip and the end of the list (FEED-01)', async () => {
+    home().mockResolvedValue(page([post('p1', 'first post', 1), post('p2', 'second post', 2)]));
+    await renderHome();
+
+    expect(home()).toHaveBeenCalledWith({ tab: 'forYou', sort: 'recent', window: 'all', cursor: null });
+    expect(screen.getByText('first post')).toBeTruthy();
+    expect(screen.getByText('second post')).toBeTruthy();
+    expect(screen.getByTestId('network-chip')).toBeTruthy();
+    expect(screen.getByText("You've reached the end.")).toBeTruthy();
+    expect(screen.getByTestId('compose-fab')).toBeTruthy();
+  });
+
+  it('asks a signed-out reader to sign in for Following (AUTH-02)', async () => {
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+
+    fireEvent.press(screen.getByTestId('home-tabs-following'));
+    await act(async () => {});
+
+    expect(screen.getByText('See posts from people you follow')).toBeTruthy();
+    expect(screen.getByTestId('following-sign-in')).toBeTruthy();
+    expect(useHomePrefsStore.getState().accounts['signed-out']?.tab).toBe('following');
+    expect(home()).not.toHaveBeenCalledWith(expect.objectContaining({ tab: 'following' }));
+  });
+
+  it('reads Following when signed in, with its empty state (FEED-02)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    useHomePrefsStore.setState({ accounts: { [viewer.identityId]: { tab: 'following', sort: 'recent', window: 'all' } } });
+    home().mockResolvedValue(page([]));
+    await renderHome();
+
+    expect(home()).toHaveBeenCalledWith(expect.objectContaining({ tab: 'following', sort: 'recent' }));
+    expect(screen.getByText('Your following feed is empty')).toBeTruthy();
+    expect(screen.getByText('Explore')).toBeTruthy();
+  });
+
+  it('shows post skeletons and "Connecting…" while the engine boots with nothing cached (FEED-01)', async () => {
+    fakeEngine.setStatus({ state: 'booting' });
+    home().mockReturnValue(new Promise(() => undefined));
+    await renderHome();
+
+    expect(screen.getAllByTestId('post-skeleton')).toHaveLength(4);
+    expect(screen.getByText('Connecting to Dash Platform…')).toBeTruthy();
+  });
+
+  it('shows the empty For You state', async () => {
+    home().mockResolvedValue(page([]));
+    await renderHome();
+
+    expect(screen.getByText('No posts yet')).toBeTruthy();
+    expect(screen.getByText('Be the first to share something!')).toBeTruthy();
+  });
+
+  it('shows the error state with nothing cached, and retries (G-11)', async () => {
+    home().mockRejectedValue(Object.assign(new Error('down'), { code: 'ENGINE_UNAVAILABLE' }));
+    await renderHome();
+
+    expect(screen.getByText('Something went wrong')).toBeTruthy();
+    expect(screen.getByText(/temporarily unavailable/)).toBeTruthy();
+
+    home().mockResolvedValue(page([post('p1', 'back again', 1)]));
+    await act(async () => fireEvent.press(screen.getByText('Try again')));
+    expect(screen.getByText('back again')).toBeTruthy();
+  });
+
+  it('switches to Top and its window where the contract ranks likes (FEED-04)', async () => {
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+
+    // Jest renders iOS: the native segmented control.
+    const segment = (id: string, index: number) =>
+      fireEvent(screen.getByTestId(id), 'change', { nativeEvent: { selectedSegmentIndex: index } });
+    segment('home-sort', 1);
+    await act(async () => {});
+    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'all', cursor: null });
+
+    segment('home-window', 0);
+    await act(async () => {});
+    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'today', cursor: null });
+  });
+
+  it('has no sort control on a contract without rankings (v2)', async () => {
+    fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, rankings: false } } });
+    useHomePrefsStore.setState({ accounts: { 'signed-out': { tab: 'forYou', sort: 'top', window: 'all' } } });
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+
+    expect(screen.queryByTestId('home-sort')).toBeNull();
+    expect(home()).toHaveBeenCalledWith(expect.objectContaining({ sort: 'recent' }));
+  });
+
+  it('shows the new-posts pill and inserts the posts on tap (FEED-05)', async () => {
+    const first = post('p1', 'first post', 5);
+    home().mockResolvedValue(page([first]));
+    checkNew().mockResolvedValue({ count: 2, posts: [post('n1', 'newest', 0), post('n2', 'newer', 1)] });
+    await renderHome();
+
+    expect(checkNew()).toHaveBeenCalledWith({ tab: 'forYou', since: first.createdAt, knownIds: ['p1'] });
+    expect(screen.getByText('Show 2 new posts')).toBeTruthy();
+    expect(screen.queryByText('newest')).toBeNull();
+
+    checkNew().mockResolvedValue({ count: 0, posts: [] });
+    await act(async () => fireEvent.press(screen.getByTestId('new-posts-pill')));
+
+    expect(screen.getByText('newest')).toBeTruthy();
+    expect(screen.getByText('newer')).toBeTruthy();
+    expect(screen.queryByTestId('new-posts-pill')).toBeNull();
+  });
+
+  it('puts the viewer’s new post on top of For You (PD-3)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    home().mockResolvedValue(page([post('p1', 'first post', 5)]));
+    await renderHome();
+
+    const mine = fixturePost({ id: 'mine', content: 'my new post', author: AUTHORS.alice, createdAt: at(0) });
+    await act(async () => {
+      fakeEngine.emit('content.created', { kind: 'post', id: 'mine', confirmed: false, post: mine });
+    });
+
+    expect(screen.getByText('my new post')).toBeTruthy();
+    expect(useOwnPosts.getState().ids).toEqual(['mine']);
+  });
+
+  it('shows the offline banner, and a refresh offline ends at once (G-1, FEED-06)', async () => {
+    jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: false } as ReturnType<typeof NetInfo.useNetInfo>);
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+
+    expect(screen.getByTestId('offline-banner')).toBeTruthy();
+    expect(checkNew()).not.toHaveBeenCalled();
+
+    act(() => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+    expect(useToastStore.getState().current?.message).toBe("You're offline. Showing saved posts.");
+    expect(home()).toHaveBeenCalledTimes(1);
+  });
+});

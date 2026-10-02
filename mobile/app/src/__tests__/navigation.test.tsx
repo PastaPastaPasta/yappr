@@ -22,7 +22,7 @@ describe('app shell', () => {
     const app = await renderApp('/');
 
     expect(app.getPathname()).toBe('/');
-    expect(screen.getByText('Coming in the feed PR')).toBeTruthy();
+    expect(screen.getByTestId('home-header')).toBeTruthy();
     for (const name of TABS) expect(tab(name)).toBeTruthy();
   });
 
@@ -96,7 +96,7 @@ describe('app shell', () => {
   // Every 1.0 screen has a reachable stub (EXECUTION M1 exit check). Reached
   // in-app, since links may not open some of them (+native-intent).
   it.each([
-    ['/', 'feed'],
+    ['/', null],
     ['/explore', 'explore and search'],
     ['/explore/search?q=dash', 'explore and search'],
     ['/explore/search/people?q=dash', 'explore and search'],
