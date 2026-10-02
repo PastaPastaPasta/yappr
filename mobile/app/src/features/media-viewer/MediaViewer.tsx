@@ -442,8 +442,10 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
     });
   const step = (by: number) => {
     const target = Math.min(count - 1, Math.max(0, index + by));
+    if (target === index) return;
     page.set(target);
     dragX.set(0);
+    resetZoom();
     setIndex(target);
   };
 
