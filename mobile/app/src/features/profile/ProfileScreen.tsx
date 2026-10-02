@@ -96,19 +96,24 @@ function ProfileTabList({
   // top bar: otherwise a stuck start is clamped short and the pinned copy shows twice.
   const [spacer, setSpacer] = useState(0);
   const spacerRef = useRef(0);
-  const viewport = useRef(0);
-  const pendingStick = useRef(startStuck);
-  const onContentSizeChange = (_width: number, height: number) => {
-    if (viewport.current <= 0 || stickOffset <= 0) return;
-    const needed = Math.max(0, Math.ceil(viewport.current + stickOffset - (height - spacerRef.current)));
+  const measured = useRef({ viewport: 0, content: 0 });
+  // Held until the user scrolls: content that shrinks (skeleton to posts) clamps the offset,
+  // and the next pass puts the tabs back.
+  const holdStick = useRef(startStuck);
+  const settle = () => {
+    const { viewport, content } = measured.current;
+    if (viewport <= 0 || content <= 0 || stickOffset <= 0) return;
+    const needed = Math.max(0, Math.ceil(viewport + stickOffset - (content - spacerRef.current)));
     if (Math.abs(needed - spacerRef.current) > 1) {
       spacerRef.current = needed;
       setSpacer(needed);
       return;
     }
-    if (pendingStick.current && height - viewport.current >= stickOffset) {
-      pendingStick.current = false;
-      listRef.current?.scrollToOffset({ offset: stickOffset, animated: false });
+    if (holdStick.current && content - viewport >= stickOffset - 1) {
+      // After this layout pass: scrolling from inside it is clamped to the old content size.
+      requestAnimationFrame(() => {
+        if (holdStick.current) listRef.current?.scrollToOffset({ offset: stickOffset, animated: false });
+      });
     }
   };
   const posts = useEngineInfiniteQuery<ProfileItem>(
@@ -196,11 +201,18 @@ function ProfileTabList({
       }}
       onEndReachedThreshold={1.5}
       onScroll={onScroll}
+      onScrollBeginDrag={() => {
+        holdStick.current = false;
+      }}
       scrollEventThrottle={16}
       onLayout={(event) => {
-        viewport.current = event.nativeEvent.layout.height;
+        measured.current.viewport = event.nativeEvent.layout.height;
+        settle();
       }}
-      onContentSizeChange={onContentSizeChange}
+      onContentSizeChange={(_width, height) => {
+        measured.current.content = height;
+        settle();
+      }}
       contentInsetAdjustmentBehavior="never"
       refreshControl={
         <RefreshControl
@@ -248,7 +260,8 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const y = event.nativeEvent.contentOffset.y;
     // Only the thresholds matter: re-render when one is crossed, not on every frame.
-    const next = y > bannerHeight - barHeight ? (headerHeight > 0 && y > headerHeight - barHeight ? 2 : 1) : 0;
+    // Stuck from the exact offset a stuck tab switch opens at, so the next switch stays stuck too.
+    const next = y > bannerHeight - barHeight ? (headerHeight > 0 && y >= headerHeight - barHeight - 1 ? 2 : 1) : 0;
     setScrollY((current) => (current === next ? current : next));
   };
   const tabsStuck = scrollY === 2;
