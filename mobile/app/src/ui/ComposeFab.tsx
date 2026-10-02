@@ -2,6 +2,8 @@ import { router } from 'expo-router';
 import { Pressable } from 'react-native';
 import { PlusIcon } from 'react-native-heroicons/outline';
 
+import { requireAuth } from '~/data/require-auth';
+
 import { lightImpact } from './haptics';
 import { colors } from './tokens';
 
@@ -13,7 +15,8 @@ import { colors } from './tokens';
 export function ComposeFab() {
   const onPress = () => {
     lightImpact();
-    router.push('/compose');
+    // Signed out, the sign-in sheet opens first (PRD COMP-11, G-8).
+    requireAuth(() => router.push('/compose'));
   };
 
   return (

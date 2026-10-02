@@ -1,5 +1,9 @@
 import { router, type Href } from 'expo-router';
+import type { SessionDTO } from '@engine/api';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+
+import { useSignInPrompt } from '~/data/require-auth';
+import { useSessionStore } from '~/data/session';
 
 // Resolved against Jest's cwd, mobile/app.
 const APP_DIR = './src/app';
@@ -35,11 +39,23 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/messages');
   });
 
-  it('opens compose from the floating button', async () => {
+  it('opens compose from the floating button, signed in', async () => {
     const app = await renderApp('/');
 
+    act(() => useSessionStore.setState({ status: 'signed-in', session: { identityId: ID } as SessionDTO }));
     fireEvent.press(screen.getByTestId('compose-fab'));
     expect(app.getPathname()).toBe('/compose');
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+  });
+
+  it('asks a signed-out user to sign in instead of opening compose (PRD COMP-11)', async () => {
+    const app = await renderApp('/');
+
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    fireEvent.press(screen.getByTestId('compose-fab'));
+    expect(app.getPathname()).toBe('/');
+    expect(useSignInPrompt.getState().open).toBe(true);
+    act(() => useSignInPrompt.setState({ open: false }));
   });
 
   it('pushes shared detail screens onto the current tab and keeps each tab’s history', async () => {
@@ -126,7 +142,7 @@ describe('app shell', () => {
     ['/settings/appearance', 'settings and bookmarks'],
     ['/settings/about', 'settings and bookmarks'],
     ['/settings/diagnostics', null],
-    ['/compose', 'compose'],
+    ['/compose', null],
     ['/media?postId=abc123&index=0', 'post detail'],
     ['/terms-gate', 'safety'],
     ['/lockdown', null],

@@ -90,7 +90,8 @@ export default function RootLayout() {
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
                   {/* Root modals (UX_SPEC §3.2). Titles come from the screens. */}
-                  <Stack.Screen name="compose" options={FULL_SCREEN} />
+                  {/* Compose draws its own header (UX_SPEC §4.11); a modal's header can't be hidden from the screen. */}
+                  <Stack.Screen name="compose" options={{ ...FULL_SCREEN, headerShown: false }} />
                   <Stack.Screen
                     name="sign-in"
                     options={{ presentation: 'modal', headerShown: false }}
