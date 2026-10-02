@@ -36,6 +36,12 @@ export interface WriteSpec<V> {
   announceUnconfirmed?: boolean;
   onConfirmed?: (ticket: WriteTicket, vars: V) => void;
   /**
+   * The failure toast for a ticket, when the write has something more
+   * specific to say than the engine's message (a partly posted thread);
+   * null falls back to the default.
+   */
+  failureText?: (ticket: WriteTicket, vars: V) => string | null;
+  /**
    * What the write asks for (`like ? 'liked' : 'unliked'`). A write made
    * while one with the same key is pending is queued; if it asks for what
    * the pending one asked, the queue is dropped instead (a like, unlike,
@@ -203,7 +209,7 @@ function settle(ticket: WriteTicket): void {
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
       if (!latest) return;
       undo(entry);
-      fail(failureText(ticket.error, spec.failureMessage), retry);
+      fail(spec.failureText?.(ticket, entry.vars) ?? failureText(ticket.error, spec.failureMessage), retry);
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
       return;

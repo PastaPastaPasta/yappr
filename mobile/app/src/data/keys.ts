@@ -55,6 +55,8 @@ export const queryKeys = {
     stats: (id: string) => [...root, 'post', id, 'stats'] as const,
     /** `posts.poll`. */
     poll: (pollId: string) => [...root, 'poll', pollId] as const,
+    /** `safety.ownReport`: the viewer's report on this post or reply. */
+    ownReport: (id: string) => [...root, 'post', id, 'ownReport'] as const,
   },
 
   profile: {
@@ -82,6 +84,8 @@ export const queryKeys = {
 
   /** `notifications.list`. Never persisted. */
   notifications: (filter: NotificationFilter = 'all') => [...root, 'notifications', filter] as const,
+  /** Every `notifications.list` filter: a prefix of the key above. */
+  notificationsAll: [...root, 'notifications'] as const,
 
   /** `safety.blocked`. */
   blocked: [...root, 'blocked'] as const,

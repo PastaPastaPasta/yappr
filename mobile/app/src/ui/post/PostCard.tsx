@@ -321,7 +321,9 @@ function postAccessibilityLabel(
   else if (post.encrypted) parts.push('Private post.');
   else if (extras.content) parts.push(`${extras.content}.`);
   const { quoted } = post;
-  if (quoted) {
+  if (quoted?.viewer?.authorBlocked) {
+    parts.push(`${stubText('blocked', 'post')}.`);
+  } else if (quoted) {
     const hidden = extras.quoteCovered || quoted.encrypted || quoted.deleted;
     parts.push(`Quote: ${quoted.author.displayName}${hidden ? '' : `, ${quoted.content}`}.`);
   }
@@ -413,7 +415,9 @@ export const PostCard = memo(function PostCard({
     body = <PrivatePostPlaceholder name={post.author.displayName} onOpenWeb={actions.onOpenPrivate} />;
   } else {
     let quoteSlot: ReactNode = null;
-    if (post.quoted) {
+    if (post.quoted?.viewer?.authorBlocked) {
+      quoteSlot = <PostStub state="blocked" variant="embed" />;
+    } else if (post.quoted) {
       quoteSlot = (
         <QuoteEmbed
           post={post.quoted}
@@ -506,7 +510,7 @@ export const PostCard = memo(function PostCard({
           });
         }
       }
-      if (post.quoted)
+      if (post.quoted && !post.quoted.viewer?.authorBlocked)
         a11yActions.push({ name: 'quote', label: 'Open quoted post', run: actions.onQuotePress });
       const openPreview = actions.onLinkPreviewPress;
       const previewUrl = typeof linkPreview === 'object' ? external(linkPreview.url) : null;
