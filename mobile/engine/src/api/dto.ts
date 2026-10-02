@@ -264,6 +264,9 @@ export interface ProfileStatsDTO {
   following: number
 }
 
+/** Where a block comes from: the viewer's own block document, or only a block list they follow. */
+export type BlockSourceDTO = 'self' | 'list'
+
 export interface ProfileDTO {
   id: string
   /** Primary DPNS name (contested first, then shortest), without `.dash`. */
@@ -289,8 +292,16 @@ export interface ProfileDTO {
   /** Display only in 1.0 (tips are deferred). */
   paymentUris?: { scheme: string; uri: string; label?: string }[]
   stats: ProfileStatsDTO
-  /** Signed in only. `blocks` is `null` when the block lists could not be read. */
-  viewer?: { follows: boolean; blocks: boolean | null; isSelf: boolean }
+  /**
+   * Signed in only. `blocks`: the viewer sees this user as blocked, by their
+   * own block or by a block list they follow; `null` when the block lists
+   * could not be read. `blockedBy` says where the block comes from: `'self'`
+   * (the viewer's own block, which an unblock deletes; it wins when both
+   * apply), `'list'` (only a followed block list: an unblock cannot lift it,
+   * see `safety.unblock`'s `STILL_BLOCKED`), `null` when not blocked or
+   * unreadable.
+   */
+  viewer?: { follows: boolean; blocks: boolean | null; blockedBy: BlockSourceDTO | null; isSelf: boolean }
 }
 
 export interface PostMappingOptions {

@@ -141,6 +141,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   const newId = options.newId ?? (() => crypto.randomUUID())
   const handlers = new Map<WriteOp, WriteHandler>()
   const records = new Map<string, TicketRecord>()
+  const observers = new Set<(ticket: WriteTicket) => void>()
   const absenceRecheckMs = options.absenceRecheckMs ?? 2_000
 
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
@@ -205,6 +206,13 @@ export function createTicketStore(options: TicketStoreOptions) {
     persist()
     const ticket = clone(record.ticket)
     options.emit('write.status', ticket)
+    for (const observer of observers) {
+      try {
+        observer(clone(ticket))
+      } catch {
+        // An observer's failure never costs the write its report.
+      }
+    }
     return ticket
   }
 
@@ -242,25 +250,35 @@ export function createTicketStore(options: TicketStoreOptions) {
     const notSent = error instanceof NotSentError
     const classified = classify(notSent ? error.cause : error)
     const merged = withDocuments(id, documents)
-    // A transport failure during run() may come after the broadcast: lib signs, broadcasts and
-    // waits in one call. Only a handler's NotSentError, or a failure while it still reported
+    // Any failure during run() may come after the broadcast: lib signs, broadcasts and waits in
+    // one call. Only a handler's NotSentError, or a failure while it still reported
     // 'waiting-parent' (before any lib write call), proves nothing went out, and only while the
     // ticket names no unconfirmed document: an earlier part (a thread's) may already be out.
     const claimedNotSent = notSent || recordOf(id).ticket.stage === 'waiting-parent'
     const partlySent = merged.some(doc => !doc.confirmed)
     const transient = ['NETWORK', 'RATE_LIMITED', 'TIMEOUT'].includes(classified.code)
     let data: EngineErrorData = classified
-    let state = ticketStateFor(classified)
+    let state: 'failed' | 'unconfirmed' = 'failed'
     if (claimedNotSent && partlySent) {
       data = { ...classified, outcome: 'unknown', retryable: false }
       state = 'unconfirmed'
-    } else if (notSent && classified.outcome === 'unknown') {
+    } else if (notSent) {
       // Proved never sent: a would-be "maybe landed" is plainly failed, and a transient one may be retried.
-      data = { ...classified, outcome: 'not-sent', retryable: transient }
-      state = 'failed'
-    } else if (!claimedNotSent && (classified.code === 'NETWORK' || classified.code === 'RATE_LIMITED')) {
-      data = { ...classified, outcome: 'unknown', retryable: false }
-      state = ticketStateFor(data)
+      if (classified.outcome === 'unknown') data = { ...classified, outcome: 'not-sent', retryable: transient }
+    } else if (claimedNotSent) {
+      // 'waiting-parent': before lib's write call, so a transport failure there (outcome not-sent)
+      // stays failed and retryable; a timeout or a nonce refusal may still be the write's, as before.
+      if (classified.outcome === 'unknown') {
+        state = 'unconfirmed'
+        data = { ...classified, retryable: false }
+      }
+    } else {
+      // Past any pre-broadcast stage, only a verdict (a consensus refusal, a proved absence, or one
+      // of lib's pre-signing errors) makes it failed. Anything else (a transport failure such as
+      // wasm's "Failed to fetch", a timeout, an unrecognised error) may have landed: unconfirmed,
+      // and not retryable until a check proves it absent.
+      state = ticketStateFor(classified)
+      if (state === 'unconfirmed') data = { ...classified, outcome: 'unknown', retryable: false }
     }
     const ticket = update(id, {
       state,
@@ -357,6 +375,16 @@ export function createTicketStore(options: TicketStoreOptions) {
     /** Register how `op` runs; M7b's write methods each register one. */
     register<A>(op: WriteOp, handler: WriteHandler<A>): void {
       handlers.set(op, handler)
+    },
+
+    /**
+     * Call `observer` with every ticket transition the store reports
+     * (`write.status`), for engine-side caches a write makes stale. Returns
+     * the unsubscribe.
+     */
+    observe(observer: (ticket: WriteTicket) => void): () => void {
+      observers.add(observer)
+      return () => { observers.delete(observer) }
     },
 
     /**

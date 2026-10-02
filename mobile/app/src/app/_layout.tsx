@@ -4,7 +4,6 @@ import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { StatusBar } from 'expo-status-bar';
 import { useColorScheme } from 'nativewind';
 import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -21,6 +20,7 @@ import { MediaUrlProvider } from '~/ui/media-url';
 import { ToastHost } from '~/ui/ToastHost';
 import { persistOptions, queryClient } from '~/state/query-client';
 import { stackScreenOptions } from '~/ui/stack-options';
+import { ThemedStatusBar } from '~/ui/ThemedStatusBar';
 import { navigationTheme } from '~/ui/tokens';
 
 /** Deep links into a modal or a tab still have the tabs underneath. */
@@ -141,7 +141,7 @@ export default function RootLayout() {
                 <ToastHost />
                 {/* Welcome, the terms gate, the account switcher and the app lock (S1); the lock stays on top. */}
                 <AuthGates />
-                <StatusBar style="auto" />
+                <ThemedStatusBar />
               </BottomSheetModalProvider>
             </AvatarSvgProvider>
           </MediaUrlProvider>
