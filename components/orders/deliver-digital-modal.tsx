@@ -22,14 +22,14 @@ interface DeliverDigitalModalProps {
   kits: ReadonlyMap<string, SellerKit>
   sellerId: string
   sellerPrivateKey: Uint8Array
-  /** True when this order already has a delivery: sending again reuses no license keys by default. */
+  /** True when this order already has a delivery: sending again takes no new unique codes by default. */
   alreadyDelivered: boolean
   onDelivered: (result: FulfillOrderResult) => void
 }
 
 /**
- * Deliver an order's digital lines: each line's kit (files, links, license
- * keys, instructions), plus anything the seller attaches for this order only
+ * Deliver an order's digital lines: each line's kit (links, codes, files,
+ * unique codes, instructions), plus anything the seller adds for this order only
  * and a message. The result is encrypted so only this order's buyer can read it.
  */
 export function DeliverDigitalModal({
@@ -154,8 +154,8 @@ export function DeliverDigitalModal({
               </p>
               {planned ? (
                 <p className="text-xs text-gray-500">
-                  {planned.assets.length} file{planned.assets.length === 1 ? '' : 's'}/link{planned.assets.length === 1 ? '' : 's'}
-                  {planned.licenseKeys ? ` · ${planned.licenseKeys.length} license key${planned.licenseKeys.length === 1 ? '' : 's'}` : ''}
+                  {planned.assets.length} link{planned.assets.length === 1 ? '' : 's'}/code{planned.assets.length === 1 ? '' : 's'}/file{planned.assets.length === 1 ? '' : 's'}
+                  {planned.licenseKeys ? ` · ${planned.licenseKeys.length} unique code${planned.licenseKeys.length === 1 ? '' : 's'}` : ''}
                   {planned.instructions ? ' · instructions' : ''}
                 </p>
               ) : (
@@ -163,7 +163,7 @@ export function DeliverDigitalModal({
               )}
               <details>
                 <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">
-                  Attach files or links for this order only
+                  Add a link, code or file for this order only
                 </summary>
                 <div className="mt-2">
                   <DigitalAssetListEditor
@@ -172,6 +172,7 @@ export function DeliverDigitalModal({
                     onBusyChange={(busy) => setLineUploading(`${line.itemId}-${line.variantKey ?? ''}-${index}`, busy)}
                     identityId={sellerId}
                     disabled={isSubmitting}
+                    forOneOrder
                   />
                 </div>
               </details>
@@ -189,7 +190,7 @@ export function DeliverDigitalModal({
               className="mt-0.5 w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
             />
             <span className="text-sm">
-              Issue new license keys
+              Issue new unique codes
               <span className="block text-xs text-gray-500">The keys from the earlier delivery stay in the buyer&apos;s library either way.</span>
             </span>
           </label>

@@ -6,6 +6,7 @@ import { ArrowDownTrayIcon, ArrowTopRightOnSquareIcon, ClipboardIcon, DocumentIc
 import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { fetchDecryptedFile, formatFileSize, saveBlob, type DigitalFileAsset } from '@/lib/services/digital-file-service'
+import { isSafeDeliveryUrl } from '@/lib/services/digital-delivery-plan'
 import { getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
 import { formatDate } from '@/lib/utils/format'
 import type { OrderDelivery, OrderDeliveryPayload } from '@/lib/types'
@@ -46,7 +47,55 @@ function copy(text: string, label: string) {
     .catch(() => toast.error('Failed to copy'))
 }
 
-/** One delivery's goods: downloads, links, license keys and the seller's notes. */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={`Copy ${label.toLowerCase()}`}
+      onClick={() => copy(text, label)}
+      className="p-1 text-gray-500 hover:text-yappr-500 flex-shrink-0"
+    >
+      <ClipboardIcon className="h-4 w-4" />
+    </button>
+  )
+}
+
+/** A link the buyer opens, with a copy button (and its access code, when it has one). */
+function LinkRow({ label, url, code }: { label: string; url: string; code?: string }) {
+  return (
+    <li className="space-y-1">
+      <div className="flex items-center gap-2">
+        <a
+          // ipfs:// links open through a gateway (other URLs come back as themselves);
+          // decodeDelivery already refused any scheme but http(s), magnet and ipfs.
+          href={getAllGatewayUrls(url)[0]}
+          target="_blank"
+          rel="noopener noreferrer nofollow"
+          className="inline-flex items-center gap-1.5 text-sm text-yappr-600 hover:underline break-all min-w-0"
+        >
+          <ArrowTopRightOnSquareIcon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          {label}
+        </a>
+        <CopyButton text={url} label="Link" />
+      </div>
+      {code && <CodeRow label="Access code" code={code} />}
+    </li>
+  )
+}
+
+/** Text to copy: an access code, a voucher, a license key. */
+function CodeRow({ label, code }: { label: string; code: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <KeyIcon className="h-4 w-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
+      <span className="text-xs text-gray-500 flex-shrink-0">{label}:</span>
+      <code className="flex-1 min-w-0 text-sm font-mono break-all">{code}</code>
+      <CopyButton text={code} label={label} />
+    </div>
+  )
+}
+
+/** One delivery's goods: links, codes, downloads, unique codes and the seller's notes. */
 function DeliveryBody({ payload }: { payload: OrderDeliveryPayload }) {
   return (
     <div className="space-y-3">
@@ -58,40 +107,19 @@ function DeliveryBody({ payload }: { payload: OrderDeliveryPayload }) {
           </p>
           {item.assets.length > 0 && (
             <ul className="space-y-2">
-              {item.assets.map((asset, assetIndex) => asset.kind === 'file' ? (
-                <FileRow key={assetIndex} asset={asset} />
-              ) : (
-                <li key={assetIndex}>
-                  <a
-                    // ipfs:// links open through a gateway (other URLs come back as themselves);
-                    // decodeDelivery already refused any scheme but http(s) and ipfs.
-                    href={getAllGatewayUrls(asset.url)[0]}
-                    target="_blank"
-                    rel="noopener noreferrer nofollow"
-                    className="inline-flex items-center gap-1.5 text-sm text-yappr-600 hover:underline break-all"
-                  >
-                    <ArrowTopRightOnSquareIcon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
-                    {asset.label}
-                  </a>
-                </li>
-              ))}
+              {item.assets.map((asset, assetIndex) => {
+                if (asset.kind === 'file') return <FileRow key={assetIndex} asset={asset} />
+                if (asset.kind === 'link') return <LinkRow key={assetIndex} label={asset.label} url={asset.url} code={asset.code} />
+                return <li key={assetIndex}><CodeRow label={asset.label} code={asset.code} /></li>
+              })}
             </ul>
           )}
           {item.licenseKeys && item.licenseKeys.length > 0 && (
             <ul className="space-y-1">
-              {item.licenseKeys.map((key, keyIndex) => (
-                <li key={keyIndex} className="flex items-center gap-2">
-                  <KeyIcon className="h-4 w-4 text-gray-400 flex-shrink-0" aria-hidden="true" />
-                  <code className="flex-1 min-w-0 text-sm font-mono break-all">{key}</code>
-                  <button
-                    type="button"
-                    aria-label="Copy license key"
-                    onClick={() => copy(key, 'License key')}
-                    className="p-1 text-gray-500 hover:text-yappr-500"
-                  >
-                    <ClipboardIcon className="h-4 w-4" />
-                  </button>
-                </li>
+              {item.licenseKeys.map((entry, keyIndex) => isSafeDeliveryUrl(entry) ? (
+                <LinkRow key={keyIndex} label={entry} url={entry} />
+              ) : (
+                <li key={keyIndex}><CodeRow label={item.licenseKeys?.length === 1 ? 'Your code' : `Code ${keyIndex + 1}`} code={entry} /></li>
               ))}
             </ul>
           )}

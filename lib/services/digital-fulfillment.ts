@@ -72,7 +72,7 @@ export class KeyRecoveryError extends Error {
   /** Seller-facing recovery instructions, keys included. Show it; never log it. */
   recoveryText(): string {
     const lines = this.#entries.map((entry) => `"${entry.itemTitle}": ${entry.keys.join(', ')}`);
-    return `${this.message} Check these products' pools and re-add any of these keys not already there: ${lines.join('; ')}.`;
+    return `${this.message} Check these products' unique codes and re-add any of these not already there: ${lines.join('; ')}.`;
   }
 }
 
@@ -150,7 +150,7 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
       const recovery = await restorePools(input, updatedKits);
       // This pool's own write may have landed unseen: its keys may be gone too.
       if (error instanceof KitWriteUncertainError) recovery.push(keysTaken(input, itemId));
-      const message = `Nothing was delivered: the license keys for "${titleOf(input.delivery, itemId)}" could not be reserved (${error instanceof Error ? error.message : 'unknown error'}).`;
+      const message = `Nothing was delivered: the unique codes for "${titleOf(input.delivery, itemId)}" could not be reserved (${error instanceof Error ? error.message : 'unknown error'}).`;
       if (recovery.length > 0) throw new KeyRecoveryError(message, recovery, { cause: error });
       throw new Error(message, { cause: error });
     }
@@ -175,7 +175,7 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
       // Not seen on chain, which does not prove it never will be: keep the keys reserved.
       const message = 'The delivery could not be confirmed. Check the order before delivering again.';
       const keys = reserved();
-      if (keys.length > 0) throw new KeyRecoveryError(`${message} If it never arrives, its license keys are out of their pools.`, keys, { cause: error });
+      if (keys.length > 0) throw new KeyRecoveryError(`${message} If it never arrives, its unique codes are out of their pools.`, keys, { cause: error });
       throw new Error(message, { cause: error });
     }
     delivery = { ...found, payload: input.delivery };
