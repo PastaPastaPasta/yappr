@@ -11,7 +11,9 @@ import {
   addAccount,
   finishWalletSwitch,
   reauthenticate,
+  reauthTarget,
   returnFromAddAccount,
+  startReauthTracking,
   signOutAccount,
   switchAccount,
   useAccounts,
@@ -161,6 +163,26 @@ it('says so when signing in again could not start', async () => {
   expect(router.push).not.toHaveBeenCalled();
   expect(useToastStore.getState().current?.message).toBe("Couldn't start signing in again. Please try again.");
   expect(useAccounts.getState().reauth).toBeNull();
+});
+
+it('honours a sign-in-again target only while its account is marked, and drops it on a sign-in or switch', () => {
+  useAccounts.setState({ reauth: 'alice' });
+  expect(reauthTarget()).toBeNull();
+  markSessionExpired('alice');
+  expect(reauthTarget()).toBe('alice');
+
+  const stop = startReauthTracking();
+  try {
+    fakeEngine.emit('session.changed', { session: session('alice'), reason: 'restored' });
+    expect(useAccounts.getState().reauth).toBe('alice');
+    fakeEngine.emit('session.changed', { session: session('bob'), reason: 'switched' });
+    expect(useAccounts.getState().reauth).toBeNull();
+    useAccounts.setState({ reauth: 'alice' });
+    fakeEngine.emit('session.changed', { session: session('carol'), reason: 'signed-in' });
+    expect(useAccounts.getState().reauth).toBeNull();
+  } finally {
+    stop();
+  }
 });
 
 it('forgets the "Sign in again" mark of an account signed out', async () => {

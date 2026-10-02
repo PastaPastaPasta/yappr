@@ -10,6 +10,7 @@ import KeySignInScreen from '~/app/sign-in/key';
 import RegisterKeysScreen from '~/app/sign-in/register';
 import TermsGateScreen from '~/app/terms-gate';
 import { useSessionStore } from '~/data/session';
+import { markSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
 import { useAccounts } from './accounts';
@@ -50,6 +51,7 @@ beforeEach(() => {
   useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
   useTermsStore.setState({ accepted: {} });
   useAccounts.setState({ reauth: null });
+  useExpiredSessions.setState({ ids: [] });
 });
 afterEach(() => jest.useRealTimers());
 
@@ -146,6 +148,7 @@ describe('private key sign-in (AUTH-08)', () => {
   });
 
   it('signs an account being signed in again in with the new key, never switching back to its old one (AUTH-14)', async () => {
+    markSessionExpired(alice.identityId);
     useAccounts.setState({ reauth: alice.identityId });
     useSessionStore.setState({
       accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
@@ -177,9 +180,16 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     expect(router.push).toHaveBeenCalledWith('/sign-in/qr');
   });
 
-  it('says whose session expired when signing an account in again (AUTH-14)', async () => {
+  it('says whose session expired when signing an account in again, and nothing for a leftover target (AUTH-14)', async () => {
     jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
+    // Left over from a flow that ended: the account no longer needs signing in again.
     useAccounts.setState({ reauth: alice.identityId });
+    const { unmount } = render(<SignInScreen />);
+    await act(async () => {});
+    expect(screen.queryByTestId('sign-in-reauth')).toBeNull();
+    unmount();
+
+    markSessionExpired(alice.identityId);
     useSessionStore.setState({
       accounts: [{ identityId: alice.identityId, username: 'alice.dash', method: 'key', lastUsedAt: new Date(), active: false }],
     });

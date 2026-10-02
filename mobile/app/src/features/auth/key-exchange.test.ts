@@ -3,7 +3,7 @@ import { Linking } from 'react-native';
 
 import { fakeEngine } from '~/data/testing/fake-engine';
 
-import { finishWalletSwitch, useAccounts } from './accounts';
+import { finishWalletSwitch, reauthTarget } from './accounts';
 import {
   cancelKeyExchange,
   checkAgain,
@@ -20,10 +20,7 @@ import {
 } from './key-exchange';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
-jest.mock('./accounts', () => ({
-  finishWalletSwitch: jest.fn(),
-  useAccounts: jest.requireActual<typeof import('zustand')>('zustand').create(() => ({ reauth: null as string | null })),
-}));
+jest.mock('./accounts', () => ({ finishWalletSwitch: jest.fn(), reauthTarget: jest.fn(() => null) }));
 
 const NOW = Date.now();
 const request = (id = 'r1', expiresIn = 10 * 60_000): KeyExchangeRequestDTO => ({
@@ -76,7 +73,7 @@ describe('wallet sign-in', () => {
   });
 
   it('asks the engine to log in afresh the account being signed in again (AUTH-14)', async () => {
-    useAccounts.setState({ reauth: 'id1' });
+    jest.mocked(reauthTarget).mockReturnValueOnce('id1');
     fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
     fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({ status: 'signed-in', session });
 
@@ -84,7 +81,6 @@ describe('wallet sign-in', () => {
 
     expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledWith({ reauth: 'id1' });
     expect(phase()).toEqual({ name: 'signed-in', session });
-    useAccounts.setState({ reauth: null });
   });
 
   it('shows the QR without opening anything', async () => {

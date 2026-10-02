@@ -5,7 +5,7 @@ import { CheckCircleIcon, ExclamationCircleIcon } from 'react-native-heroicons/o
 
 import { useSessionStore } from '~/data/session';
 import { engine } from '~/engine';
-import { accountName, switchAccount, useAccounts } from '~/features/auth/accounts';
+import { accountName, switchAccount, useReauthTarget } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
 import { isTransient, keyErrorText } from '~/features/auth/errors';
 import { useCloseSignIn } from '~/features/auth/navigation';
@@ -55,7 +55,7 @@ export default function KeySignInScreen() {
   const close = useCloseSignIn();
   const accounts = useSessionStore((s) => s.accounts);
   const activeId = useSessionStore((s) => s.session?.identityId ?? null);
-  const reauth = useAccounts((s) => s.reauth);
+  const reauth = useReauthTarget();
   const [key, setKey] = useState('');
   const [check, setCheck] = useState<Check>({ state: 'idle' });
   useBlockScreenCapture('secret', useIsFocused());

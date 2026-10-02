@@ -5,7 +5,7 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDownIcon, ChevronRightIcon, KeyIcon, LinkIcon } from 'react-native-heroicons/outline';
 
 import { useSessionStore } from '~/data/session';
-import { accountName, useAccounts } from '~/features/auth/accounts';
+import { accountName, useReauthTarget } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
 import { FEATURE_APP_CONNECT, links, openInApp } from '~/features/auth/onboarding';
 import { useCloseSignIn } from '~/features/auth/navigation';
@@ -82,7 +82,7 @@ export default function SignInScreen() {
   const close = useCloseSignIn();
   const walletInstalled = useWalletInstalled();
   const [showOther, setShowOther] = useState(false);
-  const reauth = useAccounts((s) => s.reauth);
+  const reauth = useReauthTarget();
   const reauthAccount = useSessionStore((s) => s.accounts.find((a) => a.identityId === reauth));
   const reauthName = reauth ? accountName(reauthAccount ?? { identityId: reauth, username: null }) : null;
 

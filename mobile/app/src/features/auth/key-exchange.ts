@@ -7,7 +7,7 @@ import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
-import { finishWalletSwitch, useAccounts } from './accounts';
+import { finishWalletSwitch, reauthTarget } from './accounts';
 import { copy } from './copy';
 import { isTransient, walletErrorText } from './errors';
 import { networkName } from './onboarding';
@@ -186,7 +186,7 @@ export async function startKeyExchange(
   try {
     const pending = resume ? await engine.api.session.pendingKeyExchange() : null;
     // Signing an account in again (AUTH-14): the wallet's answer for it logs in, never switches back.
-    request = pending ?? (await engine.api.session.startKeyExchange({ reauth: useAccounts.getState().reauth }));
+    request = pending ?? (await engine.api.session.startKeyExchange({ reauth: reauthTarget() }));
     // Cancelled while the request was being made: abandon it, or the next launch would resume it.
     if (stale(gen) && get().phase.name === 'idle') abandon(request);
   } catch (error) {

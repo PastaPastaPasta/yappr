@@ -2,8 +2,9 @@ import type { AccountDTO, SessionDTO } from '@engine/api';
 import { router } from 'expo-router';
 import { create } from 'zustand';
 
+import { onEngineEvent } from '~/data/events';
 import { useSessionStore } from '~/data/session';
-import { clearSessionExpired } from '~/data/session-expiry';
+import { clearSessionExpired, isSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { handleOf } from '~/ui/handle';
@@ -199,6 +200,31 @@ export function addAccount(): Promise<void> {
  */
 export function reauthenticate(identityId: string): Promise<void> {
   return signInBesideCurrent({ label: copy.accounts.reauthing, failed: copy.accounts.reauthFailed, reauth: identityId });
+}
+
+/**
+ * The account the sign-in flow is signing in again, while it still needs it
+ * (marked "Sign in again"): a leftover target never changes a later sign-in.
+ */
+export function reauthTarget(): string | null {
+  const { reauth } = useAccounts.getState();
+  return isSessionExpired(reauth) ? reauth : null;
+}
+
+/** `reauthTarget`, re-rendering when it changes. */
+export function useReauthTarget(): string | null {
+  const reauth = useAccounts((s) => s.reauth);
+  return useSessionExpired(reauth) ? reauth : null;
+}
+
+/**
+ * A sign-in or switch ends any "sign in again" flow (mounted by `AuthGates`):
+ * whatever happens next is not that flow.
+ */
+export function startReauthTracking(): () => void {
+  return onEngineEvent('session.changed', ({ reason }) => {
+    if (reason === 'signed-in' || reason === 'switched') useAccounts.setState({ reauth: null });
+  });
 }
 
 /**

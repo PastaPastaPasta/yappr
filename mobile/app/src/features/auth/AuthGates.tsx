@@ -14,7 +14,7 @@ import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
-import { reauthenticate, returnFromAddAccount, useAccounts } from './accounts';
+import { reauthenticate, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
@@ -112,7 +112,6 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
  * this flow; it ends once that account is signed in again.
  */
 function useReauthFlow(): void {
-  const { identityId } = useSession();
   useEffect(
     () =>
       setReauthHandler((id) => {
@@ -120,9 +119,7 @@ function useReauthFlow(): void {
       }),
     [],
   );
-  useEffect(() => {
-    if (identityId !== null && useAccounts.getState().reauth === identityId) useAccounts.setState({ reauth: null });
-  }, [identityId]);
+  useEffect(() => startReauthTracking(), []);
 }
 
 /** Switching or adding an account restarts the engine; say so over everything until it is back. */
