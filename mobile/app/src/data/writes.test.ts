@@ -297,6 +297,27 @@ describe('submitWrite', () => {
     }
   });
 
+  it("never adopts another write's ticket that already settled, when it is listed again", async () => {
+    const onAdopted = jest.fn();
+    // As `dm.send`: any ticket of the op could be the cut-short call's.
+    const matching = { ...spec, matches: (t: WriteTicket) => t.op === 'like', onAdopted };
+    fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    expect((await runWrite(matching, target)).status).toBe('unknown');
+
+    // A later write lands and settles.
+    const other: TargetRef = { ...target, id: `${target.id}-other` };
+    const later = ticket({ target: other });
+    fakeEngine.method('engage.like').mockResolvedValueOnce(later);
+    expect((await runWrite(matching, other)).status).toBe('submitted');
+    act(() => fakeEngine.emit('write.status', advance(later, { state: 'confirmed' })));
+
+    fakeEngine.method('writes.list').mockResolvedValueOnce([advance(later, { state: 'confirmed' })]);
+    await act(async () => {
+      await adoptRestoredWrites();
+    });
+    expect(onAdopted).not.toHaveBeenCalled();
+  });
+
   it('undoes and toasts a refused call, and asks to sign in for NOT_SIGNED_IN', async () => {
     fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('bad'), { code: 'BAD_REQUEST' }));
     await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused' });

@@ -22,7 +22,7 @@ import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { SessionEvents } from './session'
-import { NotSentError, type TicketStore } from '../writes/tickets'
+import { NotSentError, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import { avatarFromField, type AuthorDTO, type Page } from './dto'
 
@@ -44,6 +44,12 @@ const GROUP_NAME_MAX_BYTES = 200
 const MAX_SEND_PARTS = 20
 /** A sent message's block time can trail its ticket by this much. */
 const SENT_MATCH_SLACK_MS = 60_000
+/**
+ * A `dm.send` call still before its ticket this long after it started is
+ * refused: the host gives a send's text back to the composer when no ticket
+ * shows 60 s after it (`UNTICKETED_WAIT_MS`), so none may appear later.
+ */
+const SEND_SUBMIT_DEADLINE_MS = 45_000
 
 export interface DmModuleOptions {
   emit(event: string, payload: unknown): void
@@ -191,13 +197,17 @@ export function createDmModule(options: DmModuleOptions) {
    * parts, re-split past the ones already out, since lib trims what it
    * sends) and how many are out, so a retry sends only the rest (SR-18).
    */
-  const partial = new Map<string, { parts: string[]; sent: number }>()
+  const partial = new Map<string, { identityId: string; parts: string[]; sent: number }>()
   const partsFor = (args: SendArgs, ticketId: string) => partial.get(ticketId)?.parts ?? partsOf(args.text)
 
-  /** After a long send failed: claim and record the parts that went out before it did. */
-  async function notePartlySent(args: SendArgs, ticketId: string): Promise<void> {
+  /**
+   * After a v5 send failed: claim and record the parts that went out before
+   * it did. True when every part is out (lib failed after the last one was
+   * held), so the send is delivered and a retry would send it again.
+   */
+  async function notePartlySent(args: SendArgs, ticketId: string): Promise<boolean> {
+    if (backend.kind !== 'v5' || halted) return false
     const parts = partsFor(args, ticketId)
-    if (parts.length < 2 || halted) return
     const pool = await freshOwn(args, ticketId, 0)
     let sent = 0
     for (const part of parts) {
@@ -206,7 +216,9 @@ export function createDmModule(options: DmModuleOptions) {
       claimed.set(claimKey(args.key, pool.splice(index, 1)[0].id), ticketId)
       sent += 1
     }
-    if (sent > 0) partial.set(ticketId, { parts: [...parts.slice(0, sent), ...partsOf(parts.slice(sent).join(''))], sent })
+    if (sent === parts.length) return true
+    if (sent > 0) partial.set(ticketId, { identityId: args.identityId, parts: [...parts.slice(0, sent), ...partsOf(parts.slice(sent).join(''))], sent })
+    return false
   }
 
   /** Claim, for `ticketId`, one fresh message per part; false when a part has none. */
@@ -252,12 +264,17 @@ export function createDmModule(options: DmModuleOptions) {
       // A retry after a long send failed part way sends only the parts that did not go out.
       const earlier = partial.get(id)
       const text = earlier ? earlier.parts.slice(earlier.sent).join('') : args.text
-      let result: Awaited<ReturnType<typeof backend.send>>
+      let result: WriteResult
       try {
         result = await running(args.identityId, () => backend.send(args.identityId, args.key, text))
       } catch (error) {
-        await notePartlySent(args, id).catch(cause => logger.debug('DM send: could not record the parts sent:', cause))
-        throw error
+        const delivered = await notePartlySent(args, id).catch(cause => {
+          logger.debug('DM send: could not record the parts sent:', cause)
+          return false
+        })
+        if (!delivered) throw error
+        logger.debug('DM send: failed after every part was out, so it is sent:', error)
+        result = { state: 'confirmed' }
       }
       // Which of my messages this send made, so no other ticket's check counts them. Best effort:
       // the message is out, so a failed read here must never fail the ticket (or start an engine
@@ -410,6 +427,7 @@ export function createDmModule(options: DmModuleOptions) {
      * through `dm.changed` (`MessageDTO.pending` until read back on v5).
      */
     async send(key: string, text: string): Promise<WriteTicket> {
+      const calledAt = Date.now()
       const identityId = session()
       const conversation = keyOf(key)
       if (typeof text !== 'string' || !text.trim()) throw new RpcError('The message is empty', 'BAD_REQUEST')
@@ -420,6 +438,7 @@ export function createDmModule(options: DmModuleOptions) {
       // What is already mine, so "check again" never mistakes an earlier identical message for this one.
       const before = (await backend.messages(identityId, conversation)).filter(m => m.own).map(m => m.id)
       assertStill(identityId)
+      if (Date.now() - calledAt > SEND_SUBMIT_DEADLINE_MS) throw new RpcError('Sending took too long, so nothing was sent. Try again.', 'NETWORK')
       return options.tickets.submit<SendArgs>({ op: 'dm.send', args: { identityId, key: conversation, text, before }, target: { conversationKey: conversation } })
     },
 
@@ -586,6 +605,7 @@ export function createDmModule(options: DmModuleOptions) {
     /** `identityId` signed out: nothing of its messages may stay on the device (PRD AUTH-11). */
     forget: (identityId: string): void => {
       backend.forget(identityId)
+      for (const [ticketId, entry] of partial) if (entry.identityId === identityId) partial.delete(ticketId)
     },
     /** AppState: `background` resolves once the DM flush is done, or after the host's background budget. */
     lifecycle: (state: AppLifecycleState): Promise<void> => bounded(backend.lifecycle(state), LIFECYCLE_FLUSH_WAIT_MS, 'The DM lifecycle'),

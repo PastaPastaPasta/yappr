@@ -147,6 +147,16 @@ export function MessageSettingsScreen() {
     );
   }
 
+  // The engine runs but its saved state never loaded: say so, not two loading placeholders.
+  if (status.data?.error && !status.data.ready && !status.data.locked) {
+    return (
+      <Screen>
+        {header}
+        <ErrorState message="Couldn't load your message settings. Check your connection and try again." onRetry={() => refreshDm()} testID="dm-settings-error" />
+      </Screen>
+    );
+  }
+
   const retention = status.data?.retention ?? null;
   return (
     <Screen scroll>

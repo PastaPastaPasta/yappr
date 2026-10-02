@@ -66,6 +66,12 @@ interface SendAttempt {
   heldAtBroadcast: number
 }
 
+/** One engine's sends, run one at a time, and the one in progress. */
+interface SendLane {
+  queue: Promise<unknown>
+  attempt: SendAttempt | null
+}
+
 const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
 
 function toMessageDTO(view: MessageView): MessageDTO {
@@ -128,29 +134,35 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
   /** Saves still running for engines already stopped: their end rewrites lib's cache. */
   const flushes = new Map<string, Promise<unknown>>()
-  /** Sends run one at a time here, so a broadcast seen during one is its own (or, harmlessly, a group write's). */
-  let sending: Promise<unknown> = Promise.resolve()
-  let attempt: SendAttempt | null = null
-  const watched = new WeakSet<DmEngine>()
+  /**
+   * Each engine's sends, one at a time, so a broadcast seen during one is its
+   * own (or, harmlessly, a group write's). Per engine: a send hanging on an
+   * old account's engine never holds up the next account's.
+   */
+  const lanes = new WeakMap<DmEngine, SendLane>()
 
   /**
-   * Count `createMessage` broadcasts on the engine's chain for the send in
-   * progress. lib sends a long text part by part inside one call and reports
-   * a failure without saying whether the failing part was broadcast; this
-   * tells (SR-17).
+   * The engine's send lane, which counts `createMessage` broadcasts on its
+   * chain for the send in progress. lib sends a long text part by part inside
+   * one call and reports a failure without saying whether the failing part
+   * was broadcast; this tells (SR-17).
    */
-  function watchBroadcasts(running: DmEngine): void {
-    if (watched.has(running)) return
-    watched.add(running)
+  function laneOf(running: DmEngine): SendLane {
+    const known = lanes.get(running)
+    if (known) return known
+    const lane: SendLane = { queue: Promise.resolve(), attempt: null }
+    lanes.set(running, lane)
     const { chain } = running.ctx
     const createMessage = chain.createMessage.bind(chain)
     chain.createMessage = (tag, body) => {
+      const { attempt } = lane
       if (attempt) {
         attempt.broadcasts += 1
         attempt.heldAtBroadcast = ownMessages(running, attempt.key)
       }
       return createMessage(tag, body)
     }
+    return lane
   }
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
@@ -359,10 +371,10 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      */
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const running = engine(identityId)
-      watchBroadcasts(running)
-      const turn = sending.then(async () => {
+      const lane = laneOf(running)
+      const turn = lane.queue.then(async () => {
         const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0 }
-        attempt = current
+        lane.attempt = current
         try {
           await running.send(key, text)
         } catch (error) {
@@ -370,10 +382,10 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
           if (current.broadcasts === 0 || ownMessages(running, key) > current.heldAtBroadcast) throw new NotSentError(error)
           throw error
         } finally {
-          if (attempt === current) attempt = null
+          if (lane.attempt === current) lane.attempt = null
         }
       })
-      sending = turn.catch(() => undefined)
+      lane.queue = turn.catch(() => undefined)
       await turn
       return { state: 'confirmed' }
     },

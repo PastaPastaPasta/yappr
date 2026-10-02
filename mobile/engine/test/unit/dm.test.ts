@@ -106,6 +106,8 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
     dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
+    /** Signs in as `id` without a sign-out (`hooks.sessionChanged` starts its messages). */
+    switchTo: (id: string) => { signedIn = id },
     /** Whether this device holds no encryption key (the engine source answers null). */
     setLocked: (value: boolean) => { locked = value },
     /** The ticket's last `write.status`, once settled. */
@@ -367,6 +369,58 @@ describe('dm on DM v5: 1:1', () => {
     expect(ledger.messages).toHaveLength(written + 1)
   })
 
+  it('confirms a send that failed after its message was out, so a retry never sends it twice', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const engine = a.engine()
+    const send = engine.send.bind(engine)
+    const written = ledger.messages.length
+    // lib throws after the message was broadcast and held (saving its cache, say).
+    vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text) => {
+      await send(conversation, text)
+      throw new Error('The quota has been exceeded')
+    })
+    expect(await a.settled(await a.dm.send(key, 'once'))).toMatchObject({ state: 'confirmed', error: null })
+    expect(ledger.messages).toHaveLength(written + 1)
+  })
+
+  it('refuses a send still before its ticket after 45 s, so none shows after the host gave the text back', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    const engine = a.engine()
+    const messages = engine.messages.bind(engine)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // The reads before the ticket take 46 s.
+    vi.spyOn(engine, 'messages').mockImplementationOnce(conversation => {
+      vi.setSystemTime(Date.now() + 46_000)
+      return messages(conversation)
+    })
+    const written = ledger.messages.length
+    await expect(a.dm.send(key, 'late')).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(a.tickets.list().filter(t => t.op === 'dm.send')).toEqual([])
+    expect(ledger.messages).toHaveLength(written)
+  })
+
+  it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    vi.spyOn(a.engine(), 'send').mockReturnValue(new Promise<void>(() => undefined))
+    await a.dm.send(key, 'stuck')
+    await a.hooks.stop()
+    a.switchTo(carol)
+    a.hooks.sessionChanged(started(carol))
+    await ready(a)
+    const toBob = await a.dm.startDirect(bob)
+    expect(await a.settled(await a.dm.send(toBob, 'from carol'))).toMatchObject({ state: 'confirmed' })
+  })
+
   describe('a long send (several messages) that fails part way (SR-18)', () => {
     const PART = 4081
     const text = `${'a'.repeat(PART)}${'b'.repeat(PART)}${'c'.repeat(100)}`
@@ -400,6 +454,18 @@ describe('dm on DM v5: 1:1', () => {
       chain.hook = null
       await a.tickets.retry(ticket.id)
       expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('confirms a long send that failed after its last part was out', async () => {
+      const { a, b, key } = await sending()
+      const engine = a.engine()
+      const send = engine.send.bind(engine)
+      vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, parts) => {
+        await send(conversation, parts)
+        throw new Error('The quota has been exceeded')
+      })
+      expect(await a.settled(await a.dm.send(key, text))).toMatchObject({ state: 'confirmed', error: null })
       expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
     })
 

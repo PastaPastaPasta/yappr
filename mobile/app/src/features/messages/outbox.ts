@@ -4,7 +4,15 @@ import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import { adoptRestoredWrites, checkWrite, errorCode, retryWrite, runWrite, type WriteSpec } from '~/data/writes';
+import {
+  adoptRestoredWrites,
+  checkWrite,
+  errorCode,
+  isFollowedWrite,
+  retryWrite,
+  runWrite,
+  type WriteSpec,
+} from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
@@ -227,12 +235,12 @@ async function resolveUnticketed(entry: OutboxEntry): Promise<void> {
     if (ticket) applyTicket(current.id, ticket);
     return;
   }
-  const followed = new Set(useOutbox.getState().entries.map((e) => e.ticketId));
   const unclaimed = tickets.some(
     (t) =>
       sendSpec.matches?.(t, { entryId: entry.id, key: entry.key, text: entry.text }) === true &&
       new Date(t.createdAt).getTime() >= entry.createdAt - TICKET_SKEW_MS &&
-      !followed.has(t.id),
+      // Another send's (one that landed may be gone from the outbox, its ticket still listed).
+      !isFollowedWrite(t.id),
   );
   if (unclaimed || Date.now() - entry.createdAt < UNTICKETED_WAIT_MS) {
     queryClient.invalidateQueries({ queryKey: queryKeys.dm.messages(entry.key) }).catch(() => undefined);
