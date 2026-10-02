@@ -1066,7 +1066,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ │ 🔍 Search Yappr             │ │  search field (native on iOS)
 │ └─────────────────────────────┘ │
 │ [ Trending | Top | Creators ]   │  segmented (dev); hidden on v2
-│ [ 3 days | All time ]           │  only on Top
+│ [ 3 days | All time ]           │  Top; Trending has 24h | All time
 ├─────────────────────────────────┤
 │ 1  #dash                        │  trending rows: rank caption,
 │    128 likes (dev) / posts (v2) │  tag body.strong, count subhead
@@ -1080,6 +1080,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Trending count:** "{N} likes" where `topSort` is on (dev), "{N} posts" on v2 (as web).
 - **Top:** PostCards. **Creators:** ranked user rows with "2.4K likes" as the secondary line.
+- **Windows (dev, `windowedRankings`):** Trending "24h / All time" (opens on 24h, EXPL-02), Top "3 days / All time" (EXPL-03), as web's per-axis `RankingWindowToggle`; Creators has none.
 - **States:** loading copy, empty copy (5.7), error (2.16).
 
 ### 4.16 Search and results
