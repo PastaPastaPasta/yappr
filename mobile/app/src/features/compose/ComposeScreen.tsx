@@ -248,6 +248,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const askToLeave = useCallback(
     (leave: () => void) => {
       if (!latest.current.hasContent) {
+        Keyboard.dismiss();
         persist();
         leaving.current = true;
         leave();
