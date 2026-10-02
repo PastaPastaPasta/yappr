@@ -192,7 +192,9 @@ App Store Connect app record per variant: `pr.yap.app.dev`,
 3. Archive with signing, then export and upload in one step:
 
    ```bash
-   APP_VARIANT=devnet YAPPR_BUILD_NUMBER=<n> npm run release:ios -- archive   # makes the project; the unsigned archive is not uploaded
+   # The archive re-evaluates app.config.ts (expo-constants), so APP_VARIANT must reach both steps.
+   export APP_VARIANT=devnet YAPPR_BUILD_NUMBER=<n>
+   npm run release:ios -- archive   # makes the project; the unsigned archive is not uploaded
    cd ios && xcodebuild -workspace YapprDev.xcworkspace -scheme YapprDev -configuration Release \
      -destination 'generic/platform=iOS' -archivePath ../build/release/YapprDev.xcarchive \
      -allowProvisioningUpdates DEVELOPMENT_TEAM=<TEAM_ID> \
@@ -206,8 +208,8 @@ App Store Connect app record per variant: `pr.yap.app.dev`,
 
    `ExportOptions.plist` contains `method` = `app-store-connect`,
    `destination` = `upload`, `teamID` = `<TEAM_ID>`, and
-   `manageAppVersionAndBuildNumber` = `false`. The workspace is
-   `YapprBeta.xcworkspace` for testnet.
+   `manageAppVersionAndBuildNumber` = `false`. For testnet, export
+   `APP_VARIANT=testnet` and use `YapprBeta.xcworkspace` and the `YapprBeta` scheme.
 4. In App Store Connect, answer the export compliance question: standard
    algorithms not provided by Apple (COMPLIANCE, Encryption export). Then add
    the build to the internal testing group. The first external build goes

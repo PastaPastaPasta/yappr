@@ -1,4 +1,6 @@
+import { execFileSync } from 'child_process';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 import appConfig, { resolveBuildNumber } from '../../app.config';
@@ -76,5 +78,36 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
       ]),
     );
     expect(config.plugins).toContain('./plugins/release-hardening');
+  });
+});
+
+describe('release-ios.sh variant guard', () => {
+  const script = fs.readFileSync(path.join(APP_DIR, 'scripts/release-ios.sh'), 'utf8');
+  const guard = /^bundle_id_matches\(\) \{[\s\S]*?^\}$/m.exec(script)?.[0];
+
+  function matches(applicationId: string, setting: string): boolean {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-ios-'));
+    const pbxproj = path.join(dir, 'project.pbxproj');
+    fs.writeFileSync(pbxproj, `\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = ${setting};\n`);
+    try {
+      execFileSync('bash', ['-c', `${guard}\nbundle_id_matches "$0" "$1"`, applicationId, pbxproj]);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it('accepts the bundle id bare or quoted, as Expo prebuild may write it', () => {
+    expect(guard).toBeDefined();
+    expect(matches('pr.yap.app.dev', 'pr.yap.app.dev')).toBe(true);
+    expect(matches('pr.yap.app.dev', '"pr.yap.app.dev"')).toBe(true);
+  });
+
+  it('rejects another variant, including look-alikes', () => {
+    expect(matches('pr.yap.app.dev', 'pr.yap.app.beta')).toBe(false);
+    expect(matches('pr.yap.app', 'pr.yap.app.dev')).toBe(false);
+    expect(matches('pr.yap.app.dev', 'prXyapXappXdev')).toBe(false);
   });
 });

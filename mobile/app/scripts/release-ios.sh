@@ -35,8 +35,12 @@ scheme="$(basename "$workspace" .xcworkspace)"
 mkdir -p "$out"
 
 # The bundle id and build number are baked in at prebuild; a reused project must match this build.
+# pbxproj writes the id bare or quoted ("…"), depending on the serializer; accept both.
+bundle_id_matches() { # <application id> <project.pbxproj>
+  grep -qE "PRODUCT_BUNDLE_IDENTIFIER = \"?${1//./\\.}\"?;" "$2"
+}
 application_id="$(node -p "require('./src/variants.ts').VARIANTS['$APP_VARIANT'].applicationId")"
-if ! grep -q "PRODUCT_BUNDLE_IDENTIFIER = $application_id;" "ios/$scheme.xcodeproj/project.pbxproj" ||
+if ! bundle_id_matches "$application_id" "ios/$scheme.xcodeproj/project.pbxproj" ||
   [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "ios/$scheme/Info.plist")" != "$build_number" ]]; then
   echo "ios/ was prebuilt for another variant or build number; rerun without YAPPR_SKIP_PREBUILD." >&2
   exit 1
