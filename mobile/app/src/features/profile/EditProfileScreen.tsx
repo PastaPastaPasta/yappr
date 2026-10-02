@@ -76,8 +76,10 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   const patch = patchOf(initial, form, creating);
   const errors = validateForm(form, limits);
   const valid = Object.keys(errors).length === 0;
-  const dirty = !isEmptyPatch(patch);
-  const canSave = valid && dirty && !saving;
+  // Edited since the modal opened. Without a profile document the pre-filled name already
+  // makes a patch (the first save creates the profile), but leaving then loses nothing.
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+  const canSave = valid && !isEmptyPatch(patch) && !saving;
   const set = <K extends keyof ProfileForm>(key: K) => (value: ProfileForm[K]) => setForm((f) => ({ ...f, [key]: value }));
 
   // Leaving with unsaved changes asks first (PRD PROF-06); a confirmed save leaves at once.
@@ -103,9 +105,11 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     [navigation, dirty],
   );
 
+  // Unconfirmed may still have landed, and the tracker has said "Not confirmed yet": leave
+  // rather than invite a second save of the same change.
   useEffect(() => {
-    if (save.status !== 'confirmed') return;
-    toast.success('Profile updated!');
+    if (save.status !== 'confirmed' && save.status !== 'unconfirmed') return;
+    if (save.status === 'confirmed') toast.success('Profile updated!');
     leaving.current = true;
     if (router.canGoBack()) router.back();
   }, [save.status]);

@@ -9,6 +9,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
@@ -17,6 +18,16 @@ import { BookmarksScreen } from './BookmarksScreen';
 import { EditProfileScreen } from './EditProfileScreen';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+/** The screen's navigation listeners (`beforeRemove`), so a test can try to leave. */
+const mockListeners: Record<string, (event: unknown) => void> = {};
+
+/** Tries to leave the screen; true when the screen held it back to ask. */
+function tryLeave(): boolean {
+  const preventDefault = jest.fn();
+  act(() => mockListeners.beforeRemove?.({ preventDefault, data: { action: { type: 'GO_BACK' } } }));
+  return preventDefault.mock.calls.length > 0;
+}
+
 // Stack.Screen renders its header buttons here, so the tests can press them.
 jest.mock('expo-router', () => {
   const { View } = jest.requireActual('react-native');
@@ -30,7 +41,13 @@ jest.mock('expo-router', () => {
         </View>
       ),
     },
-    useNavigation: () => ({ addListener: () => () => undefined, dispatch: jest.fn() }),
+    useNavigation: () => ({
+      addListener: (event: string, listener: (e: unknown) => void) => {
+        mockListeners[event] = listener;
+        return () => undefined;
+      },
+      dispatch: jest.fn(),
+    }),
     useFocusEffect: jest.fn(),
   };
 });
@@ -88,6 +105,8 @@ let alert: { title: string; press: (text: string) => void } | null = null;
 beforeEach(() => {
   jest.clearAllMocks();
   fakeEngine.reset();
+  // A write a test left pending would keep its key busy for the next.
+  resetWriteTracking();
   queryClient.clear();
   fakeEngine.setStatus({
     state: 'ready',
@@ -132,6 +151,44 @@ describe('EditProfileScreen', () => {
     expect(router.back).toHaveBeenCalled();
   });
 
+  it('asks before discarding an edit', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    expect(tryLeave()).toBe(false);
+    fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
+    expect(tryLeave()).toBe(true);
+    expect(alert?.title).toBe('Discard changes?');
+  });
+
+  it('without a profile document: leaves without asking, and the first save creates it', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue({ ...PROFILE, hasProfile: false, displayName: 'jana', bio: undefined });
+    fakeEngine.method('profiles.update').mockResolvedValue(ticket({ op: 'profile.update', target: { identityId: VIEWER } }));
+    renderScreen(<EditProfileScreen />);
+    await flush();
+
+    expect(screen.getByTestId('edit-name')).toHaveDisplayValue('jana');
+    expect(tryLeave()).toBe(false);
+    expect(alert).toBeNull();
+    expect(screen.getByTestId('edit-save')).toBeEnabled();
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    expect(fakeEngine.method('profiles.update')).toHaveBeenCalledWith({ displayName: 'jana' });
+  });
+
+  it('closes on an unconfirmed save rather than offering Save again', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
+    expect(router.back).toHaveBeenCalled();
+    expect(useToastStore.getState().current?.message).not.toBe('Profile updated!');
+  });
+
   it('blocks saving an over-long name', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     renderScreen(<EditProfileScreen />);
@@ -162,6 +219,50 @@ describe('BookmarksScreen', () => {
     expect(screen.queryByText('Film grain')).toBeNull();
     expect(screen.getByText('Salt is not optional')).toBeTruthy();
     expect(queryClient.getQueryData(queryKeys.bookmarks)).toBeDefined();
+  });
+
+  it('clears every bookmark, one write at a time, after confirming', async () => {
+    fakeEngine.method('engage.bookmarks').mockResolvedValue({
+      items: [saved('b1', 'Film grain'), saved('b2', 'Salt is not optional')],
+      cursor: null,
+      hasMore: false,
+    });
+    fakeEngine
+      .method('engage.unbookmark')
+      .mockImplementation(async (target: { id: string }) =>
+        ticket({ op: 'unbookmark', target: { id: target.id, kind: 'post', ownerId: 'x', rootPostId: null } }),
+      );
+    renderScreen(<BookmarksScreen />);
+    await flush();
+
+    fireEvent(screen.getByTestId('bookmarks-menu'), 'pressAction', { nativeEvent: { event: 'clear' } });
+    expect(alert?.title).toBe('Clear all bookmarks?');
+    await act(async () => alert?.press('Clear all'));
+    await flush();
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledTimes(2);
+    expect(useToastStore.getState().current?.message).toBe('All bookmarks cleared');
+    expect(screen.queryByText('Film grain')).toBeNull();
+  });
+
+  it('stops clearing at the first refusal and says how far it got', async () => {
+    fakeEngine.method('engage.bookmarks').mockResolvedValue({
+      items: [saved('b1', 'Film grain'), saved('b2', 'Salt is not optional'), saved('b3', 'Kiln day')],
+      cursor: null,
+      hasMore: false,
+    });
+    fakeEngine
+      .method('engage.unbookmark')
+      .mockResolvedValueOnce(ticket({ op: 'unbookmark', target: { id: 'b1', kind: 'post', ownerId: 'x', rootPostId: null } }))
+      .mockRejectedValue(Object.assign(new Error('Not enough credits'), { code: 'FEE_UNPAYABLE' }));
+    renderScreen(<BookmarksScreen />);
+    await flush();
+
+    fireEvent(screen.getByTestId('bookmarks-menu'), 'pressAction', { nativeEvent: { event: 'clear' } });
+    await act(async () => alert?.press('Clear all'));
+    await flush();
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledTimes(2);
+    expect(useToastStore.getState().current?.message).toBe('Removed 1 of 3 bookmarks');
+    expect(screen.getByText('Kiln day')).toBeTruthy();
   });
 
   it('shows the empty state', async () => {

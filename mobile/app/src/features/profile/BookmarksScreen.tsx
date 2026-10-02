@@ -1,7 +1,7 @@
 import type { PostDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
 import { router, Stack, useFocusEffect } from 'expo-router';
-import { useCallback, useState, type ReactElement } from 'react';
+import { useCallback, useRef, useState, type ReactElement } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { BookmarkIcon, EllipsisHorizontalIcon, TrashIcon } from 'react-native-heroicons/outline';
@@ -32,6 +32,8 @@ const remove = (post: PostDTO) => sendWrite(bookmarkWrite, { post, bookmark: fal
 function BookmarkRow({ post }: { post: PostDTO }) {
   return (
     <ReanimatedSwipeable
+      // A recycled cell must not bring the previous post's open swipe with it.
+      key={post.id}
       friction={2}
       rightThreshold={40}
       overshootRight={false}
@@ -78,10 +80,16 @@ export function BookmarksScreen() {
     (api, cursor) => api.engage.bookmarks(cursor),
     { persist: true, enabled: signedIn },
   );
-  // Bookmarks made elsewhere since the last visit: read again whenever the screen shows.
+  // Bookmarks made elsewhere since the last visit: read again whenever the screen shows
+  // again (the first time, the query's own fetch does it).
   const { refetch } = list;
+  const focusedBefore = useRef(false);
   useFocusEffect(
     useCallback(() => {
+      if (!focusedBefore.current) {
+        focusedBefore.current = true;
+        return;
+      }
       if (signedIn) refetch().catch(() => undefined);
     }, [signedIn, refetch]),
   );
@@ -101,15 +109,25 @@ export function BookmarksScreen() {
       // Every bookmark, not just the pages loaded so far.
       let data = list.data;
       let more = list.hasNextPage;
+      let complete = true;
       while (more) {
         const next = await list.fetchNextPage();
         data = next.data;
-        more = next.hasNextPage === true && !next.isError;
+        complete = !next.isError;
+        more = complete && next.hasNextPage === true;
       }
       const all = (data?.pages ?? []).flatMap((page) => page.items).filter(stillBookmarked);
-      const results = await Promise.all(all.map((post) => runWrite(bookmarkWrite, { post, bookmark: false })));
-      if (results.some((result) => result.status === 'refused')) toast.error('Some bookmarks could not be removed');
-      else toast.success('All bookmarks cleared');
+      // One at a time, stopping at the first that doesn't go through: the tracker already
+      // says why, and the rest would most likely fail the same way, each with its own toast.
+      let removed = 0;
+      for (const post of all) {
+        const result = await runWrite(bookmarkWrite, { post, bookmark: false });
+        if (result.status !== 'submitted' && result.status !== 'queued') break;
+        removed += 1;
+      }
+      if (removed === all.length && complete) toast.success('All bookmarks cleared');
+      else if (removed === all.length) toast.error("Some bookmarks couldn't be loaded. Pull to refresh and try again.");
+      else toast.error(`Removed ${removed} of ${all.length} bookmarks`);
     } catch (error) {
       appendLog('warn', 'host', `Clearing bookmarks failed: ${errorMessage(error)}`);
       toast.error('Some bookmarks could not be removed');
