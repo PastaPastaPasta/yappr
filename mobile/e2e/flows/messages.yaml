@@ -1,0 +1,205 @@
+# Messages (PRD DM-01 – DM-07, DM-12; EXECUTION S11), DM v5 on the devnet dev client.
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test mobile/e2e/flows/messages.yaml
+#   maestro --device <udid|serial> test \
+#     -e KEY=<auth key> -e ENC=<encryption key> \
+#     -e PEER_NAME=<peer DPNS label> -e PEER_ID=<peer identity id> \
+#     [-e EXPECT="<text the peer sent>"] [-e GROUP=1] \
+#     mobile/e2e/flows/messages.yaml
+#
+# Without KEY it checks the signed-out placeholder only. With KEY (a sakura
+# pool identity's authentication key, never committed) it signs in through the
+# dev quick sign-in when nobody is signed in, unlocks messages with ENC when
+# the device holds no encryption key, opens the 1:1 with PEER_ID through the
+# new-message picker, sends a timestamped message and waits for "Sent". With
+# EXPECT it first waits for that message from the peer (the round trip: run
+# this flow on device A, then on device B with EXPECT set to A's text). With
+# GROUP=1 it also creates a group with the peer, sends to it and opens
+# Group info. Sends are real writes on sakura: use pool personas only.
+#
+# Maestro records command values, KEY and ENC included, in its logs and debug
+# artifacts (~/.maestro/tests/...): never upload or attach those from a run
+# with keys, and delete them afterwards.
+appId: pr.yap.app.dev
+---
+- openLink: yappr-dev:///messages
+
+# Signed out: the placeholder.
+- runFlow:
+    when:
+      true: ${typeof KEY != 'string' || KEY.length == 0}
+    commands:
+      - extendedWaitUntil:
+          visible: "Sign in to read your messages"
+          timeout: 30000
+      - assertNotVisible:
+          id: messages-list
+
+- runFlow:
+    when:
+      true: ${typeof KEY == 'string' && KEY.length > 0}
+    commands:
+      # Dev quick sign-in, only when nobody is signed in.
+      - openLink: yappr-dev:///settings/diagnostics
+      - scrollUntilVisible:
+          element:
+            id: dev-sign-in-key
+          direction: DOWN
+          timeout: 45000
+      - runFlow:
+          when:
+            visible: "nobody"
+          commands:
+            - tapOn:
+                id: dev-sign-in-key
+            - inputText: ${KEY}
+            - pressKey: Enter
+            - tapOn:
+                id: dev-sign-in
+            - extendedWaitUntil:
+                visible: "Sign out"
+                timeout: 60000
+
+      - openLink: yappr-dev:///messages
+      - extendedWaitUntil:
+          visible: "Messages"
+          timeout: 30000
+
+      # Locked: automatic recovery first, then the key by hand.
+      - runFlow:
+          when:
+            visible:
+              id: messages-locked
+          commands:
+            - tapOn: "Enter encryption key"
+            - extendedWaitUntil:
+                visible:
+                  id: dm-unlock-key
+                timeout: 60000
+            - tapOn:
+                id: dm-unlock-key
+            - inputText: ${ENC}
+            - tapOn:
+                id: dm-unlock-save
+            - extendedWaitUntil:
+                notVisible:
+                  id: dm-unlock-key
+                timeout: 60000
+
+      - extendedWaitUntil:
+          visible:
+            id: messages-list
+          timeout: 90000
+      - extendedWaitUntil:
+          notVisible:
+            id: messages-loading
+          timeout: 90000
+
+      # New message: the picker finds the peer by name and opens the 1:1.
+      - openLink: yappr-dev:///messages/new
+      - extendedWaitUntil:
+          visible:
+            id: picker-search
+          timeout: 20000
+      - assertVisible: "Choose a person to start an encrypted conversation."
+      - tapOn:
+          id: picker-search
+      - inputText: ${PEER_NAME}
+      # Return closes the keyboard, so the tap below lands on a settled list.
+      - pressKey: Enter
+      - extendedWaitUntil:
+          visible:
+            id: picker-user-${PEER_ID}
+          timeout: 60000
+      - tapOn:
+          id: picker-user-${PEER_ID}
+      - extendedWaitUntil:
+          visible:
+            id: dm-composer
+          timeout: 60000
+
+      # The round trip: the peer's message shows up live (the open conversation polls every 4 s).
+      - runFlow:
+          when:
+            true: ${typeof EXPECT == 'string' && EXPECT.length > 0}
+          commands:
+            - extendedWaitUntil:
+                visible: .*${EXPECT}.*
+                timeout: 120000
+
+      # Send: a "Sending…" bubble at once, then "Sent".
+      - evalScript: ${output.text = 'Maestro DM ' + Date.now()}
+      - tapOn:
+          id: dm-composer
+      - inputText: ${output.text}
+      - tapOn:
+          id: dm-send
+      # A bubble reads as one element ("You, <text>, <time>, <status>"), so match inside it.
+      - assertVisible: .*${output.text}.*
+      - extendedWaitUntil:
+          visible:
+            id: dm-status
+            text: "Sent"
+          timeout: 120000
+
+      # A group with the peer: create, send, and the owner's Group info.
+      - runFlow:
+          when:
+            true: ${typeof GROUP == 'string' && GROUP.length > 0}
+          commands:
+            - openLink: yappr-dev:///messages/new-group
+            - extendedWaitUntil:
+                visible:
+                  id: new-group-name
+                timeout: 20000
+            - tapOn:
+                id: new-group-name
+            - inputText: Maestro group
+            - tapOn:
+                id: picker-search
+            - inputText: ${PEER_NAME}
+            - pressKey: Enter
+            - extendedWaitUntil:
+                visible:
+                  id: picker-user-${PEER_ID}
+                timeout: 60000
+            - tapOn:
+                id: picker-user-${PEER_ID}
+            - assertVisible:
+                id: new-group-chips
+            - tapOn:
+                id: new-group-create
+            # The roster and a key per member: several writes.
+            - extendedWaitUntil:
+                visible:
+                  id: dm-composer
+                timeout: 180000
+            - assertVisible: ".*Maestro group.*"
+            - tapOn:
+                id: dm-composer
+            - inputText: Hello group
+            - tapOn:
+                id: dm-send
+            - extendedWaitUntil:
+                visible:
+                  id: dm-status
+                  text: "Sent"
+                timeout: 120000
+            - tapOn:
+                id: dm-header-title
+            - extendedWaitUntil:
+                visible:
+                  id: group-info
+                timeout: 20000
+            - assertVisible: "Owner"
+            - assertVisible:
+                id: group-end
+
+      # Message settings: reclaim message fees and the blocked list.
+      - openLink: yappr-dev:///messages/settings
+      - extendedWaitUntil:
+          visible:
+            id: dm-retention
+          timeout: 60000
+      - assertVisible: "Never (keep paying for storage)"
