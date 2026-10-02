@@ -16,6 +16,7 @@ import { config } from '~/config';
 import { useCapabilities, useSession } from '~/data/session';
 import { useEngineStatus } from '~/engine/hooks';
 import type { EngineStatus } from '~/engine/supervisor';
+import { accountName } from '~/features/auth/accounts';
 import { cn } from '~/lib-allowlist';
 import { useAppearance } from '~/state/appearance';
 import { Avatar } from '~/ui/Avatar';
@@ -23,7 +24,6 @@ import { NetworkChip, type EngineState } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { colors, tw, useColors } from '~/ui/tokens';
 
-import { accountName } from './accounts';
 import { copy, THEME_LABEL } from './copy';
 import { formatDash } from './format';
 import { versionLine } from './links';
@@ -107,7 +107,7 @@ export function SettingsScreen() {
             value={copy.account.onDevice(accounts.length)}
             icon={UserGroupIcon}
             iconTint={colors.gray500}
-            onPress={go('/settings/account')}
+            onPress={go('/settings/accounts')}
             testID="settings-accounts"
           />
         ) : null}

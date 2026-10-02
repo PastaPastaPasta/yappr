@@ -5,20 +5,20 @@ import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import type { ReactElement, ReactNode } from 'react';
-import { ActionSheetIOS, Alert, type AlertButton } from 'react-native';
+import { Alert, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { engineSupervisor } from '~/engine';
+import { useAccounts } from '~/features/auth/accounts';
 import { useAppearance } from '~/state/appearance';
 import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
 import { AboutScreen } from './AboutScreen';
 import { AccountSettingsScreen } from './AccountSettingsScreen';
-import { useAccountTransition } from './accounts';
 import { AppearanceSettingsScreen, NotificationSettingsScreen, PrivacySettingsScreen } from './ContentSettingsScreens';
 import { SettingsScreen } from './SettingsScreen';
 
@@ -86,7 +86,6 @@ const toastMessage = () => useToastStore.getState().current?.message;
 const cachedSettings = () => queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
 
 let alert: { title: string; message?: string; press: (text: string) => void } | null = null;
-let sheet: { options: string[]; choose: (label: string) => void } | null = null;
 
 const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
 
@@ -111,18 +110,13 @@ beforeEach(() => {
   fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { dm: 'v5' } as CapabilitiesDTO } });
   useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [account(ALICE, 'alice.dash', true)] });
   useToastStore.setState({ current: null });
-  useAccountTransition.setState({ transition: null });
+  useAccounts.setState({ transition: null, returnTo: null });
   useAppearance.setState({ theme: 'system' });
   fakeEngine.method('settings.get').mockResolvedValue(SETTINGS);
   fakeEngine.method('profiles.get').mockResolvedValue(null);
   alert = null;
-  sheet = null;
   jest.spyOn(Alert, 'alert').mockImplementation((title, message, buttons?: AlertButton[]) => {
     alert = { title, message, press: (text) => buttons?.find((b) => b.text === text)?.onPress?.() };
-  });
-  jest.spyOn(ActionSheetIOS, 'showActionSheetWithOptions').mockImplementation((options, callback) => {
-    const labels = options.options;
-    sheet = { options: labels, choose: (label) => callback(labels.indexOf(label)) };
   });
 });
 
@@ -164,7 +158,7 @@ describe('Settings root (SET-01)', () => {
     expect(byId('settings-sign-in')).toBeTruthy();
     expect(byId('settings-accounts')).toHaveAccessibleName('Accounts, 1 account');
     fireEvent.press(byId('settings-accounts'));
-    expect(router.push).toHaveBeenCalledWith('/settings/account');
+    expect(router.push).toHaveBeenCalledWith('/settings/accounts');
   });
 
   it('has no Messages settings on legacy messages (v3)', () => {
@@ -442,46 +436,6 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(fakeEngine.method('session.signOut')).not.toHaveBeenCalled();
   });
 
-  it('signs out another account without switching', async () => {
-    useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
-    fakeEngine.method('session.signOut').mockResolvedValue(undefined);
-    fakeEngine.method('session.accounts').mockResolvedValue([account(ALICE, 'alice.dash', true)]);
-    renderScreen(<AccountSettingsScreen />);
-    await settle();
-
-    fireEvent.press(byId(`account-row-${BOB}`));
-    expect(sheet?.options).toEqual(['Switch to @bob', 'Sign out of @bob', 'Cancel']);
-    act(() => sheet?.choose('Sign out of @bob'));
-    expect(alert?.title).toBe('Sign out of @bob?');
-    await act(async () => alert?.press('Sign out'));
-
-    expect(fakeEngine.method('session.signOut')).toHaveBeenCalledWith({ identityId: BOB });
-    expect(useSessionStore.getState().accounts.map((a) => a.identityId)).toEqual([ALICE]);
-    expect(useSessionStore.getState().session?.identityId).toBe(ALICE);
-    expect(engineSupervisor.restart).not.toHaveBeenCalled();
-  });
-
-  it('switches accounts through an engine restart', async () => {
-    const bob: SessionDTO = { ...alice, identityId: BOB, username: 'bob', credits: 0n };
-    useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
-    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
-    fakeEngine.method('session.current').mockResolvedValue(bob);
-    jest.mocked(engineSupervisor.restart).mockImplementation(() => {
-      fakeEngine.setStatus({ state: 'ready', epoch: 2 });
-      useSessionStore.setState({ status: 'signed-in', session: bob });
-    });
-    renderScreen(<AccountSettingsScreen />);
-    await settle();
-
-    fireEvent.press(byId(`account-row-${BOB}`));
-    await act(async () => sheet?.choose('Switch to @bob'));
-
-    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(BOB);
-    expect(engineSupervisor.restart).toHaveBeenCalledWith('Switching accounts');
-    expect(toastMessage()).toBe('Switched to @bob');
-    expect(useAccountTransition.getState().transition).toBeNull();
-  });
-
   it('signing out the last account goes Home, signed out', async () => {
     fakeEngine.method('session.signOut').mockImplementation(async () => {
       useSessionStore.setState({ status: 'signed-out', session: null });
@@ -498,7 +452,7 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(engineSupervisor.restart).not.toHaveBeenCalled();
   });
 
-  it('signing out the active account moves to the next one, covered throughout', async () => {
+  it('signing out the active account moves to the next one', async () => {
     const bob: SessionDTO = { ...alice, identityId: BOB, username: 'bob', credits: 0n };
     useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
     fakeEngine.method('session.signOut').mockImplementation(async () => {
@@ -511,54 +465,39 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
       fakeEngine.setStatus({ state: 'ready', epoch: 2 });
       useSessionStore.setState({ status: 'signed-in', session: bob });
     });
-    const covers: (string | null)[] = [];
-    const stop = useAccountTransition.subscribe((s) => covers.push(s.transition?.kind ?? null));
     renderScreen(<AccountSettingsScreen />);
     await settle();
 
     fireEvent.press(byId('account-sign-out'));
     await act(async () => alert?.press('Sign out'));
-    stop();
 
     expect(fakeEngine.method('session.signOut')).toHaveBeenCalledWith({ identityId: ALICE });
     expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(BOB);
     expect(engineSupervisor.restart).toHaveBeenCalledWith('Switching accounts');
     expect(toastMessage()).toBe('Switched to @bob');
     expect(router.navigate).not.toHaveBeenCalled();
-    // No uncovered moment between the sign-out and the switch.
-    expect(covers).toEqual(['sign-out', 'switch', null]);
+    expect(useAccounts.getState().transition).toBeNull();
   });
 
-  it('an add backed out of sign-in can switch back to the parked account', async () => {
-    fakeEngine.method('session.prepareAddAccount').mockResolvedValue(undefined);
-    fakeEngine.method('session.current').mockResolvedValueOnce(null).mockResolvedValue(alice);
-    jest
-      .mocked(engineSupervisor.restart)
-      .mockImplementationOnce(() => {
-        fakeEngine.setStatus({ state: 'ready', epoch: 2 });
-        useSessionStore.setState({ status: 'signed-out', session: null, accounts: [account(ALICE, 'alice.dash', false)] });
-      })
-      .mockImplementationOnce(() => {
-        fakeEngine.setStatus({ state: 'ready', epoch: 3 });
-        useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [account(ALICE, 'alice.dash', true)] });
-      });
-    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+  it('links to the accounts on this device, and to app lock', async () => {
+    useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
     renderScreen(<AccountSettingsScreen />);
     await settle();
 
-    await act(async () => fireEvent.press(byId('account-add')));
-    expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalled();
-    expect(router.push).toHaveBeenCalledWith('/sign-in');
+    expect(byId('account-accounts')).toHaveAccessibleName('Accounts, 2 accounts');
+    fireEvent.press(byId('account-accounts'));
+    expect(router.push).toHaveBeenCalledWith('/settings/accounts');
+    fireEvent.press(byId('account-app-lock'));
+    expect(router.push).toHaveBeenCalledWith('/settings/app-lock');
+  });
 
-    // Back from sign-in without adding: alice is listed, parked.
+  it('signed out with accounts parked on this device: the way back to them', () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [account(ALICE, 'alice.dash', false)] });
+    renderScreen(<AccountSettingsScreen />);
+
     expect(byId('account-signed-out-accounts')).toBeTruthy();
-    fireEvent.press(byId(`account-row-${ALICE}`));
-    expect(sheet?.options).toEqual(['Switch to @alice', 'Sign out of @alice', 'Cancel']);
-    await act(async () => sheet?.choose('Switch to @alice'));
-
-    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(ALICE);
-    expect(toastMessage()).toBe('Switched to @alice');
-    expect(byId('account-identity-id')).toHaveTextContent(ALICE);
+    fireEvent.press(byId('account-accounts'));
+    expect(router.push).toHaveBeenCalledWith('/settings/accounts');
   });
 
   it('signed out: a way to sign in', () => {
