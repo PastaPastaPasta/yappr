@@ -1,4 +1,4 @@
-import type { AccountDTO } from '@engine/api';
+import type { AccountDTO, SessionDTO } from '@engine/api';
 import { router } from 'expo-router';
 import { create } from 'zustand';
 
@@ -40,28 +40,55 @@ const RESTART_TIMEOUT_MS = 90_000;
 export const accountName = (account: { identityId: string; username: string | null }) =>
   handleOf({ id: account.identityId, username: account.username?.replace(/\.dash$/i, '') || null });
 
-type SessionState = ReturnType<typeof useSessionStore.getState>;
-
-/** Resolves with the session store once `settled` holds for it, after the engine restarts. */
-function waitForSession(settled: (s: SessionState) => boolean): Promise<SessionState> {
+/** Resolves once `ready` holds for `subscribe`'s source; rejects after `ms`. */
+function when(subscribe: (listener: () => void) => () => void, ready: () => boolean, ms: number): Promise<void> {
   return new Promise((resolve, reject) => {
+    const check = () => {
+      if (!ready()) return;
+      clearTimeout(timer);
+      stop();
+      resolve();
+    };
     const timer = setTimeout(() => {
       stop();
       reject(new Error('The engine did not come back in time'));
-    }, RESTART_TIMEOUT_MS);
-    const stop = useSessionStore.subscribe((state) => {
-      if (!settled(state)) return;
-      clearTimeout(timer);
-      stop();
-      resolve(state);
-    });
+    }, ms);
+    const stop = subscribe(check);
+    check();
   });
 }
 
-/** Restart the engine once every secure write has landed, so the next boot reads the parked account's state. */
-async function restartEngine(reason: string): Promise<void> {
+/**
+ * Restart the engine once every secure write has landed, so the next boot
+ * reads the parked account's state, and resolve with the session that boot
+ * restored. Only the new epoch's answer counts: the session store may already
+ * say "signed out", and a late write for the old engine must not pass for it.
+ */
+async function restartEngine(reason: string): Promise<SessionDTO | null> {
   await engineStorage.idle();
+  const deadline = Date.now() + RESTART_TIMEOUT_MS;
+  const from = engineSupervisor.getStatus().epoch;
   engineSupervisor.restart(reason);
+  await when(
+    engineSupervisor.subscribeStatus,
+    () => {
+      const { state, epoch } = engineSupervisor.getStatus();
+      return epoch > from && (state === 'ready' || state === 'degraded');
+    },
+    RESTART_TIMEOUT_MS,
+  );
+  const session = await engine.api.session.current();
+  // The session sync applies the same restore; wait for it so the screens behind agree.
+  const identityId = session?.identityId ?? null;
+  await when(
+    useSessionStore.subscribe,
+    () => {
+      const s = useSessionStore.getState();
+      return s.status !== 'unknown' && (s.session?.identityId ?? null) === identityId;
+    },
+    Math.max(deadline - Date.now(), 0),
+  );
+  return session;
 }
 
 async function withTransition<T>(transition: AccountTransition, run: () => Promise<T>): Promise<T> {
@@ -69,7 +96,8 @@ async function withTransition<T>(transition: AccountTransition, run: () => Promi
   try {
     return await run();
   } finally {
-    useAccounts.setState({ transition: null });
+    // A switch queued by this one (signing out the active account) may already show its own.
+    if (useAccounts.getState().transition === transition) useAccounts.setState({ transition: null });
   }
 }
 
@@ -91,10 +119,8 @@ export async function switchAccount(account: { identityId: string; username: str
   return withTransition({ kind: 'switch', label: copy.accounts.switching(name) }, async () => {
     try {
       await engine.api.session.switchAccount(identityId);
-      const settled = waitForSession((s) => s.status === 'signed-out' || s.session?.identityId === identityId);
-      await restartEngine('Switching accounts');
-      const state = await settled;
-      if (state.session?.identityId !== identityId) throw new Error('The account did not restore');
+      const restored = await restartEngine('Switching accounts');
+      if (restored?.identityId !== identityId) throw new Error('The account did not restore');
       toast.success(copy.accounts.switched(name));
       return true;
     } catch (error) {
@@ -119,9 +145,7 @@ export async function addAccount(): Promise<void> {
   await withTransition({ kind: 'add', label: copy.accounts.adding }, async () => {
     try {
       await engine.api.session.prepareAddAccount();
-      const settled = waitForSession((s) => s.status === 'signed-out');
-      await restartEngine('Adding an account');
-      await settled;
+      if (await restartEngine('Adding an account')) throw new Error('The engine restored an account');
       useAccounts.setState({ returnTo: from });
       router.push('/sign-in');
     } catch (error) {
