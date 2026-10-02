@@ -122,7 +122,7 @@ describe('app shell', () => {
     ['/settings/app-lock', 'sign-in'],
     ['/settings/notifications', 'notifications'],
     ['/settings/privacy', 'settings and bookmarks'],
-    ['/settings/blocked', 'safety'],
+    ['/settings/blocked', null],
     ['/settings/appearance', 'settings and bookmarks'],
     ['/settings/about', 'settings and bookmarks'],
     ['/settings/diagnostics', null],
@@ -138,8 +138,8 @@ describe('app shell', () => {
     ['/sign-in/key', 'sign-in'],
     ['/welcome', 'sign-in'],
     ['/__gallery', null],
-    ['/block/abc123', 'safety'],
-    ['/report/abc123?kind=post', 'safety'],
+    ['/block/abc123', null],
+    ['/report/abc123?kind=post', null],
   ])('%s has a stub', async (url, pr) => {
     const app = await renderApp('/');
     act(() => router.push(url as Href));
