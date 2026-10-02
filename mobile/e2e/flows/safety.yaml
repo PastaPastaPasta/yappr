@@ -1,0 +1,152 @@
+# Safety (PRD SAFE-01 – SAFE-04; EXECUTION S9): blocking an author takes their
+# posts out of the feed at once, the Blocked list shows them and unblocks
+# them (so the run ends where it began), and a post can be reported.
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test \
+#     -e KEY=<pool identity private key, hex or WIF> \
+#     -e TARGET_ID=<identity id of an author with posts in the feed> \
+#     -e TARGET_HANDLE=<that author's DPNS label, without @> \
+#     mobile/e2e/flows/safety.yaml
+# KEY is a sakura pool identity's authentication key, never committed. This
+# flow WRITES as that identity: a block, an unblock and (unless the post was
+# already reported, or the community has no moderation team yet) a public
+# report of the first post in the feed. Use only your own pool personas.
+# Maestro records command values, KEY included, in its logs and debug
+# artifacts (~/.maestro/tests/...): delete those after a run with KEY.
+#
+# The feed is the dev gallery's live For You feed (`/__gallery?section=live`,
+# dev builds), which renders the real PostItem; switch to `/` once the Home
+# feed has landed. Links can't open the block and report sheets, so the flow
+# reaches them through a post's menu, as a user does. Turn off the dev
+# client's floating "Tools button" (dev menu) first: it can cover the
+# Blocked list's Unblock button.
+appId: pr.yap.app.dev
+---
+# Sign in with the dev quick sign-in (Settings > Diagnostics), unless already signed in.
+- openLink: yappr-dev:///settings/diagnostics
+- scrollUntilVisible:
+    element:
+      id: dev-sign-in
+    direction: DOWN
+    timeout: 30000
+- runFlow:
+    when:
+      notVisible: "Sign out"
+    commands:
+      - tapOn:
+          id: dev-sign-in-key
+      # In parts: iOS drops characters from one long secure-field input.
+      - inputText: ${KEY.substring(0, 16)}
+      - inputText: ${KEY.substring(16, 32)}
+      - inputText: ${KEY.substring(32, 48)}
+      - inputText: ${KEY.substring(48)}
+      - tapOn: "Signed in as"
+      - tapOn:
+          id: dev-sign-in
+      - extendedWaitUntil:
+          visible: "Sign out"
+          timeout: 90000
+
+# The feed shows the target's posts.
+- openLink: yappr-dev:///__gallery?section=live
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 90000
+# A card is one screen-reader element: its label names the author's handle.
+- scrollUntilVisible:
+    element: ".*@${TARGET_HANDLE},.*"
+    direction: DOWN
+    timeout: 60000
+
+# Block from a post's menu: the sheet asks first, with the public note.
+- tapOn:
+    id: "more-btn-.*"
+    childOf: ".*@${TARGET_HANDLE},.*"
+- tapOn: "Block @${TARGET_HANDLE}"
+- extendedWaitUntil:
+    visible:
+      id: block-confirm
+    timeout: 60000
+- assertVisible: "Block @${TARGET_HANDLE}?"
+- assertVisible: "Visible to anyone on Dash Platform"
+- tapOn:
+    id: block-note
+- inputText: "Maestro safety flow"
+- tapOn: "Visible to anyone on Dash Platform"
+- tapOn:
+    id: block-confirm
+- extendedWaitUntil:
+    visible: "User blocked"
+    timeout: 20000
+# Their posts are gone from the feed at once (optimistic), and stay gone.
+- extendedWaitUntil:
+    notVisible: ".*@${TARGET_HANDLE},.*"
+    timeout: 20000
+
+# The Blocked list has them, with the note; Unblock takes the row away.
+- openLink: yappr-dev:///settings/blocked
+- extendedWaitUntil:
+    visible:
+      id: blocked-${TARGET_ID}
+    timeout: 90000
+- assertVisible: ".*Maestro safety flow.*"
+- tapOn:
+    id: unblock-${TARGET_ID}
+- extendedWaitUntil:
+    visible: "User unblocked"
+    timeout: 20000
+- assertNotVisible:
+    id: blocked-${TARGET_ID}
+
+# Report the first post in the feed. A post reported before shows the
+# existing report instead; a community with no moderation team yet refuses
+# it and offers "Email the Yappr team" (PRD SAFE-04).
+- openLink: yappr-dev:///__gallery?section=live
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 90000
+- tapOn:
+    id: "more-btn-.*"
+    index: 0
+- tapOn: "Report (post|reply)"
+- extendedWaitUntil:
+    visible:
+      id: "report-sheet|report-existing|report-own"
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        id: report-sheet
+    commands:
+      - assertVisible: "What is wrong with it?"
+      - tapOn:
+          id: report-reason-0
+      - scrollUntilVisible:
+          element:
+            id: report-submit
+          direction: DOWN
+      - tapOn:
+          id: report-submit
+      - extendedWaitUntil:
+          visible:
+            id: "report-sent|report-refused|report-existing"
+          timeout: 120000
+- runFlow:
+    when:
+      visible:
+        id: report-sent
+    commands:
+      - assertVisible: "Report sent"
+      - tapOn:
+          id: report-done
+- runFlow:
+    when:
+      visible:
+        id: report-existing
+    commands:
+      - assertVisible: "You reported this (post|reply)"
+      - tapOn:
+          id: report-done

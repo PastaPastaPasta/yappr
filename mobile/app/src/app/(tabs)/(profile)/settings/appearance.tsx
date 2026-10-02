@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { AppearanceSettingsScreen } from '~/features/settings/ContentSettingsScreens';
 
-export default function AppearanceSettingsScreen() {
-  return <Placeholder title="Appearance" comingIn="the settings and bookmarks PR" />;
-}
+export default AppearanceSettingsScreen;

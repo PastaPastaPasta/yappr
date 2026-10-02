@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
   identities: { contractNonce: vi.fn() },
+  documents: { get: vi.fn() },
   wasm: { refreshIdentityNonce: vi.fn(async () => undefined) },
 }))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }))
@@ -27,7 +28,7 @@ vi.stubGlobal('localStorage', {
 })
 
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { allocateNonce, loadReservation, releaseNonce, reserveNonce, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { allocateNonce, loadReservation, releaseNonce, reserveNonce, settleSupersededReplaces, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -41,6 +42,7 @@ beforeEach(() => {
   // A fresh identity per test: this tab's in-memory copies are module state.
   OWNER = `owner-${++owner}`
   sdk.identities.contractNonce.mockReset()
+  sdk.documents.get.mockReset()
   vi.useFakeTimers()
 })
 afterEach(() => {
@@ -150,6 +152,77 @@ describe('an SDK-signed write whose outcome is unknown', () => {
     await timedOutSdkWrite()
     const later = Date.now() + 16 * 60 * 1000
     expect(allocateNonce(n(100), loadReservation(OWNER, CONTRACT), later)).toBe(n(101))
+  })
+})
+
+describe('settleSupersededReplaces: an SDK-signed replace Platform shows superseded', () => {
+  const REPLACE = { documentType: 'dmSelfState', documentId: 'doc-1', revision: 3 }
+
+  /** A replace of doc-1 to revision 3 whose answer was lost after the broadcast. */
+  async function lostReplace(replaces: typeof REPLACE | null = REPLACE) {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const outcome = withSdkSignedWrite(OWNER, CONTRACT, async () => { throw new Error('transport error: Failed to fetch') }, replaces ?? undefined)
+      .then(() => undefined, () => undefined)
+    await vi.runAllTimersAsync()
+    await outcome
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+  }
+
+  async function settle() {
+    const settled = settleSupersededReplaces(OWNER, CONTRACT)
+    await vi.runAllTimersAsync()
+    return settled
+  }
+
+  it('stores what the replace writes, and the nonce Platform reported before it, with its pending entry, for every tab', async () => {
+    await lostReplace()
+    expect(loadReservation(OWNER, CONTRACT)?.pending[0]).toMatchObject({ replaces: REPLACE, signedAfter: n(100) })
+  })
+
+  it('releases it once the document is at its revision or later and the next nonce is consumed, and the next SDK-signed write runs', async () => {
+    await lostReplace()
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    sdk.documents.get.mockResolvedValue({ $revision: 3 })
+    expect(await settle()).toBe(1)
+    expect(sdk.documents.get).toHaveBeenCalledWith(CONTRACT, 'dmSelfState', 'doc-1')
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toEqual([])
+    const next = vi.fn(async () => 'sent')
+    expect(await runSdkWrite(next)).toEqual({ ok: true, value: 'sent' })
+
+    await lostReplace()
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    sdk.documents.get.mockResolvedValue({ $revision: 5 })
+    expect(await settle()).toBe(1)
+  })
+
+  it('keeps it pending while the nonce after the reported one is unconsumed: a stale-revision replace may still execute', async () => {
+    await lostReplace()
+    sdk.documents.get.mockResolvedValue({ $revision: 3 })
+    expect(await settle()).toBe(0)
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+  })
+
+  it('keeps it pending while it may still execute, or when nothing can be proved', async () => {
+    await lostReplace()
+    sdk.identities.contractNonce.mockResolvedValue(n(101))
+    for (const answer of [
+      () => sdk.documents.get.mockResolvedValue({ $revision: 2 }),
+      () => sdk.documents.get.mockResolvedValue(undefined),
+      () => sdk.documents.get.mockRejectedValue(new Error('no available addresses')),
+    ]) {
+      answer()
+      expect(await settle()).toBe(0)
+      expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(1)
+    }
+  })
+
+  it('never touches an SDK-signed write that named no replace, nor one whose nonce is known', async () => {
+    await lostReplace(null)
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.documents.get.mockResolvedValue({ $revision: 99 })
+    expect(await settle()).toBe(0)
+    expect(sdk.documents.get).not.toHaveBeenCalled()
+    expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(2)
   })
 })
 

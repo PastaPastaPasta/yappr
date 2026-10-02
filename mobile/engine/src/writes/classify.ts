@@ -101,9 +101,14 @@ const RULES: readonly Rule[] = [
   ['RATE_LIMITED', 'not-sent', true, isRateLimitedError],
   ['TIMEOUT', 'unknown', false, isTimeoutError],
   // Substring rules: a refusal that carries a consensus code is Platform's verdict, whatever its prose says.
+  // 'transport error' / 'Failed to fetch' / 'Load failed': wasm-sdk's gRPC-web call failing in fetch()
+  // (Chromium's and WebKit's TypeError text), with or without the "no available addresses" wrapper.
+  // An engine read that failed (`readFailure`) carries the code itself.
   ['NETWORK', 'not-sent', true, (error, message) => consensusCodeOf(error) === null && (
+    readCode(error) === 'NETWORK' ||
     evoSdkService.isConnectionError(error) ||
-    ['no available addresses', 'Missing response message', 'Network', 'connection'].some(marker => message.includes(marker)))],
+    ['no available addresses', 'Missing response message', 'Network', 'connection', 'transport error', 'Failed to fetch', 'Load failed']
+      .some(marker => message.includes(marker)))],
   ['NO_KEY', 'not-sent', true, (error, message) => consensusCodeOf(error) === null &&
     (message.includes('Private key not found') || message.includes('Not logged in'))],
 ]
@@ -136,13 +141,36 @@ export function classify(error: unknown): EngineErrorData {
 }
 
 /**
- * The ticket state a classified error leaves a write in: one that may well
- * have landed (a timeout, an already-exists, a nonce refusal, a transport
- * failure after the broadcast) is `unconfirmed` (check again), never `failed`.
- * An unrecognised error stays `failed`.
+ * lib's own errors that it raises before it signs anything: the write was not
+ * sent, wherever in `run()` they surface.
+ */
+const LIB_NOT_SENT: ReadonlySet<EngineErrorCode> = new Set<EngineErrorCode>(['PENDING_WRITE', 'STORAGE', 'NO_KEY'])
+
+/**
+ * Whether a classified error is a verdict that ends a write `failed`: a
+ * consensus refusal, a create proved absent, the engine's own refusal (or
+ * its own reading of what lib did, as `STILL_BLOCKED`), or one of lib's
+ * pre-signing errors. Anything else (a transport failure, a timeout, an
+ * unrecognised error) carries no verdict: the write may have landed.
+ */
+export function provesNotApplied(error: EngineErrorData): boolean {
+  switch (error.outcome) {
+    case 'refused': case 'not-recorded': case 'local': return true
+    case 'not-sent': return LIB_NOT_SENT.has(error.code)
+    case 'unknown': return false
+  }
+}
+
+/**
+ * The ticket state a classified error leaves a write in once the write may
+ * have been broadcast (the handler's `run()` is past any pre-broadcast stage):
+ * `failed` only when the error proves the write never executed
+ * ({@link provesNotApplied}); anything else may well have landed (a timeout,
+ * an already-exists, a nonce refusal, a transport failure, an unrecognised
+ * error) and is `unconfirmed` (check again), never `failed`.
  */
 export function ticketStateFor(error: EngineErrorData): Extract<WriteState, 'failed' | 'unconfirmed'> {
-  return error.outcome === 'unknown' && error.code !== 'UNKNOWN' ? 'unconfirmed' : 'failed'
+  return provesNotApplied(error) ? 'failed' : 'unconfirmed'
 }
 
 function readCode(error: unknown): unknown {

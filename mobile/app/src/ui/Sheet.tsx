@@ -1,6 +1,7 @@
 import {
   BottomSheetBackdrop,
   BottomSheetModal,
+  BottomSheetScrollView,
   BottomSheetView,
   type BottomSheetBackdropProps,
 } from '@gorhom/bottom-sheet';
@@ -19,6 +20,11 @@ export interface SheetProps {
   children: ReactNode;
   /** False while a write is in flight: no scrim tap, swipe or back to close (UX_SPEC §2.13). */
   dismissible?: boolean;
+  /**
+   * Content that can outgrow the screen (long text, large type, landscape):
+   * the sheet stops below the status bar and its content scrolls.
+   */
+  scrollable?: boolean;
   testID?: string;
 }
 
@@ -27,7 +33,7 @@ export interface SheetProps {
  * content, with a grabber, `radius.2xl` top corners, `bg.elevated` and the
  * `overlay.sheet` scrim. Android's back gesture closes it first.
  */
-export function Sheet({ open, onClose, title, children, dismissible = true, testID }: SheetProps) {
+export function Sheet({ open, onClose, title, children, dismissible = true, scrollable = false, testID }: SheetProps) {
   const ref = useRef<BottomSheetModal>(null);
   const insets = useSafeAreaInsets();
   const c = useColors();
@@ -76,9 +82,29 @@ export function Sheet({ open, onClose, title, children, dismissible = true, test
     [dismissible],
   );
 
+  const contentProps = {
+    testID,
+    accessibilityViewIsModal: true,
+    onAccessibilityEscape: () => {
+      if (dismissible) ref.current?.dismiss();
+    },
+  };
+  const contentStyle = { paddingHorizontal: 20, paddingTop: 8, paddingBottom: insets.bottom + 16, gap: 12 };
+  const body = (
+    <>
+      {title ? (
+        <Text variant="headline" tone="emphasis" accessibilityRole="header">
+          {title}
+        </Text>
+      ) : null}
+      {children}
+    </>
+  );
+
   return (
     <BottomSheetModal
       ref={ref}
+      topInset={insets.top}
       onDismiss={handleDismiss}
       enablePanDownToClose={dismissible}
       backdropComponent={backdrop}
@@ -92,21 +118,15 @@ export function Sheet({ open, onClose, title, children, dismissible = true, test
       }}
       handleIndicatorStyle={{ backgroundColor: c.textDecorative }}
     >
-      <BottomSheetView
-        testID={testID}
-        accessibilityViewIsModal
-        onAccessibilityEscape={() => {
-          if (dismissible) ref.current?.dismiss();
-        }}
-        style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: insets.bottom + 16, gap: 12 }}
-      >
-        {title ? (
-          <Text variant="headline" tone="emphasis" accessibilityRole="header">
-            {title}
-          </Text>
-        ) : null}
-        {children}
-      </BottomSheetView>
+      {scrollable ? (
+        <BottomSheetScrollView {...contentProps} contentContainerStyle={contentStyle}>
+          {body}
+        </BottomSheetScrollView>
+      ) : (
+        <BottomSheetView {...contentProps} style={contentStyle}>
+          {body}
+        </BottomSheetView>
+      )}
     </BottomSheetModal>
   );
 }
