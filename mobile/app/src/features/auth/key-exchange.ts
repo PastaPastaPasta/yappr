@@ -5,6 +5,7 @@ import { create } from 'zustand';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { syncStorage } from '~/state/storage';
 
 import { copy } from './copy';
 import { isTransient, walletErrorText } from './errors';
@@ -45,7 +46,16 @@ export type KeyExchangePhase =
   | { name: 'registration'; request: KeyExchangeRequestDTO; uri: string; keys: KeyToRegister[] }
   | { name: 'registering'; request: KeyExchangeRequestDTO; uri: string; keys: KeyToRegister[]; slow: boolean }
   | { name: 'signed-in'; session: SessionDTO }
-  | { name: 'error'; title: string; message: string; retry: 'start' | 'poll' | 'registration' };
+  | {
+      name: 'error';
+      title: string;
+      message: string;
+      retry: 'start' | 'poll' | 'registration';
+      /** With `retry: 'registration'`: the step the wallet already signed, to keep checking (not to sign again). */
+      registration?: Registration;
+    };
+
+type Registration = { request: KeyExchangeRequestDTO; uri: string; keys: KeyToRegister[] };
 
 interface KeyExchangeState {
   mode: KeyExchangeMode;
@@ -59,6 +69,16 @@ interface KeyExchangeState {
 const initial: KeyExchangeState = { mode: 'wallet', phase: { name: 'idle' }, walletOpenFailed: false, request: null };
 
 export const useKeyExchange = create<KeyExchangeState>()(() => initial);
+
+/** The mode of the request in progress, so a resume after a kill reopens its screen (QR or wallet). */
+const MODE_KEY = 'yappr.signin.mode';
+useKeyExchange.subscribe((state, previous) => {
+  if (state.phase.name === 'idle') return;
+  if (state.mode !== previous.mode || previous.phase.name === 'idle') syncStorage.setItem(MODE_KEY, state.mode);
+});
+
+/** The mode of the last request started here (for `pendingKeyExchange` after a kill). */
+export const lastKeyExchangeMode = (): KeyExchangeMode => (syncStorage.getItem(MODE_KEY) === 'qr' ? 'qr' : 'wallet');
 
 const set = (patch: Partial<KeyExchangeState>) => useKeyExchange.setState(patch);
 const get = () => useKeyExchange.getState();
@@ -81,8 +101,8 @@ export function openWallet(): void {
   if (uri) openLink(uri, () => set({ walletOpenFailed: true }));
 }
 
-function failed(error: unknown, retry: 'start' | 'poll' | 'registration'): KeyExchangePhase {
-  return { name: 'error', title: copy.signin.failed, message: walletErrorText(error, networkName), retry };
+function failed(error: unknown, retry: 'start' | 'poll' | 'registration', registration?: Registration): KeyExchangePhase {
+  return { name: 'error', title: copy.signin.failed, message: walletErrorText(error, networkName), retry, registration };
 }
 
 async function handleStep(gen: number, step: KeyExchangeResultDTO): Promise<void> {
@@ -134,14 +154,20 @@ async function poll(gen: number, request: KeyExchangeRequestDTO, superseded = 0)
 /**
  * Start a wallet sign-in. `resume` picks up a request the engine still holds
  * (the app was killed while waiting, AUTH-03) instead of making a new one.
+ * `open: false` leaves a new request for "Open wallet again" in wallet mode.
  */
-export async function startKeyExchange(mode: KeyExchangeMode, { resume = false } = {}): Promise<void> {
+export async function startKeyExchange(
+  mode: KeyExchangeMode,
+  { resume = false, open = true } = {},
+): Promise<void> {
   const gen = next();
   set({ ...initial, mode, phase: { name: 'starting' } });
   let request: KeyExchangeRequestDTO;
   try {
     const pending = resume ? await engine.api.session.pendingKeyExchange() : null;
     request = pending ?? (await engine.api.session.startKeyExchange());
+    // Cancelled while the request was being made: abandon it, or the next launch would resume it.
+    if (stale(gen) && get().phase.name === 'idle') abandon(request);
   } catch (error) {
     if (stale(gen)) return;
     appendLog('warn', 'host', `Creating the sign-in request failed: ${errorCode(error) ?? errorMessage(error)}`);
@@ -157,18 +183,22 @@ export async function startKeyExchange(mode: KeyExchangeMode, { resume = false }
   }
   if (stale(gen)) return;
   set({ request });
-  if (mode === 'wallet' && !resume) openWallet();
+  if (mode === 'wallet' && !resume && open) openWallet();
   await poll(gen, request);
 }
 
-/** "Check again": poll the same request while it is live, else make a fresh one (AUTH-03). */
-export async function checkAgain(now = Date.now()): Promise<void> {
+/**
+ * "Check again": poll the same request while it is live, else make a fresh
+ * one (AUTH-03). Only the button opens the wallet for it; a return to the
+ * app (`open: false`) does not send the user straight back out.
+ */
+export async function checkAgain(now = Date.now(), { open = true } = {}): Promise<void> {
   const { request, mode } = get();
   if (request && new Date(request.expiresAt).getTime() - now > EXPIRY_MARGIN_MS) {
     await poll(next(), request);
     return;
   }
-  await startKeyExchange(mode);
+  await startKeyExchange(mode, { open });
 }
 
 /** The primary action of the error state. */
@@ -201,7 +231,8 @@ async function waitForRegistration(
       if (stale(gen)) return;
       appendLog('warn', 'host', `Key registration failed: ${errorCode(error) ?? errorMessage(error)}`);
       const retryable = isTransient(error) && errorCode(error) !== 'KEY_REGISTRATION_TIMEOUT';
-      set({ phase: failed(error, retryable ? 'registration' : 'start') });
+      const { request, uri, keys } = phase;
+      set({ phase: retryable ? failed(error, 'registration', { request, uri, keys }) : failed(error, 'start') });
       return;
     }
   }
@@ -217,16 +248,14 @@ export async function continueRegistration(): Promise<void> {
   await waitForRegistration(gen, { request: phase.request, uri: phase.uri, keys: phase.keys, slow: false });
 }
 
-/** "Check now" while the registration confirms. */
+/** "Check now" while the registration confirms, and "Try again" after a check failed. */
 export async function checkRegistrationNow(): Promise<void> {
-  const { phase, request } = get();
+  const { phase } = get();
   if (phase.name === 'registering') {
     await waitForRegistration(next(), { request: phase.request, uri: phase.uri, keys: phase.keys, slow: phase.slow });
-    return;
-  }
-  if (phase.name === 'error' && request) {
-    // The approval is kept in the engine; asking again re-derives the registration step.
-    await poll(next(), request);
+  } else if (phase.name === 'error' && phase.registration) {
+    // The wallet may have broadcast the registration already: keep checking, never ask to sign it again.
+    await waitForRegistration(next(), { ...phase.registration, slow: true });
   }
 }
 
@@ -237,7 +266,7 @@ export async function checkRegistrationNow(): Promise<void> {
 export function walletReturned(): void {
   const { phase } = get();
   if (phase.name === 'waiting' || phase.name === 'no-response') {
-    checkAgain().catch(() => undefined);
+    checkAgain(Date.now(), { open: false }).catch(() => undefined);
   } else if (phase.name === 'registering') {
     checkRegistrationNow().catch(() => undefined);
   }
@@ -266,16 +295,18 @@ export function keyExchangeInProgress(): boolean {
   return name === 'waiting' || name === 'no-response' || name === 'registration' || name === 'registering';
 }
 
+function abandon(request: KeyExchangeRequestDTO): void {
+  engine.api.session.cancelKeyExchange(request.requestId).catch((error: unknown) => {
+    appendLog('warn', 'host', `Cancelling the sign-in request failed: ${errorMessage(error)}`);
+  });
+}
+
 /** "Cancel": abandon the request (the engine zeroes its keys) and forget the screen state. */
 export function cancelKeyExchange(): void {
   next();
   const { request } = get();
   set(initial);
-  if (request) {
-    engine.api.session.cancelKeyExchange(request.requestId).catch((error: unknown) => {
-      appendLog('warn', 'host', `Cancelling the sign-in request failed: ${errorMessage(error)}`);
-    });
-  }
+  if (request) abandon(request);
 }
 
 /** The finished state handed off to the terms gate or Home: forget it without cancelling anything. */

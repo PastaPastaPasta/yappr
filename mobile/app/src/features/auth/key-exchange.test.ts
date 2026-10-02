@@ -9,11 +9,13 @@ import {
   checkRegistrationNow,
   continueRegistration,
   currentWalletUri,
+  lastKeyExchangeMode,
   POLL_MS,
   retry,
   startKeyExchange,
   takeWalletReturnLink,
   useKeyExchange,
+  walletReturned,
 } from './key-exchange';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -196,6 +198,46 @@ describe('wallet sign-in', () => {
     expect(phase()).toEqual({ name: 'signed-in', session });
   });
 
+  it('makes a fresh request on a return to the app after expiry, without opening the wallet again', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValueOnce(request('r1', 5_000)).mockResolvedValueOnce(request('r2'));
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue({ status: 'pending', requestId: 'x', expiresAt: new Date() });
+
+    await startKeyExchange('wallet');
+    expect(openURL).toHaveBeenCalledTimes(1);
+
+    walletReturned();
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(useKeyExchange.getState().request?.requestId).toBe('r2');
+    expect(openURL).toHaveBeenCalledTimes(1);
+  });
+
+  it('abandons a request that was being made when the user cancelled', async () => {
+    const created = deferred<KeyExchangeRequestDTO>();
+    fakeEngine.method('session.startKeyExchange').mockReturnValue(created.promise);
+
+    const started = startKeyExchange('wallet');
+    cancelKeyExchange();
+    created.resolve(request('late'));
+    await started;
+
+    expect(fakeEngine.method('session.cancelKeyExchange')).toHaveBeenCalledWith('late');
+    expect(phase().name).toBe('idle');
+    expect(fakeEngine.method('session.awaitKeyExchange')).not.toHaveBeenCalled();
+  });
+
+  it('remembers the mode of the request, for a resume after a kill', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
+
+    startKeyExchange('qr').catch(() => undefined);
+    expect(lastKeyExchangeMode()).toBe('qr');
+    cancelKeyExchange();
+    startKeyExchange('wallet').catch(() => undefined);
+    expect(lastKeyExchangeMode()).toBe('wallet');
+    useKeyExchange.setState({ mode: 'qr' });
+    expect(lastKeyExchangeMode()).toBe('qr');
+  });
+
   it('cancels the request in the engine', async () => {
     fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
     fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));
@@ -271,6 +313,24 @@ describe('first-login key registration (AUTH-06)', () => {
       message: 'This sign-in request expired. Start a new one.',
       retry: 'start',
     });
+  });
+
+  it('"Try again" after a failed check keeps checking the signed registration, never asks for it again', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockResolvedValue(needsRegistration);
+    fakeEngine
+      .method('session.awaitKeyRegistration')
+      .mockRejectedValueOnce(remoteError('RPC_TIMEOUT', 'timed out'))
+      .mockResolvedValueOnce({ status: 'signed-in', session });
+
+    await startKeyExchange('wallet');
+    await continueRegistration();
+    expect(phase()).toMatchObject({ name: 'error', retry: 'registration' });
+
+    await retry();
+    expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('session.awaitKeyRegistration')).toHaveBeenCalledTimes(2);
+    expect(phase()).toEqual({ name: 'signed-in', session });
   });
 
   it('"Check now" polls the registration again', async () => {

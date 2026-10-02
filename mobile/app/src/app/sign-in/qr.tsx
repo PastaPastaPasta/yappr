@@ -1,4 +1,4 @@
-import { router, Stack } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 
@@ -22,6 +22,7 @@ import { Text } from '~/ui/Text';
 
 /** UX_SPEC §4.4: the request as a QR code for a wallet on another device (AUTH-04). */
 export default function QrSignInScreen() {
+  const { resume } = useLocalSearchParams<{ resume?: string }>();
   const phase = useKeyExchange((s) => s.phase);
   const request = useKeyExchange((s) => s.request);
   useForegroundRepoll();
@@ -30,9 +31,9 @@ export default function QrSignInScreen() {
 
   useEffect(() => {
     const current = useKeyExchange.getState();
-    if (current.phase.name === 'idle') startKeyExchange('qr').catch(() => undefined);
+    if (current.phase.name === 'idle') startKeyExchange('qr', { resume: resume === '1' }).catch(() => undefined);
     else useKeyExchange.setState({ mode: 'qr' });
-  }, []);
+  }, [resume]);
 
   const needsRegistration = phase.name === 'registration' || phase.name === 'registering';
   useEffect(() => {

@@ -14,7 +14,7 @@ import { tw } from '~/ui/tokens';
 import { AccountSwitcherSheet } from './AccountSwitcher';
 import { returnFromAddAccount, useAccounts } from './accounts';
 import { AppLockOverlay } from './AppLockOverlay';
-import { cancelKeyExchange, keyExchangeInProgress } from './key-exchange';
+import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
 import { useOnboarding } from './onboarding';
 import { useHasAcceptedTerms } from './terms';
 import { TopOverlay } from './TopOverlay';
@@ -52,15 +52,16 @@ function useTermsGate(ready: boolean, pathname: string): void {
 
 /**
  * Leaving the sign-in flow by any route (a swipe-down included): abandon a
- * wallet request still waiting, and after an abandoned "Add account", go
- * back to the parked account.
+ * wallet request still waiting and forget any wallet screen state (an error
+ * or a finished sign-in would greet the next visit), and after an abandoned
+ * "Add account", go back to the parked account.
  */
 function useSignInExit(pathname: string): void {
   const wasInSignIn = useRef(false);
   useEffect(() => {
     const inside = inSignIn(pathname);
     if (wasInSignIn.current && !inside && pathname !== '/terms-gate') {
-      if (keyExchangeInProgress()) cancelKeyExchange();
+      if (useKeyExchange.getState().phase.name !== 'idle') cancelKeyExchange();
       returnFromAddAccount();
     }
     wasInSignIn.current = inside;
@@ -82,7 +83,7 @@ function useResumeWalletSignIn(ready: boolean): void {
     engine.api.session
       .pendingKeyExchange()
       .then((pending) => {
-        if (pending) router.push('/sign-in/wallet?resume=1');
+        if (pending) router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`));
   }, [ready, engineUp, status]);
