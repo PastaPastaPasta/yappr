@@ -84,8 +84,22 @@ export type WriteResult =
 
 const tracked = new Map<string, Tracked>();
 const latestByKey = new Map<string, string>();
-/** Keys whose submit or retry hasn't answered yet, with what they ask for. */
-const submitting = new Map<string, unknown>();
+/**
+ * Keys whose submit or retry hasn't answered yet, with what they ask for.
+ * Each call marks its key with its own token and clears only that mark: a
+ * queued write released while the call settles marks the key itself.
+ */
+const submitting = new Map<string, { token: symbol; intent: unknown }>();
+
+/** Marks `key` busy for one call; the result clears the mark if it is still that call's. */
+function markSubmitting(key: string | undefined, intent: unknown): () => void {
+  if (key === undefined) return () => undefined;
+  const token = Symbol(key);
+  submitting.set(key, { token, intent });
+  return () => {
+    if (submitting.get(key)?.token === token) submitting.delete(key);
+  };
+}
 
 interface Waiting {
   spec: WriteSpec<unknown>;
@@ -101,6 +115,8 @@ const queued = new Map<string, Waiting>();
 /** Writes whose call an engine restart or timeout cut short, until their ticket shows up. */
 let orphans: Waiting[] = [];
 const ORPHAN_MS = 10 * 60_000;
+/** A restored ticket was made by the call that was cut short, so not long before it (clock skew). */
+const ORPHAN_SKEW_MS = 5_000;
 
 /** The engine went away under the call: it may or may not have run. */
 const OUTCOME_UNKNOWN = new Set(['ENGINE_RESTARTED', 'ENGINE_DISCONNECTED', 'ENGINE_TIMEOUT', 'RPC_TIMEOUT']);
@@ -224,11 +240,18 @@ function adopt(ticket: WriteTicket): void {
   if (tracked.has(ticket.id)) return;
   const now = Date.now();
   orphans = orphans.filter((o) => now - o.at < ORPHAN_MS);
-  const orphan = orphans.find((o) => o.spec.matches?.(ticket, o.vars));
+  const orphan = orphans.find(
+    (o) => time(ticket.createdAt) >= o.at - ORPHAN_SKEW_MS && o.spec.matches?.(ticket, o.vars) === true,
+  );
   if (!orphan) return;
   orphans = orphans.filter((o) => o !== orphan);
   tracked.set(ticket.id, { spec: orphan.spec, vars: orphan.vars, key: orphan.key, undo: orphan.undo, handled: '' });
-  if (orphan.key !== undefined && !latestByKey.has(orphan.key)) latestByKey.set(orphan.key, ticket.id);
+  if (orphan.key !== undefined) {
+    // Still the latest write for its key unless one was made after it.
+    const latestId = latestByKey.get(orphan.key);
+    const latest = latestId === undefined ? undefined : useWriteTickets.getState().byId[latestId];
+    if (!latest || time(latest.createdAt) < orphan.at) latestByKey.set(orphan.key, ticket.id);
+  }
 }
 
 function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
@@ -266,7 +289,8 @@ const NO_INTENT = Symbol('no intent');
 
 /** What the write pending for `key` asks for, `NO_INTENT` when none is pending. */
 function pendingIntent(key: string): unknown {
-  if (submitting.has(key)) return submitting.get(key);
+  const marked = submitting.get(key);
+  if (marked) return marked.intent;
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
   if (!entry || useWriteTickets.getState().byId[id!]?.state !== 'pending') return NO_INTENT;
@@ -306,10 +330,7 @@ function runQueued(waiting: Waiting): Promise<WriteResult> {
 /** Sends a write; `waiting.undo` set means its optimistic change is already applied. */
 async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
-  if (key !== undefined) submitting.set(key, spec.intent?.(vars));
-  const done = () => {
-    if (key !== undefined) submitting.delete(key);
-  };
+  const done = markSubmitting(key, spec.intent?.(vars));
   let revert = waiting.undo;
   try {
     revert ??= spec.optimistic?.(vars) ?? null;
@@ -385,7 +406,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     toast('Already updated');
     return null;
   }
-  if (key !== undefined) submitting.set(key, entry.spec.intent?.(entry.vars));
+  const done = markSubmitting(key, entry.spec.intent?.(entry.vars));
   try {
     if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
     return receive(await engine.api.writes.retry(ticketId), 'call');
@@ -395,7 +416,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     fail(entry.spec.failureMessage);
     return null;
   } finally {
-    if (key !== undefined) submitting.delete(key);
+    done();
   }
 }
 

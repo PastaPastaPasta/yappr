@@ -52,11 +52,11 @@ export interface PostItemProps
  * `BareRepostCard`). The target's counts and the viewer's marks on it come
  * from `engage.stats`: a quoted post arrives without them.
  */
-function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean } {
+function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean; reloadMarks: (() => void) | null } {
   const target = post.bareRepost ? post.quoted : undefined;
   const targetId = target?.id ?? '';
   const targetKind = target?.kind ?? 'post';
-  const { data: fresh } = useEngineQuery(
+  const { data: fresh, isError, refetch } = useEngineQuery(
     queryKeys.post.stats(targetId),
     async () => {
       const stats = await readEngageStats(targetId, targetKind);
@@ -83,7 +83,12 @@ function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean } {
     };
   }, [post, target, fresh]);
   // Until `engage.stats` answers, a bare repost's like, repost and bookmark state is unknown.
-  return { post: shown, marksPending: target !== undefined && fresh === undefined };
+  return {
+    post: shown,
+    marksPending: target !== undefined && fresh === undefined,
+    // A failed read is asked again on the next press, rather than blocking the controls for good.
+    reloadMarks: isError ? () => refetch().catch(() => undefined) : null,
+  };
 }
 
 /** The read-only poll a post shows (`posts.poll`), as the card renders it. */
@@ -200,7 +205,7 @@ async function confirmDelete(
  * Pass card props (`variant`, `replyingTo`, ...) through.
  */
 export const PostItem = memo(function PostItem({ post: listed, removal = 'hide', ...cardProps }: PostItemProps) {
-  const { post: shownPost, marksPending } = useShownPost(listed);
+  const { post: shownPost, marksPending, reloadMarks } = useShownPost(listed);
   const poll = usePoll(shownPost);
   const listedRemoved = usePostRemoved(listed.id);
   const shownRemoved = usePostRemoved(shownPost.id);
@@ -218,12 +223,18 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
 
   const { actions, menu } = useMemo(() => {
     // A bare repost's marks are unknown until engage.stats answers: acting on a guess would send a duplicate.
-    const known = (action: () => void) => () => {
-      if (marksPending) toast('Loading this post. Try again in a moment.');
-      else action();
-    };
+    // Signed out, the sign-in sheet comes first either way.
+    const known = (action: () => void) => () =>
+      requireAuth(() => {
+        if (!marksPending) {
+          action();
+          return;
+        }
+        reloadMarks?.();
+        toast('Loading this post. Try again in a moment.');
+      });
 
-    const like = known(() => requireAuth(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked })));
+    const like = known(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked }));
 
     const deleteQuote = () => {
       const quoteId = post.viewer?.ownQuoteId;
@@ -242,12 +253,10 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
 
     const quote = () => requireAuth(() => router.push({ pathname: '/compose', params: { quote: post.id } }));
 
-    const bookmark = known(() =>
-      requireAuth(() => {
-        const on = !post.viewer?.bookmarked;
-        sendWrite(bookmarkWrite, { post, bookmark: on }, on ? 'Added to bookmarks' : 'Removed from bookmarks');
-      }),
-    );
+    const bookmark = known(() => {
+      const on = !post.viewer?.bookmarked;
+      sendWrite(bookmarkWrite, { post, bookmark: on }, on ? 'Added to bookmarks' : 'Removed from bookmarks');
+    });
 
     const follow = () =>
       requireAuth(() => {
@@ -281,16 +290,14 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
       onCopyId: () => copyText(post.author.id, 'Identity ID copied'),
       onReply: () => requireAuth(() => router.push({ pathname: '/compose', params: { replyTo: post.id } })),
       onRepost: known(() =>
-        requireAuth(() =>
-          showActionSheet({
-            actions: repostSheet(post, capabilities, {
-              repost: () => repost(true),
-              undo: () => repost(false),
-              quote,
-              deleteQuote,
-            }),
+        showActionSheet({
+          actions: repostSheet(post, capabilities, {
+            repost: () => repost(true),
+            undo: () => repost(false),
+            quote,
+            deleteQuote,
           }),
-        ),
+        }),
       ),
       onLike: like,
       onBookmark: bookmark,
@@ -307,7 +314,7 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
     };
     const menu: PostCardMenu = { items: menuItems(post, own, followKnown), onSelect };
     return { actions, menu };
-  }, [post, own, followKnown, marksPending, viewerId, capabilities, external]);
+  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external]);
 
   if (removed && !asStub) return null;
 

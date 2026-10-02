@@ -200,6 +200,32 @@ describe('submitWrite', () => {
     expect(apply).toHaveBeenCalledTimes(2);
   });
 
+  it('keeps a released queued write busy when the confirmation beats the call’s answer', async () => {
+    const toggle: WriteSpec<{ on: boolean }> = {
+      key: () => `like:${target.id}`,
+      submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
+      intent: ({ on }) => on,
+      noun: 'like',
+      failureMessage: 'x',
+    };
+    const like = ticket();
+    let answer: (t: WriteTicket) => void = () => undefined;
+    fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    const first = runWrite(toggle, { on: true });
+    await expect(runWrite(toggle, { on: false })).resolves.toEqual({ status: 'queued' });
+
+    // The unlike, once released, stays in flight.
+    fakeEngine.method('engage.unlike').mockImplementationOnce(() => new Promise(() => undefined));
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(like, { state: 'confirmed' }));
+      answer(like);
+      await first;
+    });
+    expect(fakeEngine.method('engage.unlike')).toHaveBeenCalledTimes(1);
+    await expect(runWrite(toggle, { on: true })).resolves.toEqual({ status: 'queued' });
+    expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+  });
+
   it('drops a queued write that asks for what the pending one asked (like, unlike, like)', async () => {
     const toggle: WriteSpec<{ on: boolean }> = {
       key: () => `like:${target.id}`,
