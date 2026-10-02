@@ -2,16 +2,21 @@ import { router } from 'expo-router';
 import { Pressable } from 'react-native';
 import { PlusIcon } from 'react-native-heroicons/outline';
 
+import { requireAuth } from '~/data/require-auth';
+
 import { lightImpact } from './haptics';
 import { colors } from './tokens';
+
+const openCompose = () => requireAuth(() => router.push('/compose'));
 
 /**
  * The floating compose button (ADR-001 E4) on Home, Explore and Profile: the
  * web's 56px accent circle (yappr-600 in light mode, OQ-2) with `shadow-yappr-lg`. Render it as the
- * last child of the screen so it floats over the content. `onPress` replaces
- * the default navigation to the composer (e.g. to gate it behind sign-in).
+ * last child of the screen so it floats over the content. By default it opens
+ * the composer, signed out the sign-in sheet first (PRD COMP-11, G-8);
+ * `onPress` replaces that.
  */
-export function ComposeFab({ onPress: action = () => router.push('/compose') }: { onPress?: () => void }) {
+export function ComposeFab({ onPress: action = openCompose }: { onPress?: () => void }) {
   const onPress = () => {
     lightImpact();
     action();

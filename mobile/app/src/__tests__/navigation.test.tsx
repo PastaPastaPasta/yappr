@@ -52,7 +52,7 @@ describe('app shell', () => {
   });
 
   // Signed in, the button opens /compose (features/home/HomeScreen.test.tsx).
-  it('asks a signed-out reader to sign in from the floating button (G-8)', async () => {
+  it('asks a signed-out reader to sign in from the floating button (PRD COMP-11, G-8)', async () => {
     const app = await renderApp('/');
 
     fireEvent.press(screen.getByTestId('compose-fab'));
@@ -145,7 +145,7 @@ describe('app shell', () => {
     ['/settings/appearance', null],
     ['/settings/about', null],
     ['/settings/diagnostics', null],
-    ['/compose', 'compose'],
+    ['/compose', null],
     ['/media?postId=abc123&index=0', null],
     ['/terms-gate', null],
     ['/lockdown', null],

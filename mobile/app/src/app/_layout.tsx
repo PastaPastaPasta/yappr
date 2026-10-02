@@ -14,6 +14,7 @@ import { EngineHost } from '~/engine/EngineHost';
 import { AuthGates } from '~/features/auth/AuthGates';
 import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
+import { startPendingPosts } from '~/features/compose/pending-posts';
 import { useAppearance } from '~/state/appearance';
 import { ActionSheetHost } from '~/ui/action-sheet';
 import { AvatarSvgProvider } from '~/ui/avatar-svg';
@@ -78,6 +79,8 @@ export default function RootLayout() {
   useUnsupportedEngineRoute();
   // The session store, write tickets and created content follow the engine app-wide.
   useEffect(() => startDataLayer(), []);
+  // Compose's posts on their way to the chain (their optimistic cards and write status).
+  useEffect(() => startPendingPosts(), []);
   // A signed-out account's recent searches go with it (AUTH-11).
   useEffect(() => startRecentSearchCleanup(), []);
   const ipfsGateway = useIpfsGateway();
@@ -94,7 +97,8 @@ export default function RootLayout() {
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
 
                   {/* Root modals (UX_SPEC §3.2). Titles come from the screens. */}
-                  <Stack.Screen name="compose" options={FULL_SCREEN} />
+                  {/* Compose draws its own header (UX_SPEC §4.11); a modal's header can't be hidden from the screen. */}
+                  <Stack.Screen name="compose" options={{ ...FULL_SCREEN, headerShown: false }} />
                   <Stack.Screen
                     name="sign-in"
                     options={{ presentation: 'modal', headerShown: false }}

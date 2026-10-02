@@ -497,6 +497,24 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.objectContaining({ rootPostId: id('post0') }), expect.anything())
   })
 
+  it('keeps the image on the first part: a resume past it carries none', async () => {
+    const { tickets, outcome, posts } = engine()
+    creating(1, FEE_CHANGED)
+    const draft = { parts: [{ text: 'one' }, { text: 'two' }], mediaUrl: 'https://img.example/a.png' }
+    const ticket = await outcome(posts.publish(draft))
+    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ mediaUrl: 'https://img.example/a.png' }))
+    m.replyService.createReply.mockClear()
+    await tickets.retry(ticket.id)
+    expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+
+    // The host's own resume, the same.
+    creating()
+    m.replyService.createReply.mockClear()
+    await outcome(posts.publish({ ...draft, resume: { postedIds: [id('post0'), null] } }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+  })
+
   it('never fails a thread with a timed-out part: unconfirmed, unprovable, not retryable', async () => {
     const { tickets, outcome, posts } = engine()
     m.postService.createPost.mockImplementation(async () => post(id('post0')))

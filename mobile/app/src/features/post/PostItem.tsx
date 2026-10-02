@@ -8,6 +8,7 @@ import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
+import { usePendingWriteStatus } from '~/features/compose/pending-posts';
 import { usePostSafety } from '~/features/safety/use-post-safety';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
 import type { MenuItem } from '~/ui/ContextMenu';
@@ -223,6 +224,8 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
   const safety = usePostSafety(listed, shownPost, removal, viewerId);
   const safePost = safety.post;
   const post = useMemo(() => (asStub ? { ...safePost, deleted: true } : safePost), [asStub, safePost]);
+  // A post compose is still publishing: the optimistic card with its write status (PRD COMP-10).
+  const pending = usePendingWriteStatus(listed.id);
   const capabilities = useCapabilities();
   const { external } = useMediaUrls();
 
@@ -337,6 +340,20 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
   }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail]);
 
   if ((removed && !asStub) || safety.hidden) return null;
+
+  if (pending) {
+    return (
+      <PostCard
+        {...safety.gates}
+        {...cardProps}
+        variant="optimistic"
+        post={post}
+        viewerId={viewerId ?? undefined}
+        writeStatus={pending}
+        actions={{ onAuthorPress: actions.onAuthorPress }}
+      />
+    );
+  }
 
   return (
     <PostCard
