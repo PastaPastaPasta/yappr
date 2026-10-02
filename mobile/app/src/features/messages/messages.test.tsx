@@ -700,6 +700,13 @@ describe('New message (DM-05)', () => {
     expect(screen.getByTestId('picker-search').props.value).toBe(BOB_ID);
   });
 
+  it('says why when the person has no encryption key, not that nobody was found (SR-40)', async () => {
+    const reason = 'This account has no encryption key yet, so it cannot receive encrypted messages.';
+    fakeEngine.method('dm.startDirect').mockRejectedValue(Object.assign(new Error(reason), { code: 'BAD_REQUEST' }));
+    await renderAt(`/messages/new?with=${BOB_ID}`);
+    expect(useToastStore.getState().current?.message).toBe(reason);
+  });
+
   it("refuses to message yourself without asking the engine", async () => {
     fakeEngine.method('explore.searchUsers').mockResolvedValue([{ ...BOB, id: VIEWER }]);
     await renderAt(`/messages/new?with=${VIEWER}`);
