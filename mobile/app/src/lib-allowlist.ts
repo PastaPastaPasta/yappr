@@ -31,3 +31,5 @@ export {
 } from '@/lib/post-helpers';
 // Spoken times for screen readers ("5 minutes ago"), from the same env-free module.
 export { formatTime } from '@/lib/utils/common';
+// Stored-tag display (`dash_cashtag` → `$DASH`), from the same import-free module.
+export { cashtagStorageToDisplay, isCashtagStorage } from '@/lib/post-helpers';

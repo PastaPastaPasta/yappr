@@ -28,6 +28,10 @@ export interface UserRowProps {
   followLoading?: boolean;
   onFollowPress?: () => void;
   onPress?: () => void;
+  /** A leaderboard position, shown before the avatar. */
+  rank?: number;
+  /** A secondary line under the handle (a leaderboard's "2.4K likes"). */
+  detail?: string;
   testID?: string;
 }
 
@@ -50,6 +54,8 @@ export function UserRow({
   followLoading = false,
   onFollowPress,
   onPress,
+  rank,
+  detail,
   testID,
 }: UserRowProps) {
   const largeText = useLargeText();
@@ -73,7 +79,14 @@ export function UserRow({
     // following as a custom action.
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={[user.displayName, handle, followsYou && 'follows you', user.bio]
+      accessibilityLabel={[
+        rank !== undefined && `Number ${rank}`,
+        user.displayName,
+        handle,
+        followsYou && 'follows you',
+        detail,
+        user.bio,
+      ]
         .filter(Boolean)
         .join(', ')}
       accessibilityActions={
@@ -88,6 +101,11 @@ export function UserRow({
       testID={testID}
       className={cn('min-h-[72px] flex-row gap-3 px-4 py-3', tw.pressed)}
     >
+      {rank !== undefined ? (
+        <Text variant="subhead" tone="secondary" tabular className="w-6 self-center text-right">
+          {rank}
+        </Text>
+      ) : null}
       <Avatar avatar={user.avatar} identityId={user.id} size="md" />
       <View className="flex-1 gap-0.5">
         <View className="flex-row items-start gap-3">
@@ -106,6 +124,11 @@ export function UserRow({
               </Text>
               {followsYou ? <Tag label="Follows you" /> : null}
             </View>
+            {detail ? (
+              <Text variant="subhead" tone="secondary" numberOfLines={1}>
+                {detail}
+              </Text>
+            ) : null}
           </View>
           {largeText ? null : followButton}
         </View>
