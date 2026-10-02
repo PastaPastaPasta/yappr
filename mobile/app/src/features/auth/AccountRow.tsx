@@ -9,11 +9,11 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { ScalePressable } from '~/ui/ScalePressable';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { monoFont, tw, useColors } from '~/ui/tokens';
 
 import { accountName } from './accounts';
 import { networkName as networkLabel } from './onboarding';
-import { useRipple } from '~/ui/ripple';
 
 /**
  * One signed-in account (UX_SPEC §4.26 "Accounts"): avatar, display name or

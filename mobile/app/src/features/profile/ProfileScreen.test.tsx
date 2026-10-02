@@ -17,14 +17,19 @@ import { useToastStore } from '~/ui/toast';
 import { ProfileScreen } from './ProfileScreen';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
-// The profile's own stack index: 1 is a pushed profile, 0 a tab root.
-let mockStackIndex = 1;
+// The root of the profile's stack: another screen for a pushed profile, the profile itself at a tab root.
+let mockStackRoot = 'home';
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), canGoBack: () => true, replace: jest.fn() },
   Stack: { Screen: () => null },
   useFocusEffect: jest.fn(),
   // canGoBack() also asks the tab navigator, which could go back to another tab.
-  useNavigation: () => ({ getState: () => ({ index: mockStackIndex }), canGoBack: () => true, goBack: jest.fn() }),
+  useNavigation: () => ({
+    getState: () => ({ index: 1, routes: [{ key: mockStackRoot }, { key: 'post' }] }),
+    canGoBack: () => true,
+    goBack: jest.fn(),
+  }),
+  useRoute: () => ({ key: 'profile' }),
 }));
 jest.mock('expo-status-bar', () => ({ setStatusBarStyle: jest.fn() }));
 // FlashList's own Jest setup (@shopify/flash-list/jestSetup): fixed layouts, so cells render.
@@ -252,14 +257,15 @@ describe('ProfileScreen', () => {
     await flush();
     expect(screen.getByTestId('profile-back')).toBeTruthy();
 
-    mockStackIndex = 0;
+    // A pushed screen above the root (index 1) still leaves the root without Back.
+    mockStackRoot = 'profile';
     try {
       screen.unmount();
       renderProfile(VIEWER, { ownTab: true });
       await flush();
       expect(screen.queryByTestId('profile-back')).toBeNull();
     } finally {
-      mockStackIndex = 1;
+      mockStackRoot = 'home';
     }
   });
 

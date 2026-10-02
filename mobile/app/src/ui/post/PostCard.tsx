@@ -28,6 +28,7 @@ import { useMediaUrls } from '../media-url';
 import { RelativeTime } from '../RelativeTime';
 import { displayText, inlineTargets, splitUrl, stripLink, type InlinePart } from '../rich-text/parse';
 import { WriteStatus, writeStatusLinks, type WriteStatusProps } from '../WriteStatus';
+import { useRipple } from '../ripple';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
@@ -37,7 +38,6 @@ import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { QuoteEmbed, QuoteSkeleton } from './QuoteEmbed';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
 import type { CardLinkPreview, CardPoll, CardPost, Loadable } from './types';
-import { useRipple } from '../ripple';
 
 /** Feed cards clamp long text and link to the detail (UX_SPEC §2.4.4). */
 const FEED_MAX_LINES = 12;

@@ -6,11 +6,11 @@ import { cn, formatTime } from '~/lib-allowlist';
 import { UnreadDot } from '~/ui/Badge';
 import { RelativeTime } from '~/ui/RelativeTime';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { tw } from '~/ui/tokens';
 
 import { ConversationAvatar } from './ConversationAvatar';
 import { conversationTitle, memberCount, previewText } from './dm-model';
-import { useRipple } from '~/ui/ripple';
 
 export interface ConversationRowProps {
   conversation: ConversationDTO;

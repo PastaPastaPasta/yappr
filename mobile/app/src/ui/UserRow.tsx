@@ -8,8 +8,8 @@ import { Button } from './Button';
 import { Text } from './Text';
 import { handleOf } from './handle';
 import type { CardAvatar } from './post/types';
-import { monoFont, tw, useLargeText } from './tokens';
 import { useRipple } from './ripple';
+import { monoFont, tw, useLargeText } from './tokens';
 
 /** The fields a user row needs; the engine's AuthorDTO / ProfileDTO both carry them. */
 export interface UserRowUser {

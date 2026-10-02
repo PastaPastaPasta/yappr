@@ -6,8 +6,8 @@ import { useAppearance } from '~/state/appearance';
 
 import { Sheet } from './Sheet';
 import { Text } from './Text';
-import { tw } from './tokens';
 import { useRipple } from './ripple';
+import { tw } from './tokens';
 
 export interface SheetAction {
   label: string;
@@ -67,7 +67,7 @@ export function ActionSheetHost() {
             close();
             action.onPress();
           }}
-          className={cn('min-h-12 justify-center rounded-lg px-2', tw.pressed)}
+          className={cn('min-h-12 justify-center rounded-lg px-2 android:overflow-hidden', tw.pressed)}
           testID={`action-sheet-${action.label}`}
         >
           <Text variant="body" tone={action.destructive ? 'destructive' : 'emphasis'}>

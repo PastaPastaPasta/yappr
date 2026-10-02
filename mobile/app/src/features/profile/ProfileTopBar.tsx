@@ -1,4 +1,4 @@
-import { useNavigation } from 'expo-router';
+import { useNavigation, useRoute } from 'expo-router';
 import type { ReactNode } from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { ArrowLeftIcon, ChevronLeftIcon } from 'react-native-heroicons/outline';
@@ -80,11 +80,14 @@ export interface ProfileTopBarProps {
  */
 export function ProfileTopBar({ title, overBanner, right }: ProfileTopBarProps) {
   const insets = useSafeAreaInsets();
-  // This stack's own history: a tab root has no Back, whatever other tabs hold.
-  // (`canGoBack()` also asks the parents, and the tab navigator can go back to
-  // the previous tab.)
+  // Back only when this screen isn't its stack's root: a tab root has none,
+  // whatever other tabs hold. Not `canGoBack()`, which also asks the tab
+  // navigator, and not the stack's index, which is the focused screen's
+  // (a root re-rendering under a pushed screen would read 1).
   const navigation = useNavigation();
-  const canGoBack = (navigation.getState()?.index ?? 0) > 0;
+  const { key } = useRoute();
+  const root = navigation.getState()?.routes[0];
+  const canGoBack = root !== undefined && root.key !== key;
   return (
     <View
       className={cn('absolute left-0 right-0 top-0 z-10', !overBanner && cn(tw.bg, 'border-b', tw.border))}

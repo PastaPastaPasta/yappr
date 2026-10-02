@@ -41,17 +41,18 @@ function tabIcon(Outline: HeroIcon, Solid: HeroIcon) {
 }
 
 /**
- * Android's tab label, capped at 1.5× font scale and shrunk to
- * fit its tab, so a large font scale doesn't clip it under the tab bar or cut
+ * Android's tab label, capped at 1.5× font scale and shrunk to fit its tab,
+ * so a large font scale doesn't clip it under the tab bar or cut
  * "Notifications" short. iOS keeps the navigator's label, which doesn't scale
  * (the Large Content Viewer shows it instead).
  */
-function AndroidTabLabel({ color, children }: { color: ColorValue; children: string }) {
+function AndroidTabLabel({ color, beside, children }: { color: ColorValue; beside: boolean; children: string }) {
   const { fonts } = useTheme();
   return (
     <Label
       tintColor={color}
-      style={[{ fontSize: LABEL_SIZE }, fonts.medium]}
+      // Beside the icon (tablets, landscape), the navigator's own label metrics.
+      style={[beside ? { fontSize: 13, marginStart: 5 } : { fontSize: LABEL_SIZE }, fonts.medium]}
       maxFontSizeMultiplier={MAX_LABEL_SCALE}
       adjustsFontSizeToFit
     >
@@ -74,8 +75,10 @@ function useAndroidTabBarStyle() {
 
 const tabBarLabel =
   Platform.OS === 'android'
-    ? ({ color, children }: { color: ColorValue; children: string }) => (
-        <AndroidTabLabel color={color}>{children}</AndroidTabLabel>
+    ? ({ color, position, children }: { color: ColorValue; position: 'beside-icon' | 'below-icon'; children: string }) => (
+        <AndroidTabLabel color={color} beside={position === 'beside-icon'}>
+          {children}
+        </AndroidTabLabel>
       )
     : undefined;
 

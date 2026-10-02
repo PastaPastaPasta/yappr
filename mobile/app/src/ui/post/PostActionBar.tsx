@@ -25,8 +25,8 @@ import { cn, formatNumber } from '~/lib-allowlist';
 
 import { Text } from '../Text';
 import { lightImpact } from '../haptics';
-import { hitSlopFor, motion, useColors, useLargeText, type IconComponent } from '../tokens';
 import { useRipple } from '../ripple';
+import { hitSlopFor, motion, useColors, useLargeText, type IconComponent } from '../tokens';
 
 const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : ShareIcon;
 

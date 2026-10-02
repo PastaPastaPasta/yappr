@@ -18,10 +18,10 @@ import { cn, formatTime } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { RelativeTime } from '~/ui/RelativeTime';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { colors, tw, type IconComponent } from '~/ui/tokens';
 
 import { phraseOf, type NotificationRowModel, type NotificationType } from './notification-model';
-import { useRipple } from '~/ui/ripple';
 
 /**
  * Type icons and their decorative colors (UX_SPEC §1.2: the phrase carries

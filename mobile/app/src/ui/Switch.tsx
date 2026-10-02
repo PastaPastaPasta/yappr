@@ -9,8 +9,8 @@ import {
 import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
-import { colors, tw, useColors } from './tokens';
 import { useRipple } from './ripple';
+import { colors, tw, useColors } from './tokens';
 
 export type SwitchProps = Omit<RNSwitchProps, 'trackColor' | 'thumbColor' | 'ios_backgroundColor'>;
 

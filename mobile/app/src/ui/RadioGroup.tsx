@@ -4,8 +4,8 @@ import { CheckIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
-import { tw, useColors } from './tokens';
 import { useRipple } from './ripple';
+import { tw, useColors } from './tokens';
 
 export interface RadioOption<T extends string> {
   value: T;

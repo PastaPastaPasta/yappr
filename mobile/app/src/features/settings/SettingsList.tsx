@@ -5,8 +5,8 @@ import { ChevronRightIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 import { Text } from '~/ui/Text';
-import { colors, tw, useColors, useIsDark, useLargeText, type IconComponent } from '~/ui/tokens';
 import { useRipple } from '~/ui/ripple';
+import { colors, tw, useColors, useIsDark, useLargeText, type IconComponent } from '~/ui/tokens';
 
 /**
  * The settings list (UX_SPEC §2.9, §4.25): an inset grouped list on iOS

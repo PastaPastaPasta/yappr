@@ -7,8 +7,8 @@ import Animated, { FadeOut, Keyframe } from 'react-native-reanimated';
 import { Avatar } from '~/ui/Avatar';
 import { ScalePressable } from '~/ui/ScalePressable';
 import { Text } from '~/ui/Text';
-import { colors, motion } from '~/ui/tokens';
 import { useRipple } from '~/ui/ripple';
+import { colors, motion } from '~/ui/tokens';
 
 /** UX_SPEC §5.2. */
 export function newPostsLabel(count: number): string {

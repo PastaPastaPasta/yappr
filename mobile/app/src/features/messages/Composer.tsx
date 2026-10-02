@@ -5,8 +5,8 @@ import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
 import { cn } from '~/lib-allowlist';
 import { ScalePressable } from '~/ui/ScalePressable';
 import { Text } from '~/ui/Text';
-import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 import { useRipple } from '~/ui/ripple';
+import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 const LINE = 22;
 const MAX_LINES = 5;

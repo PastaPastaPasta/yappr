@@ -5,8 +5,8 @@ import { PlusIcon } from 'react-native-heroicons/outline';
 import { requireAuth } from '~/data/require-auth';
 
 import { lightImpact } from './haptics';
-import { colors } from './tokens';
 import { useRipple } from './ripple';
+import { colors } from './tokens';
 
 const openCompose = () => requireAuth(() => router.push('/compose'));
 

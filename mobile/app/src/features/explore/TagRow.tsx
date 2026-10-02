@@ -3,10 +3,10 @@ import { Pressable, View } from 'react-native';
 
 import { cn } from '~/lib-allowlist';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { tw } from '~/ui/tokens';
 
 import { tagCountLabel } from './tags';
-import { useRipple } from '~/ui/ripple';
 
 export interface TagRowProps {
   tag: TagDTO;

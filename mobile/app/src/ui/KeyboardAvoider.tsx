@@ -18,7 +18,9 @@ export interface KeyboardAvoiderProps {
  *
  * The offset is the navigation header above the screen: the keyboard's frame
  * is in window coordinates, the view's own layout is not. The context rather
- * than `useHeaderHeight()`, which throws outside a navigator.
+ * than `useHeaderHeight()`, which throws outside a navigator. It is the
+ * innermost stack's header only: right for full-screen screens and modals,
+ * not under a transparent header, a form sheet or two stacked headers.
  */
 export function KeyboardAvoider({ children, avoidOnIOS = false }: KeyboardAvoiderProps) {
   const headerHeight = useContext(HeaderHeightContext) ?? 0;

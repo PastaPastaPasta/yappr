@@ -7,8 +7,8 @@ import { cn } from '~/lib-allowlist';
 import { CountBadge } from './Badge';
 import { selectionTick } from './haptics';
 import { Text } from './Text';
-import { hitSlopFor, tw, useColors } from './tokens';
 import { useRipple } from './ripple';
+import { hitSlopFor, tw, useColors } from './tokens';
 
 export interface TabOption<T extends string> {
   value: T;
