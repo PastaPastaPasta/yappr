@@ -140,6 +140,11 @@ describe('buildTimeline', () => {
     expect(statuses(null, true)).toEqual([null, 'Sending…', null]);
   });
 
+  it('says "Sending…", not "Sent", under an own message the engine has not read back yet (SR-22)', () => {
+    const items = buildTimeline([message('a', 0), message('b', 1, { pending: true })], { sending: false, peerReadAt: null, now });
+    expect(items.flatMap((i) => (i.type === 'message' ? [i.status] : []))).toEqual([null, 'Sending…']);
+  });
+
   it('shows a failed local send with its action wherever it is', () => {
     const items = buildTimeline(
       [message('a', 0, { outbox: 'failed-retry' }), message('b', 1, { outbox: 'sending' })],
