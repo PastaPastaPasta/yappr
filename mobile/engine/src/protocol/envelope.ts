@@ -128,6 +128,8 @@ export const RpcErrorCode = {
   HelloTimeout: 'ENGINE_HELLO_TIMEOUT',
   Restarted: 'ENGINE_RESTARTED',
   Disconnected: 'ENGINE_DISCONNECTED',
+  /** Part of the engine itself (its WASM, a sidecar script) did not load: only a fresh page can help. */
+  LoadFailed: 'ENGINE_LOAD_FAILED',
 } as const
 
 export type RpcErrorCodeValue = (typeof RpcErrorCode)[keyof typeof RpcErrorCode]

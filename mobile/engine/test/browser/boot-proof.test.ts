@@ -273,6 +273,35 @@ describe.skipIf(!existsSync(path.join(DIST, 'engine.html')))('engine boots in a 
     expect(result.error ?? null).toBeNull()
   }))
 
+  // A sidecar that does not load fails the boot at once, with the code that has the host start a fresh page.
+  it('chromium over https without engine.wasm.js: the boot fails fast with ENGINE_LOAD_FAILED', () => withBrowser(chromium, async (browser) => {
+    const context = await browser.newContext()
+    try {
+      const page = await context.newPage()
+      const { transport, deliver } = pageTransport(page)
+      await page.exposeFunction('__engineToHost', deliver)
+      await page.addInitScript(() => {
+        const w = window as unknown as { __engineToHost: (m: string) => void; ReactNativeWebView: { postMessage(m: string): void } }
+        w.ReactNativeWebView = { postMessage: (m: string) => { w.__engineToHost(m) } }
+      })
+      await page.route(`${HTTPS_BASE}**`, async (route) => {
+        const { pathname } = new URL(route.request().url())
+        const file = path.join(DIST, pathname.replace(/^\//, ''))
+        if (pathname.endsWith('engine.wasm.js') || !existsSync(file)) return route.fulfill({ status: 404, body: 'not found' })
+        await route.fulfill({ status: 200, contentType: file.endsWith('.js') ? 'text/javascript' : 'text/html', body: readFileSync(file) })
+      })
+      const client = createEngineClient<EngineApi>(transport, { timeoutMs: 30_000 })
+      await page.goto(`${HTTPS_BASE}engine.html`)
+      await client.ready
+      const started = performance.now()
+      await expect(client.api.engine.boot()).rejects.toMatchObject({ code: 'ENGINE_LOAD_FAILED' })
+      expect(performance.now() - started).toBeLessThan(5_000)
+      client.close()
+    } finally {
+      await context.close()
+    }
+  }))
+
   afterAll(() => {
     mkdirSync(EVIDENCE_DIR, { recursive: true })
     const stamp = new Date().toISOString().replace(/[:.]/g, '-')

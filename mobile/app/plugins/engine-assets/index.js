@@ -94,7 +94,7 @@ function writeIosPage(engineVariant, target) {
   const html = fs.readFileSync(path.join(distDir(engineVariant), 'engine.html'), 'utf8');
   const meta = `<meta http-equiv="Content-Security-Policy" content="${CSP}">`;
   if (!html.includes('<head>')) throw new Error('engine.html has no <head>');
-  fs.writeFileSync(path.join(target, 'index.html'), html.replace('<head>', `<head>${meta}`));
+  fs.writeFileSync(path.join(target, 'index.html'), html.replace('<head>', () => `<head>${meta}`));
 }
 
 /** @param {{ modRequest: { projectName?: string; projectRoot: string } }} cfg */

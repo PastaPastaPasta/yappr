@@ -279,6 +279,25 @@ describe('EngineSupervisor', () => {
     s.supervisor.stop();
   });
 
+  it('restarts, rather than degrades, an engine whose WASM did not load', async () => {
+    const s = setup({
+      configure: (engine, epoch) => {
+        if (epoch === 1) {
+          engine.handlers['engine.boot'] = () => {
+            throw new RpcError('The SDK’s WebAssembly did not load: engine.wasm.js did not load', 'ENGINE_LOAD_FAILED');
+          };
+        }
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'restarting', restarts: 1 });
+    await settle(10);
+    await boot(s, 2);
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', epoch: 2 });
+    s.supervisor.stop();
+  });
+
   it('retries a degraded boot once at a time, however many triggers arrive', async () => {
     let fail = true;
     let boots = 0;

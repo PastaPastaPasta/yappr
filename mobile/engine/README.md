@@ -48,12 +48,17 @@ CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint
 - **Three scripts, not one.** `engine.js` (1.5 MB) is the bundle: evo-sdk's unbundled entry (`dist/sdk.js`, aliased; the published `dist/evo-sdk.module.js` inlines its own glue and the WASM as 11 MB of base64), one copy of the wasm-bindgen glue, `lib/` and the API. Two **sidecar** scripts (`src/sidecar.ts`) each set one `window` global:
   - `engine.wasm.js` (11.4 MB): the SDK's WASM, gzip + base64 in a single string literal (`__YAPPR_ENGINE_WASM__`);
   - `engine.avatars.js` (2.0 MB): the DiceBear styles (`__YAPPR_ENGINE_AVATARS__`). In `engine.js`, `@dicebear/collection` is a stand-in (`src/avatars/collection-shim.ts`) whose styles read the real ones at call time.
-- **Order.** Every page runs `engine.js` first, so the engine says hello while the sidecars are still being read: `engine.inline.html` (iOS) inlines all three in that order; `engine.html` and the Android loader page load them by URL, in order and in parallel. A page without them gets them injected from beside the page.
+- **Order.** Every page runs `engine.js` first, so the engine says hello while the sidecars are still being read:
+  - iOS loads `index.html` (`engine.html` plus the host's CSP, written by the app's engine-assets plugin) by file URL;
+  - the Android loader page inserts the three scripts in order (`async = false`), and they download in parallel;
+  - `engine.inline.html` inlines all three (iOS dev builds against `YAPPR_ENGINE_DEV_URL`, and dev clients built before this split; the browser boot proof).
+  `engine.js` installs a capture-phase `load`/`error` listener as it evaluates, so it sees every sidecar's outcome whenever it happens. Nothing is ever fetched or injected: a page without a sidecar fails at once.
 - **The init path:**
-  1. The entry starts the WASM right after its hello, not at `engine.boot()`: decode the base64 (`Uint8Array.fromBase64`, else `atob`), decompress with `DecompressionStream`, and `WebAssembly.instantiateStreaming` the decompressed stream, which compiles off the main thread while it streams. `boot()` joins that init (`src/shims/wasm-sdk.ts`, which every `@dashevo/wasm-sdk` import shares: one glue module, one instance). A failed preload is forgotten, so `boot()` tries again.
+  1. The entry starts the WASM right after its hello, not at `engine.boot()`: decode the base64 (`Uint8Array.fromBase64`, else `atob`), decompress with `DecompressionStream`, and `WebAssembly.instantiateStreaming` the decompressed stream, which compiles off the main thread while it streams. `boot()` joins that init (`src/shims/wasm-sdk.ts`, which every `@dashevo/wasm-sdk` import shares: one glue module, one instance).
   2. It also preconnects to the quorum service the SDK reads first in `connect()` (`src/preconnect.ts`), so DNS and TLS overlap the compile.
   3. `boot()` waits for the avatar styles too (lib draws default avatars while it enriches reads), and `profiles.avatarSvg` waits for them.
-- **No `.wasm` fetch.** Nothing fetches a binary, so the engine works from `file://` with no web server, no native asset handler and no COOP/COEP headers. A binary sidecar served by a native request interceptor would save the base64 scan and decode, which measured at tens of milliseconds (README Measurements), against a native module and a dev-client rebuild.
+  4. **Failure.** The WASM initializes once per page, failure included (as evo-sdk's `ensureInitialized` does). If it or the avatar styles did not load, `boot()` rejects with `ENGINE_LOAD_FAILED`, and the host's supervisor counts that as a crash and starts a fresh page (with backoff, then `failed`), instead of degrading and retrying a boot that cannot succeed.
+- **No `.wasm` fetch.** Nothing fetches a binary, so the engine works from `file://` with no web server, no native asset handler and no COOP/COEP headers. A binary sidecar would need a native request interceptor (Android `shouldInterceptRequest`, iOS `WKURLSchemeHandler`) and a dev-client rebuild. It would save the base64 work, which measured in the Android emulator's WebView (Chrome 124) at 60–110 ms to scan the 11.4 MB literal, 13–24 ms for `atob` and 10–30 ms for the byte loop: one main-thread stall of about 0.1–0.15 s, after the hello and off the boot's network path.
 - **Node** (the test harness) gets the WASM from the package file instead (`test/setup/wasm.ts`), and the real DiceBear styles (the stand-in is aliased in `build.mjs` only).
 - **`target: safari16.4, chrome110`:** `DecompressionStream` needs iOS 16.4 or later.
 
@@ -297,7 +302,7 @@ On v5, a call naming a conversation before the saved state has loaded (`status()
 - **Both loading modes are viable for the host:**
   - `source={{ uri: 'file://…/engine.html' }}` (Android also needs `allowFileAccess`);
   - `source={{ html: inline, baseUrl: 'https://engine.yap.pr/' }}` with `engine.inline.html`.
-- **Recommendation:** prefer the https `baseUrl`. It gets the off-main-thread wasm compile on WebKit, and gives a stable non-null origin.
+- **What ships:** both platforms load by file URL (origin `null`): iOS `index.html` with read access to its directory, Android the loader page over `file:///android_asset/engine/`. Neither crosses the RN bridge with the bundle. The https base remains for `engine.inline.html` in iOS dev builds. (The https base was first preferred for WebKit's off-main-thread compile in a blob Worker; the engine now compiles with `instantiateStreaming` on both origins.)
 - **Not origin-related:** every run logs 3–9 failed requests to unhealthy testnet evonodes (`85.209.243.2–9`, which answer `ERR_INVALID_HTTP_RESPONSE` / "network connection was lost"). The SDK bans them and retries elsewhere. The same nodes fail from both origins.
 
 ## SDK and platform bugs found

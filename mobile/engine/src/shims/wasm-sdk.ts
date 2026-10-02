@@ -25,16 +25,15 @@ export function setWasmSource(next: WasmSource): void {
 }
 
 /**
- * Initialize the WASM once. Concurrent and repeated calls share one init; a
- * failed one is forgotten, so the next call (a boot retry) tries again.
+ * Initialize the WASM, once: every call shares the first one's outcome,
+ * failure included, as evo-sdk's own `ensureInitialized` does. A WASM that
+ * did not load is the engine's end (`engine.boot()` reports it, and the host
+ * starts a fresh page).
  */
 export default function init(): Promise<InitOutput> {
   initializing ??= (async () => {
     if (!source) throw new Error('No WASM source: call setWasmSource() before the SDK initializes')
     return rawInit({ module_or_path: await source() })
-  })().catch((error: unknown) => {
-    initializing = null
-    throw error
-  })
+  })()
   return initializing
 }

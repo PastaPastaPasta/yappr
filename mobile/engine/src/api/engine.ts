@@ -10,11 +10,20 @@ import {
 } from '@/lib/constants'
 import { profileBaseSource } from '@/lib/profile/v10-profile'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import { PROTOCOL_VERSION, RpcError, type LogLevel } from '../protocol/envelope'
+import { PROTOCOL_VERSION, RpcError, RpcErrorCode, type LogLevel } from '../protocol/envelope'
 import { ENGINE_BUILD, bundleHash } from '../build-info'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import { platformInfo, type PlatformInfoDTO } from '../dto/capabilities'
 import { avatarStylesReady } from '../avatar-styles'
+// The engine's shim (src/shims/wasm-sdk.ts) through its alias, typed as the package.
+import initWasm from '@dashevo/wasm-sdk/compressed'
+
+/** Part of the engine itself did not load (its WASM, a sidecar): the host starts a fresh page. */
+function engineLoaded<T>(loading: Promise<T>, what: string): Promise<T> {
+  return loading.catch((error: unknown) => {
+    throw new RpcError(`${what} did not load: ${error instanceof Error ? error.message : String(error)}`, RpcErrorCode.LoadFailed)
+  })
+}
 
 /**
  * Host-specific hooks the API needs. The WebView entry wires the real shims;
@@ -84,7 +93,8 @@ export function createEngineModule(runtime: EngineRuntime) {
      * Connect the SDK, exactly as the web's SdkProvider does. Storage is
      * already hydrated (before load; see shims/storage). Idempotent:
      * concurrent and repeated calls share one boot, and a failed boot can be
-     * retried.
+     * retried, except when the WASM or the avatar styles did not load
+     * (`ENGINE_LOAD_FAILED`): only a fresh page helps then.
      */
     async boot(): Promise<EngineInfo> {
       if (typeof WebAssembly === 'undefined') {
@@ -94,10 +104,10 @@ export function createEngineModule(runtime: EngineRuntime) {
         bootAttempted = true
         const started = performance.now()
         booting = Promise.all([
-          evoSdkService.initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID }),
-          // lib draws default avatars while it enriches reads: have the styles in by then. Their
-          // failure is not the SDK's; profiles.avatarSvg reports it.
-          avatarStylesReady().then(() => undefined, () => undefined),
+          engineLoaded(initWasm(), 'The SDK\'s WebAssembly')
+            .then(() => evoSdkService.initialize({ network: getConfiguredNetwork(), contractId: YAPPR_CONTRACT_ID })),
+          // lib draws default avatars while it enriches reads: have the styles in by then.
+          engineLoaded(avatarStylesReady(), 'The avatar styles'),
         ])
           .then(() => {
             bootMs ??= Math.round(performance.now() - started)

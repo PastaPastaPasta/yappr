@@ -5,8 +5,8 @@
  * anyway, so the harness installs the same storage shim the bundle does.
  *
  * `window` stays undefined on purpose: lib treats that as "no browser" (as
- * during SSR) and wasm-sdk takes its Node init path. Nothing in the read API
- * needs `window`.
+ * during SSR). Nothing in the read API needs `window`. The WASM comes from
+ * the package file (./wasm.ts), through the engine's own shim.
  */
 
 import { readFileSync } from 'node:fs'

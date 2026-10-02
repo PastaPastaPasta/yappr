@@ -287,7 +287,7 @@ States: `starting → handshaking → booting → ready ⇄ degraded → crashed
 > - **Host → engine** is `injectJavaScript("window.__yapprEngineReceive && window.__yapprEngineReceive(<JSON string literal>)")`. The message is data inside a string literal, never code.
 > - **Engine → host** is `window.ReactNativeWebView.postMessage(json)`.
 > - **Hydration** is not `init`/`init-kv` frames: the host prepends a bootstrap script to the page that assigns the whole snapshot (`window.__YAPPR_ENGINE_STORAGE__`, `<` escaped) before the engine runs, and posts the WebView's capabilities (`host-caps`).
-> - **Loading:** iOS loads `engine.inline.html` with the base URL `https://engine.yap.pr/`; Android loads a small loader page whose base is `file:///android_asset/engine/`, which loads `engine.js` (Android System WebView's `loadDataWithBaseURL` yields an empty page above about 15 MB). Both put the host's CSP and bootstrap first. `mobile/app/src/engine/page.ts`.
+> - **Loading:** `engine.js` plus two sidecar scripts, `engine.wasm.js` (the WASM, gzip + base64) and `engine.avatars.js` (the DiceBear styles), run in that order (mobile/engine/README.md "How the wasm loads"). iOS loads `index.html` (engine.html plus the CSP) from the app bundle by file URL, with read access to its directory and the bootstrap as a document-start user script; Android loads a small loader page whose base is `file:///android_asset/engine/`, with the CSP and bootstrap inline (Android System WebView's `loadDataWithBaseURL` yields an empty page above about 15 MB, and its `injectedJavaScriptBeforeContentLoaded` races the page). iOS dev builds against `YAPPR_ENGINE_DEV_URL` load `engine.inline.html` with the base URL `https://engine.yap.pr/`. `mobile/app/src/engine/page.ts`.
 
 - **Host → engine:** `webviewRef.current.postMessage(json)`. `react-native-webview` delivers it as a `message` event, on `window` on iOS and on `document` on Android, so the bootstrap listens on both.
 - **Engine → host:** `window.ReactNativeWebView.postMessage(json)`, received by `onMessage`.
@@ -1153,11 +1153,11 @@ These go in the audit scope:
   - `connect-src` stays `https:` on every variant. Narrowing it on devnet would block the diagnostics DAPI override (§3.1) and the avatar fingerprint fetch (§10.1), so devnet would behave differently from testnet.
   - **M2 must verify** that `'self'` matches `file:` scripts in both WebViews. If it does not, switch to a `sha256-` hash of `engine.js`, computed at build time.
 - **Bridge checks (as built).**
-  - The host accepts `onMessage` only from the page's own URL (`https://engine.yap.pr/` on iOS; on Android the `file:` loader page, which reports no URL). Each mount has its own transport and client, so a stale page cannot reach the current epoch's calls.
+  - The host accepts `onMessage` only from the page's own URL (the bundled `index.html` file URL on iOS, `https://engine.yap.pr/` in iOS dev; on Android the `file:` loader page, which reports no URL). Each mount has its own transport and client, so a stale page cannot reach the current epoch's calls.
   - Navigation: every request goes through `onShouldStartLoadWithRequest` (`originWhitelist={['*']}`, so nothing falls through to `Linking`); iOS allows the page once per mount, Android allows nothing (its page never asks), and `about:blank`.
   - `injectJavaScript` carries host → engine messages as JSON string literals (data, never code), plus dev-only diagnostics probes.
   - Arguments are data. They are decoded by the codec and never evaluated.
-  - The CSP is the host's `<meta>`, prepended to the page: `script-src 'unsafe-inline' 'unsafe-eval'` (plus `'self' file:` on Android for `engine.js`); the rest as below.
+  - The CSP is the host's `<meta>` (`mobile/app/src/engine/csp.json`), first in the page: `default-src 'none'; script-src 'self' file: 'unsafe-inline' 'unsafe-eval'; connect-src https:; img-src https: data: blob:; base-uri 'none'; form-action 'none'`. The inline page (iOS dev), whose https base is a real origin, drops `'self' file:`. There is no `worker-src`: nothing compiles in a blob Worker.
 - **App Review 4.2.** The UI is fully native, and the WebView is invisible and never renders content (ADR E1).
 
 ### 11.4 Lockdown Mode

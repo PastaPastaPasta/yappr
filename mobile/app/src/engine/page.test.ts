@@ -8,6 +8,9 @@ describe('engine page', () => {
     expect(page.indexOf('Content-Security-Policy')).toBeLessThan(page.indexOf('<script>BOOT</script>'));
     expect(page.indexOf('<script>BOOT</script>')).toBeLessThan(page.indexOf('ENGINE'));
     expect(page).toContain("default-src 'none'");
+    // Its https base is a real origin; nothing may load from it.
+    expect(page).toContain("script-src 'unsafe-inline' 'unsafe-eval'");
+    expect(page).not.toContain("'self'");
   });
 
   it('assigns the snapshot as a property, with no markup that could end the script', () => {

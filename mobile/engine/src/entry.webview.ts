@@ -81,9 +81,8 @@ dispatcher.hello({ bundleHash: bundleHash() })
 
 // Start on the WASM now rather than at engine.boot(): it streams in and compiles
 // while the hello crosses the bridge and the host answers. boot() joins this
-// init; a failed one is forgotten and boot() tries again (and reports why).
-initWasm().catch((error: unknown) => dispatcher.log('warn', `WASM preload failed: ${describe(error)}`))
-preconnectQuorumService()
+// init and reports a failure.
+initWasm().catch((error: unknown) => dispatcher.log('error', `The WASM did not load: ${describe(error)}`))
 
 const avatarStyles = loadSidecar(SIDECARS.avatars, () => {
   const styles = window.__YAPPR_ENGINE_AVATARS__
@@ -92,3 +91,10 @@ const avatarStyles = loadSidecar(SIDECARS.avatars, () => {
 }).then(installAvatarStyles)
 setAvatarStylesReady(avatarStyles)
 avatarStyles.catch((error: unknown) => dispatcher.log('error', `Avatar styles did not load: ${describe(error)}`))
+
+try {
+  preconnectQuorumService()
+} catch (error) {
+  // Only an optimization: the SDK reports a bad quorum URL itself.
+  dispatcher.log('warn', `Quorum preconnect skipped: ${describe(error)}`)
+}

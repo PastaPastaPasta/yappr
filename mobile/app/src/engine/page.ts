@@ -26,7 +26,6 @@ import type { StorageSnapshot } from './storage/engine-storage';
  *   its base; iOS fetches engine.inline.html and loads it with an https base,
  *   as it does from a dev client built before the split (no index.html).
  */
-const IOS_ENGINE_DIR = `${Paths.bundle.uri}engine/`;
 const IOS_DEV_PAGE_URL = 'https://engine.yap.pr/';
 const ANDROID_ASSETS_URL = 'file:///android_asset/engine/';
 
@@ -48,6 +47,8 @@ async function fetchDev(name: string): Promise<Response> {
  * it into the iOS page.
  */
 const CSP = cspPolicy.policy;
+/** The inline page loads no script by URL, and its https base is a real origin: no 'self' for it. */
+const INLINE_CSP = CSP.replace(" 'self' file:", '');
 
 export type Simulation = 'no-webassembly' | 'old-webview';
 
@@ -86,15 +87,15 @@ export function bootstrapScript(snapshot: StorageSnapshot, simulate: Simulation 
   ].join('');
 }
 
-const prelude = (bootstrap: string) =>
-  `<meta http-equiv="Content-Security-Policy" content="${CSP}"><script>${bootstrap}</script>`;
+const prelude = (bootstrap: string, csp = CSP) =>
+  `<meta http-equiv="Content-Security-Policy" content="${csp}"><script>${bootstrap}</script>`;
 
 /** Insert the CSP and the bootstrap at the top of `<head>`, ahead of the engine's own scripts. */
 export function composeInlineHtml(html: string, bootstrap: string): string {
   const head = html.indexOf('<head>');
   if (head < 0) throw new Error('engine.inline.html has no <head>');
   const at = head + '<head>'.length;
-  return html.slice(0, at) + prelude(bootstrap) + html.slice(at);
+  return html.slice(0, at) + prelude(bootstrap, INLINE_CSP) + html.slice(at);
 }
 
 /**
@@ -134,20 +135,21 @@ export async function loadEnginePage(snapshot: StorageSnapshot, simulate: Simula
       pageUrl: baseUrl,
     };
   }
-  const pageUrl = `${IOS_ENGINE_DIR}index.html`;
+  const engineDir = `${Paths.bundle.uri}engine/`;
+  const pageUrl = `${engineDir}index.html`;
   if (devUrl || !new File(pageUrl).exists) {
     // Dev: re-fetched on every boot, so "Restart engine" picks up a rebuilt engine. No index.html:
     // a dev client built before the engine was split, which bundles only the inline page.
     const inline = devUrl
       ? await (await fetchDev('engine.inline.html')).text()
-      : await new File(`${IOS_ENGINE_DIR}engine.inline.html`).text();
+      : await new File(`${engineDir}engine.inline.html`).text();
     const html = composeInlineHtml(inline, bootstrap);
     return { source: { html, baseUrl: IOS_DEV_PAGE_URL }, allowFileAccess: false, pageUrl: IOS_DEV_PAGE_URL };
   }
   return {
     source: { uri: pageUrl },
     allowFileAccess: false,
-    allowingReadAccessToURL: IOS_ENGINE_DIR,
+    allowingReadAccessToURL: engineDir,
     injectedJavaScriptBeforeContentLoaded: bootstrap,
     pageUrl,
   };
