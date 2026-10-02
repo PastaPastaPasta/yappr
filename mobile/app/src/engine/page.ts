@@ -1,4 +1,4 @@
-import { Paths } from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import { Platform } from 'react-native';
 
 import { config } from '~/config';
@@ -23,7 +23,8 @@ import type { StorageSnapshot } from './storage/engine-storage';
  *   the page. (`loadDataWithBaseURL` also silently yields an empty page for
  *   data over about 15 MB, which rules out inlining the engine.)
  * - Dev (`YAPPR_ENGINE_DEV_URL`): Android's loader page with the dev server as
- *   its base; iOS fetches engine.inline.html and loads it with an https base.
+ *   its base; iOS fetches engine.inline.html and loads it with an https base,
+ *   as it does from a dev client built before the split (no index.html).
  */
 const IOS_ENGINE_DIR = `${Paths.bundle.uri}engine/`;
 const IOS_DEV_PAGE_URL = 'https://engine.yap.pr/';
@@ -133,12 +134,16 @@ export async function loadEnginePage(snapshot: StorageSnapshot, simulate: Simula
       pageUrl: baseUrl,
     };
   }
-  if (devUrl) {
-    // Re-fetched on every boot, so "Restart engine" picks up a rebuilt engine.
-    const html = composeInlineHtml(await (await fetchDev('engine.inline.html')).text(), bootstrap);
+  const pageUrl = `${IOS_ENGINE_DIR}index.html`;
+  if (devUrl || !new File(pageUrl).exists) {
+    // Dev: re-fetched on every boot, so "Restart engine" picks up a rebuilt engine. No index.html:
+    // a dev client built before the engine was split, which bundles only the inline page.
+    const inline = devUrl
+      ? await (await fetchDev('engine.inline.html')).text()
+      : await new File(`${IOS_ENGINE_DIR}engine.inline.html`).text();
+    const html = composeInlineHtml(inline, bootstrap);
     return { source: { html, baseUrl: IOS_DEV_PAGE_URL }, allowFileAccess: false, pageUrl: IOS_DEV_PAGE_URL };
   }
-  const pageUrl = `${IOS_ENGINE_DIR}index.html`;
   return {
     source: { uri: pageUrl },
     allowFileAccess: false,

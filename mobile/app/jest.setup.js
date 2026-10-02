@@ -60,7 +60,13 @@ jest.mock('expo-secure-store', () => {
     __items: items,
   };
 });
-jest.mock('expo-file-system', () => ({ Paths: { bundle: { uri: 'file:///bundle/' } } }));
+jest.mock('expo-file-system', () => ({
+  Paths: { bundle: { uri: 'file:///bundle/' } },
+  // The app bundle's engine page is there; nothing reads files in tests.
+  File: class {
+    exists = true;
+  },
+}));
 // MMKV instances persist by id, as on a device, so "relaunch" and "reinstall" can be simulated
 // (react-native-mmkv's own test mock is a fresh, empty instance on every call).
 jest.mock('react-native-mmkv', () => {
