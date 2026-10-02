@@ -144,12 +144,39 @@ describe('wire format', () => {
     expect(item.licenseKeys).toEqual(['k'])
   })
 
-  it('accepts only http(s) URLs and ipfs:// URLs that name a CID', () => {
+  it('accepts http(s) URLs (secrets in the query included), magnet links and ipfs:// URLs that name a CID', () => {
     expect(isSafeDeliveryUrl('https://example.com/a')).toBe(true)
+    expect(isSafeDeliveryUrl('https://files.example.com/dl?q=s3cr3t&expires=1700000000#page')).toBe(true)
+    expect(isSafeDeliveryUrl('magnet:?xt=urn:btih:abc123&dn=course')).toBe(true)
     expect(isSafeDeliveryUrl(`ipfs://${CID}/book.pdf`)).toBe(true)
     expect(isSafeDeliveryUrl('ipfs://evil.example#')).toBe(false)
     expect(isSafeDeliveryUrl(`ipfs://${CID}?x=1`)).toBe(false)
     expect(isSafeDeliveryUrl('javascript:alert(1)')).toBe(false)
+  })
+
+  it('round-trips links with access codes and standalone codes, none of which need IPFS', () => {
+    const original = kit({
+      assets: [
+        { kind: 'link', label: 'Download', url: 'https://example.com/dl?q=s3cr3t' },
+        { kind: 'link', label: 'Members area', url: 'https://example.com/members', code: 'OPEN-SESAME' },
+        { kind: 'link', label: 'Torrent', url: 'magnet:?xt=urn:btih:abc123' },
+        { kind: 'code', label: 'Gift card', code: 'GIFT-1234', variantKey: 'Gold' },
+      ],
+    })
+    expect(decodeKit(encodeKit(original))).toEqual(original)
+  })
+
+  it('drops a code with nothing in it and a file that points at a magnet link', () => {
+    const decoded = decodeKit(new TextEncoder().encode(JSON.stringify({
+      v: 1,
+      deliverWhen: 'on_order',
+      assets: [
+        { kind: 'code', label: 'Empty', code: '' },
+        { kind: 'code', code: 'X' },
+        { kind: 'file', name: 'f', size: 1, url: 'magnet:?xt=urn:btih:abc', key: KEY },
+      ],
+    })))
+    expect(decoded.assets).toEqual([{ kind: 'code', label: 'Code', code: 'X' }])
   })
 
   it('refuses a delivery past the contract\'s payload cap', () => {

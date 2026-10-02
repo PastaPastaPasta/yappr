@@ -25,6 +25,8 @@ export const MAX_DELIVERY_PLAINTEXT_BYTES = MAX_ENCRYPTED_PAYLOAD_BYTES - DELIVE
 /** Largest file a seller may attach: the whole file is encrypted in memory. */
 export const MAX_DIGITAL_FILE_BYTES = 100 * 1024 * 1024
 export const MAX_INSTRUCTIONS_LENGTH = 2000
+/** Longest access code, voucher or other copyable text in one asset. */
+export const MAX_CODE_LENGTH = 500
 /**
  * Quantities come from the order payload, which the BUYER writes. A line must
  * be a whole number of units, and "Deliver all" leaves any line drawing more
@@ -147,9 +149,9 @@ export function planDelivery(
 export function planBlockers(plan: DeliveryPlan): string[] {
   return [
     ...plan.invalidQuantities.map((title) => `"${title}" has an invalid quantity in the order. Check it with the buyer before delivering.`),
-    ...plan.missingKits.map((title) => `"${title}" has no delivery content. Attach files or links for it below, or add them to the product.`),
-    ...plan.shortOnKeys.map((title) => `"${title}" does not have enough license keys left. Add keys in the product's delivery settings.`),
-    ...plan.emptyLines.map((title) => `"${title}" would be delivered empty (nothing in its kit applies to this variant). Attach files or links for it below.`),
+    ...plan.missingKits.map((title) => `"${title}" has no delivery content. Add a link, code or file for it below, or add them to the product.`),
+    ...plan.shortOnKeys.map((title) => `"${title}" does not have enough unique codes left. Add more in the product's delivery settings.`),
+    ...plan.emptyLines.map((title) => `"${title}" would be delivered empty (nothing in its kit applies to this variant). Add a link, code or file for it below.`),
   ]
 }
 
@@ -199,6 +201,8 @@ const SAFE_HTTP_URL = /^https?:\/\/\S+$/i
 // ipfs:// must name a bare CID (and optional path): a host-like value such as
 // `ipfs://evil.example#` would become that host on a subdomain gateway.
 const SAFE_IPFS_URL = /^ipfs:\/\/[a-z0-9]{46,100}(\/[^\s?#]*)?$/i
+// Handed to the buyer's torrent client; it carries no script.
+const SAFE_MAGNET_URL = /^magnet:\?\S+$/i
 const BASE64_KEY = /^[A-Za-z0-9+/]{43}=$/
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -206,22 +210,40 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const optionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined
 
-/** A link or file URL the buyer's browser may safely open: http(s) or ipfs only. */
-export const isSafeDeliveryUrl = (url: string) => SAFE_HTTP_URL.test(url) || SAFE_IPFS_URL.test(url)
+/**
+ * A URL the buyer's browser may safely open: http(s), ipfs (a CID) or magnet.
+ * Anything else (`javascript:`, `data:`) is refused; a seller with another
+ * kind of address can send it as a code instead.
+ */
+export const isSafeDeliveryUrl = (url: string) =>
+  SAFE_HTTP_URL.test(url) || SAFE_IPFS_URL.test(url) || SAFE_MAGNET_URL.test(url)
+
+const safeUrl = (value: unknown): string | undefined =>
+  typeof value === 'string' && isSafeDeliveryUrl(value) ? value : undefined
 
 function parseAsset(value: unknown): DigitalAsset | null {
-  if (!isRecord(value) || typeof value.url !== 'string' || !isSafeDeliveryUrl(value.url)) return null
+  if (!isRecord(value)) return null
   const variantKey = optionalString(value.variantKey)
+  const variant = variantKey ? { variantKey } : {}
+  const code = optionalString(value.code)
   if (value.kind === 'file') {
+    const url = safeUrl(value.url)
+    // A file is fetched and decrypted here, which a magnet link cannot be.
+    if (!url || SAFE_MAGNET_URL.test(url)) return null
     if (typeof value.name !== 'string' || !value.name) return null
     if (typeof value.key !== 'string' || !BASE64_KEY.test(value.key)) return null
     if (typeof value.size !== 'number' || !Number.isFinite(value.size) || value.size < 0) return null
     const mime = optionalString(value.mime)
-    return { kind: 'file', name: value.name, size: value.size, url: value.url, key: value.key, ...(mime ? { mime } : {}), ...(variantKey ? { variantKey } : {}) }
+    return { kind: 'file', name: value.name, size: value.size, url, key: value.key, ...(mime ? { mime } : {}), ...variant }
   }
   if (value.kind === 'link') {
-    const label = optionalString(value.label) ?? value.url
-    return { kind: 'link', label, url: value.url, ...(variantKey ? { variantKey } : {}) }
+    const url = safeUrl(value.url)
+    if (!url) return null
+    return { kind: 'link', label: optionalString(value.label) ?? url, url, ...(code ? { code } : {}), ...variant }
+  }
+  if (value.kind === 'code') {
+    if (!code) return null
+    return { kind: 'code', label: optionalString(value.label) ?? 'Code', code, ...variant }
   }
   return null
 }

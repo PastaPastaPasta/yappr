@@ -1,9 +1,32 @@
 # Digital products (storefront v6)
 
-Stores can sell **digital products** alongside shipped ones: downloadable
-files, links, license keys and redemption instructions. Delivery happens on
-Dash Platform, encrypted end to end, with no server. A buyer's purchases
-collect in a **Library** under My Orders.
+Stores can sell **digital products** alongside shipped ones: links (to
+wherever the seller already hosts the goods), access codes, unique codes
+such as license keys, downloadable files and redemption instructions. Delivery
+happens on Dash Platform, encrypted end to end, with no server. A buyer's
+purchases collect in a **Library** under My Orders.
+
+## Delivery methods
+
+Sellers are not tied to IPFS: only uploaded files use it, and files are
+optional. Every method below is encrypted to the buyer, so a secret in a link
+is as private as a license key.
+
+| Seller has | Use | Buyer sees |
+| --- | --- | --- |
+| A download page, cloud drive, course portal, invite or video link | **Link** (`https://…`, `http://…`) | the link, with a copy button |
+| A link with the secret in it (`…/dl?q=s3cr3t`, a signed URL) | **Link**, as is | the same |
+| A link plus a password or access code | **Link** with its access code | the link, and the code to copy |
+| A code every buyer shares (voucher, password, account login) | **Code** | the code to copy |
+| A different code or link per unit (license keys, gift cards, single-use invites) | **Unique codes**, one per line | one per unit; a line that is a URL is a link |
+| A torrent | **Link** (`magnet:?…`) | the link (opens their torrent client) |
+| A file to hand over directly | **File** (needs IPFS storage connected) | a download, decrypted in the browser |
+| Something only this buyer gets (a custom build, a personal invite) | the deliver modal's per-order link, code or file, plus the message | the same, for this order only |
+| Steps to redeem or install | **Instructions** | the text, with every delivery |
+
+Links accept http(s), magnet, and ipfs:// URLs that name a CID. Any other
+scheme (`javascript:`, `data:`) is refused, so the seller sends such an address
+as a code instead.
 
 Client gate: `NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v6` (`storefrontSupportsDigital()`
 in `lib/constants.ts`). Below v6 nothing changes: the digital UI is hidden, no
@@ -32,13 +55,13 @@ stays in the library.
 
 Three layers. Each key travels only inside a ciphertext.
 
-1. **Files.** The seller's browser encrypts each file with XChaCha20-Poly1305
+1. **Files** (only when the seller uploads one). The seller's browser encrypts each file with XChaCha20-Poly1305
    under a fresh random 32-byte key, then pins the ciphertext to IPFS through
    the connected Storacha/Pinata provider. The public CID reveals nothing. The
    buyer's browser downloads it from any gateway and decrypts it. A gateway that
    returns tampered bytes fails authentication, and the next gateway is tried.
-2. **The kit** (`itemDeliverable`). The asset list, including file keys, plus
-   license keys, instructions and timing, ECIES-encrypted to the **seller's own**
+2. **The kit** (`itemDeliverable`). The links, codes and files (with their
+   keys), plus unique codes, instructions and timing, ECIES-encrypted to the **seller's own**
    encryption key. Any of the seller's devices can fulfil an order. The AAD binds
    each kit to its item id.
 3. **The delivery** (`orderDelivery`). Checkout already encrypts an order to the
@@ -59,10 +82,11 @@ Code: `lib/crypto/digital-delivery.ts`, `lib/services/digital-file-service.ts`.
 
 ## Flows
 
-**Seller lists a product** (`/store/item/add`): picks *Digital*, uploads files
-(encrypted before upload) and/or adds links, optionally pastes a pool of license
-keys (one per unit sold) and instructions, and chooses the timing:
-*after I confirm payment* (default) or *as soon as it is ordered*.
+**Seller lists a product** (`/store/item/add`): picks *Digital*, adds links
+(each with an optional access code), codes and/or files (encrypted before
+upload), optionally pastes unique codes (one per unit sold) and instructions,
+and chooses the timing: *after I confirm payment* (default) or *as soon as it
+is ordered*.
 
 **Buyer checks out**: digital lines are badged. An all-digital cart skips the
 shipping address, and shipping rates count only shippable lines (weight and
@@ -71,7 +95,7 @@ payload.
 
 **Seller fulfils** (`/orders/seller`):
 - **Deliver now** on an order opens the deliver modal. It shows each line's kit,
-  lets the seller attach files or links for this order only, takes a message,
+  lets the seller add links, codes or files for this order only, takes a message,
   and optionally marks the order Delivered (default on for all-digital orders).
 - **Deliver all** sends every *ready* order in one pass. An order is ready when:
   - it has digital lines and nothing has been delivered;
@@ -85,7 +109,7 @@ payload.
   failed read must not pass for "nothing delivered". This is the closest a
   server-less store gets to automatic delivery: the seller's open browser is
   the fulfilment worker.
-- License keys come off the front of the pool, `quantity` per line. The steps
+- Unique codes (license keys and the like) come off the front of the pool, `quantity` per line. The steps
   are ordered so a key is never sent twice:
   1. The reduced pool is saved **before** the delivery is published, at the
      revision it was read. A pool changed elsewhere (another tab or device
@@ -108,14 +132,15 @@ payload.
   since been sent.
 
 **Buyer receives**: the order card shows *Your digital items*, and the
-**Library** tab lists every delivery. Files download and decrypt in the browser,
-license keys copy with one tap, and links open in a new tab. Decoding drops any
-URL that is not http(s) or ipfs, so a seller cannot deliver a `javascript:` link.
+**Library** tab lists every delivery. Links open in a new tab, codes and access
+codes copy with one tap, and files download and decrypt in the browser.
+Decoding drops any URL that is not http(s), magnet or ipfs, so a seller cannot
+deliver a `javascript:` link.
 
 ## Limits
 
 - Each encrypted payload is at most 16,000 bytes (contract cap). That holds
-  roughly 300 license keys in a kit, and the client refuses a larger kit before
+  roughly 300 unique codes in a kit, and the client refuses a larger kit before
   writing. Files have no such cap: they live on IPFS, up to 100 MB each, because
   they are encrypted in memory.
 - Delivery is the seller's act; consensus cannot see payment. The **buyer**

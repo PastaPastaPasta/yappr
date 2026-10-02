@@ -25,8 +25,8 @@ const TIMING_OPTIONS: Array<{ value: DeliverWhen; label: string; hint: string }>
 ]
 
 /**
- * What a digital product delivers: files and links, an optional pool of
- * license keys (one per unit sold), instructions for every buyer, and when
+ * What a digital product delivers: links, codes and files, an optional pool
+ * of unique codes (one per unit sold), instructions for every buyer, and when
  * "Deliver ready orders" may send it. Saved encrypted to the seller's own key.
  */
 export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disabled = false, onBusyChange }: DigitalKitEditorProps) {
@@ -53,7 +53,7 @@ export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disab
       </div>
 
       <section className="space-y-2">
-        <h3 className="text-sm font-medium">Files &amp; links</h3>
+        <h3 className="text-sm font-medium">What every buyer gets</h3>
         <DigitalAssetListEditor
           assets={kit.assets}
           onChange={(update) => onChange((current) => ({ ...current, assets: update(current.assets) }))}
@@ -73,25 +73,25 @@ export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disab
             disabled={disabled}
             className="w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
           />
-          <span className="text-sm font-medium">Sell license keys (one per unit)</span>
+          <span className="text-sm font-medium">Unique codes or links (one per unit sold)</span>
         </label>
         {sellsKeys && (
           <>
             <textarea
-              aria-label="License keys, one per line"
+              aria-label="Unique codes or links, one per line"
               value={keysText}
               onChange={(e) => {
                 setKeysText(e.target.value)
                 const keys = parseKeys(e.target.value)
                 onChange((current) => ({ ...current, licenseKeys: keys }))
               }}
-              placeholder={'One key per line\nXXXX-XXXX-XXXX\nYYYY-YYYY-YYYY'}
+              placeholder={'One per line: license keys, vouchers or single-use links\nXXXX-XXXX-XXXX\nhttps://example.com/redeem?code=YYYY'}
               rows={5}
               disabled={disabled}
               className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
             />
             <p className="text-xs text-gray-500">
-              {kit.licenseKeys?.length ?? 0} key{kit.licenseKeys?.length === 1 ? '' : 's'} left. Each delivered unit takes the next key; when the pool runs out, orders wait until you add more.
+              {kit.licenseKeys?.length ?? 0} left. Each delivered unit takes the next one, and a line that is a link reaches the buyer as a link. When they run out, orders wait until you add more.
             </p>
           </>
         )}

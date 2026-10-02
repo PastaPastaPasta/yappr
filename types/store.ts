@@ -439,12 +439,15 @@ export interface SavedAddressDocument {
 // ---------------------------------------------------------------------------
 
 /**
- * One deliverable piece of a digital product. A `file` is encrypted in the
- * browser with its own random key and the ciphertext pinned to IPFS, so the
- * public CID reveals nothing; whoever holds `key` (the seller, then each
- * buyer it is delivered to) can fetch and decrypt it. A `link` is any URL the
- * seller hosts elsewhere. `variantKey` limits an asset to one variant of the
- * item; absent means every variant.
+ * One deliverable piece of a digital product. A `link` is any URL the seller
+ * hosts elsewhere (their own site, a cloud drive, a course portal, a magnet
+ * link), with the access code or password it asks for, if any. A `code` is a
+ * piece of text to copy: a voucher, a gift card, a login, an invite. A `file`
+ * is encrypted in the browser with its own random key and the ciphertext
+ * pinned to IPFS, so the public CID reveals nothing; whoever holds `key` (the
+ * seller, then each buyer it is delivered to) can fetch and decrypt it.
+ * `variantKey` limits an asset to one variant of the item; absent means every
+ * variant.
  */
 export type DigitalAsset =
   | {
@@ -463,6 +466,14 @@ export type DigitalAsset =
       kind: 'link'
       label: string
       url: string
+      /** Access code or password the link asks for. */
+      code?: string
+      variantKey?: string
+    }
+  | {
+      kind: 'code'
+      label: string
+      code: string
       variantKey?: string
     }
 
@@ -475,9 +486,10 @@ export interface ItemDeliverablePayload {
   assets: DigitalAsset[]
   instructions?: string
   /**
-   * Pool of license keys, one consumed per unit sold. Present (even empty)
-   * when the item sells keys, so an exhausted pool blocks delivery instead of
-   * silently sending none.
+   * Pool of unique codes, one consumed per unit sold: license keys, voucher
+   * codes, or single-use links (an entry that is a URL is shown as a link).
+   * Present (even empty) when the item sells them, so an exhausted pool
+   * blocks delivery instead of silently sending none.
    */
   licenseKeys?: string[]
   deliverWhen: DeliverWhen
