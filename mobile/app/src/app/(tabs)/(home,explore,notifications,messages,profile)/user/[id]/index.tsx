@@ -1,8 +1,15 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { Placeholder } from '~/ui/Placeholder';
+import { ProfileScreen } from '~/features/profile/ProfileScreen';
+import { ComposeFab } from '~/ui/ComposeFab';
 
+/** Anyone's profile, by identity id or DPNS name (UX_SPEC §4.12). */
 export default function UserProfileScreen() {
-  const { id } = useLocalSearchParams<{ id?: string }>();
-  return <Placeholder title="Profile" detail={`id: ${id ?? ''}`} comingIn="the profiles PR" />;
+  const { id, tab } = useLocalSearchParams<{ id?: string; tab?: string }>();
+  return (
+    <>
+      <ProfileScreen idOrName={id ?? ''} requestedTab={tab} />
+      <ComposeFab />
+    </>
+  );
 }

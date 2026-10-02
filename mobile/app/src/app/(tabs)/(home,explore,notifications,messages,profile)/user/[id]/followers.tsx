@@ -1,8 +1,9 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { Placeholder } from '~/ui/Placeholder';
+import { ConnectionsScreen } from '~/features/profile/ConnectionsScreen';
 
+/** Followers of a profile (UX_SPEC §4.14). */
 export default function FollowersScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
-  return <Placeholder title="Followers" detail={`id: ${id ?? ''}`} comingIn="the profiles PR" />;
+  return <ConnectionsScreen id={id ?? ''} kind="followers" />;
 }
