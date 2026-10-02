@@ -241,6 +241,15 @@ also prebuild and build on **both** platforms (see Run).
 The root `npm run lint`, `npm run test` and `npm run build` don't look at
 `mobile/`. Run them anyway if you touched a root file.
 
+## Release builds
+
+See `mobile/RELEASE.md`. `APP_VARIANT=devnet npm run release:android` writes a
+release APK and AAB, and `npm run release:ios -- simulator|archive` writes a
+Release simulator app or an unsigned archive. Both go to `build/release/`.
+Icons come from `npm run icons`. Release-only Android settings live in
+`plugins/release-hardening`. Never commit keystores, `.p8` keys or
+provisioning profiles.
+
 ## Screenshots (agents)
 
 Every UI PR includes iOS and Android screenshots in light and dark

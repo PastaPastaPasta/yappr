@@ -80,6 +80,8 @@ const BLOCKED_ANDROID_PERMISSIONS = [
   'android.permission.SYSTEM_ALERT_WINDOW',
   'android.permission.RECORD_AUDIO',
   'android.permission.CAMERA',
+  // Play install referrer, bundled by expo-application; the app never reads it.
+  'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
 ];
 
 export default ({ config }: ConfigContext): ExpoConfig => {
