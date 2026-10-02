@@ -5,6 +5,7 @@ import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
 import { cn } from '~/lib-allowlist';
 import { ScalePressable } from '~/ui/ScalePressable';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 const LINE = 22;
@@ -29,6 +30,7 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
   const [focused, setFocused] = useState(false);
   const canSend = !disabled && value.trim().length > 0;
 
+  const sendRipple = useRipple('fill');
   return (
     <View
       className={cn('flex-row items-end gap-2 border-t px-3 py-2', tw.border, tw.bg)}
@@ -66,6 +68,7 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
         />
       </View>
       <ScalePressable
+        android_ripple={sendRipple}
         accessibilityRole="button"
         accessibilityLabel="Send message"
         accessibilityState={{ disabled: !canSend }}
@@ -73,7 +76,7 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
         onPress={onSend}
         hitSlop={hitSlopFor(40)}
         className={cn(
-          'mb-0.5 h-10 w-10 items-center justify-center rounded-full',
+          'mb-0.5 h-10 w-10 items-center justify-center rounded-full android:overflow-hidden',
           canSend ? tw.accentFill : 'bg-gray-200 dark:bg-gray-800',
         )}
         testID="dm-send"

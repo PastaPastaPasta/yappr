@@ -6,6 +6,7 @@ import { useAppearance } from '~/state/appearance';
 
 import { Sheet } from './Sheet';
 import { Text } from './Text';
+import { useRipple } from './ripple';
 import { tw } from './tokens';
 
 export interface SheetAction {
@@ -53,18 +54,20 @@ export function showActionSheet(request: ActionSheetRequest): void {
 export function ActionSheetHost() {
   const { request, open } = useActionSheet();
   const close = () => useActionSheet.setState({ open: false });
+  const ripple = useRipple();
   if (Platform.OS === 'ios') return null;
   return (
     <Sheet open={open} onClose={close} title={request?.title} testID="action-sheet">
       {request?.actions.map((action) => (
         <Pressable
+          android_ripple={ripple}
           key={action.label}
           accessibilityRole="button"
           onPress={() => {
             close();
             action.onPress();
           }}
-          className={cn('min-h-12 justify-center rounded-lg px-2', tw.pressed)}
+          className={cn('min-h-12 justify-center rounded-lg px-2 android:overflow-hidden', tw.pressed)}
           testID={`action-sheet-${action.label}`}
         >
           <Text variant="body" tone={action.destructive ? 'destructive' : 'emphasis'}>
