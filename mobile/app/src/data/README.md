@@ -156,6 +156,8 @@ const requireAuth = useRequireAuth();
 - **Signed out:** it opens the "Sign in to continue" sheet, which links to
   `/sign-in`. The action is dropped: after sign-in the user is back where
   they were, and nothing happens.
+- **In Lockdown Mode** (the engine is `unsupported`): it toasts
+  "Unavailable in Lockdown Mode" and drops the action (PRD NET-06).
 - **While the engine is still restoring the session:** whoever was signed
   in last time counts, so a write at boot shows at once (PRD G-2). If that
   account is gone, the engine refuses the write (`NOT_SIGNED_IN`), the change

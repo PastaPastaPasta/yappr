@@ -3,10 +3,11 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
+import { useToastStore } from '~/ui/toast';
 
 import { useEngineEvent } from './events';
 import { queryKeys } from './keys';
-import { requireAuth, useSignInPrompt } from './require-auth';
+import { LOCKDOWN_WRITE_BLOCKED, requireAuth, useSignInPrompt } from './require-auth';
 import { startSessionSync, useCapabilities, useSession, useSessionStore } from './session';
 import { fakeEngine } from './testing/fake-engine';
 
@@ -132,6 +133,21 @@ describe('requireAuth', () => {
     requireAuth(action);
     expect(action).toHaveBeenCalledTimes(1);
     expect(useSignInPrompt.getState().open).toBe(false);
+  });
+
+  it('says "Unavailable in Lockdown Mode" instead of running a write while browsing saved posts (SR-36)', () => {
+    const action = jest.fn();
+    useSessionStore.setState({ status: 'unknown', session: null });
+    syncStorage.setItem('yappr.session.identity', 'alice');
+    fakeEngine.setStatus({ state: 'unsupported', unsupported: 'lockdown' });
+    requireAuth(action);
+    expect(action).not.toHaveBeenCalled();
+    expect(useSignInPrompt.getState().open).toBe(false);
+    expect(useToastStore.getState().current?.message).toBe(LOCKDOWN_WRITE_BLOCKED);
+
+    fakeEngine.setStatus({ state: 'ready', unsupported: null });
+    requireAuth(action);
+    expect(action).toHaveBeenCalledTimes(1);
   });
 });
 

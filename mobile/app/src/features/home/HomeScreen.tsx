@@ -15,6 +15,7 @@ import { useEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
 import { requireAuth } from '~/data/require-auth';
 import { lastIdentity, useCapabilities, useSession, type SessionStatus } from '~/data/session';
+import { EngineBanner } from '~/engine/EngineBanner';
 import { useEngineStatus } from '~/engine/hooks';
 import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
 import { queryClient } from '~/state/query-client';
@@ -134,6 +135,7 @@ export function HomeScreen() {
       <Stack.Screen options={{ title: 'Home', headerShown: false }} />
       <HomeHeader />
       {offline ? <OfflineBanner /> : null}
+      <EngineBanner />
       <FeedControls
         tab={tab}
         onTab={selectTab}
