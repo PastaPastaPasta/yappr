@@ -178,8 +178,8 @@ rebuild.** Screen PRs share one dev-client build, so they use only these:
 `expo` and its modules (`expo-application`, `expo-clipboard`,
 `expo-constants`, `expo-crypto`, `expo-dev-client`, `expo-file-system`,
 `expo-haptics`, `expo-image`, `expo-linking`, `expo-local-authentication`,
-`expo-router`, `expo-secure-store`, `expo-sharing`, `expo-splash-screen`,
-`expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
+`expo-router`, `expo-screen-capture`, `expo-secure-store`, `expo-sharing`,
+`expo-splash-screen`, `expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
 `@react-native-community/netinfo`, `@react-native-menu/menu` (native
 long-press and dropdown menus; zeego 3 cannot build on RN 0.86),
 `@react-native-segmented-control/segmented-control`,
@@ -272,6 +272,16 @@ Open a route with a deep link through `+native-intent`, for example
 Arbitrary app routes like this work in dev builds only. Web-form links such as
 `yappr-dev://post?id=<id>` work in every build. Links can't open sign-in,
 compose, media or the gates; reach those by navigating in the app.
+
+Some screens block capture on purpose (`src/ui/screen-capture.ts`, AUTH-12),
+so their screenshots come out black:
+- `useBlockScreenCapture('secret')`: screens that show or take a private key
+  (key sign-in, the DM unlock sheet), on both platforms;
+- `useBlockScreenCapture('private')`: the DM inbox and conversations, and
+  the whole app while the app lock is on (FLAG_SECURE, which also blanks the
+  Recents thumbnail). Android only.
+
+Turn the app lock off before you capture evidence on Android.
 
 `/__gallery` is dev-only. It renders the shared tokens and has a
 Light/Dark/System switch for testing the override.

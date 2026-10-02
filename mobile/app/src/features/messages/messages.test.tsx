@@ -1,7 +1,7 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -271,6 +271,21 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('hey, coming?')).toBeTruthy();
     expect(fakeEngine.method('dm.open')).toHaveBeenCalledWith(KEY);
     expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+  });
+
+  it('keeps the conversation out of Android Recents and screenshots while it is open', async () => {
+    const { __blocked: blocked } = jest.requireMock<{ __blocked: Set<string> }>('expo-screen-capture');
+    const os = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+    try {
+      await openConversation();
+      expect(blocked.size).toBeGreaterThan(0);
+      rendered?.unmount();
+      rendered = null;
+      expect(blocked.size).toBe(0);
+    } finally {
+      Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+    }
   });
 
   it('sends: a "Sending…" bubble at once, then the engine’s own message with "Sent"', async () => {

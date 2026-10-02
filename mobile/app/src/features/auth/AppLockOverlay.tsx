@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cn } from '~/lib-allowlist';
 import { errorFeedback } from '~/ui/haptics';
 import { Button } from '~/ui/Button';
+import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
@@ -35,6 +36,9 @@ export function AppLockOverlay() {
   const covered = useLockState((s) => s.covered);
   const insets = useSafeAreaInsets();
   const prompted = useRef(false);
+  // Android snapshots Recents as the app leaves, too early to count on the cover, so with the lock
+  // on the whole app is FLAG_SECURE: a blank thumbnail, and no screenshots (AUTH-12).
+  useBlockScreenCapture('private', enabled);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => appStateChanged(state));

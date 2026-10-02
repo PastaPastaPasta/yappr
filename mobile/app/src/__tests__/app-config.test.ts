@@ -77,6 +77,8 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
         'android.permission.SYSTEM_ALERT_WINDOW',
       ]),
     );
+    // expo-screen-capture registers a capture callback on Android 14+, which needs it.
+    expect(config.android?.blockedPermissions).not.toContain('android.permission.DETECT_SCREEN_CAPTURE');
     expect(config.plugins).toContain('./plugins/release-hardening');
   });
 });

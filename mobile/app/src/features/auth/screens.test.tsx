@@ -26,6 +26,7 @@ jest.mock('expo-router', () => ({
     addListener: () => () => undefined,
   }),
   useLocalSearchParams: () => ({}),
+  useIsFocused: () => true,
 }));
 
 const KEY = 'cR4tFakeTestKeyThatIsNotRealAtAll1234567890abcdefghijk';
@@ -77,6 +78,14 @@ describe('private key sign-in (AUTH-08)', () => {
     });
     expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
     expect(mockGoBack).toHaveBeenCalled();
+  });
+
+  it('keeps the key out of screenshots while the screen is open', () => {
+    const { __blocked: blocked } = jest.requireMock<{ __blocked: Set<string> }>('expo-screen-capture');
+    const view = render(<KeySignInScreen />);
+    expect(blocked.size).toBe(1);
+    view.unmount();
+    expect(blocked.size).toBe(0);
   });
 
   it('shows the engine’s reason and keeps Sign in disabled', async () => {

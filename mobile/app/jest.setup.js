@@ -52,6 +52,19 @@ jest.mock('expo-secure-store', () => {
     __items: items,
   };
 });
+// FLAG_SECURE / the iOS screenshot block, keyed as in expo-screen-capture; tests read __blocked.
+jest.mock('expo-screen-capture', () => {
+  const blocked = new Set();
+  return {
+    preventScreenCaptureAsync: async (key = 'default') => {
+      blocked.add(key);
+    },
+    allowScreenCaptureAsync: async (key = 'default') => {
+      blocked.delete(key);
+    },
+    __blocked: blocked,
+  };
+});
 jest.mock('expo-file-system', () => ({
   Paths: { bundle: { uri: 'file:///bundle/' } },
   File: class {
