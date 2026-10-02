@@ -7,6 +7,7 @@ import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
 
 import { readFollowStatus, withFollowStatus } from './FollowableUserRow';
+import { tagFromParam } from './tags';
 
 /** People, and the engine's tag search, wait for 3 characters, as web's search does. */
 export const SEARCH_MIN_LENGTH = 3;
@@ -70,6 +71,21 @@ async function findById(api: EngineRemote, id: string): Promise<UserSummaryDTO[]
 const tagNeedle = (q: string) => q.replace(/^\$/, '');
 
 /**
+ * Tags for a query: the engine's search from 3 characters, the trending tags
+ * below that. A `$TICKER` query also looks up its own storage form
+ * (`dash_cashtag`), first: the ticker alone only finds the cashtag while it's
+ * trending, since the engine's exact lookup would count `#dash`.
+ */
+async function searchTags(api: EngineRemote, q: string): Promise<TagDTO[]> {
+  const needle = tagNeedle(q);
+  const found = needle.length >= SEARCH_MIN_LENGTH ? api.explore.searchHashtags(needle) : searchTrendingTags(needle);
+  const cashtag = q.startsWith('$') ? tagFromParam(q).storage : '';
+  if (!cashtag) return found;
+  const [exact, rest] = await Promise.all([api.explore.searchHashtags(cashtag), found]);
+  return [...exact, ...rest.filter((tag) => !exact.some((hit) => hit.tag === tag.tag))];
+}
+
+/**
  * Tags for a 1–2 character query, which the engine's search doesn't serve
  * (PRD EXPL-05): the all-time trending tags (Explore's cached list on v2)
  * whose name contains it.
@@ -100,14 +116,9 @@ export function useSearch(query: string, only?: SearchKind) {
   const people = useEngineQuery(queryKeys.explore.search('users', q), (api) => searchPeople(api, q), {
     enabled: enabled.people,
   });
-  const hashtags = useEngineQuery(
-    queryKeys.explore.search('hashtags', q),
-    (api) =>
-      tagNeedle(q).length >= SEARCH_MIN_LENGTH
-        ? api.explore.searchHashtags(tagNeedle(q))
-        : searchTrendingTags(tagNeedle(q)),
-    { enabled: enabled.hashtags },
-  );
+  const hashtags = useEngineQuery(queryKeys.explore.search('hashtags', q), (api) => searchTags(api, q), {
+    enabled: enabled.hashtags,
+  });
   const posts = useEngineQuery(queryKeys.explore.search('posts', q), (api) => api.explore.searchPosts(q), {
     enabled: enabled.posts,
   });

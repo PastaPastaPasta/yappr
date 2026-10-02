@@ -41,8 +41,9 @@ function settledViewer(): Promise<string | null> {
 
 /**
  * The signed-in viewer's follow of each user, for rows whose read skips it
- * (search and the leaderboards, as on web). Signed out, or when the read
- * fails, nothing: those rows then show no follow state they don't know.
+ * (search and the leaderboards, as on web). Signed out, nothing: those rows
+ * show no follow state. A failed read fails the whole query, so it retries
+ * and offers Retry rather than caching rows with no follow controls.
  */
 export async function readFollowStatus(api: EngineRemote, ids: readonly string[]): Promise<Record<string, boolean>> {
   const viewer = await settledViewer();
@@ -52,7 +53,7 @@ export async function readFollowStatus(api: EngineRemote, ids: readonly string[]
     return await api.graph.status(others.slice(0, STATUS_BATCH));
   } catch (error) {
     appendLog('warn', 'host', `Follow status failed: ${errorMessage(error)}`);
-    return {};
+    throw error;
   }
 }
 

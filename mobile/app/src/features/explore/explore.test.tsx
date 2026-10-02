@@ -326,6 +326,22 @@ describe('Search', () => {
     expect(screen.getByLabelText('Following Bob Builder')).toBeTruthy();
   });
 
+  it('offers a retry when the follow read fails, instead of rows with no follow button', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([user('bob')]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    fakeEngine.method('graph.status').mockRejectedValueOnce(new Error('RPC deadline'));
+    await renderAt('/explore/search/people?q=bob');
+    await settle();
+    expect(screen.getByTestId('search-results-error')).toBeTruthy();
+
+    fakeEngine.method('graph.status').mockResolvedValue({ [AUTHORS.bob.id]: true });
+    fireEvent.press(screen.getByText('Try again'));
+    await settle();
+    expect(screen.getByLabelText('Following Bob Builder')).toBeTruthy();
+  });
+
   it('groups people, hashtags and recent posts, three each with See all (EXPL-05, EXPL-06)', async () => {
     useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
     const people = [user('bob'), user('carol'), user('nameless'), user('alice')];
@@ -356,13 +372,19 @@ describe('Search', () => {
 
   it('finds a cashtag by its ticker and remembers opened tags (EXPL-08)', async () => {
     fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
-    fakeEngine.method('explore.searchHashtags').mockResolvedValue([tag('dash_cashtag', 2)]);
+    // Not trending: only the exact storage-form lookup finds it; the ticker finds #dash.
+    fakeEngine
+      .method('explore.searchHashtags')
+      .mockImplementation(async (q: string) => (q === 'dash_cashtag' ? [tag('dash_cashtag', 2, 'posts')] : [tag('dash', 7)]));
     fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
     const app = await renderAt('/explore/search');
 
     fireEvent.changeText(screen.getByTestId('search-input'), '$DASH');
     await settle();
     expect(fakeEngine.method('explore.searchHashtags')).toHaveBeenCalledWith('DASH');
+    expect(fakeEngine.method('explore.searchHashtags')).toHaveBeenCalledWith('dash_cashtag');
+    expect(screen.getByText('$DASH')).toBeTruthy();
+    expect(screen.getByText('#dash')).toBeTruthy();
 
     fireEvent.press(screen.getByTestId('search-tag-dash_cashtag'));
     await act(async () => {});
