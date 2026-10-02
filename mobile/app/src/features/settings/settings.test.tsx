@@ -1,0 +1,412 @@
+import type { AccountDTO, CapabilitiesDTO, SessionDTO, SettingsDTO } from '@engine/api';
+import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import * as Clipboard from 'expo-clipboard';
+import { router } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
+import type { ReactElement } from 'react';
+import { ActionSheetIOS, Alert, type AlertButton } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+
+import { queryKeys } from '~/data/keys';
+import { useSessionStore } from '~/data/session';
+import { fakeEngine } from '~/data/testing/fake-engine';
+import { engineSupervisor } from '~/engine';
+import { useAppearance } from '~/state/appearance';
+import { queryClient } from '~/state/query-client';
+import { useToastStore } from '~/ui/toast';
+
+import { AboutScreen } from './AboutScreen';
+import { AccountSettingsScreen } from './AccountSettingsScreen';
+import { useAccountTransition } from './accounts';
+import { AppearanceSettingsScreen, NotificationSettingsScreen, PrivacySettingsScreen } from './ContentSettingsScreens';
+import { SettingsScreen } from './SettingsScreen';
+
+jest.mock('~/engine', () => {
+  const fake = jest.requireActual('~/data/testing/fake-engine').engineModule;
+  return {
+    ...fake,
+    engineStorage: { idle: jest.fn(async () => undefined) },
+    engineSupervisor: { ...fake.engineSupervisor, restart: jest.fn() },
+  };
+});
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, Stack: { Screen: () => null } }));
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
+jest.mock('expo-web-browser', () => ({ openBrowserAsync: jest.fn(async () => ({ type: 'opened' })) }));
+
+const ALICE = '4EfA9Jrvv3nnCFdSf7fad59851iiTRZ6Wcu6YVJ4iSeF';
+const BOB = '8u9pqhrG1RbkuWvbqQ5WwFgaW2yGkVx2AYBnQ3j5vT1A';
+
+const alice: SessionDTO = {
+  identityId: ALICE,
+  network: 'devnet',
+  username: 'alice.dash',
+  credits: 123_456_789_000n,
+  hasEncryptionKey: true,
+  method: 'key',
+};
+
+const account = (identityId: string, username: string, active: boolean): AccountDTO => ({
+  identityId,
+  username,
+  method: 'key',
+  lastUsedAt: new Date(2026, 9, 1),
+  active,
+});
+
+const SETTINGS: SettingsDTO = {
+  linkPreviewsEnabled: true,
+  gateMediaFromNonFollowed: true,
+  sendReadReceipts: true,
+  sensitiveContentMode: 'blur',
+  notificationSettings: {
+    likes: true,
+    reposts: true,
+    replies: true,
+    follows: true,
+    mentions: true,
+    messages: true,
+    blogPosts: true,
+  },
+  payWith: 'credits',
+  feedLanguage: 'en',
+};
+
+const byId = (id: string) => screen.getByTestId(id);
+const toastMessage = () => useToastStore.getState().current?.message;
+const cachedSettings = () => queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
+
+let alert: { title: string; message?: string; press: (text: string) => void } | null = null;
+let sheet: { options: string[]; choose: (label: string) => void } | null = null;
+
+const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
+
+function renderScreen(element: ReactElement) {
+  return render(
+    <SafeAreaProvider initialMetrics={METRICS}>
+      <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>
+    </SafeAreaProvider>,
+  );
+}
+
+/** Lets the engine's answers (promises) land. */
+const settle = () => act(async () => {});
+
+beforeAll(() => notifyManager.setScheduler((callback) => callback()));
+afterAll(() => queryClient.clear());
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  fakeEngine.reset();
+  queryClient.clear();
+  fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { dm: 'v5' } as CapabilitiesDTO } });
+  useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [account(ALICE, 'alice.dash', true)] });
+  useToastStore.setState({ current: null });
+  useAccountTransition.setState({ transition: null });
+  useAppearance.setState({ theme: 'system' });
+  fakeEngine.method('settings.get').mockResolvedValue(SETTINGS);
+  fakeEngine.method('profiles.get').mockResolvedValue(null);
+  alert = null;
+  sheet = null;
+  jest.spyOn(Alert, 'alert').mockImplementation((title, message, buttons?: AlertButton[]) => {
+    alert = { title, message, press: (text) => buttons?.find((b) => b.text === text)?.onPress?.() };
+  });
+  jest.spyOn(ActionSheetIOS, 'showActionSheetWithOptions').mockImplementation((options, callback) => {
+    const labels = options.options;
+    sheet = { options: labels, choose: (label) => callback(labels.indexOf(label)) };
+  });
+});
+
+describe('Settings root (SET-01)', () => {
+  it('shows the account with its balance, every section, and the version line', async () => {
+    renderScreen(<SettingsScreen />);
+    await settle();
+
+    expect(byId('settings-account')).toHaveAccessibleName('Account: @alice, @alice · 1.23456789 DASH');
+    for (const id of ['notifications', 'privacy', 'messages', 'appearance', 'about', 'diagnostics']) {
+      expect(byId(`settings-${id}`)).toBeTruthy();
+    }
+    expect(screen.getByText('Yappr 1.0.0 · devnet')).toBeTruthy();
+    expect(byId('network-chip')).toBeTruthy();
+
+    fireEvent.press(byId('settings-account'));
+    expect(router.push).toHaveBeenCalledWith('/settings/account');
+    fireEvent.press(byId('settings-messages'));
+    expect(router.push).toHaveBeenCalledWith('/messages/settings');
+  });
+
+  it('signed out: sign-in instead of the account, content settings only', () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    renderScreen(<SettingsScreen />);
+
+    expect(screen.queryByTestId('settings-account')).toBeNull();
+    expect(screen.queryByTestId('settings-notifications')).toBeNull();
+    expect(screen.queryByTestId('settings-messages')).toBeNull();
+    for (const id of ['privacy', 'appearance', 'about', 'diagnostics']) expect(byId(`settings-${id}`)).toBeTruthy();
+
+    fireEvent.press(byId('settings-sign-in'));
+    expect(router.push).toHaveBeenCalledWith('/sign-in');
+  });
+
+  it('has no Messages settings on legacy messages (v3)', () => {
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as CapabilitiesDTO } });
+    renderScreen(<SettingsScreen />);
+    expect(screen.queryByTestId('settings-messages')).toBeNull();
+  });
+
+  it('shows the theme it applies', () => {
+    useAppearance.setState({ theme: 'dark' });
+    renderScreen(<SettingsScreen />);
+    expect(byId('settings-appearance')).toHaveAccessibleName('Appearance, Dark');
+  });
+});
+
+describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
+  it('changes the NSFW mode at once and saves it', async () => {
+    fakeEngine.method('settings.set').mockResolvedValue({ ...SETTINGS, sensitiveContentMode: 'hide' });
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    expect(byId('privacy-nsfw-blur')).toBeChecked();
+    await act(async () => fireEvent.press(byId('privacy-nsfw-hide')));
+
+    expect(fakeEngine.method('settings.set')).toHaveBeenCalledWith({ sensitiveContentMode: 'hide' });
+    expect(byId('privacy-nsfw-hide')).toBeChecked();
+    expect(byId('privacy-nsfw-blur')).not.toBeChecked();
+    expect(cachedSettings()?.sensitiveContentMode).toBe('hide');
+  });
+
+  it('puts a refused change back and says so', async () => {
+    fakeEngine.method('settings.set').mockRejectedValue(new Error('BAD_REQUEST'));
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(byId('privacy-link-previews')));
+
+    expect(fakeEngine.method('settings.set')).toHaveBeenCalledWith({ linkPreviewsEnabled: false });
+    expect(byId('privacy-link-previews')).toBeChecked();
+    expect(toastMessage()).toBe("Couldn't save that setting. Please try again.");
+  });
+
+  it('keeps a later change when an earlier one is refused', async () => {
+    let refuse: (error: Error) => void = () => {};
+    fakeEngine
+      .method('settings.set')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)))
+      .mockResolvedValueOnce({ ...SETTINGS, gateMediaFromNonFollowed: false });
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(byId('privacy-link-previews')));
+    await act(async () => fireEvent.press(byId('privacy-media-gate')));
+    await act(async () => refuse(new Error('nope')));
+
+    expect(cachedSettings()).toMatchObject({ linkPreviewsEnabled: true, gateMediaFromNonFollowed: false });
+  });
+
+  it('shows the media gate on, and blocked accounts and read receipts only where they apply', async () => {
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+    expect(byId('privacy-media-gate')).toBeChecked();
+    expect(byId('privacy-blocked')).toBeTruthy();
+    // DM v5 has no read receipts.
+    expect(screen.queryByTestId('privacy-read-receipts')).toBeNull();
+
+    fireEvent.press(byId('privacy-blocked'));
+    expect(router.push).toHaveBeenCalledWith('/settings/blocked');
+  });
+
+  it('offers read receipts on legacy messages', async () => {
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as CapabilitiesDTO } });
+    fakeEngine.method('settings.set').mockResolvedValue({ ...SETTINGS, sendReadReceipts: false });
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(byId('privacy-read-receipts')));
+    expect(fakeEngine.method('settings.set')).toHaveBeenCalledWith({ sendReadReceipts: false });
+  });
+
+  it('signed out: the content settings without blocked accounts', async () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+    expect(byId('privacy-nsfw')).toBeTruthy();
+    expect(screen.queryByTestId('privacy-blocked')).toBeNull();
+  });
+
+  it('offers a retry when the settings cannot be read', async () => {
+    fakeEngine.method('settings.get').mockRejectedValue(new Error('ENGINE_TIMEOUT'));
+    // No retries with backoff here: the first failure shows.
+    queryClient.setQueryDefaults(queryKeys.settings, { retry: false });
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+    expect(byId('settings-error')).toBeTruthy();
+
+    fakeEngine.method('settings.get').mockResolvedValue(SETTINGS);
+    await act(async () => fireEvent.press(screen.getByText('Try again')));
+    expect(byId('privacy-nsfw')).toBeTruthy();
+    queryClient.setQueryDefaults(queryKeys.settings, { retry: undefined });
+  });
+});
+
+describe('Notifications (SET-03, NOTIF-05)', () => {
+  it('turns one type off and leaves the others', async () => {
+    fakeEngine.method('settings.set').mockResolvedValue({
+      ...SETTINGS,
+      notificationSettings: { ...SETTINGS.notificationSettings, reposts: false },
+    });
+    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+    renderScreen(<NotificationSettingsScreen />);
+    await settle();
+
+    expect(screen.getByText('In-app notifications')).toBeTruthy();
+    await act(async () => fireEvent.press(byId('notification-toggle-reposts')));
+
+    expect(fakeEngine.method('settings.set')).toHaveBeenCalledWith({ notificationSettings: { reposts: false } });
+    expect(byId('notification-toggle-reposts')).not.toBeChecked();
+    expect(byId('notification-toggle-likes')).toBeChecked();
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.notificationsAll });
+  });
+});
+
+describe('Appearance (SET-05)', () => {
+  it('applies the theme at once', () => {
+    renderScreen(<AppearanceSettingsScreen />);
+    expect(byId('appearance-theme-system')).toBeChecked();
+
+    fireEvent.press(byId('appearance-theme-dark'));
+    expect(useAppearance.getState().theme).toBe('dark');
+    expect(byId('appearance-theme-dark')).toBeChecked();
+  });
+});
+
+describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
+  it('shows the identity, names and balance; copies the id', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue({
+      id: ALICE,
+      username: 'alice',
+      usernames: ['alice', 'alice2'],
+      displayName: 'Alice',
+      avatar: {},
+      hasProfile: true,
+      joinedAt: new Date(2026, 2, 4),
+      stats: {},
+    });
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    expect(byId('account-identity-id')).toHaveTextContent(ALICE);
+    expect(byId('account-username-alice')).toBeTruthy();
+    expect(byId('account-username-alice2')).toBeTruthy();
+    expect(screen.getByText('March 4, 2026')).toBeTruthy();
+    expect(screen.getByText('1.23456789 DASH')).toBeTruthy();
+    expect(screen.getByText('123,456,789,000 credits')).toBeTruthy();
+
+    await act(async () => fireEvent.press(byId('account-copy-id')));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(ALICE);
+    expect(toastMessage()).toBe('Identity ID copied');
+
+    fireEvent.press(byId('account-register'));
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/dpns/register');
+  });
+
+  it('refreshes the balance, and says so when it cannot', async () => {
+    fakeEngine.method('session.refreshBalance').mockRejectedValue(new Error('NETWORK'));
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(byId('account-refresh')));
+    expect(fakeEngine.method('session.refreshBalance')).toHaveBeenCalled();
+    expect(toastMessage()).toBe("Couldn't refresh the balance. Please try again.");
+    expect(byId('account-refresh')).toBeTruthy();
+  });
+
+  it('signs out after the confirm, offline', async () => {
+    fakeEngine.method('session.signOut').mockResolvedValue(undefined);
+    fakeEngine.method('session.accounts').mockResolvedValue([]);
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    fireEvent.press(byId('account-sign-out'));
+    expect(alert?.title).toBe('Sign out of @alice?');
+    expect(alert?.message).toBe(
+      'Your keys for this account are removed from this phone. Your posts and data stay on Dash Platform.',
+    );
+    await act(async () => alert?.press('Sign out'));
+
+    expect(fakeEngine.method('session.signOut')).toHaveBeenCalledWith({ identityId: ALICE });
+    expect(toastMessage()).toBe('Signed out');
+    expect(engineSupervisor.restart).not.toHaveBeenCalled();
+  });
+
+  it('cancelling the confirm keeps the account', async () => {
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+    fireEvent.press(byId('account-sign-out'));
+    await act(async () => alert?.press('Cancel'));
+    expect(fakeEngine.method('session.signOut')).not.toHaveBeenCalled();
+  });
+
+  it('signs out another account without switching', async () => {
+    useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
+    fakeEngine.method('session.signOut').mockResolvedValue(undefined);
+    fakeEngine.method('session.accounts').mockResolvedValue([account(ALICE, 'alice.dash', true)]);
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    fireEvent.press(byId(`account-row-${BOB}`));
+    expect(sheet?.options).toEqual(['Switch to @bob', 'Sign out of @bob', 'Cancel']);
+    act(() => sheet?.choose('Sign out of @bob'));
+    expect(alert?.title).toBe('Sign out of @bob?');
+    await act(async () => alert?.press('Sign out'));
+
+    expect(fakeEngine.method('session.signOut')).toHaveBeenCalledWith({ identityId: BOB });
+    expect(useSessionStore.getState().accounts.map((a) => a.identityId)).toEqual([ALICE]);
+    expect(useSessionStore.getState().session?.identityId).toBe(ALICE);
+    expect(engineSupervisor.restart).not.toHaveBeenCalled();
+  });
+
+  it('switches accounts through an engine restart', async () => {
+    const bob: SessionDTO = { ...alice, identityId: BOB, username: 'bob', credits: 0n };
+    useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+    fakeEngine.method('session.current').mockResolvedValue(bob);
+    jest.mocked(engineSupervisor.restart).mockImplementation(() => {
+      fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+      useSessionStore.setState({ status: 'signed-in', session: bob });
+    });
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    fireEvent.press(byId(`account-row-${BOB}`));
+    await act(async () => sheet?.choose('Switch to @bob'));
+
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(BOB);
+    expect(engineSupervisor.restart).toHaveBeenCalledWith('Switching accounts');
+    expect(toastMessage()).toBe('Switched to @bob');
+    expect(useAccountTransition.getState().transition).toBeNull();
+  });
+
+  it('signed out: a way to sign in', () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    renderScreen(<AccountSettingsScreen />);
+    expect(byId('account-signed-out')).toBeTruthy();
+  });
+});
+
+describe('About (SET-06, SET-07)', () => {
+  it('shows the version and network, opens the legal pages, and the bundled rules', () => {
+    renderScreen(<AboutScreen />);
+
+    expect(byId('about-version')).toHaveAccessibleName('Version, 1.0.0');
+    expect(byId('about-network')).toHaveAccessibleName('Network, devnet');
+
+    fireEvent.press(byId('about-terms'));
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/terms');
+    fireEvent.press(byId('about-privacy'));
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/privacy');
+
+    fireEvent.press(byId('about-rules'));
+    expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
+  });
+});
