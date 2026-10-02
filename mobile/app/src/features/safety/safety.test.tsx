@@ -278,6 +278,21 @@ describe('blocking', () => {
     expect(screen.getByText('Carol says hi')).toBeTruthy();
   });
 
+  it('never caches a failed block-status read as "not blocked" (SR-31)', async () => {
+    fakeEngine.method('safety.isBlocked').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));
+    renderPosts([fixturePost({ id: 'q1', author: AUTHORS.alice, quotedPostId: 'b1', quoted: fixturePost({ id: 'b1' }) })]);
+    await settle();
+    expect(fakeEngine.method('safety.isBlocked')).toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.blockStatus(BOB.id))).toBeUndefined();
+
+    // The engine answers on the next ask: the quote collapses.
+    fakeEngine.method('safety.isBlocked').mockResolvedValue({ [BOB.id]: true });
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.blockStatusAll });
+    });
+    expect(screen.getByText('Post from an account you blocked')).toBeTruthy();
+  });
+
   it('forgets block decisions when the account changes, so the engine decides again', async () => {
     fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
     renderPosts(bobPosts());

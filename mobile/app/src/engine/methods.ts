@@ -36,6 +36,19 @@ const READS = new Set([
   'notifications.list',
   'notifications.poll',
   'notifications.unreadCount',
+  'safety.blocked',
+  'safety.isBlocked',
+  'safety.blockedBy',
+  'safety.ownReport',
+  'engage.bookmarks',
+  // A proved read of an unconfirmed write: it can settle the ticket, which is the same whichever engine does it.
+  'writes.check',
+  // Engine-local snapshots of the DM backend (polling fills them); `open` and `markRead` are not reads.
+  'dm.status',
+  'dm.conversations',
+  'dm.search',
+  'dm.messages',
+  'dm.createdGroup',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 
