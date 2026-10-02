@@ -189,6 +189,75 @@ describe('wallet sign-in', () => {
     expect(useKeyExchange.getState().request).toBeNull();
   });
 
+  it.each([
+    ['before', true],
+    ['after', false],
+  ])(
+    'keeps a switch whose answer arrives after a return to the app polled the same request (repoll fails %s it)',
+    async (_, repollFailsFirst) => {
+      const first = deferred<unknown>();
+      const second = deferred<unknown>();
+      fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+      fakeEngine.method('session.awaitKeyExchange').mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+      jest.mocked(finishWalletSwitch).mockClear().mockResolvedValueOnce(session);
+      const flush = async () => {
+        for (let i = 0; i < 8; i++) await Promise.resolve();
+      };
+      // The engine has switched already, so the repoll can only be refused.
+      const refuse = () => second.reject(remoteError('RESTART_REQUIRED', 'The engine must restart to finish switching accounts'));
+
+      const started = startKeyExchange('qr');
+      await flush();
+      walletReturned();
+      await flush();
+      expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledTimes(2);
+
+      if (repollFailsFirst) {
+        refuse();
+        await flush();
+      }
+      first.resolve({ status: 'switch', identityId: 'id1' });
+      await started;
+      if (!repollFailsFirst) refuse();
+      await flush();
+
+      expect(finishWalletSwitch).toHaveBeenCalledTimes(1);
+      expect(finishWalletSwitch).toHaveBeenCalledWith('id1');
+      expect(phase()).toEqual({ name: 'signed-in', session });
+    },
+  );
+
+  it('drops a switch whose request the user cancelled', async () => {
+    const first = deferred<unknown>();
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine.method('session.awaitKeyExchange').mockReturnValueOnce(first.promise);
+    jest.mocked(finishWalletSwitch).mockClear();
+
+    const started = startKeyExchange('qr');
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    cancelKeyExchange();
+    first.resolve({ status: 'switch', identityId: 'id1' });
+    await started;
+
+    expect(finishWalletSwitch).not.toHaveBeenCalled();
+    expect(phase().name).toBe('idle');
+  });
+
+  it('keeps the approval for "Try again" when the SDK runs out of DAPI nodes', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine
+      .method('session.awaitKeyExchange')
+      .mockRejectedValueOnce(Object.assign(new Error('no available addresses to retry'), { code: -1 }))
+      .mockResolvedValueOnce({ status: 'signed-in', session });
+
+    await startKeyExchange('wallet');
+    expect(phase()).toMatchObject({ name: 'error', retry: 'poll' });
+
+    await retry();
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalledTimes(1);
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
   it('ignores the answer of a poll that a newer one superseded', async () => {
     const first = deferred<unknown>();
     fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());

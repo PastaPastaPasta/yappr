@@ -106,8 +106,12 @@ function failed(error: unknown, retry: 'start' | 'poll' | 'registration', regist
   return { name: 'error', title: copy.signin.failed, message: walletErrorText(error, networkName), retry, registration };
 }
 
-async function handleStep(gen: number, step: KeyExchangeResultDTO): Promise<void> {
-  if (stale(gen)) return;
+async function handleStep(gen: number, step: KeyExchangeResultDTO, requestId: string): Promise<void> {
+  // The engine has already put a switch's account in place and refuses every session call until it
+  // restarts, so a newer poll of the same request (a return to the app) cannot answer in its stead:
+  // keep the switch. Only a cancel or a different request drops it.
+  const keepSwitch = step.status === 'switch' && get().request?.requestId === requestId;
+  if (stale(gen) && !keepSwitch) return;
   if (step.status === 'pending') {
     set({ phase: { name: 'no-response', request: get().request } });
     return;
@@ -118,10 +122,12 @@ async function handleStep(gen: number, step: KeyExchangeResultDTO): Promise<void
   }
   if (step.status === 'switch') {
     // The wallet chose an account already on this device: the engine restarts into it, keys and all.
-    // Busy meanwhile, with nothing to poll (a return to the app must not start a new request).
+    // Busy meanwhile, with nothing to poll (a return to the app must not start a new request), and
+    // any newer poll's RESTART_REQUIRED superseded.
+    const switchGen = next();
     set({ phase: { name: 'starting' }, request: null });
     const session = await finishWalletSwitch(step.identityId);
-    if (stale(gen)) return;
+    if (stale(switchGen)) return;
     set({
       phase: session
         ? { name: 'signed-in', session }
@@ -145,7 +151,7 @@ async function poll(gen: number, request: KeyExchangeRequestDTO, superseded = 0)
   set({ phase: { name: 'waiting', request }, request });
   try {
     const step = await engine.api.session.awaitKeyExchange(request.requestId, { waitMs: POLL_MS });
-    await handleStep(gen, step);
+    await handleStep(gen, step, request.requestId);
   } catch (error) {
     if (stale(gen)) return;
     const code = errorCode(error);
@@ -235,11 +241,11 @@ async function waitForRegistration(
       const step = await engine.api.session.awaitKeyRegistration(phase.request.requestId, {
         waitMs: REGISTRATION_SLICE_MS,
       });
-      if (stale(gen)) return;
       if (step.status !== 'pending') {
-        await handleStep(gen, step);
+        await handleStep(gen, step, phase.request.requestId);
         return;
       }
+      if (stale(gen)) return;
       slow = true;
     } catch (error) {
       if (stale(gen)) return;

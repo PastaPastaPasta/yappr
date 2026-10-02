@@ -122,4 +122,14 @@ describe('sign-in error copy (AUTH-07, AUTH-08)', () => {
     expect(isTransient(new Error('Quorum not found in cache'))).toBe(true);
     expect(isTransient(coded('KEY_INVALID'))).toBe(false);
   });
+
+  it('counts an SDK that ran out of DAPI nodes as transient', () => {
+    // DapiClientError carries a numeric code, which is not an engine code.
+    const exhausted = (message: string) => Object.assign(new Error(message), { code: -1 });
+    expect(isTransient(exhausted('no available addresses to use'))).toBe(true);
+    expect(isTransient(exhausted('no available addresses to retry, last error: deadline exceeded'))).toBe(true);
+    expect(keyErrorText(exhausted('no available addresses to retry'))).toBe(
+      'Dash Platform is temporarily unavailable. Please try again in a few moments.',
+    );
+  });
 });

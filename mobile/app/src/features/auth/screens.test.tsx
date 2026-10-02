@@ -93,10 +93,13 @@ describe('private key sign-in (AUTH-08)', () => {
     expect(screen.queryByTestId('key-retry')).toBeNull();
   });
 
-  it('offers "Try again" when Platform is unavailable', async () => {
+  it.each([
+    ['an engine timeout', coded('RPC_TIMEOUT')],
+    ['no DAPI node left to try', Object.assign(new Error('no available addresses to retry'), { code: -1 })],
+  ])('offers "Try again" when Platform is unavailable (%s)', async (_, error) => {
     fakeEngine
       .method('session.checkKey')
-      .mockRejectedValueOnce(coded('RPC_TIMEOUT'))
+      .mockRejectedValueOnce(error)
       .mockResolvedValueOnce({ identityId: alice.identityId, username: null, keyId: 2, securityLevel: 2 });
     render(<KeySignInScreen />);
     fireEvent.changeText(screen.getByTestId('key-input'), KEY);

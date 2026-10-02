@@ -12,7 +12,8 @@ const TRANSIENT_CODES = new Set([
   'TIMEOUT',
   'RATE_LIMITED',
 ]);
-const TRANSIENT_MESSAGE = /network|timed? ?out|timeout|unavailable|fetch|connect|quorum|503|504|502/i;
+/** `no available addresses`: the SDK ran out of DAPI nodes to try (`… to use`, `… to retry`). */
+const TRANSIENT_MESSAGE = /network|timed? ?out|timeout|unavailable|fetch|connect|quorum|no available addresses|503|504|502/i;
 
 /** A failure worth "Try again" with the same input, as opposed to one the input causes. */
 export function isTransient(error: unknown): boolean {
