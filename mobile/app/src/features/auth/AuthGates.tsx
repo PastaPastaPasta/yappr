@@ -35,8 +35,9 @@ function useWelcomeOnFirstLaunch(ready: boolean): void {
 
 /**
  * The terms gate (AUTH-09) for a signed-in account that has not accepted
- * the current terms: at launch after a version bump, or after a sign-in that
- * did not route there itself. Never during the sign-in flow.
+ * the current terms: right after its first sign-in here (once the sign-in
+ * flow has closed), after an account switch, and at launch after a terms
+ * version bump. Never over the sign-in flow or Welcome.
  */
 function useTermsGate(ready: boolean, pathname: string): void {
   const { status, identityId } = useSession();

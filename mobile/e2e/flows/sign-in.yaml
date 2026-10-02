@@ -1,0 +1,137 @@
+# Onboarding and sign-in (PRD AUTH-01..AUTH-04, AUTH-06, AUTH-08..AUTH-10; EXECUTION S1).
+#
+# Devnet (sakura) dev client, Metro already serving the bundle. Two journeys,
+# picked by METHOD:
+#
+#   METHOD=key     private key: Welcome → Other ways → key (typed from -e
+#                  SIGN_IN_KEY, a pool persona's AUTHENTICATION/HIGH key; never
+#                  committed) → "Identity found" → terms gate → Home.
+#   METHOD=wallet  wallet key exchange across devices: the QR screen's dash-key:
+#                  link goes to the test-wallet responder as PERSONA; a first
+#                  login also answers the dash-st: key registration.
+#
+#   node mobile/tools/test-wallet-responder.mjs --serve 127.0.0.1:8789   # YAPPR_SAKURA_IDENTITIES set
+#   maestro --device <udid|serial> test -e METHOD=wallet -e PERSONA=96 mobile/e2e/flows/sign-in.yaml
+#   maestro --device <udid|serial> test -e METHOD=key -e SIGN_IN_KEY="$(cat <key file>)" mobile/e2e/flows/sign-in.yaml
+#
+# Every run starts from a cleared install (Welcome shows), signs in, accepts
+# the terms, checks the account switcher, then signs the account out again.
+#
+# Android: `adb -s <serial> reverse tcp:<metro port> tcp:<metro port>` right
+# before the run (an adb server restart drops it). Other lanes pass their
+# own Metro URL: -e DEV_CLIENT_URL='yappr-dev://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8182'.
+# The responder's SDK can end up with every DAPI address banned after sakura
+# quorum errors ("no available addresses to use"): restart it between runs.
+appId: pr.yap.app.dev
+# Defaults apply only when -e does not set a value (a plain default would win over -e).
+env:
+  APP_ID: ${APP_ID || 'pr.yap.app.dev'}
+  DEV_CLIENT_URL: ${DEV_CLIENT_URL || 'yappr-dev://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8181'}
+  METHOD: ${METHOD || 'key'}
+  SIGN_IN_KEY: ${SIGN_IN_KEY || ''}
+  PERSONA: ${PERSONA || '96'}
+  RESPONDER_URL: ${RESPONDER_URL || 'http://127.0.0.1:8789'}
+---
+- runFlow: subflows/fresh-launch.yaml
+- takeScreenshot: sign-in-01-welcome
+- tapOn:
+    id: welcome-sign-in
+- extendedWaitUntil:
+    visible: "Sign in with your Dash wallet"
+    timeout: 15000
+- takeScreenshot: sign-in-02-methods
+
+# --- Private key (AUTH-08) ---
+- runFlow:
+    when:
+      true: ${METHOD == 'key'}
+    commands:
+      - tapOn:
+          id: sign-in-other-ways
+      - tapOn:
+          id: sign-in-private-key
+      - tapOn:
+          id: key-input
+      - inputText: ${SIGN_IN_KEY}
+      # Sakura's quorum list lags now and then ("temporarily unavailable"): look the key up again.
+      - repeat:
+          times: 3
+          while:
+            notVisible:
+              id: key-found
+          commands:
+            - extendedWaitUntil:
+                visible:
+                  id: "key-found|key-retry"
+                timeout: 60000
+            - tapOn:
+                id: key-retry
+                optional: true
+      - assertVisible:
+          id: key-found
+      - takeScreenshot: sign-in-03-key-found
+      - tapOn:
+          id: key-sign-in
+
+# --- Wallet on another device, answered by the test-wallet responder (AUTH-04, AUTH-06) ---
+- runFlow:
+    when:
+      true: ${METHOD == 'wallet'}
+    commands:
+      - tapOn:
+          id: sign-in-other-device
+      - extendedWaitUntil:
+          visible:
+            id: kx-qr
+          timeout: 60000
+      - takeScreenshot: sign-in-03-qr
+      - copyTextFrom:
+          text: "dash-key:.*"
+      - runScript: scripts/respond.js
+      - extendedWaitUntil:
+          visible: "Before you start|First time login|Signed in"
+          timeout: 120000
+      - runFlow:
+          when:
+            visible: "First time login"
+          commands:
+            - takeScreenshot: sign-in-04-register
+            - copyTextFrom:
+                text: "dash-st:.*"
+            - runScript: scripts/respond.js
+
+# --- Terms gate (AUTH-09), then Home ---
+- extendedWaitUntil:
+    visible:
+      id: terms-agree
+    timeout: 180000
+- takeScreenshot: sign-in-05-terms
+- tapOn:
+    id: terms-agree
+- extendedWaitUntil:
+    visible: "Home"
+    timeout: 15000
+
+# --- Account switcher on the Profile tab (AUTH-10) ---
+- longPressOn: "Profile, tab, 5 of 5|Profile"
+- extendedWaitUntil:
+    visible: "Add account"
+    timeout: 15000
+- takeScreenshot: sign-in-06-switcher
+- tapOn: "Manage accounts"
+- extendedWaitUntil:
+    visible:
+      id: "account-menu-.*"
+    timeout: 15000
+
+# --- Sign out (AUTH-11), so the next run starts clean ---
+- tapOn:
+    id: "account-menu-.*"
+- tapOn: "Sign out"
+- extendedWaitUntil:
+    visible: "Sign out of .*"
+    timeout: 10000
+- tapOn: "Sign out"
+- extendedWaitUntil:
+    visible: "Signed out"
+    timeout: 30000
