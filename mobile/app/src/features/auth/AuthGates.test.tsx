@@ -170,4 +170,31 @@ describe('launch', () => {
     expect(router.push).not.toHaveBeenCalled();
     useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
   });
+
+  it('holds a resume whose answer arrives after the lock came up, and reopens it after unlock (SR-01)', async () => {
+    useSessionStore.setState({ status: 'signed-out', session: null });
+    useAppLockSettings.setState({ enabled: true });
+    fakeEngine.setStatus({ state: 'ready' });
+    const request = { requestId: 'r3', uri: 'dash-key:r3', expiresAt: new Date(Date.now() + 60_000) };
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('session.pendingKeyExchange').mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
+
+    mount('/');
+    // The user leaves the app while the engine answers: the cover is up when the answer lands.
+    act(() => useLockState.setState({ covered: true }));
+    answer(request);
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+
+    fakeEngine.method('session.pendingKeyExchange').mockResolvedValue(request);
+    act(() => useLockState.setState({ covered: false }));
+    await flush();
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/(wallet|qr)\?resume=1$/));
+  });
 });

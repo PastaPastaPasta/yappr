@@ -94,6 +94,12 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
       .pendingKeyExchange()
       .then((pending) => {
         if (!pending || signingIn()) return;
+        // The lock came up while the engine answered: try again once it opens.
+        const lock = useLockState.getState();
+        if (lock.locked || lock.covered) {
+          checked.current = false;
+          return;
+        }
         router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`));
