@@ -172,6 +172,17 @@ const requireAuth = useRequireAuth();
   in last time counts, so a write at boot shows at once (PRD G-2). If that
   account is gone, the engine refuses the write (`NOT_SIGNED_IN`), the change
   is undone and the sheet opens.
+- **Session expired (PRD AUTH-14, `session-expiry.ts`):** a write that fails
+  `KEY_REVOKED` (Platform refused the key: disabled, gone from the identity,
+  expired) or `NO_KEY` (outside Messages, where it means the encryption key)
+  toasts "Your session has expired. Please sign in again." with "Sign in"
+  (never Retry), and marks the account "Sign in again", persisted. Every
+  failed ticket the app hears of marks its account, followed by a spec or
+  not, and so does a call the engine refuses with `KEY_REVOKED`. Reads carry on. While
+  the active account is marked, `requireAuth` opens the "Sign in again"
+  sheet instead of running the action; it leads to `reauthenticate` (the
+  auth feature, registered by `AuthGates`). A fresh sign-in of the account
+  (`session.changed` `signed-in`) or signing it out clears the mark.
 
 Other session hooks:
 - `useSession()`: `status` (`unknown` / `signed-out` / `signed-in`),

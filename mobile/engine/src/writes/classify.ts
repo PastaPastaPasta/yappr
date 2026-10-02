@@ -5,6 +5,7 @@ import {
   categorizeError,
   consensusCodeOf,
   extractErrorMessage,
+  hasConsensusCode,
   isActionFeeAgreementError,
   isAlreadyExistsError,
   isConsensusRefusal,
@@ -72,6 +73,19 @@ function isInsufficientCreditsError(_error: unknown, message: string): boolean {
   return /IdentityInsufficientBalance|BalanceIsNotEnough|insufficient identity \S+ balance|credits balance \S+ is not enough to pay/i.test(message)
 }
 
+/**
+ * Platform refused the key the write was signed with (PRD AUTH-14): 20006
+ * `PublicKeyIsDisabledError` ("Identity key 2 is disabled"), 20003
+ * `MissingPublicKeyError` ("Public key 2 doesn't exist", a key the identity
+ * no longer has), 20016 `PublicKeyExpiredError`. The stored key will never
+ * sign again: the account must sign in again. `categorizeError` has no
+ * branch for them; the app shows the session-expired copy.
+ */
+function isRevokedKeyError(error: unknown, message: string): boolean {
+  return hasConsensusCode(error, [20003, 20006, 20016]) ||
+    /\bPublicKeyIsDisabled|\bMissingPublicKeyError|\bPublicKeyExpired|identity key \d+ is disabled|public key \d+ doesn't exist|identity public key \d+ (is )?expired at/i.test(message)
+}
+
 type Outcome = EngineErrorData['outcome']
 
 /** `matches(error, message, userMessage)`: `message` is the error's own text, `userMessage` categorizeError's. */
@@ -119,6 +133,7 @@ const RULES: readonly Rule[] = [
   ['INSUFFICIENT_YAPP', 'refused', false, isInsufficientTokenError],
   // Stage 2: their userMessage stays categorizeError's generic text, for parity with web.
   ['INSUFFICIENT_CREDITS', 'refused', false, isInsufficientCreditsError],
+  ['KEY_REVOKED', 'refused', false, isRevokedKeyError],
   ['UNKNOWN', 'refused', true, exactly(LIB_REFUSED_MESSAGE)],
   ['DUPLICATE', 'refused', false, isDuplicateUniqueIndexError],
   ['DUPLICATE', 'unknown', false, isAlreadyExistsError],

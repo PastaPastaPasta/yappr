@@ -36,6 +36,41 @@ describe('engine storage', () => {
     expect(batches).toEqual([{ area: 'local', seq: 1, ops: [['set', 'yappr_session', '{"user":2}']] }])
   })
 
+  it('holds back the secure writes a hold picks: a commit sends them, a discard drops and undoes them', async () => {
+    const storage = createEngineStorage()
+    storage.hydrate({ secure: { yappr_secure_ek_bob: 'bob-ek' } })
+    const batches = recordBatches(storage)
+    const { localStorage } = storage
+
+    // A failed sign-in: it stores a key, then clears every key of the identity by name.
+    let hold = storage.holdSecure(key => key.endsWith('_alice'))
+    expect(() => storage.holdSecure(() => true)).toThrow()
+    localStorage.setItem('yappr_secure_lk_alice', 'new')
+    await flushed()
+    localStorage.removeItem('yappr_secure_lk_alice')
+    localStorage.removeItem('yappr_secure_pk_alice')
+    localStorage.removeItem('yappr_secure_ek_alice')
+    localStorage.removeItem('yappr_secure_ek_bob') // not held
+    await flushed()
+    hold.release(false)
+    await flushed()
+    expect(batches).toEqual([{ area: 'secure', seq: 1, ops: [['del', 'yappr_secure_ek_bob']] }])
+    expect(localStorage.getItem('yappr_secure_lk_alice')).toBeNull()
+
+    // A successful one: its writes go out as if never held.
+    batches.length = 0
+    hold = storage.holdSecure(key => key.endsWith('_alice'))
+    localStorage.setItem('yappr_secure_pk_alice', 'pk')
+    localStorage.removeItem('yappr_secure_ek_alice')
+    await flushed()
+    expect(batches).toEqual([])
+    hold.release(true)
+    hold.release(false) // released once only
+    await flushed()
+    expect(batches).toEqual([{ area: 'secure', seq: 2, ops: [['set', 'yappr_secure_pk_alice', 'pk'], ['del', 'yappr_secure_ek_alice']] }])
+    expect(localStorage.getItem('yappr_secure_pk_alice')).toBe('pk')
+  })
+
   it('drops the secret store\'s availability probe and sets that change nothing', async () => {
     const storage = createEngineStorage()
     storage.hydrate({ local: { a: '1' } })

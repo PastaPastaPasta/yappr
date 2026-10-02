@@ -5,7 +5,7 @@ import { NoSymbolIcon, UserIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
-import { useSession } from '~/data/session';
+import { useCapabilities, useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { errorMessage } from '~/engine/logs';
 import { Avatar } from '~/ui/Avatar';
@@ -46,6 +46,7 @@ export function BlockScreen() {
   const blocked = useAuthorBlocked(userId, profile.data?.viewer?.blocks);
   const [note, setNote] = useState('');
   const c = useColors();
+  const dm = useCapabilities()?.dm ?? null;
 
   const title = blocked ? 'Blocked account' : 'Block account';
   const header = <Stack.Screen options={{ title }} />;
@@ -142,7 +143,7 @@ export function BlockScreen() {
           </>
         ) : (
           <>
-            <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.title(handle)} body={copy.block.body} />
+            <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.title(handle)} body={copy.block.body(dm)} />
             <View className="gap-1">
               <TextField
                 label={copy.block.note}

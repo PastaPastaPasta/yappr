@@ -9,13 +9,20 @@ import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 
 import { lastIdentity, useSessionStore } from './session';
+import { SESSION_EXPIRED_MESSAGE, isSessionExpired, signInAgain } from './session-expiry';
 
-/** Whether the sign-in sheet is open. */
-export const useSignInPrompt = create<{ open: boolean }>()(() => ({ open: false }));
+/**
+ * Whether the sign-in sheet is open; `reauth` is the account it asks to sign
+ * in again (AUTH-14), null for "Sign in to continue".
+ */
+export const useSignInPrompt = create<{ open: boolean; reauth: string | null }>()(() => ({ open: false, reauth: null }));
 
-/** Opens the "Sign in to continue" sheet (PRD G-8). */
-export function promptSignIn(): void {
-  useSignInPrompt.setState({ open: true });
+/**
+ * Opens the "Sign in to continue" sheet (PRD G-8), or with `reauth` the
+ * "Sign in again" sheet for that account (PRD AUTH-14).
+ */
+export function promptSignIn(reauth: string | null = null): void {
+  useSignInPrompt.setState({ open: true, reauth });
 }
 
 /** UX_SPEC §6 `lockdown.writeBlocked`. */
@@ -37,10 +44,12 @@ export function requireAuth(action: () => void): void {
     toast(LOCKDOWN_WRITE_BLOCKED);
     return;
   }
-  const { status } = useSessionStore.getState();
-  const signedIn = status === 'unknown' ? lastIdentity() !== null : status === 'signed-in';
-  if (signedIn) action();
-  else promptSignIn();
+  const { status, session } = useSessionStore.getState();
+  const identityId = status === 'unknown' ? lastIdentity() : (session?.identityId ?? null);
+  if (identityId === null || status === 'signed-out') promptSignIn();
+  // Its key no longer signs (AUTH-14): the write would only fail again.
+  else if (isSessionExpired(identityId)) promptSignIn(identityId);
+  else action();
 }
 
 /**
@@ -53,25 +62,30 @@ export function useRequireAuth(): typeof requireAuth {
 
 /**
  * The sheet `requireAuth` opens. Mounted once by the root layout; "Sign in"
- * goes to the sign-in flow (S1).
+ * goes to the sign-in flow (S1), and "Sign in again" to the flow for the
+ * account whose key stopped working (AUTH-14).
  */
 export function SignInPromptHost() {
   const open = useSignInPrompt((s) => s.open);
+  const reauth = useSignInPrompt((s) => s.reauth);
   const close = () => useSignInPrompt.setState({ open: false });
   return (
-    <Sheet open={open} onClose={close} title="Sign in to continue" testID="sign-in-prompt">
+    <Sheet open={open} onClose={close} title={reauth ? 'Sign in again' : 'Sign in to continue'} testID="sign-in-prompt">
       <Text variant="body" tone="secondary">
-        Sign in to post, like, repost and follow. You can keep browsing without an account.
+        {reauth
+          ? `${SESSION_EXPIRED_MESSAGE} You can keep browsing in the meantime.`
+          : 'Sign in to post, like, repost and follow. You can keep browsing without an account.'}
       </Text>
       <View className="gap-2">
         <Button
-          label="Sign in"
+          label={reauth ? 'Sign in again' : 'Sign in'}
           variant="primary"
           size="block"
           testID="sign-in-prompt-sign-in"
           onPress={() => {
             close();
-            router.push('/sign-in');
+            if (reauth) signInAgain(reauth);
+            else router.push('/sign-in');
           }}
         />
         <Button label="Not now" variant="ghost" size="block" onPress={close} testID="sign-in-prompt-dismiss" />

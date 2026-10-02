@@ -380,6 +380,19 @@ describe('BlockScreen', () => {
     expect(toastMessage()).toBe('User blocked');
   });
 
+  it.each([
+    ['legacy', /They can still message you, but their messages won't show as unread/],
+    ['v5', /This doesn't stop their messages: to do that, block them from your conversation in Messages/],
+  ] as const)('promises only what a block does to %s messages (SR-20)', async (dm, messages) => {
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm } } });
+    fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    withProviders(<BlockScreen />);
+    await settle();
+    expect(screen.getByText(messages)).toBeTruthy();
+    expect(screen.getByText(/^You won't see their posts or replies\./)).toBeTruthy();
+    expect(screen.queryByText(/won't be able to message you/)).toBeNull();
+  });
+
   it('offers Unblock for an account already blocked', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(true));
     fakeEngine.method('safety.unblock').mockResolvedValue(ticket({ op: 'unblock' }));

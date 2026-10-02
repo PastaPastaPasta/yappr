@@ -10,6 +10,7 @@ import { syncStorage } from '~/state/storage';
 
 import { onEngineEvent } from './events';
 import { queryKeys } from './keys';
+import { clearSessionExpired } from './session-expiry';
 
 /**
  * The signed-in account, driven by the engine (`session.current()` once per
@@ -156,7 +157,11 @@ export function startSessionSync(): () => void {
     }
   };
 
-  const stopEvents = onEngineEvent('session.changed', ({ session }) => applySession(session));
+  const stopEvents = onEngineEvent('session.changed', ({ session, reason }) => {
+    // A fresh sign-in stored a key that works (AUTH-14); a switch or restore brings back the old one.
+    if (reason === 'signed-in' && session) clearSessionExpired(session.identityId);
+    applySession(session);
+  });
   const stopStatus = engineSupervisor.subscribeStatus(onStatus);
   onStatus();
   return () => {

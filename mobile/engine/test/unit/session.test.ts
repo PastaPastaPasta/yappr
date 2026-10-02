@@ -86,7 +86,12 @@ const emit = (event: string, payload: unknown) => { emitted.push({ event, payloa
 
 /** A fresh engine boot over the same storage: a new controller and module, as after a restart. */
 function boot(): Session {
-  return createSessionModule({ emit, controller: createMobileAuthController(), secureDurable: () => engineStorage.secureDurable() })
+  return createSessionModule({
+    emit,
+    controller: createMobileAuthController(),
+    secureDurable: () => engineStorage.secureDurable(),
+    holdSecure: matches => engineStorage.holdSecure(matches),
+  })
 }
 
 const secureKeys = () => Object.keys(engineStorage.snapshot().secure)
@@ -469,6 +474,61 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(restored?.identityId).toBe(identityId)
     expect(emitted).toContainEqual({ event: 'session.changed', payload: { session: restored, reason: 'switched' } })
     expect(localStorage.getItem(`yappr_secure_pk_${identityId}`)).toBe(savedKey)
+  })
+
+  it('logs a parked account in again when the host is signing it in again (AUTH-14)', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const first = await session.startKeyExchange()
+    await walletApproves(first.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(first.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in' })
+    // Its stored key stopped working; the host parks it and asks the wallet again.
+    localStorage.setItem(`yappr_secure_pk_${identityId}`, 'broken')
+
+    await session.prepareAddAccount()
+    session = boot()
+    expect(await session.restore()).toBeNull()
+    const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
+    const request = await session.startKeyExchange({ reauth: identityId })
+    await walletApproves(request.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({
+      status: 'signed-in',
+      session: { identityId },
+    })
+    expect(login).toHaveBeenCalledTimes(1)
+    login.mockRestore()
+    expect(localStorage.getItem(`yappr_secure_pk_${identityId}`)).not.toBe('broken')
+    expect(await session.accounts()).toEqual([expect.objectContaining({ identityId, active: true })])
+    await expect(session.startKeyExchange({ reauth: 42 as unknown as string })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('keeps the parked account\'s stored secrets when signing it in again fails (AUTH-14)', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const first = await session.startKeyExchange()
+    await walletApproves(first.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(first.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in' })
+    // An imported encryption key, which a wallet login cannot derive again.
+    localStorage.setItem(`yappr_secure_ek_${identityId}`, 'imported-ek')
+    localStorage.setItem(`yappr_secure_ekt_${identityId}`, '"imported"')
+    await engineStorage.secureDurable()
+
+    await session.prepareAddAccount()
+    // The restarted engine is not given the parked account's secrets.
+    const { local, secure } = engineStorage.snapshot()
+    engineStorage.hydrate({ local, secure: Object.fromEntries(Object.entries(secure).filter(([key]) => !key.endsWith(identityId))) })
+    session = boot()
+    expect(await session.restore()).toBeNull()
+    changes.length = 0
+    const login = vi.spyOn(auth.PlatformAuthController.prototype, 'loginWithAuthKey').mockRejectedValueOnce(new Error('Network error'))
+    const request = await session.startKeyExchange({ reauth: identityId })
+    await walletApproves(request.uri, identityId, loginKey)
+    await expect(session.awaitKeyExchange(request.requestId, { waitMs: 1 })).rejects.toThrow()
+    login.mockRestore()
+    await engineStorage.secureDurable()
+    // lib cleared the identity's keys by name, but the host heard nothing: its stored secrets stay.
+    expect(changes.filter(c => c.area === 'secure' && c.key.endsWith(identityId))).toEqual([])
+    expect(secureKeys().filter(key => key.endsWith(identityId))).toEqual([])
   })
 
   it('cancels a waiting poll', async () => {

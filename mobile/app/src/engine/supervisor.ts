@@ -69,7 +69,7 @@ export interface EngineStatus {
   info: EngineInfo | null;
   caps: HostCaps | null;
   timings: EngineTimings | null;
-  /** Crashes and hangs since launch. */
+  /** Automatic restarts since launch (crashes and hangs that were restarted). */
   restarts: number;
   /** Calls waiting for the engine. */
   queued: number;
@@ -95,13 +95,19 @@ export interface SupervisorDeps<Load> {
 }
 
 export interface SupervisorOptions {
-  /** Restart delays, by the number of recent failures (see `maxFailures`). */
+  /** Restart delays, by the restart's place in the current run (see `maxRestarts`). */
   backoffMs?: number[];
   /**
-   * This many crashes inside `failureWindowMs`, or this many boots in a row
-   * that never came up (however slowly each failed) → `failed`.
+   * Automatic restarts allowed (PRD NET-04: 3 within 2 minutes); the next
+   * failure stops in `failed` until "Try again". Every cause counts: a crash,
+   * a hang, a missed hello or boot deadline, a failed prepare. Failures are
+   * counted two ways and the larger count decides:
+   * - every failure inside the sliding `failureWindowMs`;
+   * - epochs in a row that never came up (ready or degraded), however long
+   *   each took to fail: a 30 s hello or 90 s boot deadline must not outlast
+   *   the window and loop forever (SR-08). An epoch that comes up ends the run.
    */
-  maxFailures?: number;
+  maxRestarts?: number;
   failureWindowMs?: number;
   /** No ready (or degraded) within this long in the foreground after mount → restart. */
   bootDeadlineMs?: number;
@@ -121,7 +127,7 @@ export interface SupervisorOptions {
 
 const DEFAULTS: Required<SupervisorOptions> = {
   backoffMs: [500, 1000, 2000, 4000, 8000, 30_000],
-  maxFailures: 5,
+  maxRestarts: 3,
   failureWindowMs: 120_000,
   bootDeadlineMs: 90_000,
   helloTimeoutMs: 30_000,
@@ -178,8 +184,9 @@ export class EngineSupervisor<Load = unknown> {
   /** Calls go straight to the client once boot has been sent; until then they wait here. */
   private accepting = false;
   private queue: Job[] = [];
+  /** When each recent failure happened (see `maxRestarts`); "Try again" resets it. */
   private crashes: number[] = [];
-  /** Epochs in a row that crashed before reaching ready or degraded; any boot that comes up resets it. */
+  /** Epochs in a row that failed before coming up (ready or degraded); "Try again" resets it. */
   private failedBoots = 0;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
@@ -287,25 +294,26 @@ export class EngineSupervisor<Load = unknown> {
     if (['crashed', 'restarting', 'idle', 'failed', 'unsupported'].includes(this.status.state)) return;
     if (!this.foreground && this.status.state === 'starting') {
       // prepare() failed in the background (Keychain locked): try again on return, not in a loop.
+      // Not a give-up: calls already queued wait for that return, where the retry is automatic.
       this.log('warn', `Engine start failed in the background: ${cause}`);
       this.teardown(cause);
       this.update({ state: 'failed', reason: cause });
       return;
     }
     this.log('error', `Engine crashed: ${cause}`);
-    // A boot that never came up counts however long it took to fail: a hello or boot deadline
-    // fails slower than the window, so the window alone would restart such an engine forever.
+    // A boot that never came up counts however long it took to fail (SR-08): a hello or boot
+    // deadline fails slower than the window, so the window alone would restart such an engine forever.
     if (!['ready', 'degraded'].includes(this.status.state)) this.failedBoots += 1;
-    this.teardown(`Engine crashed: ${cause}`);
     const now = this.now();
     this.crashes = [...this.crashes.filter((at) => now - at < this.options.failureWindowMs), now];
-    this.update({ state: 'crashed', reason: cause, restarts: this.status.restarts + 1 });
     const failures = Math.max(this.crashes.length, this.failedBoots);
-    if (failures >= this.options.maxFailures) {
-      this.update({ state: 'failed', reason: `${failures} engine failures in a row; last: ${cause}` });
-      this.failQueue(new RpcError(`The engine keeps failing (${cause})`, EngineErrorCode.Unavailable));
+    this.teardown(`Engine crashed: ${cause}`);
+    if (failures > this.options.maxRestarts) {
+      // No restart follows, so `restarts` stays as it was.
+      this.fail(`${failures} engine failures in a row; last: ${cause}`);
       return;
     }
+    this.update({ state: 'crashed', reason: cause, restarts: this.status.restarts + 1 });
     const delay = this.options.backoffMs[Math.min(failures - 1, this.options.backoffMs.length - 1)];
     this.update({ state: 'restarting' });
     this.after(delay, () => this.launch(this.status.epoch + 1));
@@ -330,6 +338,13 @@ export class EngineSupervisor<Load = unknown> {
       if (this.status.state === 'degraded') this.retryBoot(0);
       this.ping();
     }
+  }
+
+  /** Gave up until "Try again" (or a return to the foreground): nothing waits for an engine that is not coming. */
+  private fail(reason: string) {
+    this.update({ state: 'failed', reason });
+    // The same error a call made from now on gets (dispatch), with the redacted reason.
+    this.failQueue(new RpcError(this.status.reason ?? reason, EngineErrorCode.Unavailable));
   }
 
   private launch(epoch: number) {
@@ -389,8 +404,7 @@ export class EngineSupervisor<Load = unknown> {
         if (errorCode(error) === RpcErrorCode.ProtocolMismatch && this.status.epoch === epoch) {
           // A packaging bug (app and engine bundle out of step): restarting cannot fix it (§3.4).
           this.teardown(errorMessage(error));
-          this.update({ state: 'failed', reason: errorMessage(error) });
-          this.failQueue(new RpcError(errorMessage(error), EngineErrorCode.Unavailable));
+          this.fail(errorMessage(error));
         } else {
           this.crashed(`handshake failed: ${errorMessage(error)}`, epoch);
         }

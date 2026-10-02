@@ -1,4 +1,4 @@
-import type { TargetRef, WriteTicket } from '@engine/api';
+import type { SessionDTO, TargetRef, WriteTicket } from '@engine/api';
 import { act, renderHook } from '@testing-library/react-native';
 
 import * as WebBrowser from 'expo-web-browser';
@@ -8,8 +8,10 @@ import { useToastStore } from '~/ui/toast';
 import { deleteWrite } from '~/features/post/post-writes';
 
 import { useSignInPrompt } from './require-auth';
+import { SESSION_EXPIRED_MESSAGE, isSessionExpired, setReauthHandler, useExpiredSessions } from './session-expiry';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
-import { adoptRestoredWrites, checkWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { useSessionStore } from './session';
+import { adoptRestoredWrites, checkWrite, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 let mockOffline = false;
@@ -57,6 +59,7 @@ beforeEach(() => {
   fakeEngine.reset();
   useToastStore.setState({ current: null });
   useSignInPrompt.setState({ open: false });
+  useExpiredSessions.setState({ ids: [] });
   mockOffline = false;
 });
 
@@ -372,6 +375,67 @@ describe('submitWrite', () => {
     });
     act(() => currentToast()?.action?.onPress());
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/yap\.pr/));
+  });
+
+  it('says the session expired and marks the account when its key no longer signs (AUTH-14)', async () => {
+    const refusedKey = {
+      code: 'KEY_REVOKED' as const,
+      consensusCode: 20006,
+      outcome: 'refused' as const,
+      retryable: false,
+      userMessage: 'Failed to create post: Identity key 2 is disabled',
+    };
+    const reauth = jest.fn();
+    const unregister = setReauthHandler(reauth);
+    try {
+      const pending = await submitPending({ identityId: 'alice' });
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'failed', error: refusedKey })));
+      expect(undo).toHaveBeenCalledTimes(1);
+      expect(isSessionExpired('alice')).toBe(true);
+      // No Retry: it would fail the same way. "Sign in" opens the flow for that account.
+      expect(currentToast()).toMatchObject({ kind: 'error', message: SESSION_EXPIRED_MESSAGE, action: { label: 'Sign in' } });
+      act(() => currentToast()?.action?.onPress());
+      expect(reauth).toHaveBeenCalledWith('alice');
+
+      // A missing key says the same, though the engine would allow a retry.
+      target = { ...target, id: `${target.id}-nokey` };
+      const missing = await submitPending({ identityId: 'bob' });
+      const noKey = { ...refusedKey, code: 'NO_KEY' as const, consensusCode: null, outcome: 'not-sent' as const, retryable: true };
+      act(() => fakeEngine.emit('write.status', advance(missing, { state: 'failed', retryable: true, error: noKey })));
+      expect(isSessionExpired('bob')).toBe(true);
+      expect(currentToast()).toMatchObject({ message: SESSION_EXPIRED_MESSAGE, action: { label: 'Sign in' } });
+
+      // Messages' NO_KEY is the encryption key: not the session.
+      target = { ...target, id: `${target.id}-dm` };
+      const dm = await submitPending({ identityId: 'carol', op: 'dm.send' });
+      act(() => fakeEngine.emit('write.status', advance(dm, { state: 'failed', retryable: true, error: noKey })));
+      expect(isSessionExpired('carol')).toBe(false);
+      expect(currentToast()?.message).not.toBe(SESSION_EXPIRED_MESSAGE);
+    } finally {
+      unregister();
+    }
+  });
+
+  it('marks the account from any failed ticket it hears of, untracks it, and from a refused call (AUTH-14)', async () => {
+    const revoked = { code: 'KEY_REVOKED' as const, consensusCode: 20003, outcome: 'refused' as const, retryable: false, userMessage: 'x' };
+    // A ticket no spec follows (another screen's, or restored after a restart).
+    act(() => fakeEngine.emit('write.status', ticket({ identityId: 'dave', state: 'failed', op: 'follow', error: revoked })));
+    expect(isSessionExpired('dave')).toBe(true);
+
+    // A retryable NO_KEY failure is not kept for a Retry that would fail the same way.
+    const pending = await submitPending({ identityId: 'erin' });
+    const noKey = { ...revoked, code: 'NO_KEY' as const, consensusCode: null, outcome: 'not-sent' as const, retryable: true };
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'failed', retryable: true, error: noKey })));
+    await expect(retryWrite(pending.id)).resolves.toBeNull();
+    expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
+
+    // Refused before any ticket, for the key itself.
+    useSessionStore.setState({ status: 'signed-in', session: { identityId: 'frank' } as SessionDTO });
+    target = { ...target, id: `${target.id}-refused` };
+    fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('Identity key 2 is disabled'), { code: 'KEY_REVOKED' }));
+    await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused' });
+    expect(isSessionExpired('frank')).toBe(true);
+    expect(currentToast()).toMatchObject({ message: SESSION_EXPIRED_MESSAGE, action: { label: 'Sign in' } });
   });
 
   it('drops a write queued behind a call the engine cut short: undone, never sent to the next engine', async () => {

@@ -1475,6 +1475,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | lock.title | Yappr is locked |
 | lock.unlock | Unlock |
 | session.expired | Your session has expired. Please sign in again. (web says "log in") |
+| accounts.signInAgain | Sign in again **(AUTH-14: the account-list mark, the write-control sheet's title and button)** |
+| accounts.reauthing | Getting ready to sign in again… |
+| accounts.reauthFailed | Couldn't start signing in again. Please try again. |
+| signin.reauth | Your session as @{name} has expired. Sign in again with its wallet or key. |
+| signInPrompt.reauthBody | Your session has expired. Please sign in again. You can keep browsing in the meantime. |
 
 ### 5.2 Home
 
@@ -1760,7 +1765,9 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Key | String |
 | --- | --- |
 | block.title | Block @{handle}? |
-| block.body | You won't see their posts, replies or messages, and they won't be able to message you. Blocks are public on Dash Platform. |
+| block.body | You won't see their posts or replies. Blocks are public on Dash Platform. **(no Messages capability)** |
+| block.body.legacyDm | You won't see their posts or replies. They can still message you, but their messages won't show as unread, and you can't message them until you unblock them. Blocks are public on Dash Platform. **(testnet: legacy DMs follow the account's blocks)** |
+| block.body.v5Dm | You won't see their posts or replies. This doesn't stop their messages: to do that, block them from your conversation in Messages. Blocks are public on Dash Platform. **(devnet: DM v5 keeps its own private block list, DM-10, DM-12)** |
 | block.note | Add a note (optional) |
 | block.noteHint | Visible to anyone on Dash Platform |
 | block.confirm | Block |

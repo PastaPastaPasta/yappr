@@ -7,7 +7,18 @@ export type ReportNoun = 'post' | 'reply';
 export const copy = {
   block: {
     title: (handle: string) => `Block ${handle}?`,
-    body: "You won't see their posts, replies or messages, and they won't be able to message you. Blocks are public on Dash Platform.",
+    /**
+     * SR-20: only what a block enforces, per Messages backend. Nothing stops
+     * them sending: legacy (testnet) DMs follow the account's blocks, which
+     * stop counting their messages as unread and close the composer; DM v5
+     * (devnet) keeps its own private block list, set from the conversation.
+     */
+    body: (dm: 'v5' | 'legacy' | null) =>
+      dm === 'legacy'
+        ? "You won't see their posts or replies. They can still message you, but their messages won't show as unread, and you can't message them until you unblock them. Blocks are public on Dash Platform."
+        : dm === 'v5'
+          ? "You won't see their posts or replies. This doesn't stop their messages: to do that, block them from your conversation in Messages. Blocks are public on Dash Platform."
+          : "You won't see their posts or replies. Blocks are public on Dash Platform.",
     note: 'Add a note (optional)',
     noteHint: 'Visible to anyone on Dash Platform',
     confirm: 'Block',

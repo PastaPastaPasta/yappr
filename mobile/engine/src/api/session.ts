@@ -20,6 +20,7 @@ import { createAccountRegistry, type SignInMethod } from '../session/accounts'
 import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
 import { verifySignInKey } from '../session/keys'
 import type { AppLifecycleState } from '../shims/lifecycle'
+import type { SecureHold } from '../shims/storage'
 import type { TicketStore } from '../writes/tickets'
 
 export type { KeyExchangeRequestDTO, KeyToRegister } from '../session/key-exchange'
@@ -71,6 +72,12 @@ export interface SessionModuleOptions {
    * reported sign-out has removed the keys (ENGINE.md §9.1). Absent in Node.
    */
   secureDurable?: () => Promise<void>
+  /**
+   * Holds back secure writes from the host (`EngineStorage.holdSecure`), so a
+   * failed wallet sign-in again (AUTH-14) cannot delete the parked account's
+   * stored secrets. Absent in Node.
+   */
+  holdSecure?: (matches: (key: string) => boolean) => SecureHold
   /** The auth controller (the engine shares it with {@link foregroundBalanceRefresh}); tests stub its dependencies. */
   controller?: PlatformAuthController
   /**
@@ -280,6 +287,20 @@ export function createSessionModule(options: SessionModuleOptions) {
     return registry.activeIdentityId() === null && registry.get(identityId)?.savedSession !== undefined
   }
 
+  /**
+   * The account the host is signing in again (PRD AUTH-14: its stored key no
+   * longer signs), set by the latest `startKeyExchange`. Its saved keys are
+   * the broken ones, so the wallet's answer for it logs in afresh instead of
+   * switching back to them. Kept in memory only: a request resumed after an
+   * app restart switches as any other parked account does.
+   */
+  let reauthTarget: string | null = null
+  /** An expired request ends its sign-in again: a request resumed or made later is a plain sign-in. */
+  function forgetReauthOnExpiry(error: unknown): never {
+    if (error instanceof RpcError && (error.code === 'KEY_EXCHANGE_TIMEOUT' || error.code === 'KEY_REGISTRATION_TIMEOUT')) reauthTarget = null
+    throw error
+  }
+
   const keyExchange = createKeyExchange<SessionDTO>({
     controller,
     storage,
@@ -288,13 +309,30 @@ export function createSessionModule(options: SessionModuleOptions) {
       return exclusive(async () => {
         // The wallet answered for an account parked here: switch to it with its saved keys. Logging
         // in again would put them at risk: a failed login-key login clears the identity's keys by
-        // name, and the host then purges the parked account's secrets it never hydrated.
-        if (isParked(identityId)) {
+        // name, and the host then purges the parked account's secrets it never hydrated. Unless the
+        // user is signing that account in again: those keys are what no longer works.
+        const reauth = identityId === reauthTarget
+        if (isParked(identityId) && !reauth) {
           await switchNow(identityId)
           return { status: 'switch', identityId }
         }
         assertSlotFree(identityId)
-        await controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex })
+        if (reauth) {
+          // A failed login-key login clears the identity's keys by name, and the host would delete
+          // the stored ones it never hydrated here (an imported encryption key among them): hold
+          // this identity's secure writes until the login has succeeded, and drop them if it fails.
+          const hold = options.holdSecure?.(key => key.endsWith(`_${identityId}`))
+          let succeeded = false
+          try {
+            await controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex })
+            succeeded = true
+          } finally {
+            hold?.release(succeeded)
+          }
+          reauthTarget = null
+        } else {
+          await controller.completeYapprKeyExchangeLogin({ identityId, loginKey, keyIndex })
+        }
         return { status: 'signed-in', session: await signedIn(identityId, 'key-exchange') }
       })
     },
@@ -384,9 +422,16 @@ export function createSessionModule(options: SessionModuleOptions) {
       return exclusiveSignIn(verified.identityId, () => controller.loginWithAuthKey(verified.identityId, verified.wif, { skipUsernameCheck: true }), 'key')
     },
 
-    async startKeyExchange(): Promise<KeyExchangeRequestDTO> {
+    /**
+     * A wallet sign-in request. `reauth`: the identity being signed in again
+     * (AUTH-14), parked by `prepareAddAccount`; the wallet's answer for it
+     * logs in with the new key rather than switching to its saved one.
+     */
+    async startKeyExchange(opts: { reauth?: string | null } = {}): Promise<KeyExchangeRequestDTO> {
       assertUsable()
       await restored()
+      if (opts.reauth != null && typeof opts.reauth !== 'string') throw new RpcError('reauth must be an identity ID', 'BAD_REQUEST')
+      reauthTarget = opts.reauth ?? null
       return keyExchange.start()
     },
 
@@ -398,17 +443,18 @@ export function createSessionModule(options: SessionModuleOptions) {
     /** Wait up to `waitMs` (default 45 s, at most 120 s) for the wallet; `pending` means call again. */
     async awaitKeyExchange(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
       assertUsable()
-      return keyExchange.await(requestId, opts.waitMs)
+      return keyExchange.await(requestId, opts.waitMs).catch(forgetReauthOnExpiry)
     },
 
     /** After the wallet broadcast the key registration: wait up to `waitMs` for the keys, then sign in. */
     async awaitKeyRegistration(requestId: string, opts: { waitMs?: number } = {}): Promise<KeyExchangeResultDTO> {
       assertUsable()
-      return keyExchange.awaitRegistration(requestId, opts.waitMs)
+      return keyExchange.awaitRegistration(requestId, opts.waitMs).catch(forgetReauthOnExpiry)
     },
 
     async cancelKeyExchange(requestId: string): Promise<void> {
       keyExchange.cancel(requestId)
+      reauthTarget = null
     },
 
     async accounts(): Promise<AccountDTO[]> {

@@ -56,6 +56,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
       controller,
       tickets,
       secureDurable: runtime.secureDurable,
+      holdSecure: runtime.holdSecure,
       stopDm: dm.hooks.stop,
       resumeDm: dm.hooks.resume,
       forgetDm: dm.hooks.forget,

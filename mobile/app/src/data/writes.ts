@@ -13,6 +13,8 @@ import { isOffline } from './connectivity';
 import { onEngineEvent } from './events';
 import type { EngineRemote } from './queries';
 import { promptSignIn } from './require-auth';
+import { useSessionStore } from './session';
+import { SESSION_EXPIRED_MESSAGE, failedForSession, markSessionExpired, signInAgain } from './session-expiry';
 
 /** Writes: tickets, rollback and toasts. The rules are in src/data/README.md ("Writes"). */
 
@@ -260,17 +262,24 @@ function settle(ticket: WriteTicket): void {
       spec.onConfirmed?.(ticket, entry.vars);
       if (latest) release(entry.key, true);
       return;
-    case 'failed':
+    case 'failed': {
+      // The account's stored key no longer signs (AUTH-14; `receive` marked it): a retry would fail the same way.
+      const sessionFailed = failedForSession(ticket);
       // Final unless the engine allows a retry.
-      if (!ticket.retryable) tracked.delete(ticket.id);
+      if (!ticket.retryable || sessionFailed) tracked.delete(ticket.id);
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
       if (!latest) return;
       undo(entry);
       spec.onFailed?.(ticket, entry.vars);
-      fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
+      if (sessionFailed) {
+        failSessionExpired(signerOf(ticket));
+      } else {
+        fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
+      }
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
       return;
+    }
     case 'unconfirmed':
       if (!latest) return;
       if (ticket.retryable) {
@@ -333,7 +342,22 @@ function adopt(ticket: WriteTicket): void {
   orphan.spec.onAdopted?.(ticket, orphan.vars);
 }
 
+/** The account a ticket was signed for (the active one when the engine did not say). */
+function signerOf(ticket: Pick<WriteTicket, 'identityId'>): string | null {
+  return ticket.identityId ?? useSessionStore.getState().session?.identityId ?? null;
+}
+
+/** "Your session has expired" with "Sign in" for that account (AUTH-14). */
+function failSessionExpired(identityId: string | null): void {
+  fail(SESSION_EXPIRED_MESSAGE, identityId ? { label: 'Sign in', onPress: () => signInAgain(identityId) } : undefined);
+}
+
 function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
+  // Every write the app hears of, followed by a spec or not (AUTH-14): its account must sign in again.
+  if (ticket.state === 'failed' && failedForSession(ticket)) {
+    const signer = signerOf(ticket);
+    if (signer) markSessionExpired(signer);
+  }
   if (orphans.length > 0) adopt(ticket);
   const current = record(ticket, from);
   settle(current);
@@ -441,6 +465,11 @@ async function send(waiting: Waiting): Promise<WriteResult> {
     release(key, false);
     if (errorCode(error) === 'NOT_SIGNED_IN') {
       promptSignIn();
+    } else if (errorCode(error) === 'KEY_REVOKED') {
+      // Refused before a ticket was made, for the key itself (AUTH-14).
+      const signer = useSessionStore.getState().session?.identityId ?? null;
+      if (signer) markSessionExpired(signer);
+      failSessionExpired(signer);
     } else if (!spec.onRejected?.(error, vars)) {
       appendLog('warn', 'host', `Write refused: ${errorMessage(error)}`);
       fail(spec.failureMessage);

@@ -5,6 +5,7 @@ import { CheckIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
+import { useSessionExpired } from '~/data/session-expiry';
 import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { ScalePressable } from '~/ui/ScalePressable';
@@ -13,12 +14,14 @@ import { useRipple } from '~/ui/ripple';
 import { monoFont, tw, useColors } from '~/ui/tokens';
 
 import { accountName } from './accounts';
+import { copy } from './copy';
 import { networkName as networkLabel } from './onboarding';
 
 /**
  * One signed-in account (UX_SPEC §4.26 "Accounts"): avatar, display name or
- * truncated id, @handle and network, a check on the current one. The profile
- * is a cached read, so the row paints from the persisted cache offline.
+ * truncated id, @handle and network, a check on the current one, and "Sign
+ * in again" when its stored key no longer signs (AUTH-14). The profile is a
+ * cached read, so the row paints from the persisted cache offline.
  */
 export function AccountRow({
   account,
@@ -41,6 +44,7 @@ export function AccountRow({
   // With neither a profile nor a name, the truncated id (AUTH-15), not lib's "User abc123".
   const name = profile && (profile.hasProfile || profile.username) ? profile.displayName : handle;
   const showHandle = name !== handle;
+  const expired = useSessionExpired(account.identityId);
 
   const ripple = useRipple();
   return (
@@ -50,7 +54,13 @@ export function AccountRow({
         android_ripple={ripple}
         wrapperStyle={{ flex: 1 }}
         accessibilityRole="button"
-        accessibilityLabel={[name, showHandle ? handle : null, networkLabel, account.active ? 'current account' : null]
+        accessibilityLabel={[
+          name,
+          showHandle ? handle : null,
+          networkLabel,
+          account.active ? 'current account' : null,
+          expired ? copy.accounts.signInAgain : null,
+        ]
           .filter(Boolean)
           .join(', ')}
         accessibilityState={{ selected: account.active }}
@@ -67,6 +77,11 @@ export function AccountRow({
           <Text variant="subhead" tone="secondary" numberOfLines={1}>
             {showHandle ? `${handle} · ${networkLabel}` : networkLabel}
           </Text>
+          {expired ? (
+            <Text variant="subheadStrong" tone="error" numberOfLines={1} testID={testID ? `${testID}-sign-in-again` : undefined}>
+              {copy.accounts.signInAgain}
+            </Text>
+          ) : null}
         </View>
         {account.active ? <CheckIcon size={22} color={c.accent} strokeWidth={2.5} /> : null}
       </ScalePressable>

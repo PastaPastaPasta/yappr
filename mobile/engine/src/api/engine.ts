@@ -13,6 +13,7 @@ import { evoSdkService } from '@/lib/services/evo-sdk-service'
 import { PROTOCOL_VERSION, RpcError, RpcErrorCode, type LogLevel } from '../protocol/envelope'
 import { ENGINE_BUILD, bundleHash } from '../build-info'
 import type { AppLifecycleState } from '../shims/lifecycle'
+import type { SecureHold } from '../shims/storage'
 import { platformInfo, type PlatformInfoDTO } from '../dto/capabilities'
 import { avatarStylesReady } from '../avatar-styles'
 // The engine's shim (src/shims/wasm-sdk.ts) through its alias, typed as the package.
@@ -37,6 +38,8 @@ export interface EngineRuntime {
   emit?: (event: string, payload: unknown) => void
   /** Resolves once the host has acknowledged every secure-storage batch so far (ENGINE.md §9.1). */
   secureDurable?: () => Promise<void>
+  /** Hold back secure writes from the host until released (`EngineStorage.holdSecure`). */
+  holdSecure?: (matches: (key: string) => boolean) => SecureHold
 }
 
 export interface EngineInfo extends PlatformInfoDTO {

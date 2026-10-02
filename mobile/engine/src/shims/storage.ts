@@ -45,6 +45,15 @@ export interface StorageSnapshot {
 type BatchListener = (batch: StorageBatch) => void
 
 /**
+ * Secure writes held back from the host (`EngineStorage.holdSecure`):
+ * `release(true)` sends them as if never held; `release(false)` drops them
+ * and puts the engine's copies back, so the host never hears of them.
+ */
+export interface SecureHold {
+  release(commit: boolean): void
+}
+
+/**
  * Key prefixes (before the deployment scope) whose values are secrets and go
  * to the secure area: lib/secure-storage (`yappr_secure_`: private keys,
  * encryption keys), lib/services/private-feed-key-store (`yappr:pf:`: the
@@ -124,6 +133,13 @@ class MemoryStorage implements Storage {
   reset(): void {
     this.items.clear()
     this.keyCache = null
+  }
+
+  /** Put one key back to `value` (null: absent) without reporting a write. */
+  restore(key: string, value: string | null): void {
+    this.keyCache = null
+    if (value === null) this.items.delete(key)
+    else this.items.set(key, value)
   }
 
   entries(): Record<string, string> {
@@ -228,6 +244,13 @@ export interface EngineStorage {
   ack(seq: number): void
   /** Flush now, then resolve once every secure batch so far is acknowledged. */
   secureDurable(): Promise<void>
+  /**
+   * Hold back the secure writes of the keys `matches` picks until the hold is
+   * released: for a step that may undo itself by deleting secrets the engine
+   * never hydrated (a failed sign-in clears an identity's keys by name, and
+   * the host would then delete the stored ones). One hold at a time.
+   */
+  holdSecure(matches: (key: string) => boolean): SecureHold
   snapshot(): Required<StorageSnapshot>
 }
 
@@ -247,6 +270,7 @@ export function createEngineStorage(options: EngineStorageOptions = {}): EngineS
   const batches: Record<StorageArea, AreaBatch> = { local: new AreaBatch(), secure: new AreaBatch() }
   const unacked = new Set<number>()
   const waiters: { seqs: Set<number>; resolve: () => void }[] = []
+  let hold: { matches: (key: string) => boolean; writes: [string, string | null, string | null][] } | null = null
 
   const emit = (batch: StorageBatch) => {
     if (batch.area === 'secure') unacked.add(batch.seq)
@@ -263,12 +287,17 @@ export function createEngineStorage(options: EngineStorageOptions = {}): EngineS
     }
   }
 
-  const observer = (area: StorageArea): WriteObserver => (key, previous, next) => {
+  const record = (area: StorageArea, key: string, previous: string | null, next: string | null) => {
     batches[area].record(key, previous, next)
     if (!scheduled) {
       scheduled = true
       schedule(flush)
     }
+  }
+
+  const observer = (area: StorageArea): WriteObserver => (key, previous, next) => {
+    if (area === 'secure' && hold?.matches(key)) hold.writes.push([key, previous, next])
+    else record(area, key, previous, next)
   }
 
   const plain = new MemoryStorage(observer('local'))
@@ -310,6 +339,23 @@ export function createEngineStorage(options: EngineStorageOptions = {}): EngineS
       flush()
       if (unacked.size === 0) return Promise.resolve()
       return new Promise(resolve => waiters.push({ seqs: new Set(unacked), resolve }))
+    },
+    holdSecure(matches) {
+      if (hold) throw new Error('Secure writes are already held')
+      const current = { matches, writes: [] as [string, string | null, string | null][] }
+      hold = current
+      return {
+        release(commit) {
+          if (hold !== current) return
+          hold = null
+          if (commit) {
+            for (const [key, previous, next] of current.writes) record('secure', key, previous, next)
+            return
+          }
+          // Back to each key's value before its first held write, newest first.
+          for (const [key, previous] of [...current.writes].reverse()) secure.restore(key, previous)
+        },
+      }
     },
     snapshot() {
       return { local: plain.entries(), secure: secure.entries() }

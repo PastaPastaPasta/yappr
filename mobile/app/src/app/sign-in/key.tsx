@@ -5,7 +5,7 @@ import { CheckCircleIcon, ExclamationCircleIcon } from 'react-native-heroicons/o
 
 import { useSessionStore } from '~/data/session';
 import { engine } from '~/engine';
-import { accountName, switchAccount } from '~/features/auth/accounts';
+import { accountName, switchAccount, useReauthTarget } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
 import { isTransient, keyErrorText } from '~/features/auth/errors';
 import { useCloseSignIn } from '~/features/auth/navigation';
@@ -55,6 +55,7 @@ export default function KeySignInScreen() {
   const close = useCloseSignIn();
   const accounts = useSessionStore((s) => s.accounts);
   const activeId = useSessionStore((s) => s.session?.identityId ?? null);
+  const reauth = useReauthTarget();
   const [key, setKey] = useState('');
   const [check, setCheck] = useState<Check>({ state: 'idle' });
   useBlockScreenCapture('secret', useIsFocused());
@@ -89,7 +90,8 @@ export default function KeySignInScreen() {
 
   const found = check.state === 'found' ? check : null;
   const foundId = found?.identityId ?? '';
-  const existing = accounts.find((a) => a.identityId === foundId && a.identityId !== activeId);
+  // An account being signed in again (AUTH-14) takes this key: switching would bring back the one that stopped working.
+  const existing = accounts.find((a) => a.identityId === foundId && a.identityId !== activeId && a.identityId !== reauth);
   const alreadyActive = !!found && foundId === activeId;
 
   /** Signed in: clear the key, close the flow (the terms gate follows when needed). */

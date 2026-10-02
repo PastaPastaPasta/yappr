@@ -5,6 +5,7 @@ import { EllipsisHorizontalIcon, PlusIcon } from 'react-native-heroicons/outline
 import { create } from 'zustand';
 
 import { useSession } from '~/data/session';
+import { isSessionExpired } from '~/data/session-expiry';
 import { cn } from '~/lib-allowlist';
 import { showActionSheet } from '~/ui/action-sheet';
 import { confirmAlert } from '~/ui/Dialog';
@@ -14,7 +15,7 @@ import { Text } from '~/ui/Text';
 import { tw, useColors } from '~/ui/tokens';
 
 import { AccountRow } from './AccountRow';
-import { accountName, addAccount, signOutAccount, switchAccount } from './accounts';
+import { accountName, addAccount, reauthenticate, signOutAccount, switchAccount } from './accounts';
 import { copy } from './copy';
 
 /** Asks first (AUTH-11), then signs the account out and deletes its keys from this device. */
@@ -50,7 +51,8 @@ function AddAccountRow({ onPress }: { onPress: () => void }) {
 
 /**
  * The accounts on this device with "Add account" (AUTH-10). Tapping an
- * account switches to it. With `manage`, each row has a menu to sign it out.
+ * account switches to it, or for one marked "Sign in again" (AUTH-14) opens
+ * its sign-in. With `manage`, each row has a menu to sign it out.
  */
 export function AccountList({
   accounts,
@@ -71,7 +73,8 @@ export function AccountList({
           testID={`account-${account.identityId}`}
           onPress={() => {
             onDone?.();
-            if (!account.active) switchAccount(account).catch(() => undefined);
+            if (isSessionExpired(account.identityId)) reauthenticate(account.identityId).catch(() => undefined);
+            else if (!account.active) switchAccount(account).catch(() => undefined);
           }}
           trailing={
             manage ? (
