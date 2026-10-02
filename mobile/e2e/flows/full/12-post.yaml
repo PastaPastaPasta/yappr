@@ -39,7 +39,9 @@ tags:
     enabled: false
 - tapOn:
     id: compose-input-0
-- inputText: "Maestro post ${RUN} #maestro"
+# No link in the text: the flow opens the post by tapping its text, and a tap that lands
+# on a hashtag opens the hashtag instead (where it lands moves with RUN's length).
+- inputText: "Maestro post ${RUN}"
 - assertVisible:
     id: compose-post
     enabled: true
