@@ -1,7 +1,7 @@
 import type { ProfileDTO, UserSummaryDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
 import { Stack } from 'expo-router';
-import { useState, type ReactElement } from 'react';
+import { useEffect, useState, type ReactElement } from 'react';
 import { RefreshControl, View } from 'react-native';
 import { UserGroupIcon, UsersIcon } from 'react-native-heroicons/outline';
 
@@ -22,6 +22,9 @@ import { UserRow } from '~/ui/UserRow';
 
 import { toggleFollow } from './profile-actions';
 import { filterUsers, SEARCH_MIN } from './connections-search';
+
+/** Matches enough to fill the screen: search-driven paging stops there, and scrolling takes over. */
+const SEARCH_SCREENFUL = 20;
 
 export type ConnectionKind = 'followers' | 'following';
 
@@ -100,6 +103,15 @@ export function ConnectionsScreen({ id, kind }: { id: string; kind: ConnectionKi
   const searching = query.trim().length >= SEARCH_MIN;
   const users = searching ? filterUsers(list.items, query) : list.items;
 
+  // The filter covers the loaded pages: while it is on, keep paging until it has a screenful
+  // or the list ends (a short filtered list never reaches onEndReached).
+  const pageForSearch =
+    searching && users.length < SEARCH_SCREENFUL && list.hasNextPage && !list.isFetchingNextPage && !list.isFetchNextPageError;
+  const { fetchNextPage } = list;
+  useEffect(() => {
+    if (pageForSearch) fetchNextPage().catch(() => undefined);
+  }, [pageForSearch, fetchNextPage]);
+
   const onRefresh = () => {
     setRefreshing(true);
     list
@@ -131,6 +143,9 @@ export function ConnectionsScreen({ id, kind }: { id: string; kind: ConnectionKi
         ))}
       </View>
     );
+  } else if (searching && list.hasNextPage) {
+    // Still paging (or a page failed, and the footer offers Load more): not "no match" yet.
+    empty = <View />;
   } else if (searching) {
     empty = <EmptyState title="No users found with that name" icon={copy.icon} testID="connections-no-match" />;
   } else {
@@ -139,7 +154,6 @@ export function ConnectionsScreen({ id, kind }: { id: string; kind: ConnectionKi
     );
   }
 
-  // Filtering covers the loaded pages; keep paging while a filter is on, so it reaches the whole list.
   const footer = list.isFetchingNextPage ? (
     <View className="items-center p-6">
       <Spinner size="sm" />
