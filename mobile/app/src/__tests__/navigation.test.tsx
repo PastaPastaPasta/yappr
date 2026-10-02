@@ -1,6 +1,7 @@
 import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
+import { useSignInPrompt } from '~/data/require-auth';
 import { useOnboarding } from '~/features/auth/onboarding';
 
 // Resolved against Jest's cwd, mobile/app.
@@ -50,11 +51,14 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/messages');
   });
 
-  it('opens compose from the floating button', async () => {
+  // Signed in, the button opens /compose (features/home/HomeScreen.test.tsx).
+  it('asks a signed-out reader to sign in from the floating button (G-8)', async () => {
     const app = await renderApp('/');
 
     fireEvent.press(screen.getByTestId('compose-fab'));
-    expect(app.getPathname()).toBe('/compose');
+    expect(useSignInPrompt.getState().open).toBe(true);
+    expect(app.getPathname()).toBe('/');
+    act(() => useSignInPrompt.setState({ open: false }));
   });
 
   it('pushes shared detail screens onto the current tab and keeps each tab’s history', async () => {

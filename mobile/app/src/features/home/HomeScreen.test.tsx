@@ -6,6 +6,7 @@ import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-librar
 import { RefreshControl } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
+import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
@@ -71,12 +72,13 @@ function Layout() {
 }
 
 async function renderHome() {
-  renderRouter({ _layout: Layout, index: HomeScreen }, { initialUrl: '/' });
+  const app = renderRouter({ _layout: Layout, index: HomeScreen, compose: () => null }, { initialUrl: '/' });
   // The pager lays out, then its pages mount.
   act(() => {
     fireEvent(screen.getByTestId('home-pager'), 'layout', { nativeEvent: { layout: { width: 400, height: 800 } } });
   });
   await act(async () => {});
+  return app;
 }
 
 beforeAll(() => {
@@ -125,10 +127,32 @@ describe('Home', () => {
     fireEvent.press(screen.getByTestId('home-tabs-following'));
     await act(async () => {});
 
+    expect(screen.getByTestId('signed-out-following')).toBeTruthy();
     expect(screen.getByText('See posts from people you follow')).toBeTruthy();
-    expect(screen.getByTestId('following-sign-in')).toBeTruthy();
+    expect(screen.getByText('Sign in')).toBeTruthy();
     expect(useHomePrefsStore.getState().accounts['signed-out']?.tab).toBe('following');
     expect(home()).not.toHaveBeenCalledWith(expect.objectContaining({ tab: 'following' }));
+  });
+
+  it('opens the sign-in sheet, not the composer, from the FAB signed out (G-8)', async () => {
+    useSignInPrompt.setState({ open: false });
+    home().mockResolvedValue(page([]));
+    const app = await renderHome();
+
+    fireEvent.press(screen.getByTestId('compose-fab'));
+
+    expect(useSignInPrompt.getState().open).toBe(true);
+    expect(app.getPathname()).toBe('/');
+  });
+
+  it('opens the composer from the FAB signed in', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    home().mockResolvedValue(page([]));
+    const app = await renderHome();
+
+    act(() => fireEvent.press(screen.getByTestId('compose-fab')));
+
+    expect(app.getPathname()).toBe('/compose');
   });
 
   it('reads Following when signed in, with its empty state (FEED-02)', async () => {

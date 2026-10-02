@@ -9,19 +9,17 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { UserGroupIcon } from 'react-native-heroicons/outline';
 import { useReducedMotion } from 'react-native-reanimated';
 
 import { useEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
+import { requireAuth } from '~/data/require-auth';
 import { lastIdentity, useCapabilities, useSession, type SessionStatus } from '~/data/session';
 import { useEngineStatus } from '~/engine/hooks';
+import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
 import { queryClient } from '~/state/query-client';
-import { Button } from '~/ui/Button';
 import { ComposeFab } from '~/ui/ComposeFab';
 import { Screen } from '~/ui/Screen';
-import { Text } from '~/ui/Text';
-import { useColors } from '~/ui/tokens';
 
 import { FeedControls, OfflineBanner } from './FeedControls';
 import { FeedPage, type FeedPageHandle } from './FeedPage';
@@ -51,25 +49,6 @@ function useRestoreStalled(status: SessionStatus): boolean {
   }, [waiting]);
   // The session never goes back to unknown, so once it is known the stall is over for good.
   return waiting && stalled;
-}
-
-/** AUTH-02 / UX_SPEC §5.2: the Following tab signed out. */
-function FollowingSignedOut() {
-  const c = useColors();
-  return (
-    <View className="flex-1 items-center px-6 py-16" testID="following-signed-out">
-      <View className="mb-4 h-16 w-16 items-center justify-center rounded-full bg-gray-100 dark:bg-gray-800">
-        <UserGroupIcon size={32} color={c.textSecondary} />
-      </View>
-      <Text variant="title" tone="emphasis" accessibilityRole="header" className="mb-2 text-center">
-        See posts from people you follow
-      </Text>
-      <Text tone="secondary" className="mb-6 max-w-sm text-center">
-        Log in to view your personalized following feed and see updates from accounts you care about.
-      </Text>
-      <Button label="Sign in" onPress={() => router.push('/sign-in')} testID="following-sign-in" />
-    </View>
-  );
 }
 
 /**
@@ -189,7 +168,7 @@ export function HomeScreen() {
             importantForAccessibility={page === tab ? 'auto' : 'no-hide-descendants'}
           >
             {!visited.has(page) || pageWidth === 0 ? null : page === 'following' && !viewer ? (
-              <FollowingSignedOut />
+              <SignedOutPlaceholder kind="following" />
             ) : (
               <FeedPage
                 // Another sort or window is another list: it starts at the top, paging afresh.
@@ -209,7 +188,8 @@ export function HomeScreen() {
           </View>
         ))}
       </ScrollView>
-      <ComposeFab />
+      {/* Signed out, the FAB opens the sign-in sheet instead of the composer (PRD G-8). */}
+      <ComposeFab onPress={() => requireAuth(() => router.push('/compose'))} />
     </Screen>
   );
 }

@@ -90,7 +90,7 @@ appId: pr.yap.app.dev
           visible: "See posts from people you follow"
           timeout: 30000
       - assertVisible:
-          id: following-sign-in
+          id: signed-out-following
 - runFlow:
     when:
       true: ${typeof KEY == 'string' && KEY.length > 0}
