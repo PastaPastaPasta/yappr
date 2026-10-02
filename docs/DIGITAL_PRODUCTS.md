@@ -100,7 +100,11 @@ payload.
 - **Deliver all** sends every *ready* order in one pass. An order is ready when:
   - it has digital lines and nothing has been delivered;
   - it is not closed;
-  - every line has a kit with enough keys;
+  - every digital line is a product this store currently lists as digital,
+    read from the seller's own `storeItem` (the order payload is
+    buyer-written, so its `fulfillment` and `itemId` prove nothing);
+  - every line has a kit with enough keys, and the delivery fits the payload
+    cap;
   - every kit's timing is met;
   - no line draws more than 10 keys (larger key orders are left for the seller
     to review).
@@ -111,8 +115,10 @@ payload.
   the fulfilment worker.
 - Unique codes (license keys and the like) come off the front of the pool, `quantity` per line. The steps
   are ordered so a key is never sent twice:
-  1. The reduced pool is saved **before** the delivery is published, at the
-     revision it was read. A pool changed elsewhere (another tab or device
+  1. The delivery is sealed (encoded and encrypted) before anything is
+     written, so one that cannot be built takes no keys. The reduced pool is
+     then saved **before** the delivery is published, at the revision it was
+     read. A pool changed elsewhere (another tab or device
      delivered meanwhile) refuses the write, and nothing is sent.
   2. Every write whose response failed is reconciled against the chain, since a
      broadcast can land after its response times out. A kit write is
@@ -129,7 +135,8 @@ payload.
   5. A bulk run re-plans each order against the pool the previous one left.
 - The product editor writes the kit only when the seller changed it. It writes
   at the revision it read, so a stale editor can never restore keys that have
-  since been sent.
+  since been sent. A first save that is broadcast but not yet seen on chain is
+  not taken as saved: the editor stays dirty and asks the seller to save again.
 
 **Buyer receives**: the order card shows *Your digital items*, and the
 **Library** tab lists every delivery. Links open in a new tab, codes and access

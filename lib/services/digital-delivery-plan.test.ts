@@ -15,7 +15,8 @@ import {
   kitsAfterDelivery,
   planDelivery,
 } from './digital-delivery-plan'
-import type { ItemDeliverablePayload, OrderItem } from '../../types'
+import type { BulkReadinessInput } from './digital-delivery-plan'
+import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
 
 const KEY = 'A'.repeat(43) + '='
 const CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
@@ -25,6 +26,9 @@ const line = (itemId: string, quantity = 1, extra: Partial<OrderItem> = {}): Ord
   ({ itemId, itemTitle: itemId.toUpperCase(), quantity, unitPrice: 100, fulfillment: 'digital', ...extra })
 const kit = (extra: Partial<ItemDeliverablePayload> = {}): ItemDeliverablePayload =>
   ({ v: 1, assets: [], deliverWhen: 'payment_confirmed', ...extra })
+/** These items, listed as digital in store `store`. */
+const listed = (itemIds: string[]) =>
+  new Map(itemIds.map((itemId) => [itemId, { storeId: 'store', fulfillment: 'digital' as const }]))
 
 describe('planDelivery', () => {
   it('delivers only digital lines, with the assets of each line\'s variant', () => {
@@ -74,7 +78,7 @@ describe('planDelivery', () => {
     const plan = planDelivery(order, kits)
     expect(plan.emptyLines).toEqual(['EBOOK'])
     expect(planBlockers(plan)).toHaveLength(1)
-    expect(isReadyForBulkDelivery(order, undefined, false, kits)).toBe(false)
+    expect(isReadyForBulkDelivery({ payload: order, storeId: 'store', latestStatus: undefined, alreadyDelivered: false, kits, listings: listed(['ebook']) })).toBe(false)
   })
 
   it('leaves pools without license keys alone', () => {
@@ -87,32 +91,48 @@ describe('planDelivery', () => {
 
 describe('isReadyForBulkDelivery', () => {
   const kits = new Map([['song', kit({ assets: [file('song.mp3')] })], ['now', kit({ deliverWhen: 'on_order', assets: [file('now.zip')] })]])
+  const ready = (items: OrderItem[], latestStatus?: OrderStatus, extra: Partial<BulkReadinessInput> = {}) =>
+    isReadyForBulkDelivery({ payload: { items }, storeId: 'store', latestStatus, alreadyDelivered: false, kits, listings: listed(['song', 'now', 'game']), ...extra })
 
   it('waits for payment unless every kit delivers on order', () => {
-    expect(isReadyForBulkDelivery({ items: [line('song')] }, undefined, false, kits)).toBe(false)
-    expect(isReadyForBulkDelivery({ items: [line('song')] }, 'pending', false, kits)).toBe(false)
-    expect(isReadyForBulkDelivery({ items: [line('song')] }, 'payment_received', false, kits)).toBe(true)
-    expect(isReadyForBulkDelivery({ items: [line('now')] }, undefined, false, kits)).toBe(true)
-    expect(isReadyForBulkDelivery({ items: [line('now'), line('song')] }, 'pending', false, kits)).toBe(false)
+    expect(ready([line('song')])).toBe(false)
+    expect(ready([line('song')], 'pending')).toBe(false)
+    expect(ready([line('song')], 'payment_received')).toBe(true)
+    expect(ready([line('now')])).toBe(true)
+    expect(ready([line('now'), line('song')], 'pending')).toBe(false)
   })
 
   it('never re-delivers, delivers a closed order, or delivers without a kit', () => {
-    expect(isReadyForBulkDelivery({ items: [line('now')] }, undefined, true, kits)).toBe(false)
-    expect(isReadyForBulkDelivery({ items: [line('now')] }, 'refunded', false, kits)).toBe(false)
-    expect(isReadyForBulkDelivery({ items: [line('other')] }, 'payment_received', false, kits)).toBe(false)
-    expect(isReadyForBulkDelivery({ items: [line('mug', 1, { fulfillment: undefined })] }, 'payment_received', false, kits)).toBe(false)
+    expect(ready([line('now')], undefined, { alreadyDelivered: true })).toBe(false)
+    expect(ready([line('now')], 'refunded')).toBe(false)
+    expect(ready([line('other')], 'payment_received', { listings: listed(['other']) })).toBe(false)
+    expect(ready([line('mug', 1, { fulfillment: undefined })], 'payment_received')).toBe(false)
+  })
+
+  it('only trusts the seller\'s listing, not the buyer-written line', () => {
+    // An item from another of the seller's stores.
+    expect(ready([line('now')], undefined, { listings: new Map([['now', { storeId: 'other-store', fulfillment: 'digital' }]]) })).toBe(false)
+    // Switched back to shipped: its old kit is still there.
+    expect(ready([line('now')], undefined, { listings: new Map([['now', { storeId: 'store', fulfillment: 'shipped' }]]) })).toBe(false)
+    // Not found (or its read failed).
+    expect(ready([line('now')], undefined, { listings: new Map() })).toBe(false)
   })
 
   it('leaves a large key order for the seller to review', () => {
     const pool = Array.from({ length: 50 }, (_, i) => `k${i}`)
     const many = new Map([['game', kit({ deliverWhen: 'on_order', licenseKeys: pool })]])
-    expect(isReadyForBulkDelivery({ items: [line('game', MAX_BULK_KEYS_PER_LINE)] }, undefined, false, many)).toBe(true)
-    expect(isReadyForBulkDelivery({ items: [line('game', MAX_BULK_KEYS_PER_LINE + 1)] }, undefined, false, many)).toBe(false)
+    expect(ready([line('game', MAX_BULK_KEYS_PER_LINE)], undefined, { kits: many })).toBe(true)
+    expect(ready([line('game', MAX_BULK_KEYS_PER_LINE + 1)], undefined, { kits: many })).toBe(false)
   })
 
   it('holds an order whose key pool has run out', () => {
     const empty = new Map([['game', kit({ deliverWhen: 'on_order', licenseKeys: [] })]])
-    expect(isReadyForBulkDelivery({ items: [line('game')] }, undefined, false, empty)).toBe(false)
+    expect(ready([line('game')], undefined, { kits: empty })).toBe(false)
+  })
+
+  it('holds an order whose delivery would not fit the contract\'s payload cap', () => {
+    const huge = new Map([['now', kit({ deliverWhen: 'on_order', instructions: 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES) })]])
+    expect(ready([line('now')], undefined, { kits: huge })).toBe(false)
   })
 })
 

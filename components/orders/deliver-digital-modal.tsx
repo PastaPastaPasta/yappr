@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, encodeDelivery, isDigitalOnly, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, isDigitalOnly, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -80,18 +80,7 @@ export function DeliverDigitalModal({
   }, [lines, kits, extras, includeNewKeys])
 
   const plan = useMemo(() => planDelivery(payload, effectiveKits, message), [payload, effectiveKits, message])
-  const sizeError = useMemo(() => {
-    try {
-      encodeDelivery(plan.delivery)
-      return null
-    } catch (error) {
-      return error instanceof Error ? error.message : 'This delivery is too large.'
-    }
-  }, [plan.delivery])
-  const blockers = [
-    ...planBlockers(plan),
-    ...(sizeError ? [sizeError] : []),
-  ]
+  const blockers = useMemo(() => planBlockers(plan), [plan])
   const orderSellsKeys = lines.some((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined)
 
   const handleClose = () => {

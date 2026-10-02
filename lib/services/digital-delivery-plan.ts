@@ -15,6 +15,7 @@ import type {
   OrderItem,
   OrderPayload,
   OrderStatus,
+  StoreItem,
   StoreOrder,
 } from '../../types'
 
@@ -145,13 +146,25 @@ export function planDelivery(
   }
 }
 
+/** Why a delivery cannot be encrypted within the contract's cap, or null when it can. */
+function deliverySizeError(delivery: OrderDeliveryPayload): string | null {
+  try {
+    encodeDelivery(delivery)
+    return null
+  } catch (error) {
+    return error instanceof Error ? error.message : 'This delivery is too large.'
+  }
+}
+
 /** Every reason a plan cannot be delivered as it stands, for the seller. */
 export function planBlockers(plan: DeliveryPlan): string[] {
+  const sizeError = deliverySizeError(plan.delivery)
   return [
     ...plan.invalidQuantities.map((title) => `"${title}" has an invalid quantity in the order. Check it with the buyer before delivering.`),
     ...plan.missingKits.map((title) => `"${title}" has no delivery content. Add a link, code or file for it below, or add them to the product.`),
     ...plan.shortOnKeys.map((title) => `"${title}" does not have enough unique codes left. Add more in the product's delivery settings.`),
     ...plan.emptyLines.map((title) => `"${title}" would be delivered empty (nothing in its kit applies to this variant). Add a link, code or file for it below.`),
+    ...(sizeError ? [sizeError] : []),
   ]
 }
 
@@ -168,21 +181,41 @@ export function kitsAfterDelivery(
   return next
 }
 
+/** The seller's own listing of an item, read from the chain. */
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment'>
+
+export interface BulkReadinessInput {
+  payload: Pick<OrderPayload, 'items'>
+  /** The store the order was placed with. */
+  storeId: string
+  latestStatus: OrderStatus | undefined
+  alreadyDelivered: boolean
+  kits: ReadonlyMap<string, ItemDeliverablePayload>
+  /** The seller's current listing of each item the order names, by item id. */
+  listings: ReadonlyMap<string, ItemListing>
+}
+
 /**
  * Whether "Deliver ready orders" may fulfil this order without the seller
  * opening it: it has digital lines, nothing was delivered yet, it is not
- * closed, every digital line has a kit with keys enough, and every kit's
- * timing rule is met (`on_order` always; `payment_confirmed` once the seller
- * has marked payment received).
+ * closed, every digital line is a product this store currently sells as
+ * digital, every one has a kit with keys enough, and every kit's timing rule
+ * is met (`on_order` always; `payment_confirmed` once the seller has marked
+ * payment received).
+ *
+ * The listing check matters because the order payload is buyer-written: a
+ * line's `itemId` and `fulfillment` prove nothing. Without it a buyer could
+ * name another store's item, or one switched back to shipped whose old kit
+ * remains, and have its content sent automatically.
  */
-export function isReadyForBulkDelivery(
-  payload: Pick<OrderPayload, 'items'>,
-  latestStatus: OrderStatus | undefined,
-  alreadyDelivered: boolean,
-  kits: ReadonlyMap<string, ItemDeliverablePayload>
-): boolean {
+export function isReadyForBulkDelivery({ payload, storeId, latestStatus, alreadyDelivered, kits, listings }: BulkReadinessInput): boolean {
   if (alreadyDelivered || !hasDigitalLines(payload)) return false
   if (latestStatus && CLOSED_STATUSES.has(latestStatus)) return false
+  const listedAsDigital = (itemId: string) => {
+    const listing = listings.get(itemId)
+    return listing?.storeId === storeId && listing.fulfillment === 'digital'
+  }
+  if (!digitalLines(payload).every((line) => listedAsDigital(line.itemId))) return false
   const plan = planDelivery(payload, kits)
   if (planBlockers(plan).length > 0) return false
   // A large key order is the seller's call, not the bulk button's.
