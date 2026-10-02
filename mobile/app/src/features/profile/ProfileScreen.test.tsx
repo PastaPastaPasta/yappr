@@ -17,11 +17,19 @@ import { useToastStore } from '~/ui/toast';
 import { ProfileScreen } from './ProfileScreen';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+// The root of the profile's stack: another screen for a pushed profile, the profile itself at a tab root.
+let mockStackRoot = 'home';
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), back: jest.fn(), canGoBack: () => true, replace: jest.fn() },
   Stack: { Screen: () => null },
   useFocusEffect: jest.fn(),
-  useNavigation: () => ({ canGoBack: () => true, goBack: jest.fn() }),
+  // canGoBack() also asks the tab navigator, which could go back to another tab.
+  useNavigation: () => ({
+    getState: () => ({ index: 1, routes: [{ key: mockStackRoot }, { key: 'post' }] }),
+    canGoBack: () => true,
+    goBack: jest.fn(),
+  }),
+  useRoute: () => ({ key: 'profile' }),
 }));
 jest.mock('expo-status-bar', () => ({ setStatusBarStyle: jest.fn() }));
 // FlashList's own Jest setup (@shopify/flash-list/jestSetup): fixed layouts, so cells render.
@@ -239,6 +247,26 @@ describe('ProfileScreen', () => {
     expect(screen.getByTestId('profile-settings')).toBeTruthy();
     expect(screen.queryByTestId('profile-follow')).toBeNull();
     expect(screen.queryByLabelText('Message Jana Abara')).toBeNull();
+  });
+
+  it('has Back on a pushed profile and none at the Profile tab root', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(
+      profile({ id: VIEWER, username: 'jana', displayName: 'Jana Abara', viewer: undefined }),
+    );
+    renderProfile(VIEWER, { ownTab: true });
+    await flush();
+    expect(screen.getByTestId('profile-back')).toBeTruthy();
+
+    // A pushed screen above the root (index 1) still leaves the root without Back.
+    mockStackRoot = 'profile';
+    try {
+      screen.unmount();
+      renderProfile(VIEWER, { ownTab: true });
+      await flush();
+      expect(screen.queryByTestId('profile-back')).toBeNull();
+    } finally {
+      mockStackRoot = 'home';
+    }
   });
 
   it('shows the own profile with Edit profile and the username card when nameless', async () => {

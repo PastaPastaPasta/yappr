@@ -7,6 +7,7 @@ import Animated, { FadeOut, Keyframe } from 'react-native-reanimated';
 import { Avatar } from '~/ui/Avatar';
 import { ScalePressable } from '~/ui/ScalePressable';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { colors, motion } from '~/ui/tokens';
 
 /** UX_SPEC §5.2. */
@@ -60,6 +61,7 @@ export function NewPostsPill({ posts, onPress }: NewPostsPillProps) {
     AccessibilityInfo.announceForAccessibility(label);
   }, [visible, label]);
 
+  const ripple = useRipple('fill');
   if (!visible) return null;
   const authors = newestAuthors(posts);
 
@@ -67,11 +69,12 @@ export function NewPostsPill({ posts, onPress }: NewPostsPillProps) {
     <View pointerEvents="box-none" className="absolute left-0 right-0 top-3 z-10 items-center">
       <Animated.View entering={ENTER} exiting={EXIT}>
         <ScalePressable
+          android_ripple={ripple}
           accessibilityRole="button"
           accessibilityLabel={label}
           onPress={onPress}
           testID="new-posts-pill"
-          className="h-9 flex-row items-center gap-1.5 rounded-full bg-yappr-600 pl-3 pr-4 shadow-lg active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600"
+          className="h-9 flex-row items-center gap-1.5 rounded-full bg-yappr-600 android:overflow-hidden pl-3 pr-4 shadow-lg active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600"
         >
           <ArrowUpIcon size={14} color={colors.white} strokeWidth={2.5} />
           <View className="flex-row" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>

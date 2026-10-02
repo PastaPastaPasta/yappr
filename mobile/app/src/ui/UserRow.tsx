@@ -8,6 +8,7 @@ import { Button } from './Button';
 import { Text } from './Text';
 import { handleOf } from './handle';
 import type { CardAvatar } from './post/types';
+import { useRipple } from './ripple';
 import { monoFont, tw, useLargeText } from './tokens';
 
 /** The fields a user row needs; the engine's AuthorDTO / ProfileDTO both carry them. */
@@ -74,10 +75,12 @@ export function UserRow({
       />
     );
 
+  const ripple = useRipple();
   return (
     // One screen-reader element (a parent hides its children on iOS), with
     // following as a custom action.
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel={[
         rank !== undefined && `Number ${rank}`,

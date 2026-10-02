@@ -1,7 +1,7 @@
 import type { CapabilitiesDTO, ProfileDTO } from '@engine/api';
 import { router, Stack, useNavigation } from 'expo-router';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from 'react-native';
+import { Pressable, ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
@@ -13,6 +13,7 @@ import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { confirmAlert } from '~/ui/Dialog';
 import { ErrorState } from '~/ui/EmptyState';
+import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { SwitchRow } from '~/ui/Switch';
@@ -217,7 +218,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
             ),
         }}
       />
-      <KeyboardAvoidingView className="flex-1" behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoider avoidOnIOS>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="pb-12" testID="edit-profile">
           <ProfileBanner uri={form.bannerUri.trim() || undefined} height={120} />
           <View className="-mt-11 flex-row items-end gap-3 px-4">
@@ -252,7 +253,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
             )}
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+      </KeyboardAvoider>
       {pickerOpen ? (
         <AvatarPicker
           open

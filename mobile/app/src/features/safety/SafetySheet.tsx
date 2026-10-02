@@ -4,6 +4,7 @@ import { ScrollView, View } from 'react-native';
 
 import { Button } from '~/ui/Button';
 import { EmptyState } from '~/ui/EmptyState';
+import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { useColors, type IconComponent } from '~/ui/tokens';
@@ -22,17 +23,19 @@ export function closeSheet(): void {
  */
 export function SheetBody({ children, testID }: { children: ReactNode; testID?: string }) {
   return (
-    <ScrollView
-      className="flex-1 bg-white dark:bg-neutral-900"
-      contentContainerClassName="gap-4 px-5 pb-10 pt-6"
-      keyboardShouldPersistTaps="handled"
-      keyboardDismissMode="interactive"
-      automaticallyAdjustKeyboardInsets
-      contentInsetAdjustmentBehavior="automatic"
-      testID={testID}
-    >
-      {children}
-    </ScrollView>
+    <KeyboardAvoider>
+      <ScrollView
+        className="flex-1 bg-white dark:bg-neutral-900"
+        contentContainerClassName="gap-4 px-5 pb-10 pt-6"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
+        automaticallyAdjustKeyboardInsets
+        contentInsetAdjustmentBehavior="automatic"
+        testID={testID}
+      >
+        {children}
+      </ScrollView>
+    </KeyboardAvoider>
   );
 }
 

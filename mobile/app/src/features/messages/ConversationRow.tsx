@@ -6,6 +6,7 @@ import { cn, formatTime } from '~/lib-allowlist';
 import { UnreadDot } from '~/ui/Badge';
 import { RelativeTime } from '~/ui/RelativeTime';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { tw } from '~/ui/tokens';
 
 import { ConversationAvatar } from './ConversationAvatar';
@@ -37,8 +38,10 @@ export const ConversationRow = memo(function ConversationRow({ conversation, onP
     .filter(Boolean)
     .join(', ');
 
+  const ripple = useRipple();
   return (
     <Pressable
+      android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel={label}
       accessibilityActions={onLongPress ? [{ name: 'longpress', label: 'More options' }] : undefined}

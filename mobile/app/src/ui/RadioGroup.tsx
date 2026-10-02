@@ -4,6 +4,7 @@ import { CheckIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
+import { useRipple } from './ripple';
 import { tw, useColors } from './tokens';
 
 export interface RadioOption<T extends string> {
@@ -50,12 +51,14 @@ export function RadioGroup<T extends string>({
   const c = useColors();
   const ios = Platform.OS === 'ios';
 
+  const ripple = useRipple();
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={accessibilityLabel} testID={testID}>
       {options.map((option, index) => {
         const selected = option.value === value;
         return (
           <Pressable
+            android_ripple={ripple}
             key={option.value}
             accessibilityRole="radio"
             accessibilityLabel={option.title}

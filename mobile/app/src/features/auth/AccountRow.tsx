@@ -9,6 +9,7 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { ScalePressable } from '~/ui/ScalePressable';
 import { Text } from '~/ui/Text';
+import { useRipple } from '~/ui/ripple';
 import { monoFont, tw, useColors } from '~/ui/tokens';
 
 import { accountName } from './accounts';
@@ -41,10 +42,12 @@ export function AccountRow({
   const name = profile && (profile.hasProfile || profile.username) ? profile.displayName : handle;
   const showHandle = name !== handle;
 
+  const ripple = useRipple();
   return (
     // The menu sits beside the row, not inside it: an iOS button hides the controls it contains.
     <View className={cn('flex-row items-center', trailing ? 'pr-2' : null)}>
       <ScalePressable
+        android_ripple={ripple}
         wrapperStyle={{ flex: 1 }}
         accessibilityRole="button"
         accessibilityLabel={[name, showHandle ? handle : null, networkLabel, account.active ? 'current account' : null]
