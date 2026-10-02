@@ -865,7 +865,7 @@ type EngineErrorCode =
   | 'MODERATION_BARRED' | 'MODERATION_NOT_SEATED' | 'TOO_LONG' | 'RULE_VIOLATION' | 'ALREADY_CLAIMED'
   | 'PARENT_TOO_YOUNG' | 'PARENT_UNCONFIRMED' | 'FEE_UNPAYABLE' | 'FEE_SHARE_MISMATCH' | 'EXPIRED' | 'CONTEST'
   | 'FEE_CHANGED' | 'NONCE_CONFLICT' | 'NOT_RECORDED' | 'PENDING_WRITE' | 'STORAGE' | 'APP_OUTDATED'
-  | 'BUILD_DEFECT' | 'IMMUTABLE' | 'TARGET_GONE' | 'NOT_OWNER' | 'STALE' | 'FROZEN' | 'INSUFFICIENT_YAPP'
+  | 'BUILD_DEFECT' | 'IMMUTABLE' | 'TARGET_GONE' | 'NOT_OWNER' | 'STALE' | 'FROZEN' | 'INSUFFICIENT_YAPP' | 'INSUFFICIENT_CREDITS'
   | 'DUPLICATE' | 'QUOTE_HAS_TEXT' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PRIVATE_FEED_SYNC_REQUIRED' | 'UNKNOWN'
 interface EngineErrorData {
   code: EngineErrorCode
@@ -915,6 +915,8 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 
 | # | Predicate | Code | Effect |
 | --- | --- | --- | --- |
+| 21a | "Insufficient identity … balance … required …" / "credits balance … is not enough to pay" (`IdentityInsufficientBalanceError`, `BalanceIsNotEnoughError`; `categorizeError` has no branch) | `INSUFFICIENT_CREDITS` | `failed`, not retryable; the app shows PRD G-5's copy |
+| 21b | `fromBoolean(false)`'s stand-in error (lib's boolean services swallow theirs) | `UNKNOWN`, outcome `refused` | `failed`, retryable, as web rolls it back |
 | 22 | `isDuplicateUniqueIndexError` :968 (40105) | `DUPLICATE` | `failed`; the v10 repost path recovers the existing slot (§6.3 `engage`) |
 | 23 | `isAlreadyExistsError` :116 (no consensus code) | `DUPLICATE` | `unconfirmed`, outcome `unknown`: the broadcast probably landed |
 | 24 | `isRateLimitedError` :106 | `RATE_LIMITED` | `failed`, retryable |

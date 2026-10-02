@@ -186,9 +186,14 @@ describe('engage writes', () => {
     // waiting-parent is left before lib's write, so a transport failure there is never "proved not sent".
     expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'signing', null])
 
-    // lib's boolean `false` carries no verdict (it swallows the error): it may have landed.
+    // lib's boolean `false` (it swallows the error) is a failed write, as on web: rolled back,
+    // and retryable (SR-04), never a silent "may have landed".
     m.likeService.likePost.mockResolvedValue(false)
-    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'UNKNOWN', outcome: 'unknown' } })
+    const refused = await outcome(engage.like(TARGET))
+    expect(refused).toMatchObject({ state: 'failed', retryable: true, error: { code: 'UNKNOWN', outcome: 'refused' } })
+    m.likeService.likePost.mockResolvedValue(true)
+    await tickets.retry(refused.id)
+    expect(await settled(tickets, refused.id)).toMatchObject({ state: 'confirmed' })
   })
 
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {

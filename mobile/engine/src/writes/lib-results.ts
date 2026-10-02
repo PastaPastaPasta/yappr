@@ -1,6 +1,7 @@
 import { extractErrorMessage } from '@/lib/error-utils'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import type { StateTransitionResult } from '@/lib/services/state-transition-service'
+import { LIB_REFUSED_MESSAGE } from './classify'
 import type { WriteResult } from './tickets'
 import type { TicketDocument } from './types'
 
@@ -21,13 +22,14 @@ export function fromTransitionResult(result: StateTransitionResult, documents?: 
 
 /**
  * The services that answer `boolean` (`likePost`, `bookmarkPost`, ...):
- * `false` is `failed`/UNKNOWN. They swallow the `confirmed: false` signal, as
- * on web, so `true` is taken as `confirmed`.
+ * `false` is `failed`, refused and retryable (`LIB_REFUSED_MESSAGE`). They
+ * swallow the `confirmed: false` signal, as on web, so `true` is taken as
+ * `confirmed`.
  */
 export function fromBoolean(ok: boolean, documents?: TicketDocument[]): WriteResult {
   return ok
     ? { state: 'confirmed', documents }
-    : { state: 'failed', error: new Error('The network did not accept this change'), documents }
+    : { state: 'failed', error: new Error(LIB_REFUSED_MESSAGE), documents }
 }
 
 /**
