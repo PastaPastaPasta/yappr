@@ -48,7 +48,7 @@ CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint
 - **Three scripts, not one.** `engine.js` (1.5 MB) is the bundle: evo-sdk's unbundled entry (`dist/sdk.js`, aliased; the published `dist/evo-sdk.module.js` inlines its own glue and the WASM as 11 MB of base64), one copy of the wasm-bindgen glue, `lib/` and the API. Two **sidecar** scripts (`src/sidecar.ts`) each set one `window` global:
   - `engine.wasm.js` (11.4 MB): the SDK's WASM, gzip + base64 in a single string literal (`__YAPPR_ENGINE_WASM__`);
   - `engine.avatars.js` (2.0 MB): the DiceBear styles (`__YAPPR_ENGINE_AVATARS__`). In `engine.js`, `@dicebear/collection` is a stand-in (`src/avatars/collection-shim.ts`) whose styles read the real ones at call time.
-- **Order.** Every page runs `engine.js` first, so the engine says hello while the sidecars are still being read:
+- **Order.** Every page runs `engine.js`, then `engine.avatars.js`, then `engine.wasm.js`. The engine says hello while the sidecars are still being read, and the avatar styles do not wait for the 11 MB WASM script (the host draws avatars on its cached screens before the engine is ready):
   - iOS loads `index.html` (`engine.html` plus the host's CSP, written by the app's engine-assets plugin) by file URL;
   - the Android loader page inserts the three scripts in order (`async = false`), and they download in parallel;
   - `engine.inline.html` inlines all three (iOS dev builds against `YAPPR_ENGINE_DEV_URL`, and dev clients built before this split; the browser boot proof).

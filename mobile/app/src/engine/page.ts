@@ -10,7 +10,7 @@ import type { StorageSnapshot } from './storage/engine-storage';
 /**
  * How the hidden WebView loads the engine (mobile/engine/README.md "How the
  * wasm loads"; ENGINE.md §2.3): engine.js, then its sidecar scripts (the
- * SDK's WASM and the avatar styles), all read by the WebView straight from
+ * avatar styles and the SDK's WASM), all read by the WebView straight from
  * the app bundle, so none of their 15 MB crosses the React Native bridge. The
  * host's CSP and bootstrap script come first.
  *
@@ -104,10 +104,10 @@ export function composeInlineHtml(html: string, bootstrap: string): string {
 
 /**
  * The scripts the loader page runs, in order: the bundle, then its sidecars
- * (mobile/engine src/sidecar.ts), the SDK's WASM and the avatar styles. The
+ * (mobile/engine src/sidecar.ts), the avatar styles and the SDK's WASM. The
  * engine says hello while they, fetched in parallel, are still being read.
  */
-const LOADER_SCRIPTS = ['engine.js', 'engine.wasm.js', 'engine.avatars.js'];
+const LOADER_SCRIPTS = ['engine.js', 'engine.avatars.js', 'engine.wasm.js'];
 
 /** A page that loads the engine's scripts from its base URL, after the CSP and the bootstrap (engine.html, plus those). */
 export function composeLoaderHtml(bootstrap: string, bundleHash: string): string {

@@ -26,7 +26,7 @@ describe('engine page', () => {
 
   it('loads engine.js, then its sidecars, after the CSP, the bootstrap and the bundle hash (Android)', () => {
     const page = composeLoaderHtml('BOOT', 'abc');
-    const scripts = '["engine.js","engine.wasm.js","engine.avatars.js"]';
+    const scripts = '["engine.js","engine.avatars.js","engine.wasm.js"]';
     expect(page.indexOf('<script>BOOT</script>')).toBeLessThan(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__="abc"'));
     expect(page.indexOf('__YAPPR_ENGINE_BUNDLE_HASH__')).toBeLessThan(page.indexOf(scripts));
     expect(page).toContain('s.async=false');

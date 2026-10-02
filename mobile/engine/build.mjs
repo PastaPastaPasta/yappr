@@ -188,8 +188,9 @@ async function main() {
   const wasmGzip = gzipSync(wasm, { level: 9 })
   writeFileSync(path.join(outdir, 'engine.wasm.js'), `window.__YAPPR_ENGINE_WASM__=${JSON.stringify(wasmGzip.toString('base64'))};\n`)
 
-  // engine.js first, then the sidecars: every page runs them in this order (src/sidecar.ts).
-  const scripts = ['engine.js', 'engine.wasm.js', 'engine.avatars.js'].map(name => ({ name, source: readFileSync(path.join(outdir, name)) }))
+  // engine.js first, then the sidecars: every page runs them in this order (src/sidecar.ts). The avatar
+  // styles go before the 11 MB WASM, so avatars drawn from the host's cached screens need not wait for it.
+  const scripts = ['engine.js', 'engine.avatars.js', 'engine.wasm.js'].map(name => ({ name, source: readFileSync(path.join(outdir, name)) }))
   // engine.inline.html puts each script inside <script>: either sequence would end or corrupt it.
   for (const { name, source } of scripts) {
     for (const forbidden of [/<\/script/i, /<!--/]) {
@@ -211,7 +212,8 @@ async function main() {
   await build({ ...common, entryPoints: [path.join(here, 'src/selftest.ts')], outfile: path.join(outdir, 'selftest.js') })
   writeFileSync(path.join(outdir, 'selftest.html'), `${head}<meta name="viewport" content="width=device-width"></head><body><pre id="out" style="white-space:pre-wrap;font:14px monospace"></pre><script src="selftest.js"></script>${scriptTags}</body></html>\n`)
 
-  const [js, wasmJs, avatarsJs] = scripts.map(({ source }) => source)
+  const sourceOf = (name) => scripts.find(script => script.name === name).source
+  const [js, wasmJs, avatarsJs] = ['engine.js', 'engine.wasm.js', 'engine.avatars.js'].map(sourceOf)
   const manifest = {
     ...engineBuild,
     sha256: hash,
