@@ -1,0 +1,54 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "base": {
+      "node": "22.20.0",
+      "android": {
+        "gradleCommand": ":app:bundleRelease -PreactNativeArchitectures=arm64-v8a"
+      }
+    },
+    "development": {
+      "extends": "base",
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": { "APP_VARIANT": "devnet" },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "ios": { "simulator": true }
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": true,
+      "env": { "APP_VARIANT": "devnet" }
+    },
+    "beta": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": true,
+      "env": { "APP_VARIANT": "testnet" }
+    },
+    "production": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": true,
+      "env": { "APP_VARIANT": "production" }
+    }
+  },
+  "submit": {
+    "preview": {
+      "android": { "track": "internal", "releaseStatus": "draft" }
+    },
+    "beta": {
+      "android": { "track": "internal", "releaseStatus": "draft" }
+    },
+    "production": {
+      "android": { "track": "internal", "releaseStatus": "draft" }
+    }
+  }
+}

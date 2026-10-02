@@ -1,0 +1,149 @@
+name: Mobile release
+
+# Builds release artifacts of the Expo app for one variant (mobile/RELEASE.md).
+# Runs without secrets: Android signs with the debug key and iOS is archived
+# unsigned. Add the ANDROID_UPLOAD_* secrets to the `mobile-release`
+# environment (restrict it to protected branches) to sign the AAB with the
+# upload key. Uploading to TestFlight and Play needs the owner's credentials
+# and is a manual step (RELEASE.md).
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'APP_VARIANT'
+        type: choice
+        options: [devnet, testnet]
+        default: devnet
+      build_number:
+        description: 'Build number (iOS CFBundleVersion, Android versionCode); empty = this run number'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-release-${{ github.ref }}-${{ inputs.variant }}
+  cancel-in-progress: false
+
+env:
+  APP_VARIANT: ${{ inputs.variant }}
+  YAPPR_BUILD_NUMBER: ${{ inputs.build_number || github.run_number }}
+
+jobs:
+  android:
+    name: Android (AAB + APK)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: mobile-release
+    defaults:
+      run:
+        working-directory: mobile/app
+    env:
+      # Only whether the key exists; the secret itself reaches the one step that decodes it.
+      HAS_UPLOAD_KEY: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 != '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/engine/package-lock.json
+            mobile/app/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The engine bundle (built at prebuild) needs the root and engine dependencies.
+      - name: Install dependencies
+        run: |
+          npm ci --prefix ../..
+          npm ci --prefix ../engine
+          npm ci
+
+      # Runs after the installs, so no package install script sees the key.
+      - name: Upload key (optional)
+        if: env.HAS_UPLOAD_KEY == 'true'
+        env:
+          UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: |
+          store="$RUNNER_TEMP/upload.jks"
+          printf '%s' "$UPLOAD_KEYSTORE_BASE64" | base64 --decode > "$store"
+          delimiter="EOF_$(openssl rand -hex 16)"
+          for pair in "YAPPR_UPLOAD_STORE_FILE=$store" "YAPPR_UPLOAD_STORE_PASSWORD=$STORE_PASSWORD" \
+            "YAPPR_UPLOAD_KEY_ALIAS=$KEY_ALIAS" "YAPPR_UPLOAD_KEY_PASSWORD=$KEY_PASSWORD"; do
+            printf '%s<<%s\n%s\n%s\n' "${pair%%=*}" "$delimiter" "${pair#*=}" "$delimiter" >> "$GITHUB_ENV"
+          done
+
+      - name: Build release APK and AAB
+        run: scripts/release-android.sh all
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ inputs.variant }}-${{ env.YAPPR_BUILD_NUMBER }}
+          path: |
+            mobile/app/build/release/*.apk
+            mobile/app/build/release/*.aab
+          if-no-files-found: error
+
+  ios:
+    name: iOS (unsigned archive)
+    runs-on: macos-26
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: mobile/app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            mobile/engine/package-lock.json
+            mobile/app/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix ../..
+          npm ci --prefix ../engine
+          npm ci
+
+      - name: Build unsigned archive
+        run: scripts/release-ios.sh archive
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ inputs.variant }}-${{ env.YAPPR_BUILD_NUMBER }}
+          path: |
+            mobile/app/build/release/*-unsigned.ipa
+            mobile/app/build/release/*.log
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-${{ inputs.variant }}-${{ env.YAPPR_BUILD_NUMBER }}-log
+          path: mobile/app/build/release/*.log
