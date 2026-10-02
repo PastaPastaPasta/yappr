@@ -1,0 +1,117 @@
+# Home feed (PRD FEED-01 – FEED-07, AUTH-02; EXECUTION S2).
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test mobile/e2e/flows/home-feed.yaml
+#   maestro --device <udid|serial> test -e KEY=<pool identity private key> mobile/e2e/flows/home-feed.yaml
+# Without KEY it checks the signed-out Following prompt; with KEY (a sakura
+# pool identity's authentication key, never committed) it signs in through
+# the dev quick sign-in and reads Following. Nothing here writes.
+appId: pr.yap.app.dev
+---
+- openLink: yappr-dev:///
+- extendedWaitUntil:
+    visible:
+      id: home-header
+    timeout: 30000
+- assertVisible: "For You"
+- assertVisible: "Following"
+# The first page: real posts (each card has a "⋯" button).
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 90000
+
+# Infinite scroll, then back up and pull to refresh.
+- scroll
+- scroll
+- scroll
+- scrollUntilVisible:
+    element:
+      id: home-tabs-forYou
+    direction: UP
+    timeout: 20000
+- swipe:
+    start: "50%, 35%"
+    end: "50%, 85%"
+    duration: 600
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 60000
+
+# The new-posts pill, when someone has posted meanwhile (sakura is live): tap it to insert.
+- extendedWaitUntil:
+    visible:
+      id: new-posts-pill
+    timeout: 20000
+    optional: true
+- tapOn:
+    id: new-posts-pill
+    optional: true
+
+# Sign in when a key was passed.
+- runFlow:
+    when:
+      true: ${typeof KEY == 'string' && KEY.length > 0}
+    commands:
+      - openLink: yappr-dev:///settings/diagnostics
+      - scrollUntilVisible:
+          element:
+            id: dev-sign-in-key
+          direction: DOWN
+          timeout: 20000
+      - tapOn:
+          id: dev-sign-in-key
+      - inputText: ${KEY}
+      # Return closes the keyboard (Maestro's hideKeyboard is unreliable on iOS).
+      - pressKey: Enter
+      - tapOn:
+          id: dev-sign-in
+      - extendedWaitUntil:
+          visible: "Sign out"
+          timeout: 60000
+      - openLink: yappr-dev:///
+      - extendedWaitUntil:
+          visible:
+            id: home-header
+          timeout: 30000
+
+# Switch tabs by tapping, and back by swiping the pager.
+- tapOn:
+    id: home-tabs-following
+- runFlow:
+    when:
+      true: ${typeof KEY != 'string' || KEY.length == 0}
+    commands:
+      - extendedWaitUntil:
+          visible: "See posts from people you follow"
+          timeout: 30000
+      - assertVisible:
+          id: following-sign-in
+- runFlow:
+    when:
+      true: ${typeof KEY == 'string' && KEY.length > 0}
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: feed-following
+          timeout: 30000
+- swipe:
+    start: "15%, 60%"
+    end: "90%, 60%"
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 30000
+
+# Recent / Top where the contract ranks likes (devnet).
+- tapOn:
+    text: "Top"
+    optional: true
+- extendedWaitUntil:
+    visible:
+      id: "more-btn-.*"
+    timeout: 60000
+- tapOn:
+    text: "Recent"
+    optional: true
