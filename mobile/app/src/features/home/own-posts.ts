@@ -1,9 +1,11 @@
 import type { PostDTO } from '@engine/api';
 import { useQueries } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
 import { engineQueryOptions } from '~/data/queries';
+import { useViewerId } from '~/data/session';
 
 /**
  * The viewer's own new posts, kept on top of For You until the feed itself
@@ -54,14 +56,20 @@ export function resetOwnPosts(): void {
 const cachedPosts = (results: { data?: PostDTO | null }[]): PostDTO[] =>
   results.flatMap((result) => (result.data ? [result.data] : []));
 
-/** The pinned posts still in the cache (newest first). An account switch clears the cache, and with it the pins' posts. */
+/**
+ * The signed-in viewer's pinned posts still in the cache (newest first). The
+ * pins are process-wide, so another account's (one pinned before a switch, or
+ * a late `content.created` from it) never shows: only the viewer's own posts do.
+ */
 export function usePinnedPosts(): PostDTO[] {
   const ids = useOwnPosts((s) => s.ids);
-  return useQueries({
+  const viewerId = useViewerId();
+  const cached = useQueries({
     queries: ids.map((id) =>
       // Cache-only: the seed from `content.created`, patched by optimistic updates.
       engineQueryOptions(queryKeys.post.detail(id), (api) => api.posts.get(id), { enabled: false }),
     ),
     combine: cachedPosts,
   });
+  return useMemo(() => cached.filter((post) => post.author.id === viewerId), [cached, viewerId]);
 }

@@ -264,7 +264,9 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
             : undefined
         }
         testID="feed-empty"
-      />
+      >
+        <LegacyLink />
+      </EmptyState>
     );
   }
 

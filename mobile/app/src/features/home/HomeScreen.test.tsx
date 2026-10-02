@@ -157,6 +157,8 @@ describe('Home', () => {
 
     expect(screen.getByText('No posts yet')).toBeTruthy();
     expect(screen.getByText('Be the first to share something!')).toBeTruthy();
+    // An empty feed still points to the older posts (web's empty state does too).
+    expect(screen.getByTestId('legacy-link')).toBeTruthy();
   });
 
   it('shows the error state with nothing cached, and retries (G-11)', async () => {
@@ -229,6 +231,34 @@ describe('Home', () => {
 
     expect(screen.getByText('my new post')).toBeTruthy();
     expect(useOwnPosts.getState().ids).toEqual(['mine']);
+  });
+
+  it('never shows another account’s pinned post after a switch (PD-3)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    home().mockResolvedValue(page([post('p1', 'first post', 5)]));
+    await renderHome();
+
+    const mine = fixturePost({ id: 'mine', content: 'my new post', author: AUTHORS.alice, createdAt: at(0) });
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.post.detail('mine'), mine);
+      fakeEngine.emit('content.created', { kind: 'post', id: 'mine', confirmed: false, post: mine });
+    });
+    expect(screen.getByText('my new post')).toBeTruthy();
+
+    // Switch to Bob; the old account's post comes back into the cache (opened, or a late event).
+    await act(async () => {
+      useSessionStore.setState({ status: 'signed-in', session: { ...viewer, identityId: AUTHORS.bob.id }, accounts: [] });
+    });
+    const late = fixturePost({ id: 'late', content: 'alice late post', author: AUTHORS.alice, createdAt: at(0) });
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.post.detail('mine'), mine);
+      queryClient.setQueryData(queryKeys.post.detail('late'), late);
+      fakeEngine.emit('content.created', { kind: 'post', id: 'late', confirmed: false, post: late });
+    });
+
+    expect(screen.queryByText('my new post')).toBeNull();
+    expect(screen.queryByText('alice late post')).toBeNull();
+    expect(screen.getByText('first post')).toBeTruthy();
   });
 
   it('polls for new posts from the feed’s newest post, not the viewer’s pinned one', async () => {
