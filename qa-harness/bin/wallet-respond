@@ -1,0 +1,73 @@
+#!/bin/bash
+# wallet-respond: drive the Node test-wallet responder (mobile/tools, ADR-001 E5.4) so a release build can sign in
+# with "Sign in with your Dash wallet" without a human wallet. DEVNET (sakura) ONLY: the responder refuses any
+# request whose n= is not devnet, so it can never write to testnet.
+#
+#   wallet-respond --serve            start the shared loopback server on $QA_RESPONDER_ADDR (orchestrator; once)
+#   wallet-respond --health           is the server up?
+#   wallet-respond <persona> <uri>    answer one dash-key: or dash-st: request for persona 90-98
+#                                     (uses the server when it is up, else a one-shot CLI run)
+#   wallet-respond <persona> --from <ios|android> <device>
+#                                     screenshot the device, decode the sign-in QR (qa kx-uri) and answer it
+#
+# Release-build sign-in flow (no wallet installed on simulators/emulators, so "Open wallet" shows AUTH-05):
+#   1. Sign in -> "Use a wallet on another device" (testID sign-in-other-device) -> QR (kx-qr)
+#   2. wallet-respond <persona> --from <plat> <device>       # answers dash-key: (publishes loginKeyResponse)
+#   3. The app shows "Wallet approved…", "Checking your identity"; if the persona lacks the derived keys it shows
+#      "First time login" with a dash-st: QR (kx-register-qr): run step 2 again (answers dash-st:, broadcasts the
+#      IdentityUpdate signed with the persona's MASTER key), then wait for "Finishing setup…" to finish.
+#   4. EULA (terms-gate) -> Home.
+# Each answer writes to sakura (credits from that persona). Persona 99 must NOT be used here (writes).
+#
+# Needs a checkout with root + mobile/tools node_modules: $YAPPR_RESPONDER_REPO, else builds/current/src.
+set -uo pipefail
+QA_ROOT="${QA_ROOT:-/Users/pasta/workspace/yappr-mobile-qa}"
+. "$QA_ROOT/env.sh"
+
+repo="${YAPPR_RESPONDER_REPO:-}"
+if [ -z "$repo" ]; then
+  for c in "$QA_BUILD/src" $(ls -dt "$QA_SRC"/*/ 2>/dev/null); do
+    if [ -f "$c/mobile/tools/test-wallet-responder.mjs" ] && [ -d "$c/node_modules" ] && [ -d "$c/mobile/tools/node_modules" ]; then repo="${c%/}"; break; fi
+  done
+fi
+[ -n "$repo" ] || { echo "wallet-respond: no checkout with node_modules + mobile/tools/node_modules (run build-candidate, or npm ci there)" >&2; exit 1; }
+
+# The env file: the checkout's .env.devnet must target sakura (the pool is tagged devnet-sakura).
+envfile="${YAPPR_ENV_FILE:-$repo/.env.devnet}"
+grep -q '^NEXT_PUBLIC_DEVNET_NAME=sakura' "$envfile" 2>/dev/null || { echo "wallet-respond: $envfile does not target sakura" >&2; exit 1; }
+export YAPPR_SAKURA_IDENTITIES
+resp() { node "$repo/mobile/tools/test-wallet-responder.mjs" --env-file "$envfile" "$@"; }
+
+health() { curl -s --max-time 3 "http://$QA_RESPONDER_ADDR/health"; }
+
+case "${1:-}" in
+  ""|-h|--help) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  --serve)
+    if health >/dev/null 2>&1; then echo "already serving on $QA_RESPONDER_ADDR"; exit 0; fi
+    mkdir -p "$QA_STATE"
+    echo "serving on $QA_RESPONDER_ADDR (repo $repo); log $QA_STATE/responder.log"
+    resp --serve "$QA_RESPONDER_ADDR" >> "$QA_STATE/responder.log" 2>&1; exit $? ;;
+  --health) health && echo; exit $? ;;
+esac
+
+persona="$1"; shift
+case "$persona" in 9[0-8]) ;; 99) echo "wallet-respond: persona 99 is read-only (proof posts); use 90-98" >&2; exit 2 ;; *) echo "wallet-respond: personas 90-98 only" >&2; exit 2 ;; esac
+
+if [ "${1:-}" = "--from" ]; then
+  [ $# -ge 3 ] || { echo "usage: wallet-respond <persona> --from <ios|android> <device>" >&2; exit 2; }
+  uri="$("$QA_ROOT/bin/qa" "$2" "$3" kx-uri | head -1)" || { echo "wallet-respond: no QR code on screen" >&2; exit 1; }
+else
+  uri="${1:-}"
+fi
+case "$uri" in dash-key:*|dash-st:*) ;; *) echo "wallet-respond: not a dash-key:/dash-st: URI: ${uri:0:40}" >&2; exit 2 ;; esac
+case "$uri" in *n=d*) ;; *) echo "wallet-respond: refusing a non-devnet request (n= is not d): never answer testnet requests" >&2; exit 2 ;; esac
+
+echo "answering ${uri%%:*}: request for persona $persona" >&2
+if health >/dev/null 2>&1; then
+  body="$(node -e 'process.stdout.write(JSON.stringify({uri: process.argv[1], persona: Number(process.argv[2])}))' "$uri" "$persona")"
+  out="$(curl -s --max-time 300 -w '\n%{http_code}' -XPOST "http://$QA_RESPONDER_ADDR/respond" -H 'content-type: application/json' -d "$body")"
+  code="$(echo "$out" | tail -n1)"; echo "$out" | sed '$d'
+  [ "$code" = 200 ] || { echo "wallet-respond: HTTP $code" >&2; exit 1; }
+else
+  resp --uri "$uri" --persona "$persona"
+fi

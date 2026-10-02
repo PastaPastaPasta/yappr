@@ -1,0 +1,63 @@
+#!/bin/bash
+# persona-key <idx> <file> [--purpose auth|critical|encryption] [--format wif|hex]
+#
+# Writes one sakura persona private key to <file> (mode 0600) WITHOUT printing it. Prints only the persona's
+# public metadata (handle, identity id, key id/purpose/level) so you can check you got the right one.
+#
+#   auth        keyId 2 AUTHENTICATION/HIGH      (default; what "Sign in with a private key" expects, AUTH-08)
+#   critical    keyId 1 AUTHENTICATION/CRITICAL  (also accepted by AUTH-08; use it to test the CRITICAL path)
+#   encryption  keyId 4 ENCRYPTION/MEDIUM        ("Unlock your messages" key, DM-02)
+#   --format    wif (default; devnet uses the testnet WIF prefix 0xef, compressed) or hex (64 chars; AUTH-08 hex case)
+#
+# Personas 90-98 are QA-usable. 99 has the v11 proof posts: key-entry sign-in only, NEVER write with it.
+# Source: $YAPPR_SAKURA_IDENTITIES (identities.json, field identityKeys[].privateKeyHex). Keep key files under
+# $QA_PERSONAS (0700, never published). Type them with: qa <plat> <dev> type-secret-from-file <file>
+set -euo pipefail
+QA_ROOT="${QA_ROOT:-/Users/pasta/workspace/yappr-mobile-qa}"
+. "$QA_ROOT/env.sh"
+
+[ $# -ge 2 ] || { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+idx="$1"; out="$2"; shift 2
+purpose=auth; format=wif
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --purpose) purpose="$2"; shift ;;
+    --format) format="$2"; shift ;;
+    *) echo "unknown option $1" >&2; exit 2 ;;
+  esac; shift
+done
+case "$idx" in 9[0-9]) ;; *) echo "persona-key: only personas 90-99 are reserved for mobile QA" >&2; exit 2 ;; esac
+[ "$idx" = 99 ] && echo "persona-key: WARNING persona 99 holds proof posts: sign in by key only, never write" >&2
+
+mkdir -p "$(dirname "$out")"; chmod 700 "$QA_PERSONAS" 2>/dev/null || true
+umask 077
+node - "$YAPPR_SAKURA_IDENTITIES" "$idx" "$purpose" "$format" "$out" <<'JS'
+const fs = require('fs');
+const crypto = require('crypto');
+const [file, idxS, purpose, format, out] = process.argv.slice(2);
+const pool = JSON.parse(fs.readFileSync(file, 'utf8'));
+const p = pool.identities.find((x) => x.personaIdx === Number(idxS));
+if (!p) { console.error(`persona ${idxS} not found`); process.exit(1); }
+const want = { auth: ['authentication', 'high'], critical: ['authentication', 'critical'], encryption: ['encryption', 'medium'] }[purpose];
+if (!want) { console.error('purpose must be auth|critical|encryption'); process.exit(2); }
+const k = p.identityKeys.find((x) => x.purpose.toLowerCase() === want[0] && x.securityLevel.toLowerCase() === want[1]);
+if (!k) { console.error(`persona ${idxS} has no ${want.join('/')} key`); process.exit(1); }
+const raw = Buffer.from(k.privateKeyHex, 'hex');
+if (raw.length !== 32) { console.error('unexpected key length'); process.exit(1); }
+let text;
+if (format === 'hex') text = raw.toString('hex');
+else if (format === 'wif') {
+  const sha = (b) => crypto.createHash('sha256').update(b).digest();
+  const payload = Buffer.concat([Buffer.from([0xef]), raw, Buffer.from([0x01])]);   // testnet/devnet, compressed
+  const full = Buffer.concat([payload, sha(sha(payload)).subarray(0, 4)]);
+  const A = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  let n = BigInt('0x' + full.toString('hex')); let s = '';
+  while (n > 0n) { s = A[Number(n % 58n)] + s; n /= 58n; }
+  for (const byte of full) { if (byte === 0) s = '1' + s; else break; }
+  text = s;
+} else { console.error('format must be wif|hex'); process.exit(2); }
+fs.writeFileSync(out, text, { mode: 0o600 });
+fs.chmodSync(out, 0o600);
+console.log(`persona ${p.personaIdx} @${p.handle} (${(p.dpns || []).join(', ')}) identity ${p.identityId}`);
+console.log(`wrote keyId ${k.keyId} ${k.purpose}/${k.securityLevel} as ${format} -> ${out} (0600, ${text.length} chars, not shown)`);
+JS

@@ -1,0 +1,147 @@
+#!/bin/bash
+# build-candidate <ref> [--variants devnet,testnet] [--platforms ios,android] [--deps-only] [--dry-run] [--no-current]
+#
+# Builds Yappr release candidates with the repo's own release scripts (mobile/RELEASE.md):
+#   APP_VARIANT=<v> npm run release:ios -- simulator      -> Release .app for the iOS Simulator
+#   APP_VARIANT=<v> npm run release:android -- apk        -> release APK (R8, Hermes, no cleartext)
+# into $QA_BUILDS/<sha8>/ with stable names:
+#   ios-devnet.app  ios-testnet.app  android-devnet.apk  android-testnet.apk
+#   BUILD-INFO.md (ref, sha, versions, sha256, timings)  logs/  src -> the worktree it was built from
+# and points $QA_BUILDS/current at it (unless --no-current).
+#
+# <ref>: a branch on GitHub (staging, mobile/foo), pull/<N> (a PR head), or a commit sha already fetched.
+# The worktree lives at $QA_SRC/<sha8> (detached, never committed to). Re-running reuses it and skips npm ci
+# when node_modules is present.
+#
+# Signing: Android APKs are signed with the Expo template debug key (`…-debugsigned.apk`; the same key for every
+# candidate, so installing a newer candidate over an older one is a real upgrade). It differs from builds signed
+# with an upload key: install those with `qa android <serial> install <apk> --replace` (wipes app data).
+# ABIs: arm64-v8a (the emulators are arm64). Build number: commit count of the ref (monotonic along staging).
+# Duration: roughly 10-25 min per iOS variant and 8-15 min per Android variant on an idle host; far longer when
+# the emulators/simulators are busy. Run it in the background and tail logs/.
+set -euo pipefail
+QA_ROOT="${QA_ROOT:-/Users/pasta/workspace/yappr-mobile-qa}"
+. "$QA_ROOT/env.sh"
+
+ref=""; variants="devnet testnet"; platforms="ios android"; deps_only=0; dry=0; set_current=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --variants) variants="$(echo "$2" | tr ',' ' ')"; shift ;;
+    --platforms) platforms="$(echo "$2" | tr ',' ' ')"; shift ;;
+    --deps-only) deps_only=1 ;;
+    --dry-run) dry=1 ;;
+    --no-current) set_current=0 ;;
+    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*) echo "unknown option $1" >&2; exit 2 ;;
+    *) ref="$1" ;;
+  esac; shift
+done
+[ -n "$ref" ] || { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+log() { echo "[$(date +%H:%M:%S)] $*"; }
+git_() { git -C "$YAPPR_REPO" "$@"; }
+
+# ---- resolve the ref ----
+case "$ref" in
+  pull/*) remote_ref="refs/pull/${ref#pull/}/head"; local_ref="refs/remotes/qa/$ref" ;;
+  *) remote_ref="refs/heads/$ref"; local_ref="refs/remotes/qa/$ref" ;;
+esac
+if git_ rev-parse --verify -q "$ref^{commit}" >/dev/null && [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]]; then
+  sha="$(git_ rev-parse "$ref^{commit}")"
+else
+  log "fetching $remote_ref"
+  timeout 180 git -C "$YAPPR_REPO" -c fetch.prune=false fetch -q "$YAPPR_REMOTE" "+$remote_ref:$local_ref"
+  sha="$(git_ rev-parse "$local_ref^{commit}")"
+fi
+short="${sha:0:8}"
+src="$QA_SRC/$short"; out="$QA_BUILDS/$short"
+build_number="$(git_ rev-list --count "$sha")"
+log "ref $ref -> $sha (build number $build_number)"
+log "worktree $src ; output $out ; variants: $variants ; platforms: $platforms"
+
+if [ $dry -eq 1 ]; then
+  echo "dry run: would create the worktree, npm ci (root, mobile/engine, mobile/app, mobile/tools), then for each variant:"
+  for v in $variants; do
+    for p in $platforms; do
+      case "$p" in
+        ios) echo "  APP_VARIANT=$v YAPPR_BUILD_NUMBER=$build_number npm run release:ios -- simulator  -> $out/ios-$v.app" ;;
+        android) echo "  APP_VARIANT=$v YAPPR_BUILD_NUMBER=$build_number YAPPR_ANDROID_ABIS=arm64-v8a npm run release:android -- apk  -> $out/android-$v.apk" ;;
+      esac
+    done
+  done
+  git_ show "$sha:mobile/RELEASE.md" >/dev/null 2>&1 && echo "mobile/RELEASE.md present at $short" || echo "WARNING: $short has no mobile/RELEASE.md (release scripts missing?)"
+  git_ show "$sha:.env.devnet" | grep -q '^NEXT_PUBLIC_DEVNET_NAME=sakura' && echo ".env.devnet targets sakura" || echo "WARNING: .env.devnet does not target sakura"
+  exit 0
+fi
+
+mkdir -p "$out/logs"
+if [ ! -d "$src/.git" ] && [ ! -f "$src/.git" ]; then
+  log "adding worktree"
+  git_ worktree add --detach "$src" "$sha" >/dev/null
+fi
+[ "$(git -C "$src" rev-parse HEAD)" = "$sha" ] || { echo "worktree $src is not at $sha" >&2; exit 1; }
+ln -sfn "$src" "$out/src"
+[ -f "$src/mobile/RELEASE.md" ] || { echo "$short has no mobile/RELEASE.md: the release scripts are missing" >&2; exit 1; }
+grep -q '^NEXT_PUBLIC_DEVNET_NAME=sakura' "$src/.env.devnet" || echo "WARNING: $src/.env.devnet does not target sakura" >&2
+
+deps() { # <dir> <name>
+  if [ -d "$1/node_modules" ] && [ "$1/node_modules/.package-lock.json" -nt "$1/package-lock.json" ]; then log "deps $2: present"; return; fi
+  log "npm ci $2"
+  (cd "$1" && npm ci --no-audit --no-fund --loglevel=error) > "$out/logs/npm-$2.log" 2>&1 || { tail -20 "$out/logs/npm-$2.log"; exit 1; }
+}
+deps "$src" root
+deps "$src/mobile/engine" engine
+deps "$src/mobile/app" app
+deps "$src/mobile/tools" tools
+[ $deps_only -eq 1 ] && { log "deps done (--deps-only)"; exit 0; }
+
+info="$out/BUILD-INFO.md"
+{
+  echo "# Build $short"
+  echo
+  echo "- ref: \`$ref\`  sha: \`$sha\`  built: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "- build number (CFBundleVersion / versionCode): $build_number"
+  echo "- app version: $(node -p "require('$src/mobile/app/package.json').version")"
+  echo "- commit: $(git -C "$src" log -1 --format='%s (%an, %ad)' --date=short)"
+  echo
+  echo "| Artifact | sha256 | size | build time |"
+  echo "| --- | --- | --- | --- |"
+} > "$info"
+
+version="$(node -p "require('$src/mobile/app/package.json').version")"
+export JAVA_HOME ANDROID_HOME YAPPR_BUILD_NUMBER="$build_number" YAPPR_ANDROID_ABIS=arm64-v8a
+unset YAPPR_SKIP_PREBUILD YAPPR_UPLOAD_STORE_FILE
+
+record() { # <artifact> <seconds>
+  local f="$1"
+  if [ -d "$f" ]; then sum="$(cd "$f" && find . -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256 | cut -c1-16) (tree)"
+  else sum="$(shasum -a 256 "$f" | cut -c1-16)"; fi
+  echo "| $(basename "$f") | \`$sum\` | $(du -sh "$f" | cut -f1) | $(( $2 / 60 ))m$(( $2 % 60 ))s |" >> "$info"
+}
+
+failed=0
+for v in $variants; do
+  for p in $platforms; do
+    t0=$(date +%s)
+    case "$p" in
+      ios)
+        log "iOS $v: release:ios simulator (log $out/logs/ios-$v.log)"
+        if (cd "$src/mobile/app" && APP_VARIANT="$v" npm run release:ios -- simulator) > "$out/logs/ios-$v.log" 2>&1; then
+          app="$src/mobile/app/build/release/yappr-$v-$version-$build_number-simulator.app"
+          rm -rf "$out/ios-$v.app"; cp -R "$app" "$out/ios-$v.app"
+          record "$out/ios-$v.app" $(( $(date +%s) - t0 )); log "iOS $v done"
+        else failed=1; log "iOS $v FAILED"; tail -15 "$out/logs/ios-$v.log"; echo "| ios-$v.app | FAILED (logs/ios-$v.log) | | |" >> "$info"; fi ;;
+      android)
+        log "Android $v: release:android apk (log $out/logs/android-$v.log)"
+        if (cd "$src/mobile/app" && APP_VARIANT="$v" npm run release:android -- apk) > "$out/logs/android-$v.log" 2>&1; then
+          apk="$(ls -t "$src/mobile/app/build/release/yappr-$v-$version-$build_number"*.apk | head -1)"
+          cp "$apk" "$out/android-$v.apk"
+          record "$out/android-$v.apk" $(( $(date +%s) - t0 )); log "Android $v done ($(basename "$apk"))"
+        else failed=1; log "Android $v FAILED"; tail -15 "$out/logs/android-$v.log"; echo "| android-$v.apk | FAILED (logs/android-$v.log) | | |" >> "$info"; fi ;;
+    esac
+  done
+done
+
+if [ $set_current -eq 1 ] && [ $failed -eq 0 ]; then ln -sfn "$short" "$QA_BUILDS/current"; log "builds/current -> $short"; fi
+cat "$info"
+exit $failed

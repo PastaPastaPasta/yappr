@@ -1,0 +1,9 @@
+#!/bin/bash
+# qr-decode <image.png>: prints the payload of every QR code in the image (Core Image; compiled on first use).
+set -euo pipefail
+dir="$(cd "$(dirname "$0")" && pwd)"
+bin="$dir/lib/.qr-decode"
+if [ ! -x "$bin" ] || [ "$dir/lib/qr-decode.swift" -nt "$bin" ]; then
+  swiftc -O -o "$bin" "$dir/lib/qr-decode.swift" 2>/dev/null || xcrun swiftc -O -o "$bin" "$dir/lib/qr-decode.swift"
+fi
+exec "$bin" "$@"

@@ -1,0 +1,939 @@
+#!/bin/bash
+# qa: the device driver every Yappr mobile QA stream uses. Read it once with `cat $QA_ROOT/bin/qa`.
+#
+#   qa ios <udid> <command> [args]          qa android <serial> <command> [args]
+#   qa stream <L1i|L1a|...|SPi|SPa> <command> [args]   (resolves the device from env.sh's table)
+#   qa devices                              (stream table + live state)
+#
+# Variants: devnet (pr.yap.app.dev, yappr-dev://) | testnet (pr.yap.app.beta, yappr-beta://). Commands that
+# take [variant] default to $QA_VARIANT (devnet). Release builds: no Metro, no dev menu, no dev-only routes.
+# Run with dangerouslyDisableSandbox: true (simctl, adb and maestro all need it).
+#
+# APP LIFECYCLE
+#   install <app|apk> [--replace]   install a build (Android: --replace uninstalls first on a signature clash)
+#   uninstall [variant]             remove the app (iOS keeps the Keychain unless you also run clear-data)
+#   launch [variant] [--fresh]      start (or foreground) the app; --fresh = kill first. Prints launch time on Android
+#   kill [variant]                  force-stop
+#   background                      send the app to the background (iOS opens Settings, Android presses HOME)
+#   foreground [variant]            bring it back without a restart
+#   clear-data [variant] [--keep-keychain]
+#                                   Android: pm clear. iOS: uninstall + reinstall the last installed .app and
+#                                   reset the simulator Keychain (unless --keep-keychain; that is the "reinstall" case)
+#   status                          installed Yappr apps, versions, foreground app
+#   open-url <url> [variant]        deep link. yappr-dev:// and yappr-beta:// pick their app. https://yap.pr/... links
+#                                   need the app-link association (OQ-8): until it ships iOS opens Safari, Android
+#                                   says it cannot resolve the intent (record that, it is the expected 1.0 state)
+#
+# EVIDENCE
+#   screenshot <path.png>           full-screen capture (parent dirs are created)
+#   record-start <path.mp4>         start a screen recording (Android segments are joined at stop)
+#   record-stop                     stop it and write the mp4
+#   logs-start <dir> [--level debug]
+#                                   iOS: `log stream` for the Yappr processes + WebKit (the engine WebView);
+#                                   Android: full logcat (main,system,crash) to <dir>/logcat-raw.txt
+#   logs-stop                       stop the capture
+#   pull-logs <dir>                 snapshot: iOS copies the stream; Android writes logcat-app.txt (app + WebView pids,
+#                                   ReactNativeJS, chromium, AndroidRuntime) and crash buffer. Also run after crashes
+#   grep-log <regex> [dir]          grep the running/last capture (case-insensitive, ERE)
+#   crash-info [variant] <dir>      iOS: new .ips crash reports for Yappr; Android: exit-info + crash buffer + tombstones list
+#   memory [variant] [--watch <sec> <count> --out <file.csv>]
+#                                   resident memory (KB) of the app process and its WebView/engine process
+#   clipboard-get [file]            print or save the device clipboard (iOS pbpaste; Android: not readable from adb on
+#                                   API 35, exits 3 -> read the Diagnostics screen with ui-text instead)
+#   clipboard-set <text>            iOS only (simctl pbcopy)
+#   kx-uri [png]                    screenshot (or read <png>) and decode the sign-in QR code -> prints dash-key:/dash-st: URI
+#
+# UI: small generated Maestro flows (10-60 s each on a loaded host). On iOS, ui-text / tap-* / long-press-* /
+# type go through idb first (~1 s; QA_IOS_DRIVER=maestro to force Maestro; `ui-text --maestro` for the full tree)
+#   ui-dump [file.json]             raw Maestro view hierarchy (stdout or file)
+#   ui-text [--all] [file.txt]      compact list: id | text | a11y label | bounds | flags  (best way to "read" a screen;
+#                                   --all keeps the status bar / system UI). iOS puts RN text in the a11y column
+#   tap-text <text> [--index n] [--contains] [--regex]
+#                                   tap by visible text or accessibility label (exact match by default)
+#   tap-id <testID> [--index n]     tap by testID (RN testID = iOS accessibilityIdentifier = Android resource-id)
+#   tap-xy <x> <y>                  tap at points/pixels or percentages ("50%" "90%")
+#   long-press-text <text> | long-press-id <testID>
+#   double-tap-id <testID>
+#   type <text>                     type into the focused field (iOS: any Unicode, non-ASCII is slower; Android: ASCII only)
+#   type-secret-from-file <file>    type a key from a 0600 file without printing it anywhere (temp flow + debug dir are deleted)
+#   erase [n]                       delete n characters (default 50) from the focused field
+#   hide-keyboard
+#   press-key <Enter|Backspace|Home|Back|Lock|Power|Tab|Volume Up|Volume Down>
+#   back                            Android: BACK key. iOS: edge swipe (falls back to tapping the nav bar back button)
+#   back-gesture                    Android predictive back: edge swipe in gesture navigation
+#   scroll [down|up]                one scroll of the main list
+#   scroll-until <text|id:testID> [down|up] [timeout_s]
+#   swipe <up|down|left|right>  |  swipe <x1%,y1%> <x2%,y2%>
+#   wait-for-text <text> [timeout_s] [--contains]   exit 1 when it does not appear (default 20 s)
+#   wait-for-id <testID> [timeout_s]
+#   wait-gone-text <text> [timeout_s]
+#   assert-text <text> [--contains] | assert-id <testID>        exit 1 if not visible now
+#   flow <file.yaml> [-e K=V ...]   run any Maestro flow file on this device (debug output kept beside it)
+#
+# DEVICE STATE
+#   appearance light|dark
+#   font-scale <n>|<name>           Android: settings font_scale (0.85 .. 2.0). iOS: content size; n maps 0.8=extra-small
+#                                   1.0=large(default) 1.3=extra-extra-large 1.5=accessibility-medium 2.0=AX5 (or pass a name)
+#   reduce-motion on|off            iOS: accessibility pref (relaunch the app); Android: animator/transition scales 0
+#   contrast on|off                 iOS increase_contrast; Android high_text_contrast_enabled
+#   talkback on|off                 Android only (iOS Simulator has no VoiceOver: audit labels with ui-text)
+#   locale <tag>                    e.g. ar-EG, he-IL, en-US. Android: per-app locale; iOS: simulator languages. Relaunch after
+#   rotate landscape|portrait       (the app is portrait-locked: expect no rotation)
+#   network off|on|airplane|slow|edge|full|stall|unstall
+#                                   Android only. off/on = wifi+data, airplane = airplane mode, slow/edge/full = emulator
+#                                   link shaping, stall/unstall = drop the app uid's packets (root) so the OS stays "online"
+#                                   but Dash Platform is unreachable (NET-03). iOS Simulator: exits 3 BLOCKED (shares the
+#                                   host network; pfctl / Network Link Conditioner are host-wide and NOT allowed)
+#   screen small|reset              Android: 720x1280 @280dpi small-screen simulation (E-14); always reset after
+#   engine-kill [variant]           kill the engine WebView's content/renderer process (NET-04)
+#   biometric enroll|match|nomatch|unenroll
+#                                   iOS: Face ID/Touch ID simulator notifications. Android: enroll sets PIN 1111 and opens
+#                                   fingerprint enrolment (finish it with `biometric match` x N + tap-text); match = finger 1
+#
+# Unicode on Android: Maestro's inputText is ASCII-only on Android. For emoji/CJK/RTL text on Android use iOS, or
+# post the text from iOS and read it on Android. `type` warns and exits 3 when given non-ASCII on Android.
+# Maestro evaluates ${...} inside text as JavaScript: avoid "${" in typed text.
+set -uo pipefail
+
+QA_ROOT="${QA_ROOT:-/Users/pasta/workspace/yappr-mobile-qa}"
+# shellcheck disable=SC1091
+. "$QA_ROOT/env.sh"
+
+die() { echo "qa: $*" >&2; exit 1; }
+blocked() { echo "BLOCKED: $*" >&2; exit 3; }
+usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+if [ $# -lt 1 ]; then usage; exit 2; fi
+case "$1" in
+  -h|--help|help) usage; exit 0 ;;
+  devices)
+    for st in L1i L1a L2i L2a L3i L3a L4i L4a SPi SPa; do
+      row="$(qa_stream_row "$st")"; set -- $row
+      plat=$1; dev=$2; theme=$4; personas=$5
+      if [ "$plat" = ios ]; then
+        state="$(xcrun simctl list devices | grep "$dev" | sed -E 's/.*\((Booted|Shutdown)\).*/\1/' | head -1)"
+      else
+        dev="$(qa_serial_for_avd "$3" || echo "$dev")"
+        state="$(adb -s "$dev" get-state 2>/dev/null || echo offline)"
+      fi
+      printf '%-4s %-8s %-38s %-6s %-8s %s\n' "$st" "$plat" "$dev" "$theme" "${personas}" "$state"
+    done
+    exit 0 ;;
+  stream)
+    [ $# -ge 3 ] || die "usage: qa stream <stream> <command> [args]"
+    st="$2"; shift 2
+    exec "$0" $(qa_stream "$st") "$@" ;;
+esac
+
+PLAT="$1"; DEV="${2:-}"; CMD="${3:-}"
+[ -n "$DEV" ] && [ -n "$CMD" ] || { usage; exit 2; }
+shift 3
+case "$PLAT" in ios|android) ;; *) die "platform must be ios or android" ;; esac
+
+STATE="$QA_STATE/$DEV"
+mkdir -p "$STATE"
+chmod 700 "$QA_STATE" "$STATE" 2>/dev/null || true
+
+# ---------- variants ----------
+bundle_of() {
+  case "${1:-$QA_VARIANT}" in
+    devnet|dev|pr.yap.app.dev) echo pr.yap.app.dev ;;
+    testnet|beta|pr.yap.app.beta) echo pr.yap.app.beta ;;
+    *) die "unknown variant '$1' (devnet|testnet)" ;;
+  esac
+}
+exec_of() { case "$(bundle_of "${1:-}")" in pr.yap.app.dev) echo YapprDev ;; *) echo YapprBeta ;; esac; }
+is_variant() { case "${1:-}" in devnet|dev|testnet|beta|pr.yap.app.dev|pr.yap.app.beta) return 0 ;; *) return 1 ;; esac; }
+
+adbd() { adb -s "$DEV" "$@"; }
+ashell() { adb -s "$DEV" shell "$@"; }
+simctl() { xcrun simctl "$@"; }
+
+# Bundle that maestro flows target (affects nothing for taps; must just be a valid id).
+FLOW_APP="$(bundle_of "$QA_VARIANT")"
+
+# ---------- fast iOS path (idb, ~1 s per call) ----------
+# QA_IOS_DRIVER=idb (default) reads/taps/types through idb's accessibility API and falls back to Maestro when an
+# element is not found after 3 tries (Maestro waits longer and sees nested views). QA_IOS_DRIVER=maestro forces Maestro.
+IOS_DRIVER="${QA_IOS_DRIVER:-idb}"
+use_idb() { [ "$PLAT" = ios ] && [ "$IOS_DRIVER" = idb ] && command -v idb >/dev/null 2>&1; }
+idb_json() { idb ui describe-all --udid "$DEV" 2>/dev/null; }
+idb_find() { idb_json | python3 "$QA_ROOT/bin/lib/idb_ui.py" find "$@"; }    # <id|text> <value> <exact|contains|regex> <index>
+idb_screen() { idb_json | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; f=d[0]["frame"]; print(int(f["width"]), int(f["height"]))'; }
+idb_pt() { # <value> <total>: "50%" -> points
+  case "$1" in *%) echo $(( ${1%\%} * $2 / 100 )) ;; *) echo "$1" ;; esac
+}
+# idb_tap <id|text> <value> <mode> <index> [duration]: 3 tries, 1 s apart
+idb_tap() {
+  local xy i
+  for i in 1 2 3; do
+    if xy="$(idb_find "$1" "$2" "$3" "${4:-0}")"; then
+      if [ -n "${5:-}" ]; then idb ui tap --udid "$DEV" --duration "$5" ${xy% *} ${xy#* }; else idb ui tap --udid "$DEV" ${xy% *} ${xy#* }; fi
+      return $?
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+# ---------- maestro plumbing ----------
+yq() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }            # YAML single-quoted scalar
+rx_escape() { printf '%s' "$1" | sed -e 's/[][(){}.*+?^$|\\]/\\&/g'; }   # literal text -> Maestro regex
+
+# Text selector: exact (escaped) by default, substring with --contains, raw with --regex.
+text_selector() {
+  local text="$1" mode="${2:-exact}"
+  case "$mode" in
+    regex) printf '%s' "$text" ;;
+    contains) printf '.*%s.*' "$(rx_escape "$text")" ;;
+    *) rx_escape "$text" ;;
+  esac
+}
+
+# maestro_run <flow.yaml> <tmpdir>: runs a flow on $DEV with output in <tmpdir>. Retries once with a driver
+# reinstall when the on-device driver/server is missing or died (another agent's maestro run, an app reinstall,
+# adb root), never on a real assertion failure.
+maestro_run() {
+  local flow="$1" tmp="$2" rc attempt=1 reinstall=--no-reinstall-driver
+  while :; do
+    rm -rf "$tmp/debug" "$tmp/out"
+    maestro --device "$DEV" test $reinstall --no-ansi \
+      --debug-output "$tmp/debug" --flatten-debug-output --test-output-dir "$tmp/out" \
+      "$flow" > "$tmp/maestro.log" 2>&1
+    rc=$?
+    [ $rc -eq 0 ] && return 0
+    [ $attempt -ge 2 ] && return $rc
+    if cat "$tmp/maestro.log" "$tmp"/debug/*.log 2>/dev/null \
+       | grep -qE 'DeviceServerDied|StatusRuntimeException: UNAVAILABLE|Connection refused|Unable to launch|driver (is )?not|XCTestDriver.*(fail|error)'; then
+      attempt=2; reinstall=--reinstall-driver; sleep 2; continue
+    fi
+    return $rc
+  done
+}
+
+# run_flow <body>: writes appId header + body to a temp flow and runs it on $DEV. Prints the failure tail on error.
+run_flow() {
+  local body="$1" tmp rc
+  tmp="$(mktemp -d "$STATE/flow.XXXXXX")"
+  chmod 700 "$tmp"
+  printf 'appId: %s\n---\n%s\n' "$FLOW_APP" "$body" > "$tmp/flow.yaml"
+  maestro_run "$tmp/flow.yaml" "$tmp"; rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "qa: maestro step failed (rc=$rc). Flow + log kept in $tmp" >&2
+    grep -vE '^\s*$' "$tmp/maestro.log" | tail -n 12 >&2
+    grep -hE 'Exception|ERROR' "$tmp"/debug/*.log 2>/dev/null | head -2 | cut -c1-240 >&2
+  else
+    rm -rf "$tmp"
+  fi
+  return $rc
+}
+
+parse_sel_opts() { # sets SEL_MODE, SEL_INDEX from trailing options
+  SEL_MODE=exact; SEL_INDEX=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --contains) SEL_MODE=contains ;;
+      --regex) SEL_MODE=regex ;;
+      --index) SEL_INDEX="$2"; shift ;;
+    esac
+    shift
+  done
+}
+
+sel_text_yaml() { # <text> -> selector block lines (indented 4)
+  printf '    text: %s\n' "$(yq "$(text_selector "$1" "$SEL_MODE")")"
+  [ -n "$SEL_INDEX" ] && printf '    index: %s\n' "$SEL_INDEX"
+  return 0
+}
+sel_id_yaml() {
+  printf '    id: %s\n' "$(yq "$(rx_escape "$1")")"
+  [ -n "$SEL_INDEX" ] && printf '    index: %s\n' "$SEL_INDEX"
+  return 0
+}
+
+# ---------- iOS helpers ----------
+ios_app_pid() { simctl spawn "$DEV" launchctl list 2>/dev/null | awk -v b="UIKitApplication:$1" 'index($3,b)==1 && $1 ~ /^[0-9]+$/ {print $1; exit}'; }
+ios_launchd_pid() { ps -Ao pid,command | awk -v u="Devices/$DEV/" '/launchd_sim/ && index($0,u) {print $1; exit}'; }
+ios_webcontent_pids() {
+  # WebContent extension processes of this simulator: host processes whose parent is this sim's launchd_sim.
+  local l; l="$(ios_launchd_pid)"; [ -n "$l" ] || return 0
+  ps -Ao pid,ppid,command | awk -v l="$l" '$2==l && /WebContentExtension\.appex/ {print $1}'
+}
+ios_last_app_file() { echo "$STATE/last-app-$1"; }
+
+# ---------- Android helpers ----------
+and_pid() { ashell pidof "$1" 2>/dev/null | tr -d '\r' | awk '{print $1}'; }
+and_activity() { # launcher component of a package (release and dev builds differ), cached per device
+  local f="$STATE/activity-$1" c
+  if [ -s "$f" ]; then cat "$f"; return; fi
+  c="$(ashell cmd package resolve-activity --brief -c android.intent.category.LAUNCHER "$1" 2>/dev/null | tr -d '\r' | tail -1)"
+  case "$c" in */*) echo "$c" > "$f"; echo "$c" ;; *) echo "$1/.MainActivity" ;; esac
+}
+and_uid() { ashell pm list packages -U "$1" 2>/dev/null | tr -d '\r' | sed -nE "s/^package:$1 uid:([0-9]+).*/\1/p" | head -1; }
+and_renderer_pids() {
+  # WebView renderers are isolated processes; they are named after the WebView provider, not the app.
+  ashell ps -A -o PID,NAME 2>/dev/null | tr -d '\r' | awk '/sandboxed_process/ {print $1}'
+}
+and_ensure_root() {
+  if [ "$(ashell id -u 2>/dev/null | tr -d '\r')" != "0" ]; then
+    echo "qa: adb root on $DEV (this restarts adbd; a running logs capture is restarted)" >&2
+    adbd root >/dev/null 2>&1 || true
+    sleep 2; adbd wait-for-device
+    if [ -f "$STATE/logs.dir" ] && [ -f "$STATE/logs.pid" ] && ! kill -0 "$(cat "$STATE/logs.pid")" 2>/dev/null; then
+      local d; d="$(cat "$STATE/logs.dir")"
+      nohup adb -s "$DEV" logcat -v threadtime -b main,system,crash >> "$d/logcat-raw.txt" 2>/dev/null &
+      echo $! > "$STATE/logs.pid"
+    fi
+  fi
+}
+
+# ======================================================================================
+case "$CMD" in
+
+# ---------------- lifecycle ----------------
+install)
+  [ $# -ge 1 ] || die "usage: install <app|apk> [--replace]"
+  path="$1"; [ -e "$path" ] || die "no such build: $path"
+  if [ "$PLAT" = ios ]; then
+    bid="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$path/Info.plist")" || die "not an .app: $path"
+    simctl install "$DEV" "$path" || die "simctl install failed"
+    (cd "$(dirname "$path")" && echo "$(pwd)/$(basename "$path")") > "$(ios_last_app_file "$bid")"
+    echo "installed $bid on $DEV from $path"
+  else
+    rm -f "$STATE"/activity-*
+    out="$(adbd install -r -d "$path" 2>&1)"; rc=$?
+    if [ $rc -ne 0 ] && echo "$out" | grep -qE 'UPDATE_INCOMPATIBLE|signatures do not match'; then
+      if [ "${2:-}" = "--replace" ]; then
+        pkg="$(echo "$out" | sed -nE 's/.*Existing package ([^ ]+) signatures.*/\1/p')"
+        aapt2="$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | tail -1)"
+        [ -n "$pkg" ] || pkg="$("$aapt2" dump packagename "$path" 2>/dev/null | head -1)"
+        echo "qa: signature clash; uninstalling $pkg (its data is lost)" >&2
+        adbd uninstall "$pkg" >/dev/null; out="$(adbd install -r "$path" 2>&1)"; rc=$?
+      else
+        echo "$out" >&2; die "signature differs from the installed app; rerun with --replace (wipes app data)"
+      fi
+    fi
+    echo "$out" | tail -1
+    [ $rc -eq 0 ] || exit $rc
+  fi ;;
+
+uninstall)
+  b="$(bundle_of "${1:-}")"
+  if [ "$PLAT" = ios ]; then simctl uninstall "$DEV" "$b"; else adbd uninstall "$b"; fi ;;
+
+launch)
+  v="$QA_VARIANT"; fresh=0
+  for a in "$@"; do if [ "$a" = --fresh ]; then fresh=1; elif is_variant "$a"; then v="$a"; fi; done
+  b="$(bundle_of "$v")"
+  if [ "$PLAT" = ios ]; then
+    if [ $fresh -eq 1 ]; then simctl launch --terminate-running-process "$DEV" "$b"; else simctl launch "$DEV" "$b"; fi
+  else
+    [ $fresh -eq 1 ] && ashell am force-stop "$b"
+    ashell am start -W -n "$(and_activity "$b")" | tr -d '\r' | grep -E 'Status|TotalTime|WaitTime|Error' || true
+  fi ;;
+
+kill)
+  b="$(bundle_of "${1:-}")"
+  if [ "$PLAT" = ios ]; then simctl terminate "$DEV" "$b" 2>/dev/null || true; else ashell am force-stop "$b"; fi ;;
+
+background)
+  if [ "$PLAT" = ios ]; then simctl launch "$DEV" com.apple.Preferences >/dev/null; else ashell input keyevent KEYCODE_HOME; fi ;;
+
+foreground)
+  b="$(bundle_of "${1:-}")"
+  if [ "$PLAT" = ios ]; then simctl launch "$DEV" "$b" >/dev/null
+  else ashell am start -n "$(and_activity "$b")" >/dev/null; fi
+  echo "foregrounded $b" ;;
+
+clear-data)
+  v="$QA_VARIANT"; keep=0
+  for a in "$@"; do if [ "$a" = --keep-keychain ]; then keep=1; elif is_variant "$a"; then v="$a"; fi; done
+  b="$(bundle_of "$v")"
+  if [ "$PLAT" = android ]; then ashell pm clear "$b"
+  else
+    f="$(ios_last_app_file "$b")"
+    [ -f "$f" ] || die "no recorded .app for $b on $DEV: run 'qa ios $DEV install <app>' once first"
+    app="$(cat "$f")"
+    simctl terminate "$DEV" "$b" 2>/dev/null || true
+    simctl uninstall "$DEV" "$b"
+    if [ $keep -eq 0 ]; then simctl keychain "$DEV" reset && echo "simulator keychain reset (all apps on $DEV)"; fi
+    simctl install "$DEV" "$app" && echo "reinstalled $b from $app"
+  fi ;;
+
+status)
+  if [ "$PLAT" = ios ]; then
+    xcrun simctl list devices | grep "$DEV"
+    for b in pr.yap.app.dev pr.yap.app.beta; do
+      info="$(simctl appinfo "$DEV" "$b" 2>/dev/null)" || { echo "$b: not installed"; continue; }
+      path="$(echo "$info" | sed -nE 's/.*Bundle = "file:\/\/([^"]+)\/";/\1/p' | head -1)"
+      ver="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$path/Info.plist" 2>/dev/null)"
+      build="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$path/Info.plist" 2>/dev/null)"
+      pid="$(ios_app_pid "$b")"
+      echo "$b: $ver ($build) pid=${pid:-not running} $(basename "$path")"
+    done
+  else
+    echo "$DEV $(adbd emu avd name 2>/dev/null | head -1 | tr -d '\r') state=$(adbd get-state)"
+    for b in pr.yap.app.dev pr.yap.app.beta; do
+      d="$(ashell dumpsys package "$b" 2>/dev/null | tr -d '\r')"
+      if ! echo "$d" | grep -q versionName; then echo "$b: not installed"; continue; fi
+      echo "$b: $(echo "$d" | sed -nE 's/^ *versionName=(.*)/\1/p' | head -1) code=$(echo "$d" | sed -nE 's/^ *versionCode=([0-9]+).*/\1/p' | head -1) $(echo "$d" | grep -q DEBUGGABLE && echo debug || echo release) updated=$(echo "$d" | sed -nE 's/^ *lastUpdateTime=(.*)/\1/p' | head -1) pid=$(and_pid "$b")"
+    done
+    echo "foreground: $(ashell dumpsys activity activities 2>/dev/null | tr -d '\r' | grep -m1 -E 'topResumedActivity|mResumedActivity' | sed -E 's/.* ([^ ]+\/[^ ]+) .*/\1/')"
+  fi ;;
+
+open-url)
+  [ $# -ge 1 ] || die "usage: open-url <url> [variant]"
+  url="$1"
+  if [ "$PLAT" = ios ]; then simctl openurl "$DEV" "$url"
+  else
+    pkg=""
+    case "$url" in
+      yappr-dev:*) pkg=pr.yap.app.dev ;; yappr-beta:*) pkg=pr.yap.app.beta ;;
+      *) if [ -n "${2:-}" ]; then pkg="$(bundle_of "$2")"; fi ;;
+    esac
+    out="$(ashell am start -W -a android.intent.action.VIEW -d "'$url'" ${pkg:+"$pkg"} 2>&1 | tr -d '\r')"
+    echo "$out" | grep -E 'Status|Activity:|Error|Warning|unable' || echo "$out" | tail -3
+    echo "$out" | grep -qE 'Error|unable to resolve' && exit 1
+  fi ;;
+
+# ---------------- evidence ----------------
+screenshot)
+  [ $# -ge 1 ] || die "usage: screenshot <path.png>"
+  mkdir -p "$(dirname "$1")"
+  if [ "$PLAT" = ios ]; then simctl io "$DEV" screenshot --type=png "$1" >/dev/null 2>&1 || die "screenshot failed"
+  else adbd exec-out screencap -p > "$1" || die "screenshot failed"; fi
+  [ -s "$1" ] || die "empty screenshot"
+  echo "$1" ;;
+
+record-start)
+  [ $# -ge 1 ] || die "usage: record-start <path.mp4>"
+  [ -f "$STATE/rec.pid" ] && kill -0 "$(cat "$STATE/rec.pid")" 2>/dev/null && die "a recording is already running (record-stop first)"
+  mkdir -p "$(dirname "$1")"; echo "$1" > "$STATE/rec.path"
+  if [ "$PLAT" = ios ]; then
+    nohup xcrun simctl io "$DEV" recordVideo --codec=h264 --force "$1" > "$STATE/rec.log" 2>&1 &
+    echo $! > "$STATE/rec.pid"
+  else
+    # screenrecord stops at 180 s: loop 170 s segments until record-stop removes the flag.
+    ashell rm -f /data/local/tmp/qa-rec-*.mp4
+    touch "$STATE/rec.flag"
+    nohup bash -c 'i=0; while [ -f "$0/rec.flag" ]; do adb -s "$1" shell screenrecord --size 720x1600 --bit-rate 4000000 --time-limit 170 /data/local/tmp/qa-rec-$(printf %03d $i).mp4 || sleep 2; i=$((i+1)); done' "$STATE" "$DEV" > "$STATE/rec.log" 2>&1 &
+    echo $! > "$STATE/rec.pid"
+  fi
+  sleep 1; echo "recording -> $1" ;;
+
+record-stop)
+  [ -f "$STATE/rec.pid" ] || die "no recording running"
+  out="$(cat "$STATE/rec.path")"; pid="$(cat "$STATE/rec.pid")"
+  if [ "$PLAT" = ios ]; then
+    kill -INT "$pid" 2>/dev/null; for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+  else
+    rm -f "$STATE/rec.flag"
+    ashell pkill -INT screenrecord 2>/dev/null || ashell killall -INT screenrecord 2>/dev/null || true
+    for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    segdir="$(mktemp -d "$STATE/rec.XXXXXX")"
+    for f in $(ashell ls /data/local/tmp/ 2>/dev/null | tr -d '\r' | grep '^qa-rec-.*\.mp4$' | sort); do adbd pull "/data/local/tmp/$f" "$segdir/$f" >/dev/null 2>&1; done
+    ashell rm -f /data/local/tmp/qa-rec-*.mp4
+    n="$(ls "$segdir"/*.mp4 2>/dev/null | wc -l | tr -d ' ')"
+    if [ "$n" = 1 ]; then mv "$segdir"/*.mp4 "$out"
+    elif [ "$n" -gt 1 ]; then
+      for f in "$segdir"/*.mp4; do echo "file '$f'"; done > "$segdir/list.txt"
+      ffmpeg -loglevel error -y -f concat -safe 0 -i "$segdir/list.txt" -c copy "$out"
+    else rm -rf "$segdir"; rm -f "$STATE/rec.pid"; die "no recording segments found"; fi
+    rm -rf "$segdir"
+  fi
+  rm -f "$STATE/rec.pid"
+  [ -s "$out" ] && echo "$out ($(du -h "$out" | cut -f1))" || die "recording missing: $out" ;;
+
+logs-start)
+  [ $# -ge 1 ] || die "usage: logs-start <dir> [--level debug]"
+  d="$1"; mkdir -p "$d"; d="$(cd "$d" && pwd)"
+  [ -f "$STATE/logs.pid" ] && kill -0 "$(cat "$STATE/logs.pid")" 2>/dev/null && die "logs already running into $(cat "$STATE/logs.dir") (logs-stop first)"
+  echo "$d" > "$STATE/logs.dir"
+  if [ "$PLAT" = ios ]; then
+    lvl=info; [ "${2:-}" = "--level" ] && lvl="${3:-debug}"
+    pred='process == "YapprDev" OR process == "YapprBeta" OR (process BEGINSWITH "com.apple.WebKit" AND (eventMessage CONTAINS[c] "yappr" OR messageType == error OR messageType == fault)) OR (process == "SpringBoard" AND eventMessage CONTAINS "pr.yap.app")'
+    nohup xcrun simctl spawn "$DEV" log stream --style compact --level "$lvl" --predicate "$pred" > "$d/ios-log.txt" 2>&1 &
+    echo $! > "$STATE/logs.pid"
+  else
+    adbd logcat -c 2>/dev/null || true
+    nohup adb -s "$DEV" logcat -v threadtime -b main,system,crash > "$d/logcat-raw.txt" 2>/dev/null &
+    echo $! > "$STATE/logs.pid"
+  fi
+  echo "logging -> $d" ;;
+
+logs-stop)
+  [ -f "$STATE/logs.pid" ] || die "no log capture running"
+  kill "$(cat "$STATE/logs.pid")" 2>/dev/null || true; rm -f "$STATE/logs.pid"
+  echo "stopped; logs in $(cat "$STATE/logs.dir")" ;;
+
+pull-logs)
+  [ $# -ge 1 ] || die "usage: pull-logs <dir>"
+  out="$1"; mkdir -p "$out"; ts="$(date +%H%M%S)"
+  src="$(cat "$STATE/logs.dir" 2>/dev/null || true)"
+  if [ "$PLAT" = ios ]; then
+    if [ -n "$src" ] && [ -f "$src/ios-log.txt" ]; then cp "$src/ios-log.txt" "$out/ios-log-$ts.txt"
+    else simctl spawn "$DEV" log show --last 10m --style compact --predicate 'process == "YapprDev" OR process == "YapprBeta"' > "$out/ios-log-$ts.txt" 2>&1; fi
+    echo "$out/ios-log-$ts.txt"
+  else
+    pids="$(for b in pr.yap.app.dev pr.yap.app.beta; do and_pid "$b"; done; and_renderer_pids)"
+    pat="ReactNativeJS|ReactNative|chromium|AndroidRuntime|FATAL|pr\.yap\.app|Yappr|yappr|cr_|WebView"
+    for p in $pids; do pat="$pat| $p "; done
+    if [ -n "$src" ] && [ -f "$src/logcat-raw.txt" ]; then grep -E "$pat" "$src/logcat-raw.txt" > "$out/logcat-app-$ts.txt"
+    else adbd logcat -d -v threadtime | grep -E "$pat" > "$out/logcat-app-$ts.txt"; fi
+    adbd logcat -d -b crash -v threadtime > "$out/logcat-crash-$ts.txt" 2>/dev/null
+    echo "$out/logcat-app-$ts.txt ($(wc -l < "$out/logcat-app-$ts.txt" | tr -d ' ') lines); $out/logcat-crash-$ts.txt"
+  fi ;;
+
+grep-log)
+  [ $# -ge 1 ] || die "usage: grep-log <regex> [dir]"
+  d="${2:-$(cat "$STATE/logs.dir" 2>/dev/null)}"; [ -n "$d" ] || die "no capture; pass a dir"
+  f="$d/ios-log.txt"; [ "$PLAT" = android ] && f="$d/logcat-raw.txt"
+  grep -iE "$1" "$f" ;;
+
+crash-info)
+  v="$QA_VARIANT"; [ $# -ge 1 ] && is_variant "$1" && { v="$1"; shift; }
+  out="${1:-$STATE}"; mkdir -p "$out"; b="$(bundle_of "$v")"
+  if [ "$PLAT" = ios ]; then
+    ex="$(exec_of "$v")"
+    find "$HOME/Library/Logs/DiagnosticReports" -name "${ex}*.ips" -mmin -240 2>/dev/null | while read -r f; do
+      grep -q "$DEV" "$f" 2>/dev/null && cp "$f" "$out/" && echo "crash report: $out/$(basename "$f")"
+    done
+    echo "(iOS: only reports from the last 4 h that mention $DEV are copied)"
+  else
+    ashell dumpsys activity exit-info "$b" 2>/dev/null | tr -d '\r' | head -80 > "$out/exit-info.txt"
+    adbd logcat -d -b crash -v threadtime > "$out/logcat-crash.txt" 2>/dev/null
+    ashell ls -l /data/tombstones 2>/dev/null | tr -d '\r' > "$out/tombstones.txt" || true
+    echo "$out/exit-info.txt $out/logcat-crash.txt"
+    grep -E 'reason=|description=|timestamp=' "$out/exit-info.txt" | head -12
+  fi ;;
+
+memory)
+  v="$QA_VARIANT"; watch=0; count=1; csv=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --watch) watch="$2"; count="$3"; shift 2 ;;
+      --out) csv="$2"; shift ;;
+      *) is_variant "$1" && v="$1" ;;
+    esac; shift
+  done
+  b="$(bundle_of "$v")"
+  sample() {
+    local app=0 web=0 p
+    if [ "$PLAT" = ios ]; then
+      p="$(ios_app_pid "$b")"; [ -n "$p" ] && app="$(ps -o rss= -p "$p" 2>/dev/null | tr -d ' ')"
+      for p in $(ios_webcontent_pids); do web=$((web + $(ps -o rss= -p "$p" 2>/dev/null | tr -d ' ' || echo 0))); done
+    else
+      app="$(ashell dumpsys meminfo "$b" 2>/dev/null | tr -d '\r' | awk '/TOTAL PSS:|TOTAL:/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}')"
+      for p in $(and_renderer_pids); do
+        w="$(ashell dumpsys meminfo "$p" 2>/dev/null | tr -d '\r' | awk '/TOTAL PSS:|TOTAL:/ {for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/){print $i; exit}}')"
+        web=$((web + ${w:-0}))
+      done
+    fi
+    echo "$(date +%H:%M:%S),${app:-0},${web}"
+  }
+  hdr="time,app_kb,engine_webview_kb  ($([ "$PLAT" = ios ] && echo 'iOS RSS' || echo 'Android PSS'))"
+  if [ -n "$csv" ]; then mkdir -p "$(dirname "$csv")"; [ -f "$csv" ] || echo "$hdr" > "$csv"; else echo "$hdr"; fi
+  i=0
+  while [ $i -lt "$count" ]; do
+    line="$(sample)"; if [ -n "$csv" ]; then echo "$line" >> "$csv"; fi; echo "$line"
+    i=$((i+1)); if [ $i -lt "$count" ]; then sleep "$watch"; fi
+  done ;;
+
+clipboard-get)
+  if [ "$PLAT" = ios ]; then
+    if [ -n "${1:-}" ]; then mkdir -p "$(dirname "$1")"; simctl pbpaste "$DEV" > "$1"; echo "$1 ($(wc -c < "$1" | tr -d ' ') bytes)"; else simctl pbpaste "$DEV"; fi
+  else
+    blocked "Android 10+ does not let adb read the clipboard. Read Settings > Engine diagnostics with 'ui-text' (Status/Network rows + 'Recent logs'), or paste into a text field and ui-text it."
+  fi ;;
+
+clipboard-set)
+  [ "$PLAT" = ios ] || blocked "adb cannot set the Android clipboard; type the text instead"
+  printf '%s' "${1:-}" | simctl pbcopy "$DEV" ;;
+
+kx-uri)
+  png="${1:-$STATE/kx-$(date +%s).png}"
+  [ -n "${1:-}" ] && [ -f "$1" ] || "$0" "$PLAT" "$DEV" screenshot "$png" >/dev/null
+  "$QA_ROOT/bin/qr-decode" "$png" ;;
+
+# ---------------- UI ----------------
+ui-dump)
+  if [ -n "${1:-}" ]; then
+    mkdir -p "$(dirname "$1")"
+    maestro --device "$DEV" hierarchy --no-ansi --no-reinstall-driver 2>/dev/null | sed -n '/^{/,$p' > "$1"
+    [ -s "$1" ] && echo "$1" || die "hierarchy dump failed"
+  else
+    maestro --device "$DEV" hierarchy --no-ansi --no-reinstall-driver 2>/dev/null | sed -n '/^{/,$p'
+  fi ;;
+
+ui-text)
+  if use_idb && [ "${1:-}" != "--maestro" ] && [ "${1:-}" != "--all" ]; then
+    res="$(idb_json | python3 "$QA_ROOT/bin/lib/idb_ui.py" text)"
+    if [ -n "$res" ]; then
+      if [ -n "${1:-}" ]; then mkdir -p "$(dirname "$1")"; echo "$res" > "$1"; echo "$1 ($(echo "$res" | wc -l | tr -d ' ') rows)"; else echo "$res"; fi
+      exit 0
+    fi
+  fi
+  [ "${1:-}" = "--maestro" ] && shift
+  tmpj="$(mktemp "$STATE/hier.XXXXXX")"
+  maestro --device "$DEV" hierarchy --no-ansi --no-reinstall-driver 2>/dev/null | sed -n '/^{/,$p' > "$tmpj"
+  [ -s "$tmpj" ] || { rm -f "$tmpj"; die "hierarchy dump failed"; }
+  showall=0; if [ "${1:-}" = "--all" ]; then showall=1; shift; fi
+  res="$(python3 - "$tmpj" "$showall" <<'PY'
+import json, sys
+root = json.load(open(sys.argv[1]))
+showall = sys.argv[2] == "1"
+SYSTEM = ("com.android.systemui", "android:id/", "Android System notification")
+rows = []
+def walk(n):
+    a = n.get("attributes", {}) or {}
+    rid = a.get("resource-id") or a.get("identifier") or ""
+    text = a.get("text") or ""
+    label = a.get("accessibilityText") or a.get("content-desc") or ""
+    hint = a.get("hintText") or ""
+    if not showall and any(x in rid or x in label for x in SYSTEM):
+        rid = text = label = hint = ""
+    if rid or text or label or hint:
+        flags = [k for k in ("checked", "selected", "focused") if str(a.get(k)).lower() == "true"]
+        if str(a.get("enabled", "true")).lower() == "false": flags.append("disabled")
+        if hint: flags.append("hint=" + hint)
+        if label == text: label = ""
+        rows.append(" | ".join([rid, text.replace("\n", "\\n"), label.replace("\n", "\\n"), a.get("bounds", ""), ",".join(flags)]))
+    for c in n.get("children", []) or []:
+        walk(c)
+walk(root)
+seen = set()
+for r in rows:
+    if r not in seen:
+        seen.add(r); print(r)
+PY
+)"
+  rm -f "$tmpj"
+  if [ -n "${1:-}" ]; then mkdir -p "$(dirname "$1")"; echo "$res" > "$1"; echo "$1 ($(echo "$res" | wc -l | tr -d ' ') rows)"; else echo "$res"; fi ;;
+
+tap-text)
+  [ $# -ge 1 ] || die "usage: tap-text <text> [--index n] [--contains] [--regex]"
+  t="$1"; shift; parse_sel_opts "$@"
+  if use_idb && idb_tap text "$t" "$SEL_MODE" "${SEL_INDEX:-0}"; then exit 0; fi
+  run_flow "- tapOn:
+$(sel_text_yaml "$t")" ;;
+
+tap-id)
+  [ $# -ge 1 ] || die "usage: tap-id <testID> [--index n]"
+  t="$1"; shift; parse_sel_opts "$@"
+  if use_idb && idb_tap id "$t" exact "${SEL_INDEX:-0}"; then exit 0; fi
+  run_flow "- tapOn:
+$(sel_id_yaml "$t")" ;;
+
+tap-xy)
+  [ $# -ge 2 ] || die "usage: tap-xy <x> <y>"
+  if use_idb; then
+    wh="$(idb_screen)" && idb ui tap --udid "$DEV" "$(idb_pt "$1" "${wh% *}")" "$(idb_pt "$2" "${wh#* }")" && exit 0
+  fi
+  run_flow "- tapOn:
+    point: $(yq "$1,$2")" ;;
+
+long-press-text)
+  [ $# -ge 1 ] || die "usage: long-press-text <text> [--index n] [--contains]"
+  t="$1"; shift; parse_sel_opts "$@"
+  if use_idb && idb_tap text "$t" "$SEL_MODE" "${SEL_INDEX:-0}" 1.2; then exit 0; fi
+  run_flow "- longPressOn:
+$(sel_text_yaml "$t")" ;;
+
+long-press-id)
+  [ $# -ge 1 ] || die "usage: long-press-id <testID> [--index n]"
+  t="$1"; shift; parse_sel_opts "$@"
+  if use_idb && idb_tap id "$t" exact "${SEL_INDEX:-0}" 1.2; then exit 0; fi
+  run_flow "- longPressOn:
+$(sel_id_yaml "$t")" ;;
+
+double-tap-id)
+  [ $# -ge 1 ] || die "usage: double-tap-id <testID> [--index n]"
+  t="$1"; shift; parse_sel_opts "$@"
+  run_flow "- doubleTapOn:
+$(sel_id_yaml "$t")" ;;
+
+type)
+  [ $# -ge 1 ] || die "usage: type <text>"
+  if [ "$PLAT" = android ] && printf '%s' "$1" | LC_ALL=C grep -q '[^ -~]'; then
+    blocked "non-ASCII text cannot be typed on Android with Maestro (type it on iOS, or post it from iOS and verify here)"
+  fi
+  # idb types ASCII only; Unicode (emoji, Arabic, CJK) goes through Maestro, which handles it on iOS.
+  if use_idb && ! printf '%s' "$1" | LC_ALL=C grep -q '[^ -~]'; then idb ui text --udid "$DEV" "$1" 2>/dev/null && exit 0; fi
+  run_flow "- inputText: $(yq "$1")" ;;
+
+type-secret-from-file)
+  [ $# -ge 1 ] || die "usage: type-secret-from-file <file>"
+  f="$1"; [ -r "$f" ] || die "cannot read $f"
+  perm="$(stat -f %Lp "$f")"; [ "$perm" = 600 ] || [ "$perm" = 400 ] || die "$f must be mode 0600 (is $perm)"
+  tmp="$(mktemp -d "$STATE/secret.XXXXXX")"; chmod 700 "$tmp"
+  trap 'rm -rf "$tmp"' EXIT
+  python3 - "$f" "$tmp/flow.yaml" "$FLOW_APP" <<'PY'
+import sys
+secret = open(sys.argv[1]).read().strip()
+with open(sys.argv[2], "w") as out:
+    out.write("appId: %s\n---\n- inputText: '%s'\n" % (sys.argv[3], secret.replace("'", "''")))
+PY
+  chmod 600 "$tmp/flow.yaml"
+  maestro_run "$tmp/flow.yaml" "$tmp"; rc=$?
+  if [ $rc -ne 0 ]; then
+    python3 - "$f" "$tmp/maestro.log" <<'PY' >&2
+import sys
+s = open(sys.argv[1]).read().strip()
+lines = [l.replace(s, "***") for l in open(sys.argv[2]).read().splitlines() if l.strip()]
+print("qa: type-secret failed:\n" + "\n".join(lines[-8:]))
+PY
+  else echo "typed secret from $(basename "$f") (not shown)"; fi
+  exit $rc ;;
+
+erase)
+  run_flow "- eraseText: ${1:-50}" ;;
+
+hide-keyboard)
+  if [ "$PLAT" = android ]; then ashell input keyevent KEYCODE_ESCAPE >/dev/null 2>&1; run_flow "- hideKeyboard"; else run_flow "- hideKeyboard"; fi ;;
+
+press-key)
+  [ $# -ge 1 ] || die "usage: press-key <Enter|Backspace|Home|Back|Lock|Tab|...>"
+  run_flow "- pressKey: $(yq "$1")" ;;
+
+back)
+  if [ "$PLAT" = android ]; then ashell input keyevent KEYCODE_BACK
+  else
+    # The native stack back button (XCUITest id "BackButton") or a screen's own back control; else an edge swipe.
+    # Modals (compose, sign-in, sheets) have no back: tap their close control (compose-close, modal-close,
+    # sheet-close, sign-in-close, media-close) or `swipe down`.
+    run_flow '- evalScript: ${output.tapped = false}
+- runFlow:
+    when:
+      visible:
+        id: "BackButton|profile-back|search-back"
+    commands:
+      - tapOn:
+          id: "BackButton|profile-back|search-back"
+      - evalScript: ${output.tapped = true}
+- runFlow:
+    when:
+      true: ${!output.tapped}
+    commands:
+      - swipe:
+          start: "1%,50%"
+          end: "85%,50%"
+          duration: 300'
+  fi ;;
+
+back-gesture)
+  [ "$PLAT" = android ] || die "back-gesture is Android-only (use back on iOS)"
+  size="$(ashell wm size | tr -d '\r' | sed -nE 's/.*: ([0-9]+)x([0-9]+).*/\1 \2/p' | tail -1)"
+  w="${size% *}"; h="${size#* }"
+  ashell input swipe 2 $((h/2)) $((w*45/100)) $((h/2)) 250 ;;
+
+scroll)
+  if [ "${1:-down}" = up ]; then run_flow "- swipe:
+    direction: DOWN
+    duration: 400"
+  else run_flow "- scroll"; fi ;;
+
+scroll-until)
+  [ $# -ge 1 ] || die "usage: scroll-until <text|id:testID> [down|up] [timeout_s]"
+  t="$1"; dir="$(echo "${2:-down}" | tr '[:lower:]' '[:upper:]')"; to="${3:-30}"
+  case "$t" in id:*) sel="    id: $(yq "$(rx_escape "${t#id:}")")" ;; *) sel="    text: $(yq "$(rx_escape "$t")")" ;; esac
+  run_flow "- scrollUntilVisible:
+    element:
+  $sel
+    direction: $dir
+    timeout: $((to*1000))" ;;
+
+swipe)
+  [ $# -ge 1 ] || die "usage: swipe <up|down|left|right> | swipe <x1%,y1%> <x2%,y2%>"
+  if [ $# -ge 2 ]; then run_flow "- swipe:
+    start: $(yq "$1")
+    end: $(yq "$2")
+    duration: 400"
+  else run_flow "- swipe:
+    direction: $(echo "$1" | tr '[:lower:]' '[:upper:]')
+    duration: 400"; fi ;;
+
+wait-for-text)
+  [ $# -ge 1 ] || die "usage: wait-for-text <text> [timeout_s] [--contains]"
+  t="$1"; to=20; shift
+  if [ $# -ge 1 ] && [[ "$1" =~ ^[0-9]+$ ]]; then to="$1"; shift; fi
+  parse_sel_opts "$@"
+  run_flow "- extendedWaitUntil:
+    visible:
+$(sel_text_yaml "$t" | sed 's/^/  /')
+    timeout: $((to*1000))" ;;
+
+wait-for-id)
+  [ $# -ge 1 ] || die "usage: wait-for-id <testID> [timeout_s]"
+  SEL_INDEX=""; run_flow "- extendedWaitUntil:
+    visible:
+      id: $(yq "$(rx_escape "$1")")
+    timeout: $(( ${2:-20} * 1000 ))" ;;
+
+wait-gone-text)
+  [ $# -ge 1 ] || die "usage: wait-gone-text <text> [timeout_s]"
+  run_flow "- extendedWaitUntil:
+    notVisible:
+      text: $(yq "$(rx_escape "$1")")
+    timeout: $(( ${2:-20} * 1000 ))" ;;
+
+assert-text)
+  [ $# -ge 1 ] || die "usage: assert-text <text> [--contains]"
+  t="$1"; shift; parse_sel_opts "$@"
+  run_flow "- assertVisible:
+$(sel_text_yaml "$t")" ;;
+
+assert-id)
+  [ $# -ge 1 ] || die "usage: assert-id <testID>"
+  run_flow "- assertVisible:
+    id: $(yq "$(rx_escape "$1")")" ;;
+
+flow)
+  [ $# -ge 1 ] || die "usage: flow <file.yaml> [-e K=V ...]"
+  f="$1"; shift
+  dbg="$(dirname "$f")/$(basename "$f" .yaml)-debug-$(date +%H%M%S)"
+  maestro --device "$DEV" test --no-reinstall-driver --no-ansi --debug-output "$dbg" --flatten-debug-output "$@" "$f" ;;
+
+# ---------------- device state ----------------
+appearance)
+  case "${1:-}" in light|dark) ;; *) die "usage: appearance light|dark" ;; esac
+  if [ "$PLAT" = ios ]; then simctl ui "$DEV" appearance "$1"
+  else ashell cmd uimode night "$([ "$1" = dark ] && echo yes || echo no)"; fi
+  echo "appearance $1" ;;
+
+font-scale)
+  [ $# -ge 1 ] || die "usage: font-scale <n|name>"
+  if [ "$PLAT" = android ]; then ashell settings put system font_scale "$1"; echo "font_scale $(ashell settings get system font_scale | tr -d '\r')"
+  else
+    case "$1" in
+      0.8|0.80) s=extra-small ;; 0.85|0.9) s=small ;; 0.95) s=medium ;; 1|1.0) s=large ;; 1.1|1.15) s=extra-large ;;
+      1.2|1.3) s=extra-extra-large ;; 1.4) s=extra-extra-extra-large ;; 1.5) s=accessibility-medium ;;
+      1.6|1.7) s=accessibility-large ;; 1.8) s=accessibility-extra-large ;; 1.9) s=accessibility-extra-extra-large ;;
+      2|2.0|ax5|AX5) s=accessibility-extra-extra-extra-large ;; *) s="$1" ;;
+    esac
+    simctl ui "$DEV" content_size "$s" && echo "content_size $(simctl ui "$DEV" content_size)"
+  fi ;;
+
+reduce-motion)
+  case "${1:-}" in on|off) ;; *) die "usage: reduce-motion on|off" ;; esac
+  if [ "$PLAT" = ios ]; then
+    v=$([ "$1" = on ] && echo true || echo false)
+    simctl spawn "$DEV" defaults write com.apple.Accessibility ReduceMotionEnabled -bool "$v"
+    simctl spawn "$DEV" notifyutil -p com.apple.accessibility.reduce.motion.status >/dev/null 2>&1 || true
+    echo "reduce motion $1 (relaunch the app to be sure it reads the new value)"
+  else
+    s=$([ "$1" = on ] && echo 0 || echo 1)
+    for k in animator_duration_scale transition_animation_scale window_animation_scale; do ashell settings put global "$k" "$s"; done
+    echo "animation scales $s"
+  fi ;;
+
+contrast)
+  case "${1:-}" in on|off) ;; *) die "usage: contrast on|off" ;; esac
+  if [ "$PLAT" = ios ]; then simctl ui "$DEV" increase_contrast "$([ "$1" = on ] && echo enabled || echo disabled)"
+  else ashell settings put secure high_text_contrast_enabled "$([ "$1" = on ] && echo 1 || echo 0)"; fi
+  echo "contrast $1" ;;
+
+talkback)
+  [ "$PLAT" = android ] || blocked "the iOS Simulator has no VoiceOver; audit accessibility labels with ui-text (and Accessibility Inspector if a human is available)"
+  svc=com.google.android.marvin.talkback/com.google.android.marvin.talkback.TalkBackService
+  if [ "${1:-}" = on ]; then ashell settings put secure enabled_accessibility_services "$svc"; ashell settings put secure accessibility_enabled 1
+  else ashell settings put secure enabled_accessibility_services '""' ; ashell settings put secure accessibility_enabled 0; fi
+  echo "talkback ${1:-off} (with TalkBack on, taps need a double-tap; turn it off before driving with maestro)" ;;
+
+locale)
+  [ $# -ge 1 ] || die "usage: locale <tag e.g. ar-EG>"
+  tag="$1"; lang="${tag%%-*}"; under="$(echo "$tag" | tr '-' '_')"
+  if [ "$PLAT" = ios ]; then
+    simctl spawn "$DEV" defaults write -g AppleLanguages -array "$tag" "$lang"
+    simctl spawn "$DEV" defaults write -g AppleLocale "$under"
+    echo "simulator language $tag (relaunch the app; a full sim reboot is never done by qa)"
+  else
+    for b in pr.yap.app.dev pr.yap.app.beta; do ashell cmd locale set-app-locales "$b" --locales "$tag" 2>/dev/null; done
+    echo "per-app locale $tag for both variants (relaunch the app)"
+  fi ;;
+
+rotate)
+  case "${1:-}" in landscape|portrait) ;; *) die "usage: rotate landscape|portrait" ;; esac
+  if [ "$PLAT" = android ]; then
+    ashell settings put system accelerometer_rotation 0
+    ashell settings put system user_rotation "$([ "$1" = landscape ] && echo 1 || echo 0)"
+  else
+    run_flow "- setOrientation: $([ "$1" = landscape ] && echo LANDSCAPE_LEFT || echo PORTRAIT)"
+  fi
+  echo "rotate $1" ;;
+
+network)
+  [ "$PLAT" = android ] || blocked "the iOS Simulator shares the Mac's network: per-simulator offline is impossible without host-wide changes (pfctl, Network Link Conditioner), which are NOT allowed. Run offline/slow-network cases on Android; on iOS mark them BLOCKED (env) or use a physical device."
+  case "${1:-}" in
+    off) ashell svc wifi disable; ashell svc data disable ;;
+    on) ashell cmd connectivity airplane-mode disable 2>/dev/null; ashell svc wifi enable; ashell svc data enable ;;
+    airplane) ashell cmd connectivity airplane-mode enable ;;
+    slow) adbd emu network speed gsm >/dev/null; adbd emu network delay gprs >/dev/null ;;
+    edge) adbd emu network speed edge >/dev/null; adbd emu network delay edge >/dev/null ;;
+    full) adbd emu network speed full >/dev/null; adbd emu network delay none >/dev/null ;;
+    stall|unstall)
+      and_ensure_root
+      v="${2:-$QA_VARIANT}"; uid="$(and_uid "$(bundle_of "$v")")"; [ -n "$uid" ] || die "app not installed"
+      op=$([ "$1" = stall ] && echo -I || echo -D)
+      for t in iptables ip6tables; do
+        while [ "$op" = -D ] && ashell "$t -D OUTPUT -m owner --uid-owner $uid -j DROP" >/dev/null 2>&1; do :; done
+        [ "$op" = -I ] && ashell "$t -I OUTPUT -m owner --uid-owner $uid -j DROP"
+      done ;;
+    *) die "usage: network off|on|airplane|slow|edge|full|stall|unstall [variant]" ;;
+  esac
+  sleep 1
+  echo "network ${1}: $(ashell dumpsys connectivity 2>/dev/null | tr -d '\r' | grep -m1 -E 'Active default network' || true)" ;;
+
+screen)
+  [ "$PLAT" = android ] || blocked "iOS screen size is fixed per simulator model; a small-screen run needs an iPhone SE simulator (not created by qa)"
+  case "${1:-}" in
+    small) ashell wm size 720x1280; ashell wm density 280 ;;
+    reset) ashell wm size reset; ashell wm density reset ;;
+    *) die "usage: screen small|reset" ;;
+  esac
+  echo "screen ${1}: $(ashell wm size | tr -d '\r' | tail -1), $(ashell wm density | tr -d '\r' | tail -1)" ;;
+
+engine-kill)
+  b="$(bundle_of "${1:-}")"
+  if [ "$PLAT" = ios ]; then
+    pids="$(ios_webcontent_pids)"
+    [ -n "$pids" ] || die "no WebContent process on $DEV (is the app running?)"
+    for p in $pids; do kill -9 "$p" && echo "killed WebContent pid $p"; done
+  else
+    and_ensure_root
+    pids="$(and_renderer_pids)"
+    [ -n "$pids" ] || die "no WebView renderer process (is the app running?)"
+    for p in $pids; do ashell kill -9 "$p" && echo "killed WebView renderer pid $p"; done
+    echo "(renderers are not tagged with their app; every running WebView renderer was killed)"
+  fi ;;
+
+biometric)
+  case "${1:-}" in
+    enroll|unenroll)
+      if [ "$PLAT" = ios ]; then
+        simctl spawn "$DEV" notifyutil -s com.apple.BiometricKit.enrollmentChanged "$([ "$1" = enroll ] && echo 1 || echo 0)"
+        simctl spawn "$DEV" notifyutil -p com.apple.BiometricKit.enrollmentChanged
+        echo "biometric $1ed (Face ID/Touch ID simulator)"
+      else
+        if [ "$1" = enroll ]; then
+          ashell locksettings set-pin 1111 >/dev/null 2>&1 || true
+          ashell am start -a android.settings.FINGERPRINT_ENROLL >/dev/null 2>&1 || ashell am start -a android.settings.SECURITY_SETTINGS >/dev/null
+          echo "PIN set to 1111; fingerprint enrolment opened. Finish it: tap-text through the intro, enter 1111, then 'biometric match' until done."
+        else
+          ashell locksettings clear --old 1111 >/dev/null 2>&1; echo "PIN cleared (fingerprints are removed with it)"
+        fi
+      fi ;;
+    match|nomatch)
+      if [ "$PLAT" = ios ]; then
+        simctl spawn "$DEV" notifyutil -p "com.apple.BiometricKit_Sim.pearl.$1"
+        simctl spawn "$DEV" notifyutil -p "com.apple.BiometricKit_Sim.fingerTouch.$1"
+      else
+        adbd emu finger touch "$([ "$1" = match ] && echo 1 || echo 9)" >/dev/null
+      fi
+      echo "biometric $1" ;;
+    *) die "usage: biometric enroll|match|nomatch|unenroll" ;;
+  esac ;;
+
+*) die "unknown command '$CMD' (qa --help)" ;;
+esac

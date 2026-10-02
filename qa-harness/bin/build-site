@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""build-site: render the QA markdown + evidence into site/ for GitHub Pages (agentic-qa skill, Phase 4).
+
+  bin/build-site [--out site] [--no-media]      (does NOT publish; push site/ yourself after the redaction decision)
+
+What it does
+  * Every markdown file in the workspace root (QA-REPORT, EXEC-SUMMARY, STORY-MATRIX, DEFECT-LEDGER, QA-PLAN,
+    AGENT-BRIEF, SR-BRIEF, REPORT-TEMPLATE) and every evidence/**/*.md is rendered to HTML with pandoc.
+  * Evidence: .png/.jpg -> .webp (cwebp -q 80, max 1280 px tall), .mp4/.mov copied, .txt/.log/.csv/.json/.xml copied
+    when <= 3 MB (larger ones are truncated to the last 3 MB with a note). Everything else is skipped.
+  * Every evidence path in the text (`evidence/...`, `$QA_EVIDENCE/...`, absolute workspace paths, code spans or
+    bare) becomes a clickable link; .png links point at the .webp. Links to .md become .html.
+  * Defect ids (D-001, D-L2a-003, SR-07) link to DEFECT-LEDGER.html#<id>; ledger and matrix rows get anchors.
+  * DEFECT-LEDGER tables are sorted by severity (S1 first).
+  * evidence/index.html is a gallery per stream and test, with a note on black (FLAG_SECURE) screenshots.
+  * Safety: aborts if any key from personas/ appears in evidence or markdown, and never copies personas/, .state/,
+    builds/ or src/.
+"""
+import argparse
+import html
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+EVID = os.path.join(ROOT, "evidence")
+IMG = (".png", ".jpg", ".jpeg")
+VID = (".mp4", ".mov", ".webm")
+TXT = (".txt", ".log", ".csv", ".json", ".xml", ".ips", ".yaml")
+MAX_TXT = 3 * 1024 * 1024
+ROOT_DOCS = ["QA-REPORT.md", "EXEC-SUMMARY.md", "STORY-MATRIX.md", "DEFECT-LEDGER.md", "QA-PLAN.md",
+             "AGENT-BRIEF.md", "SR-BRIEF.md", "REPORT-TEMPLATE.md"]
+
+CSS = """
+:root { color-scheme: light dark; --fg:#111827; --bg:#fff; --mut:#6b7280; --bd:#e5e7eb; --acc:#0369a1; --row:#f9fafb; }
+@media (prefers-color-scheme: dark) { :root { --fg:#f3f4f6; --bg:#111318; --mut:#9ca3af; --bd:#2d3139; --acc:#38bdf8; --row:#181b21; } }
+body { font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg);
+       max-width: 1400px; margin: 0 auto; padding: 1rem 1.5rem 4rem; }
+nav.top { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--bd); padding: .5rem 0; margin-bottom: 1rem; z-index: 2; }
+nav.top a { margin-right: 1rem; }
+a { color: var(--acc); text-decoration: none; } a:hover { text-decoration: underline; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 1rem 0; display: block; overflow-x: auto; }
+th, td { border: 1px solid var(--bd); padding: 4px 6px; vertical-align: top; text-align: left; }
+tr:nth-child(even) td { background: var(--row); }
+code { font-size: 12.5px; word-break: break-all; } pre { overflow-x: auto; padding: .75rem; border: 1px solid var(--bd); }
+td:target, tr:target td, :target { outline: 2px solid #f59e0b; }
+.sev-S1 { color: #dc2626; font-weight: 700; } .sev-S2 { color: #ea580c; font-weight: 700; } .sev-S3 { color: #ca8a04; } .sev-S4 { color: var(--mut); }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
+.gallery figure { margin: 0; font-size: 11px; color: var(--mut); word-break: break-all; }
+.gallery img { width: 100%; border: 1px solid var(--bd); border-radius: 6px; }
+.note { border-left: 4px solid #f59e0b; padding: .5rem 1rem; background: var(--row); }
+"""
+
+NOTE_BLACK = ("<p class='note'><b>Black screenshots are expected on some Android screens.</b> The app sets FLAG_SECURE on "
+              "the DM inbox, conversations, group info, the private-key sign-in screen and the DM unlock sheet, and on every "
+              "screen while app lock is on, so Android captures them as black frames by design. The streams saved UI "
+              "hierarchy dumps (<code>*-ui.txt</code>) next to those screenshots as the evidence. iOS simulator screenshots "
+              "capture those screens normally.</p>")
+
+
+def sh(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True)
+
+
+def secret_scan():
+    keys = []
+    pdir = os.path.join(ROOT, "personas")
+    if os.path.isdir(pdir):
+        for f in os.listdir(pdir):
+            try:
+                k = open(os.path.join(pdir, f)).read().strip()
+                if len(k) >= 40:
+                    keys.append(k)
+            except OSError:
+                pass
+    if not keys:
+        return
+    targets = [os.path.join(ROOT, d) for d in ROOT_DOCS if os.path.exists(os.path.join(ROOT, d))]
+    hits = []
+    for base in [EVID] + targets:
+        paths = [base] if os.path.isfile(base) else [os.path.join(dp, fn) for dp, _, fns in os.walk(base) for fn in fns]
+        for p in paths:
+            if p.lower().endswith(IMG + VID):
+                continue
+            try:
+                data = open(p, "rb").read()
+            except OSError:
+                continue
+            for k in keys:
+                if k.encode() in data:
+                    hits.append(p)
+    if hits:
+        sys.exit("build-site: ABORT, a persona key appears in:\n  " + "\n  ".join(sorted(set(hits))))
+
+
+def media_out(rel):
+    root, ext = os.path.splitext(rel)
+    return root + ".webp" if ext.lower() in IMG else rel
+
+
+def copy_evidence(out, with_media):
+    count = {"img": 0, "vid": 0, "txt": 0}
+    for dp, _, fns in os.walk(EVID):
+        for fn in fns:
+            src = os.path.join(dp, fn)
+            rel = os.path.relpath(src, ROOT)
+            ext = os.path.splitext(fn)[1].lower()
+            dst = os.path.join(out, media_out(rel))
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if ext in IMG and with_media:
+                if not os.path.exists(dst) or os.path.getmtime(dst) < os.path.getmtime(src):
+                    r = sh("cwebp", "-quiet", "-q", "80", "-resize", "0", "1280", src, "-o", dst)
+                    if r.returncode != 0:
+                        shutil.copy2(src, dst[:-5] + ext)
+                count["img"] += 1
+            elif ext in VID and with_media:
+                if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src):
+                    shutil.copy2(src, dst)
+                count["vid"] += 1
+            elif ext in TXT:
+                size = os.path.getsize(src)
+                if size <= MAX_TXT:
+                    shutil.copy2(src, dst)
+                else:
+                    with open(src, "rb") as f:
+                        f.seek(size - MAX_TXT)
+                        tail = f.read()
+                    with open(dst, "wb") as f:
+                        f.write(b"[build-site: truncated, last 3 MB of %d bytes]\n" % size + tail)
+                count["txt"] += 1
+    return count
+
+
+PATH_RE = re.compile(
+    r"(?:/Users/pasta/workspace/yappr-mobile-qa/|\$QA_EVIDENCE/|\$\{QA_EVIDENCE\}/|\$QA_ROOT/)?"
+    r"(?P<p>evidence/[A-Za-z0-9_.\-/]+[A-Za-z0-9_/])")
+ID_RE = re.compile(r"(?<![\w#/-])(?P<id>D-(?:L[1-4][ia]-|RP[ia]-)?\d{3}|SR-\d{2,3}|ENV-[A-Za-z0-9]+-\d{2})(?![\w-])")
+
+
+def linkify(md, page_rel):
+    """Turn evidence paths into links relative to the page, and defect ids into ledger anchors."""
+    up = os.path.relpath(".", os.path.dirname(page_rel)) if os.path.dirname(page_rel) else "."
+
+    def path_link(m):
+        p = m.group("p").rstrip("/.")
+        target = media_out(p) if not p.endswith("/") else p
+        if os.path.isdir(os.path.join(ROOT, p)):
+            target = p + "/"
+        if target.endswith(".md"):
+            target = target[:-3] + ".html"
+        return "[%s](%s/%s)" % (p, up, target)
+
+    out_lines = []
+    in_fence = False
+    for line in md.split("\n"):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            out_lines.append(line)
+            continue
+        if in_fence:
+            out_lines.append(line)
+            continue
+        # `evidence/...` code spans -> links; bare paths too (skip ones already inside markdown links)
+        line = re.sub(r"`((?:/Users/pasta/workspace/yappr-mobile-qa/|\$QA_EVIDENCE/)?evidence/[^`]+)`",
+                      lambda m: PATH_RE.sub(path_link, m.group(1)), line)
+        line = re.sub(r"(?<![\[(/\w])" + PATH_RE.pattern, path_link, line)
+        if not page_rel.endswith("DEFECT-LEDGER.md"):
+            line = ID_RE.sub(lambda m: "[%s](%s/DEFECT-LEDGER.html#%s)" % (m.group("id"), up, m.group("id")), line)
+        line = re.sub(r"\]\(([^)#]+)\.md(#[^)]*)?\)", lambda m: "](%s.html%s)" % (m.group(1), m.group(2) or ""), line)
+        out_lines.append(line)
+    return "\n".join(out_lines)
+
+
+def sort_ledger(md):
+    """Sort every table whose header has a Sev column by severity, anchor the first cell, colour the severity."""
+    lines = md.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("|") and i + 1 < len(lines) and re.match(r"^\|\s*-", lines[i + 1]):
+            header = [c.strip() for c in line.strip("|").split("|")]
+            out += [line, lines[i + 1]]
+            i += 2
+            rows = []
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append(lines[i])
+                i += 1
+            sev_col = next((k for k, h in enumerate(header) if h.lower().startswith("sev")), None)
+
+            def cells(r):
+                return [c.strip() for c in r.strip().strip("|").split("|")]
+
+            if sev_col is not None:
+                rank = lambda r: (re.search(r"S([1-4])", cells(r)[sev_col] if len(cells(r)) > sev_col else "") or [None, "9"])[1]
+                rows.sort(key=lambda r: (rank(r), cells(r)[0]))
+            for r in rows:
+                c = cells(r)
+                if c and re.match(r"^(D|SR|ENV)-", c[0]):
+                    c[0] = '<a id="%s"></a>%s' % (c[0], c[0])
+                if sev_col is not None and len(c) > sev_col:
+                    m = re.search(r"S[1-4]", c[sev_col])
+                    if m:
+                        c[sev_col] = '<span class="sev-%s">%s</span>' % (m.group(0), c[sev_col])
+                out.append("| " + " | ".join(c) + " |")
+            continue
+        out.append(line)
+        i += 1
+    return "\n".join(out)
+
+
+def nav(page_rel):
+    up = os.path.relpath(".", os.path.dirname(page_rel)) if os.path.dirname(page_rel) else "."
+    items = [("index.html", "Home"), ("EXEC-SUMMARY.html", "Summary"), ("STORY-MATRIX.html", "Stories"),
+             ("DEFECT-LEDGER.html", "Defects"), ("QA-PLAN.html", "Plan"), ("evidence/index.html", "Evidence")]
+    return "<nav class='top'>" + "".join("<a href='%s/%s'>%s</a>" % (up, h, t) for h, t in items) + "</nav>"
+
+
+def render(md_text, page_rel, out, title):
+    md_text = linkify(md_text, page_rel)
+    if page_rel.endswith("DEFECT-LEDGER.md"):
+        md_text = sort_ledger(md_text)
+    r = subprocess.run(["pandoc", "-f", "gfm+raw_html", "-t", "html5", "--wrap=none"], input=md_text,
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("pandoc failed on %s: %s" % (page_rel, r.stderr))
+    body = r.stdout
+    up = os.path.relpath(".", os.path.dirname(page_rel)) if os.path.dirname(page_rel) else "."
+    extra = NOTE_BLACK if "/REPORT" in page_rel or page_rel.startswith("STORY") else ""
+    doc = ("<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width'>"
+           "<title>%s</title><link rel='stylesheet' href='%s/style.css'></head><body>%s%s%s</body></html>"
+           % (html.escape(title), up, nav(page_rel), extra, body))
+    dst = os.path.join(out, page_rel[:-3] + ".html")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    open(dst, "w", encoding="utf-8").write(doc)
+    return dst
+
+
+def gallery(out):
+    parts = ["<h1>Evidence gallery</h1>", NOTE_BLACK]
+    if not os.path.isdir(EVID):
+        parts.append("<p>No evidence yet.</p>")
+    else:
+        for stream in sorted(os.listdir(EVID)):
+            sdir = os.path.join(EVID, stream)
+            if not os.path.isdir(sdir):
+                continue
+            rep = os.path.join(sdir, "REPORT.md")
+            parts.append("<h2 id='%s'>%s%s</h2>" % (stream, stream,
+                         " · <a href='%s/REPORT.html'>report</a>" % stream if os.path.exists(rep) else ""))
+            for test in sorted(os.listdir(sdir)):
+                tdir = os.path.join(sdir, test)
+                if not os.path.isdir(tdir):
+                    continue
+                figs = []
+                for fn in sorted(os.listdir(tdir)):
+                    ext = os.path.splitext(fn)[1].lower()
+                    rel = "%s/%s/%s" % (stream, test, fn)
+                    if ext in IMG:
+                        w = media_out(rel)
+                        figs.append("<figure><a href='%s'><img loading='lazy' src='%s' alt='%s'></a><figcaption>%s</figcaption></figure>"
+                                    % (w, w, html.escape(fn), html.escape(fn)))
+                    elif ext in VID:
+                        figs.append("<figure><video controls preload='none' src='%s' width='100%%'></video><figcaption>%s</figcaption></figure>"
+                                    % (rel, html.escape(fn)))
+                    elif ext in TXT:
+                        figs.append("<figure><a href='%s'>%s</a></figure>" % (rel, html.escape(fn)))
+                if figs:
+                    parts.append("<h3 id='%s-%s'>%s</h3><div class='gallery'>%s</div>" % (stream, test, test, "".join(figs)))
+    doc = ("<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Evidence</title>"
+           "<link rel='stylesheet' href='../style.css'></head><body>%s%s</body></html>" % (nav("evidence/index.md"), "".join(parts)))
+    os.makedirs(os.path.join(out, "evidence"), exist_ok=True)
+    open(os.path.join(out, "evidence", "index.html"), "w", encoding="utf-8").write(doc)
+
+
+def index(out, docs, counts):
+    rows = "".join("<li><a href='%s'>%s</a></li>" % (d[:-3] + ".html", d[:-3]) for d in docs)
+    streams = sorted(s for s in os.listdir(EVID) if os.path.isdir(os.path.join(EVID, s))) if os.path.isdir(EVID) else []
+    srows = "".join("<li><a href='evidence/%s/REPORT.html'>%s</a></li>" % (s, s) for s in streams
+                    if os.path.exists(os.path.join(EVID, s, "REPORT.md")))
+    doc = ("<!doctype html><html lang='en'><head><meta charset='utf-8'><title>Yappr Mobile 1.0 QA</title>"
+           "<link rel='stylesheet' href='style.css'></head><body>%s<h1>Yappr Mobile 1.0: agentic QA report</h1>"
+           "<p>Start with the <a href='EXEC-SUMMARY.html'>executive summary</a>, then the <a href='DEFECT-LEDGER.html'>defect "
+           "ledger</a> (sorted by severity) and the <a href='STORY-MATRIX.html'>story matrix</a> (all 141 PRD stories, with proof).</p>"
+           "<h2>Documents</h2><ul>%s</ul><h2>Stream reports</h2><ul>%s</ul>"
+           "<p>Evidence: %d screenshots, %d videos, %d logs/dumps. <a href='evidence/index.html'>Gallery</a>.</p></body></html>"
+           % (nav("index.md"), rows, srows or "<li>none yet</li>", counts["img"], counts["vid"], counts["txt"]))
+    open(os.path.join(out, "index.html"), "w", encoding="utf-8").write(doc)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=os.path.join(ROOT, "site"))
+    ap.add_argument("--no-media", action="store_true", help="skip image/video conversion (fast text-only rebuild)")
+    a = ap.parse_args()
+    for tool in ("pandoc", "cwebp"):
+        if not shutil.which(tool):
+            sys.exit("build-site: %s not found" % tool)
+    secret_scan()
+    out = a.out
+    os.makedirs(out, exist_ok=True)
+    open(os.path.join(out, "style.css"), "w").write(CSS)
+    open(os.path.join(out, ".nojekyll"), "w").write("")
+    counts = copy_evidence(out, not a.no_media) if os.path.isdir(EVID) else {"img": 0, "vid": 0, "txt": 0}
+    docs = [d for d in ROOT_DOCS if os.path.exists(os.path.join(ROOT, d))]
+    for d in docs:
+        render(open(os.path.join(ROOT, d), encoding="utf-8").read(), d, out, d[:-3])
+    if os.path.isdir(EVID):
+        for dp, _, fns in os.walk(EVID):
+            for fn in fns:
+                if fn.endswith(".md"):
+                    rel = os.path.relpath(os.path.join(dp, fn), ROOT)
+                    render(open(os.path.join(dp, fn), encoding="utf-8").read(), rel, out, rel[:-3])
+    gallery(out)
+    index(out, docs, counts)
+    print("site/ built: %d docs, %d screenshots, %d videos, %d text files -> %s" % (len(docs), counts["img"], counts["vid"], counts["txt"], out))
+    print("Not published. Preview: open %s/index.html" % out)
+
+
+if __name__ == "__main__":
+    main()
