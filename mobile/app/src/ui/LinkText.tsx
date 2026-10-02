@@ -1,4 +1,4 @@
-import { Pressable } from 'react-native';
+import { Pressable, type Insets, type StyleProp, type ViewStyle } from 'react-native';
 
 import { cn } from '~/lib-allowlist';
 
@@ -12,6 +12,9 @@ export interface LinkTextProps {
   /** `link` for navigation, `button` for in-place actions ("Retry"). */
   role?: 'link' | 'button';
   className?: string;
+  /** Overrides the default 44 pt padding, for links set close together (WriteStatus). */
+  hitSlop?: Insets;
+  style?: StyleProp<ViewStyle>;
   testID?: string;
 }
 
@@ -25,16 +28,19 @@ export function LinkText({
   variant = 'subhead',
   role = 'link',
   className,
+  hitSlop = hitSlopFor(20),
+  style,
   testID,
 }: LinkTextProps) {
   return (
     <Pressable
       accessibilityRole={role}
-      hitSlop={hitSlopFor(20)}
+      hitSlop={hitSlop}
       onPress={onPress}
       disabled={!onPress}
       testID={testID}
       className={cn('self-start', className)}
+      style={style}
     >
       {({ pressed }) => (
         <Text variant={variant} tone="link" className={pressed ? 'underline' : undefined}>

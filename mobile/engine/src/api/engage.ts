@@ -11,7 +11,7 @@ import { RpcError } from '../protocol/envelope'
 import { assertAtMost, enrichToDTOs, notSupported, requireViewer, viewerId, withLoadingAuthor } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
 import { assertTarget, relationProbe, settleTarget, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
-import { fromBoolean, wasConfirmed } from '../writes/lib-results'
+import { fromBoolean, fromDeleteBoolean, wasConfirmed } from '../writes/lib-results'
 import { likeExists, ownQuoteStrict, repostExists } from '../writes/strict-reads'
 import type { TicketStore, WriteResult } from '../writes/tickets'
 import type { TargetRef, WriteOp, WriteTicket } from '../writes/types'
@@ -156,7 +156,7 @@ export function createEngageWrites(tickets: TicketStore) {
       if (!quoteId) return { state: 'confirmed' }
       // `use-post-engagement.ts` `removeOwnQuote`: v11 tombstones the quote post (clearing its quote
       // frees the slot), v10 deletes it.
-      return fromBoolean(await postService.deleteOwnPost(quoteId, viewer))
+      return fromDeleteBoolean(await postService.deleteOwnPost(quoteId, viewer), ctx.probe)
     },
     // The slot (or the repost document) read back: a tombstoned quote post still exists, so its id proves nothing.
     probe: relation(isReposted, false),

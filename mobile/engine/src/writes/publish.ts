@@ -7,7 +7,7 @@ import type { Post } from '@/lib/types'
 import { isUnconfirmed } from '@/lib/unconfirmed-writes'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { RpcError } from '../protocol/envelope'
-import { assertId, assertMediaUrl, assertTarget, badRequest, signer, socialDoc } from './handler-kit'
+import { assertId, assertMediaUrl, assertTarget, badRequest, characters, signer, socialDoc } from './handler-kit'
 import { NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types'
 
@@ -21,6 +21,8 @@ import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types
 
 /** `compose-modal.tsx` `canAddThread`. */
 const MAX_THREAD_PARTS = 10
+/** `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), as stored (`mediaUrlForContract`). */
+const MAX_MEDIA_URL = 512
 
 export interface DraftDTO {
   /** 1–10 parts; a reply or a quote has exactly one. Parts without visible text are skipped, as on web. */
@@ -49,7 +51,11 @@ export function validateDraft(draft: DraftDTO): void {
   if (draft.quote) assertTarget(draft.quote)
   if (draft.replyTo && draft.quote) throw badRequest('A post replies or quotes, not both')
   if ((draft.replyTo || draft.quote) && parts.length > 1) throw badRequest('A reply or a quote cannot be a thread')
-  if (draft.mediaUrl != null) assertMediaUrl(draft.mediaUrl, 'mediaUrl')
+  if (draft.mediaUrl != null) {
+    assertMediaUrl(draft.mediaUrl, 'mediaUrl')
+    // Over the contract's limit it would be refused after the ticket, every time: refuse it here.
+    if (characters(mediaUrlForContract(draft.mediaUrl)) > MAX_MEDIA_URL) throw badRequest(`mediaUrl is over ${MAX_MEDIA_URL} characters`)
+  }
   const posted: unknown = draft.resume ? draft.resume.postedIds : []
   if (!Array.isArray(posted) || posted.length > parts.length) throw badRequest('resume.postedIds must name at most one id per part')
   posted.forEach((id, index) => { if (id !== null) assertId(id, `resume.postedIds[${index}]`) })
@@ -154,6 +160,15 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
         const next: WriteStage = status.startsWith('Waiting') ? 'waiting-parent' : 'broadcasting'
         if (next !== stage) ctx.stage(stage = next)
         ctx.progress(before + current - 1, before + total)
+      },
+      // On the ticket at once, not only once publishThread returns: a restart or a kill mid-thread
+      // must still know which parts landed, so Check again can prove them and Edit never reposts them.
+      onCreated: ({ index, postId, isReply }) => {
+        try {
+          ctx.documents([{ ...socialDoc(isReply ? 'reply' : 'post', postId, 'create', !isUnconfirmed(postId)), part: Number(plan[index].threadPostId) }])
+        } catch {
+          // The ticket is gone (dismissed): the final documents below are what count.
+        }
       },
     })
 

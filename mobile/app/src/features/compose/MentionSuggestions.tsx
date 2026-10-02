@@ -61,8 +61,9 @@ export function MentionSuggestions({ query, onSelect }: MentionSuggestionsProps)
             accessibilityRole="button"
             accessibilityLabel={`${user.displayName}, @${user.username}`}
             onPress={() => onSelect(user)}
-            className={cn('flex-row items-center gap-3 px-4', tw.pressedMuted)}
-            style={{ height: ROW_HEIGHT }}
+            className={cn('flex-row items-center gap-3 px-4 py-2', tw.pressedMuted)}
+            // A floor, not a fixed height: at the largest text sizes the name and handle need more (G-12).
+            style={{ minHeight: ROW_HEIGHT }}
             testID={`mention-${user.username}`}
           >
             <Avatar avatar={user.avatar} identityId={user.id} size="md" />

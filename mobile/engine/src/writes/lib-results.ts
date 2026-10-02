@@ -1,7 +1,8 @@
 import { extractErrorMessage } from '@/lib/error-utils'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import type { StateTransitionResult } from '@/lib/services/state-transition-service'
-import type { WriteResult } from './tickets'
+import { LIB_REFUSED_MESSAGE } from './classify'
+import type { ProbeResult, WriteResult } from './tickets'
 import type { TicketDocument } from './types'
 
 /**
@@ -21,13 +22,30 @@ export function fromTransitionResult(result: StateTransitionResult, documents?: 
 
 /**
  * The services that answer `boolean` (`likePost`, `bookmarkPost`, ...):
- * `false` is `failed`/UNKNOWN. They swallow the `confirmed: false` signal, as
- * on web, so `true` is taken as `confirmed`.
+ * `false` is `failed`, refused and retryable (`LIB_REFUSED_MESSAGE`). They
+ * swallow the `confirmed: false` signal, as on web, so `true` is taken as
+ * `confirmed`.
  */
 export function fromBoolean(ok: boolean, documents?: TicketDocument[]): WriteResult {
   return ok
     ? { state: 'confirmed', documents }
-    : { state: 'failed', error: new Error('The network did not accept this change'), documents }
+    : { state: 'failed', error: new Error(LIB_REFUSED_MESSAGE), documents }
+}
+
+/**
+ * A delete or tombstone service's boolean (`deleteOwnPost`, `deleteOwnReply`).
+ * lib's `deleteDocument` and `tombstoneDocument` send and wait in one call
+ * and answer `false` for any error, a gateway timeout included, so `false`
+ * does not prove the change was refused. The write's own probe decides: the
+ * document still there is `failed` and retryable (`fromBoolean`), proved gone
+ * (or blanked) is `confirmed`, and an unreadable answer is `unconfirmed`, for
+ * Check again.
+ */
+export async function fromDeleteBoolean(ok: boolean, probe: () => Promise<ProbeResult>): Promise<WriteResult> {
+  if (ok) return fromBoolean(true)
+  const proof = await probe()
+  if (proof.state === 'applied') return { state: 'confirmed' }
+  return proof.state === 'not-applied' ? fromBoolean(false) : { state: 'unconfirmed' }
 }
 
 /**

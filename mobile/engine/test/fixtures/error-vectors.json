@@ -752,6 +752,48 @@
         "state": "unconfirmed",
         "userMessage": "Failed to create post: transport error: grpc error: code: 'Internal error', message: \"Failed to call gRPC service: JS API error: TypeError: Load failed\""
       }
+    },
+    {
+      "name": "identity credits short (IdentityInsufficientBalanceError)",
+      "error": {
+        "message": "Insufficient identity 9t2eWkcBMVbMsZvyNbFMPHcWxVzXWEhQZ3RqQXmaFSZz balance 1200 required 91300000"
+      },
+      "expect": {
+        "code": "INSUFFICIENT_CREDITS",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Insufficient identity 9t2eWkcBMVbMsZvyNbFMPHcWxVzXWEhQZ3RqQXmaFSZz balance 1200 required 91300000"
+      }
+    },
+    {
+      "name": "credits short to pay the fee (BalanceIsNotEnoughError)",
+      "error": {
+        "message": "Current credits balance 1200 is not enough to pay 91300000 fee"
+      },
+      "expect": {
+        "code": "INSUFFICIENT_CREDITS",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Current credits balance 1200 is not enough to pay 91300000 fee"
+      }
+    },
+    {
+      "name": "lib's boolean false (fromBoolean)",
+      "error": {
+        "message": "The network did not accept this change"
+      },
+      "expect": {
+        "code": "UNKNOWN",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": true,
+        "state": "failed",
+        "userMessage": "Failed to create post: The network did not accept this change"
+      }
     }
   ]
 }

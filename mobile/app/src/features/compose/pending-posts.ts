@@ -10,7 +10,7 @@ import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
 import { EMPTY_VIEWER, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
 import { useSessionStore } from '~/data/session';
-import { checkWrite, runWrite, type WriteSpec } from '~/data/writes';
+import { checkWrite, runWrite, writeFailureText, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { toast } from '~/ui/toast';
@@ -19,6 +19,7 @@ import type { WriteState as CardWriteState, WriteStatusProps } from '~/ui/WriteS
 import {
   deleteDraft,
   forgetDrafts,
+  isDraftSlotHeld,
   loadDraft,
   saveDraft,
   type ComposeContext,
@@ -352,7 +353,8 @@ const partText = (index: number) => `Post ${index + 1}`;
 /** "Thread partly posted. Post {n} failed: {reason}" (UX_SPEC §5.4), or the deleted-target line for a reply. */
 function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): string | null {
   if (!entry) return null;
-  const reason = ticket.error?.userMessage ?? 'Something went wrong.';
+  // PRD G-5's copy when credits or YAPP ran short, else the engine's message.
+  const reason = ticket.error ? writeFailureText(ticket.error, ticket.error.userMessage || 'Something went wrong.') : 'Something went wrong.';
   if (entry.draft.replyTo && /not found|deleted/i.test(reason) && ticket.error?.outcome !== 'unknown') {
     return "This post was deleted, so it can't be replied to.";
   }
@@ -399,6 +401,9 @@ export const publishWrite: WriteSpec<PublishVars> = {
 /** The draft a pending post came from, for Edit and for a failure (PRD G-4: text is never lost). */
 function draftPartsOf(entry: PendingPost): DraftPart[] {
   const posted = postedIds(entry);
+  // The first part landed (`content.created`) though no ticket names it, as after a restart cut the
+  // call short: Edit must show it posted, or Post would publish it again (PRD COMP-05).
+  if (!posted[0] && entry.adoptedId && !entry.ticket?.retryable) posted[0] = entry.adoptedId;
   return entry.draft.parts.map((part, i) => ({ text: part.text, postedId: posted[i] ?? null }));
 }
 
@@ -416,8 +421,12 @@ export function pendingDraft(localId: string): ComposeDraft | null {
   };
 }
 
-/** Whether the post's own context has room for its text: no draft there, or the one it brought back. */
+/**
+ * Whether the post's own context has room for its text: no composer open on
+ * it (that one would save over it), and no draft there but the one it brought back.
+ */
 function draftSlotFree(entry: PendingPost): boolean {
+  if (isDraftSlotHeld(entry.identityId, entry.context)) return false;
   const existing = loadDraft(entry.identityId, entry.context);
   return !existing || existing.fromPending === entry.localId;
 }
@@ -465,9 +474,16 @@ async function submit(localId: string, retry: boolean): Promise<void> {
 /**
  * A post that will not land as it stands: its text back to the draft. One
  * with no card (a resumed thread) then goes, its text safe in the draft.
+ * When the draft is taken (another draft, or a composer open on it), the text
+ * stays with the entry, and one with no card gets one, to Retry or Edit from.
  */
 function settleFailure(entry: PendingPost): void {
-  if (returnToDraft(entry) && entry.placement === 'none') discardPending(entry.localId);
+  if (returnToDraft(entry)) {
+    if (entry.placement === 'none') discardPending(entry.localId);
+  } else if (entry.placement === 'none') {
+    patchEntry(entry.localId, { placement: 'feed' });
+    placeCards();
+  }
 }
 
 export interface PublishInput {

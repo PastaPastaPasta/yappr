@@ -50,6 +50,28 @@ export const NOT_DISTINCT_MESSAGE = 'The network doesn\'t allow this combination
 export const TOO_YOUNG_MESSAGE = 'What this depends on was only just published. Wait a minute and try again.'
 export const BUILD_DEFECT_MESSAGE = 'Something went wrong building this action, so the network refused it. Nothing was charged. Please report this.'
 
+/**
+ * The error `fromBoolean` stands in for what a lib service that answers
+ * `false` swallowed (`likePost`, `bookmarkPost`, `removeRepost`, ...). lib
+ * answers `false` when its write threw (a refusal, a missing key, a pending
+ * nonce, a failed send). Web takes `false` as failed and rolls the change
+ * back, and so does the app (PRD G-4), never as a silent "may have landed". A
+ * retry is safe: each of those services reads for the document before it
+ * writes. The delete services (`deleteOwnPost`, `deleteOwnReply`) also answer
+ * `false` for a send whose wait gave no verdict, so their `false` is decided
+ * by a probe first (`fromDeleteBoolean`).
+ */
+export const LIB_REFUSED_MESSAGE = 'The network did not accept this change'
+
+/**
+ * Platform's refusal when the identity's credits cannot pay for the write
+ * (`IdentityInsufficientBalanceError`, `BalanceIsNotEnoughError`).
+ * `categorizeError` has no branch for it; the app shows PRD G-5's copy.
+ */
+function isInsufficientCreditsError(_error: unknown, message: string): boolean {
+  return /IdentityInsufficientBalance|BalanceIsNotEnough|insufficient identity \S+ balance|credits balance \S+ is not enough to pay/i.test(message)
+}
+
 type Outcome = EngineErrorData['outcome']
 
 /** `matches(error, message, userMessage)`: `message` is the error's own text, `userMessage` categorizeError's. */
@@ -96,6 +118,8 @@ const RULES: readonly Rule[] = [
   ['FROZEN', 'refused', false, isFrozenBalanceError],
   ['INSUFFICIENT_YAPP', 'refused', false, isInsufficientTokenError],
   // Stage 2: their userMessage stays categorizeError's generic text, for parity with web.
+  ['INSUFFICIENT_CREDITS', 'refused', false, isInsufficientCreditsError],
+  ['UNKNOWN', 'refused', true, exactly(LIB_REFUSED_MESSAGE)],
   ['DUPLICATE', 'refused', false, isDuplicateUniqueIndexError],
   ['DUPLICATE', 'unknown', false, isAlreadyExistsError],
   ['RATE_LIMITED', 'not-sent', true, isRateLimitedError],
