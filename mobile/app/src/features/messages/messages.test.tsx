@@ -652,6 +652,16 @@ describe('New group (DM-06)', () => {
     expect(useToastStore.getState().current?.message).toBe('1 member(s) did not get the group key yet.');
   });
 
+  it('says a name over the byte limit is too long instead of letting the engine refuse it (SR-38)', async () => {
+    await fillForm();
+    // 70 characters pass the 100-character cap, but are 210 UTF-8 bytes.
+    fireEvent.changeText(screen.getByTestId('new-group-name'), '中文测试中'.repeat(14));
+    expect(screen.getByText(/too long for the network/)).toBeTruthy();
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.createGroup')).not.toHaveBeenCalled();
+  });
+
   it('creates once when Create is tapped again before the engine answers', async () => {
     await fillForm();
     const created = ticket({ op: 'dm.group' });

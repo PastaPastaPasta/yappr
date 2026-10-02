@@ -3,6 +3,7 @@ import {
   composerBlockedReason,
   conversationTitle,
   dayLabel,
+  groupNameError,
   isIdentityIdText,
   isPartOfSend,
   matchesSearch,
@@ -166,5 +167,17 @@ describe('isPartOfSend', () => {
     expect(isPartOfSend({ text: 'hell' }, 'hello')).toBe(false);
     const long = 'x'.repeat(5000);
     expect(isPartOfSend({ text: 'x'.repeat(4000) }, long)).toBe(true);
+  });
+});
+
+describe('groupNameError (SR-38)', () => {
+  it('passes names within 200 UTF-8 bytes, trimmed', () => {
+    expect(groupNameError('Builders')).toBeUndefined();
+    expect(groupNameError(`  ${'中'.repeat(66)}  `)).toBeUndefined();
+  });
+
+  it('refuses names the character cap lets through but the engine would refuse', () => {
+    expect(groupNameError('中'.repeat(67))).toMatch(/too long for the network/);
+    expect(groupNameError('😀'.repeat(51))).toMatch(/too long for the network/);
   });
 });
