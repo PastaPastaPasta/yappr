@@ -59,15 +59,6 @@ export function emptyCopy(filter: MobileFilter): string {
   return FILTERS.find((def) => def.value === filter)?.empty ?? FILTERS[0].empty;
 }
 
-/** The per-type switches of Settings → Notifications (copy §5.10, NOTIF-05). */
-export const TOGGLES: readonly { key: keyof NotificationToggles; label: string; description: string }[] = [
-  { key: 'likes', label: 'Likes', description: 'When someone likes your posts' },
-  { key: 'reposts', label: 'Reposts', description: 'When someone reposts your content' },
-  { key: 'replies', label: 'Replies', description: 'When someone replies to you' },
-  { key: 'follows', label: 'Follows', description: 'When someone follows you' },
-  { key: 'mentions', label: 'Mentions', description: 'When someone mentions you' },
-];
-
 /** One row of the list: a single notification, or the likes of one post grouped (NOTIF-06). */
 export interface NotificationRowModel {
   /** Stable across pages: the newest notification's id, or `likes:<post>` for a group. */

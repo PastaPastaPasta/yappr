@@ -11,11 +11,11 @@ import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { engineSupervisor } from '~/engine';
 import { openPost, openUser } from '~/features/post/post-navigation';
+import { NotificationSettingsScreen } from '~/features/settings/ContentSettingsScreens';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
-import { NotificationSettingsScreen } from './NotificationSettingsScreen';
 import { NotificationsScreen, WINDOWED_FOOTER } from './NotificationsScreen';
 import { POLL_INTERVAL_MS, useNotificationBadge, useNotificationsBadge } from './notifications-data';
 
@@ -520,7 +520,7 @@ describe('Settings → Notifications (NOTIF-05)', () => {
 
     await act(async () => fireEvent.press(screen.getByTestId('notification-toggle-follows')));
     expect(screen.getByLabelText('Follows')).toBeChecked();
-    expect(useToastStore.getState().current?.message).toBe("Couldn't save the setting. Try again.");
+    expect(useToastStore.getState().current?.message).toBe("Couldn't save that setting. Please try again.");
   });
 
   it('undoes a refused change even when the settings can\'t be read again', async () => {

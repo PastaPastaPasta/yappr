@@ -1,24 +1,25 @@
-import type { NotificationDTO, Page, SettingsDTO } from '@engine/api';
+import type { NotificationDTO, Page } from '@engine/api';
 import type { InfiniteData } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import { create } from 'zustand';
 
 import { useEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
+import { useEngineInfiniteQuery } from '~/data/queries';
 import { useViewerId } from '~/data/session';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { useAppActive } from '~/features/home/use-app-active';
 import { queryClient } from '~/state/query-client';
 import { toast } from '~/ui/toast';
 
 import type { MobileFilter } from './notification-model';
-import { useAppActive } from './use-app-active';
 
 /**
  * The notifications data: the list per filter, the tab badge with its
- * foreground poll (NOTIF-03), read marks (NOTIF-04) and the per-type
- * toggles (NOTIF-05). Never persisted (src/data/README.md).
+ * foreground poll (NOTIF-03), and read marks (NOTIF-04). Never persisted
+ * (src/data/README.md). The per-type toggles (NOTIF-05) are saved by
+ * `~/features/settings/settings-data`.
  */
 
 /** NOTIF-03: every 30 s while the app is in the foreground and signed in. */
@@ -112,11 +113,6 @@ export function useNotificationList(filter: MobileFilter, enabled: boolean) {
   );
 }
 
-/** Settings are device-wide (PD-12): the toggles and the NSFW mode the snippets follow. */
-export function useSettings() {
-  return useEngineQuery(queryKeys.settings, (api) => api.settings.get());
-}
-
 /**
  * Marks these ids read in every cached list; returns how many were unread.
  * A list fetch already in flight may have read them unread, so it is
@@ -195,43 +191,5 @@ export async function markAllNotificationsRead(): Promise<void> {
     appendLog('warn', 'host', `Mark all as read failed: ${errorMessage(error)}`);
     toast.error("Couldn't mark notifications as read. Try again.");
     resyncAfterFailedMark();
-  }
-}
-
-type Toggles = SettingsDTO['notificationSettings'];
-
-/** Settles toggle writes in order: only the latest change, overall and per type, lands its answer. */
-let toggleSeq = 0;
-const latestToggle = new Map<keyof Toggles, number>();
-
-function patchToggle(key: keyof Toggles, value: boolean): void {
-  queryClient.setQueryData<SettingsDTO>(queryKeys.settings, (data) =>
-    data ? { ...data, notificationSettings: { ...data.notificationSettings, [key]: value } } : data,
-  );
-}
-
-/**
- * Turns one notification type on or off (NOTIF-05). Applied at once; the
- * lists refetch without (or with) that type, and the engine recounts the
- * badge. A refused change is undone, unless a newer change of that type
- * has replaced it, and the settings are then read again.
- */
-export async function setNotificationToggle(key: keyof Toggles, value: boolean): Promise<void> {
-  const seq = ++toggleSeq;
-  latestToggle.set(key, seq);
-  await queryClient.cancelQueries({ queryKey: queryKeys.settings });
-  const previous = queryClient.getQueryData<SettingsDTO>(queryKeys.settings)?.notificationSettings[key];
-  patchToggle(key, value);
-  try {
-    const next = await engine.api.settings.set({ notificationSettings: { [key]: value } });
-    // A newer change is still on its way; its answer carries this one too.
-    if (seq === toggleSeq) queryClient.setQueryData(queryKeys.settings, next);
-  } catch (error) {
-    appendLog('warn', 'host', `Saving a notification setting failed: ${errorMessage(error)}`);
-    toast.error("Couldn't save the setting. Try again.");
-    if (previous !== undefined && latestToggle.get(key) === seq) patchToggle(key, previous);
-    queryClient.invalidateQueries({ queryKey: queryKeys.settings }).catch(() => undefined);
-  } finally {
-    refetchLists();
   }
 }

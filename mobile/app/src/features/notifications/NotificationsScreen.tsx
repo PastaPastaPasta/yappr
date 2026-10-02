@@ -1,4 +1,3 @@
-import { useNetInfo } from '@react-native-community/netinfo';
 import { FlashList } from '@shopify/flash-list';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
@@ -10,7 +9,10 @@ import { queryKeys } from '~/data/keys';
 import { lastIdentity, useSession } from '~/data/session';
 import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
+import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
+import { useOffline } from '~/features/home/use-app-active';
 import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
+import { useSettings } from '~/features/settings/settings-data';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -40,7 +42,6 @@ import {
   pollNotifications,
   useNotificationBadge,
   useNotificationList,
-  useSettings,
 } from './notifications-data';
 import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
 
@@ -48,18 +49,6 @@ import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
 export const WINDOWED_FOOTER = 'Older replies and quotes may not appear here.';
 const OFFLINE_MESSAGE = "You're offline";
 const REFRESH_FAILED = "Couldn't refresh notifications. Try again.";
-
-function SignedOut() {
-  return (
-    <EmptyState
-      icon={BellIcon}
-      title="Sign in to see your notifications"
-      description="Likes, replies, follows and mentions show up here."
-      action={{ label: 'Sign in', onPress: () => router.push('/sign-in') }}
-      testID="notifications-signed-out"
-    />
-  );
-}
 
 function Loading() {
   return (
@@ -137,7 +126,7 @@ export function NotificationsScreen() {
   const signedIn = status === 'signed-in' || (status === 'unknown' && lastIdentity() !== null);
   const viewerId = identityId ?? (status === 'unknown' ? lastIdentity() : null);
   const { state: engineState } = useEngineStatus();
-  const offline = useNetInfo().isConnected === false;
+  const offline = useOffline();
 
   const settings = useSettings();
   const toggles = settings.data?.notificationSettings;
@@ -202,10 +191,10 @@ export function NotificationsScreen() {
 
   if (!signedIn) {
     return (
-      <Screen scroll>
+      <>
         {header}
-        <SignedOut />
-      </Screen>
+        <SignedOutPlaceholder kind="notifications" />
+      </>
     );
   }
 
