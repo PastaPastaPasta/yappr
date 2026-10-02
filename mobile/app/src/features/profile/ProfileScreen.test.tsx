@@ -1,6 +1,6 @@
 import type { CapabilitiesDTO, ProfileDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
 import { ActionSheetIOS } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
+import { resetBlockDecisions, useAuthorBlocked } from '~/features/safety/block-state';
 import { useToastStore } from '~/ui/toast';
 
 import { ProfileScreen } from './ProfileScreen';
@@ -59,7 +60,7 @@ const profile = (overrides: Partial<ProfileDTO> = {}): ProfileDTO => ({
   pronouns: 'she/her',
   joinedAt: new Date(2026, 9, 1),
   stats: { posts: 1, followers: 3, following: 4 },
-  viewer: { follows: false, blocks: false, isSelf: false },
+  viewer: { follows: false, blocks: false, blockedBy: null, isSelf: false },
   ...overrides,
 });
 
@@ -95,6 +96,8 @@ beforeEach(() => {
   fakeEngine.reset();
   // A write a test left pending would keep its key busy for the next.
   resetWriteTracking();
+  // A block decision a test made would hold for the next (features/safety).
+  resetBlockDecisions();
   queryClient.clear();
   fakeEngine.setStatus({ info: { capabilities: { rankings: true } as CapabilitiesDTO } });
   useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
@@ -177,7 +180,7 @@ describe('ProfileScreen', () => {
   });
 
   it('replaces the tabs with the blocked notice, and unblocks optimistically', async () => {
-    fakeEngine.method('profiles.get').mockResolvedValue(profile({ viewer: { follows: false, blocks: true, isSelf: false } }));
+    fakeEngine.method('profiles.get').mockResolvedValue(profile({ viewer: { follows: false, blocks: true, blockedBy: 'self', isSelf: false } }));
     fakeEngine.method('safety.unblock').mockResolvedValue(ticket({ op: 'unblock', target: { identityId: OTHER } }));
     renderProfile();
     await flush();
@@ -191,10 +194,12 @@ describe('ProfileScreen', () => {
     expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(OTHER);
     expect(screen.queryByText('You blocked this user')).toBeNull();
     expect(screen.getByTestId('profile-tabs')).toBeTruthy();
+    // The shared unblock (features/safety): the author's posts come back everywhere else too.
+    expect(renderHook(() => useAuthorBlocked(OTHER, true)).result.current).toBe(false);
   });
 
   it('brings the blocked notice back when the unblock is refused (a followed block list)', async () => {
-    const blocked = profile({ viewer: { follows: false, blocks: true, isSelf: false } });
+    const blocked = profile({ viewer: { follows: false, blocks: true, blockedBy: 'self', isSelf: false } });
     fakeEngine.method('profiles.get').mockResolvedValue(blocked);
     fakeEngine
       .method('safety.unblock')
@@ -225,7 +230,7 @@ describe('ProfileScreen', () => {
 
   it('shows the own profile with Edit profile and the username card when nameless', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(
-      profile({ id: VIEWER, username: null, usernames: [], hasProfile: false, displayName: 'User yraATc', viewer: { follows: false, blocks: false, isSelf: true } }),
+      profile({ id: VIEWER, username: null, usernames: [], hasProfile: false, displayName: 'User yraATc', viewer: { follows: false, blocks: false, blockedBy: null, isSelf: true } }),
     );
     renderProfile(VIEWER, { ownTab: true });
     await flush();

@@ -16,11 +16,13 @@ import {
 import { queryKeys } from '~/data/keys';
 import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { useRequireAuth } from '~/data/require-auth';
-import { useCapabilities, useSession } from '~/data/session';
+import { lastIdentity, useCapabilities, useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copyText } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
+import { blockWrite, useAuthorBlocked } from '~/features/safety/block-state';
+import { copy as safetyCopy } from '~/features/safety/copy';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
@@ -33,7 +35,6 @@ import { tw, useColors } from '~/ui/tokens';
 
 import { copyProfileLink, messageUser, shareProfile, toggleFollow } from './profile-actions';
 import { initialTab, looksLikeIdentityId, looksLikeName, profileTabs, type ProfileTabSpec } from './profile-format';
-import { unblockWrite } from './profile-writes';
 import { ProfileHeader, ProfileHeaderSkeleton } from './ProfileHeader';
 import { ProfileTopBar, TopBarIcon, useTopBarHeight } from './ProfileTopBar';
 import { useNsfwAcknowledged } from './nsfw-ack';
@@ -281,7 +282,9 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
 
   const name = profile?.displayName ?? '';
   const handle = profile ? handleOf(profile) : '';
-  const blocked = !isSelf && profile?.viewer?.blocks === true;
+  // A block or unblock made on this device counts at once (features/safety); while the session restores, the engine's word.
+  const blockedHere = useAuthorBlocked(profile?.id, profile?.viewer?.blocks);
+  const blocked = !isSelf && (viewerId ? blockedHere : profile?.viewer?.blocks === true);
   const following = profile?.viewer?.follows === true;
   const bannerGated = !isSelf && !following && settings.data?.gateMediaFromNonFollowed === true;
   const nsfwGated =
@@ -315,7 +318,12 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
       ? { id: 'unblock', title: `Unblock ${handle}`, systemImage: 'checkmark.circle' }
       : { id: 'block', title: `Block ${handle}`, systemImage: 'nosign', destructive: true },
   ];
-  const unblock = () => requireAuth(() => sendWrite(unblockWrite, { userId: profileId }, 'User unblocked'));
+  // The shared unblock: it also brings back the author's posts hidden elsewhere (SAFE-02).
+  const unblock = () =>
+    requireAuth(() => {
+      const ownId = viewerId ?? lastIdentity();
+      if (ownId) sendWrite(blockWrite, { viewerId: ownId, userId: profileId, block: false }, safetyCopy.toast.unblocked);
+    });
   const onMenu = (id: string) => {
     if (!profileId) return;
     if (id === 'bookmarks') router.push('/bookmarks');
