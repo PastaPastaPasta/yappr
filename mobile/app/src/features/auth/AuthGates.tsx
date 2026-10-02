@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
 import { lastIdentity, useSession, useSessionStore } from '~/data/session';
+import { setReauthHandler } from '~/data/session-expiry';
 import { engine, engineNetworkKey } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { appendLog, errorMessage } from '~/engine/logs';
@@ -13,7 +14,7 @@ import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
-import { returnFromAddAccount, useAccounts } from './accounts';
+import { reauthenticate, returnFromAddAccount, useAccounts } from './accounts';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
@@ -106,6 +107,24 @@ function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   }, [ready, engineUp, status]);
 }
 
+/**
+ * "Sign in again" (AUTH-14): the data layer's write controls and toasts open
+ * this flow; it ends once that account is signed in again.
+ */
+function useReauthFlow(): void {
+  const { identityId } = useSession();
+  useEffect(
+    () =>
+      setReauthHandler((id) => {
+        reauthenticate(id).catch(() => undefined);
+      }),
+    [],
+  );
+  useEffect(() => {
+    if (identityId !== null && useAccounts.getState().reauth === identityId) useAccounts.setState({ reauth: null });
+  }, [identityId]);
+}
+
 /** Switching or adding an account restarts the engine; say so over everything until it is back. */
 function AccountTransitionOverlay() {
   const transition = useAccounts((s) => s.transition);
@@ -142,6 +161,7 @@ export function AuthGates() {
   useSignInExit(pathname);
   useResumeWalletSignIn(ready, pathname);
   useInboundLinkEffects(ready);
+  useReauthFlow();
   return (
     <>
       <AccountSwitcherSheet />

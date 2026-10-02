@@ -2,6 +2,7 @@ import type { AccountDTO, SessionDTO } from '@engine/api';
 import { router } from 'expo-router';
 
 import { useSessionStore } from '~/data/session';
+import { isSessionExpired, markSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
 import { useToastStore } from '~/ui/toast';
 
@@ -9,6 +10,7 @@ import {
   accountName,
   addAccount,
   finishWalletSwitch,
+  reauthenticate,
   returnFromAddAccount,
   signOutAccount,
   switchAccount,
@@ -60,7 +62,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   fakeEngine.reset();
   useSessionStore.setState({ status: 'signed-in', session: session('alice'), accounts: [account('alice', true), account('bob')] });
-  useAccounts.setState({ transition: null, returnTo: null });
+  useAccounts.setState({ transition: null, returnTo: null, reauth: null });
+  useExpiredSessions.setState({ ids: [] });
   useToastStore.setState({ current: null });
   useOnboarding.setState({ welcomed: true });
 });
@@ -118,6 +121,54 @@ it('adds an account: parks the current one, restarts signed out, opens sign-in, 
   await flush();
   expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
   expect(useAccounts.getState().returnTo).toBeNull();
+});
+
+it('signs an account in again: parks it, restarts signed out, opens sign-in aimed at it (AUTH-14)', async () => {
+  markSessionExpired('alice');
+  fakeEngine.method('session.prepareAddAccount').mockResolvedValue(undefined);
+  bootsAs(null);
+
+  const preparing = reauthenticate('alice');
+  expect(useAccounts.getState().transition).toEqual({ kind: 'add', label: 'Getting ready to sign in again…' });
+  await preparing;
+  expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
+  expect(restart).toHaveBeenCalledWith('Signing in again');
+  expect(router.push).toHaveBeenCalledWith('/sign-in');
+  expect(useAccounts.getState()).toMatchObject({ transition: null, returnTo: 'alice', reauth: 'alice' });
+
+  // Abandoned: back to the account as it was, still marked.
+  fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+  bootsAs(session('alice'));
+  returnFromAddAccount();
+  await flush();
+  expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+  expect(useAccounts.getState()).toMatchObject({ returnTo: null, reauth: null });
+  expect(isSessionExpired('alice')).toBe(true);
+});
+
+it('signed out, signs an account in again with no engine restart', async () => {
+  useSessionStore.setState({ status: 'signed-out', session: null, accounts: [account('alice')] });
+  await reauthenticate('alice');
+  expect(fakeEngine.method('session.prepareAddAccount')).not.toHaveBeenCalled();
+  expect(restart).not.toHaveBeenCalled();
+  expect(router.push).toHaveBeenCalledWith('/sign-in');
+  expect(useAccounts.getState().reauth).toBe('alice');
+});
+
+it('says so when signing in again could not start', async () => {
+  fakeEngine.method('session.prepareAddAccount').mockRejectedValue(new Error('RESTART_REQUIRED'));
+  await reauthenticate('alice');
+  expect(router.push).not.toHaveBeenCalled();
+  expect(useToastStore.getState().current?.message).toBe("Couldn't start signing in again. Please try again.");
+  expect(useAccounts.getState().reauth).toBeNull();
+});
+
+it('forgets the "Sign in again" mark of an account signed out', async () => {
+  markSessionExpired('bob');
+  fakeEngine.method('session.signOut').mockResolvedValue(undefined);
+  fakeEngine.method('session.accounts').mockResolvedValue([account('alice', true)]);
+  await signOutAccount('bob');
+  expect(isSessionExpired('bob')).toBe(false);
 });
 
 it('signs out the active account and moves to the next one (AUTH-11)', async () => {

@@ -16,6 +16,8 @@ export const copy = {
   signin: {
     title: 'Sign in with your Dash wallet',
     subtitle: 'Approve one request in your wallet. Your keys never leave it.',
+    /** AUTH-14: the flow opened for an account whose stored key no longer signs. */
+    reauth: (name: string) => `Your session as ${name} has expired. Sign in again with its wallet or key.`,
     openWallet: 'Open wallet',
     otherDevice: 'Use a wallet on another device',
     other: 'Other ways to sign in',
@@ -102,6 +104,10 @@ export const copy = {
     addFailed: "Couldn't start adding an account. Please try again.",
     empty: 'No accounts on this device yet.',
     signOut: 'Sign out',
+    /** AUTH-14: an account whose stored key no longer signs. */
+    signInAgain: 'Sign in again',
+    reauthing: 'Getting ready to sign in again…',
+    reauthFailed: "Couldn't start signing in again. Please try again.",
   },
   signout: {
     title: (name: string) => `Sign out of ${name}?`,

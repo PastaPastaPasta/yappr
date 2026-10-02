@@ -280,6 +280,15 @@ export function createSessionModule(options: SessionModuleOptions) {
     return registry.activeIdentityId() === null && registry.get(identityId)?.savedSession !== undefined
   }
 
+  /**
+   * The account the host is signing in again (PRD AUTH-14: its stored key no
+   * longer signs), set by the latest `startKeyExchange`. Its saved keys are
+   * the broken ones, so the wallet's answer for it logs in afresh instead of
+   * switching back to them. Kept in memory only: a request resumed after an
+   * app restart switches as any other parked account does.
+   */
+  let reauthTarget: string | null = null
+
   const keyExchange = createKeyExchange<SessionDTO>({
     controller,
     storage,
@@ -288,8 +297,9 @@ export function createSessionModule(options: SessionModuleOptions) {
       return exclusive(async () => {
         // The wallet answered for an account parked here: switch to it with its saved keys. Logging
         // in again would put them at risk: a failed login-key login clears the identity's keys by
-        // name, and the host then purges the parked account's secrets it never hydrated.
-        if (isParked(identityId)) {
+        // name, and the host then purges the parked account's secrets it never hydrated. Unless the
+        // user is signing that account in again: those keys are what no longer works.
+        if (isParked(identityId) && identityId !== reauthTarget) {
           await switchNow(identityId)
           return { status: 'switch', identityId }
         }
@@ -384,9 +394,16 @@ export function createSessionModule(options: SessionModuleOptions) {
       return exclusiveSignIn(verified.identityId, () => controller.loginWithAuthKey(verified.identityId, verified.wif, { skipUsernameCheck: true }), 'key')
     },
 
-    async startKeyExchange(): Promise<KeyExchangeRequestDTO> {
+    /**
+     * A wallet sign-in request. `reauth`: the identity being signed in again
+     * (AUTH-14), parked by `prepareAddAccount`; the wallet's answer for it
+     * logs in with the new key rather than switching to its saved one.
+     */
+    async startKeyExchange(opts: { reauth?: string | null } = {}): Promise<KeyExchangeRequestDTO> {
       assertUsable()
       await restored()
+      if (opts.reauth != null && typeof opts.reauth !== 'string') throw new RpcError('reauth must be an identity ID', 'BAD_REQUEST')
+      reauthTarget = opts.reauth ?? null
       return keyExchange.start()
     },
 

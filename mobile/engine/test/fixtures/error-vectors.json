@@ -668,16 +668,16 @@
       }
     },
     {
-      "name": "expired identity key is not a timeout",
+      "name": "expired identity key is not a timeout: the account signs in again (AUTH-14)",
       "error": {
         "message": "Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)"
       },
       "expect": {
-        "code": "UNKNOWN",
+        "code": "KEY_REVOKED",
         "consensusCode": null,
-        "outcome": "unknown",
+        "outcome": "refused",
         "retryable": false,
-        "state": "unconfirmed",
+        "state": "failed",
         "userMessage": "Failed to create post: Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)"
       }
     },
@@ -779,6 +779,54 @@
         "retryable": false,
         "state": "failed",
         "userMessage": "Failed to create post: Current credits balance 1200 is not enough to pay 91300000 fee"
+      }
+    },
+    {
+      "name": "signing key disabled (PublicKeyIsDisabledError 20006)",
+      "error": {
+        "name": "PublicKeyIsDisabledError",
+        "message": "Identity key 2 is disabled",
+        "code": 20006
+      },
+      "expect": {
+        "code": "KEY_REVOKED",
+        "consensusCode": 20006,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Identity key 2 is disabled"
+      }
+    },
+    {
+      "name": "signing key no longer on the identity (MissingPublicKeyError 20003)",
+      "error": {
+        "name": "MissingPublicKeyError",
+        "message": "Public key 2 doesn't exist",
+        "code": 20003
+      },
+      "expect": {
+        "code": "KEY_REVOKED",
+        "consensusCode": 20003,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Public key 2 doesn't exist"
+      }
+    },
+    {
+      "name": "signing key expired (PublicKeyExpiredError 20016)",
+      "error": {
+        "name": "PublicKeyExpiredError",
+        "message": "Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)",
+        "code": 20016
+      },
+      "expect": {
+        "code": "KEY_REVOKED",
+        "consensusCode": 20016,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "Failed to create post: Identity public key 2 expired at 1790000000000 ms and can no longer sign (block time 1790000000001 ms)"
       }
     },
     {

@@ -471,6 +471,32 @@ describe('key exchange (dash-key:) with a stubbed chain', () => {
     expect(localStorage.getItem(`yappr_secure_pk_${identityId}`)).toBe(savedKey)
   })
 
+  it('logs a parked account in again when the host is signing it in again (AUTH-14)', async () => {
+    const loginKey = crypto.getRandomValues(new Uint8Array(32))
+    const identityId = walletIdentity(loginKey, true)
+    const first = await session.startKeyExchange()
+    await walletApproves(first.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(first.requestId, { waitMs: 1 })).toMatchObject({ status: 'signed-in' })
+    // Its stored key stopped working; the host parks it and asks the wallet again.
+    localStorage.setItem(`yappr_secure_pk_${identityId}`, 'broken')
+
+    await session.prepareAddAccount()
+    session = boot()
+    expect(await session.restore()).toBeNull()
+    const login = vi.spyOn(auth.PlatformAuthController.prototype, 'completeYapprKeyExchangeLogin')
+    const request = await session.startKeyExchange({ reauth: identityId })
+    await walletApproves(request.uri, identityId, loginKey)
+    expect(await session.awaitKeyExchange(request.requestId, { waitMs: 1 })).toMatchObject({
+      status: 'signed-in',
+      session: { identityId },
+    })
+    expect(login).toHaveBeenCalledTimes(1)
+    login.mockRestore()
+    expect(localStorage.getItem(`yappr_secure_pk_${identityId}`)).not.toBe('broken')
+    expect(await session.accounts()).toEqual([expect.objectContaining({ identityId, active: true })])
+    await expect(session.startKeyExchange({ reauth: 42 as unknown as string })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
   it('cancels a waiting poll', async () => {
     const request = await session.startKeyExchange()
     const waiting = session.awaitKeyExchange(request.requestId, { waitMs: 5_000 })

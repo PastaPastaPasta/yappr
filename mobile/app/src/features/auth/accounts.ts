@@ -3,6 +3,7 @@ import { router } from 'expo-router';
 import { create } from 'zustand';
 
 import { useSessionStore } from '~/data/session';
+import { clearSessionExpired } from '~/data/session-expiry';
 import { engine, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { handleOf } from '~/ui/handle';
@@ -29,9 +30,11 @@ interface AccountsState {
   transition: AccountTransition | null;
   /** While adding an account: the account to return to if the sign-in is abandoned. */
   returnTo: string | null;
+  /** While signing an account in again (AUTH-14): that account. Its sign-in logs in afresh, never switches. */
+  reauth: string | null;
 }
 
-export const useAccounts = create<AccountsState>()(() => ({ transition: null, returnTo: null }));
+export const useAccounts = create<AccountsState>()(() => ({ transition: null, returnTo: null, reauth: null }));
 
 /** The engine can take a while to boot (wasm, SDK, contracts). */
 const RESTART_TIMEOUT_MS = 90_000;
@@ -149,27 +152,53 @@ function runSwitch(
 }
 
 /**
- * Add another account: park the current one, restart the engine signed out,
- * then open the sign-in flow. Abandoning the sign-in switches back
- * (`returnFromAddAccount`). Signed out, this is just the sign-in flow.
+ * Park the current account, restart the engine signed out, then open the
+ * sign-in flow; abandoning it switches back (`returnFromAddAccount`).
+ * Signed out, this is just the sign-in flow.
  */
-export async function addAccount(): Promise<void> {
+async function signInBesideCurrent({
+  label,
+  failed,
+  reauth,
+}: {
+  label: string;
+  failed: string;
+  reauth: string | null;
+}): Promise<void> {
   const from = useSessionStore.getState().session?.identityId ?? null;
   if (!from) {
+    useAccounts.setState({ reauth });
     router.push('/sign-in');
     return;
   }
-  await withTransition({ kind: 'add', label: copy.accounts.adding }, async () => {
+  await withTransition({ kind: 'add', label }, async () => {
     try {
       await engine.api.session.prepareAddAccount();
-      if (await restartEngine('Adding an account')) throw new Error('The engine restored an account');
-      useAccounts.setState({ returnTo: from });
+      if (await restartEngine(reauth ? 'Signing in again' : 'Adding an account')) {
+        throw new Error('The engine restored an account');
+      }
+      useAccounts.setState({ returnTo: from, reauth });
       router.push('/sign-in');
     } catch (error) {
-      appendLog('warn', 'host', `Preparing to add an account failed: ${errorMessage(error)}`);
-      toast.error(copy.accounts.addFailed);
+      appendLog('warn', 'host', `Preparing to sign in failed: ${errorMessage(error)}`);
+      toast.error(failed);
     }
   });
+}
+
+/** Add another account (AUTH-10). */
+export function addAccount(): Promise<void> {
+  return signInBesideCurrent({ label: copy.accounts.adding, failed: copy.accounts.addFailed, reauth: null });
+}
+
+/**
+ * Sign an account in again (AUTH-14: its stored key no longer signs), by
+ * wallet or key: the sign-in flow with that account parked, whose sign-in
+ * stores the new key instead of switching back to the old one. Abandoning
+ * it returns to the account that was active, still marked "Sign in again".
+ */
+export function reauthenticate(identityId: string): Promise<void> {
+  return signInBesideCurrent({ label: copy.accounts.reauthing, failed: copy.accounts.reauthFailed, reauth: identityId });
 }
 
 /**
@@ -178,8 +207,8 @@ export async function addAccount(): Promise<void> {
  */
 export function returnFromAddAccount(): void {
   const { returnTo } = useAccounts.getState();
+  useAccounts.setState({ returnTo: null, reauth: null });
   if (!returnTo) return;
-  useAccounts.setState({ returnTo: null });
   const { status, accounts } = useSessionStore.getState();
   if (status !== 'signed-out') return;
   const account = accounts.find((a) => a.identityId === returnTo) ?? { identityId: returnTo, username: null };
@@ -202,6 +231,7 @@ export async function signOutAccount(identityId: string): Promise<boolean> {
       toast.error(copy.signout.failed);
       return false;
     }
+    clearSessionExpired(identityId);
     const remaining = await refreshAccounts().catch(() => useSessionStore.getState().accounts);
     const others = remaining.filter((a) => a.identityId !== identityId);
     if (others.length === 0) setWelcomed(false);

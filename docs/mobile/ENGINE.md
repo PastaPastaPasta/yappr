@@ -544,7 +544,7 @@ interface EngineInfo {
 | `current` | `() => Promise<SessionDTO \| null>` | `controller.getState()` (`vendor/platform-auth/src/core/controller.ts:86`) |
 | `restore` | `() => Promise<SessionDTO \| null>` | `controller.restoreSession()` (:175), run at boot. It validates the stored key with `storedKeyBelongsToIdentity` (`lib/auth/session-key.ts:21`). |
 | `signInWithKey` *(sensitiveArgs)* | `(input: { key: string }) => Promise<SessionDTO>` | Accepts **WIF or hex**:<br>• `parsePrivateKey` (`lib/crypto/wif.ts:126`). Unlike web, hex is accepted: `key-login-form.tsx:34` sends hex down the password path.<br>• `validateWifNetwork` against `keyNetwork()` (`lib/constants.ts:282`).<br>• `identityService.getIdentityIdByPublicKeyHash` (`lib/services/identity-service.ts:147`).<br>• `keyValidationService.validatePrivateKey` (`lib/services/key-validation-service.ts:107`) / `matchIdentityKey` (`lib/crypto/keys.ts:138`), requiring an enabled AUTH key at CRITICAL or HIGH.<br>• `controller.loginWithAuthKey` (:221) with `skipUsernameCheck: true`. Mobile has no username gate in 1.0; DPNS registration links out to web. |
-| `startKeyExchange` | `() => Promise<KeyExchangeRequestDTO>` | `generateYapprEphemeralKeyPair` (`yappr-protocol.ts:55`), `controller.getYapprKeyExchangeConfig` (:106), `buildYapprKeyExchangeUri` (`yappr-protocol.ts:193`). The ephemeral private key stays in engine memory, keyed by `requestId`. |
+| `startKeyExchange` | `(opts?: { reauth?: string \| null }) => Promise<KeyExchangeRequestDTO>` | `generateYapprEphemeralKeyPair` (`yappr-protocol.ts:55`), `controller.getYapprKeyExchangeConfig` (:106), `buildYapprKeyExchangeUri` (`yappr-protocol.ts:193`). The ephemeral private key stays in engine memory, keyed by `requestId`. `reauth` names a parked account being signed in again (PRD AUTH-14): the wallet's answer for it logs in with the new key instead of switching back to its saved one. |
 | `awaitKeyExchange` | `(requestId: string) => Promise<KeyExchangeResultDTO>` | `controller.pollYapprKeyExchangeResponse` (:125), honouring cancel. Then `controller.checkYapprKeysRegistered` (:149). If the keys are registered, `controller.completeYapprKeyExchangeLogin` (:167) → `loginWithLoginKey` (:436). Otherwise it returns `needs-registration`. This ports the state machine in `useYapprKeyExchangeLogin` (`yappr-hooks.tsx:82`). |
 | `cancelKeyExchange` | `(requestId: string) => Promise<void>` | aborts the poll; wipes the ephemeral key (`clearSensitiveBytes`, `yappr-protocol.ts:146`) |
 | `awaitKeyRegistration` | `(requestId: string) => Promise<SessionDTO>` | Polls `checkYapprKeysRegistered` every 5 s until 300 s, then signs in. This ports `useYapprKeyRegistration` (`yappr-hooks.tsx:284,423`). The `dash-st:` URI comes from `buildYapprUnsignedKeyRegistrationTransition` (:159) → `buildUnsignedKeyRegistrationTransition` (`lib/services/identity-update-builder.ts:136`) → `buildYapprStateTransitionUri` (`yappr-protocol.ts:276`), and is returned inside `needs-registration`. |
@@ -860,7 +860,7 @@ type EngineErrorCode =
   | 'ENGINE_TIMEOUT' | 'ENGINE_RESTARTED' | 'ENGINE_UNAVAILABLE' | 'ENGINE_BUSY' | 'ENGINE_VARIANT_MISMATCH'
   | 'ABORTED' | 'BAD_REQUEST' | 'BAD_CURSOR' | 'NOT_SUPPORTED' | 'NOT_SIGNED_IN' | 'NOT_RETRYABLE' | 'CODEC'
   // session
-  | 'KEY_INVALID' | 'KEY_WRONG_NETWORK' | 'KEY_NOT_ON_IDENTITY' | 'IDENTITY_NOT_FOUND' | 'NO_KEY'
+  | 'KEY_INVALID' | 'KEY_WRONG_NETWORK' | 'KEY_NOT_ON_IDENTITY' | 'IDENTITY_NOT_FOUND' | 'NO_KEY' | 'KEY_REVOKED'
   | 'KEY_EXCHANGE_TIMEOUT' | 'KEY_EXCHANGE_CANCELLED' | 'KEY_REGISTRATION_TIMEOUT'
   // writes (classify(), from lib/error-utils.ts predicates)
   | 'MODERATION_BARRED' | 'MODERATION_NOT_SEATED' | 'TOO_LONG' | 'RULE_VIOLATION' | 'ALREADY_CLAIMED'
@@ -917,6 +917,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 | # | Predicate | Code | Effect |
 | --- | --- | --- | --- |
 | 21a | "Insufficient identity … balance … required …" / "credits balance … is not enough to pay" (`IdentityInsufficientBalanceError`, `BalanceIsNotEnoughError`; `categorizeError` has no branch) | `INSUFFICIENT_CREDITS` | `failed`, not retryable; the app shows PRD G-5's copy |
+| 21b | The signing key was refused: 20006 `PublicKeyIsDisabledError` ("Identity key … is disabled"), 20003 `MissingPublicKeyError` ("Public key … doesn't exist"), 20016 `PublicKeyExpiredError` (`categorizeError` has no branch) | `KEY_REVOKED` | `failed`, not retryable; the app marks the account "Sign in again" (PRD AUTH-14) |
 | 21b | `fromBoolean(false)`'s stand-in error (lib's boolean services swallow theirs) | `UNKNOWN`, outcome `refused` | `failed`, retryable, as web rolls it back. A delete's `false` (`deleteOwnPost`, `deleteOwnReply`) may hide a send whose wait gave no verdict, so the write's probe decides first: still there → this row; proved gone → `confirmed`; unreadable → `unconfirmed` |
 | 22 | `isDuplicateUniqueIndexError` :968 (40105) | `DUPLICATE` | `failed`; the v10 repost path recovers the existing slot (§6.3 `engage`) |
 | 23 | `isAlreadyExistsError` :116 (no consensus code) | `DUPLICATE` | `unconfirmed`, outcome `unknown`: the broadcast probably landed |

@@ -1475,6 +1475,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | lock.title | Yappr is locked |
 | lock.unlock | Unlock |
 | session.expired | Your session has expired. Please sign in again. (web says "log in") |
+| accounts.signInAgain | Sign in again **(AUTH-14: the account-list mark, the write-control sheet's title and button)** |
+| accounts.reauthing | Getting ready to sign in again… |
+| accounts.reauthFailed | Couldn't start signing in again. Please try again. |
+| signin.reauth | Your session as @{name} has expired. Sign in again with its wallet or key. |
+| signInPrompt.reauthBody | Your session has expired. Please sign in again. You can keep browsing in the meantime. |
 
 ### 5.2 Home
 

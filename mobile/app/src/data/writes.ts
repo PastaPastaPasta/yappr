@@ -13,6 +13,8 @@ import { isOffline } from './connectivity';
 import { onEngineEvent } from './events';
 import type { EngineRemote } from './queries';
 import { promptSignIn } from './require-auth';
+import { useSessionStore } from './session';
+import { SESSION_EXPIRED_MESSAGE, failedForSession, markSessionExpired, signInAgain } from './session-expiry';
 
 /** Writes: tickets, rollback and toasts. The rules are in src/data/README.md ("Writes"). */
 
@@ -260,17 +262,26 @@ function settle(ticket: WriteTicket): void {
       spec.onConfirmed?.(ticket, entry.vars);
       if (latest) release(entry.key, true);
       return;
-    case 'failed':
+    case 'failed': {
       // Final unless the engine allows a retry.
       if (!ticket.retryable) tracked.delete(ticket.id);
+      // The account's stored key no longer signs (AUTH-14): mark it "Sign in again", whichever write said so.
+      const expired = failedForSession(ticket) ? (ticket.identityId ?? useSessionStore.getState().session?.identityId ?? null) : null;
+      if (expired) markSessionExpired(expired);
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
       if (!latest) return;
       undo(entry);
       spec.onFailed?.(ticket, entry.vars);
-      fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
+      if (expired) {
+        // A retry would fail the same way: signing in again is the way forward.
+        fail(SESSION_EXPIRED_MESSAGE, { label: 'Sign in', onPress: () => signInAgain(expired) });
+      } else {
+        fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
+      }
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
       return;
+    }
     case 'unconfirmed':
       if (!latest) return;
       if (ticket.retryable) {

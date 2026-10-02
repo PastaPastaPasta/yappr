@@ -12,7 +12,9 @@ import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { engineSupervisor } from '~/engine';
+import { useExpiredSessions } from '~/data/session-expiry';
 import { useAccounts } from '~/features/auth/accounts';
+import { AccountList } from '~/features/auth/AccountSwitcher';
 import { useAppearance } from '~/state/appearance';
 import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
@@ -110,7 +112,8 @@ beforeEach(() => {
   fakeEngine.setStatus({ state: 'ready', epoch: 1, info: { capabilities: { dm: 'v5' } as CapabilitiesDTO } });
   useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [account(ALICE, 'alice.dash', true)] });
   useToastStore.setState({ current: null });
-  useAccounts.setState({ transition: null, returnTo: null });
+  useAccounts.setState({ transition: null, returnTo: null, reauth: null });
+  useExpiredSessions.setState({ ids: [] });
   useAppearance.setState({ theme: 'system' });
   fakeEngine.method('settings.get').mockResolvedValue(SETTINGS);
   fakeEngine.method('profiles.get').mockResolvedValue(null);
@@ -478,6 +481,22 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(toastMessage()).toBe('Switched to @bob');
     expect(router.navigate).not.toHaveBeenCalled();
     expect(useAccounts.getState().transition).toBeNull();
+  });
+
+  it('marks an account whose key stopped working "Sign in again", and opens its sign-in on tap (AUTH-14)', async () => {
+    useExpiredSessions.setState({ ids: [ALICE] });
+    const accounts = [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)];
+    fakeEngine.method('session.prepareAddAccount').mockReturnValue(new Promise(() => undefined));
+    renderScreen(<AccountList accounts={accounts} manage />);
+    await settle();
+
+    expect(byId(`account-${ALICE}-sign-in-again`)).toHaveTextContent('Sign in again');
+    expect(byId(`account-${ALICE}`)).toHaveAccessibleName(/, Sign in again$/);
+    expect(screen.queryByTestId(`account-${BOB}-sign-in-again`)).toBeNull();
+    await act(async () => fireEvent.press(byId(`account-${ALICE}`)));
+    expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
+    expect(useAccounts.getState().transition?.label).toBe('Getting ready to sign in again…');
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
   });
 
   it('links to the accounts on this device, and to app lock', async () => {

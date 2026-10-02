@@ -12,6 +12,7 @@ import TermsGateScreen from '~/app/terms-gate';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
+import { useAccounts } from './accounts';
 import { useKeyExchange } from './key-exchange';
 import { useTermsStore } from './terms';
 
@@ -48,6 +49,7 @@ beforeEach(() => {
   fakeEngine.reset();
   useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
   useTermsStore.setState({ accepted: {} });
+  useAccounts.setState({ reauth: null });
 });
 afterEach(() => jest.useRealTimers());
 
@@ -142,6 +144,25 @@ describe('private key sign-in (AUTH-08)', () => {
 
     expect(screen.getByText('Switch to this account')).toBeTruthy();
   });
+
+  it('signs an account being signed in again in with the new key, never switching back to its old one (AUTH-14)', async () => {
+    useAccounts.setState({ reauth: alice.identityId });
+    useSessionStore.setState({
+      accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
+    });
+    fakeEngine.method('session.checkKey').mockResolvedValue({ identityId: alice.identityId, username: 'alice', keyId: 2, securityLevel: 2 });
+    fakeEngine.method('session.signInWithKey').mockResolvedValue(alice);
+    render(<KeySignInScreen />);
+    fireEvent.changeText(screen.getByTestId('key-input'), KEY);
+    await act(async () => {
+      jest.advanceTimersByTime(400);
+    });
+
+    expect(screen.queryByText('Switch to this account')).toBeNull();
+    await act(async () => fireEvent.press(screen.getByTestId('key-sign-in')));
+    expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  });
 });
 
 describe('sign-in methods (AUTH-03, AUTH-05)', () => {
@@ -154,6 +175,19 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     expect(screen.queryByTestId('sign-in-open-wallet')).toBeNull();
     fireEvent.press(screen.getByTestId('sign-in-other-device'));
     expect(router.push).toHaveBeenCalledWith('/sign-in/qr');
+  });
+
+  it('says whose session expired when signing an account in again (AUTH-14)', async () => {
+    jest.spyOn(Linking, 'canOpenURL').mockResolvedValue(true);
+    useAccounts.setState({ reauth: alice.identityId });
+    useSessionStore.setState({
+      accounts: [{ identityId: alice.identityId, username: 'alice.dash', method: 'key', lastUsedAt: new Date(), active: false }],
+    });
+    render(<SignInScreen />);
+    await act(async () => {});
+    expect(screen.getByTestId('sign-in-reauth')).toHaveTextContent(
+      'Your session as @alice has expired. Sign in again with its wallet or key.',
+    );
   });
 
   it('leads with "Open wallet" when a wallet handles dash-key:, and hides the private key under "Other ways"', async () => {
