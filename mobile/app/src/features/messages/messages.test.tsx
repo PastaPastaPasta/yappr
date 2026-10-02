@@ -1,7 +1,7 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
-import { Alert, Platform } from 'react-native';
+import { Alert, AppState, Platform, type AppStateStatus } from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -298,6 +298,27 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('hey, coming?')).toBeTruthy();
     expect(fakeEngine.method('dm.open')).toHaveBeenCalledWith(KEY);
     expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+  });
+
+  it('marks messages that arrive in the background read only once the app is back (SR-19)', async () => {
+    const listeners: ((state: AppStateStatus) => void)[] = [];
+    const spy = jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
+      listeners.push(listener as (state: AppStateStatus) => void);
+      return { remove: jest.fn() } as unknown as ReturnType<typeof AppState.addEventListener>;
+    });
+    try {
+      await openConversation();
+      await act(async () => listeners.forEach((listener) => listener('background')));
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, unread: 1 })]);
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations });
+      });
+      expect(fakeEngine.method('dm.markRead')).not.toHaveBeenCalled();
+      await act(async () => listeners.forEach((listener) => listener('active')));
+      expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('keeps the conversation out of Android Recents and screenshots while it is open', async () => {

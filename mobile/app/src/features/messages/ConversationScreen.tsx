@@ -42,6 +42,7 @@ import { DmLocked } from './DmStates';
 import { takeDraft, useDraft, useDrafts } from './drafts';
 import { forgetLanded, mergeOutbox, resolveFailed, sendInBackground, useOutboxFor } from './outbox';
 import { UnlockSheet } from './UnlockSheet';
+import { useAppActive } from './use-app-active';
 
 /** Hides the tab bar while this screen is focused (UX_SPEC §4.20). */
 function useHiddenTabBar(): void {
@@ -164,10 +165,12 @@ export function ConversationScreen() {
     return () => openConversation(null);
   }, [focused, ready, key]);
 
+  // Read only while the user can see it: Android delivers new messages to a backgrounded app (NET-08).
+  const active = useAppActive();
   const unread = conversation?.unread ?? 0;
   useEffect(() => {
-    if (focused && ready && unread > 0) markConversationRead(key);
-  }, [focused, ready, unread, key]);
+    if (focused && active && ready && unread > 0) markConversationRead(key);
+  }, [focused, active, ready, unread, key]);
 
   const merged = useMemo(() => mergeOutbox(chronological(messages.items), outbox), [messages.items, outbox]);
   useEffect(() => forgetLanded(merged.landed), [merged.landed]);

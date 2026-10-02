@@ -270,14 +270,19 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     },
 
     /**
-     * Background: resolve once the self-state flush lib starts on `pagehide`
-     * is done (a flush queues behind it). Active: poll now, not at the next tick.
+     * Background: stop polling (Android keeps the WebView's timers running,
+     * and nothing but the DM flush may run there, PRD NET-08), and resolve
+     * once the self-state flush lib starts on `pagehide` is done (a flush
+     * queues behind it). Active: poll now, and on the cadence again.
      */
     async lifecycle(state: AppLifecycleState): Promise<void> {
       const running = current?.engine
       if (!running) return
-      if (state === 'background') await running.flush()
-      if (state === 'active') running.tick().catch(error => logger.warn('DM v5 poll failed:', error))
+      if (state === 'background') {
+        running.pause()
+        await running.flush()
+      }
+      if (state === 'active') running.resume().catch(error => logger.warn('DM v5 poll failed:', error))
     },
 
     async status(identityId: string): Promise<DmStatusDTO> {

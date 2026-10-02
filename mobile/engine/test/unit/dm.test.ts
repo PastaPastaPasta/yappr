@@ -180,13 +180,18 @@ describe('dm on DM v5: session lifecycle', () => {
     expect(user.local.getItem(`yappr_dm_v5:${bob}`)).not.toBeNull()
   })
 
-  it('saves the self-state before a background lifecycle resolves', async () => {
+  it('stops polling in the background and saves the self-state before it resolves; polls again on return (SR-19)', async () => {
     const user = await ready(userOn(ledgerNow(), alice))
-    const flush = vi.spyOn(user.engine(), 'flush')
+    const engine = user.engine()
+    const flush = vi.spyOn(engine, 'flush')
+    const pause = vi.spyOn(engine, 'pause')
     await user.hooks.lifecycle('background')
+    expect(pause).toHaveBeenCalledTimes(1)
     expect(flush).toHaveBeenCalledTimes(1)
-    const tick = vi.spyOn(user.engine(), 'tick')
+    const resume = vi.spyOn(engine, 'resume')
+    const tick = vi.spyOn(engine, 'tick')
     await user.hooks.lifecycle('active')
+    expect(resume).toHaveBeenCalledTimes(1)
     expect(tick).toHaveBeenCalledTimes(1)
   })
 
