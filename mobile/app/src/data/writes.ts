@@ -350,6 +350,8 @@ function runQueued(waiting: Waiting): Promise<WriteResult> {
 /** Sends a write; `waiting.undo` set means its optimistic change is already applied. */
 async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
+  // A ticket the call made is no older than the call (a timeout answers long after the engine made it).
+  const calledAt = Date.now();
   const done = markSubmitting(key, spec.intent?.(vars));
   let revert = waiting.undo;
   try {
@@ -364,7 +366,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
     if (OUTCOME_UNKNOWN.has(errorCode(error) ?? '')) {
       // It may have run (PRD G-3): keep the change, say nothing, and follow the ticket the engine restores.
       appendLog('warn', 'host', `Write cut short: ${errorMessage(error)}`);
-      orphans.push({ spec, vars, key, undo: revert, at: Date.now() });
+      orphans.push({ spec, vars, key, undo: revert, at: calledAt });
       done();
       release(key, true);
       return { status: 'unknown', error };

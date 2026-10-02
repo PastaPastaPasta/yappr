@@ -302,10 +302,12 @@ describe('Conversation (DM-03, DM-04)', () => {
 
   it('marks messages that arrive in the background read only once the app is back (SR-19)', async () => {
     const listeners: ((state: AppStateStatus) => void)[] = [];
-    const spy = jest.spyOn(AppState, 'addEventListener').mockImplementation((_type, listener) => {
-      listeners.push(listener as (state: AppStateStatus) => void);
-      return { remove: jest.fn() } as unknown as ReturnType<typeof AppState.addEventListener>;
-    });
+    // Swapped, not spied: jest-expo's AppState is a mock whose restore would drop its implementation.
+    const original = AppState.addEventListener;
+    AppState.addEventListener = ((_type: string, listener: (state: AppStateStatus) => void) => {
+      listeners.push(listener);
+      return { remove: () => undefined };
+    }) as unknown as typeof AppState.addEventListener;
     try {
       await openConversation();
       await act(async () => listeners.forEach((listener) => listener('background')));
@@ -316,8 +318,10 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(fakeEngine.method('dm.markRead')).not.toHaveBeenCalled();
       await act(async () => listeners.forEach((listener) => listener('active')));
       expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+      rendered?.unmount();
+      rendered = null;
     } finally {
-      spy.mockRestore();
+      AppState.addEventListener = original;
     }
   });
 
@@ -508,6 +512,54 @@ describe('Conversation (DM-03, DM-04)', () => {
     fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
     await act(async () => {});
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(restored.id);
+  });
+
+  it('puts the text of a send the engine never took back in the composer, once it has no ticket for it (SR-16)', async () => {
+    await openConversation();
+    fakeEngine.method('dm.send').mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'did it go?');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    fakeEngine.method('writes.list').mockResolvedValue([]);
+
+    // Just cut short: the engine may still make its ticket.
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(useToastStore.getState().current?.message).toBe('Still checking. Tap again in a moment.');
+    expect(screen.getByTestId('dm-composer').props.value).toBe('');
+
+    // Later, still no ticket: it never went out.
+    jest.setSystemTime(Date.now() + 61_000);
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+    expect(screen.queryByText('Not confirmed · Tap to check')).toBeNull();
+    expect(useToastStore.getState().current?.message).toBe("This message wasn't sent. It's back in the message box.");
+  });
+
+  it('puts back only the parts a long send did not deliver when it fails part way (SR-18)', async () => {
+    await openConversation();
+    const first = 'a'.repeat(4081);
+    const rest = `${'b'.repeat(4081)}${'c'.repeat(10)}`;
+    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    fireEvent.changeText(screen.getByTestId('dm-composer'), `${first}${rest}`);
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    // The first part landed, then the send was refused for good.
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValue(page([dmMessage('p1', { text: first, own: true, sender: VIEWER, at: new Date() }), theirs]));
+    await act(async () => {
+      fakeEngine.emit(
+        'write.status',
+        advance(sent, { state: 'failed', retryable: false, error: { code: 'FEE_UNPAYABLE', userMessage: 'No credits.' } as never }),
+      );
+    });
+    await act(async () => {});
+    fireEvent.press(screen.getByText('Failed · Tap to edit'));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-composer').props.value).toBe(rest);
   });
 
   it('shows the empty conversation copy', async () => {

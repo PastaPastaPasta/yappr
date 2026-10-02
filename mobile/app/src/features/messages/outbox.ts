@@ -4,13 +4,14 @@ import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import { checkWrite, errorCode, retryWrite, runWrite, type WriteSpec } from '~/data/writes';
+import { adoptRestoredWrites, checkWrite, errorCode, retryWrite, runWrite, type WriteSpec } from '~/data/writes';
+import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
 import { lightImpact } from '~/ui/haptics';
 import { toast } from '~/ui/toast';
 
-import { isPartOfSend, type OutboxStatus, type TimelineMessage } from './dm-model';
+import { chronological, isPartOfSend, type OutboxStatus, type TimelineMessage } from './dm-model';
 import { useDrafts } from './drafts';
 
 /**
@@ -185,13 +186,75 @@ export async function resolveFailed(entryId: string): Promise<void> {
     return;
   }
   if (entry.state === 'unconfirmed') {
-    // No ticket to check (the engine never answered): the message list shows whether it went out.
+    await resolveUnticketed(entry);
+    return;
+  }
+  remove(entry.id);
+  // A long send refused part way: only the parts that did not go out come back (the rest is in the conversation).
+  useDrafts.getState().restore(entry.identityId, entry.key, unsentText(entry));
+}
+
+/** A cut-short call's ticket is made as the call reaches the engine: not before it (clock skew). */
+const TICKET_SKEW_MS = 5_000;
+/**
+ * How long a cut-short send may still get its ticket: the engine keeps
+ * running a call the host stopped waiting for (its reads before submitting).
+ */
+export const UNTICKETED_WAIT_MS = 60_000;
+
+/**
+ * "Tap to check" on a send whose call was cut short before it answered with
+ * a ticket (SR-16). The ticket the engine made is followed from here; when
+ * the engine has none for it, the send never started, so its text goes back
+ * to the composer (PRD G-4).
+ */
+async function resolveUnticketed(entry: OutboxEntry): Promise<void> {
+  let tickets: WriteTicket[];
+  try {
+    // Follows the send's ticket, if the engine made one (`onAdopted`).
+    await adoptRestoredWrites();
+    tickets = await engine.api.writes.list();
+  } catch (error) {
+    appendLog('warn', 'host', `Checking a message failed: ${errorMessage(error)}`);
+    toast.error("Couldn't check. Try again in a moment.");
+    return;
+  }
+  const current = useOutbox.getState().entries.find((e) => e.id === entry.id);
+  if (!current) return;
+  if (current.ticketId) {
+    const ticket = await checkWrite(current.ticketId);
+    if (ticket) applyTicket(current.id, ticket);
+    return;
+  }
+  const followed = new Set(useOutbox.getState().entries.map((e) => e.ticketId));
+  const unclaimed = tickets.some(
+    (t) =>
+      sendSpec.matches?.(t, { entryId: entry.id, key: entry.key, text: entry.text }) === true &&
+      new Date(t.createdAt).getTime() >= entry.createdAt - TICKET_SKEW_MS &&
+      !followed.has(t.id),
+  );
+  if (unclaimed || Date.now() - entry.createdAt < UNTICKETED_WAIT_MS) {
     queryClient.invalidateQueries({ queryKey: queryKeys.dm.messages(entry.key) }).catch(() => undefined);
-    toast("Still checking. If it doesn't show, send it again.");
+    toast('Still checking. Tap again in a moment.');
     return;
   }
   remove(entry.id);
   useDrafts.getState().restore(entry.identityId, entry.key, entry.text);
+  toast("This message wasn't sent. It's back in the message box.");
+}
+
+/**
+ * The part of a send's text that is not in the conversation: all of it,
+ * unless a long send failed after its first parts went out.
+ */
+function unsentText(entry: OutboxEntry): string {
+  const data = queryClient.getQueryData<{ pages: { items: MessageDTO[] }[] }>(queryKeys.dm.messages(entry.key));
+  const before = new Set(entry.before);
+  const mine = chronological((data?.pages ?? []).flatMap((page) => page.items)).filter(
+    (m) => m.own && !before.has(m.id) && m.at.getTime() >= entry.after,
+  );
+  const { cursor } = partsOfSend(mine, entry.text);
+  return entry.text.trim().slice(cursor);
 }
 
 /** Forgets every local send and draft (sign-out): their plaintext must not outlive the session. */
@@ -220,21 +283,29 @@ const CLAIM_ORDER: Record<OutboxState, number> = { confirmed: 0, sending: 1, unc
 /**
  * The engine messages that make up a send of `text`: the same text, or for a
  * send v5 split into parts, parts that put together give the whole text.
- * `complete` is false while a part is missing (one landed, a later one failed).
+ * `complete` is false while a part is missing (one landed, a later one
+ * failed); `cursor` is where the text the parts cover ends.
  */
-function partsOfSend(candidates: readonly TimelineMessage[], text: string): { taken: TimelineMessage[]; complete: boolean } {
+function partsOfSend(
+  candidates: readonly TimelineMessage[],
+  text: string,
+): { taken: TimelineMessage[]; complete: boolean; cursor: number } {
   const sent = text.trim();
   const pool = candidates.filter((m) => isPartOfSend(m, text));
   const taken: TimelineMessage[] = [];
+  const at = (cursor: number) => pool.findIndex((m) => m.text.length > 0 && sent.startsWith(m.text, cursor));
   let cursor = 0;
   while (cursor < sent.length) {
-    const index = pool.findIndex((m) => m.text.length > 0 && sent.startsWith(m.text, cursor));
+    let index = at(cursor);
+    // A retry sends the rest of a long text trimmed, so a part may start past the spaces at the cut.
+    const spaces = /^\s*/.exec(sent.slice(cursor))?.[0].length ?? 0;
+    if (index < 0 && spaces > 0) index = at((cursor += spaces));
     if (index < 0) break;
     const [part] = pool.splice(index, 1);
     taken.push(part);
     cursor += part.text.length;
   }
-  return { taken, complete: cursor === sent.length };
+  return { taken, complete: cursor === sent.length, cursor };
 }
 
 /** A send the engine's own messages now show, and the messages that are it. */
