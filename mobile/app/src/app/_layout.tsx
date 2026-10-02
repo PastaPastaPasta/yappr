@@ -10,7 +10,9 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { SignInPromptHost } from '~/data/require-auth';
 import { startDataLayer } from '~/data/sync';
+import { setHydrationGate } from '~/engine';
 import { EngineHost } from '~/engine/EngineHost';
+import { untilUnlocked } from '~/features/auth/app-lock';
 import { AuthGates } from '~/features/auth/AuthGates';
 import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
@@ -31,6 +33,9 @@ export const unstable_settings = { anchor: '(tabs)' };
 SplashScreen.preventAutoHideAsync().catch(() => {
   // Already hidden (fast refresh); nothing to keep up.
 });
+
+// With the app lock on, the engine reads no keys until the owner unlocks (ENGINE.md §9.2).
+setHydrationGate(untilUnlocked);
 
 /**
  * Full-screen root modals. Not `fullScreenModal`: on iOS that presents with

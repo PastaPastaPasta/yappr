@@ -28,9 +28,22 @@ const SNAPSHOT_WARN_CHARS = 8_000_000;
 
 let nextSimulation: Simulation | null = null;
 
+/** Resolves when the engine may read its secrets; the app lock holds it until unlocked. */
+let hydrationGate: () => Promise<void> = () => Promise.resolve();
+
+/**
+ * Hold every engine boot's secret hydration on `gate` (ENGINE.md §9.2: the
+ * app lock authenticates before secrets are read). Set once, before the
+ * engine host mounts.
+ */
+export function setHydrationGate(gate: () => Promise<void>): void {
+  hydrationGate = gate;
+}
+
 export const engineSupervisor = new EngineSupervisor<EngineLoad>({
   platform: Platform.OS === 'ios' ? 'ios' : 'android',
   async prepare() {
+    await hydrationGate();
     await engineStorage.open();
     const snapshot = await engineStorage.snapshot();
     const { snapshotChars } = engineStorage.stats();
