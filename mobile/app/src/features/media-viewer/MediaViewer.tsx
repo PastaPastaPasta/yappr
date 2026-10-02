@@ -37,14 +37,23 @@ import { clampOffset, fittedSize, settlePage, shouldDismiss, MAX_ZOOM, DOUBLE_TA
 const WHITE = colors.white;
 const SPRING = { damping: 20, stiffness: 220, mass: 0.6 } as const;
 
-/** The post the viewer was opened from, found in the cache, else read. */
+/**
+ * The post the viewer was opened from, found in the cache, else read. The
+ * card that opened the viewer already holds the media; likes on it update
+ * optimistically. lib answers a failed read as "absent", so a read that
+ * finds nothing never replaces a copy this device already holds.
+ */
 function useViewerPost(postId: string) {
-  return useEngineQuery<PostDTO | null>(queryKeys.post.detail(postId), (api) => api.posts.get(postId), {
-    enabled: postId.length > 0,
-    // The card that opened the viewer already holds the media; likes on it update optimistically.
-    // No refetch at open: lib answers a failed read as "absent", which would blank the viewer.
-    initialData: () => findCachedPost(postId),
-  });
+  return useEngineQuery<PostDTO | null>(
+    queryKeys.post.detail(postId),
+    async (api) => (await api.posts.get(postId)) ?? findCachedPost(postId) ?? null,
+    {
+      enabled: postId.length > 0,
+      initialData: () => findCachedPost(postId),
+      // The entry may exist without data (a detail screen's seed slot): show the cached copy meanwhile.
+      placeholderData: () => findCachedPost(postId),
+    },
+  );
 }
 
 interface PageProps {
@@ -58,6 +67,8 @@ interface PageProps {
   width: number;
   height: number;
   onSize: (index: number, size: { width: number; height: number }) => void;
+  /** Next / previous item for screen readers; set on the current item when there are several. */
+  onStep?: (by: 1 | -1) => void;
 }
 
 /** One item, fitted to the screen; the current one carries the zoom and pan. */
@@ -72,6 +83,7 @@ const ViewerPage = memo(function ViewerPage({
   width,
   height,
   onSize,
+  onStep,
 }: PageProps) {
   const { media: resolve } = useMediaUrls();
   const [failed, setFailed] = useState(false);
@@ -131,8 +143,17 @@ const ViewerPage = memo(function ViewerPage({
   return (
     <View
       accessible
-      accessibilityRole="image"
+      accessibilityRole={onStep ? 'adjustable' : 'image'}
       accessibilityLabel={label}
+      accessibilityActions={
+        onStep
+          ? [
+              { name: 'increment', label: 'Next image' },
+              { name: 'decrement', label: 'Previous image' },
+            ]
+          : undefined
+      }
+      onAccessibilityAction={onStep ? (e) => onStep(e.nativeEvent.actionName === 'increment' ? 1 : -1) : undefined}
       style={{ width, height }}
       className="items-center justify-center"
     >
@@ -434,13 +455,7 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
       />
       <GestureDetector gesture={gesture}>
         <Animated.View
-          style={[{ flexDirection: 'row', width: width * count, height }, stripStyle]}
-          accessibilityActions={[
-            { name: 'increment', label: 'Next image' },
-            { name: 'decrement', label: 'Previous image' },
-          ]}
-          onAccessibilityAction={(e) => step(e.nativeEvent.actionName === 'increment' ? 1 : -1)}
-        >
+          style={[{ flexDirection: 'row', width: width * count, height }, stripStyle]}>
           {items.map((media, i) => (
             <ViewerPage
               key={`${i}:${media.url}`}
@@ -454,6 +469,7 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
               width={width}
               height={height}
               onSize={onSize}
+              onStep={count > 1 && i === index ? step : undefined}
             />
           ))}
         </Animated.View>

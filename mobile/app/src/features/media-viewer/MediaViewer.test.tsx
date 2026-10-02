@@ -72,9 +72,42 @@ describe('MediaViewer', () => {
     await act(async () => {});
 
     expect(screen.getByText('3 / 4')).toBeTruthy();
-    expect(screen.getAllByRole('image')).toHaveLength(4);
+    // The current item is the screen reader's adjustable element; the others are plain images.
+    expect(screen.getAllByRole('image')).toHaveLength(3);
+    const current = screen.getByRole('adjustable');
+    fireEvent(current, 'accessibilityAction', { nativeEvent: { actionName: 'increment' } });
+    expect(screen.getByText('4 / 4')).toBeTruthy();
+    fireEvent(screen.getByRole('adjustable'), 'accessibilityAction', { nativeEvent: { actionName: 'decrement' } });
+    expect(screen.getByText('3 / 4')).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Close image'));
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('keeps a seeded post on screen when its re-read finds nothing', async () => {
+    const post = POSTS.fourImages;
+    // `openPost` seeds the detail as stale, so the viewer re-reads it; lib answers a failed read as `null`.
+    queryClient.setQueryData(queryKeys.post.detail(post.id), post, { updatedAt: 0 });
+    fakeEngine.method('posts.get').mockResolvedValue(null);
+    renderViewer(post.id);
+    await act(async () => {});
+
+    expect(fakeEngine.method('posts.get')).toHaveBeenCalled();
+    expect(screen.getByText('1 / 4')).toBeTruthy();
+    expect(screen.queryByText('Image unavailable')).toBeNull();
+  });
+
+  it('shows a post cached elsewhere while its empty detail entry loads', async () => {
+    const post = POSTS.fourImages;
+    queryClient.setQueryData(queryKeys.post.thread(post.id), {
+      pages: [{ focus: post, ancestors: [], removedAncestorIds: [], replies: { items: [], cursor: null, hasMore: false } }],
+      pageParams: [null],
+    });
+    // A detail screen's seed slot: the entry exists, without data.
+    queryClient.getQueryCache().build(queryClient, { queryKey: queryKeys.post.detail(post.id) });
+    fakeEngine.method('posts.get').mockReturnValue(new Promise(() => undefined));
+    renderViewer(post.id);
+    await act(async () => {});
+    expect(screen.getByText('1 / 4')).toBeTruthy();
   });
 
   it('shares the image URL and likes the post optimistically', async () => {
