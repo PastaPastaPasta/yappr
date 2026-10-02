@@ -26,6 +26,11 @@ vi.mock('@/lib/secure-storage', async (load) => ({ ...await load<object>(), stor
 const { createEngineStorage, installEngineStorage } = await import('../../src/shims/storage')
 installEngineStorage(createEngineStorage())
 const { createDmModule } = await import('../../src/api/dm')
+const { storePrivateKey } = await import('@/lib/secure-storage')
+const { privateKeyToWif } = await import('@/lib/crypto/wif')
+const { deriveEncryptionKey } = await import('@/lib/crypto/key-derivation')
+// lib's secret store keeps nothing without `window` (set after the imports: DM code listens on a real one).
+Object.assign(globalThis, { window: globalThis })
 const { createTicketStore } = await import('../../src/writes/tickets')
 
 const encryptionKey = (id: number, priv: Uint8Array) => ({ id, purpose: 1, type: 0, securityLevel: 2, data: getPublicKey(priv) })
@@ -35,7 +40,7 @@ identity.publicKeys = [
   encryptionKey(5, BOB_PRIV),
 ]
 
-function unlocker() {
+function unlocker(unhydrated?: ReadonlySet<string>) {
   const storage = { getItem: () => null, setItem: () => undefined }
   const tickets = createTicketStore({ storage, emit: () => undefined, currentIdentity: () => alice, documentExists: async () => true })
   const dm = createDmModule({
@@ -44,6 +49,7 @@ function unlocker() {
     backend: 'v5',
     v5Source: { engineFor: () => null, release: () => undefined },
     viewer: () => alice,
+    unhydrated,
   })
   return dm.api
 }
@@ -61,5 +67,24 @@ describe('dm.unlock with a typed key on an identity with two encryption keys', (
     const dm = unlocker()
     expect(await dm.unlock({ key: bytesToHex(ALICE_PRIV) })).toMatchObject({ unlocked: true })
     expect(storeEncryptionKey).toHaveBeenCalledWith(alice, bytesToHex(ALICE_PRIV))
+  })
+})
+
+describe('dm.unlock deriving the key from the sign-in key', () => {
+  const authKey = BOB_PRIV.map(b => b ^ 7)
+  beforeEach(() => {
+    storeEncryptionKey.mockClear()
+    storePrivateKey(alice, privateKeyToWif(authKey, 'testnet'))
+    identity.publicKeys = [encryptionKey(4, deriveEncryptionKey(authKey, alice))]
+  })
+
+  it('derives and stores it when it matches the identity', async () => {
+    expect(await unlocker().unlock()).toMatchObject({ unlocked: true })
+    expect(storeEncryptionKey).toHaveBeenCalledTimes(1)
+  })
+
+  it('never derives for an account whose stored secrets this engine was not given (AUTH-14)', async () => {
+    expect(await unlocker(new Set([alice])).unlock()).toEqual({ unlocked: false, reason: 'not-derivable' })
+    expect(storeEncryptionKey).not.toHaveBeenCalled()
   })
 })

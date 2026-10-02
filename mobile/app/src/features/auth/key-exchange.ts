@@ -2,12 +2,13 @@ import type { KeyExchangeRequestDTO, KeyExchangeResultDTO, KeyToRegister, Sessio
 import { Linking } from 'react-native';
 import { create } from 'zustand';
 
+import { useExpiredSessions } from '~/data/session-expiry';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { syncStorage } from '~/state/storage';
 
-import { finishWalletSwitch, reauthTarget } from './accounts';
+import { finishWalletSwitch, loadSignedInAgain } from './accounts';
 import { copy } from './copy';
 import { isTransient, walletErrorText } from './errors';
 import { networkName } from './onboarding';
@@ -106,7 +107,19 @@ function failed(error: unknown, retry: 'start' | 'poll' | 'registration', regist
   return { name: 'error', title: copy.signin.failed, message: walletErrorText(error, networkName), retry, registration };
 }
 
-async function handleStep(gen: number, step: KeyExchangeResultDTO, requestId: string): Promise<void> {
+/** The accounts marked "Sign in again", read before a call that may sign one in (which clears its mark). */
+const markedNow = () => useExpiredSessions.getState().ids;
+
+/**
+ * `marked`: the accounts marked "Sign in again" before the call that
+ * answered `step`. Signing one in again restarts the engine into it.
+ */
+async function handleStep(
+  gen: number,
+  step: KeyExchangeResultDTO,
+  requestId: string,
+  marked: readonly string[],
+): Promise<void> {
   // The engine has already put a switch's account in place and refuses every session call until it
   // restarts, so a newer poll of the same request (a return to the app) cannot answer in its stead:
   // keep the switch. Only a cancel or a different request drops it.
@@ -117,7 +130,16 @@ async function handleStep(gen: number, step: KeyExchangeResultDTO, requestId: st
     return;
   }
   if (step.status === 'signed-in') {
-    set({ phase: { name: 'signed-in', session: step.session }, request: null });
+    let { session } = step;
+    if (marked.includes(session.identityId)) {
+      // AUTH-14: the engine restarts into the account to load its other stored keys. Busy
+      // meanwhile, with nothing to poll (the request is spent), as for a switch below.
+      const reloadGen = next();
+      set({ phase: { name: 'starting' }, request: null });
+      session = await loadSignedInAgain(session);
+      if (stale(reloadGen)) return;
+    }
+    set({ phase: { name: 'signed-in', session }, request: null });
     return;
   }
   if (step.status === 'switch') {
@@ -150,8 +172,9 @@ async function handleStep(gen: number, step: KeyExchangeResultDTO, requestId: st
 async function poll(gen: number, request: KeyExchangeRequestDTO, superseded = 0): Promise<void> {
   set({ phase: { name: 'waiting', request }, request });
   try {
+    const marked = markedNow();
     const step = await engine.api.session.awaitKeyExchange(request.requestId, { waitMs: POLL_MS });
-    await handleStep(gen, step, request.requestId);
+    await handleStep(gen, step, request.requestId, marked);
   } catch (error) {
     if (stale(gen)) return;
     const code = errorCode(error);
@@ -185,8 +208,8 @@ export async function startKeyExchange(
   let request: KeyExchangeRequestDTO;
   try {
     const pending = resume ? await engine.api.session.pendingKeyExchange() : null;
-    // Signing an account in again (AUTH-14): the wallet's answer for it logs in, never switches back.
-    request = pending ?? (await engine.api.session.startKeyExchange({ reauth: reauthTarget() }));
+    // Accounts marked "Sign in again" (AUTH-14): the wallet's answer for one logs in, never switches back.
+    request = pending ?? (await engine.api.session.startKeyExchange({ reauth: markedNow() }));
     // Cancelled while the request was being made: abandon it, or the next launch would resume it.
     if (stale(gen) && get().phase.name === 'idle') abandon(request);
   } catch (error) {
@@ -239,11 +262,12 @@ async function waitForRegistration(
   for (;;) {
     set({ phase: { name: 'registering', ...phase, slow } });
     try {
+      const marked = markedNow();
       const step = await engine.api.session.awaitKeyRegistration(phase.request.requestId, {
         waitMs: REGISTRATION_SLICE_MS,
       });
       if (step.status !== 'pending') {
-        await handleStep(gen, step, phase.request.requestId);
+        await handleStep(gen, step, phase.request.requestId, marked);
         return;
       }
       if (stale(gen)) return;

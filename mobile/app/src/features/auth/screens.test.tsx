@@ -13,12 +13,17 @@ import { useSessionStore } from '~/data/session';
 import { markSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
-import { useAccounts } from './accounts';
+import { loadSignedInAgain, useAccounts } from './accounts';
 import { useKeyExchange } from './key-exchange';
 import { useTermsStore } from './terms';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 jest.mock('expo-web-browser', () => ({ openBrowserAsync: jest.fn(async () => ({ type: 'opened' })) }));
+// The restart after signing an account in again is covered in accounts.test.ts.
+jest.mock('./accounts', () => ({
+  ...jest.requireActual<typeof import('./accounts')>('./accounts'),
+  loadSignedInAgain: jest.fn(async (session: unknown) => session),
+}));
 const mockGoBack = jest.fn();
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), canGoBack: () => true },
@@ -82,6 +87,7 @@ describe('private key sign-in (AUTH-08)', () => {
     });
     expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
     expect(mockGoBack).toHaveBeenCalled();
+    expect(loadSignedInAgain).not.toHaveBeenCalled();
   });
 
   it('keeps the key out of screenshots while the screen is open', () => {
@@ -147,25 +153,38 @@ describe('private key sign-in (AUTH-08)', () => {
     expect(screen.getByText('Switch to this account')).toBeTruthy();
   });
 
-  it('signs an account being signed in again in with the new key, never switching back to its old one (AUTH-14)', async () => {
-    markSessionExpired(alice.identityId);
-    useAccounts.setState({ reauth: alice.identityId });
-    useSessionStore.setState({
-      accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
-    });
-    fakeEngine.method('session.checkKey').mockResolvedValue({ identityId: alice.identityId, username: 'alice', keyId: 2, securityLevel: 2 });
-    fakeEngine.method('session.signInWithKey').mockResolvedValue(alice);
-    render(<KeySignInScreen />);
-    fireEvent.changeText(screen.getByTestId('key-input'), KEY);
-    await act(async () => {
-      jest.advanceTimersByTime(400);
-    });
+  it.each([
+    ['being signed in again', true],
+    ['added with "Add account"', false],
+  ])(
+    'signs a marked account %s in with the new key, never switching back to its old one, then reloads it (AUTH-14)',
+    async (_flow, reauthFlow) => {
+      markSessionExpired(alice.identityId);
+      // The plain "Add account" flow has no target: the mark alone decides.
+      useAccounts.setState({ reauth: reauthFlow ? alice.identityId : null });
+      useSessionStore.setState({
+        accounts: [{ identityId: alice.identityId, username: 'alice', method: 'key', lastUsedAt: new Date(), active: false }],
+      });
+      fakeEngine.method('session.checkKey').mockResolvedValue({ identityId: alice.identityId, username: 'alice', keyId: 2, securityLevel: 2 });
+      fakeEngine.method('session.signInWithKey').mockImplementation(async () => {
+        // The sign-in's session.changed clears the mark before the answer arrives.
+        useExpiredSessions.setState({ ids: [] });
+        return alice;
+      });
+      render(<KeySignInScreen />);
+      fireEvent.changeText(screen.getByTestId('key-input'), KEY);
+      await act(async () => {
+        jest.advanceTimersByTime(400);
+      });
 
-    expect(screen.queryByText('Switch to this account')).toBeNull();
-    await act(async () => fireEvent.press(screen.getByTestId('key-sign-in')));
-    expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
-    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
-  });
+      expect(screen.queryByText('Switch to this account')).toBeNull();
+      await act(async () => fireEvent.press(screen.getByTestId('key-sign-in')));
+      expect(fakeEngine.method('session.signInWithKey')).toHaveBeenCalledWith({ key: KEY });
+      expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+      expect(loadSignedInAgain).toHaveBeenCalledWith(alice);
+      expect(mockGoBack).toHaveBeenCalled();
+    },
+  );
 });
 
 describe('sign-in methods (AUTH-03, AUTH-05)', () => {

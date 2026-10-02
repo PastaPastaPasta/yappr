@@ -12,6 +12,8 @@ export type EngineErrorCode =
   // Platform refused the signing key: disabled, no longer on the identity, or expired (PRD AUTH-14)
   | 'KEY_REVOKED'
   | 'KEY_EXCHANGE_TIMEOUT' | 'KEY_EXCHANGE_CANCELLED' | 'KEY_REGISTRATION_TIMEOUT'
+  // a wallet sign-in whose derived auth key is disabled on the identity (PRD AUTH-14)
+  | 'KEY_DISABLED'
   // writes (classify(), from lib/error-utils.ts predicates)
   | 'MODERATION_BARRED' | 'MODERATION_NOT_SEATED' | 'TOO_LONG' | 'RULE_VIOLATION' | 'ALREADY_CLAIMED'
   | 'PARENT_TOO_YOUNG' | 'PARENT_UNCONFIRMED' | 'FEE_UNPAYABLE' | 'FEE_SHARE_MISMATCH' | 'EXPIRED' | 'CONTEST'

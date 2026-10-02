@@ -10,8 +10,8 @@ import {
   accountName,
   addAccount,
   finishWalletSwitch,
+  loadSignedInAgain,
   reauthenticate,
-  reauthTarget,
   returnFromAddAccount,
   startReauthTracking,
   signOutAccount,
@@ -165,12 +165,8 @@ it('says so when signing in again could not start', async () => {
   expect(useAccounts.getState().reauth).toBeNull();
 });
 
-it('honours a sign-in-again target only while its account is marked, and drops it on a sign-in or switch', () => {
+it('drops the sign-in-again target on a sign-in or switch', () => {
   useAccounts.setState({ reauth: 'alice' });
-  expect(reauthTarget()).toBeNull();
-  markSessionExpired('alice');
-  expect(reauthTarget()).toBe('alice');
-
   const stop = startReauthTracking();
   try {
     fakeEngine.emit('session.changed', { session: session('alice'), reason: 'restored' });
@@ -183,6 +179,27 @@ it('honours a sign-in-again target only while its account is marked, and drops i
   } finally {
     stop();
   }
+});
+
+it('after signing an account in again, restarts into it so its other stored keys load (AUTH-14)', async () => {
+  useSessionStore.setState({ status: 'signed-in', session: session('bob', 'bob'), accounts: [account('alice'), account('bob', true)] });
+  const restored = { ...session('bob', 'bob'), hasEncryptionKey: true };
+  bootsAs(restored);
+
+  const loading = loadSignedInAgain(session('bob', 'bob'));
+  expect(useAccounts.getState().transition).toEqual({ kind: 'reload', label: 'Signing in as @bob…' });
+  await expect(loading).resolves.toEqual(restored);
+  expect(restart).toHaveBeenCalledWith('Signed in again');
+  // No switch to prepare: the engine already has the account in its slot.
+  expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  expect(useAccounts.getState().transition).toBeNull();
+  expect(useToastStore.getState().current).toBeNull();
+});
+
+it('keeps the signed-in session when the restart after signing in again fails', async () => {
+  bootsAs(null);
+  await expect(loadSignedInAgain(session('alice'))).resolves.toEqual(session('alice'));
+  expect(useAccounts.getState().transition).toBeNull();
 });
 
 it('forgets the "Sign in again" mark of an account signed out', async () => {

@@ -76,6 +76,8 @@ interface Request {
   requestId: string
   uri: string
   expiresAt: number
+  /** The accounts whose answer logs in afresh, never as a switch (`start`'s `reauth`). */
+  reauth: readonly string[]
   ephemeralKey: Uint8Array
   pubKeyHash: Uint8Array
   approval?: Approval
@@ -86,14 +88,19 @@ interface StoredRequest {
   requestId: string
   uri: string
   expiresAt: number
+  /** Kept with the request, so a request resumed by a restarted engine still signs these in afresh. */
+  reauth?: string[]
   ephemeralKeyHex: string
 }
 
 export interface KeyExchangeOptions<S> {
   controller: PlatformAuthController
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
-  /** Sign in with the wallet's login key (the controller's `completeYapprKeyExchangeLogin` plus the engine's bookkeeping). */
-  complete(identityId: string, loginKey: Uint8Array, keyIndex: number): Promise<KeyExchangeDone<S>>
+  /**
+   * Sign in with the wallet's login key (the controller's `completeYapprKeyExchangeLogin` plus the
+   * engine's bookkeeping). `reauth`: the request named this identity in `start`'s `reauth`.
+   */
+  complete(identityId: string, loginKey: Uint8Array, keyIndex: number, context: { reauth: boolean }): Promise<KeyExchangeDone<S>>
   now?(): number
   newId?(): string
 }
@@ -123,6 +130,12 @@ function isCancellation(error: unknown): boolean {
 }
 
 const cancelledError = () => new RpcError('Sign-in was cancelled', 'KEY_EXCHANGE_CANCELLED')
+
+/** `complete` refused the approval outright (an account is already signed in, the wallet's key is disabled): retrying it cannot help. */
+const REFUSED_CODES: ReadonlySet<string> = new Set(['BAD_REQUEST', 'KEY_DISABLED'])
+
+const identityList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : []
 
 const toRequestDTO = (request: Request): KeyExchangeRequestDTO =>
   ({ requestId: request.requestId, uri: request.uri, expiresAt: new Date(request.expiresAt) })
@@ -181,6 +194,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
       requestId: stored.requestId,
       uri: stored.uri,
       expiresAt: stored.expiresAt,
+      reauth: identityList(stored.reauth),
       ephemeralKey,
       pubKeyHash: hash160(getYapprPublicKey(ephemeralKey)),
     }
@@ -211,7 +225,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
     if (finishing) return finishing
     // A copy: `cancel`/`start` may wipe the approval while the sign-in still uses its key.
     const loginKey = approval.loginKey.slice()
-    finishing = options.complete(approval.identityId, loginKey, approval.keyIndex)
+    finishing = options.complete(approval.identityId, loginKey, approval.keyIndex, { reauth: request.reauth.includes(approval.identityId) })
       .finally(() => clearSensitiveBytes(loginKey))
       .then(
         (done): KeyExchangeStep<S> => {
@@ -220,8 +234,8 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         },
         (error: unknown) => {
           finishing = null
-          // Refused outright (an account is already signed in): nothing to retry, so the keys go now.
-          if (error instanceof RpcError && error.code === 'BAD_REQUEST') wipe(request)
+          // Refused outright: nothing to retry, so the keys go now.
+          if (error instanceof RpcError && REFUSED_CODES.has(error.code)) wipe(request)
           throw error
         },
       )
@@ -258,8 +272,11 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
   }
 
   return {
-    /** A new `dash-key:` request. Any earlier request is abandoned (one sign-in at a time). */
-    start(): KeyExchangeRequestDTO {
+    /**
+     * A new `dash-key:` request. Any earlier request is abandoned (one sign-in at a time).
+     * `reauth`: identities whose answer `complete` is told to log in afresh; persisted with the request.
+     */
+    start({ reauth = [] }: { reauth?: readonly string[] } = {}): KeyExchangeRequestDTO {
       const previous = current()
       if (previous) wipe(previous)
       const config = controller.getYapprKeyExchangeConfig()
@@ -272,6 +289,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
           label: config.label,
         }, config.network),
         expiresAt: now() + REQUEST_LIFETIME_MS,
+        reauth: [...reauth],
         ephemeralKey: ephemeral.privateKey,
         pubKeyHash: hash160(ephemeral.publicKey),
       }
@@ -281,6 +299,7 @@ export function createKeyExchange<S>(options: KeyExchangeOptions<S>) {
         requestId: request.requestId,
         uri: request.uri,
         expiresAt: request.expiresAt,
+        reauth: [...reauth],
         ephemeralKeyHex: bytesToHex(ephemeral.privateKey),
       }
       storage.setItem(PENDING_REQUEST_KEY, JSON.stringify(stored))

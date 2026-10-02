@@ -4,7 +4,7 @@ import { Pressable, View } from 'react-native';
 import { EllipsisHorizontalIcon, PlusIcon } from 'react-native-heroicons/outline';
 import { create } from 'zustand';
 
-import { useSession } from '~/data/session';
+import { useSession, useSessionStore } from '~/data/session';
 import { isSessionExpired } from '~/data/session-expiry';
 import { cn } from '~/lib-allowlist';
 import { showActionSheet } from '~/ui/action-sheet';
@@ -51,8 +51,12 @@ function AddAccountRow({ onPress }: { onPress: () => void }) {
 
 /**
  * The accounts on this device with "Add account" (AUTH-10). Tapping an
- * account switches to it, or for one marked "Sign in again" (AUTH-14) opens
- * its sign-in. With `manage`, each row has a menu to sign it out.
+ * account switches to it, even one marked "Sign in again" (AUTH-14: reads
+ * keep working, and its write controls ask to sign in again); its "Sign in
+ * again" button, or tapping it while it is the current one, opens its
+ * sign-in. A marked account that cannot be opened (its key is gone from the
+ * device) goes to its sign-in instead. With `manage`, each row has a menu
+ * to sign it out.
  */
 export function AccountList({
   accounts,
@@ -73,8 +77,24 @@ export function AccountList({
           testID={`account-${account.identityId}`}
           onPress={() => {
             onDone?.();
-            if (isSessionExpired(account.identityId)) reauthenticate(account.identityId).catch(() => undefined);
-            else if (!account.active) switchAccount(account).catch(() => undefined);
+            const { identityId } = account;
+            if (!account.active) {
+              const marked = isSessionExpired(identityId);
+              const from = useSessionStore.getState().session?.identityId ?? null;
+              // A marked account whose key is gone cannot restore: its sign-in instead, and back to
+              // `from` if that is abandoned (the failed switch left nobody signed in).
+              switchAccount(account, { quiet: marked })
+                .then(async (switched) => {
+                  if (!switched && marked) await reauthenticate(identityId, { returnTo: from });
+                })
+                .catch(() => undefined);
+            } else if (isSessionExpired(identityId)) {
+              reauthenticate(identityId).catch(() => undefined);
+            }
+          }}
+          onSignInAgain={() => {
+            onDone?.();
+            reauthenticate(account.identityId).catch(() => undefined);
           }}
           trailing={
             manage ? (

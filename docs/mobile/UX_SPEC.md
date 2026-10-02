@@ -1263,6 +1263,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
   1. "Identity ID" (monospace value, 2 lines, copy `IconButton`), "Usernames" (each name as a row; "Register a username on yap.pr" link row), "Account created".
   2. "Balance" (DASH value `body.strong` tabular, credits below in `caption`, refresh `IconButton`), "YAPP" (where shown).
   3. "Accounts" › (switcher list screen: rows with `xl` avatars, check on current, "Add account"), "App lock" › (switch + timeout radio rows).
+     - An account marked "Sign in again" (AUTH-14) has an outline `sm` "Sign in again" button beside its row, which opens its sign-in. Tapping the row of a marked account that is not the current one still switches to it, for reading; its write controls then open the "Sign in again" sheet. Tapping the current marked account's row opens its sign-in, and so does tapping one that cannot be opened (its key is gone from the device), without a "Couldn't switch" toast; abandoning that sign-in returns to the account that was current.
   4. "Sign out" (destructive row).
 - Moderation notice (SAFE-09) at the top when present: `error.bg` card.
 
@@ -1475,11 +1476,13 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | lock.title | Yappr is locked |
 | lock.unlock | Unlock |
 | session.expired | Your session has expired. Please sign in again. (web says "log in") |
-| accounts.signInAgain | Sign in again **(AUTH-14: the account-list mark, the write-control sheet's title and button)** |
+| accounts.signInAgain | Sign in again **(AUTH-14: the account-list button, the write-control sheet's title and button)** |
 | accounts.reauthing | Getting ready to sign in again… |
 | accounts.reauthFailed | Couldn't start signing in again. Please try again. |
 | signin.reauth | Your session as @{name} has expired. Sign in again with its wallet or key. |
 | signInPrompt.reauthBody | Your session has expired. Please sign in again. You can keep browsing in the meantime. |
+| accounts.loadingAgain | Signing in as @{name}… **(AUTH-14: full-screen progress while the app reloads the account just signed in again, to load its other keys)** |
+| signin.walletKeyDisabled | The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead. **(AUTH-14: the "Sign-in failed" message)** |
 
 ### 5.2 Home
 
