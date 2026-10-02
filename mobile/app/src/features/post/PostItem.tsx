@@ -8,6 +8,7 @@ import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
+import { usePendingWriteStatus } from '~/features/compose/pending-posts';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
 import type { MenuItem } from '~/ui/ContextMenu';
 import { confirmAlert } from '~/ui/Dialog';
@@ -194,6 +195,8 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
   const poll = usePoll(post);
   const removed = usePostRemoved(listed.id);
   const shownRemoved = usePostRemoved(post.id);
+  // A post compose is still publishing: the optimistic card with its write status (PRD COMP-10).
+  const pending = usePendingWriteStatus(listed.id);
   const viewerId = useViewerId();
   const capabilities = useCapabilities();
   const { external } = useMediaUrls();
@@ -288,6 +291,19 @@ export const PostItem = memo(function PostItem({ post: listed, ...cardProps }: P
   }, [post, own, followKnown, viewerId, capabilities, external]);
 
   if (removed || shownRemoved) return null;
+
+  if (pending) {
+    return (
+      <PostCard
+        {...cardProps}
+        variant="optimistic"
+        post={post}
+        viewerId={viewerId ?? undefined}
+        writeStatus={pending}
+        actions={{ onAuthorPress: actions.onAuthorPress }}
+      />
+    );
+  }
 
   return (
     <PostCard

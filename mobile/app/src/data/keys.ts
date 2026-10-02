@@ -75,6 +75,8 @@ export const queryKeys = {
     topPosts: (window: RankingWindow = 'all') => [...root, 'explore', 'topPosts', window] as const,
     topCreators: (window: RankingWindow = 'all') => [...root, 'explore', 'topCreators', window] as const,
     search: (kind: 'users' | 'hashtags' | 'posts', q: string) => [...root, 'explore', 'search', kind, q] as const,
+    /** `posts.mentionCandidates` (compose's @-suggestions). */
+    mentions: (prefix: string) => [...root, 'explore', 'mentions', prefix.toLowerCase()] as const,
   },
 
   /** `engage.bookmarks`. */

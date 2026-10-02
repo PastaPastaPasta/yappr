@@ -1,0 +1,656 @@
+import type { AuthorDTO, ContentCreatedEvent, DraftDTO, PostDTO, ProfileDTO, TargetRef, ThreadReplyDTO, WriteTicket } from '@engine/api';
+import { parse, stringify } from '@engine/protocol/codec';
+import type { Query } from '@tanstack/react-query';
+import { router } from 'expo-router';
+import { create } from 'zustand';
+
+import { engine, engineSupervisor } from '~/engine';
+import { appendLog, errorMessage } from '~/engine/logs';
+import { onEngineEvent } from '~/data/events';
+import { queryKeys } from '~/data/keys';
+import { EMPTY_VIEWER, updateCachedPosts } from '~/data/optimistic';
+import { useSessionStore } from '~/data/session';
+import { checkWrite, submitWrite, type WriteSpec } from '~/data/writes';
+import { queryClient } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
+import { toast } from '~/ui/toast';
+import type { WriteState as CardWriteState, WriteStatusProps } from '~/ui/WriteStatus';
+
+import { deleteDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
+
+/**
+ * Posts on their way to the chain (PRD COMP-10, PD-3). Compose closes on
+ * Post; from then on the post lives here: an optimistic card at the top of
+ * the Home feeds and the author's profile (a reply: under its parent in the
+ * thread), with the write-status row in place of the action bar.
+ *
+ * The entry is the source of truth, kept in MMKV so a card survives a kill:
+ * every cached list it belongs to gets the card back whenever it loads or
+ * refetches, until the ticket confirms (the card becomes the real post) or
+ * the user takes it back with Edit. A failed post's text returns to its
+ * draft (PRD G-4).
+ */
+
+export interface PendingPost {
+  /** The optimistic card's id (`pending-…`); never sent anywhere. */
+  localId: string;
+  identityId: string;
+  context: ComposeContext;
+  /** What was submitted: only parts with content, `resume` aligned with them. */
+  draft: DraftDTO;
+  /** The optimistic card: the first part still to post. */
+  post: PostDTO;
+  /** Where the card shows: Home and the profile, under its parent in a thread, or nowhere (a resumed thread). */
+  placement: 'feed' | 'thread' | 'none';
+  ticketId: string | null;
+  /** The last ticket seen. */
+  ticket: WriteTicket | null;
+  /** The engine refused the call itself (no ticket): nothing was sent. */
+  refused: boolean;
+  createdAt: number;
+  /**
+   * When the ticket confirmed. The entry then holds the real post for a
+   * while, so a list that refetches before the chain's indexes show it
+   * (a read a second after the confirm can miss it) still keeps it on top.
+   */
+  confirmedAt?: number;
+  /**
+   * The card's real id, learned from `content.created` before the ticket
+   * names it (a thread's first part lands while the rest still post): the
+   * real post then carries the write status instead of a second card.
+   */
+  adoptedId?: string;
+}
+
+/** How long a confirmed post stays pinned in the lists it was put in. */
+const PIN_MS = 2 * 60_000;
+
+interface PendingState {
+  entries: Record<string, PendingPost>;
+}
+
+const STORAGE_KEY = 'yappr.compose.pending';
+
+function restore(): Record<string, PendingPost> {
+  try {
+    const raw = syncStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? (parse(raw) as Record<string, PendingPost>) : {};
+    // A post killed between submit and the engine's answer never got its ticket id: it may or may
+    // not have gone out, so it is offered as failed (Edit), never re-sent on its own.
+    for (const entry of Object.values(parsed)) {
+      if (!entry.ticketId) entry.refused = true;
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+export const usePendingPosts = create<PendingState>()(() => ({ entries: restore() }));
+
+usePendingPosts.subscribe(({ entries }) => {
+  if (Object.keys(entries).length === 0) syncStorage.removeItem(STORAGE_KEY);
+  else syncStorage.setItem(STORAGE_KEY, stringify(entries));
+});
+
+const getEntry = (localId: string): PendingPost | undefined => usePendingPosts.getState().entries[localId];
+
+function patchEntry(localId: string, patch: Partial<PendingPost>): void {
+  usePendingPosts.setState(({ entries }) => {
+    const entry = entries[localId];
+    return entry ? { entries: { ...entries, [localId]: { ...entry, ...patch } } } : { entries };
+  });
+}
+
+function dropEntry(localId: string): void {
+  usePendingPosts.setState(({ entries }) => {
+    const { [localId]: _dropped, ...rest } = entries;
+    return { entries: rest };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/** Part index → the id it was posted under: the submitted `resume`, then what the ticket names. */
+export function postedIds(entry: PendingPost): (string | null)[] {
+  const posted = entry.draft.parts.map((_, i) => entry.draft.resume?.postedIds[i] ?? null);
+  for (const doc of entry.ticket?.documents ?? []) {
+    if (doc.action === 'create' && doc.part !== undefined && doc.part < posted.length) posted[doc.part] = doc.id;
+  }
+  return posted;
+}
+
+/** The write-status row for an entry (UX_SPEC §2.4.11); null once confirmed. */
+export function pendingStatus(entry: PendingPost): CardWriteState | null {
+  const total = entry.draft.parts.length;
+  const posted = postedIds(entry).filter(Boolean).length;
+  const failed: CardWriteState =
+    total > 1 && posted > 0 ? { state: 'partial', posted, total } : { state: 'failed' };
+  const ticket = entry.ticket;
+  if (entry.confirmedAt) return null;
+  if (entry.refused) return failed;
+  if (!ticket || ticket.state === 'pending') {
+    const progress = ticket?.progress;
+    return total > 1 && progress
+      ? { state: 'threadProgress', index: Math.min(progress.done + 1, total), total }
+      : { state: 'posting' };
+  }
+  if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) return failed;
+  if (ticket.state === 'unconfirmed') return { state: 'unconfirmed' };
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// The optimistic card in cached lists
+// ---------------------------------------------------------------------------
+
+type Json = Record<string, unknown>;
+const isObject = (value: unknown): value is Json => typeof value === 'object' && value !== null;
+const idOf = (value: unknown) => (isObject(value) && typeof value.id === 'string' ? value.id : undefined);
+
+/** Rebuilds every array in `value` through `edit` (children first); untouched branches keep their identity. */
+function mapArrays(value: unknown, edit: (items: unknown[]) => unknown[]): unknown {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const mapped = value.map((item) => {
+      const next = mapArrays(item, edit);
+      if (next !== item) changed = true;
+      return next;
+    });
+    const edited = edit(changed ? mapped : value);
+    return edited !== value || changed ? edited : value;
+  }
+  if (!isObject(value) || value instanceof Date) return value;
+  let next: Json = value;
+  for (const [key, child] of Object.entries(value)) {
+    const mapped = mapArrays(child, edit);
+    if (mapped !== child) {
+      if (next === value) next = { ...value };
+      next[key] = mapped;
+    }
+  }
+  return next;
+}
+
+function setData(query: Query, data: unknown): void {
+  if (data === query.state.data) return;
+  queryClient.setQueryData(query.queryKey, data, { updatedAt: query.state.dataUpdatedAt });
+}
+
+/** Removes the card from every cached query, or swaps it for the real post. */
+function replaceInCaches(localId: string, replacement: PostDTO | null): void {
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.all })) {
+    const data = query.state.data;
+    if (data === undefined) continue;
+    const next = mapArrays(data, (items) => {
+      const index = items.findIndex((item) => idOf(item) === localId);
+      if (index < 0) return items;
+      const copy = [...items];
+      if (!replacement || items.some((item) => idOf(item) === replacement.id)) copy.splice(index, 1);
+      else copy[index] = { ...(items[index] as Json), ...replacement };
+      return copy;
+    });
+    setData(query, next);
+  }
+}
+
+/** Which cached list a query is: `feed.home` (Recent), a profile's Posts tab, or a thread. */
+function listKind(key: readonly unknown[]): { kind: 'home' } | { kind: 'profile'; id: string } | { kind: 'thread' } | null {
+  const [, , family, a, b, c] = key;
+  if (family === 'feed' && a === 'home' && isObject(b) && b.sort === 'recent') return { kind: 'home' };
+  if (family === 'profile' && typeof a === 'string' && b === 'posts' && isObject(c) && c.tab === 'posts') {
+    return { kind: 'profile', id: a };
+  }
+  if (family === 'post' && b === 'thread') return { kind: 'thread' };
+  return null;
+}
+
+interface PagesData {
+  pages: { items: unknown[] }[];
+}
+const isPages = (data: unknown): data is PagesData =>
+  isObject(data) && Array.isArray(data.pages) && data.pages.every((p) => isObject(p) && Array.isArray(p.items));
+
+/** A feed or profile's pages with the card first, unless it (or the post it became) is already there. */
+function withCardFirst(data: PagesData, card: PostDTO, realId: string | null): PagesData {
+  const ids = new Set(data.pages.flatMap((page) => page.items.map(idOf)));
+  if (ids.has(card.id) || (realId && ids.has(realId)) || data.pages.length === 0) return data;
+  const [first, ...rest] = data.pages;
+  return { ...data, pages: [{ ...first, items: [card, ...(first?.items ?? [])] }, ...rest] };
+}
+
+interface ThreadData {
+  focus: PostDTO | null;
+  replies: { items: ThreadReplyDTO[] };
+}
+const isThread = (data: unknown): data is ThreadData =>
+  isObject(data) && 'focus' in data && isObject(data.replies) && Array.isArray(data.replies.items);
+
+/** A thread with the reply under its parent: first among the focus's replies, or just below a listed reply. */
+function withReply(thread: ThreadData, card: PostDTO, realId: string | null): ThreadData {
+  const items = thread.replies.items;
+  if (items.some((r) => r.id === card.id || r.id === realId)) return thread;
+  const reply = (depth: 0 | 1): ThreadReplyDTO => ({ ...card, depth, isAuthorThread: false, hiddenReplyCount: 0 });
+  let next: ThreadReplyDTO[] | null = null;
+  if (thread.focus?.id === card.parentId) next = [reply(0), ...items];
+  else {
+    const at = items.findIndex((r) => r.id === card.parentId);
+    if (at >= 0) next = [...items.slice(0, at + 1), reply(1), ...items.slice(at + 1)];
+  }
+  return next ? { ...thread, replies: { ...thread.replies, items: next } } : thread;
+}
+
+const firstPostedId = (entry: PendingPost): string | null => {
+  const index = entry.draft.parts.findIndex((_, i) => !entry.draft.resume?.postedIds[i]);
+  return (index >= 0 ? postedIds(entry)[index] : null) ?? entry.adoptedId ?? null;
+};
+
+/** Forgets confirmed posts once their pin has run out. */
+function prunePinned(now = Date.now()): void {
+  const expired = Object.values(usePendingPosts.getState().entries).filter(
+    (e) => e.confirmedAt && now - e.confirmedAt > PIN_MS,
+  );
+  for (const entry of expired) dropEntry(entry.localId);
+}
+
+/**
+ * Puts each pending card of the signed-in account, and each post confirmed
+ * in the last two minutes, into the queries given (default: every cached one).
+ */
+function placeCards(queries?: Query[]): void {
+  prunePinned();
+  const viewerId = useSessionStore.getState().session?.identityId;
+  const entries = Object.values(usePendingPosts.getState().entries).filter(
+    (e) => e.identityId === viewerId && e.placement !== 'none' && (e.confirmedAt || pendingStatus(e) !== null),
+  );
+  if (entries.length === 0) return;
+  for (const query of queries ?? queryClient.getQueryCache().findAll({ queryKey: queryKeys.all })) {
+    const list = listKind(query.queryKey);
+    let data = query.state.data;
+    if (!list || data === undefined) continue;
+    // Oldest first, so the newest card ends on top.
+    for (const entry of [...entries].sort((a, b) => a.createdAt - b.createdAt)) {
+      const realId = firstPostedId(entry);
+      if (entry.placement === 'feed' && isPages(data)) {
+        if (list.kind === 'home' || (list.kind === 'profile' && list.id === entry.identityId)) {
+          data = withCardFirst(data, entry.post, realId);
+        }
+      } else if (entry.placement === 'thread' && list.kind === 'thread') {
+        if (isThread(data)) data = withReply(data, entry.post, realId);
+        else if (isObject(data) && Array.isArray(data.pages)) {
+          // Infinite thread pages are cumulative: each holds the whole thread.
+          const current: unknown[] = data.pages;
+          const pages = current.map((page) => (isThread(page) ? withReply(page, entry.post, realId) : page));
+          if (pages.some((page, i) => page !== current[i])) data = { ...data, pages };
+        }
+      }
+    }
+    setData(query, data);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Publishing
+// ---------------------------------------------------------------------------
+
+interface PublishVars {
+  localId: string;
+  /** Re-run the ticket the engine proved did not land (`writes.retry`), instead of publishing anew. */
+  retry: boolean;
+}
+
+/** The parent's reply count or the quoted post's quote count, moved with the post (PRD COMP-03); returns the undo. */
+function bumpTarget(entry: PendingPost | undefined): () => void {
+  const target = entry?.draft.replyTo ?? entry?.draft.quote;
+  if (!entry || !target) return () => undefined;
+  const field = entry.draft.replyTo ? 'replies' : 'quotes';
+  const move = (by: number, only?: ReadonlySet<string>) =>
+    updateCachedPosts(target.id, (post) => ({ ...post, stats: { ...post.stats, [field]: Math.max(0, post.stats[field] + by) } }), only);
+  const changed = move(1);
+  return () => {
+    move(-1, changed);
+  };
+}
+
+const partText = (index: number) => `Post ${index + 1}`;
+
+/** "Thread partly posted. Post {n} failed: {reason}" (UX_SPEC §5.4), or the deleted-target line for a reply. */
+function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): string | null {
+  if (!entry) return null;
+  const reason = ticket.error?.userMessage ?? 'Something went wrong.';
+  if (entry.draft.replyTo && /not found|deleted/i.test(reason) && ticket.error?.outcome !== 'unknown') {
+    return "This post was deleted, so it can't be replied to.";
+  }
+  const total = entry.draft.parts.length;
+  const posted = postedIds({ ...entry, ticket });
+  const failedAt = posted.findIndex((id) => !id);
+  if (total < 2 || failedAt <= 0 || posted.every((id) => !id)) return null;
+  return `Thread partly posted. ${partText(failedAt)} failed: ${reason}`;
+}
+
+export const publishWrite: WriteSpec<PublishVars> = {
+  key: ({ localId }) => `publish:${localId}`,
+  submit: (api, { localId, retry }) => {
+    const entry = getEntry(localId);
+    if (!entry) return Promise.reject(new Error('This post is no longer pending'));
+    return retry && entry.ticketId ? api.writes.retry(entry.ticketId) : api.posts.publish(entry.draft);
+  },
+  optimistic: ({ localId }) => bumpTarget(getEntry(localId)),
+  noun: 'post',
+  failureMessage: "Couldn't post. Please try again.",
+  failureText: (ticket, { localId }) => failureTextFor(ticket, getEntry(localId)),
+};
+
+/** The draft a pending post came from, for Edit and for a failure (PRD G-4: text is never lost). */
+function draftPartsOf(entry: PendingPost): DraftPart[] {
+  const posted = postedIds(entry);
+  return entry.draft.parts.map((part, i) => ({ text: part.text, postedId: posted[i] ?? null }));
+}
+
+function returnToDraft(entry: PendingPost): void {
+  saveDraft(entry.identityId, {
+    context: entry.context,
+    parts: draftPartsOf(entry),
+    sensitive: entry.draft.sensitive === true,
+    mediaUrl: entry.draft.mediaUrl ?? '',
+    updatedAt: Date.now(),
+    fromPending: entry.localId,
+  });
+}
+
+async function submit(localId: string, retry: boolean): Promise<void> {
+  const ticket = await submitWrite(publishWrite, { localId, retry });
+  const entry = getEntry(localId);
+  if (!entry) return;
+  if (ticket) {
+    patchEntry(localId, { ticketId: ticket.id, refused: false });
+    receiveTicket(ticket);
+  } else if (!retry) {
+    // Refused before any ticket (or skipped): nothing went out.
+    patchEntry(localId, { refused: true });
+    returnToDraft(entry);
+  }
+}
+
+export interface PublishInput {
+  identityId: string;
+  context: ComposeContext;
+  /** Every editor part, posted ones included. */
+  parts: DraftPart[];
+  sensitive: boolean;
+  mediaUrl: string | null;
+  /** The post replied to or quoted. */
+  target: PostDTO | null;
+  author: AuthorDTO;
+}
+
+const newLocalId = () => `pending-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+const targetRef = (post: PostDTO): TargetRef => ({
+  id: post.id,
+  kind: post.kind,
+  ownerId: post.author.id,
+  rootPostId: post.rootPostId ?? null,
+});
+
+/**
+ * Posts what compose holds: the optimistic card appears at once and the
+ * write runs in the background (PRD PD-3). Parts without visible text are
+ * left out; parts already posted are resumed past, never posted again.
+ */
+export function publishPost(input: PublishInput, hasContent: (text: string) => boolean): string {
+  const parts = input.parts.filter((part) => part.postedId || hasContent(part.text));
+  const postedIdList = parts.map((part) => part.postedId);
+  const firstOpen = postedIdList.findIndex((id) => !id);
+  const { mode } = input.context;
+  const target = input.target;
+  const localId = newLocalId();
+  const media = firstOpen === 0 && input.mediaUrl ? [{ type: 'image' as const, url: input.mediaUrl }] : [];
+  const reply = mode === 'reply' && target !== null;
+  const post: PostDTO = {
+    id: localId,
+    kind: reply ? 'reply' : 'post',
+    author: input.author,
+    content: (parts[firstOpen]?.text ?? '').trim(),
+    createdAt: new Date(),
+    stats: { likes: 0, reposts: 0, replies: 0, quotes: 0 },
+    viewer: EMPTY_VIEWER,
+    media,
+    sensitive: input.sensitive,
+    deleted: false,
+    encrypted: false,
+    ...(reply ? { parentId: target.id, rootPostId: target.rootPostId ?? target.id } : {}),
+    ...(mode === 'quote' && target ? { quotedPostId: target.id, quoted: target } : {}),
+    quotedRemoved: false,
+    bareRepost: false,
+  };
+  const draft: DraftDTO = {
+    parts: parts.map((part) => ({ text: part.text })),
+    replyTo: reply ? targetRef(target) : null,
+    quote: mode === 'quote' && target ? targetRef(target) : null,
+    sensitive: input.sensitive,
+    mediaUrl: input.mediaUrl || null,
+    resume: postedIdList.some(Boolean) ? { postedIds: postedIdList } : null,
+  };
+  const entry: PendingPost = {
+    localId,
+    identityId: input.identityId,
+    context: input.context,
+    draft,
+    post,
+    placement: firstOpen !== 0 ? 'none' : reply ? 'thread' : 'feed',
+    ticketId: null,
+    ticket: null,
+    refused: false,
+    createdAt: Date.now(),
+  };
+  usePendingPosts.setState(({ entries }) => ({ entries: { ...entries, [localId]: entry } }));
+  // The draft moves into the pending post; a failure brings it back.
+  deleteDraft(input.identityId, input.context);
+  placeCards();
+  submit(localId, false).catch((error: unknown) => appendLog('warn', 'host', `Publish failed: ${errorMessage(error)}`));
+  return localId;
+}
+
+/** "Check again" on an unconfirmed post. */
+export function checkPending(localId: string): void {
+  const ticketId = getEntry(localId)?.ticketId;
+  if (!ticketId) return;
+  checkWrite(ticketId)
+    .then((ticket) => ticket && receiveTicket(ticket))
+    .catch(() => undefined);
+}
+
+/**
+ * "Retry" / "Retry the rest". A ticket the engine proved did not land is
+ * retried in place (it resumes past the parts that landed); a refused one
+ * is published again with the posted parts as `resume`. Never while the
+ * write may still land.
+ */
+export function retryPending(localId: string): void {
+  const entry = getEntry(localId);
+  if (!entry) return;
+  const ticket = entry.ticket;
+  const status = pendingStatus(entry);
+  if (!status || (status.state !== 'failed' && status.state !== 'partial')) return;
+  deleteDraft(entry.identityId, entry.context, localId);
+  if (ticket?.retryable) {
+    submit(localId, true).catch(() => undefined);
+    return;
+  }
+  const posted = postedIds(entry);
+  patchEntry(localId, {
+    draft: { ...entry.draft, resume: posted.some(Boolean) ? { postedIds: posted } : null },
+    ticketId: null,
+    ticket: null,
+    refused: false,
+  });
+  if (ticket) engine.api.writes.dismiss(ticket.id).catch(() => undefined);
+  submit(localId, false).catch(() => undefined);
+}
+
+/** "Edit": the card goes, and compose opens on its draft. */
+export function editPending(localId: string): void {
+  const entry = getEntry(localId);
+  if (!entry) return;
+  returnToDraft(entry);
+  discardPending(localId);
+  const { mode, targetId } = entry.context;
+  const params = mode === 'reply' ? { replyTo: targetId ?? '' } : mode === 'quote' ? { quote: targetId ?? '' } : {};
+  router.push({ pathname: '/compose', params });
+}
+
+/** Forgets a pending post and its card (compose posts its returned draft anew, or Edit). */
+export function discardPending(localId: string): void {
+  const entry = getEntry(localId);
+  dropEntry(localId);
+  replaceInCaches(localId, null);
+  if (entry?.ticketId) engine.api.writes.dismiss(entry.ticketId).catch(() => undefined);
+}
+
+const SUCCESS = {
+  post: 'Post created successfully!',
+  quote: 'Post created successfully!',
+  reply: 'Reply posted',
+} as const;
+
+/**
+ * The ticket confirmed: the card becomes the real post (seeded by
+ * `content.created` when it arrived) and stays pinned for a while.
+ */
+function confirmed(entry: PendingPost, ticket: WriteTicket): void {
+  const realId = firstPostedId({ ...entry, ticket });
+  const real = realId ? (queryClient.getQueryData<PostDTO>(queryKeys.post.detail(realId)) ?? null) : null;
+  const post = realId ? { ...entry.post, id: realId, ...(real ?? {}) } : null;
+  if (post) patchEntry(entry.localId, { ticket, post, confirmedAt: Date.now() });
+  else dropEntry(entry.localId);
+  replaceInCaches(entry.localId, post);
+  deleteDraft(entry.identityId, entry.context, entry.localId);
+  const total = entry.draft.parts.length;
+  toast.success(total > 1 ? `Thread with ${total} posts created!` : SUCCESS[entry.context.mode]);
+}
+
+/** A ticket update for a pending post: track it, finish it, or bring its text back to the draft. */
+function receiveTicket(ticket: WriteTicket): void {
+  const entry = Object.values(usePendingPosts.getState().entries).find((e) => e.ticketId === ticket.id);
+  if (!entry || entry.confirmedAt) return;
+  const before = pendingStatus(entry)?.state;
+  const next = { ...entry, ticket };
+  if (ticket.state === 'confirmed') {
+    confirmed(entry, ticket);
+    return;
+  }
+  patchEntry(entry.localId, { ticket });
+  const after = pendingStatus(next)?.state;
+  if ((after === 'failed' || after === 'partial') && before !== after) returnToDraft(next);
+}
+
+/**
+ * `content.created` for a post this device is still publishing (a thread's
+ * first part, before the ticket names it): the card becomes that post, so a
+ * feed refetch never shows it twice.
+ */
+function adoptCreated({ post }: ContentCreatedEvent): void {
+  const entry = Object.values(usePendingPosts.getState().entries).find(
+    (e) =>
+      !e.confirmedAt &&
+      !e.adoptedId &&
+      e.placement !== 'none' &&
+      e.identityId === post.author.id &&
+      e.post.kind === post.kind &&
+      e.post.content === post.content.trim(),
+  );
+  if (!entry) return;
+  patchEntry(entry.localId, { adoptedId: post.id });
+  replaceInCaches(entry.localId, { ...entry.post, ...post });
+}
+
+/** Asks the engine for every pending ticket of the account (after a restart); a ticket it no longer has goes. */
+function reconcile(identityId: string): void {
+  for (const entry of Object.values(usePendingPosts.getState().entries)) {
+    if (entry.identityId !== identityId || !entry.ticketId || entry.confirmedAt) continue;
+    engine.api.writes
+      .get(entry.ticketId)
+      .then((ticket) => {
+        if (ticket) receiveTicket(ticket);
+        else if (pendingStatus(entry)?.state !== 'failed' && pendingStatus(entry)?.state !== 'partial') {
+          // Pruned by the engine: it confirmed long ago. The next refresh shows the real post.
+          dropEntry(entry.localId);
+          replaceInCaches(entry.localId, null);
+        }
+      })
+      .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending post failed: ${errorMessage(error)}`));
+  }
+}
+
+/**
+ * Starts following pending posts: their tickets, the lists that should show
+ * them, and the account. Started once by `startDataLayer`; returns the stop.
+ */
+export function startPendingPosts(): () => void {
+  const stopTickets = onEngineEvent('write.status', receiveTicket);
+  const stopCreated = onEngineEvent('content.created', adoptCreated);
+  const stopCache = queryClient.getQueryCache().subscribe((event) => {
+    const loaded =
+      (event.type === 'updated' && event.action.type === 'success') ||
+      (event.type === 'added' && event.query.state.data !== undefined);
+    if (loaded && listKind(event.query.queryKey)) placeCards([event.query]);
+  });
+  let reconciledEpoch = -1;
+  const onSession = () => {
+    const { status, session } = useSessionStore.getState();
+    const epoch = engineSupervisor.getStatus().epoch;
+    if (status !== 'signed-in' || !session || epoch === reconciledEpoch) return;
+    reconciledEpoch = epoch;
+    reconcile(session.identityId);
+    placeCards();
+  };
+  const stopSession = useSessionStore.subscribe(onSession);
+  onSession();
+  return () => {
+    stopTickets();
+    stopCreated();
+    stopCache();
+    stopSession();
+  };
+}
+
+/**
+ * The write-status row for a post, when it is a pending card of the
+ * signed-in account (PostItem renders it as the optimistic variant).
+ */
+export function usePendingWriteStatus(postId: string): WriteStatusProps | null {
+  const entry = usePendingPosts(
+    (s) => s.entries[postId] ?? Object.values(s.entries).find((e) => e.adoptedId === postId),
+  );
+  const viewerId = useSessionStore((s) => s.session?.identityId ?? null);
+  if (!entry || entry.identityId !== viewerId) return null;
+  const status = pendingStatus(entry);
+  if (!status) return null;
+  const { localId } = entry;
+  return {
+    status,
+    onCheckAgain: () => checkPending(localId),
+    onRetry: () => retryPending(localId),
+    onRetryRest: () => retryPending(localId),
+    onEdit: () => editPending(localId),
+  };
+}
+
+/** The signed-in author for an optimistic card: their profile (given or cached), else the session's name. */
+export function viewerAuthor(identityId: string, username: string | null, known?: ProfileDTO | null): AuthorDTO {
+  const profile = known ?? queryClient.getQueryData<ProfileDTO | null>(queryKeys.profile.detail(identityId));
+  if (profile) {
+    return { id: identityId, username: profile.username, displayName: profile.displayName, avatar: profile.avatar, resolved: true };
+  }
+  const style = engineSupervisor.getStatus().info?.avatarStyles?.defaultStyle ?? 'thumbs';
+  return {
+    id: identityId,
+    username,
+    displayName: username ?? `User ${identityId.slice(-6)}`,
+    avatar: { uri: null, dicebear: { style, seed: identityId } },
+    resolved: true,
+  };
+}

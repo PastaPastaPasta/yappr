@@ -1,5 +1,6 @@
 import type { ContentCreatedEvent } from '@engine/api';
 
+import { startPendingPosts } from '~/features/compose/pending-posts';
 import { queryClient } from '~/state/query-client';
 
 import { onEngineEvent } from './events';
@@ -41,6 +42,8 @@ export function startDataLayer(): () => void {
     startSessionSync(),
     startWriteTracking(),
     onEngineEvent('content.created', contentCreated),
+    // Compose's posts on their way to the chain (their optimistic cards and write status).
+    startPendingPosts(),
     stopAccount,
   ];
   return () => stops.forEach((stop) => stop());

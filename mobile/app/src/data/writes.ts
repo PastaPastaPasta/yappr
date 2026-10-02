@@ -36,6 +36,12 @@ export interface WriteSpec<V> {
   announceUnconfirmed?: boolean;
   onConfirmed?: (ticket: WriteTicket, vars: V) => void;
   /**
+   * The failure toast for a ticket, when the write has something more
+   * specific to say than the engine's message (a partly posted thread);
+   * null falls back to the default.
+   */
+  failureText?: (ticket: WriteTicket, vars: V) => string | null;
+  /**
    * The engine refused the call itself (validation, `NOT_SUPPORTED`,
    * `QUOTE_HAS_TEXT`, ...): no ticket was made. Return true when handled;
    * otherwise a failure toast shows. `NOT_SIGNED_IN` opens the sign-in sheet.
@@ -134,7 +140,7 @@ function settle(ticket: WriteTicket): void {
       return;
     case 'failed':
       if (latest) undo(entry);
-      fail(failureText(ticket.error, spec.failureMessage), retry);
+      fail(spec.failureText?.(ticket, entry.vars) ?? failureText(ticket.error, spec.failureMessage), retry);
       return;
     case 'unconfirmed':
       if (ticket.retryable) {
