@@ -1,5 +1,5 @@
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { BackHandler, Pressable, ScrollView, View } from 'react-native';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { ChevronDownIcon } from 'react-native-heroicons/outline';
@@ -16,10 +16,6 @@ import { Button } from '~/ui/Button';
 import { Text } from '~/ui/Text';
 import { motion, tw, useColors } from '~/ui/tokens';
 
-function leave(): void {
-  if (router.canGoBack()) router.back();
-  else router.replace('/');
-}
 
 /**
  * UX_SPEC §4.7, PRD AUTH-09: every identity accepts the community rules,
@@ -32,6 +28,14 @@ export default function TermsGateScreen() {
   const { identityId, status } = useSession();
   const [rulesOpen, setRulesOpen] = useState(false);
   const [declining, setDeclining] = useState(false);
+  // Leave once: "Not now" signs out, which would otherwise leave a second time below.
+  const left = useRef(false);
+  const leave = () => {
+    if (left.current) return;
+    left.current = true;
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  };
 
   // Android back must not skip the gate.
   useEffect(() => {

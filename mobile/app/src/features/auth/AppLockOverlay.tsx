@@ -1,6 +1,5 @@
-import { Image } from 'expo-image';
 import { useEffect, useRef } from 'react';
-import { AppState, View } from 'react-native';
+import { AppState, Image, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cn } from '~/lib-allowlist';
@@ -61,12 +60,7 @@ export function AppLockOverlay() {
         testID="app-lock"
         accessibilityViewIsModal
       >
-        <Image
-          source={icon}
-          style={{ width: 72, height: 72, borderRadius: 16 }}
-          accessibilityIgnoresInvertColors
-          accessible={false}
-        />
+        <Image source={icon} style={{ width: 72, height: 72, borderRadius: 16 }} accessibilityIgnoresInvertColors />
         <Text variant="headline" tone="emphasis" accessibilityRole="header">
           {copy.lock.title}
         </Text>

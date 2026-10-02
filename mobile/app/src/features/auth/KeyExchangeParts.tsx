@@ -160,9 +160,8 @@ export function DevWalletUri({ uri }: { uri: string | null }) {
     <Text
       variant="caption"
       tone="decorative"
-      selectable
       numberOfLines={1}
-      ellipsizeMode="middle"
+      ellipsizeMode="tail"
       testID="kx-uri"
       accessibilityLabel={uri}
       className="text-center"

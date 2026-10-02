@@ -183,6 +183,19 @@ describe('wallet sign-in', () => {
     expect(phase().name).toBe('no-response');
   });
 
+  it('polls again when the engine cancels a poll this app did not cancel', async () => {
+    fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
+    fakeEngine
+      .method('session.awaitKeyExchange')
+      .mockRejectedValueOnce(remoteError('KEY_EXCHANGE_CANCELLED'))
+      .mockResolvedValueOnce({ status: 'signed-in', session });
+
+    await startKeyExchange('qr');
+
+    expect(fakeEngine.method('session.awaitKeyExchange')).toHaveBeenCalledTimes(2);
+    expect(phase()).toEqual({ name: 'signed-in', session });
+  });
+
   it('cancels the request in the engine', async () => {
     fakeEngine.method('session.startKeyExchange').mockResolvedValue(request());
     fakeEngine.method('session.awaitKeyExchange').mockReturnValue(new Promise(() => undefined));

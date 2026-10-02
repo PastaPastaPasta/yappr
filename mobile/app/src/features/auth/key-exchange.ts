@@ -97,6 +97,8 @@ async function handleStep(gen: number, step: KeyExchangeResultDTO): Promise<void
   }
   const request = get().request ?? { requestId: step.requestId, uri: step.uri, expiresAt: step.expiresAt };
   const registration = { request, uri: step.uri, keys: step.keys };
+  // A dash-key: link that did not open says nothing about the dash-st: one.
+  set({ walletOpenFailed: false });
   if (get().mode === 'qr') {
     // Across devices the wallet scans the registration too: show it and start checking at once.
     await waitForRegistration(gen, { ...registration, slow: false });
@@ -105,7 +107,7 @@ async function handleStep(gen: number, step: KeyExchangeResultDTO): Promise<void
   }
 }
 
-async function poll(gen: number, request: KeyExchangeRequestDTO): Promise<void> {
+async function poll(gen: number, request: KeyExchangeRequestDTO, superseded = 0): Promise<void> {
   set({ phase: { name: 'waiting', request }, request });
   try {
     const step = await engine.api.session.awaitKeyExchange(request.requestId, { waitMs: POLL_MS });
@@ -113,6 +115,12 @@ async function poll(gen: number, request: KeyExchangeRequestDTO): Promise<void> 
   } catch (error) {
     if (stale(gen)) return;
     const code = errorCode(error);
+    // Our own cancel always moves the generation on, so this poll lost to another one in the
+    // engine (its polls of one request abort each other): poll again, at most twice.
+    if (code === 'KEY_EXCHANGE_CANCELLED' && superseded < 2) {
+      await poll(next(), request, superseded + 1);
+      return;
+    }
     if (code === 'KEY_EXCHANGE_TIMEOUT') {
       // The request expired: "Check again" makes a fresh one.
       set({ phase: { name: 'no-response', request: null }, request: null });
@@ -204,6 +212,7 @@ export async function continueRegistration(): Promise<void> {
   const { phase } = get();
   if (phase.name !== 'registration' && phase.name !== 'registering') return;
   const gen = next();
+  set({ walletOpenFailed: false });
   openLink(phase.uri, () => set({ walletOpenFailed: true }));
   await waitForRegistration(gen, { request: phase.request, uri: phase.uri, keys: phase.keys, slow: false });
 }

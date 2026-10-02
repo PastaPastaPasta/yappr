@@ -71,7 +71,7 @@ export default function WalletSignInScreen() {
       break;
     case 'waiting':
       body = walletOpenFailed ? (
-        <StatusBlock tone="error" title={copy.signin.failed} testID="kx-nothing-opened">
+        <StatusBlock tone="waiting" title={copy.signin.waiting} testID="kx-nothing-opened">
           <View className={cn('mt-2 rounded-xl p-4', tw.bgMuted)}>
             <Text variant="subhead" tone="secondary">
               {copy.signin.nothingOpened}

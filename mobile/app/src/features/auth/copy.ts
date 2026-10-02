@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 /**
  * Onboarding and sign-in copy (UX_SPEC §5.1). Strings marked (web) there are
  * the web app's, verbatim: change them on both sides or neither.
@@ -113,9 +115,13 @@ export const copy = {
     unlock: 'Unlock',
     prompt: 'Unlock Yappr',
     settingsTitle: 'App lock',
+    section: 'Security',
     timeout: 'Require after',
     note: 'Yappr asks for this when it opens and when you come back to it.',
-    unavailable: 'Set up Face ID, Touch ID, a fingerprint or a device passcode in your device settings to use app lock.',
+    unavailable: Platform.select({
+      ios: 'Set up Face ID, Touch ID or a passcode in Settings to use app lock.',
+      default: 'Set up a fingerprint or a screen lock in your device settings to use app lock.',
+    }),
     timeouts: {
       0: 'Immediately',
       60_000: 'After 1 minute',
