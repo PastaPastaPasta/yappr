@@ -1,7 +1,7 @@
 import type { Page, PostDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
-import type { InfiniteData, QueryKey } from '@tanstack/react-query';
-import { useRef, useState, type ReactElement } from 'react';
+import { hashKey, useIsRestoring, type InfiniteData, type QueryKey } from '@tanstack/react-query';
+import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { RefreshControl, View } from 'react-native';
 
 import { useEngineInfiniteQuery } from '~/data/queries';
@@ -27,6 +27,26 @@ export function postItemType(post: PostDTO): string {
 }
 
 type PagedPosts = ReturnType<typeof useEngineInfiniteQuery<PostDTO>>;
+type PagedData = InfiniteData<Page<PostDTO>, string | null>;
+
+/** The first page alone: a refetch of an infinite query re-reads every page it holds. */
+function firstPageOnly(data: PagedData | undefined): PagedData | undefined {
+  return data && data.pages.length > 1
+    ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) }
+    : data;
+}
+
+/**
+ * A new visit starts from the first saved page, as Home does on a cold start
+ * (FEED-11), so a stale list doesn't re-read every page the last visit
+ * loaded. Its age is kept, so it still refreshes when stale; a list another
+ * screen is showing is left alone.
+ */
+function trimToFirstPage(queryHash: string): void {
+  const query = queryClient.getQueryCache().get<Page<PostDTO>, Error, PagedData>(queryHash);
+  if (!query || query.getObserversCount() > 0 || (query.state.data?.pages.length ?? 0) <= 1) return;
+  queryClient.setQueryData<PagedData>(query.queryKey, firstPageOnly, { updatedAt: query.state.dataUpdatedAt });
+}
 
 export interface PagedPostListProps {
   queryKey: QueryKey;
@@ -51,6 +71,13 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
   // Automatic paging pauses after MAX_AUTO_PAGES until the reader asks for more.
   const autoPages = useRef(0);
   const [paused, setPaused] = useState(false);
+  // Before the screen's query subscribes (child effects run first), so its first fetch reads one page.
+  const isRestoring = useIsRestoring();
+  const queryHash = hashKey(queryKey);
+  useEffect(() => {
+    if (!isRestoring) trimToFirstPage(queryHash);
+  }, [isRestoring, queryHash]);
+
   const onRefresh = () => {
     if (offline) {
       toast(OFFLINE_REFRESH_MESSAGE);
@@ -61,9 +88,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
     autoPages.current = 0;
     setPaused(false);
     // A refetch re-reads every page it holds: start again from the first.
-    queryClient.setQueryData<InfiniteData<Page<PostDTO>, string | null>>(queryKey, (data) =>
-      data && data.pages.length > 1 ? { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) } : data,
-    );
+    queryClient.setQueryData<PagedData>(queryKey, firstPageOnly);
     query
       .refetch()
       .then((result) => {
@@ -82,7 +107,8 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
     fetchNextPage().catch(() => undefined);
   };
   const onEndReached = () => {
-    if (!hasNextPage || isFetchingNextPage || isFetchNextPageError || paused) return;
+    // A next page during a pull to refresh would cancel it and read on from the old cursor.
+    if (!hasNextPage || isFetchingNextPage || isFetchNextPageError || paused || query.isRefetching) return;
     if (autoPages.current >= MAX_AUTO_PAGES) {
       setPaused(true);
       return;
@@ -90,8 +116,10 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
     autoPages.current += 1;
     fetchNextPage().catch(() => undefined);
   };
+  // A new scroll by the reader counts as asking for more (FEED-07): it resumes paused paging.
   const onScrollBeginDrag = () => {
-    autoPages.current = 0;
+    if (paused && hasNextPage && !isFetchingNextPage) loadMore();
+    else autoPages.current = 0;
   };
 
   let footer = null;

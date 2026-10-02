@@ -3,11 +3,12 @@ import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
-import { ActionSheetIOS } from 'react-native';
+import { ActionSheetIOS, RefreshControl } from 'react-native';
 
 import HashtagRoute from '~/app/(tabs)/(home,explore,notifications,messages,profile)/hashtag/[tag]';
 import SearchResultsRoute from '~/app/(tabs)/(explore)/explore/search/[kind]';
 import SearchRoute from '~/app/(tabs)/(explore)/explore/search/index';
+import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine, ticket } from '~/data/testing/fake-engine';
@@ -17,7 +18,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { ExploreScreen } from './ExploreScreen';
 import { useExplorePrefs } from './explore-prefs';
-import { clearRecent, getRecent } from './recent-searches';
+import { addRecent, clearRecent, getRecent, startRecentSearchCleanup } from './recent-searches';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 jest.mock('react-native-safe-area-context', () => jest.requireActual('react-native-safe-area-context/jest/mock').default);
@@ -247,8 +248,9 @@ describe('Explore', () => {
 describe('Search', () => {
   beforeEach(() => jest.useFakeTimers());
 
-  it('searches tags and posts only below 3 characters (EXPL-05)', async () => {
+  it('below 3 characters searches posts and the trending tags, not people (EXPL-05)', async () => {
     fakeEngine.method('explore.searchPosts').mockResolvedValue([post('s1', 'about dash')]);
+    fakeEngine.method('explore.trending').mockResolvedValue([tag('dash', 5), tag('mobile', 3), tag('dash_cashtag', 2)]);
     await renderAt('/explore/search');
 
     fireEvent.changeText(screen.getByTestId('search-input'), 'da');
@@ -257,9 +259,71 @@ describe('Search', () => {
 
     expect(fakeEngine.method('explore.searchPosts')).toHaveBeenCalledWith('da');
     expect(fakeEngine.method('explore.searchUsers')).not.toHaveBeenCalled();
+    // The engine's tag search starts at 3 characters; shorter queries match the all-time trending tags.
     expect(fakeEngine.method('explore.searchHashtags')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('explore.trending')).toHaveBeenCalledWith({ window: 'all' });
+    expect(screen.getByText('#dash')).toBeTruthy();
+    expect(screen.getByText('$DASH')).toBeTruthy();
+    expect(screen.queryByText('#mobile')).toBeNull();
     expect(screen.getByText('Type at least 3 characters to search for people')).toBeTruthy();
     expect(screen.getByText('about dash')).toBeTruthy();
+  });
+
+  it('resolves a pasted identity id, skipping an id nothing is known about', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    const bob = user('bob', { username: null });
+    const id = bob.id.padEnd(44, 'x').slice(0, 44).replace(/[0OIl]/g, 'x');
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    fakeEngine.method('graph.status').mockResolvedValue({});
+    fakeEngine
+      .method('profiles.batch')
+      .mockResolvedValueOnce([{ ...bob, id }])
+      .mockResolvedValueOnce([{ ...bob, id, displayName: `User ${id.slice(-6)}` }]);
+    await renderAt(`/explore/search?q=${id}`);
+    await settle();
+
+    expect(fakeEngine.method('profiles.batch')).toHaveBeenCalledWith([id]);
+    expect(screen.getByText('Bob Builder')).toBeTruthy();
+
+    // An id with no name, profile name or bio (a typo) finds no one.
+    queryClient.clear();
+    fireEvent.changeText(screen.getByTestId('search-input'), `${id} `);
+    await settle();
+    expect(screen.queryByText(`User ${id.slice(-6)}`)).toBeNull();
+    expect(screen.getByText(`No results for "${id}"`)).toBeTruthy();
+  });
+
+  it('keeps the name results when the identity lookup fails', async () => {
+    const id = AUTHORS.carol.id.padEnd(44, 'x').slice(0, 44).replace(/[0OIl]/g, 'x');
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([user('carol')]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    fakeEngine.method('profiles.batch').mockRejectedValue(new Error('DAPI timeout'));
+    await renderAt(`/explore/search?q=${id}`);
+    await settle();
+
+    expect(screen.getByText(AUTHORS.carol.displayName)).toBeTruthy();
+    expect(screen.queryByTestId('search-retry-people')).toBeNull();
+  });
+
+  it('reads follows once a cold start has restored the session', async () => {
+    useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([user('bob')]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    fakeEngine.method('graph.status').mockResolvedValue({ [AUTHORS.bob.id]: true });
+    await renderAt('/explore/search/people?q=bob');
+    await settle();
+    expect(fakeEngine.method('graph.status')).not.toHaveBeenCalled();
+
+    await act(async () => {
+      useSessionStore.setState({ status: 'signed-in', session: viewer });
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('graph.status')).toHaveBeenCalledWith([AUTHORS.bob.id]);
+    expect(screen.getByLabelText('Following Bob Builder')).toBeTruthy();
   });
 
   it('groups people, hashtags and recent posts, three each with See all (EXPL-05, EXPL-06)', async () => {
@@ -389,10 +453,89 @@ describe('Hashtag page', () => {
     expect(screen.getByText('v2 post')).toBeTruthy();
   });
 
+  it('pauses after three automatic pages until the reader scrolls again; a refresh starts over (FEED-07)', async () => {
+    let n = 0;
+    fakeEngine.method('feed.hashtag').mockImplementation(() => {
+      n += 1;
+      return Promise.resolve(page([post(`p${n}`, `post ${n}`)], true));
+    });
+    await renderAt('/hashtag/mobile');
+    await act(async () => {});
+    const calls = () => fakeEngine.method('feed.hashtag').mock.calls.length;
+
+    // The short list keeps reaching its end: the first page, three automatic ones, then the pill.
+    expect(calls()).toBe(4);
+    expect(screen.getByTestId('hashtag-posts-load-more')).toBeTruthy();
+    await act(async () => {
+      fireEvent(screen.getByTestId('hashtag-posts'), 'endReached');
+    });
+    expect(calls()).toBe(4);
+
+    // A new drag is a new ask: paging resumes (one page, then three automatic ones again).
+    await act(async () => {
+      fireEvent(screen.getByTestId('hashtag-posts'), 'scrollBeginDrag');
+    });
+    await act(async () => {});
+    expect(calls()).toBe(8);
+    expect(screen.getByText('post 8')).toBeTruthy();
+    expect(screen.getByTestId('hashtag-posts-load-more')).toBeTruthy();
+
+    // Pull to refresh reads the first page only, and the three-page budget starts over.
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('feed.hashtag').mock.calls[8]?.[0]).toEqual(expect.objectContaining({ cursor: null }));
+    expect(calls()).toBe(12);
+    expect(screen.queryByText('post 2')).toBeNull();
+    expect(screen.getByTestId('hashtag-posts-load-more')).toBeTruthy();
+  });
+
+  it('reopens a saved tag from its first page, still due a refresh', async () => {
+    const key = queryKeys.feed.hashtag({ tag: 'mobile', sort: 'recent', window: 'all' });
+    queryClient.setQueryData(
+      key,
+      { pages: [page([post('a', 'saved a')], true), page([post('b', 'saved b')], true)], pageParams: [null, 'next'] },
+      { updatedAt: 1 },
+    );
+    // What the refetch starts from: it re-reads every page the cache holds then.
+    const heldPages: number[] = [];
+    fakeEngine.method('feed.hashtag').mockImplementation(() => {
+      heldPages.push(queryClient.getQueryData<{ pages: unknown[] }>(key)?.pages.length ?? 0);
+      return new Promise<never>(() => undefined);
+    });
+    await renderAt('/hashtag/mobile');
+
+    // One read, of the first page, over the one saved page left.
+    expect(heldPages).toEqual([1]);
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledWith(expect.objectContaining({ cursor: null }));
+    expect(queryClient.getQueryData<{ pages: unknown[] }>(key)?.pages).toHaveLength(1);
+    expect(queryClient.getQueryState(key)?.dataUpdatedAt).toBe(1);
+    expect(screen.getByText('saved a')).toBeTruthy();
+    expect(screen.queryByText('saved b')).toBeNull();
+  });
+
   it('rejects a link that is not a tag', async () => {
     await renderAt('/hashtag/not%20a%20tag');
 
     expect(screen.getByText('Not a hashtag')).toBeTruthy();
     expect(fakeEngine.method('feed.hashtag')).not.toHaveBeenCalled();
+  });
+});
+
+describe('Recent searches on sign-out (AUTH-11)', () => {
+  it('drop the bucket of an account that leaves the device', () => {
+    const account = (identityId: string) => ({ identityId, username: null, method: 'key' as const, lastUsedAt: new Date(0), active: false });
+    const stop = startRecentSearchCleanup();
+    useSessionStore.setState({ accounts: [account('A'), account('B')] });
+    addRecent('A', { kind: 'query', q: 'from a' });
+    addRecent('B', { kind: 'query', q: 'from b' });
+
+    useSessionStore.setState({ accounts: [account('B')] });
+    expect(getRecent('A')).toEqual([]);
+    expect(getRecent('B')).toEqual([{ kind: 'query', q: 'from b' }]);
+
+    stop();
+    clearRecent('B');
   });
 });

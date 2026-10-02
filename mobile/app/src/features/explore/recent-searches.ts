@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import { lastIdentity, useSession } from '~/data/session';
+import { lastIdentity, useSession, useSessionStore } from '~/data/session';
 import { syncStorage } from '~/state/storage';
 
 /**
@@ -89,6 +89,21 @@ export function clearRecent(account: string): void {
 
 export function getRecent(account: string): readonly RecentSearch[] {
   return read(account);
+}
+
+/**
+ * Signing an account out deletes its recent searches (PRD AUTH-11): an
+ * account that leaves the device's account list loses its bucket. The root
+ * layout starts it once; returns the stop.
+ */
+export function startRecentSearchCleanup(): () => void {
+  return useSessionStore.subscribe((state, previous) => {
+    if (state.accounts === previous.accounts) return;
+    const kept = new Set(state.accounts.map((account) => account.identityId));
+    for (const account of previous.accounts) {
+      if (!kept.has(account.identityId)) clearRecent(account.identityId);
+    }
+  });
 }
 
 const subscribe = (listener: () => void) => {

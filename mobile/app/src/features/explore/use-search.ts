@@ -1,12 +1,14 @@
-import type { UserSummaryDTO } from '@engine/api';
+import type { TagDTO, UserSummaryDTO } from '@engine/api';
 import { useEffect, useState } from 'react';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineQuery, type EngineRemote } from '~/data/queries';
+import { engineQueryOptions, useEngineQuery, type EngineRemote } from '~/data/queries';
+import { appendLog, errorMessage } from '~/engine/logs';
+import { queryClient } from '~/state/query-client';
 
 import { readFollowStatus, withFollowStatus } from './FollowableUserRow';
 
-/** People and tags wait for 3 characters, as the engine (and web's DPNS search) does. */
+/** People, and the engine's tag search, wait for 3 characters, as web's search does. */
 export const SEARCH_MIN_LENGTH = 3;
 /** PRD EXPL-05: searches run after 300 ms without typing. */
 export const SEARCH_DEBOUNCE_MS = 300;
@@ -43,29 +45,56 @@ export function useDebounced<T>(value: T, ms: number): T {
  * viewer's follow of each.
  */
 async function searchPeople(api: EngineRemote, q: string): Promise<UserSummaryDTO[]> {
-  const [byName, byId] = await Promise.all([
-    api.explore.searchUsers(q),
-    IDENTITY_ID.test(q) ? api.profiles.batch([q]) : Promise.resolve<UserSummaryDTO[]>([]),
-  ]);
+  const [byName, byId] = await Promise.all([api.explore.searchUsers(q), IDENTITY_ID.test(q) ? findById(api, q) : []]);
   const users = [...byId, ...byName.filter((user) => !byId.some((found) => found.id === user.id))];
   const status = await readFollowStatus(api, users.map((user) => user.id));
   return users.map((user) => withFollowStatus(user, status));
+}
+
+/**
+ * The identity a pasted id names. `profiles.batch` answers for any id, so a
+ * row with no name, profile name or bio (a mistyped id, or an identity with
+ * nothing to show) is left out; a failed read just finds no one.
+ */
+async function findById(api: EngineRemote, id: string): Promise<UserSummaryDTO[]> {
+  try {
+    const users = await api.profiles.batch([id]);
+    return users.filter((user) => user.username !== null || user.bio || user.displayName !== `User ${id.slice(-6)}`);
+  } catch (error) {
+    appendLog('warn', 'host', `Identity lookup failed: ${errorMessage(error)}`);
+    return [];
+  }
 }
 
 /** The tag search matches storage forms, so `$DASH` looks for `dash` (and finds `dash_cashtag`). */
 const tagNeedle = (q: string) => q.replace(/^\$/, '');
 
 /**
- * The three searches for a (settled) query, or just `only`: people and
- * hashtags from 3 characters, posts from 1 (a substring of the newest 100
- * posts, PD-10).
+ * Tags for a 1–2 character query, which the engine's search doesn't serve
+ * (PRD EXPL-05): the all-time trending tags (Explore's cached list on v2)
+ * whose name contains it.
+ */
+async function searchTrendingTags(needle: string): Promise<TagDTO[]> {
+  const text = needle.replace(/^#/, '').toLowerCase();
+  const trending = await queryClient.fetchQuery(
+    engineQueryOptions(queryKeys.explore.trending('all'), (api) => api.explore.trending({ window: 'all' }), {
+      persist: true,
+    }),
+  );
+  return trending.filter((tag) => tag.display.slice(1).toLowerCase().includes(text));
+}
+
+/**
+ * The three searches for a (settled) query, or just `only`: people from 3
+ * characters; hashtags and posts from 1 (shorter tag queries match the
+ * trending tags; posts are a substring of the newest 100, PD-10).
  */
 export function useSearch(query: string, only?: SearchKind) {
   const q = query.trim();
   const wanted = (kind: SearchKind) => only === undefined || only === kind;
   const enabled = {
     people: wanted('people') && q.length >= SEARCH_MIN_LENGTH,
-    hashtags: wanted('hashtags') && tagNeedle(q).length >= SEARCH_MIN_LENGTH,
+    hashtags: wanted('hashtags') && tagNeedle(q).replace(/^#/, '').length > 0,
     posts: wanted('posts') && q.length > 0,
   };
   const people = useEngineQuery(queryKeys.explore.search('users', q), (api) => searchPeople(api, q), {
@@ -73,7 +102,10 @@ export function useSearch(query: string, only?: SearchKind) {
   });
   const hashtags = useEngineQuery(
     queryKeys.explore.search('hashtags', q),
-    (api) => api.explore.searchHashtags(tagNeedle(q)),
+    (api) =>
+      tagNeedle(q).length >= SEARCH_MIN_LENGTH
+        ? api.explore.searchHashtags(tagNeedle(q))
+        : searchTrendingTags(tagNeedle(q)),
     { enabled: enabled.hashtags },
   );
   const posts = useEngineQuery(queryKeys.explore.search('posts', q), (api) => api.explore.searchPosts(q), {

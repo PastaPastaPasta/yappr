@@ -14,6 +14,30 @@ import { UserRow } from '~/ui/UserRow';
 
 /** `graph.status` reads at most this many ids at once. */
 const STATUS_BATCH = 100;
+/** How long a read waits for the saved session to restore before reading as signed out. */
+const SESSION_WAIT_MS = 5000;
+
+/**
+ * The signed-in identity, once the engine has restored the session: a read
+ * made earlier (a cold-start deep link) would otherwise cache rows with no
+ * follow state, and the same account restoring doesn't refetch them.
+ */
+function settledViewer(): Promise<string | null> {
+  const viewer = () => useSessionStore.getState().session?.identityId ?? null;
+  if (useSessionStore.getState().status !== 'unknown') return Promise.resolve(viewer());
+  return new Promise((resolve) => {
+    let stop = () => {};
+    const done = () => {
+      clearTimeout(timer);
+      stop();
+      resolve(viewer());
+    };
+    const timer = setTimeout(done, SESSION_WAIT_MS);
+    stop = useSessionStore.subscribe((state) => {
+      if (state.status !== 'unknown') done();
+    });
+  });
+}
 
 /**
  * The signed-in viewer's follow of each user, for rows whose read skips it
@@ -21,7 +45,7 @@ const STATUS_BATCH = 100;
  * fails, nothing: those rows then show no follow state they don't know.
  */
 export async function readFollowStatus(api: EngineRemote, ids: readonly string[]): Promise<Record<string, boolean>> {
-  const viewer = useSessionStore.getState().session?.identityId;
+  const viewer = await settledViewer();
   const others = Array.from(new Set(ids)).filter((id) => id !== viewer);
   if (!viewer || others.length === 0) return {};
   try {

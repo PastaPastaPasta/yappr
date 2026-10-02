@@ -308,7 +308,13 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
             <Text variant="subhead" tone="secondary" className="flex-1">
               Couldn&apos;t load {SEARCH_TITLES[row.kind].toLowerCase()}.
             </Text>
-            <Pressable accessibilityRole="button" hitSlop={hitSlopFor(20)} onPress={row.retry}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Try loading ${SEARCH_TITLES[row.kind].toLowerCase()} again`}
+              hitSlop={hitSlopFor(20)}
+              onPress={row.retry}
+              testID={`search-retry-${row.kind}`}
+            >
               <Text variant="subheadStrong" tone="link">
                 Try again
               </Text>

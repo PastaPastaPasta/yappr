@@ -37,13 +37,13 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
   const [chosenWindow, setWindow] = useState<RankingWindow>('all');
   const sort: TagSort = chosenSort === 'top' && capabilities?.rankings ? 'top' : 'recent';
   const windowed = sort === 'top' && Boolean(capabilities?.windowedRankings);
-  const window: RankingWindow = windowed ? chosenWindow : 'all';
+  const rankWindow: RankingWindow = windowed ? chosenWindow : 'all';
 
-  const key = queryKeys.feed.hashtag({ tag: tag.storage, sort, window });
   const storage = tag.storage;
+  const key = queryKeys.feed.hashtag({ tag: storage, sort, window: rankWindow });
   const posts = useEngineInfiniteQuery<PostDTO>(
     key,
-    (api, cursor) => api.feed.hashtag({ tag: storage, sort, window, cursor }),
+    (api, cursor) => api.feed.hashtag({ tag: storage, sort, window: rankWindow, cursor }),
     { persist: true, enabled: storage !== '' },
   );
 
@@ -65,7 +65,7 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
     <View className={cn('gap-2 border-b px-4 py-2', tw.border)}>
       <SegmentedControl options={SORTS} value={sort} onChange={setSort} testID="hashtag-sort" />
       {windowed ? (
-        <SegmentedControl options={TAG_WINDOWS} value={window} onChange={setWindow} testID="hashtag-window" />
+        <SegmentedControl options={TAG_WINDOWS} value={rankWindow} onChange={setWindow} testID="hashtag-window" />
       ) : null}
     </View>
   ) : undefined;
@@ -75,7 +75,7 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
       <Stack.Screen options={{ title: tag.display }} />
       {offline ? <OfflineBanner message="You're offline. Showing saved posts." /> : null}
       <PagedPostList
-        key={`${sort}:${window}`}
+        key={`${sort}:${rankWindow}`}
         queryKey={key}
         query={posts}
         header={header}
