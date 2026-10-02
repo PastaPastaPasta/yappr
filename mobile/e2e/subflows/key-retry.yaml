@@ -1,0 +1,21 @@
+# On the private-key sheet showing a transient error (key-retry): wait a moment,
+# as a user reading it would (Maestro has no sleep: key-found cannot show before
+# the tap, so this optional wait always runs its whole timeout), tap "Try again",
+# and return once the new lookup has started (the error and its button go away;
+# optional, since a lookup that fails at once can bring them back between two looks).
+# The SDK fails fast while sakura's DAPI nodes are out of reach, so back-to-back
+# retries would all fail within seconds.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: key-found
+    timeout: 10000
+    optional: true
+- tapOn:
+    id: key-retry
+- extendedWaitUntil:
+    notVisible:
+      id: key-retry
+    timeout: 15000
+    optional: true

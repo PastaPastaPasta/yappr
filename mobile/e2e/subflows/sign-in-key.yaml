@@ -24,9 +24,13 @@ appId: ${APP_ID}
 - inputText: ${MAESTRO_SIGN_IN_KEY_2}
 - inputText: ${MAESTRO_SIGN_IN_KEY_3}
 - inputText: ${MAESTRO_SIGN_IN_KEY_4}
-# Sakura's quorum list lags now and then ("temporarily unavailable"): look the key up again.
+# Sakura's quorum list lags now and then ("Dash Platform is temporarily unavailable"),
+# and while it does, the SDK fails every lookup at once. So, as a user would: read
+# the error, wait a moment, then "Try again" (key-retry looks the key up again).
+# Wait for the new lookup to start before reading its result, or a stale error on
+# screen is read as its answer and the next tap cancels it.
 - repeat:
-    times: 3
+    times: 6
     while:
       notVisible:
         id: key-found
@@ -35,9 +39,11 @@ appId: ${APP_ID}
           visible:
             id: "key-found|key-retry"
           timeout: 60000
-      - tapOn:
-          id: key-retry
-          optional: true
+      - runFlow:
+          when:
+            visible:
+              id: key-retry
+          file: key-retry.yaml
 - assertVisible:
     id: key-found
 - tapOn:
@@ -46,16 +52,14 @@ appId: ${APP_ID}
     visible:
       id: "terms-agree|home-header|settings-root|key-retry"
     timeout: 120000
-# Signing in can meet the same lag ("Dash Platform is temporarily unavailable"):
-# "Try again" looks the key up again, then sign in again, as a user would.
+# Signing in can meet the same lag: look the key up again, then sign in again.
 - repeat:
-    times: 3
+    times: 4
     while:
       visible:
         id: key-retry
     commands:
-      - tapOn:
-          id: key-retry
+      - runFlow: key-retry.yaml
       - extendedWaitUntil:
           visible:
             id: "key-found|key-retry"
