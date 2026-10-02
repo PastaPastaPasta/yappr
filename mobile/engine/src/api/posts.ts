@@ -24,7 +24,7 @@ import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/
 import { RpcError } from '../protocol/envelope'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
 import { assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
-import { documentExists, fromBoolean } from '../writes/lib-results'
+import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
 import { createPublishHandler, validateDraft, type DraftDTO } from '../writes/publish'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
@@ -454,7 +454,8 @@ export function createPostWrites(tickets: TicketStore, emit: (event: 'content.cr
       const viewer = signer(ctx)
       const { id, kind } = target
       // A tombstone where posts are permanent (v9, v11), a delete elsewhere (`deleteOwnPost`).
-      return fromBoolean(kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer))
+      const ok = kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer)
+      return fromDeleteBoolean(ok, ctx.probe)
     },
     // A real delete names the document, proved absent; a tombstone (v9, v11) stays, blanked.
     probe: (ticket, args, kit) => deletesAreTombstones()

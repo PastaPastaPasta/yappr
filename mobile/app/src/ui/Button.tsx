@@ -3,6 +3,7 @@ import { View, type PressableProps, type StyleProp, type ViewStyle } from 'react
 
 import { cn } from '~/lib-allowlist';
 
+import { useRipple } from './ripple';
 import { ScalePressable } from './ScalePressable';
 import { Spinner } from './Spinner';
 import { Text } from './Text';
@@ -12,8 +13,10 @@ import { hitSlopFor, typeScale, useColors, type IconComponent, type SemanticColo
  * The web's `buttonVariants` (components/ui/button.tsx), class for class,
  * with UX_SPEC §2.1's touch sizes: `min-h` instead of `h` so labels can wrap
  * at large text sizes, and primary fills darkened in light mode (OQ-2).
+ * Android clips to the pill so the ripple (src/ui/ripple.ts) keeps its shape;
+ * not iOS, where clipping would also cut off the shadow.
  */
-const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded-full', {
+const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded-full android:overflow-hidden', {
   variants: {
     variant: {
       primary: 'bg-yappr-600 active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600',
@@ -100,6 +103,7 @@ export function Button({
   const c = useColors();
   const color = contentColor(variant, c);
   const inactive = disabled || loading;
+  const ripple = useRipple(variant === 'primary' || variant === 'destructive' ? 'fill' : 'surface');
 
   return (
     <ScalePressable
@@ -107,6 +111,7 @@ export function Button({
       accessibilityLabel={accessibilityLabel ?? label}
       accessibilityState={{ disabled: inactive, busy: loading }}
       disabled={inactive}
+      android_ripple={variant === 'link' ? undefined : ripple}
       hitSlop={size === 'sm' ? hitSlopFor(32) : size === 'md' ? hitSlopFor(40) : undefined}
       wrapperStyle={[size === 'block' ? { alignSelf: 'stretch' } : null, layoutStyle]}
       className={cn(buttonVariants({ variant, size, disabled }), className)}

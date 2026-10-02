@@ -95,13 +95,23 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
   have landed, and dropped when the pending one fails, since that failure's
-  undo restored the very state a toggle back asked for. With `intent` on the
+  undo restored the very state a toggle back asked for. It is also dropped,
+  undone and announced when the pending one's call is cut short (below). With `intent` on the
   spec, a queued write that asks for what the pending one asked is dropped
   too, so a like, unlike, like run sends one like.
+- **Offline (PRD G-1).** While the OS reports no connectivity, `runWrite`
+  (and Retry) send nothing and make no optimistic change: the toast says
+  "You're offline. Nothing was sent." and the result is `refused`.
+- **Short of credits or YAPP (PRD G-5).** `INSUFFICIENT_CREDITS` and
+  `INSUFFICIENT_YAPP` failures toast the mobile copy (YAPP with "Open
+  yap.pr"), never Retry. `writeFailureText` gives the same text to a spec
+  with its own message.
 - **The engine cut the call short.** `ENGINE_RESTARTED`, `ENGINE_DISCONNECTED`,
   `RPC_TIMEOUT` and `ENGINE_TIMEOUT` mean the write may have run (an account
   switch is an engine restart). No failure toast: give the spec `matches`, so
-  the tracker can follow the restored ticket. `onAdopted` tells a spec that
+  the tracker can follow the restored ticket. A write queued behind it is
+  never sent: the call may still be running, and the next engine may sign as
+  another account. `onAdopted` tells a spec that
   keeps its own record of the write (a DM's outbox bubble) which ticket that is.
   - Signing out or switching accounts forgets every tracked write.
 - **When the engine refuses the call itself.** No ticket is made, and the

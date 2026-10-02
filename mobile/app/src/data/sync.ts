@@ -5,6 +5,7 @@ import { engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
 
+import { startConnectivity } from './connectivity';
 import { onEngineEvent } from './events';
 import { queryKeys } from './keys';
 import { useRemovedPosts } from './optimistic';
@@ -85,6 +86,7 @@ export function startDataLayer(): () => void {
   const stops = [
     startSessionSync(),
     startWriteTracking(),
+    startConnectivity(),
     onEngineEvent('content.created', contentCreated),
     stopAccount,
     stopRestored,

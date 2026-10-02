@@ -28,6 +28,9 @@ export interface ProfileUpdateVars {
 export const profileUpdateWrite: WriteSpec<ProfileUpdateVars> = {
   key: ({ viewerId }) => `profile:${viewerId}`,
   submit: (api, { patch }) => api.profiles.update(patch),
+  // A second Save of the same change before the first answers is dropped, not sent again
+  // (each send of an unchanged profile is another paid replace on v2).
+  intent: ({ patch }) => JSON.stringify(patch),
   onConfirmed: () => {
     refetch(queryKeys.profile.all);
     refetch(queryKeys.feed.all);

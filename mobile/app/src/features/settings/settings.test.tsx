@@ -425,7 +425,8 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
 
     expect(fakeEngine.method('session.signOut')).toHaveBeenCalledWith({ identityId: ALICE });
     expect(toastMessage()).toBe('Signed out');
-    expect(engineSupervisor.restart).not.toHaveBeenCalled();
+    // After the sign-out, not before it: a fresh engine drops the page that carried the keys (SR-11).
+    expect(engineSupervisor.restart).toHaveBeenCalledTimes(1);
   });
 
   it('cancelling the confirm keeps the account', async () => {
@@ -449,7 +450,7 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
 
     expect(router.dismissAll).toHaveBeenCalled();
     expect(router.navigate).toHaveBeenCalledWith('/');
-    expect(engineSupervisor.restart).not.toHaveBeenCalled();
+    expect(engineSupervisor.restart).toHaveBeenCalledTimes(1);
   });
 
   it('signing out the active account moves to the next one', async () => {

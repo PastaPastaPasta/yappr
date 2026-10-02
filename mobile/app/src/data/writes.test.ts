@@ -1,13 +1,20 @@
 import type { TargetRef, WriteTicket } from '@engine/api';
 import { act, renderHook } from '@testing-library/react-native';
 
+import * as WebBrowser from 'expo-web-browser';
+
 import { useToastStore } from '~/ui/toast';
+
+import { deleteWrite } from '~/features/post/post-writes';
 
 import { useSignInPrompt } from './require-auth';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { adoptRestoredWrites, checkWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
+let mockOffline = false;
+jest.mock('./connectivity', () => ({ isOffline: () => mockOffline, startConnectivity: () => () => undefined }));
+jest.mock('expo-web-browser', () => ({ openBrowserAsync: jest.fn(async () => ({ type: 'opened' })) }));
 
 /** A fresh post per test: a write left pending would hold its key. */
 let target: TargetRef;
@@ -50,6 +57,7 @@ beforeEach(() => {
   fakeEngine.reset();
   useToastStore.setState({ current: null });
   useSignInPrompt.setState({ open: false });
+  mockOffline = false;
 });
 
 describe('submitWrite', () => {
@@ -329,6 +337,75 @@ describe('submitWrite', () => {
     await expect(submitWrite(spec, target)).resolves.toBeNull();
     expect(useSignInPrompt.getState().open).toBe(true);
     expect(currentToast()).toBeNull();
+  });
+
+  it('sends nothing while offline: no change, and "Nothing was sent" (PRD G-1)', async () => {
+    mockOffline = true;
+    await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused', error: { code: 'OFFLINE' } });
+    expect(apply).not.toHaveBeenCalled();
+    expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
+    expect(currentToast()).toMatchObject({ message: "You're offline. Nothing was sent." });
+  });
+
+  it('says credits or YAPP are short in the mobile copy, with no Retry (PRD G-5)', async () => {
+    const short = (code: 'INSUFFICIENT_CREDITS' | 'INSUFFICIENT_YAPP') => ({
+      code,
+      consensusCode: null,
+      outcome: 'refused' as const,
+      retryable: false,
+      userMessage: "You don't have enough YAPP. Buy more to continue.",
+    });
+    const credits = await submitPending();
+    act(() => fakeEngine.emit('write.status', advance(credits, { state: 'failed', error: short('INSUFFICIENT_CREDITS') })));
+    expect(currentToast()).toMatchObject({
+      kind: 'error',
+      message: "Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted.",
+    });
+    expect(currentToast()?.action).toBeUndefined();
+
+    target = { ...target, id: `${target.id}-yapp` };
+    const yapp = await submitPending();
+    act(() => fakeEngine.emit('write.status', advance(yapp, { state: 'failed', error: short('INSUFFICIENT_YAPP') })));
+    expect(currentToast()).toMatchObject({
+      message: 'You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again.',
+      action: { label: 'Open yap.pr' },
+    });
+    act(() => currentToast()?.action?.onPress());
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/yap\.pr/));
+  });
+
+  it('drops a write queued behind a call the engine cut short: undone, never sent to the next engine', async () => {
+    const toggle: WriteSpec<{ on: boolean }> = {
+      key: () => `like:${target.id}`,
+      submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
+      optimistic: apply,
+      intent: ({ on }) => on,
+      noun: 'like',
+      failureMessage: 'x',
+    };
+    let cut: (error: unknown) => void = () => undefined;
+    fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise((_resolve, reject) => (cut = reject)));
+    const first = runWrite(toggle, { on: true });
+    await expect(runWrite(toggle, { on: false })).resolves.toEqual({ status: 'queued' });
+
+    await act(async () => {
+      cut(Object.assign(new Error('The engine restarted'), { code: 'ENGINE_RESTARTED' }));
+      await expect(first).resolves.toMatchObject({ status: 'unknown' });
+    });
+    expect(fakeEngine.method('engage.unlike')).not.toHaveBeenCalled();
+    // The queued unlike's change is undone; the cut-short like's stays (it may have landed).
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(currentToast()).toMatchObject({ kind: 'error', message: "Your like didn't go through. Try again." });
+  });
+
+  it('sends one delete for a second delete made while the first is pending', async () => {
+    const own: TargetRef = { ...target, ownerId: 'viewer' };
+    const pending = ticket({ op: 'post.delete', target: own });
+    fakeEngine.method('posts.delete').mockResolvedValueOnce(pending);
+    await expect(runWrite(deleteWrite, { target: own })).resolves.toMatchObject({ status: 'submitted' });
+    await expect(runWrite(deleteWrite, { target: own })).resolves.toEqual({ status: 'queued' });
+    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(fakeEngine.method('posts.delete')).toHaveBeenCalledTimes(1);
   });
 
   it('lets the spec handle a refusal itself', async () => {

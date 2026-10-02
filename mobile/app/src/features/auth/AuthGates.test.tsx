@@ -6,6 +6,7 @@ import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
 import { useAccounts } from './accounts';
+import { useAppLockSettings, useLockState } from './app-lock';
 import { AuthGates } from './AuthGates';
 import { useKeyExchange } from './key-exchange';
 import { useOnboarding } from './onboarding';
@@ -48,6 +49,8 @@ beforeEach(() => {
   useTermsStore.setState({ accepted: {} });
   useAccounts.setState({ transition: null, returnTo: null });
   useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [] });
+  useAppLockSettings.setState({ enabled: false });
+  useLockState.setState({ locked: false, covered: false, authenticating: false, backgroundAt: null });
   fakeEngine.method('session.cancelKeyExchange').mockResolvedValue(undefined);
 });
 
@@ -67,6 +70,19 @@ describe('terms gate (AUTH-09)', () => {
     act(() => acceptTerms('devnet-test', 'alice'));
     act(() => useAccounts.setState({ transition: null }));
     expect(router.push).not.toHaveBeenCalled();
+  });
+  it('never opens over the app lock, where iOS would draw it above the lock screen (SR-01)', () => {
+    useAppLockSettings.setState({ enabled: true });
+    useLockState.setState({ locked: true });
+    mount('/');
+    expect(router.push).not.toHaveBeenCalled();
+
+    // The lock screen covering an inactive app holds it too.
+    act(() => useLockState.setState({ locked: false, covered: true }));
+    expect(router.push).not.toHaveBeenCalled();
+
+    act(() => useLockState.setState({ covered: false }));
+    expect(router.push).toHaveBeenCalledWith('/terms-gate');
   });
 });
 
@@ -153,5 +169,32 @@ describe('launch', () => {
     await flush();
     expect(router.push).not.toHaveBeenCalled();
     useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
+  });
+
+  it('holds a resume whose answer arrives after the lock came up, and reopens it after unlock (SR-01)', async () => {
+    useSessionStore.setState({ status: 'signed-out', session: null });
+    useAppLockSettings.setState({ enabled: true });
+    fakeEngine.setStatus({ state: 'ready' });
+    const request = { requestId: 'r3', uri: 'dash-key:r3', expiresAt: new Date(Date.now() + 60_000) };
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('session.pendingKeyExchange').mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
+
+    mount('/');
+    // The user leaves the app while the engine answers: the cover is up when the answer lands.
+    act(() => useLockState.setState({ covered: true }));
+    answer(request);
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+
+    fakeEngine.method('session.pendingKeyExchange').mockResolvedValue(request);
+    act(() => useLockState.setState({ covered: false }));
+    await flush();
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/(wallet|qr)\?resume=1$/));
   });
 });

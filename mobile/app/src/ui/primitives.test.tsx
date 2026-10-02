@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AccessibilityInfo, Alert } from 'react-native';
+import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
@@ -228,6 +229,21 @@ describe('WriteStatus', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(links.length);
   });
 
+  it('gives each action a testID, and targets that never reach over a neighbour (A11Y-08, UX_SPEC §6.4)', () => {
+    const onRetry = jest.fn();
+    const onEdit = jest.fn();
+    render(<WriteStatus status={{ state: 'failed' }} onRetry={onRetry} onEdit={onEdit} />);
+    for (const id of ['write-status-retry', 'write-status-edit']) {
+      const link = screen.getByTestId(id);
+      expect(link.props.hitSlop).toMatchObject({ left: 0, right: 0 });
+      expect(link.props.hitSlop.top).toBeGreaterThan(0);
+      expect(StyleSheet.flatten(link.props.style).minWidth).toBeGreaterThanOrEqual(44);
+    }
+    fireEvent.press(screen.getByTestId('write-status-retry'));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
   it('announces state changes, not its first appearance', () => {
     const announce = jest
       .spyOn(AccessibilityInfo, 'announceForAccessibility')
@@ -342,6 +358,31 @@ describe('toasts', () => {
     act(() => jest.advanceTimersByTime(3000));
     expect(useToastStore.getState().current).toBeNull();
     jest.useRealTimers();
+  });
+
+  it('on iOS, lifts each toast into a window overlay above modals, unless told not to (SR-33)', () => {
+    const metrics = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } };
+    const view = render(
+      <SafeAreaProvider initialMetrics={metrics}>
+        <ToastHost aboveModals />
+      </SafeAreaProvider>,
+    );
+    expect(view.UNSAFE_queryAllByType(FullWindowOverlay)).toHaveLength(0);
+    act(() => {
+      toast.error('Failed to update profile');
+    });
+    const [overlay] = view.UNSAFE_getAllByType(FullWindowOverlay);
+    expect(overlay?.props.unstable_accessibilityContainerViewIsModal).toBe(false);
+    expect(screen.getByText('Failed to update profile')).toBeTruthy();
+
+    // While the app lock is up the toast stays in the root view, under the lock screen.
+    view.rerender(
+      <SafeAreaProvider initialMetrics={metrics}>
+        <ToastHost aboveModals={false} />
+      </SafeAreaProvider>,
+    );
+    expect(view.UNSAFE_queryAllByType(FullWindowOverlay)).toHaveLength(0);
+    expect(screen.getByText('Failed to update profile')).toBeTruthy();
   });
 });
 

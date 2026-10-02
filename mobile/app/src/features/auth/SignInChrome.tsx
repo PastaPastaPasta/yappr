@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cn } from '~/lib-allowlist';
 import { IconButton } from '~/ui/IconButton';
+import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, tw } from '~/ui/tokens';
 
@@ -53,20 +54,22 @@ export function SignInBody({
 }) {
   const insets = useSafeAreaInsets();
   return (
-    <View className={cn('flex-1', tw.bg)} testID={testID}>
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        automaticallyAdjustKeyboardInsets
-        keyboardShouldPersistTaps="handled"
-        contentContainerClassName={cn('grow gap-4 px-6 pb-6 pt-4', center && 'justify-center')}
-      >
-        {children}
-      </ScrollView>
-      {footer ? (
-        <View className="gap-3 px-6 pt-3" style={{ paddingBottom: Math.max(insets.bottom, 16) }}>
-          {footer}
-        </View>
-      ) : null}
-    </View>
+    <KeyboardAvoider>
+      <View className={cn('flex-1', tw.bg)} testID={testID}>
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled"
+          contentContainerClassName={cn('grow gap-4 px-6 pb-6 pt-4', center && 'justify-center')}
+        >
+          {children}
+        </ScrollView>
+        {footer ? (
+          <View className="gap-3 px-6 pt-3" style={{ paddingBottom: Math.max(insets.bottom, 16) }}>
+            {footer}
+          </View>
+        ) : null}
+      </View>
+    </KeyboardAvoider>
   );
 }

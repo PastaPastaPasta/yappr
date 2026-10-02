@@ -9,7 +9,7 @@ import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 import { characterCount, counterLabel, counterTone, type ContentLimits } from './limits';
 
 export interface ComposeAccessoryBarProps {
-  /** The active part's text, for the counter. */
+  /** The active part's text as it will be posted (trimmed), for the counter. */
   text: string;
   limits: ContentLimits;
   offline: boolean;

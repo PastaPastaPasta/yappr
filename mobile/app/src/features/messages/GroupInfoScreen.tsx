@@ -26,7 +26,7 @@ import { tw, useColors } from '~/ui/tokens';
 
 import { ConversationAvatar } from './ConversationAvatar';
 import { readErrorMessage, refreshDm, useConversations, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
-import { conversationTitle, memberCount } from './dm-model';
+import { conversationTitle, GROUP_NAME_MAX, groupNameError, memberCount } from './dm-model';
 import {
   addMemberWrite,
   endGroupWrite,
@@ -36,8 +36,6 @@ import {
   resendKeysWrite,
 } from './dm-writes';
 import { UserPicker } from './UserPicker';
-
-const NAME_MAX = 100;
 
 function RenameDialog({
   open,
@@ -51,7 +49,8 @@ function RenameDialog({
   onSave: (name: string) => void;
 }) {
   const [name, setName] = useState(initial);
-  const valid = name.trim().length > 0 && name.trim() !== initial;
+  const nameError = groupNameError(name);
+  const valid = name.trim().length > 0 && name.trim() !== initial && !nameError;
   return (
     <Dialog open={open} onClose={onClose} testID="rename-dialog">
       <Text variant="headline" tone="emphasis" accessibilityRole="header" className="mb-4">
@@ -61,7 +60,8 @@ function RenameDialog({
         label="Group name"
         value={name}
         onChangeText={setName}
-        maxLength={NAME_MAX}
+        maxLength={GROUP_NAME_MAX}
+        error={nameError}
         autoFocus
         returnKeyType="done"
         onSubmitEditing={() => valid && onSave(name.trim())}

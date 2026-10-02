@@ -75,6 +75,12 @@ export interface PublishInput {
    */
   markSensitive: boolean
   onProgress: (progress: PostingProgress) => void
+  /**
+   * Each part as soon as it is created, before the next one is attempted, so
+   * a caller that can be cut short (the mobile engine) has every posted id
+   * on record even if this call never returns.
+   */
+  onCreated?: (created: { index: number; postId: string; isReply: boolean }) => void
 }
 
 export interface SuccessfulPost {
@@ -107,7 +113,7 @@ interface CreatedDocument {
  * is deliberately not chained to, so what follows stays public and top-level.
  */
 export async function publishThread(input: PublishInput): Promise<PublishOutcome> {
-  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, mediaHashes, markSensitive, onProgress } = input
+  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, mediaHashes, markSensitive, onProgress, onCreated } = input
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
@@ -234,6 +240,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
     // Only a write that went out unconfirmed arms the gate; the record is
     // session-wide because the optimistic card is already interactive.
     if (!created.confirmed) markUnconfirmed(created.isReply ? 'reply' : 'post', created.postId)
+    onCreated?.({ index: i, postId: created.postId, isReply: created.isReply })
 
     progress(isThisPostPrivate ? 'Private post created!' : `Post ${i + 1} created, processing hashtags...`)
     // Encrypted content is never indexed; only a public teaser is.
