@@ -225,3 +225,24 @@ describe('DmEngine self-state edits across a reload (§5.5)', () => {
     expect(bob.getSnapshot().blocked).toEqual([alice58])
   })
 })
+
+describe('DmEngine.pause', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('stops polling until resumed, then polls at once and on the schedule again', async () => {
+    vi.useFakeTimers()
+    const ledger = new MemoryLedger()
+    const alice = engine(ledger, ALICE_ID, ALICE_PRIV)
+    await alice.start()
+    const tick = vi.spyOn(alice, 'tick')
+
+    alice.pause()
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(tick).not.toHaveBeenCalled()
+
+    await alice.resume()
+    expect(tick).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    expect(tick.mock.calls.length).toBeGreaterThan(1)
+  })
+})

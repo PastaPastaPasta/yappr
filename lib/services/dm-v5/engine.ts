@@ -106,6 +106,7 @@ export class DmEngine {
   private queue: Promise<unknown> = Promise.resolve()
   private started = false
   private stopped = false
+  private paused = false
   private timer: ReturnType<typeof setTimeout> | null = null
   private openKey: string | null = null
   private recovery: RecoveryProgress | null = null
@@ -216,6 +217,22 @@ export class DmEngine {
     this.ctx.store.cancelTimer()
   }
 
+  /**
+   * Stop polling until {@link resume} (the mobile app went to the background,
+   * where it must not poll). Saves and the user's own actions still run.
+   */
+  pause(): void {
+    this.paused = true
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+  }
+
+  /** Back from {@link pause}: poll now, then on the usual schedule. */
+  resume(): Promise<void> {
+    this.paused = false
+    return this.tick()
+  }
+
   /** Save pending self-state edits now (page hidden or closed, §5.5), on the queue. */
   flush(): Promise<boolean> {
     return this.run(() => this.ctx.store.flush()).catch((error) => {
@@ -225,7 +242,7 @@ export class DmEngine {
   }
 
   private schedule(): void {
-    if (this.stopped) return
+    if (this.stopped || this.paused) return
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
       this.tick().catch((error) => logger.warn('DM v5 poll failed:', error))
@@ -254,7 +271,7 @@ export class DmEngine {
   /** At most once a day: plan on the queue, then delete one message per queued task (each is a write). */
   private maybeSweep(): void {
     const { ctx } = this
-    if (this.sweeping || this.stopped || this.recovery || ctx.store.status === 'idle' || !ctx.chain.canWrite()) return
+    if (this.sweeping || this.stopped || this.paused || this.recovery || ctx.store.status === 'idle' || !ctx.chain.canWrite()) return
     if (ctx.store.state.settings.retention === 'never') return
     if (ctx.chain.now() - ctx.cache.lastSweep < SWEEP_INTERVAL_MS) return
     this.sweeping = true

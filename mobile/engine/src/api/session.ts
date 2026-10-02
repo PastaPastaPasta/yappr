@@ -14,10 +14,12 @@ import {
 } from '@/lib/secure-storage'
 import { stopDmEngine } from '@/lib/services/dm-v5'
 import { dpnsService } from '@/lib/services/dpns-service'
+import { logger } from '@/lib/logger'
 import { RpcError } from '../protocol/envelope'
 import { createAccountRegistry, type SignInMethod } from '../session/accounts'
 import { createKeyExchange, type KeyExchangeRequestDTO, type KeyExchangeStep } from '../session/key-exchange'
 import { verifySignInKey } from '../session/keys'
+import type { AppLifecycleState } from '../shims/lifecycle'
 import type { TicketStore } from '../writes/tickets'
 
 export type { KeyExchangeRequestDTO, KeyToRegister } from '../session/key-exchange'
@@ -69,7 +71,7 @@ export interface SessionModuleOptions {
    * reported sign-out has removed the keys (ENGINE.md §9.1). Absent in Node.
    */
   secureDurable?: () => Promise<void>
-  /** Tests inject a controller with stubbed dependencies. */
+  /** The auth controller (the engine shares it with {@link foregroundBalanceRefresh}); tests stub its dependencies. */
   controller?: PlatformAuthController
   /**
    * Stops direct messages and saves their pending state, before sign-out or
@@ -88,8 +90,9 @@ const toCredits = (balance: number): bigint => BigInt(Math.trunc(balance))
  * Mobile 1.0 signs in with a wallet (key exchange) or a private key only
  * (ADR-001 E5): no vaults, passwords or passkeys, no username or profile
  * gate (DPNS registration links out to web). Post-login tasks (block data,
- * private-feed key sync), the encryption-key auto-derive and the balance
- * refresh stay on, as on web.
+ * private-feed key sync) and the encryption-key auto-derive stay on, as on
+ * web. The balance refresh runs in the foreground only
+ * ({@link foregroundBalanceRefresh}).
  */
 export function createMobileAuthController(): PlatformAuthController {
   const deps = createYapprPlatformAuthDependencies()
@@ -103,11 +106,52 @@ export function createMobileAuthController(): PlatformAuthController {
       passkeyLogin: false,
       authVault: false,
       legacyPasswordLogin: false,
+      balanceRefresh: false,
     },
     vault: undefined,
     passkeys: undefined,
     legacyPasswordLogins: undefined,
   })
+}
+
+/** How often the signed-in balance is read while the app is in the foreground (platform-auth's default). */
+export const BALANCE_REFRESH_MS = 300_000
+
+/**
+ * The controller's balance refresh, in the foreground only (PRD NET-08):
+ * platform-auth's own `setInterval` keeps running in a backgrounded Android
+ * WebView. Every `intervalMs` while signed in and active; the engine's
+ * `lifecycle` drives `lifecycle()`.
+ */
+export function foregroundBalanceRefresh(
+  controller: {
+    getState(): { user: unknown }
+    subscribe(listener: () => void): unknown
+    refreshBalance(): Promise<void>
+  },
+  intervalMs = BALANCE_REFRESH_MS,
+) {
+  let foreground = true
+  let timer: ReturnType<typeof setInterval> | null = null
+  const sync = () => {
+    const run = foreground && controller.getState().user !== null
+    if (run && !timer) {
+      timer = setInterval(() => {
+        controller.refreshBalance().catch(error => logger.warn('Balance refresh failed:', error))
+      }, intervalMs)
+    } else if (!run && timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  }
+  controller.subscribe(sync)
+  return {
+    lifecycle(state: AppLifecycleState): void {
+      if (state === 'inactive') return
+      foreground = state === 'active'
+      sync()
+    },
+  }
 }
 
 /**

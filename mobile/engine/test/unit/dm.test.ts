@@ -159,6 +159,17 @@ describe('dm on DM v5: session lifecycle', () => {
     expect(tick).toHaveBeenCalledTimes(1)
   })
 
+  it('stops polling in the background and polls again on return (SR-30, NET-08)', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    const pause = vi.spyOn(user.engine(), 'pause')
+    const resume = vi.spyOn(user.engine(), 'resume')
+    await user.hooks.lifecycle('background')
+    expect(pause).toHaveBeenCalledTimes(1)
+    expect(resume).not.toHaveBeenCalled()
+    await user.hooks.lifecycle('active')
+    expect(resume).toHaveBeenCalledTimes(1)
+  })
+
   it('reports locked without an encryption key, and starts once one exists', async () => {
     const user = userOn(ledgerNow(), alice)
     await user.hooks.stop()
