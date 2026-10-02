@@ -1,13 +1,14 @@
 import { router } from 'expo-router';
 import { Platform, Share } from 'react-native';
 
-import { sendWrite } from '~/data/writes';
+import { errorCode, sendWrite } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copyText } from '~/features/post/post-navigation';
 import { followWrite } from '~/features/post/post-writes';
 import { showActionSheet } from '~/ui/action-sheet';
 import { lightImpact } from '~/ui/haptics';
+import { toast } from '~/ui/toast';
 
 import { profileWebUrl } from './profile-format';
 
@@ -51,8 +52,9 @@ export function toggleFollow(identityId: string, handle: string, following: bool
 /**
  * "Message" (PRD PROF-09): the existing 1:1 with this user, or a new one.
  * `dm.startDirect` finds or opens it without writing anything; when it
- * can't (messages locked, still restoring), the new-message screen takes
- * the user from there.
+ * can't yet (messages locked, still restoring), the new-message screen
+ * takes the user from there. A request that can never work (signed out, a
+ * bad peer) says so instead.
  */
 export async function messageUser(identityId: string): Promise<void> {
   try {
@@ -60,6 +62,11 @@ export async function messageUser(identityId: string): Promise<void> {
     router.push({ pathname: '/messages/[conversationId]', params: { conversationId } });
   } catch (error) {
     appendLog('info', 'host', `Opening a conversation from a profile: ${errorMessage(error)}`);
+    const code = errorCode(error);
+    if (code === 'NOT_SIGNED_IN' || code === 'BAD_REQUEST') {
+      toast.error(code === 'BAD_REQUEST' ? errorMessage(error) : 'Sign in to send messages');
+      return;
+    }
     router.push({ pathname: '/messages/new', params: { with: identityId } });
   }
 }

@@ -35,16 +35,21 @@ export function TopBarIcon({
   testID?: string;
 }) {
   const c = useColors();
+  // Inside a menu the menu view is the button (it takes the tap), so this view carries the label.
+  const inMenu = !onPress;
   const content = (
     <View
       className="h-8 w-8 items-center justify-center rounded-full"
       style={overBanner ? { backgroundColor: 'rgba(0,0,0,0.4)' } : undefined}
+      accessible={inMenu}
+      accessibilityRole={inMenu ? 'button' : undefined}
+      accessibilityLabel={inMenu ? accessibilityLabel : undefined}
+      testID={inMenu ? testID : undefined}
     >
       <Icon size={20} color={overBanner ? colors.white : c.textPrimary} />
     </View>
   );
-  // Inside a menu the menu view is the button (it takes the tap).
-  if (!onPress) return content;
+  if (inMenu) return content;
   return (
     <Pressable
       accessibilityRole="button"

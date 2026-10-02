@@ -3,7 +3,7 @@ import type { ProfileTab } from '@engine/api/profiles';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { setStatusBarStyle } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState, type ReactElement } from 'react';
+import { useCallback, useRef, useState, type ReactElement } from 'react';
 import { RefreshControl, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 import {
   Cog6ToothIcon,
@@ -73,10 +73,10 @@ function ProfileTabList({
   tabBar,
   onScroll,
   onRefreshProfile,
-  startOffset,
+  stickOffset,
+  startStuck,
+  barHeight,
 }: {
-  /** Where to open: a tab picked while the tabs were stuck keeps them stuck. */
-  startOffset: number;
   profileId: string;
   tab: ProfileTab;
   spec: ProfileTabSpec;
@@ -84,16 +84,33 @@ function ProfileTabList({
   tabBar: ReactElement;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   onRefreshProfile: () => Promise<unknown>;
+  /** The offset at which the tab bar meets the top bar (0 until the header is measured). */
+  stickOffset: number;
+  /** A tab picked while the tabs were stuck opens with them stuck. */
+  startStuck: boolean;
+  barHeight: number;
 }) {
   const c = useColors();
   const listRef = useRef<FlashListRef<Row>>(null);
-  const [initialOffset] = useState(startOffset);
-  useEffect(() => {
-    if (initialOffset <= 0) return undefined;
-    // After the first layout, so the header is measured.
-    const frame = requestAnimationFrame(() => listRef.current?.scrollToOffset({ offset: initialOffset, animated: false }));
-    return () => cancelAnimationFrame(frame);
-  }, [initialOffset]);
+  // Room below a short tab (an empty state, a few posts), so the tabs can always reach the
+  // top bar: otherwise a stuck start is clamped short and the pinned copy shows twice.
+  const [spacer, setSpacer] = useState(0);
+  const spacerRef = useRef(0);
+  const viewport = useRef(0);
+  const pendingStick = useRef(startStuck);
+  const onContentSizeChange = (_width: number, height: number) => {
+    if (viewport.current <= 0 || stickOffset <= 0) return;
+    const needed = Math.max(0, Math.ceil(viewport.current + stickOffset - (height - spacerRef.current)));
+    if (Math.abs(needed - spacerRef.current) > 1) {
+      spacerRef.current = needed;
+      setSpacer(needed);
+      return;
+    }
+    if (pendingStick.current && height - viewport.current >= stickOffset) {
+      pendingStick.current = false;
+      listRef.current?.scrollToOffset({ offset: stickOffset, animated: false });
+    }
+  };
   const posts = useEngineInfiniteQuery<ProfileItem>(
     queryKeys.profile.posts(profileId, tab),
     (api, cursor) => api.profiles.posts({ id: profileId, tab, cursor }),
@@ -135,7 +152,7 @@ function ProfileTabList({
     ];
   }
 
-  const footer = posts.isFetchingNextPage ? (
+  const more = posts.isFetchingNextPage ? (
     <View className="items-center p-6">
       <Spinner size="sm" />
     </View>
@@ -150,6 +167,12 @@ function ProfileTabList({
       />
     </View>
   ) : null;
+  const footer = (
+    <>
+      {more}
+      {spacer > 0 ? <View style={{ height: spacer }} /> : null}
+    </>
+  );
 
   const rows: Row[] = [{ kind: 'header' }, { kind: 'tabs' }, ...body];
   return (
@@ -174,11 +197,16 @@ function ProfileTabList({
       onEndReachedThreshold={1.5}
       onScroll={onScroll}
       scrollEventThrottle={16}
+      onLayout={(event) => {
+        viewport.current = event.nativeEvent.layout.height;
+      }}
+      onContentSizeChange={onContentSizeChange}
       contentInsetAdjustmentBehavior="never"
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
           onRefresh={onRefresh}
+          progressViewOffset={barHeight}
           tintColor={c.accent}
           colors={[c.accent]}
           progressBackgroundColor={c.bg}
@@ -234,7 +262,8 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   const settings = useEngineQuery(queryKeys.settings, (api) => api.settings.get());
   const profile: ProfileDTO | null | undefined = profileQuery.data;
   const profileId = profile?.id ?? '';
-  const isSelf = !!profile && profile.id === viewerId;
+  // The Profile tab is the viewer's own even while the session restores (viewerId still null).
+  const isSelf = !!profile && (ownTab || profile.id === viewerId);
   const [nsfwAcknowledged, acknowledgeNsfw] = useNsfwAcknowledged(profileId);
 
   const name = profile?.displayName ?? '';
@@ -409,7 +438,11 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
       <TopTabs
         options={tabs.map(({ value, label }) => ({ value, label }))}
         value={shownTab.value}
-        onChange={setTab}
+        onChange={(next) => {
+          // The new tab opens at the top unless the tabs were stuck: the bar goes back over the banner.
+          if (!tabsStuck) setScrollY(0);
+          setTab(next);
+        }}
         testID="profile-tabs"
       />
     </View>
@@ -452,7 +485,9 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
         tabBar={tabBar}
         onScroll={onScroll}
         onRefreshProfile={refreshProfile}
-        startOffset={tabsStuck ? headerHeight - barHeight : 0}
+        stickOffset={headerHeight > 0 ? headerHeight - barHeight : 0}
+        startStuck={tabsStuck}
+        barHeight={barHeight}
       />
       {tabsStuck ? (
         <View className="absolute left-0 right-0" style={{ top: barHeight }} testID="profile-tabs-stuck">

@@ -9,6 +9,7 @@ import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
@@ -92,6 +93,8 @@ let sheet: { options: string[]; choose: (label: string) => void } | null = null;
 beforeEach(() => {
   jest.clearAllMocks();
   fakeEngine.reset();
+  // A write a test left pending would keep its key busy for the next.
+  resetWriteTracking();
   queryClient.clear();
   fakeEngine.setStatus({ info: { capabilities: { rankings: true } as CapabilitiesDTO } });
   useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
@@ -150,6 +153,19 @@ describe('ProfileScreen', () => {
     expect(screen.getByLabelText('3 Followers')).toBeTruthy();
   });
 
+  it('rolls the follow back when the write is refused', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profile());
+    fakeEngine.method('graph.follow').mockRejectedValue(Object.assign(new Error('Not enough credits'), { code: 'FEE_UNPAYABLE' }));
+    renderProfile();
+    await flush();
+
+    await act(async () => fireEvent.press(screen.getByTestId('profile-follow')));
+    await flush();
+    expect(fakeEngine.method('graph.follow')).toHaveBeenCalledWith(OTHER);
+    expect(screen.getByTestId('profile-follow')).toHaveAccessibleName('Follow Sigrid Dahl');
+    expect(screen.getByLabelText('3 Followers')).toBeTruthy();
+  });
+
   it('asks a signed-out reader to sign in instead of following', async () => {
     useSessionStore.setState({ status: 'signed-out', session: null });
     fakeEngine.method('profiles.get').mockResolvedValue(profile({ viewer: undefined }));
@@ -175,6 +191,36 @@ describe('ProfileScreen', () => {
     expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(OTHER);
     expect(screen.queryByText('You blocked this user')).toBeNull();
     expect(screen.getByTestId('profile-tabs')).toBeTruthy();
+  });
+
+  it('brings the blocked notice back when the unblock is refused (a followed block list)', async () => {
+    const blocked = profile({ viewer: { follows: false, blocks: true, isSelf: false } });
+    fakeEngine.method('profiles.get').mockResolvedValue(blocked);
+    fakeEngine
+      .method('safety.unblock')
+      .mockRejectedValue(Object.assign(new Error('Blocked through a block list you follow'), { code: 'STILL_BLOCKED' }));
+    renderProfile();
+    await flush();
+
+    await act(async () => fireEvent.press(screen.getByText('Unblock')));
+    await flush();
+    expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(OTHER);
+    expect(screen.getByText('You blocked this user')).toBeTruthy();
+    expect(screen.queryByTestId('profile-tabs')).toBeNull();
+  });
+
+  it('treats the Profile tab as the viewer’s own while the session restores', async () => {
+    useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
+    fakeEngine.method('profiles.get').mockResolvedValue(
+      profile({ id: VIEWER, username: 'jana', displayName: 'Jana Abara', viewer: undefined }),
+    );
+    renderProfile(VIEWER, { ownTab: true });
+    await flush();
+
+    expect(screen.getByTestId('profile-edit')).toBeTruthy();
+    expect(screen.getByTestId('profile-settings')).toBeTruthy();
+    expect(screen.queryByTestId('profile-follow')).toBeNull();
+    expect(screen.queryByLabelText('Message Jana Abara')).toBeNull();
   });
 
   it('shows the own profile with Edit profile and the username card when nameless', async () => {

@@ -26,7 +26,8 @@ export default function OwnProfileScreen() {
   }
   return (
     <>
-      <ProfileScreen idOrName={id} ownTab />
+      {/* Keyed: another account starts fresh (its tab, scroll and username card). */}
+      <ProfileScreen key={id} idOrName={id} ownTab />
       <ComposeFab />
     </>
   );
