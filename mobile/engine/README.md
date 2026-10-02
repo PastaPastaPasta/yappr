@@ -266,11 +266,30 @@ On v5, a call naming a conversation before the saved state has loaded (`status()
 - **Lost replace answers.** lib keeps an SDK-signed write (a roster or self-state replace) whose answer never came (a transport error after the broadcast) pending for 15 minutes, and refuses every DM write in between with `PENDING_WRITE`, even once the DM engine has read the replace back. Before each v5 write the engine calls lib's `settleSupersededReplaces`, which releases such an entry once Platform shows its document at the revision it writes, or later, and the nonce after the one Platform reported before it was signed consumed (a stale-revision replace still executes as a paid error and takes a nonce, so the revision alone is not enough; no nonce is guessed). A replace still unseen keeps holding writes back, as it must. The sakura write suite loses one rename answer on purpose and expects the next group change to confirm.
 - **Tests.** `test/unit/dm.test.ts` runs both backends offline: v5 on lib's in-memory test chain with three users on one ledger (round trip, events, paging, groups, block, hide, retention, lifecycle, the unconfirmed send), legacy over a fake service. `test/contract/read/dm.test.ts` checks the session gate and, on testnet, lists a public legacy inbox (v3 invites name both sides in the clear) without decrypting anything. `test/contract/write/dm.test.ts` is the sakura suite on personas 94–96 (1:1 round trip; group create, rename, add, leave, through account switches); it skips with the W-SAKURA reason until the cutover.
 
+## Cold start in the app (2026-10-02, devnet sakura, evo-sdk 5.0.0-beta.1)
+
+Release builds (`npm run release:android -- apk`, `npm run release:ios -- simulator`) of staging `c0f5e294` against this split, on the Android emulator `yappr_pixel_l4` (Android 15, System WebView 124, signed out) and the iOS 26.5 simulator (signed in). Cold launches, interleaved build by build, 6 per build; medians, with the range. Mount, hello, boot and ready are the supervisor's timings (Settings → Engine diagnostics). The host was shared with other agents (load average 35–55), and the network part of boot varies run to run.
+
+| | Android before | Android after | iOS before | iOS after |
+| --- | --- | --- | --- | --- |
+| Prepare (snapshot, page) | 130 ms | 70 ms | 390 ms | 63 ms |
+| Mount → hello | 946 ms (824–1415) | 594 ms (387–867) | 886 ms (834–1117) | 656 ms (636–829) |
+| Boot (`engine.boot()`) | 2012 ms (1509–2740) | 637 ms (268–1006) | 732 ms (657–870) | 215 ms (114–350) |
+| **Mount → ready** | **3448 ms (2521–4162)** | **1400 ms (1105–1891)** | **1620 ms (1503–2014)** | **996 ms (904–1466)** |
+| Launch → first avatar drawn (screen recording) | 3.60 s | 3.32 s | 2.80 s | 2.33 s |
+| JS heap after boot (Chromium) | 72 MB | 60 MB | | |
+| WebView renderer PSS | 251 MB | 236 MB | | |
+
+- **What each change bought** (Android, earlier interleaved rounds): moving the WASM out of `engine.js` took mount → hello from about 840 to 600 ms. The bundled TokenHistory contract (one `getDataContracts` round trip, 0.3–0.7 s), the WASM preload at hello and the quorum preconnect took boot from about 2 s to 0.6 s. On iOS, loading the page by file URL took prepare from 390 to 63 ms: the 15 MB page no longer goes through Hermes and the bridge.
+- **Launch → feed** stays about the same (2.7–2.9 s on Android, 1.6–1.7 s on iOS): the host shows the persisted feed before the engine is ready.
+- **Under heavy load** (another agent's builds, load average up to 200), the same comparison on Android gave mount → ready 8.6 s before and 4.3 s after (medians of 6), and the "4–5 s to parse engine.js" seen before was mostly that load: on a quiet emulator, the old 15 MB bundle loaded and ran in 0.4–1.2 s.
+
 ## Measurements (2026-10-01, testnet, evo-sdk 4.2.0-beta.7, Apple Silicon Mac)
 
 **Bundle:**
-- `engine.js` is **15.09 MB**, **9.45 MB gzip** as of M7b (14.92 MB at M2; M7b adds the composer, the notification and report services, and the services index `publishThread` imports). About 11.8 MB of it is evo-sdk with the inlined wasm.
-- The rest is wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
+- `engine.js` was **15.09 MB**, **9.45 MB gzip** as of M7b (14.92 MB at M2; M7b adds the composer, the notification and report services, and the services index `publishThread` imports). About 11.8 MB of it was evo-sdk with the inlined wasm.
+- The rest was wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
+- **Since the split (2026-10-02):** `engine.js` is 1.53 MB (0.34 MB gzip), `engine.wasm.js` 11.40 MB and `engine.avatars.js` 2.03 MB.
 - The build takes about 0.4 s.
 
 **Browser boot proof:** `npm run test:browser`, 3 cold runs per configuration, each in a fresh browser context. Two more WebKit runs check the injected snapshot: a session read at call time (the feed comes back with viewer marks), and a persisted `yappr-settings` `feedLanguage: 'zz'` read by zustand `persist` when `lib/store.ts` loads (the v2 For You page comes back empty). Raw data is in `browser-boot-*.{json,tsv}`; the files for these numbers, the simulator screenshot and the reproducer below were saved **locally** on the build machine under `/tmp/claude/yappr-mobile/evidence/m2-engine/` and are not in the repo. "Boot" is the `engine.boot()` round trip (wasm decompress + compile, SDK connect, contract preload; testnet contracts are seeded from `lib/contracts/bundled`). "Feed" is the first For You page (`feed.home`), enriched.
