@@ -12,7 +12,7 @@ import { Tag } from '~/ui/Badge';
 import { Button } from '~/ui/Button';
 import { ContextMenu } from '~/ui/ContextMenu';
 import { confirmAlert, Dialog } from '~/ui/Dialog';
-import { EmptyState } from '~/ui/EmptyState';
+import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
 import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
@@ -24,7 +24,7 @@ import { TextField } from '~/ui/TextField';
 import { tw, useColors } from '~/ui/tokens';
 
 import { ConversationAvatar } from './ConversationAvatar';
-import { useConversations, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
+import { readErrorMessage, refreshDm, useConversations, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
 import { conversationTitle, memberCount } from './dm-model';
 import {
   addMemberWrite,
@@ -158,6 +158,18 @@ export function GroupInfoScreen() {
       <Screen>
         {header}
         <EmptyState icon={UserGroupIcon} title="Groups aren't available on this network" />
+      </Screen>
+    );
+  }
+  if ((status.isError && !status.data) || (conversations.isError && !conversations.data)) {
+    return (
+      <Screen>
+        {header}
+        <ErrorState
+          message={readErrorMessage(status.error ?? conversations.error)}
+          onRetry={() => refreshDm()}
+          testID="group-info-error"
+        />
       </Screen>
     );
   }

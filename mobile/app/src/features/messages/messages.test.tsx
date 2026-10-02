@@ -1,6 +1,7 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -13,8 +14,12 @@ import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
 import { ConversationScreen } from './ConversationScreen';
+import { GroupInfoScreen } from './GroupInfoScreen';
+import { MessageSettingsScreen } from './MessageSettingsScreen';
+import { NewGroupScreen } from './NewGroupScreen';
+import { NewMessageScreen } from './NewMessageScreen';
 import { useMessagesBadge } from './dm-data';
-import { useDrafts } from './drafts';
+import { useDraft, useDrafts } from './drafts';
 import { InboxScreen } from './InboxScreen';
 import { mergeOutbox, useOutbox, type OutboxEntry } from './outbox';
 import { BOB_ID, conversation, dmMessage, FLAGS } from './test-fixtures';
@@ -69,12 +74,20 @@ function Layout() {
   );
 }
 
+let rendered: ReturnType<typeof renderRouter> | null = null;
+/** Where the router is now. */
+const pathname = () => rendered?.getPathname();
+
 async function renderAt(initialUrl: string) {
-  renderRouter(
+  rendered = renderRouter(
     {
       _layout: Layout,
       'messages/index': InboxScreen,
+      'messages/new': NewMessageScreen,
+      'messages/new-group': NewGroupScreen,
+      'messages/settings': MessageSettingsScreen,
       'messages/[conversationId]/index': ConversationScreen,
+      'messages/[conversationId]/info': GroupInfoScreen,
     },
     { initialUrl },
   );
@@ -200,6 +213,36 @@ describe('Messages badge (DM-13)', () => {
     expect(result.current).toBe(3);
   });
 
+  it('forgets drafts and local sends when the account signs out', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    useDrafts.getState().set(VIEWER, 'k', 'half-typed secret');
+    const { result, rerender } = renderHook(() => ({ badge: useMessagesBadge(), draft: useDraft(VIEWER, 'k') }), { wrapper });
+    await act(async () => {});
+    expect(result.current.draft).toBe('half-typed secret');
+    useOutbox.setState({
+      entries: [
+        {
+          id: 'local:1',
+          identityId: VIEWER,
+          key: 'k',
+          text: 'unsent secret',
+          createdAt: Date.now(),
+          before: [],
+          after: 0,
+          ticketId: null,
+          state: 'failed',
+          retryable: false,
+        },
+      ],
+    });
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] }));
+    rerender({});
+    await act(async () => {});
+    expect(result.current.draft).toBe('');
+    expect(useOutbox.getState().entries).toEqual([]);
+  });
+
   it('is hidden signed out and while locked', async () => {
     const { result, rerender } = renderHook(() => useMessagesBadge(), { wrapper });
     expect(result.current).toBe(0);
@@ -304,6 +347,40 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.queryByTestId('dm-composer')).toBeNull();
   });
 
+  it('shows an error with Retry when the status read fails, instead of loading forever', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));
+    await renderAt(`/messages/${encodeURIComponent(KEY)}`);
+    // renderRouter runs Jest's fake timers.
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(2100);
+      });
+    }
+    expect(screen.queryByTestId('dm-conversation-loading')).toBeNull();
+    expect(screen.getByText('Network error. Please check your connection and try again.')).toBeTruthy();
+
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY })]);
+    fakeEngine.method('dm.messages').mockResolvedValue(page([theirs]));
+    fireEvent.press(screen.getByText('Try again'));
+    await act(async () => {});
+    expect(screen.getByText('hey, coming?')).toBeTruthy();
+  });
+
+  it('sends once when Send is tapped twice before the screen re-renders', async () => {
+    await openConversation();
+    fakeEngine.method('dm.send').mockResolvedValue(ticket({ op: 'dm.send', target: { conversationKey: KEY } }));
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'just once');
+    // The handler itself, called twice in one tick (fireEvent would re-render between taps).
+    const onSend = screen.UNSAFE_getAllByProps({ testID: 'dm-send' })[0].props.onPress as () => void;
+    await act(async () => {
+      onSend();
+      onSend();
+    });
+    expect(fakeEngine.method('dm.send')).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the empty conversation copy', async () => {
     await openConversation([]);
     expect(screen.getByText('No messages yet. Start the conversation!')).toBeTruthy();
@@ -359,5 +436,195 @@ describe('queryKeys.dm', () => {
   it('nests every DM query under one prefix', () => {
     expect(queryKeys.dm.messages('k').slice(0, 3)).toEqual(queryKeys.dm.all);
     expect(queryKeys.dm.people(['a', 'b']).slice(0, 3)).toEqual(queryKeys.dm.all);
+  });
+});
+
+const BOB = { id: BOB_ID, username: 'bob', displayName: 'Bob Builder', avatar: { uri: null, dicebear: null }, resolved: true };
+const busy = () => Object.assign(new Error('Messages are still loading'), { code: 'ENGINE_BUSY' });
+
+describe('New message (DM-05)', () => {
+  beforeEach(() => {
+    signIn();
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([BOB]);
+    fakeEngine.method('graph.followers').mockResolvedValue({ items: [BOB], cursor: null, hasMore: false });
+  });
+
+  it('?with= waits out ENGINE_BUSY (a cold start) and opens the conversation', async () => {
+    fakeEngine.method('dm.startDirect').mockRejectedValueOnce(busy()).mockResolvedValue('d:alice-bob');
+    await renderAt(`/messages/new?with=${BOB_ID}`);
+    expect(screen.getByTestId('new-message-opening')).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
+    // renderRouter runs Jest's fake timers.
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(1100);
+      });
+    }
+    expect(fakeEngine.method('dm.startDirect')).toHaveBeenCalledTimes(2);
+    expect(pathname()).toBe('/messages/d:alice-bob');
+  });
+
+  it('?with= an unknown id leaves the picker showing that search, with the reason', async () => {
+    fakeEngine.method('dm.startDirect').mockRejectedValue(Object.assign(new Error('not found'), { code: 'BAD_REQUEST' }));
+    await renderAt(`/messages/new?with=${BOB_ID}`);
+    expect(fakeEngine.method('dm.startDirect')).toHaveBeenCalledTimes(1);
+    expect(useToastStore.getState().current?.message).toBe('No user found with this identity ID');
+    expect(screen.queryByTestId('new-message-opening')).toBeNull();
+    expect(screen.getByTestId('picker-search').props.value).toBe(BOB_ID);
+  });
+
+  it("refuses to message yourself without asking the engine", async () => {
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([{ ...BOB, id: VIEWER }]);
+    await renderAt(`/messages/new?with=${VIEWER}`);
+    expect(fakeEngine.method('dm.startDirect')).not.toHaveBeenCalled();
+    expect(useToastStore.getState().current?.message).toBe("You can't message yourself");
+  });
+});
+
+describe('New group (DM-06)', () => {
+  async function fillForm() {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('graph.followers').mockResolvedValue({ items: [BOB], cursor: null, hasMore: false });
+    await renderAt('/messages/new-group');
+    fireEvent.changeText(screen.getByTestId('new-group-name'), 'Builders');
+    fireEvent.press(screen.getByTestId(`picker-user-${BOB_ID}`));
+    expect(screen.getByTestId('new-group-chips')).toBeTruthy();
+  }
+
+  it('opens the group once confirmed, offering to resend keys to members it missed', async () => {
+    await fillForm();
+    const created = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.createGroup').mockResolvedValue(created);
+    fakeEngine.method('dm.createdGroup').mockResolvedValue({ key: 'g:builders', failed: [BOB_ID] });
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledWith('Builders', [BOB_ID]);
+    expect(screen.getByTestId('new-group-progress')).toBeTruthy();
+
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(created, { state: 'confirmed' }));
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('dm.createdGroup')).toHaveBeenCalledWith(created.id);
+    expect(pathname()).toBe('/messages/g:builders');
+    expect(useToastStore.getState().current?.message).toBe('1 member(s) did not get the group key yet.');
+  });
+
+  it('keeps Create locked while the creation is unconfirmed, until a check finds the group', async () => {
+    await fillForm();
+    const created = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.createGroup').mockResolvedValue(created);
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(created, { state: 'unconfirmed', retryable: false }));
+    });
+    expect(screen.getByTestId('new-group-unconfirmed')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
+
+    const found = advance(created, { state: 'confirmed', updatedAt: new Date(Date.now() + 5000) });
+    // The engine reports the transition as `write.status` before it answers the call.
+    fakeEngine.method('writes.check').mockImplementation(async () => {
+      fakeEngine.emit('write.status', found);
+      return found;
+    });
+    fakeEngine.method('dm.createdGroup').mockResolvedValue({ key: 'g:builders', failed: [] });
+    fireEvent.press(screen.getByTestId('new-group-check'));
+    await act(async () => {});
+    await act(async () => {});
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(created.id);
+    expect(pathname()).toBe('/messages/g:builders');
+  });
+
+  it('goes back to the inbox when the engine no longer knows the new group', async () => {
+    await fillForm();
+    const created = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.createGroup').mockResolvedValue(created);
+    fakeEngine.method('dm.createdGroup').mockResolvedValue(null);
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    await act(async () => {});
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(created, { state: 'confirmed' }));
+    });
+    await act(async () => {});
+    expect(useToastStore.getState().current?.message).toBe('Group created');
+    expect(pathname()).toBe('/messages');
+  });
+});
+
+describe('Group info (DM-07, DM-08)', () => {
+  const GROUP = 'g:builders';
+  const group = (overrides: Partial<ConversationDTO> = {}) =>
+    conversation({ key: GROUP, kind: 'group', peer: null, name: 'Builders', members: [VIEWER, BOB_ID], ownerId: BOB_ID, ...overrides });
+
+  async function openInfo(row: ConversationDTO) {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([row]);
+    await renderAt(`/messages/${encodeURIComponent(GROUP)}/info`);
+  }
+
+  it('gives the owner rename and End group, and a member Leave group', async () => {
+    await openInfo(group({ ownerId: VIEWER, isOwner: true }));
+    expect(screen.getByTestId('group-rename')).toBeTruthy();
+    expect(screen.getByTestId('group-end')).toBeTruthy();
+    expect(screen.queryByTestId('group-leave')).toBeNull();
+  });
+
+  it('leaves after the confirm, then returns to the inbox', async () => {
+    await openInfo(group());
+    expect(screen.queryByTestId('group-rename')).toBeNull();
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => buttons?.[1]?.onPress?.());
+    const left = ticket({ op: 'dm.group', target: { conversationKey: GROUP } });
+    fakeEngine.method('dm.leaveGroup').mockResolvedValue(left);
+    fireEvent.press(screen.getByTestId('group-leave'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.leaveGroup')).toHaveBeenCalledWith(GROUP);
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(left, { state: 'confirmed' }));
+    });
+    await act(async () => {});
+    expect(pathname()).toBe('/messages');
+    alert.mockRestore();
+  });
+
+  it('shows an error with Retry when the status read fails', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));
+    await renderAt(`/messages/${encodeURIComponent(GROUP)}/info`);
+    // renderRouter runs Jest's fake timers.
+    for (let i = 0; i < 4; i += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(2100);
+      });
+    }
+    expect(screen.getByTestId('group-info-error')).toBeTruthy();
+  });
+});
+
+describe('Message settings (DM-12)', () => {
+  it('puts the retention back when saving it fails', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ retention: 'never' }));
+    fakeEngine.method('dm.setRetention').mockRejectedValue(new Error('quorum'));
+    await renderAt('/messages/settings');
+    fireEvent.press(screen.getByTestId('dm-retention-30d'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.setRetention')).toHaveBeenCalledWith('30d');
+    expect(queryClient.getQueryData<DmStatusDTO>(queryKeys.dm.status)?.retention).toBe('never');
+    expect(useToastStore.getState().current?.message).toBe("Couldn't save the setting. Try again.");
+  });
+
+  it('has nothing to set on legacy (DM-11)', async () => {
+    signIn();
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
+    fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy' }));
+    await renderAt('/messages/settings');
+    expect(screen.getByTestId('dm-settings-unavailable')).toBeTruthy();
+    expect(screen.queryByTestId('dm-retention')).toBeNull();
   });
 });

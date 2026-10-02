@@ -1,5 +1,5 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, SettingsDTO, UserSummaryDTO } from '@engine/api';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import { useEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
@@ -10,6 +10,7 @@ import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
 
+import { clearLocalMessages } from './outbox';
 import { useAppActive } from './use-app-active';
 
 /**
@@ -143,8 +144,12 @@ export function useMessagesBadge(): number {
     queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations }).catch(() => undefined);
   });
 
-  // A new account starts from its own status (the cache reset drops the old one).
+  // A new account starts from its own status (the cache reset drops the old one), and the
+  // last account's unsent text and local sends go with it.
+  const previousViewer = useRef(viewerId);
   useEffect(() => {
+    if (previousViewer.current && previousViewer.current !== viewerId) clearLocalMessages();
+    previousViewer.current = viewerId;
     if (viewerId) refreshDm();
   }, [viewerId]);
 

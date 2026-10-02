@@ -1,6 +1,7 @@
-import type { DmRetention, DmStatusDTO, SettingsDTO } from '@engine/api';
+import type { DmRetention, DmStatusDTO } from '@engine/api';
 import { Stack } from 'expo-router';
 import { View } from 'react-native';
+import { Cog6ToothIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { engine } from '~/engine';
@@ -9,18 +10,18 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { handleOf } from '~/ui/handle';
+import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { RadioGroup, type RadioOption } from '~/ui/RadioGroup';
 import { Screen } from '~/ui/Screen';
 import { RowSkeleton } from '~/ui/Skeleton';
 import { Spinner } from '~/ui/Spinner';
-import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { tw } from '~/ui/tokens';
 import { queryClient } from '~/state/query-client';
 
 import { setBlockedInMessages } from './dm-actions';
-import { useDmBackend, useDmSettings, useDmStatus, useDmViewer, usePeople } from './dm-data';
+import { readErrorMessage, refreshDm, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
 import { DmSignedOut } from './DmStates';
 
 const RETENTION_OPTIONS: readonly RadioOption<DmRetention>[] = [
@@ -58,18 +59,6 @@ async function setRetention(retention: DmRetention): Promise<void> {
   } catch (error) {
     appendLog('warn', 'host', `Saving retention failed: ${errorMessage(error)}`);
     if (previous) queryClient.setQueryData(queryKeys.dm.status, previous);
-    toast.error("Couldn't save the setting. Try again.");
-  }
-}
-
-async function setReadReceipts(value: boolean): Promise<void> {
-  const previous = queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
-  if (previous) queryClient.setQueryData<SettingsDTO>(queryKeys.settings, { ...previous, sendReadReceipts: value });
-  try {
-    queryClient.setQueryData(queryKeys.settings, await engine.api.settings.set({ sendReadReceipts: value }));
-  } catch (error) {
-    appendLog('warn', 'host', `Saving read receipts failed: ${errorMessage(error)}`);
-    if (previous) queryClient.setQueryData(queryKeys.settings, previous);
     toast.error("Couldn't save the setting. Try again.");
   }
 }
@@ -121,14 +110,14 @@ function BlockedList({ ids }: { ids: string[] }) {
 }
 
 /**
- * Message settings (UX_SPEC §4.23, PRD DM-12, DM-11): v5 "Reclaim message
- * fees" and the people blocked in Messages; legacy (testnet) read receipts.
+ * Message settings (UX_SPEC §4.23, PRD DM-12): v5 "Reclaim message fees" and
+ * the people blocked in Messages. Legacy (testnet) has none (DM-11); its read
+ * receipts are in Settings (SET-04).
  */
 export function MessageSettingsScreen() {
   const { signedIn } = useDmViewer();
   const backend = useDmBackend();
-  const status = useDmStatus(signedIn);
-  const settings = useDmSettings(signedIn && backend === 'legacy');
+  const status = useDmStatus(signedIn && backend !== 'legacy');
   const header = <Stack.Screen options={{ title: 'Message settings' }} />;
 
   if (!signedIn) {
@@ -142,27 +131,18 @@ export function MessageSettingsScreen() {
 
   if (backend === 'legacy') {
     return (
-      <Screen scroll>
+      <Screen>
         {header}
-        <SectionHeader title="Privacy" />
-        {settings.data ? (
-          <SwitchRow
-            label="Read receipts"
-            description="Let others see when you've read their messages"
-            value={settings.data.sendReadReceipts}
-            onValueChange={(value) => {
-              setReadReceipts(value).catch(() => undefined);
-            }}
-            testID="dm-read-receipts"
-          />
-        ) : (
-          <View className="items-center py-6">
-            <Spinner size="sm" />
-          </View>
-        )}
-        <Text variant="caption" tone="secondary" className="px-4 pt-1">
-          Read receipts work both ways: with them off, you don&apos;t see when others have read yours.
-        </Text>
+        <EmptyState icon={Cog6ToothIcon} title="Message settings aren't available on this network" testID="dm-settings-unavailable" />
+      </Screen>
+    );
+  }
+
+  if (status.isError && !status.data) {
+    return (
+      <Screen>
+        {header}
+        <ErrorState message={readErrorMessage(status.error)} onRetry={() => refreshDm()} testID="dm-settings-error" />
       </Screen>
     );
   }

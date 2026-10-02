@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,7 +11,9 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { selectionTick } from '~/ui/haptics';
+import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
+import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
@@ -60,7 +62,12 @@ export function NewGroupScreen() {
   const [name, setName] = useState('');
   const [members, setMembers] = useState<PickerUser[]>([]);
   const create = useWrite(createGroupWrite);
-  const busy = create.status === 'pending';
+  // Not confirmed (a timeout or a 504) may still have landed: a second creation could make a
+  // second group, so the form stays locked until a check settles it. A check that proved it
+  // did not land comes back retryable, and the tracker says "Try again".
+  const unconfirmed = create.status === 'unconfirmed' && create.ticket?.retryable !== true;
+  const [checking, setChecking] = useState(false);
+  const busy = create.status === 'pending' || unconfirmed;
   const canCreate = !busy && name.trim().length > 0 && members.length > 0;
   const selected = new Set(members.map((m) => m.id));
 
@@ -77,7 +84,24 @@ export function NewGroupScreen() {
 
   const submit = () => {
     if (!canCreate) return;
-    create.run({ name: name.trim(), memberIds: members.map((m) => m.id) }).catch(() => undefined);
+    create
+      .send({ name: name.trim(), memberIds: members.map((m) => m.id) })
+      .then((result) => {
+        // The engine restarted under the call: the group may exist, and the inbox will show it.
+        if (result.status === 'unknown') {
+          toast('The group may have been created. Check your messages before trying again.');
+          router.dismissTo('/messages');
+        }
+      })
+      .catch(() => undefined);
+  };
+
+  const check = () => {
+    setChecking(true);
+    create
+      .check()
+      .catch(() => undefined)
+      .finally(() => setChecking(false));
   };
 
   // Confirmed: open the new group, and offer to resend the key to anyone the creation missed.
@@ -87,7 +111,12 @@ export function NewGroupScreen() {
     engine.api.dm
       .createdGroup(ticketId)
       .then((created) => {
-        if (!created) return;
+        if (!created) {
+          // Created, but the engine restarted since and no longer knows which group: the inbox has it.
+          toast.success('Group created');
+          router.dismissTo('/messages');
+          return;
+        }
         leaveModalFor(created.key);
         if (created.failed.length > 0) {
           toast.error(`${created.failed.length} member(s) did not get the group key yet.`, {
@@ -103,7 +132,7 @@ export function NewGroupScreen() {
       label="Create group"
       size={Platform.OS === 'ios' ? 'sm' : 'block'}
       disabled={!canCreate}
-      loading={busy}
+      loading={create.status === 'pending'}
       onPress={submit}
       testID="new-group-create"
     />
@@ -154,7 +183,18 @@ export function NewGroupScreen() {
               ))}
             </View>
           ) : null}
-          {busy ? (
+          {unconfirmed ? (
+            <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1" accessibilityLiveRegion="polite">
+              <Text variant="caption" tone="secondary" testID="new-group-unconfirmed">
+                Not confirmed yet. It may still have gone through.
+              </Text>
+              {checking ? (
+                <Spinner size="sm" />
+              ) : (
+                <LinkText label="Check" onPress={check} testID="new-group-check" />
+              )}
+            </View>
+          ) : busy ? (
             <Text variant="caption" tone="secondary" accessibilityLiveRegion="polite" testID="new-group-progress">
               Creating the group and sending each member its key. This can take a little while.
             </Text>

@@ -32,6 +32,13 @@ export const useDrafts = create<DraftsState>()((set) => ({
   clearAll: () => set({ byKey: {} }),
 }));
 
+/** Takes the draft to send it: read at call time (two quick taps send it once) and cleared. */
+export function takeDraft(identityId: string, key: string): string {
+  const text = useDrafts.getState().byKey[slot(identityId, key)] ?? '';
+  if (text) useDrafts.getState().set(identityId, key, '');
+  return text;
+}
+
 export function useDraft(identityId: string | null, key: string): string {
   return useDrafts((s) => (identityId ? (s.byKey[slot(identityId, key)] ?? '') : ''));
 }

@@ -2,9 +2,9 @@ import type { ConversationDTO } from '@engine/api';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { FlashList } from '@shopify/flash-list';
 import { router, Stack, useFocusEffect } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, RefreshControl, TextInput, View } from 'react-native';
-import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { ChatBubbleLeftRightIcon, Cog6ToothIcon, PencilSquareIcon } from 'react-native-heroicons/outline';
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
@@ -42,13 +42,16 @@ function HeaderActions({ v5 }: { v5: boolean }) {
   );
   return (
     <View className="flex-row items-center gap-1">
-      <IconButton
-        icon={Cog6ToothIcon}
-        accessibilityLabel="Message settings"
-        onPress={openSettings}
-        onLongPress={Platform.OS === 'android' ? () => toast('Message settings') : undefined}
-        testID="messages-settings"
-      />
+      {/* PRD DM-11: legacy (testnet) has no Message settings; its read receipts live in Settings (SET-04). */}
+      {v5 ? (
+        <IconButton
+          icon={Cog6ToothIcon}
+          accessibilityLabel="Message settings"
+          onPress={openSettings}
+          onLongPress={Platform.OS === 'android' ? () => toast('Message settings') : undefined}
+          testID="messages-settings"
+        />
+      ) : null}
       {v5 ? (
         <ContextMenu
           items={[
@@ -107,8 +110,14 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
 
 /** iOS: swipe left for "Delete" (as Mail and Messages). */
 function SwipeToDelete({ conversation, children }: { conversation: ConversationDTO; children: React.ReactNode }) {
+  const swipeable = useRef<SwipeableMethods>(null);
+  // FlashList reuses this cell for other conversations: one swiped open must not stay open on another.
+  useEffect(() => {
+    swipeable.current?.reset();
+  }, [conversation.key]);
   return (
     <ReanimatedSwipeable
+      ref={swipeable}
       friction={2}
       rightThreshold={40}
       overshootRight={false}
@@ -180,6 +189,7 @@ export function InboxScreen() {
   };
 
   const onPress = useCallback((conversation: ConversationDTO) => openConversationScreen(conversation.key), []);
+  const swipes = (conversation: ConversationDTO) => v5 && Platform.OS === 'ios' && !conversation.flags.hidden;
   const onLongPress = useCallback((conversation: ConversationDTO) => {
     showActionSheet({
       actions: [
@@ -280,11 +290,12 @@ export function InboxScreen() {
       <FlashList
         data={rows}
         keyExtractor={(item) => item.key}
+        getItemType={(item) => (swipes(item) ? 'swipe' : 'row')}
         renderItem={({ item }) => {
           const row = (
             <ConversationRow conversation={item} onPress={onPress} onLongPress={v5 ? onLongPress : undefined} />
           );
-          return v5 && Platform.OS === 'ios' && !item.flags.hidden ? (
+          return swipes(item) ? (
             <SwipeToDelete conversation={item}>{row}</SwipeToDelete>
           ) : (
             row

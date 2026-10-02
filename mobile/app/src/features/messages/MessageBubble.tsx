@@ -1,5 +1,6 @@
+import { useRecyclingState } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
-import { memo, useState, type ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Pressable, Text as RNText, View } from 'react-native';
 
 import { openExternal } from '~/features/post/post-navigation';
@@ -87,7 +88,8 @@ export const MessageBubble = memo(function MessageBubble({
   onSenderPress,
 }: MessageBubbleProps) {
   const { message, firstOfRun, lastOfRun, status, statusIsError } = item;
-  const [showTime, setShowTime] = useState(false);
+  // FlashList reuses this cell for other messages: the shown time belongs to this one.
+  const [showTime, setShowTime] = useRecyclingState(false, [message.id]);
   const own = message.own;
   const emoji = isEmojiOnly(message.text);
   const failed = statusIsError && !!message.outbox;

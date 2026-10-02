@@ -184,12 +184,10 @@ export async function resolveFailed(entryId: string): Promise<void> {
   useDrafts.getState().restore(entry.identityId, entry.key, entry.text);
 }
 
-/** Drops a local send from the screen (its text goes back to the composer). */
-export function discardFailed(entryId: string): void {
-  const entry = useOutbox.getState().entries.find((e) => e.id === entryId);
-  if (!entry) return;
-  remove(entry.id);
-  useDrafts.getState().restore(entry.identityId, entry.key, entry.text);
+/** Forgets every local send and draft (sign-out): their plaintext must not outlive the session. */
+export function clearLocalMessages(): void {
+  useOutbox.setState({ entries: [] });
+  useDrafts.getState().clearAll();
 }
 
 function statusOf(entry: OutboxEntry): OutboxStatus {

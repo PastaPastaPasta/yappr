@@ -26,6 +26,7 @@ import {
   markConversationRead,
   openConversation,
   readErrorMessage,
+  refreshDm,
   useConversation,
   useDmBackend,
   useDmSettings,
@@ -37,7 +38,7 @@ import {
 import { buildTimeline, chronological, composerBlockedReason, conversationTitle, memberCount, type TimelineItem } from './dm-model';
 import { DaySeparator, MessageBubble } from './MessageBubble';
 import { DmLocked } from './DmStates';
-import { useDraft, useDrafts } from './drafts';
+import { takeDraft, useDraft, useDrafts } from './drafts';
 import { forgetLanded, mergeOutbox, resolveFailed, sendInBackground, useOutboxFor } from './outbox';
 import { UnlockSheet } from './UnlockSheet';
 
@@ -199,14 +200,15 @@ export function ConversationScreen() {
 
   const offline = useNetInfo().isConnected === false;
   const send = () => {
-    const text = draft;
-    if (!viewerId || !text.trim()) return;
+    if (!viewerId || !draft.trim()) return;
     if (offline) {
       // PRD G-1: nothing is sent, and the text stays in the composer.
       toast("You're offline. Nothing was sent.");
       return;
     }
-    setDraft('');
+    // Taken from the store, not this render: a second tap before the re-render finds it empty.
+    const text = takeDraft(viewerId, key);
+    if (!text.trim()) return;
     sendInBackground(viewerId, key, text);
     scrollToNewest();
   };
@@ -272,7 +274,10 @@ export function ConversationScreen() {
   }
 
   let empty = null;
-  if (messages.isError && !messages.data) {
+  if (status.isError && !status.data) {
+    // The status gates every read below: without it nothing would ever load.
+    empty = <ErrorState message={readErrorMessage(status.error)} onRetry={() => refreshDm()} testID="dm-conversation-error" />;
+  } else if (messages.isError && !messages.data) {
     empty =
       errorCode(messages.error) === 'BAD_REQUEST' ? (
         <EmptyState
