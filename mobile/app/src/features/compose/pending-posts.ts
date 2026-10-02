@@ -10,7 +10,7 @@ import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
 import { EMPTY_VIEWER, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
 import { useSessionStore } from '~/data/session';
-import { checkWrite, runWrite, type WriteSpec } from '~/data/writes';
+import { checkWrite, runWrite, writeFailureText, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { toast } from '~/ui/toast';
@@ -352,7 +352,8 @@ const partText = (index: number) => `Post ${index + 1}`;
 /** "Thread partly posted. Post {n} failed: {reason}" (UX_SPEC §5.4), or the deleted-target line for a reply. */
 function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): string | null {
   if (!entry) return null;
-  const reason = ticket.error?.userMessage ?? 'Something went wrong.';
+  // PRD G-5's copy when credits or YAPP ran short, else the engine's message.
+  const reason = ticket.error ? writeFailureText(ticket.error, ticket.error.userMessage || 'Something went wrong.') : 'Something went wrong.';
   if (entry.draft.replyTo && /not found|deleted/i.test(reason) && ticket.error?.outcome !== 'unknown') {
     return "This post was deleted, so it can't be replied to.";
   }

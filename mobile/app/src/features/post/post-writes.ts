@@ -102,6 +102,8 @@ export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }
       unslot?.();
     };
   },
+  // A second delete while the first is pending asks for the same thing: dropped, never sent.
+  intent: () => 'deleted',
   onConfirmed: (_ticket, { target }) => markPostDeleted(target.id),
   matches: (ticket, { target }) => ticket.op === 'post.delete' && (ticket.target as { id?: string } | null)?.id === target.id,
   noun: 'delete',

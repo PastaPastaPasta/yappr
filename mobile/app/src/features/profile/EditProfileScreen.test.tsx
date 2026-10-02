@@ -163,6 +163,25 @@ describe('EditProfileScreen', () => {
     expect(router.back).toHaveBeenCalled();
   });
 
+  it('sends one update for a double-tapped Save, even after the first confirms (SR-14)', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    let answer: (t: typeof pending) => void = () => undefined;
+    fakeEngine.method('profiles.update').mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
+    // Both taps land before the engine answers with the first ticket.
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('edit-save'));
+      fireEvent.press(screen.getByTestId('edit-save'));
+    });
+    await act(async () => answer(pending));
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    await flush();
+    expect(fakeEngine.method('profiles.update')).toHaveBeenCalledTimes(1);
+  });
+
   it('asks before discarding an edit', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     renderScreen(<EditProfileScreen />);
