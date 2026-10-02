@@ -25,6 +25,14 @@ appId: ${APP_ID}
       - launchApp:
           appId: ${APP_ID}
           stopApp: true
+# iOS: an "Open in …?" question left up by a link an interrupted run opened (open-link.yaml)
+# outlives the app and covers it: refuse that stale link.
+- runFlow:
+    when:
+      platform: iOS
+      visible: "Open in .*\\?"
+    commands:
+      - tapOn: "Cancel"
 - runFlow:
     when:
       true: ${DEV_CLIENT_URL != ''}
