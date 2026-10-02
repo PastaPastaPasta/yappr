@@ -30,7 +30,10 @@ jest.mock('~/engine', () => {
     engineSupervisor: { ...fake.engineSupervisor, restart: jest.fn() },
   };
 });
-jest.mock('expo-router', () => ({ router: { push: jest.fn() }, Stack: { Screen: () => null } }));
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn(), navigate: jest.fn(), dismissAll: jest.fn(), canDismiss: jest.fn(() => true) },
+  Stack: { Screen: () => null },
+}));
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
 jest.mock('expo-web-browser', () => ({ openBrowserAsync: jest.fn(async () => ({ type: 'opened' })) }));
 
@@ -148,6 +151,16 @@ describe('Settings root (SET-01)', () => {
     expect(router.push).toHaveBeenCalledWith('/sign-in');
   });
 
+  it('signed out with accounts parked on this device: a way back to them', () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [account(ALICE, 'alice.dash', false)] });
+    renderScreen(<SettingsScreen />);
+
+    expect(byId('settings-sign-in')).toBeTruthy();
+    expect(byId('settings-accounts')).toHaveAccessibleName('Accounts, 1 account');
+    fireEvent.press(byId('settings-accounts'));
+    expect(router.push).toHaveBeenCalledWith('/settings/account');
+  });
+
   it('has no Messages settings on legacy messages (v3)', () => {
     fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as CapabilitiesDTO } });
     renderScreen(<SettingsScreen />);
@@ -176,6 +189,19 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
     expect(cachedSettings()?.sensitiveContentMode).toBe('hide');
   });
 
+  it('refetches the loaded lists when the NSFW mode changes (the engine filters them)', async () => {
+    fakeEngine.method('settings.set').mockResolvedValue({ ...SETTINGS, sensitiveContentMode: 'hide' });
+    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(byId('privacy-nsfw-hide')));
+
+    for (const queryKey of [queryKeys.feed.all, queryKeys.explore.all, queryKeys.profile.all, queryKeys.post.all, queryKeys.bookmarks]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
+  });
+
   it('puts a refused change back and says so', async () => {
     fakeEngine.method('settings.set').mockRejectedValue(new Error('BAD_REQUEST'));
     renderScreen(<PrivacySettingsScreen />);
@@ -190,10 +216,14 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
 
   it('keeps a later change when an earlier one is refused', async () => {
     let refuse: (error: Error) => void = () => {};
+    const saved = { ...SETTINGS, gateMediaFromNonFollowed: false };
     fakeEngine
       .method('settings.set')
       .mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)))
-      .mockResolvedValueOnce({ ...SETTINGS, gateMediaFromNonFollowed: false });
+      .mockImplementationOnce(async () => {
+        fakeEngine.method('settings.get').mockResolvedValue(saved);
+        return saved;
+      });
     renderScreen(<PrivacySettingsScreen />);
     await settle();
 
@@ -202,6 +232,23 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
     await act(async () => refuse(new Error('nope')));
 
     expect(cachedSettings()).toMatchObject({ linkPreviewsEnabled: true, gateMediaFromNonFollowed: false });
+  });
+
+  it('settles on the engine after two refused changes to one field', async () => {
+    const refusals: ((error: Error) => void)[] = [];
+    fakeEngine.method('settings.set').mockImplementation(() => new Promise((_resolve, reject) => refusals.push(reject)));
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    // Off, then on again; both refused, the first last. The engine still has it on.
+    await act(async () => fireEvent.press(byId('privacy-link-previews')));
+    await act(async () => fireEvent.press(byId('privacy-link-previews')));
+    await act(async () => refusals[1]?.(new Error('nope')));
+    await act(async () => refusals[0]?.(new Error('nope')));
+
+    expect(fakeEngine.method('settings.get')).toHaveBeenCalledTimes(2);
+    expect(cachedSettings()?.linkPreviewsEnabled).toBe(true);
+    expect(byId('privacy-link-previews')).toBeChecked();
   });
 
   it('keeps both of two quick changes while a fetch is cancelled', async () => {
@@ -403,6 +450,85 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(useAccountTransition.getState().transition).toBeNull();
   });
 
+  it('signing out the last account goes Home, signed out', async () => {
+    fakeEngine.method('session.signOut').mockImplementation(async () => {
+      useSessionStore.setState({ status: 'signed-out', session: null });
+    });
+    fakeEngine.method('session.accounts').mockResolvedValue([]);
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    fireEvent.press(byId('account-sign-out'));
+    await act(async () => alert?.press('Sign out'));
+
+    expect(router.dismissAll).toHaveBeenCalled();
+    expect(router.navigate).toHaveBeenCalledWith('/');
+    expect(engineSupervisor.restart).not.toHaveBeenCalled();
+  });
+
+  it('signing out the active account moves to the next one, covered throughout', async () => {
+    const bob: SessionDTO = { ...alice, identityId: BOB, username: 'bob', credits: 0n };
+    useSessionStore.setState({ accounts: [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)] });
+    fakeEngine.method('session.signOut').mockImplementation(async () => {
+      useSessionStore.setState({ status: 'signed-out', session: null });
+    });
+    fakeEngine.method('session.accounts').mockResolvedValue([account(BOB, 'bob', false)]);
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+    fakeEngine.method('session.current').mockResolvedValue(bob);
+    jest.mocked(engineSupervisor.restart).mockImplementation(() => {
+      fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+      useSessionStore.setState({ status: 'signed-in', session: bob });
+    });
+    const covers: (string | null)[] = [];
+    const stop = useAccountTransition.subscribe((s) => covers.push(s.transition?.kind ?? null));
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    fireEvent.press(byId('account-sign-out'));
+    await act(async () => alert?.press('Sign out'));
+    stop();
+
+    expect(fakeEngine.method('session.signOut')).toHaveBeenCalledWith({ identityId: ALICE });
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(BOB);
+    expect(engineSupervisor.restart).toHaveBeenCalledWith('Switching accounts');
+    expect(toastMessage()).toBe('Switched to @bob');
+    expect(router.navigate).not.toHaveBeenCalled();
+    // No uncovered moment between the sign-out and the switch.
+    expect(covers).toEqual(['sign-out', 'switch', null]);
+  });
+
+  it('an add backed out of sign-in can switch back to the parked account', async () => {
+    fakeEngine.method('session.prepareAddAccount').mockResolvedValue(undefined);
+    fakeEngine.method('session.current').mockResolvedValueOnce(null).mockResolvedValue(alice);
+    jest
+      .mocked(engineSupervisor.restart)
+      .mockImplementationOnce(() => {
+        fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+        useSessionStore.setState({ status: 'signed-out', session: null, accounts: [account(ALICE, 'alice.dash', false)] });
+      })
+      .mockImplementationOnce(() => {
+        fakeEngine.setStatus({ state: 'ready', epoch: 3 });
+        useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [account(ALICE, 'alice.dash', true)] });
+      });
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    await act(async () => fireEvent.press(byId('account-add')));
+    expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalled();
+    expect(router.push).toHaveBeenCalledWith('/sign-in');
+
+    // Back from sign-in without adding: alice is listed, parked.
+    expect(byId('account-signed-out-accounts')).toBeTruthy();
+    fireEvent.press(byId(`account-row-${ALICE}`));
+    expect(sheet?.options).toEqual(['Switch to @alice', 'Sign out of @alice', 'Cancel']);
+    await act(async () => sheet?.choose('Switch to @alice'));
+
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith(ALICE);
+    expect(toastMessage()).toBe('Switched to @alice');
+    expect(byId('account-identity-id')).toHaveTextContent(ALICE);
+  });
+
   it('signed out: a way to sign in', () => {
     useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
     renderScreen(<AccountSettingsScreen />);
@@ -422,6 +548,7 @@ describe('About (SET-06, SET-07)', () => {
     fireEvent.press(byId('about-privacy'));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/privacy');
 
+    expect(byId('about-rules')).toHaveAccessibleName('Community rules summary');
     fireEvent.press(byId('about-rules'));
     expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
   });

@@ -9,6 +9,7 @@ import {
   InformationCircleIcon,
   PaintBrushIcon,
   ShieldCheckIcon,
+  UserGroupIcon,
 } from 'react-native-heroicons/outline';
 
 import { config } from '~/config';
@@ -74,7 +75,7 @@ function AccountSummary() {
  * sign-in in place of the account.
  */
 export function SettingsScreen() {
-  const { signedIn, status } = useSession();
+  const { signedIn, status, accounts } = useSession();
   const capabilities = useCapabilities();
   const engineStatus = useEngineStatus();
   const theme = useAppearance((s) => s.theme);
@@ -99,6 +100,17 @@ export function SettingsScreen() {
             testID="settings-sign-in"
           />
         )}
+        {/* Accounts parked on this device (an add backed out of sign-in): the way back to them. */}
+        {!signedIn && status !== 'unknown' && accounts.length > 0 ? (
+          <SettingsRow
+            label={copy.account.accounts}
+            value={copy.account.onDevice(accounts.length)}
+            icon={UserGroupIcon}
+            iconTint={colors.gray500}
+            onPress={go('/settings/account')}
+            testID="settings-accounts"
+          />
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup>

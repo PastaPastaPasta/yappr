@@ -52,6 +52,8 @@ export const copy = {
     addFailed: "Couldn't start adding an account. Please try again.",
     signingOut: 'Signing out…',
     signInFirst: 'Sign in to see your account.',
+    parkedNote: "You're signed out. Choose an account to switch back to it.",
+    onDevice: (count: number) => (count === 1 ? '1 account' : `${count} accounts`),
   },
 
   notifications: {
@@ -101,7 +103,7 @@ export const copy = {
     engine: 'Engine',
     terms: 'Terms of Use',
     privacy: 'Privacy Policy',
-    rules: 'Community rules',
+    rules: 'Community rules summary',
     support: 'Support',
     licenses: 'Open-source licenses',
     web: 'Yappr on the web',

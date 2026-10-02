@@ -1,7 +1,7 @@
 import type { AccountDTO } from '@engine/api';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import {
   ArrowPathIcon,
@@ -164,6 +164,35 @@ function AccountRow({ account }: { account: AccountDTO }) {
   );
 }
 
+/**
+ * The accounts on this device, the current one first, with Add account
+ * (AUTH-10). Signed out (an add backed out of sign-in, say) it lists the
+ * parked accounts, so a tap switches back to one.
+ */
+function AccountsGroup({ accounts, footer, children }: { accounts: AccountDTO[]; footer?: string; children?: ReactNode }) {
+  // The engine lists every account with the active one marked; keep the active one first.
+  const listed = [...accounts].sort((a, b) => Number(b.active) - Number(a.active));
+  return (
+    <SettingsGroup title={copy.account.accounts} footer={footer} testID="account-accounts">
+      {listed.map((account) => (
+        <AccountRow key={account.identityId} account={account} />
+      ))}
+      <SettingsRow
+        label={copy.account.addAccount}
+        icon={PlusIcon}
+        iconTint={colors.yappr500}
+        link
+        chevron={false}
+        onPress={() => {
+          addAccount().catch(() => undefined);
+        }}
+        testID="account-add"
+      />
+      {children}
+    </SettingsGroup>
+  );
+}
+
 /** While a switch, add or sign-out runs, the screen shows only that. */
 function TransitionCover({ label }: { label: string }) {
   return (
@@ -187,6 +216,14 @@ export function AccountSettingsScreen() {
   const transition = useAccountTransition((s) => s.transition);
 
   if (!session) {
+    if (status !== 'unknown' && !transition && accounts.length > 0) {
+      return (
+        <SettingsScroll testID="account-signed-out-accounts">
+          <SettingsHeader title={copy.sections.account} />
+          <AccountsGroup accounts={accounts} footer={copy.account.parkedNote} />
+        </SettingsScroll>
+      );
+    }
     return (
       <SettingsPage>
         <SettingsHeader title={copy.sections.account} />
@@ -209,8 +246,6 @@ export function AccountSettingsScreen() {
 
   const usernames = profile.data?.usernames ?? (session.username ? [session.username.replace(/\.dash$/i, '')] : []);
   const joinedAt = profile.data?.joinedAt;
-  // The engine lists every account with the active one marked; keep the active one first.
-  const listed = [...accounts].sort((a, b) => Number(b.active) - Number(a.active));
 
   return (
     <View className="flex-1">
@@ -243,21 +278,7 @@ export function AccountSettingsScreen() {
           <BalanceRow credits={session.credits} />
         </SettingsGroup>
 
-        <SettingsGroup title={copy.account.accounts}>
-          {listed.map((account) => (
-            <AccountRow key={account.identityId} account={account} />
-          ))}
-          <SettingsRow
-            label={copy.account.addAccount}
-            icon={PlusIcon}
-            iconTint={colors.yappr500}
-            link
-            chevron={false}
-            onPress={() => {
-              addAccount().catch(() => undefined);
-            }}
-            testID="account-add"
-          />
+        <AccountsGroup accounts={accounts}>
           <SettingsRow
             label={copy.account.appLock}
             icon={LockClosedIcon}
@@ -265,7 +286,7 @@ export function AccountSettingsScreen() {
             onPress={() => router.push('/settings/app-lock')}
             testID="account-app-lock"
           />
-        </SettingsGroup>
+        </AccountsGroup>
 
         <SettingsGroup>
           <SettingsRow

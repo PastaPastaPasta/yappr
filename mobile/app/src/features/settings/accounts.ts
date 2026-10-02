@@ -85,36 +85,58 @@ async function restartEngine(reason: string): Promise<SessionDTO | null> {
   return session;
 }
 
-async function withTransition<T>(transition: AccountTransition, run: () => Promise<T>): Promise<T> {
+/** Shows `transition` while `run` runs; `run` can hand over to a next step's transition without a gap. */
+async function withTransition<T>(
+  transition: AccountTransition,
+  run: (handOver: (next: AccountTransition) => void) => Promise<T>,
+): Promise<T> {
+  let current = transition;
   useAccountTransition.setState({ transition });
   try {
-    return await run();
+    return await run((next) => {
+      current = next;
+      useAccountTransition.setState({ transition: next });
+    });
   } finally {
-    if (useAccountTransition.getState().transition === transition) useAccountTransition.setState({ transition: null });
+    if (useAccountTransition.getState().transition === current) useAccountTransition.setState({ transition: null });
   }
 }
 
-/** Switch to another account signed in on this device. Resolves true once the engine runs as it. */
-export async function switchAccount(account: { identityId: string; username: string | null }): Promise<boolean> {
-  const { identityId } = account;
-  if (useSessionStore.getState().session?.identityId === identityId) return true;
+/** Parks the current account, restarts the engine as `account`, and says how it went. */
+async function runSwitch(account: { identityId: string; username: string | null }): Promise<boolean> {
   const name = accountName(account);
-  return withTransition({ kind: 'switch', label: copy.account.switching(name) }, async () => {
-    try {
-      await engine.api.session.switchAccount(identityId);
-      const restored = await restartEngine('Switching accounts');
-      if (restored?.identityId !== identityId) throw new Error('The account did not restore');
-      toast.success(copy.account.switched(name));
-      return true;
-    } catch (error) {
-      appendLog('warn', 'host', `Switching accounts failed: ${errorMessage(error)}`);
-      toast.error(copy.account.switchFailed);
-      return false;
-    }
-  });
+  try {
+    await engine.api.session.switchAccount(account.identityId);
+    const restored = await restartEngine('Switching accounts');
+    if (restored?.identityId !== account.identityId) throw new Error('The account did not restore');
+    toast.success(copy.account.switched(name));
+    return true;
+  } catch (error) {
+    appendLog('warn', 'host', `Switching accounts failed: ${errorMessage(error)}`);
+    toast.error(copy.account.switchFailed);
+    return false;
+  }
 }
 
-/** Add another account: park the current one, restart signed out, then open sign-in. */
+const switching = (account: { identityId: string; username: string | null }): AccountTransition => ({
+  kind: 'switch',
+  label: copy.account.switching(accountName(account)),
+});
+
+/**
+ * Switch to another account signed in on this device (or, signed out, to a
+ * parked one). Resolves true once the engine runs as it.
+ */
+export async function switchAccount(account: { identityId: string; username: string | null }): Promise<boolean> {
+  if (useSessionStore.getState().session?.identityId === account.identityId) return true;
+  return withTransition(switching(account), () => runSwitch(account));
+}
+
+/**
+ * Add another account: park the current one, restart signed out, then open
+ * sign-in. The parked account stays listed on Settings → Account, signed out
+ * too, so backing out of sign-in can switch back to it.
+ */
 export async function addAccount(): Promise<void> {
   if (!useSessionStore.getState().session) {
     router.push('/sign-in');
@@ -132,14 +154,20 @@ export async function addAccount(): Promise<void> {
   });
 }
 
+/** Signed out with nobody left: Home, signed out (AUTH-11). */
+function goHome(): void {
+  if (router.canDismiss()) router.dismissAll();
+  router.navigate('/');
+}
+
 /**
  * Sign an account out and delete its keys from this device, offline
  * (AUTH-11). Signing out the active account moves to the most recently used
- * other account, if there is one; otherwise the app is signed out.
+ * other account, if there is one; otherwise to Home, signed out.
  */
 export async function signOutAccount(identityId: string): Promise<boolean> {
   const active = useSessionStore.getState().session?.identityId === identityId;
-  const signedOut = await withTransition({ kind: 'sign-out', label: copy.account.signingOut }, async () => {
+  return withTransition({ kind: 'sign-out', label: copy.account.signingOut }, async (handOver) => {
     try {
       await engine.api.session.signOut({ identityId });
     } catch (error) {
@@ -149,11 +177,19 @@ export async function signOutAccount(identityId: string): Promise<boolean> {
     }
     // Signing out another account changes no session, so nothing else refreshes the list.
     const accounts = await engine.api.session.accounts().catch(() => useSessionStore.getState().accounts);
-    useSessionStore.setState({ accounts: accounts.filter((a) => a.identityId !== identityId) });
+    const remaining = accounts.filter((a) => a.identityId !== identityId);
+    useSessionStore.setState({ accounts: remaining });
     toast(copy.account.signedOutDone);
+    if (!active) return true;
+    // The engine lists the most recently used account first.
+    const next = remaining[0];
+    if (!next) {
+      goHome();
+      return true;
+    }
+    // The cover stays up from the sign-out through the switch's restart.
+    handOver(switching(next));
+    await runSwitch(next);
     return true;
   });
-  const next = active ? useSessionStore.getState().accounts[0] : undefined;
-  if (signedOut && next) await switchAccount(next);
-  return signedOut;
 }

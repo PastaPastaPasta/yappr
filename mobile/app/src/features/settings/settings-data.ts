@@ -43,6 +43,16 @@ function undoOf(from: SettingsDTO, patch: SettingsPatch): SettingsPatch {
   return undo as SettingsPatch;
 }
 
+/** The lists the engine filters by the NSFW mode as it builds them (`hide` drops posts). */
+const NSFW_FILTERED = [queryKeys.feed.all, queryKeys.explore.all, queryKeys.profile.all, queryKeys.post.all, queryKeys.bookmarks];
+
+const refetch = (queryKey: readonly unknown[]) => {
+  queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
+};
+
+/** Saves not yet answered: a re-read while one is out could show the engine before it lands. */
+let saving = 0;
+
 /**
  * Changes settings at once (the control moves before the engine answers),
  * then saves them through the engine. A refused save puts back only the
@@ -54,14 +64,15 @@ export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
   await queryClient.cancelQueries({ queryKey: queryKeys.settings });
   const before = queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
   if (before) queryClient.setQueryData<SettingsDTO>(queryKeys.settings, applyPatch(before, patch));
+  saving += 1;
   try {
     const saved = await engine.api.settings.set(patch);
     // The cache already shows this patch, and any later one still in flight: keep it.
     if (!queryClient.getQueryData(queryKeys.settings)) queryClient.setQueryData(queryKeys.settings, saved);
-    if (patch.notificationSettings) {
-      // Turning a type off hides its items from every loaded list at once (NOTIF-05).
-      queryClient.invalidateQueries({ queryKey: queryKeys.notificationsAll }).catch(() => undefined);
-    }
+    // Turning a type off hides its items from every loaded list at once (NOTIF-05).
+    if (patch.notificationSettings) refetch(queryKeys.notificationsAll);
+    // Loaded lists were built under the old mode: Hide must drop NSFW posts, and leaving it bring them back.
+    if (patch.sensitiveContentMode !== undefined) NSFW_FILTERED.forEach(refetch);
     return true;
   } catch (error) {
     appendLog('warn', 'host', `Saving settings failed: ${errorMessage(error)}`);
@@ -69,7 +80,12 @@ export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
       const undo = undoOf(before, patch);
       queryClient.setQueryData<SettingsDTO>(queryKeys.settings, (current) => (current ? applyPatch(current, undo) : current));
     }
+    // Two refused changes to one field can undo in the wrong order: once the last answer is in,
+    // settle on what the engine has.
+    if (saving === 1) refetch(queryKeys.settings);
     toast.error(copy.saveFailed);
     return false;
+  } finally {
+    saving -= 1;
   }
 }
