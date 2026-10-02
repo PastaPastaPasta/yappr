@@ -177,8 +177,16 @@ export function MessageSettingsScreen() {
         </View>
       )}
       <SectionHeader title="Blocked" />
-      {/* Not before the saved state loads: an empty list would read as "Nobody". */}
-      {status.data?.ready ? <BlockedList ids={status.data.blocked} /> : <RowSkeleton />}
+      {/* Not before the saved state loads: an empty list would read as "Nobody". Locked, it never does. */}
+      {status.data?.ready ? (
+        <BlockedList ids={status.data.blocked} />
+      ) : status.data?.locked ? (
+        <Text variant="subhead" tone="secondary" className="px-4 py-3" testID="dm-blocked-locked">
+          Unlock your messages to see who you blocked.
+        </Text>
+      ) : (
+        <RowSkeleton />
+      )}
       <View className="h-10" />
     </Screen>
   );

@@ -917,6 +917,14 @@ describe('Message settings (DM-12)', () => {
     expect(useToastStore.getState().current?.message).toBe("Couldn't save the setting. Try again.");
   });
 
+  it('says to unlock, instead of loading forever, while messages are locked (SR-42)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true, ready: false, retention: null }));
+    await renderAt('/messages/settings');
+    expect(screen.getByText('Unlock your messages to change this setting.')).toBeTruthy();
+    expect(screen.getByTestId('dm-blocked-locked')).toBeTruthy();
+  });
+
   it('has nothing to set on legacy (DM-11)', async () => {
     signIn();
     fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
