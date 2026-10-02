@@ -5,15 +5,16 @@ import { Stack } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 import { RefreshControl } from 'react-native';
 
+import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
-import { fakeEngine } from '~/data/testing/fake-engine';
+import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { useHomePrefsStore } from './home-prefs';
-import { HomeScreen } from './HomeScreen';
-import { useOwnPosts } from './own-posts';
+import { HomeScreen, RESTORE_WAIT_MS } from './HomeScreen';
+import { resetOwnPosts, useOwnPosts } from './own-posts';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 
@@ -54,6 +55,10 @@ const page = (items: PostDTO[], hasMore = false): Page<PostDTO> => ({
   hasMore,
 });
 
+// The fake supervisor has no restart; Home's engine-down state calls it.
+const restart = jest.fn();
+Object.assign(engineModule.engineSupervisor, { restart });
+
 const home = () => fakeEngine.method('feed.home');
 const checkNew = () => fakeEngine.method('feed.checkNew');
 
@@ -80,6 +85,12 @@ beforeAll(() => {
   queryClient.setDefaultOptions({ queries: { ...queryClient.getDefaultOptions().queries, retry: false } });
 });
 afterAll(() => queryClient.clear());
+// After the tree unmounts: a read left pending (the skeleton test) otherwise keeps Jest from exiting.
+afterEach(() => {
+  queryClient.clear();
+  resetOwnPosts();
+  fakeEngine.setStatus({ state: 'ready' });
+});
 
 beforeEach(() => {
   jest.useRealTimers();
@@ -88,7 +99,7 @@ beforeEach(() => {
   fakeEngine.setStatus({ state: 'ready', info: { capabilities: CAPABILITIES } });
   useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
   useHomePrefsStore.setState({ accounts: {} });
-  useOwnPosts.setState({ ids: [] });
+  restart.mockClear();
   useToastStore.setState({ current: null });
   checkNew().mockResolvedValue({ count: 0, posts: [] });
   jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: true } as ReturnType<typeof NetInfo.useNetInfo>);
@@ -211,11 +222,106 @@ describe('Home', () => {
 
     const mine = fixturePost({ id: 'mine', content: 'my new post', author: AUTHORS.alice, createdAt: at(0) });
     await act(async () => {
+      // The data layer seeds the detail the pin renders from (sync.ts).
+      queryClient.setQueryData(queryKeys.post.detail('mine'), mine);
       fakeEngine.emit('content.created', { kind: 'post', id: 'mine', confirmed: false, post: mine });
     });
 
     expect(screen.getByText('my new post')).toBeTruthy();
     expect(useOwnPosts.getState().ids).toEqual(['mine']);
+  });
+
+  it('polls for new posts from the feed’s newest post, not the viewer’s pinned one', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    const first = post('p1', 'first post', 5);
+    home().mockResolvedValue(page([first]));
+    await renderHome();
+
+    const mine = fixturePost({ id: 'mine', content: 'my new post', author: AUTHORS.alice, createdAt: at(0) });
+    checkNew().mockResolvedValue({ count: 1, posts: [mine] });
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.post.detail('mine'), mine);
+      fakeEngine.emit('content.created', { kind: 'post', id: 'mine', confirmed: false, post: mine });
+    });
+
+    expect(checkNew()).toHaveBeenLastCalledWith({ tab: 'forYou', since: first.createdAt, knownIds: ['p1'] });
+    // The viewer's own post is already on screen: no pill for it.
+    expect(screen.queryByTestId('new-posts-pill')).toBeNull();
+  });
+
+  it('renders the restored tab when the account changes to one saved on Following (FEED-03)', async () => {
+    useHomePrefsStore.setState({ accounts: { [viewer.identityId]: { tab: 'following', sort: 'recent', window: 'all' } } });
+    home().mockResolvedValue(page([post('p1', 'a followed post', 1)]));
+    await renderHome();
+
+    await act(async () => {
+      useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    });
+
+    expect(home()).toHaveBeenCalledWith(expect.objectContaining({ tab: 'following' }));
+    expect(screen.getByTestId('feed-following')).toBeTruthy();
+  });
+
+  it('keeps the pages read after a failed refresh (FEED-06)', async () => {
+    home().mockResolvedValueOnce(page([post('p1', 'first post', 5)], true));
+    home().mockResolvedValueOnce(page([post('p2', 'second page post', 6)]));
+    await renderHome();
+    await act(async () => {
+      fireEvent(screen.getByTestId('feed-list-forYou'), 'endReached');
+    });
+    expect(screen.getByText('second page post')).toBeTruthy();
+
+    home().mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    expect(screen.getByText('second page post')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
+  });
+
+  it('keeps polling for new posts after a failed next page (FEED-05, FEED-07)', async () => {
+    const first = post('p1', 'first post', 5);
+    home().mockResolvedValueOnce(page([first], true));
+    home().mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await renderHome();
+    await act(async () => {
+      fireEvent(screen.getByTestId('feed-list-forYou'), 'endReached');
+    });
+
+    expect(screen.getByTestId('feed-load-more')).toBeTruthy();
+    // The feed is in status `error` with its pages kept; the polling stays on.
+    const poll = queryClient.getQueryCache().find({ queryKey: queryKeys.feed.newPosts('forYou', first.createdAt.getTime()) });
+    expect(poll?.isDisabled()).toBe(false);
+  });
+
+  it('offers a restart when the engine has failed with nothing cached (G-11)', async () => {
+    fakeEngine.setStatus({ state: 'failed' });
+    useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
+    await renderHome();
+
+    expect(screen.getByTestId('feed-engine-down')).toBeTruthy();
+    expect(screen.getByText(/temporarily unavailable/)).toBeTruthy();
+    fireEvent.press(screen.getByText('Try again'));
+    expect(restart).toHaveBeenCalled();
+  });
+
+  it('reads For You signed out when the session restore stalls with the engine up', async () => {
+    jest.useFakeTimers();
+    useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+    expect(home()).not.toHaveBeenCalled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(RESTORE_WAIT_MS);
+    });
+    expect(home()).toHaveBeenCalledWith(expect.objectContaining({ tab: 'forYou' }));
+    expect(screen.getByText('first post')).toBeTruthy();
+
+    // The session arriving late refetches, for the viewer's marks.
+    await act(async () => {
+      useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    });
+    expect(home()).toHaveBeenCalledTimes(2);
   });
 
   it('shows the offline banner, and a refresh offline ends at once (G-1, FEED-06)', async () => {

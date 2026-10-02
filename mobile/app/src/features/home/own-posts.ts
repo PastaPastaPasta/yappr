@@ -19,15 +19,36 @@ const MAX_PINS = 10;
 
 export const useOwnPosts = create<{ ids: string[] }>()(() => ({ ids: [] }));
 
+/** Each pin's expiry, cleared with the pin. */
+const expiries = new Map<string, ReturnType<typeof setTimeout>>();
+
 export function unpinOwnPosts(ids: readonly string[]): void {
   if (ids.length === 0) return;
+  for (const id of ids) {
+    clearTimeout(expiries.get(id));
+    expiries.delete(id);
+  }
   const drop = new Set(ids);
   useOwnPosts.setState(({ ids: pinned }) => ({ ids: pinned.filter((id) => !drop.has(id)) }));
 }
 
 export function pinOwnPost(id: string): void {
-  useOwnPosts.setState(({ ids }) => ({ ids: [id, ...ids.filter((pinned) => pinned !== id)].slice(0, MAX_PINS) }));
-  setTimeout(() => unpinOwnPosts([id]), PIN_MS);
+  const { ids } = useOwnPosts.getState();
+  const next = [id, ...ids.filter((pinned) => pinned !== id)];
+  // Past the cap, the oldest pins go (with their timers).
+  unpinOwnPosts(next.slice(MAX_PINS));
+  useOwnPosts.setState({ ids: next.slice(0, MAX_PINS) });
+  clearTimeout(expiries.get(id));
+  expiries.set(
+    id,
+    setTimeout(() => unpinOwnPosts([id]), PIN_MS),
+  );
+}
+
+/** Drop every pin and its timer (tests). */
+export function resetOwnPosts(): void {
+  unpinOwnPosts([...expiries.keys()]);
+  useOwnPosts.setState({ ids: [] });
 }
 
 const cachedPosts = (results: { data?: PostDTO | null }[]): PostDTO[] =>

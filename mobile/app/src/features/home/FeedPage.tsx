@@ -9,6 +9,7 @@ import { useReducedMotion } from 'react-native-reanimated';
 
 import { openExternal } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
+import { engineSupervisor } from '~/engine';
 import { useEngineStatus } from '~/engine/hooks';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -18,7 +19,7 @@ import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { useColors } from '~/ui/tokens';
 
-import { LEGACY_APP_URL, readErrorMessage } from './feed-data';
+import { LEGACY_APP_URL, readErrorMessage, UNAVAILABLE_MESSAGE } from './feed-data';
 import type { FeedSort } from './home-prefs';
 import { NewPostsPill } from './NewPostsPill';
 import { unpinOwnPosts, usePinnedPosts } from './own-posts';
@@ -144,8 +145,11 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
 
   const newPosts = useNewPosts({
     tab,
-    items,
-    enabled: live && !offline && readable && sort === 'recent' && feed.isSuccess,
+    // The pins are newer than the feed but say nothing about others' posts in between.
+    items: feedItems,
+    shown: items,
+    // A failed next page or refresh keeps the pages read (status `error`); the polling goes on.
+    enabled: live && !offline && readable && sort === 'recent' && feed.data !== undefined,
   });
 
   const listRef = useRef<FlashListRef<PostDTO>>(null);
@@ -224,7 +228,19 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
   }
 
   let empty;
-  if (feed.isError) {
+  if (feed.data === undefined && (engineState === 'failed' || engineState === 'unsupported')) {
+    // The engine gave up (or cannot run here): nothing will load until it restarts (PRD G-11).
+    empty = (
+      <ErrorState
+        message={UNAVAILABLE_MESSAGE}
+        onRetry={() => {
+          engineSupervisor.restart('Try again (Home)');
+          if (readable) feed.refetch().catch(() => undefined);
+        }}
+        testID="feed-engine-down"
+      />
+    );
+  } else if (feed.isError) {
     empty = (
       <ErrorState
         message={readErrorMessage(feed.error)}

@@ -56,13 +56,18 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
 
   const { refetch } = feed;
 
-  /** Reload the first page only (a pull to refresh is at the top anyway). Resolves with the error, if it failed. */
+  /**
+   * Reload the first page only (a pull to refresh is at the top anyway).
+   * Resolves with the error, if it failed; the pages read before stay.
+   */
   const refresh = async (): Promise<Error | null> => {
     const queryKey = queryKeys.feed.home({ tab, sort, window });
     // A next page in flight would land on top of the trimmed pages.
     await queryClient.cancelQueries({ queryKey, exact: true });
+    const before = queryClient.getQueryData<FeedData>(queryKey);
     queryClient.setQueryData<FeedData>(queryKey, keepFirstPage);
     const result = await refetch();
+    if (result.error && before) queryClient.setQueryData<FeedData>(queryKey, before);
     return result.error;
   };
 
@@ -86,15 +91,18 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
  * 15 s while `enabled`, and once at once whenever it turns on (return to the
  * app or to Home, PRD FEED-05). Each answer is the whole set since the
  * feed's newest post, so nothing accumulates here; inserting them moves the
- * newest and starts over.
+ * newest and starts over. `items` are the feed's own; `shown` adds what the
+ * screen puts above them (the viewer's pinned posts), which the pill skips.
  */
 export function useNewPosts({
   tab,
   items,
+  shown,
   enabled,
 }: {
   tab: FeedTab;
   items: readonly PostDTO[];
+  shown: readonly PostDTO[];
   enabled: boolean;
 }): PostDTO[] {
   const since = newestTimestamp(items) ?? 0;
@@ -111,7 +119,7 @@ export function useNewPosts({
     },
   );
   return useMemo(() => {
-    const shown = new Set(items.map((item) => item.id));
-    return (data?.posts ?? []).filter((post) => !shown.has(post.id));
-  }, [data, items]);
+    const seen = new Set(shown.map((item) => item.id));
+    return (data?.posts ?? []).filter((post) => !seen.has(post.id));
+  }, [data, shown]);
 }

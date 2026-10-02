@@ -6,6 +6,9 @@
 # Without KEY it checks the signed-out Following prompt; with KEY (a sakura
 # pool identity's authentication key, never committed) it signs in through
 # the dev quick sign-in and reads Following. Nothing here writes.
+# Maestro records command values, KEY included, in its logs and debug
+# artifacts (~/.maestro/tests/...): never upload or attach those from a run
+# with KEY, and delete them afterwards.
 appId: pr.yap.app.dev
 ---
 - openLink: yappr-dev:///
