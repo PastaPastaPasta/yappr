@@ -119,4 +119,39 @@ describe('launch', () => {
     await flush();
     expect(router.push).toHaveBeenCalledWith('/sign-in/qr?resume=1');
   });
+
+  it('leaves a request alone when the sign-in flow already owns it (a slow boot)', async () => {
+    useSessionStore.setState({ status: 'signed-out', session: null });
+    fakeEngine.setStatus({ state: 'ready' });
+    fakeEngine
+      .method('session.pendingKeyExchange')
+      .mockResolvedValue({ requestId: 'r1', uri: 'dash-key:r1', expiresAt: new Date(Date.now() + 60_000) });
+    useKeyExchange.setState({ mode: 'wallet', phase: { name: 'starting' }, request: null });
+
+    mount('/sign-in/wallet');
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(fakeEngine.method('session.pendingKeyExchange')).not.toHaveBeenCalled();
+  });
+
+  it('drops a resume whose answer arrives after the user started signing in', async () => {
+    useSessionStore.setState({ status: 'signed-out', session: null });
+    fakeEngine.setStatus({ state: 'ready' });
+    let answer: (value: unknown) => void = () => undefined;
+    fakeEngine.method('session.pendingKeyExchange').mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
+
+    const go = mount('/');
+    go('/sign-in/qr');
+    const request = { requestId: 'r2', uri: 'dash-key:r2', expiresAt: new Date(Date.now() + 60_000) };
+    useKeyExchange.setState({ mode: 'qr', phase: { name: 'waiting', request }, request });
+    answer(request);
+    await flush();
+    expect(router.push).not.toHaveBeenCalled();
+    useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
+  });
 });

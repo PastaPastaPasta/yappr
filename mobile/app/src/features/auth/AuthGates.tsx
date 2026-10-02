@@ -71,19 +71,28 @@ function useSignInExit(pathname: string): void {
 /**
  * A wallet request the engine still holds after the app was killed while
  * waiting (AUTH-03): back to the waiting screen, within its 10 minutes.
+ * Not when the user is already in the sign-in flow (a slow boot): the
+ * request the engine holds may be the one that flow just made.
  */
-function useResumeWalletSignIn(ready: boolean): void {
+function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   const { status } = useSession();
   const { state } = useEngineStatus();
   const checked = useRef(false);
+  const path = useRef(pathname);
+  useEffect(() => {
+    path.current = pathname;
+  }, [pathname]);
   const engineUp = state === 'ready' || state === 'degraded';
   useEffect(() => {
     if (!ready || !engineUp || status !== 'signed-out' || checked.current) return;
     checked.current = true;
+    const signingIn = () => inSignIn(path.current) || useKeyExchange.getState().phase.name !== 'idle';
+    if (signingIn()) return;
     engine.api.session
       .pendingKeyExchange()
       .then((pending) => {
-        if (pending) router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
+        if (!pending || signingIn()) return;
+        router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`));
   }, [ready, engineUp, status]);
@@ -120,7 +129,7 @@ export function AuthGates() {
   useWelcomeOnFirstLaunch(ready);
   useTermsGate(ready, pathname);
   useSignInExit(pathname);
-  useResumeWalletSignIn(ready);
+  useResumeWalletSignIn(ready, pathname);
   return (
     <>
       <AccountSwitcherSheet />
