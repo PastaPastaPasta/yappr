@@ -8,7 +8,7 @@ import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { identityService } from '@/lib/services/identity-service'
-import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
+import { findEncryptionKey, hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { logger } from '@/lib/logger'
@@ -497,6 +497,12 @@ export function createDmModule(options: DmModuleOptions) {
           if (validation.errorType === 'IDENTITY_NOT_FOUND') throw new RpcError(validation.error || 'Could not fetch identity data', 'NETWORK')
           if (validation.noKeyOnIdentity) return { unlocked: false, reason: 'no-key-on-identity' }
           throw new RpcError(validation.error || 'Invalid key', 'KEY_INVALID')
+        }
+        // lib accepts any of the identity's encryption keys, but messages (and every peer) use only
+        // the one `findEncryptionKey` picks: another key would unlock an inbox nobody can write to.
+        const messagingKey = findEncryptionKey(identity.publicKeys)
+        if (messagingKey && validation.keyId !== messagingKey.id) {
+          throw new RpcError(`This is not the encryption key messages use: enter key ${messagingKey.id} instead`, 'KEY_INVALID')
         }
         assertStill(identityId)
         storeEncryptionKey(identityId, key)
