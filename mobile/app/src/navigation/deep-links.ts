@@ -116,7 +116,7 @@ const WEB_ROUTES: Record<string, (q: Query) => string | null> = {
   '/notifications': () => '/notifications',
   '/messages': (q) => {
     if (q.startConversation === undefined) return '/messages';
-    // TODO(messages PR): open the existing conversation when there is one (engine `dm` lookup).
+    // The new-message screen opens the existing (or a new) conversation with them (`dm.startDirect`).
     const to = id(q.startConversation);
     return to ? withQuery('/messages/new', { with: to }) : null;
   },

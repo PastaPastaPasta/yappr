@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { NewGroupScreen } from '~/features/messages/NewGroupScreen';
 
-export default function NewGroupScreen() {
-  return <Placeholder title="New group" comingIn="the messages PR" />;
-}
+export default NewGroupScreen;
