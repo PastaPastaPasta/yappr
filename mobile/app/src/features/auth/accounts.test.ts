@@ -144,6 +144,26 @@ it('brings Welcome back after the last account signs out (AUTH-01)', async () =>
   expect(useSessionStore.getState().accounts).toEqual([]);
 });
 
+it("restarts the engine after the last account signs out, dropping the page that carried its keys (SR-11)", async () => {
+  fakeEngine.method('session.signOut').mockResolvedValue(undefined);
+  fakeEngine.method('session.accounts').mockResolvedValue([]);
+
+  await signOutAccount('alice');
+  await flush();
+
+  expect(restart).toHaveBeenCalledTimes(1);
+});
+
+it('does not restart the engine for signing out an account that is not active', async () => {
+  fakeEngine.method('session.signOut').mockResolvedValue(undefined);
+  fakeEngine.method('session.accounts').mockResolvedValue([account('alice', true)]);
+
+  await signOutAccount('bob');
+  await flush();
+
+  expect(restart).not.toHaveBeenCalled();
+});
+
 it('keeps the switch progress up after signing out the active account, until the next one is back', async () => {
   fakeEngine.method('session.signOut').mockResolvedValue(undefined);
   fakeEngine.method('session.accounts').mockResolvedValue([account('bob')]);

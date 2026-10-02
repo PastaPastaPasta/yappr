@@ -105,6 +105,25 @@ export async function authenticate(): Promise<boolean> {
   }
 }
 
+/**
+ * Resolves once the app is unlocked (at once when it is not locked). The
+ * engine waits on it before reading secrets, so a locked app restores no
+ * session and signs nothing until the owner unlocks (ENGINE.md §9.2).
+ */
+export function untilUnlocked(): Promise<void> {
+  return new Promise((resolve) => {
+    if (!useLockState.getState().locked) {
+      resolve();
+      return;
+    }
+    const stop = useLockState.subscribe(({ locked }) => {
+      if (locked) return;
+      stop();
+      resolve();
+    });
+  });
+}
+
 /** Ask for authentication and unlock on success. */
 export async function unlock(): Promise<boolean> {
   const passed = await authenticate();

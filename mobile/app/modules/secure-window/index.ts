@@ -13,3 +13,11 @@ export function setCaptureBlocked(on: boolean): Promise<boolean> {
   native.setSecure(on);
   return Promise.resolve(true);
 }
+
+/**
+ * iOS only (index.ios.ts). Android hides the Recents thumbnail with
+ * FLAG_SECURE instead (`setCaptureBlocked`), so this is never called here.
+ */
+export function setSwitcherProtected(on: boolean): Promise<boolean> {
+  return Promise.reject(new Error(`App-switcher protection is iOS only (asked to turn it ${on ? 'on' : 'off'})`));
+}

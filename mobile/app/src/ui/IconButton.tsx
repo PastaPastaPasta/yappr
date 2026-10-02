@@ -2,6 +2,7 @@ import type { PressableProps } from 'react-native';
 
 import { cn } from '~/lib-allowlist';
 
+import { useRipple } from './ripple';
 import { ScalePressable } from './ScalePressable';
 import { hitSlopFor, useColors, type IconComponent } from './tokens';
 
@@ -38,12 +39,14 @@ export function IconButton({
 }: IconButtonProps) {
   const c = useColors();
   const tint = color ?? c[TINT[variant]];
+  const ripple = useRipple('icon');
 
   return (
     <ScalePressable
       accessibilityRole="button"
       accessibilityState={{ disabled: !!disabled }}
       disabled={disabled}
+      android_ripple={ripple}
       hitSlop={hitSlopFor(36)}
       className={cn(
         'h-9 w-9 items-center justify-center rounded-full',

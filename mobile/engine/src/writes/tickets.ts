@@ -40,6 +40,8 @@ export interface WriteRunContext {
   progress(done: number, total: number): void
   /** Record document ids as soon as they are known, so a later `check` can prove them. */
   documents(documents: TicketDocument[]): void
+  /** Run this write's own probe (what `check` runs) against the ticket as it stands. */
+  probe(): Promise<ProbeResult>
 }
 
 /** What the store lends a handler's own probe, so every probe proves documents the same way. */
@@ -297,6 +299,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       stage: stage => { update(id, { stage }) },
       progress: (done, total) => { update(id, { progress: { done, total } }) },
       documents: documents => { update(id, { documents: withDocuments(id, documents) }) },
+      probe: () => probe(clone(recordOf(id).ticket), args),
     }
     Promise.resolve()
       .then(() => handler.run(args, ctx))

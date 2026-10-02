@@ -4,9 +4,10 @@ import { FALLBACK_ROUTE } from '~/navigation/deep-links';
 import { Screen } from '~/ui/Screen';
 
 /**
- * Unknown routes (stale or unsupported links) go home. It paints the themed
- * surface for the frame before the redirect lands.
- * TODO(shell PR): the "This link isn't supported in the app" toast.
+ * Unknown routes go home. Inbound links never land here (`+native-intent`
+ * routes unknown ones home with the unsupported-link toast); this catches a
+ * stale in-app route. It paints the themed surface for the frame before the
+ * redirect lands.
  */
 export default function NotFound() {
   return (

@@ -20,12 +20,12 @@ import { toast } from '~/ui/toast';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 import { useDmViewer } from './dm-data';
+import { GROUP_NAME_MAX, groupNameError } from './dm-model';
 import { createGroupWrite, resendKeysTo } from './dm-writes';
 import { DmSignedOut } from './DmStates';
 import { CloseButton, leaveModalFor } from './NewMessageScreen';
 import { UserPicker, type PickerUser } from './UserPicker';
 
-const NAME_MAX = 100;
 /** At most 100 members including the creator (PRD DM-06). */
 const MAX_MEMBERS = 100;
 
@@ -73,7 +73,8 @@ export function NewGroupScreen() {
   const [awaitingTicket, setAwaitingTicket] = useState(false);
   // Confirmed is final: the form stays locked while the new group is looked up and opened.
   const busy = awaitingTicket || create.status === 'pending' || create.status === 'confirmed' || unconfirmed;
-  const canCreate = !busy && name.trim().length > 0 && members.length > 0;
+  const nameError = groupNameError(name);
+  const canCreate = !busy && name.trim().length > 0 && !nameError && members.length > 0;
   const selected = new Set(members.map((m) => m.id));
 
   const toggle = (user: PickerUser) => {
@@ -186,7 +187,8 @@ export function NewGroupScreen() {
             label="Group name"
             value={name}
             onChangeText={setName}
-            maxLength={NAME_MAX}
+            maxLength={GROUP_NAME_MAX}
+            error={nameError}
             editable={!busy}
             placeholder="Builders"
             returnKeyType="done"

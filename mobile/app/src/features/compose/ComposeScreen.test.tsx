@@ -3,7 +3,7 @@ import { useNetInfo } from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ActionSheetIOS } from 'react-native';
+import { ActionSheetIOS, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -13,7 +13,7 @@ import { queryClient } from '~/state/query-client';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 
 import { ComposeScreen } from './ComposeScreen';
-import { deleteDraft, loadDraft, saveDraft, type ComposeContext } from './drafts';
+import { deleteDraft, isDraftSlotHeld, loadDraft, saveDraft, type ComposeContext } from './drafts';
 import { usePendingPosts } from './pending-posts';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -248,6 +248,9 @@ it('suggests mentions after 3 characters and inserts the pick', async () => {
     jest.advanceTimersByTime(300);
   });
   expect(fakeEngine.method('posts.mentionCandidates')).toHaveBeenCalledWith('sig');
+  // A floor, not a fixed height: the row grows at the largest text sizes (G-12).
+  expect(StyleSheet.flatten((await screen.findByTestId('mention-sigrid')).props.style)).toMatchObject({ minHeight: 56 });
+  expect(StyleSheet.flatten(byId('mention-sigrid').props.style).height).toBeUndefined();
   fireEvent.press(await screen.findByTestId('mention-sigrid'));
   expect(byId('compose-input-0')).toHaveTextContent('hi @sigrid');
   jest.useRealTimers();
@@ -324,7 +327,8 @@ it('removing the focused part moves the counter to the part that takes the focus
 });
 
 it('a target that could not be read is not "deleted": it offers Retry', async () => {
-  fakeEngine.method('posts.get').mockResolvedValue(null);
+  queryClient.setQueryDefaults(queryKeys.post.detail('target-3'), { retry: false });
+  fakeEngine.method('posts.get').mockRejectedValue(Object.assign(new Error('read failed'), { code: 'NETWORK' }));
   jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-3' });
   await renderCompose();
   expect(byId('compose-target-unread')).toHaveTextContent("Couldn't load the post", { exact: false });
@@ -336,6 +340,67 @@ it('a target that could not be read is not "deleted": it offers Retry', async ()
   fakeEngine.method('posts.get').mockResolvedValue(target);
   await act(async () => fireEvent.press(screen.getByText('Retry')));
   expect(screen.queryByTestId('compose-target-unread')).toBeNull();
+  expect(postButton()).toBeEnabled();
+});
+
+it('a target proved missing (deleted or removed on v10) is unavailable, with no Retry', async () => {
+  fakeEngine.method('posts.get').mockResolvedValue(null);
+  jest.mocked(useLocalSearchParams).mockReturnValue({ replyTo: 'target-5' });
+  await renderCompose();
+  expect(screen.getByText("This post is unavailable, so it can't be replied to.")).toBeTruthy();
+  expect(screen.queryByTestId('compose-target-unread')).toBeNull();
+  expect(screen.queryByText('Retry')).toBeNull();
+  type('hi');
+  expect(postButton()).toBeDisabled();
+
+  jest.mocked(useLocalSearchParams).mockReturnValue({ quote: 'target-5' });
+  screen.unmount();
+  await renderCompose();
+  expect(byId('compose-target-missing')).toHaveTextContent('This post is unavailable.', { exact: false });
+});
+
+it('lets the header and the NSFW chip grow with the text size (G-12)', async () => {
+  await renderCompose();
+  expect(byId('compose-header').props.className).toContain('min-h-14');
+  expect(byId('compose-header').props.className).not.toMatch(/(^|\s)h-14/);
+  expect(byId('compose-nsfw').props.className).not.toMatch(/(^|\s)h-8/);
+  expect(screen.getByText('NSFW').props.maxFontSizeMultiplier).toBe(1.5);
+});
+
+it('holds its draft slot while open, so a failed post never lands where it saves (SR-06)', async () => {
+  await renderCompose();
+  expect(isDraftSlotHeld(VIEWER_ID, POST)).toBe(true);
+  screen.unmount();
+  expect(isDraftSlotHeld(VIEWER_ID, POST)).toBe(false);
+});
+
+it('a double tap on Post publishes once', async () => {
+  fakeEngine.method('posts.publish').mockResolvedValue(ticket({ op: 'post.publish' }));
+  await renderCompose();
+  type('Hello');
+  await act(async () => {
+    fireEvent.press(postButton());
+    fireEvent.press(postButton());
+  });
+  expect(fakeEngine.method('posts.publish')).toHaveBeenCalledTimes(1);
+  expect(Object.keys(usePendingPosts.getState().entries)).toHaveLength(1);
+});
+
+it('refuses an image URL over the contract limit of 512 characters', async () => {
+  await renderCompose();
+  type('pic');
+  fireEvent.press(byId('compose-media-toggle'));
+  fireEvent.changeText(byId('compose-media-url'), `https://img.example/${'a'.repeat(600)}.png`);
+  expect(byId('compose-media-error')).toHaveTextContent('This link is too long. Use one of up to 512 characters.');
+  expect(postButton()).toBeDisabled();
+  fireEvent.changeText(byId('compose-media-url'), 'https://img.example/a.png');
+  expect(postButton()).toBeEnabled();
+});
+
+it('counts the text as posted: whitespace that posting trims is not over the limit', async () => {
+  await renderCompose();
+  type(`${'a'.repeat(20)}\n\n`);
+  expect(byId('compose-counter')).toHaveAccessibleName('20 of 20 characters');
   expect(postButton()).toBeEnabled();
 });
 

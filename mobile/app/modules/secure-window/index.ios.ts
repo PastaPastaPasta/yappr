@@ -1,4 +1,9 @@
-import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-capture';
+import {
+  allowScreenCaptureAsync,
+  disableAppSwitcherProtectionAsync,
+  enableAppSwitcherProtectionAsync,
+  preventScreenCaptureAsync,
+} from 'expo-screen-capture';
 
 /**
  * iOS: expo-screen-capture's screenshot and recording block. It is linked on
@@ -8,5 +13,15 @@ import { allowScreenCaptureAsync, preventScreenCaptureAsync } from 'expo-screen-
  */
 export async function setCaptureBlocked(on: boolean): Promise<boolean> {
   await (on ? preventScreenCaptureAsync() : allowScreenCaptureAsync());
+  return true;
+}
+
+/**
+ * iOS: a native blur over the app's root view from `willResignActive` until it
+ * is active again, so the app-switcher snapshot never waits on a JS render.
+ * It covers the root view only: presented modals sit above it.
+ */
+export async function setSwitcherProtected(on: boolean): Promise<boolean> {
+  await (on ? enableAppSwitcherProtectionAsync(1) : disableAppSwitcherProtectionAsync());
   return true;
 }

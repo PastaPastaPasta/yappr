@@ -186,9 +186,14 @@ describe('engage writes', () => {
     // waiting-parent is left before lib's write, so a transport failure there is never "proved not sent".
     expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'signing', null])
 
-    // lib's boolean `false` carries no verdict (it swallows the error): it may have landed.
+    // lib's boolean `false` (it swallows the error) is a failed write, as on web: rolled back,
+    // and retryable (SR-04), never a silent "may have landed".
     m.likeService.likePost.mockResolvedValue(false)
-    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'UNKNOWN', outcome: 'unknown' } })
+    const refused = await outcome(engage.like(TARGET))
+    expect(refused).toMatchObject({ state: 'failed', retryable: true, error: { code: 'UNKNOWN', outcome: 'refused' } })
+    m.likeService.likePost.mockResolvedValue(true)
+    await tickets.retry(refused.id)
+    expect(await settled(tickets, refused.id)).toMatchObject({ state: 'confirmed' })
   })
 
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
@@ -454,6 +459,8 @@ describe('posts.publish and posts.delete', () => {
     await expect(posts.publish({ parts: [{ text: ' ​ ' }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x'.repeat(501) }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: 'javascript:alert(1)' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    // The contract's mediaUrl maxLength (512): refused before a ticket, not after it, every retry.
+    await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: `https://img.example/${'a'.repeat(600)}.png` })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x' }], replyTo: TARGET, quote: TARGET })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
@@ -513,6 +520,32 @@ describe('posts.publish and posts.delete', () => {
     m.replyService.createReply.mockClear()
     await outcome(posts.publish({ ...draft, resume: { postedIds: [id('post0'), null] } }))
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+  })
+
+  it('names each part on the ticket as it lands, so a restart mid-thread keeps what posted (SR-03)', async () => {
+    const kv = storage()
+    const options = { storage: kv, emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0 }
+    const before = createTicketStore(options)
+    const { publish } = createPostWrites(before, emit)
+    m.postService.createPost.mockImplementation(async () => post(id('post0')))
+    m.replyService.createReply
+      .mockImplementationOnce(async () => ({ ...post(id('reply1')), parentId: id('post0') }))
+      // The third part never answers: the engine is killed while it posts.
+      .mockImplementationOnce(() => new Promise(() => undefined))
+    const ticket = await publish({ parts: [{ text: 'one' }, { text: 'two' }, { text: 'three' }] })
+    await vi.waitFor(() => expect(before.get(ticket.id)?.documents).toHaveLength(2), { timeout: 10_000, interval: 5 })
+
+    // The next engine loads the persisted ticket: interrupted, but it still names parts 1 and 2.
+    const after = createTicketStore(options)
+    createPostWrites(after, emit)
+    expect(after.get(ticket.id)).toMatchObject({
+      state: 'unconfirmed',
+      error: { code: 'ENGINE_RESTARTED' },
+      documents: [
+        { type: 'post', id: id('post0'), part: 0, confirmed: true },
+        { type: 'reply', id: id('reply1'), part: 1, confirmed: true },
+      ],
+    })
   })
 
   it('never fails a thread with a timed-out part: unconfirmed, unprovable, not retryable', async () => {
@@ -592,6 +625,33 @@ describe('posts.publish and posts.delete', () => {
     m.postService.getPostById.mockResolvedValue(null)
     m.replyService.getReplyById.mockResolvedValue({ ...post(TARGET.id), parentId: id('P'), deleted: true })
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('decides a delete\'s `false` with its probe: a send whose wait gave no verdict is not a refusal', async () => {
+    const { outcome, posts } = engine()
+    const own = { ...TARGET, ownerId: VIEWER }
+    m.postService.deleteOwnPost.mockResolvedValue(false)
+    // lib's deleteDocument answers false for a 504 too: the post proved gone is a delete that landed.
+    m.documentExists.mockResolvedValue(false)
+    expect(await outcome(posts.delete(own))).toMatchObject({ state: 'confirmed', error: null })
+    // Still there: refused, rolled back and retryable (SR-04).
+    m.documentExists.mockResolvedValue(true)
+    expect(await outcome(posts.delete(own)))
+      .toMatchObject({ state: 'failed', retryable: true, error: { code: 'UNKNOWN', outcome: 'refused' } })
+    // Unreadable: may have landed, so Check again.
+    m.documentExists.mockRejectedValue(new Error('read failed'))
+    expect(await outcome(posts.delete(own))).toMatchObject({ state: 'unconfirmed', retryable: false })
+  })
+
+  it('v10: an unrepost whose delete answers false is decided by the slot read back', async () => {
+    const { outcome, engage } = engine()
+    m.topology.repostsAreQuotes = true
+    m.strict.ownQuoteStrict.mockResolvedValue({ id: id('Bare'), bare: true })
+    m.postService.deleteOwnPost.mockResolvedValue(false)
+    m.strict.repostExists.mockResolvedValue(false)
+    expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'confirmed' })
+    m.strict.repostExists.mockResolvedValue(true)
+    expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'failed', retryable: true })
   })
 })
 

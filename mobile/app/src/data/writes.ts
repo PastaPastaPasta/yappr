@@ -1,12 +1,15 @@
 import type { EngineErrorData, WriteState, WriteTicket } from '@engine/api';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 
+import { config } from '~/config';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { errorFeedback } from '~/ui/haptics';
 import { toast, type ToastAction } from '~/ui/toast';
 
+import { isOffline } from './connectivity';
 import { onEngineEvent } from './events';
 import type { EngineRemote } from './queries';
 import { promptSignIn } from './require-auth';
@@ -173,10 +176,34 @@ function record(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
   return ticket;
 }
 
-/** categorizeError's copy (PRD G-4), unless it has nothing specific to say. */
-function failureText(error: EngineErrorData | null, fallback: string): string {
+/** PRD G-1: a write tapped while the OS reports no connectivity. */
+export const OFFLINE_MESSAGE = "You're offline. Nothing was sent.";
+
+/** PRD G-5 (UX_SPEC §5): the mobile copy for a write the identity cannot pay for. */
+const CREDITS_SHORT =
+  "Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted.";
+/** Web's copy points at a buy flow and a payment setting the app does not have. */
+const YAPP_SHORT = 'You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again.';
+
+/**
+ * A failed write's message: PRD G-5's copy when credits or YAPP are short,
+ * else categorizeError's (PRD G-4), unless it has nothing specific to say.
+ */
+export function writeFailureText(error: EngineErrorData | null, fallback: string): string {
+  if (error?.code === 'INSUFFICIENT_CREDITS') return CREDITS_SHORT;
+  if (error?.code === 'INSUFFICIENT_YAPP') return YAPP_SHORT;
   return error && error.code !== 'UNKNOWN' && error.userMessage ? error.userMessage : fallback;
 }
+
+/** "Open yap.pr" (PRD G-5): where YAPP is bought, for this variant's network. */
+const openYapprWeb: ToastAction = {
+  label: 'Open yap.pr',
+  onPress: () => {
+    WebBrowser.openBrowserAsync(`https://yap.pr${config.webBasePath}`).catch((error: unknown) =>
+      appendLog('warn', 'host', `Opening yap.pr failed: ${errorMessage(error)}`),
+    );
+  },
+};
 
 function isLatest(id: string, entry: Tracked): boolean {
   return !entry.key || latestByKey.get(entry.key) === id;
@@ -205,6 +232,8 @@ function settle(ticket: WriteTicket): void {
   const { spec } = entry;
   const latest = isLatest(ticket.id, entry);
   const retry = latest && ticket.retryable ? { label: 'Retry', onPress: () => retryWrite(ticket.id) } : undefined;
+  // Short of YAPP, nothing but getting more helps (PRD G-5); never a retry.
+  const action = ticket.error?.code === 'INSUFFICIENT_YAPP' ? openYapprWeb : retry;
 
   switch (ticket.state) {
     case 'pending':
@@ -222,7 +251,7 @@ function settle(ticket: WriteTicket): void {
       if (!latest) return;
       undo(entry);
       spec.onFailed?.(ticket, entry.vars);
-      fail(spec.failureText?.(ticket, entry.vars) ?? failureText(ticket.error, spec.failureMessage), retry);
+      fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
       return;
@@ -252,6 +281,20 @@ function release(key: string | undefined, send: boolean): void {
   if (!next) return;
   queued.delete(key);
   if (send) runQueued(next).catch(() => undefined);
+}
+
+/**
+ * The pending write for `key` was cut short (an engine restart or timeout):
+ * the write queued behind it is dropped, its change undone, and the user
+ * told. Sending it could race the cut-short call if that still runs, or reach
+ * the next engine, which signs as another account after a switch (SR-05).
+ */
+function dropQueued(key: string | undefined): void {
+  const next = key === undefined ? undefined : queued.get(key);
+  if (!next || key === undefined) return;
+  queued.delete(key);
+  next.undo?.();
+  fail(`Your ${next.spec.noun} didn't go through. Try again.`);
 }
 
 /** An untracked ticket (restored after an engine restart): follow it if a cut-short write recognises it. */
@@ -326,6 +369,11 @@ const inFlight = (key: string) => pendingIntent(key) !== NO_INTENT;
  */
 export async function runWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteResult> {
   startWriteTracking();
+  if (isOffline()) {
+    // PRD G-1: no optimistic change, nothing sent.
+    toast(OFFLINE_MESSAGE);
+    return { status: 'refused', error: Object.assign(new Error(OFFLINE_MESSAGE), { code: 'OFFLINE' }) };
+  }
   const key = spec.key?.(vars);
   if (key !== undefined) {
     const pending = pendingIntent(key);
@@ -366,7 +414,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
       appendLog('warn', 'host', `Write cut short: ${errorMessage(error)}`);
       orphans.push({ spec, vars, key, undo: revert, at: Date.now() });
       done();
-      release(key, true);
+      dropQueued(key);
       return { status: 'unknown', error };
     }
     revert?.();
@@ -424,6 +472,10 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   const { key } = entry;
   if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) {
     toast('Already updated');
+    return null;
+  }
+  if (isOffline()) {
+    toast(OFFLINE_MESSAGE);
     return null;
   }
   const done = markSubmitting(key, entry.spec.intent?.(entry.vars));

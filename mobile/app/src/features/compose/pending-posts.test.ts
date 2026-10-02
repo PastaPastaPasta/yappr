@@ -1,4 +1,4 @@
-import type { CapabilitiesDTO, EngineErrorData, Page, PostDTO, SessionDTO, ThreadDTO, WriteTicket } from '@engine/api';
+import type { AccountDTO, CapabilitiesDTO, EngineErrorData, Page, PostDTO, SessionDTO, ThreadDTO, WriteTicket } from '@engine/api';
 import { notifyManager, type InfiniteData } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -12,7 +12,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { useRemovedPosts } from '~/data/optimistic';
 
-import { deleteDraft, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
+import { deleteDraft, holdDraftSlot, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
 import { hasVisibleContent } from './limits';
 import {
   checkPending,
@@ -294,6 +294,62 @@ it("adopts a thread's first part as it lands, so a refetch never shows it twice"
   expect(pendingStatus(only()!)).toEqual({ state: 'posting' });
 });
 
+it('Edit after a restart cut a thread short keeps the parts that landed posted (SR-03)', async () => {
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  const localId = publish(['root text', 'second', 'third']);
+  await settle();
+  const root = fixturePost({ id: 'root-real', content: 'root text', author: { ...AUTHORS.alice, id: VIEWER_ID } });
+  act(() => fakeEngine.emit('content.created', { kind: 'post', id: root.id, confirmed: true, post: root }));
+
+  // The engine restarted mid-thread, and its ticket names no part.
+  const restarted = { code: 'ENGINE_RESTARTED', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' } as const;
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed', error: restarted, documents: [] })));
+  expect(pendingStatus(only()!)).toEqual({ state: 'uncertain' });
+
+  editPending(localId);
+  expect(loadDraft(VIEWER_ID, POST)?.parts.map((p) => p.postedId)).toEqual(['root-real', null, null]);
+});
+
+it('a resumed thread that fails while a composer is open keeps its text, on a card (SR-06)', async () => {
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  // "Post all" on a partly posted thread: its root is on chain, so it has no card of its own.
+  const localId = publishPost(
+    {
+      identityId: VIEWER_ID,
+      context: POST,
+      parts: [{ text: 'one', postedId: 'root-1' }, ...parts('two', 'three')],
+      sensitive: false,
+      mediaUrl: null,
+      target: null,
+      author: viewerAuthor(VIEWER_ID, 'alice'),
+    },
+    hasVisibleContent,
+  );
+  await settle();
+  expect(only()?.placement).toBe('none');
+
+  // The user opens an empty composer at once; then the resume fails.
+  const release = holdDraftSlot(VIEWER_ID, POST);
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'failed', error: failedWith('refused') })));
+
+  // Not in the slot the open composer will save over: with the entry, now on a card.
+  expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+  expect(usePendingPosts.getState().entries[localId]).toMatchObject({ placement: 'feed' });
+  expect(homeIds()).toEqual([localId, 'existing-1']);
+  expect(pendingStatus(only()!)).toEqual({ state: 'partial', posted: 1, total: 3 });
+
+  // Once that composer is closed, Edit brings the text back to the draft.
+  release();
+  editPending(localId);
+  expect(loadDraft(VIEWER_ID, POST)?.parts).toEqual([
+    { text: 'one', postedId: 'root-1' },
+    { text: 'two', postedId: null },
+    { text: 'three', postedId: null },
+  ]);
+});
+
 it('a thread retried past its posted root keeps the root as its card', async () => {
   const t = publishTicket();
   fakeEngine.method('posts.publish').mockResolvedValue(t);
@@ -524,6 +580,44 @@ it("signing out deletes the account's drafts and pending posts", async () => {
   await settle();
   expect(usePendingPosts.getState().entries).toEqual({});
   expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+});
+
+it("signing out another account deletes that account's drafts and pending posts (SR-09, AUTH-11)", async () => {
+  const OTHER = 'other-account';
+  const account = (identityId: string, active: boolean): AccountDTO => ({
+    identityId,
+    username: null,
+    method: 'key',
+    lastUsedAt: new Date(0),
+    active,
+  });
+  const draft = (text: string) => ({ context: POST, parts: parts(text), sensitive: false, mediaUrl: '', updatedAt: Date.now() });
+  fakeEngine.method('posts.publish').mockResolvedValue(ticket({ op: 'post.publish', identityId: OTHER }));
+  // A post the other account left on its way while it was active.
+  publishPost(
+    {
+      identityId: OTHER,
+      context: POST,
+      parts: parts('Theirs'),
+      sensitive: false,
+      mediaUrl: null,
+      target: null,
+      author: viewerAuthor(OTHER, null),
+    },
+    hasVisibleContent,
+  );
+  await settle();
+  saveDraft(OTHER, draft('SR-draft'));
+  saveDraft(VIEWER_ID, draft('Mine'));
+  act(() => useSessionStore.setState({ accounts: [account(VIEWER_ID, true), account(OTHER, false)] }));
+  expect(Object.values(usePendingPosts.getState().entries).map((e) => e.identityId)).toEqual([OTHER]);
+
+  // The engine announces no session change for a non-active account; only the list shrinks.
+  act(() => useSessionStore.setState({ accounts: [account(VIEWER_ID, true)] }));
+
+  expect(loadDraft(OTHER, POST)).toBeNull();
+  expect(usePendingPosts.getState().entries).toEqual({});
+  expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Mine');
 });
 
 it('a post deleted while pinned does not come back with the pin', async () => {

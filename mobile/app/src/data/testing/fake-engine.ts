@@ -70,6 +70,7 @@ export const engineModule = {
   engineStorage: {
     idle: async () => undefined,
   },
+  setHydrationGate: () => undefined,
   engineSupervisor: {
     /** An engine restart; tests drive the next session by hand (`fakeEngine.emit('session.changed', …)`). */
     restart: jest.fn(),

@@ -109,6 +109,32 @@ export function deleteOwnDraft(identityId: string, context: ComposeContext, ownP
   deleteDraft(identityId, context);
 }
 
+/** Composers open right now, by account and context: their draft slot is theirs to write. */
+const held = new Map<string, number>();
+const slotKey = (identityId: string, context: ComposeContext) => `${identityId}|${contextKey(context)}`;
+
+/**
+ * An open composer holds its context's slot: it read its draft once and
+ * saves over the slot as the user types, so nothing else may put text there
+ * meanwhile (it would be overwritten). Returns the release.
+ */
+export function holdDraftSlot(identityId: string, context: ComposeContext): () => void {
+  const key = slotKey(identityId, context);
+  held.set(key, (held.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const count = (held.get(key) ?? 1) - 1;
+    if (count > 0) held.set(key, count);
+    else held.delete(key);
+  };
+}
+
+export function isDraftSlotHeld(identityId: string, context: ComposeContext): boolean {
+  return held.has(slotKey(identityId, context));
+}
+
 /** Signing out deletes the account's drafts (PRD AUTH-11). */
 export function forgetDrafts(identityId: string): void {
   syncStorage.removeItem(storageKey(identityId));

@@ -15,7 +15,7 @@ import { Text } from '~/ui/Text';
 import { useColors, useIsDark } from '~/ui/tokens';
 
 import type { DraftPart } from './drafts';
-import { contentOverage, overflowOffset, type ContentLimits } from './limits';
+import { contentOverage, postedOverflowOffset, type ContentLimits } from './limits';
 import { composeHints, editorSpans } from './text';
 
 export interface ComposePartProps {
@@ -65,13 +65,14 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
   const c = useColors();
   const dark = useIsDark();
   const { text } = part;
-  const overflowAt = overflowOffset(text, limits);
+  // Measured as posted (trimmed), as the counter and Post are (PRD COMP-02).
+  const overflowAt = postedOverflowOffset(text, limits);
   const spans = useMemo(() => editorSpans(text, tagMax, overflowAt), [text, tagMax, overflowAt]);
   // Plain text goes in as plain text: spans rebuilt on every keystroke break IME composition
   // (CJK, iOS marked text) and slow long pastes; only highlighted text needs them.
   const plain = spans.every((span) => span.style === 'plain' && !span.over);
   const hints = useMemo(() => composeHints(text, tagMax), [text, tagMax]);
-  const { bytesOver } = contentOverage(text, limits);
+  const { bytesOver } = contentOverage(text.trim(), limits);
   const overBg = dark ? 'rgba(127,29,29,0.45)' : '#fee2e2';
 
   const onSelectionChange = (e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) =>
