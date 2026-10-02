@@ -424,6 +424,19 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.queryByTestId('dm-composer')).toBeNull();
   });
 
+  it('on legacy, follows the account\'s block: the banner, and Unblock in the menu (SR-20)', async () => {
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { dm: 'legacy' } as never } });
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy', retention: null }));
+    fakeEngine.method('settings.get').mockResolvedValue({ sendReadReceipts: false } as never);
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: 'l:C1', backend: 'legacy', flags: { ...FLAGS, blocked: true } })]);
+    fakeEngine.method('dm.messages').mockResolvedValue(page([theirs]));
+    await renderAt(`/messages/${encodeURIComponent('l:C1')}`);
+    expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+    const actions = screen.getByTestId('dm-conversation-menu').props.actions as { id: string; title: string }[];
+    expect(actions.map((a) => a.title)).toEqual(['View profile', 'Unblock']);
+  });
+
   it('shows an error with Retry when the status read fails, instead of loading forever', async () => {
     signIn();
     fakeEngine.method('dm.status').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));

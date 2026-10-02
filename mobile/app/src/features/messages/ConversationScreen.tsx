@@ -95,17 +95,13 @@ function menuItems(conversation: ConversationDTO, v5: boolean): MenuItem[] {
       ...(v5 ? [{ id: 'delete', title: 'Delete conversation', systemImage: 'trash', destructive: true }] : []),
     ];
   }
-  const items: MenuItem[] = [{ id: 'profile', title: 'View profile', systemImage: 'person.crop.circle' }];
-  if (v5) {
-    items.push(
-      conversation.flags.blocked
-        ? { id: 'unblock', title: 'Unblock', systemImage: 'hand.raised.slash' }
-        : { id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true },
-      { id: 'delete', title: 'Delete conversation', systemImage: 'trash', destructive: true },
-    );
-  } else {
-    items.push({ id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true });
-  }
+  const items: MenuItem[] = [
+    { id: 'profile', title: 'View profile', systemImage: 'person.crop.circle' },
+    conversation.flags.blocked
+      ? { id: 'unblock', title: 'Unblock', systemImage: 'hand.raised.slash' }
+      : { id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true },
+  ];
+  if (v5) items.push({ id: 'delete', title: 'Delete conversation', systemImage: 'trash', destructive: true });
   return items;
 }
 
@@ -232,9 +228,9 @@ export function ConversationScreen() {
           if (deleted && router.canGoBack()) router.back();
         })
         .catch(() => undefined);
-    } else if (id === 'block' && v5) setBlockedInMessages(peerId, true).catch(() => undefined);
-    else if (id === 'block') router.push({ pathname: '/block/[userId]', params: { userId: peerId } });
-    else if (id === 'unblock') setBlockedInMessages(peerId, false).catch(() => undefined);
+    } else if ((id === 'block' || id === 'unblock') && v5) setBlockedInMessages(peerId, id === 'block').catch(() => undefined);
+    // Legacy follows the account's blocks (SAFE-01): the block screen blocks, or shows the block with Unblock.
+    else if (id === 'block' || id === 'unblock') router.push({ pathname: '/block/[userId]', params: { userId: peerId } });
   };
 
   const header = (
