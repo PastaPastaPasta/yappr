@@ -168,7 +168,9 @@ it('takes a hosted image URL and refuses anything else', async () => {
   expect(screen.getByText('Use an https:// or ipfs:// link to an image.')).toBeTruthy();
 
   fireEvent.changeText(byId('compose-media-url'), 'https://example.com/cat.png');
-  expect(byId('compose-media-preview')).toBeTruthy();
+  // The preview follows once typing pauses.
+  expect(screen.queryByTestId('compose-media-preview')).toBeNull();
+  expect(await screen.findByTestId('compose-media-preview', {}, { timeout: 2000 })).toBeTruthy();
   await act(async () => fireEvent.press(postButton()));
   expect(fakeEngine.method('posts.publish')).toHaveBeenCalledWith(
     expect.objectContaining({ mediaUrl: 'https://example.com/cat.png' }),
