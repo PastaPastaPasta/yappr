@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { ArrowUpTrayIcon, DocumentIcon, LinkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
@@ -22,6 +22,11 @@ interface DigitalAssetListEditorProps {
   /** The item's variant keys; when given, each asset can be limited to one of them. */
   variantKeys?: string[]
   disabled?: boolean
+  /**
+   * Told when an upload starts and ends. A file's key reaches `assets` only
+   * when its upload finishes, so the parent must not save or send until then.
+   */
+  onBusyChange?: (busy: boolean) => void
 }
 
 const assetLabel = (asset: DigitalAsset) => asset.kind === 'file' ? asset.name : asset.label
@@ -33,13 +38,25 @@ const inputClass = 'px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outl
  * and only the ciphertext is uploaded (to the identity's IPFS provider); the
  * key lives in the asset, which is itself only ever stored encrypted.
  */
-export function DigitalAssetListEditor({ assets, onChange, identityId, variantKeys = [], disabled = false }: DigitalAssetListEditorProps) {
+export function DigitalAssetListEditor({ assets, onChange, identityId, variantKeys = [], disabled = false, onBusyChange }: DigitalAssetListEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [upload, setUpload] = useState<{ name: string; progress: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [needsProvider, setNeedsProvider] = useState(false)
   const [linkLabel, setLinkLabel] = useState('')
   const [linkUrl, setLinkUrl] = useState('')
+  const isUploading = upload !== null
+
+  // Through a ref, so a parent passing an inline callback does not re-fire these.
+  const onBusyChangeRef = useRef(onBusyChange)
+  useEffect(() => {
+    onBusyChangeRef.current = onBusyChange
+  }, [onBusyChange])
+  useEffect(() => {
+    onBusyChangeRef.current?.(isUploading)
+  }, [isUploading])
+  // An editor that unmounts mid-upload never reports the end; release the parent.
+  useEffect(() => () => onBusyChangeRef.current?.(false), [])
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return

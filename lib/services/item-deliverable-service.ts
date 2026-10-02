@@ -17,6 +17,20 @@ import { decryptForSelf, encryptForSelf } from '../crypto/digital-delivery';
 import { decodeKit, encodeKit } from './digital-delivery-plan';
 import type { ItemDeliverable, ItemDeliverableDocument, ItemDeliverablePayload } from '../../types';
 
+/** Reads after an unclear write: a node may lag the one that took the write. */
+const RECONCILE_ATTEMPTS = 3;
+const RECONCILE_DELAY_MS = 1500;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const canonical = (kit: ItemDeliverablePayload) => JSON.stringify(decodeKit(encodeKit(kit)));
+
+/** A kit write whose response failed and whose outcome the chain could not confirm either way. */
+export class KitWriteUncertainError extends Error {
+  constructor(readonly itemId: string, options?: { cause?: unknown }) {
+    super('Could not confirm whether the delivery content was saved.', options);
+    this.name = 'KitWriteUncertainError';
+  }
+}
+
 /** A kit as the seller works with it: the document (its id and revision) and its decrypted content. */
 export interface SellerKit {
   deliverable: ItemDeliverable;
@@ -87,6 +101,57 @@ class ItemDeliverableService extends BaseDocumentService<ItemDeliverable> {
    * the pool. The caller re-reads and tries again instead.
    */
   async saveKit(
+    ownerId: string,
+    itemId: string,
+    kit: ItemDeliverablePayload,
+    sellerPrivateKey: Uint8Array,
+    existing: ItemDeliverable | null
+  ): Promise<ItemDeliverable> {
+    try {
+      return await this.writeKit(ownerId, itemId, kit, sellerPrivateKey, existing);
+    } catch (error) {
+      // A failed response is not a failed write: a broadcast can land after
+      // its response times out. Decide from the chain, or callers would
+      // restore pools that were never taken (or skip ones that were).
+      const outcome = await this.reconcile(itemId, kit, sellerPrivateKey, existing);
+      if (outcome === 'absent') throw error;
+      if (outcome === 'unknown') throw new KitWriteUncertainError(itemId, { cause: error });
+      return outcome;
+    }
+  }
+
+  /**
+   * Whether the attempted write is on chain: the kit document when it is (one
+   * revision past `existing`, or newly created, decrypting to exactly `kit`),
+   * `absent` when the chain shows it did not land (still at the old revision
+   * after the retries, or a different write took the revision), and `unknown`
+   * when the chain could not be read to tell.
+   */
+  private async reconcile(
+    itemId: string,
+    kit: ItemDeliverablePayload,
+    sellerPrivateKey: Uint8Array,
+    existing: ItemDeliverable | null
+  ): Promise<ItemDeliverable | 'absent' | 'unknown'> {
+    const expectedRevision = existing ? (existing.$revision ?? 0) + 1 : 1;
+    let readOnce = false;
+    for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
+      if (attempt > 0) await sleep(RECONCILE_DELAY_MS);
+      try {
+        const current = await this.getForItem(itemId);
+        readOnce = true;
+        if (!current || (current.$revision ?? 0) < expectedRevision) continue;
+        if (current.$revision !== expectedRevision) return 'absent';
+        const onChain = await this.decryptKit(current, sellerPrivateKey);
+        return JSON.stringify(onChain) === canonical(kit) ? current : 'absent';
+      } catch (error) {
+        logger.warn(`Could not reconcile the delivery kit for item ${itemId}:`, error);
+      }
+    }
+    return readOnce ? 'absent' : 'unknown';
+  }
+
+  private async writeKit(
     ownerId: string,
     itemId: string,
     kit: ItemDeliverablePayload,

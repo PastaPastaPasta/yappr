@@ -13,6 +13,8 @@ interface DigitalKitEditorProps {
   identityId: string
   variantKeys?: string[]
   disabled?: boolean
+  /** True while a file upload is in flight (see DigitalAssetListEditor). */
+  onBusyChange?: (busy: boolean) => void
 }
 
 const parseKeys = (text: string) => text.split('\n').map((line) => line.trim()).filter(Boolean)
@@ -27,7 +29,7 @@ const TIMING_OPTIONS: Array<{ value: DeliverWhen; label: string; hint: string }>
  * license keys (one per unit sold), instructions for every buyer, and when
  * "Deliver ready orders" may send it. Saved encrypted to the seller's own key.
  */
-export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disabled = false }: DigitalKitEditorProps) {
+export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disabled = false, onBusyChange }: DigitalKitEditorProps) {
   const formId = useId()
   // Local text keeps blank lines while typing; the kit holds the parsed keys.
   const [keysText, setKeysText] = useState(kit.licenseKeys?.join('\n') ?? '')
@@ -58,6 +60,7 @@ export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disab
           identityId={identityId}
           variantKeys={variantKeys}
           disabled={disabled}
+          onBusyChange={onBusyChange}
         />
       </section>
 

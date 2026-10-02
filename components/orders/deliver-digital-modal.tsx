@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useId, useMemo, useState } from 'react'
+import { useCallback, useId, useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ExclamationTriangleIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
@@ -9,7 +9,7 @@ import { Modal } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
-import { fulfillOrder, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
+import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { digitalLines, encodeDelivery, isDigitalOnly, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderPayload, StoreOrder } from '@/lib/types'
@@ -49,6 +49,18 @@ export function DeliverDigitalModal({
   const [includeNewKeys, setIncludeNewKeys] = useState(!alreadyDelivered)
   const [extras, setExtras] = useState<Record<string, DigitalAsset[]>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // Lines with an attachment still uploading: its key is not in `extras` until it finishes.
+  const [uploadingLines, setUploadingLines] = useState<ReadonlySet<string>>(new Set())
+  const setLineUploading = useCallback((lineKey: string, busy: boolean) => {
+    setUploadingLines((prev) => {
+      if (prev.has(lineKey) === busy) return prev
+      const next = new Set(prev)
+      if (busy) next.add(lineKey)
+      else next.delete(lineKey)
+      return next
+    })
+  }, [])
+  const isUploading = uploadingLines.size > 0
 
   const lines = useMemo(() => digitalLines(payload), [payload])
 
@@ -68,9 +80,6 @@ export function DeliverDigitalModal({
   }, [lines, kits, extras, includeNewKeys])
 
   const plan = useMemo(() => planDelivery(payload, effectiveKits, message), [payload, effectiveKits, message])
-  const emptyLines = plan.delivery.items
-    .filter((item) => item.assets.length === 0 && !item.licenseKeys?.length && !item.instructions)
-    .map((item) => item.itemTitle)
   const sizeError = useMemo(() => {
     try {
       encodeDelivery(plan.delivery)
@@ -81,7 +90,6 @@ export function DeliverDigitalModal({
   }, [plan.delivery])
   const blockers = [
     ...planBlockers(plan),
-    ...emptyLines.map((title) => `"${title}" would be delivered empty. Attach files or links for it below.`),
     ...(sizeError ? [sizeError] : []),
   ]
   const orderSellsKeys = lines.some((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined)
@@ -92,7 +100,7 @@ export function DeliverDigitalModal({
   }
 
   const handleSubmit = async () => {
-    if (blockers.length > 0 || isSubmitting) return
+    if (blockers.length > 0 || isSubmitting || isUploading) return
     setIsSubmitting(true)
     try {
       const result = await fulfillOrder({
@@ -109,8 +117,9 @@ export function DeliverDigitalModal({
       onDelivered(result)
       onClose()
     } catch (error) {
-      logger.error('Digital delivery failed:', error)
-      toast.error(error instanceof Error ? error.message : 'Delivery failed. Please try again.')
+      // Recovery details carry plaintext license keys: shown to the seller, never logged.
+      logger.error('Digital delivery failed:', loggableFulfillmentError(error))
+      toast.error(fulfillmentErrorText(error), { duration: error instanceof KeyRecoveryError ? Infinity : 8_000 })
     } finally {
       setIsSubmitting(false)
     }
@@ -159,6 +168,7 @@ export function DeliverDigitalModal({
                   <DigitalAssetListEditor
                     assets={extras[line.itemId] ?? []}
                     onChange={(update) => setExtras((prev) => ({ ...prev, [line.itemId]: update(prev[line.itemId] ?? []) }))}
+                    onBusyChange={(busy) => setLineUploading(`${line.itemId}-${line.variantKey ?? ''}-${index}`, busy)}
                     identityId={sellerId}
                     disabled={isSubmitting}
                   />
@@ -222,8 +232,8 @@ export function DeliverDigitalModal({
 
       <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
         <Button variant="ghost" onClick={handleClose} disabled={isSubmitting}>Cancel</Button>
-        <Button onClick={() => { handleSubmit().catch((error) => logger.error(error)) }} disabled={blockers.length > 0 || isSubmitting}>
-          {isSubmitting ? 'Delivering…' : 'Deliver'}
+        <Button onClick={() => { handleSubmit().catch((error) => logger.error(error)) }} disabled={blockers.length > 0 || isSubmitting || isUploading}>
+          {isSubmitting ? 'Delivering…' : isUploading ? 'Uploading…' : 'Deliver'}
         </Button>
       </div>
     </Modal>

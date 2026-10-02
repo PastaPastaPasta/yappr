@@ -4,6 +4,8 @@ import {
   MAX_DELIVERY_PLAINTEXT_BYTES,
   isSafeDeliveryUrl,
   planBlockers,
+  digitalOrders,
+  hasDigitalLines,
   decodeDelivery,
   decodeKit,
   encodeDelivery,
@@ -66,6 +68,15 @@ describe('planDelivery', () => {
     }
   })
 
+  it('blocks a line with nothing to deliver for its variant', () => {
+    const kits = new Map([['ebook', kit({ deliverWhen: 'on_order', assets: [file('book.pdf', 'PDF')] })]])
+    const order = { items: [line('ebook', 1, { variantKey: 'EPUB' })] }
+    const plan = planDelivery(order, kits)
+    expect(plan.emptyLines).toEqual(['EBOOK'])
+    expect(planBlockers(plan)).toHaveLength(1)
+    expect(isReadyForBulkDelivery(order, undefined, false, kits)).toBe(false)
+  })
+
   it('leaves pools without license keys alone', () => {
     const kits = new Map([['song', kit({ assets: [file('song.mp3')] })]])
     const plan = planDelivery({ items: [line('song', 3)] }, kits)
@@ -75,7 +86,7 @@ describe('planDelivery', () => {
 })
 
 describe('isReadyForBulkDelivery', () => {
-  const kits = new Map([['song', kit()], ['now', kit({ deliverWhen: 'on_order' })]])
+  const kits = new Map([['song', kit({ assets: [file('song.mp3')] })], ['now', kit({ deliverWhen: 'on_order', assets: [file('now.zip')] })]])
 
   it('waits for payment unless every kit delivers on order', () => {
     expect(isReadyForBulkDelivery({ items: [line('song')] }, undefined, false, kits)).toBe(false)
@@ -144,6 +155,19 @@ describe('wire format', () => {
   it('refuses a delivery past the contract\'s payload cap', () => {
     const delivery = { v: 1 as const, items: [], message: 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES) }
     expect(() => encodeDelivery(delivery)).toThrow(/too large/)
+  })
+})
+
+describe('malformed order payloads', () => {
+  it('count as having no digital lines instead of throwing', () => {
+    for (const payload of [{ items: null }, { items: 'x' }, {}, { items: [null, 5, { fulfillment: 'digital', itemId: 'a', itemTitle: 'A', quantity: 1 }] }]) {
+      const cast = payload as unknown as { items: OrderItem[] }
+      expect(() => hasDigitalLines(cast)).not.toThrow()
+      expect(() => planDelivery(cast, new Map())).not.toThrow()
+    }
+    expect(hasDigitalLines({ items: null } as unknown as { items: OrderItem[] })).toBe(false)
+    expect(digitalOrders([{ id: 'o' }], new Map([['o', { items: 7 } as unknown as { items: OrderItem[] }]]))).toEqual([])
+    expect(isDigitalOnly(null as unknown as OrderItem[])).toBe(false)
   })
 })
 

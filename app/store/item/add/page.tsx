@@ -68,6 +68,8 @@ function AddItemPage() {
   // Only a kit the seller changed is written: re-saving an untouched copy could
   // put back license keys a delivery elsewhere has taken since it was read.
   const [kitDirty, setKitDirty] = useState(false)
+  // A file's key joins the kit only when its upload finishes: no saving before then.
+  const [isKitUploading, setIsKitUploading] = useState(false)
   const updateKit = useCallback((update: (current: ItemDeliverablePayload) => ItemDeliverablePayload) => {
     setKit(update)
     setKitDirty(true)
@@ -286,6 +288,10 @@ function AddItemPage() {
     if (!user?.identityId || !title.trim()) return
     if (!editingItemId && (!storeId || loadedStoreId !== storeId)) return
 
+    if (isKitUploading) {
+      setError('Wait for the file upload to finish before saving.')
+      return
+    }
     if (isDigital && (kitState === 'loading' || kitState === 'error')) {
       setError('The delivery content has not loaded yet. Wait a moment or reload the page.')
       return
@@ -838,6 +844,7 @@ function AddItemPage() {
                     key={existingDeliverable?.$revision ?? 'new'}
                     kit={kit}
                     onChange={updateKit}
+                    onBusyChange={setIsKitUploading}
                     identityId={user.identityId}
                     variantKeys={hasVariants ? combinations : undefined}
                     disabled={isSubmitting}
@@ -850,7 +857,7 @@ function AddItemPage() {
             <div className="pt-4">
               <Button
                 type="submit"
-                disabled={isSubmitting || !title.trim()}
+                disabled={isSubmitting || isKitUploading || !title.trim()}
                 className="w-full"
               >
                 {isSubmitting
