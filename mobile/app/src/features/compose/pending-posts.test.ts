@@ -293,6 +293,53 @@ it("adopts a thread's first part as it lands, so a refetch never shows it twice"
   expect(pendingStatus(only()!)).toEqual({ state: 'posting' });
 });
 
+it('a thread retried past its posted root keeps the root as its card', async () => {
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  publish(['root text', 'second']);
+  await settle();
+  act(() =>
+    fakeEngine.emit('write.status', advance(t, { state: 'failed', error: failedWith('refused'), documents: [doc(0, 'root-1')] })),
+  );
+
+  const again = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(again);
+  retryPending(only()!.localId);
+  await settle();
+
+  // The feed refetches with the root in it while the rest still posts: one card.
+  const root = fixturePost({ id: 'root-1', content: 'root text', author: { ...AUTHORS.alice, id: VIEWER_ID } });
+  queryClient.setQueryData(HOME, page([root, existing]));
+  expect(homeIds()).toEqual(['root-1', 'existing-1']);
+
+  act(() => fakeEngine.emit('write.status', advance(again, { state: 'confirmed', documents: [doc(1, 'second-1')] })));
+  expect(only()?.post.id).toBe('root-1');
+  queryClient.setQueryData(HOME, page([existing]));
+  expect(homeIds()).toEqual(['root-1', 'existing-1']);
+});
+
+it('adopts a created reply only for the pending reply to the same parent', async () => {
+  const parentA = fixturePost({ id: 'parent-a', author: AUTHORS.bob });
+  const parentB = fixturePost({ id: 'parent-b', author: AUTHORS.bob });
+  fakeEngine.method('posts.publish').mockResolvedValue(publishTicket());
+  const toA = publish(['Same'], { mode: 'reply', targetId: 'parent-a' }, parentA);
+  const toB = publish(['Same'], { mode: 'reply', targetId: 'parent-b' }, parentB);
+  await settle();
+
+  const created = fixturePost({
+    id: 'reply-b',
+    kind: 'reply',
+    content: 'Same',
+    parentId: 'parent-b',
+    rootPostId: 'parent-b',
+    author: { ...AUTHORS.alice, id: VIEWER_ID },
+  });
+  act(() => fakeEngine.emit('content.created', { kind: 'reply', id: created.id, confirmed: true, post: created }));
+
+  expect(usePendingPosts.getState().entries[toA]?.adoptedId).toBeUndefined();
+  expect(usePendingPosts.getState().entries[toB]?.adoptedId).toBe('reply-b');
+});
+
 it('a part "Check again" proved absent is not posted: Edit can post it again', async () => {
   const t = publishTicket();
   fakeEngine.method('posts.publish').mockResolvedValue(t);

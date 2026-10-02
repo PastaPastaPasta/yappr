@@ -272,10 +272,11 @@ function withReply(thread: ThreadData, card: PostDTO, realId: string | null): Th
   return next ? { ...thread, replies: { ...thread.replies, items: next } } : thread;
 }
 
-const firstPostedId = (entry: PendingPost): string | null => {
-  const index = entry.draft.parts.findIndex((_, i) => !entry.draft.resume?.postedIds[i]);
-  return (index >= 0 ? postedIds(entry)[index] : null) ?? entry.adoptedId ?? null;
-};
+/**
+ * The card's real id: the first part's, whether it landed in this call or an
+ * earlier one (a refused thread retried with `resume`), else the adopted one.
+ */
+const firstPostedId = (entry: PendingPost): string | null => postedIds(entry)[0] ?? entry.adoptedId ?? null;
 
 /** Forgets confirmed posts once their pin has run out. */
 function prunePinned(now = Date.now()): void {
@@ -713,6 +714,8 @@ function adoptCreated({ post }: ContentCreatedEvent): void {
       e.placement !== 'none' &&
       e.identityId === post.author.id &&
       e.post.kind === post.kind &&
+      (e.post.parentId ?? null) === (post.parentId ?? null) &&
+      (e.post.quotedPostId ?? null) === (post.quotedPostId ?? null) &&
       e.post.content === post.content.trim(),
   );
   if (!entry) return;
