@@ -13,6 +13,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../cons
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { logger } from '@/lib/logger';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
+import { bytesEqual } from '../bytes';
 import {
   buyerOrderDeliveryKey,
   decryptOrderDelivery,
@@ -22,6 +23,12 @@ import {
 } from '../crypto/digital-delivery';
 import { decodeDelivery, encodeDelivery } from './digital-delivery-plan';
 import type { OrderDelivery, OrderDeliveryDocument, OrderDeliveryPayload, StoreOrder } from '../../types';
+
+/** An encrypted delivery ready to publish. */
+export interface SealedDelivery {
+  encryptedPayload: Uint8Array;
+  nonce: Uint8Array;
+}
 
 /** Deliveries are append-only, so pages are walked until one runs short. */
 const DELIVERY_PAGE_SIZE = 100;
@@ -100,23 +107,51 @@ class OrderDeliveryService extends BaseDocumentService<OrderDelivery> {
     return deliveries;
   }
 
-  /** Encrypt and publish a delivery for `order`. Only the order's seller can sign it. */
-  async deliver(
-    sellerId: string,
-    order: OrderKeyMaterial & { buyerId: string },
-    payload: OrderDeliveryPayload,
-    sellerPrivateKey: Uint8Array
-  ): Promise<OrderDelivery> {
+  /**
+   * Encrypt a delivery for `order`. Its random nonce identifies this attempt
+   * on chain (see `findSealed`), so seal once and publish that.
+   */
+  seal(order: OrderKeyMaterial, payload: OrderDeliveryPayload, sellerPrivateKey: Uint8Array): SealedDelivery {
     const key = sellerOrderDeliveryKey(order, sellerPrivateKey);
-    const { encryptedPayload, nonce } = encryptOrderDelivery(encodeDelivery(payload), key, order.id);
+    return encryptOrderDelivery(encodeDelivery(payload), key, order.id);
+  }
+
+  /**
+   * Publish a sealed delivery. Only the order's seller can sign it.
+   * `confirmed` is false when the broadcast went out but its outcome could not
+   * be proved (a timed-out wait): the delivery may or may not land.
+   */
+  async publish(
+    sellerId: string,
+    order: Pick<StoreOrder, 'id' | 'buyerId'>,
+    sealed: SealedDelivery,
+    payload: OrderDeliveryPayload
+  ): Promise<{ delivery: OrderDelivery; confirmed: boolean }> {
     const created = await this.create(sellerId, {
       orderId: identifierStringToDocumentBytes(order.id),
       // Bound by consensus to the order's $ownerId; indexed for the buyer's library.
       buyerId: identifierStringToDocumentBytes(order.buyerId),
-      encryptedPayload,
-      nonce,
+      encryptedPayload: sealed.encryptedPayload,
+      nonce: sealed.nonce,
     });
-    return { ...created, payload };
+    const confirmed = (created as { __createConfirmed?: boolean }).__createConfirmed !== false;
+    return { delivery: { ...created, payload }, confirmed };
+  }
+
+  /**
+   * This attempt's delivery if it is on chain (matched by its unique nonce),
+   * `absent` when the order's deliveries were read and it is not among them,
+   * `unknown` when they could not be read. Absent is not proof it never will
+   * land: a broadcast can still be pending.
+   */
+  async findSealed(orderId: string, sealed: SealedDelivery): Promise<OrderDelivery | 'absent' | 'unknown'> {
+    try {
+      const found = (await this.getForOrders([orderId])).get(orderId) ?? [];
+      return found.find((delivery) => bytesEqual(delivery.nonce, sealed.nonce)) ?? 'absent';
+    } catch (error) {
+      logger.warn('Could not read the order\'s deliveries:', error);
+      return 'unknown';
+    }
   }
 
   decryptAsSeller(delivery: OrderDelivery, order: OrderKeyMaterial, sellerPrivateKey: Uint8Array): OrderDeliveryPayload {

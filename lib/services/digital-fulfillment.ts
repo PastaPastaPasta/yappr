@@ -6,17 +6,20 @@ import { logger } from '@/lib/logger';
  *
  * The pools are saved FIRST, each at the revision it was read
  * (`saveKit`), so a key is never handed out twice: a stale pool (another tab
- * delivered meanwhile) refuses the write and nothing is sent. If the delivery
- * then fails, the pools are put back; should that fail too, the seller is told
- * which keys to re-add (a lost key is recoverable, a key sent twice is not).
- * A write whose response failed is reconciled against the chain before either
- * decision, since a broadcast can land after its response times out.
+ * delivered meanwhile) refuses the write and nothing is sent.
+ *
+ * Every write whose response failed is reconciled against the chain, since a
+ * broadcast can land after its response times out. Once keys are reserved
+ * they are only put back if the reservation itself was the step that failed;
+ * a delivery that cannot be confirmed keeps them reserved and tells the seller
+ * which keys to check. A lost key can be re-added; a key sent twice cannot be
+ * recalled.
  */
 
 import { itemDeliverableService, KitWriteUncertainError, type SellerKit } from './item-deliverable-service';
-import { orderDeliveryService } from './order-delivery-service';
+import { orderDeliveryService, type SealedDelivery } from './order-delivery-service';
 import { orderStatusService } from './order-status-service';
-import { decodeDelivery, encodeDelivery, kitsAfterDelivery } from './digital-delivery-plan';
+import { kitsAfterDelivery } from './digital-delivery-plan';
 import type { OrderDelivery, OrderDeliveryPayload, OrderStatusUpdate, StoreOrder } from '../../types';
 
 export interface FulfillOrderInput {
@@ -32,6 +35,12 @@ export interface FulfillOrderInput {
 
 export interface FulfillOrderResult {
   delivery: OrderDelivery;
+  /**
+   * The delivery was broadcast but not yet seen on chain. Its keys stay
+   * reserved and the order is not marked delivered; it shows in the buyer's
+   * library once it lands.
+   */
+  pending: boolean;
   status?: OrderStatusUpdate;
   /** Kits whose pools this delivery drew on, keyed by item id; merge into the caller's kit map. */
   updatedKits: Map<string, SellerKit>;
@@ -78,8 +87,6 @@ export const fulfillmentErrorText = (error: unknown): string =>
 export const toKitPayloads = (kits: ReadonlyMap<string, SellerKit>) =>
   new Map([...kits].map(([itemId, { kit }]) => [itemId, kit]));
 
-/** Block time vs. this device's clock, for telling this attempt's delivery from earlier ones. */
-const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 const titleOf = (delivery: OrderDeliveryPayload, itemId: string) =>
   delivery.items.find((item) => item.itemId === itemId)?.itemTitle ?? itemId;
@@ -112,26 +119,20 @@ async function restorePools(
   return unrestored;
 }
 
-/**
- * After the delivery write reported failure: is it on chain anyway (a
- * broadcast can land after its response times out)? The delivery when it is,
- * `absent` when the order's deliveries were read and it is not among them,
- * `unknown` when they could not be read.
- */
-async function reconcileDelivery(input: FulfillOrderInput, startedAt: number): Promise<OrderDelivery | 'absent' | 'unknown'> {
-  try {
-    // Compare in decoded form (the decoder fixes key order), and only against
-    // deliveries from this attempt, not an identical earlier send.
-    const expected = JSON.stringify(decodeDelivery(encodeDelivery(input.delivery)));
-    const deliveries = await orderDeliveryService.loadDecrypted([input.order], (delivery, order) =>
-      orderDeliveryService.decryptAsSeller(delivery, order, input.sellerPrivateKey));
-    const match = deliveries.get(input.order.id)?.find((delivery) =>
-      delivery.createdAt.getTime() >= startedAt - CLOCK_SKEW_MS && JSON.stringify(delivery.payload) === expected);
-    return match ?? 'absent';
-  } catch (error) {
-    logger.warn('Could not check whether the failed delivery landed:', error);
-    return 'unknown';
+/** Reads after an unconfirmed delivery: a node may lag the one that took it. */
+const DELIVERY_RECONCILE_ATTEMPTS = 3;
+const DELIVERY_RECONCILE_DELAY_MS = 2000;
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Look for this attempt's delivery on chain, a few times over. */
+async function findDelivery(orderId: string, sealed: SealedDelivery): Promise<OrderDelivery | 'absent' | 'unknown'> {
+  let outcome: OrderDelivery | 'absent' | 'unknown' = 'unknown';
+  for (let attempt = 0; attempt < DELIVERY_RECONCILE_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(DELIVERY_RECONCILE_DELAY_MS);
+    outcome = await orderDeliveryService.findSealed(orderId, sealed);
+    if (typeof outcome === 'object') return outcome;
   }
+  return outcome;
 }
 
 export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrderResult> {
@@ -155,35 +156,40 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
     }
   }
 
-  // 2. Deliver. On a definite failure, give the reserved keys back.
+  // 2. Deliver, sealed once so this attempt is recognisable on chain by its nonce.
+  const sealed = orderDeliveryService.seal(order, input.delivery, sellerPrivateKey);
+  const reserved = () => [...updatedKits.keys()].map((itemId) => keysTaken(input, itemId));
   let delivery: OrderDelivery;
-  const startedAt = Date.now();
+  let pending = false;
   try {
-    delivery = await orderDeliveryService.deliver(sellerId, order, input.delivery, sellerPrivateKey);
-  } catch (error) {
-    const outcome = await reconcileDelivery(input, startedAt);
-    if (typeof outcome === 'object') {
-      delivery = { ...outcome, payload: input.delivery };
-    } else if (outcome === 'unknown') {
-      // Restoring keys a landed delivery has sent would hand them out twice;
-      // keeping them out of the pool only risks keys the seller can re-add.
-      const reserved = [...updatedKits.keys()].map((itemId) => keysTaken(input, itemId));
-      const message = 'Could not confirm whether the delivery was sent. Check the order before delivering again.';
-      if (reserved.length > 0) throw new KeyRecoveryError(`${message} If it was not sent, its license keys are out of their pools.`, reserved, { cause: error });
-      throw new Error(message, { cause: error });
-    } else {
-      const unrestored = await restorePools(input, updatedKits);
-      if (unrestored.length > 0) {
-        throw new KeyRecoveryError('Delivery failed, and its license keys could not be put back.', unrestored, { cause: error });
-      }
-      throw error;
+    const published = await orderDeliveryService.publish(sellerId, order, sealed, input.delivery);
+    delivery = published.delivery;
+    if (!published.confirmed) {
+      const found = await findDelivery(order.id, sealed);
+      if (typeof found === 'object') delivery = { ...found, payload: input.delivery };
+      else pending = true;
     }
+  } catch (error) {
+    const found = await findDelivery(order.id, sealed);
+    if (typeof found !== 'object') {
+      // Not seen on chain, which does not prove it never will be: keep the keys reserved.
+      const message = 'The delivery could not be confirmed. Check the order before delivering again.';
+      const keys = reserved();
+      if (keys.length > 0) throw new KeyRecoveryError(`${message} If it never arrives, its license keys are out of their pools.`, keys, { cause: error });
+      throw new Error(message, { cause: error });
+    }
+    delivery = { ...found, payload: input.delivery };
   }
 
   const warnings: string[] = [];
 
+  if (pending) {
+    warnings.push('The delivery was sent but is not confirmed yet. It appears in the buyer\'s library once it lands; check the order before sending it again.');
+  }
+
   let status: OrderStatusUpdate | undefined;
-  if (input.markDelivered) {
+  // Only a delivery seen on chain marks the order delivered.
+  if (input.markDelivered && !pending) {
     try {
       status = await orderStatusService.createStatusUpdate(sellerId, order.id, { status: 'delivered', buyerId: order.buyerId });
     } catch (error) {
@@ -192,5 +198,5 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
     }
   }
 
-  return { delivery, status, updatedKits, warnings };
+  return { delivery: pending ? { ...delivery, unconfirmed: true } : delivery, pending, status, updatedKits, warnings };
 }

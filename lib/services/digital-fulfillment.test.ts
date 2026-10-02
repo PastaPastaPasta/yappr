@@ -1,18 +1,21 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { saveKit, deliver, loadDecrypted, createStatusUpdate, KitWriteUncertainError } = vi.hoisted(() => ({
+const { saveKit, publish, findSealed, createStatusUpdate, KitWriteUncertainError } = vi.hoisted(() => ({
   saveKit: vi.fn(),
-  deliver: vi.fn(),
-  loadDecrypted: vi.fn(),
+  publish: vi.fn(),
+  findSealed: vi.fn(),
   createStatusUpdate: vi.fn(),
   KitWriteUncertainError: class extends Error {},
 }))
 vi.mock('./item-deliverable-service', () => ({ itemDeliverableService: { saveKit }, KitWriteUncertainError }))
-vi.mock('./order-delivery-service', () => ({ orderDeliveryService: { deliver, loadDecrypted, decryptAsSeller: vi.fn() } }))
+vi.mock('./order-delivery-service', () => ({
+  orderDeliveryService: { seal: () => SEALED, publish, findSealed },
+}))
 vi.mock('./order-status-service', () => ({ orderStatusService: { createStatusUpdate } }))
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderInput } from './digital-fulfillment'
 import type { ItemDeliverablePayload, StoreOrder } from '../../types'
 
+const SEALED = { encryptedPayload: new Uint8Array([9]), nonce: new Uint8Array(24) }
 const order = { id: 'order-1', buyerId: 'buyer', sellerId: 'seller', storeId: 'store' } as StoreOrder
 const kit: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'on_order', licenseKeys: ['k1', 'k2', 'k3'] }
 const deliverable = { id: 'kit-doc', ownerId: 'seller', itemId: 'game', createdAt: new Date(0), $revision: 4, encryptedPayload: new Uint8Array() }
@@ -29,13 +32,24 @@ const input = (overrides: Partial<FulfillOrderInput> = {}): FulfillOrderInput =>
 })
 
 beforeEach(() => {
+  vi.useFakeTimers()
   saveKit.mockReset()
-  deliver.mockReset()
-  loadDecrypted.mockReset()
+  publish.mockReset()
+  findSealed.mockReset()
   createStatusUpdate.mockReset()
-  // By default the chain shows no delivery landed.
-  loadDecrypted.mockResolvedValue(new Map())
+  findSealed.mockResolvedValue('absent')
 })
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+/** Run `fulfillOrder`, skipping its reconciliation waits. */
+async function run(overrides: Partial<FulfillOrderInput> = {}) {
+  const promise = fulfillOrder(input(overrides))
+  promise.catch(() => undefined)
+  await vi.runAllTimersAsync()
+  return promise
+}
 
 /** The recovery error a call rejected with. */
 async function recoveryErrorOf(promise: Promise<unknown>): Promise<KeyRecoveryError> {
@@ -48,45 +62,53 @@ describe('fulfillOrder', () => {
   it('reserves the keys at the revision it read, THEN delivers, then marks the order', async () => {
     const calls: string[] = []
     saveKit.mockImplementation(async () => { calls.push('save'); return { ...deliverable, $revision: 5 } })
-    deliver.mockImplementation(async () => { calls.push('deliver'); return { id: 'delivery' } })
+    publish.mockImplementation(async () => { calls.push('deliver'); return { delivery: { id: 'delivery' }, confirmed: true } })
     createStatusUpdate.mockImplementation(async () => { calls.push('status'); return { status: 'delivered' } })
 
-    const result = await fulfillOrder(input())
+    const result = await run()
     expect(calls).toEqual(['save', 'deliver', 'status'])
     expect(saveKit.mock.calls[0][2].licenseKeys).toEqual(['k2', 'k3'])
     expect(saveKit.mock.calls[0][4]).toBe(deliverable)
+    expect(result.pending).toBe(false)
     expect(result.updatedKits.get('game')?.deliverable.$revision).toBe(5)
     expect(result.warnings).toEqual([])
   })
 
   it('sends nothing when the pool cannot be reserved (e.g. it changed elsewhere)', async () => {
     saveKit.mockRejectedValue(new Error('stale revision'))
-    await expect(fulfillOrder(input())).rejects.toThrow(/Nothing was delivered/)
-    await expect(fulfillOrder(input())).rejects.not.toBeInstanceOf(KeyRecoveryError)
-    expect(deliver).not.toHaveBeenCalled()
+    const error = await run().then(() => null, (reason: unknown) => reason)
+    expect(String(error)).toMatch(/Nothing was delivered/)
+    expect(error).not.toBeInstanceOf(KeyRecoveryError)
+    expect(publish).not.toHaveBeenCalled()
   })
 
   it('asks the seller to check the pool when its reservation may have landed unseen', async () => {
     saveKit.mockRejectedValue(new KitWriteUncertainError('unclear'))
-    const error = await recoveryErrorOf(fulfillOrder(input()))
+    const error = await recoveryErrorOf(run())
     expect(error.recoveryText()).toMatch(/"Game": k1/)
-    expect(deliver).not.toHaveBeenCalled()
+    expect(publish).not.toHaveBeenCalled()
   })
 
-  it('puts the keys back when the delivery fails', async () => {
+  it('puts back the pools it already reserved when a later reservation fails', async () => {
+    const twoKits = new Map([
+      ['game', { deliverable, kit }],
+      ['dlc', { deliverable: { ...deliverable, id: 'dlc-doc', itemId: 'dlc' }, kit }],
+    ])
     const reserved = { ...deliverable, $revision: 5 }
-    saveKit.mockResolvedValueOnce(reserved).mockResolvedValueOnce({ ...deliverable, $revision: 6 })
-    deliver.mockRejectedValue(new Error('broadcast failed'))
-    await expect(fulfillOrder(input())).rejects.toThrow('broadcast failed')
-    expect(saveKit).toHaveBeenCalledTimes(2)
-    expect(saveKit.mock.calls[1][2]).toBe(kit)
-    expect(saveKit.mock.calls[1][4]).toBe(reserved)
+    saveKit.mockResolvedValueOnce(reserved).mockRejectedValueOnce(new Error('stale revision')).mockResolvedValueOnce({ ...deliverable, $revision: 6 })
+    await expect(run({ kits: twoKits, consumedKeys: new Map([['game', 1], ['dlc', 1]]) })).rejects.toThrow(/Nothing was delivered/)
+    expect(saveKit).toHaveBeenCalledTimes(3)
+    expect(saveKit.mock.calls[2][2]).toBe(kit)
+    expect(saveKit.mock.calls[2][4]).toBe(reserved)
+    expect(publish).not.toHaveBeenCalled()
   })
 
-  it('names the keys to re-add when they cannot be put back, outside anything that is logged', async () => {
-    saveKit.mockResolvedValueOnce({ ...deliverable, $revision: 5 }).mockRejectedValueOnce(new Error('offline'))
-    deliver.mockRejectedValue(new Error('broadcast failed'))
-    const error = await recoveryErrorOf(fulfillOrder(input()))
+  it('keeps reserved keys out of the pool when the delivery fails unseen, outside anything that is logged', async () => {
+    saveKit.mockResolvedValue({ ...deliverable, $revision: 5 })
+    publish.mockRejectedValue(new Error('broadcast failed'))
+    const error = await recoveryErrorOf(run())
+    // Not seen is not proof it never lands: restoring could hand the keys out twice.
+    expect(saveKit).toHaveBeenCalledTimes(1)
     expect(error.recoveryText()).toMatch(/"Game": k1/)
     expect(fulfillmentErrorText(error)).toMatch(/"Game": k1/)
     // The message, the logged form and the serialized object never carry a key.
@@ -98,41 +120,41 @@ describe('fulfillOrder', () => {
 
   it('treats a delivery that landed despite a failed response as delivered', async () => {
     saveKit.mockResolvedValue({ ...deliverable, $revision: 5 })
-    deliver.mockRejectedValue(new Error('504'))
-    loadDecrypted.mockResolvedValue(new Map([[order.id, [
-      { id: 'landed', createdAt: new Date(), payload: input().delivery },
-    ]]]))
+    publish.mockRejectedValue(new Error('504'))
+    findSealed.mockResolvedValueOnce('absent').mockResolvedValueOnce({ id: 'landed', createdAt: new Date() })
     createStatusUpdate.mockResolvedValue({ status: 'delivered' })
-    const result = await fulfillOrder(input())
+    const result = await run()
     expect(result.delivery.id).toBe('landed')
-    expect(saveKit).toHaveBeenCalledTimes(1)
+    expect(result.pending).toBe(false)
+    expect(findSealed.mock.calls[0][1]).toBe(SEALED)
   })
 
-  it('does not ignore an identical delivery from an earlier send', async () => {
+  it('keeps an unconfirmed broadcast pending: keys reserved, order not marked delivered', async () => {
     saveKit.mockResolvedValue({ ...deliverable, $revision: 5 })
-    deliver.mockRejectedValue(new Error('broadcast failed'))
-    loadDecrypted.mockResolvedValue(new Map([[order.id, [
-      { id: 'old', createdAt: new Date(Date.now() - 24 * 3600_000), payload: input().delivery },
-    ]]]))
-    await expect(fulfillOrder(input())).rejects.toThrow('broadcast failed')
-    expect(saveKit).toHaveBeenCalledTimes(2)
+    publish.mockResolvedValue({ delivery: { id: 'maybe' }, confirmed: false })
+    const result = await run()
+    expect(result.pending).toBe(true)
+    expect(result.delivery.unconfirmed).toBe(true)
+    expect(createStatusUpdate).not.toHaveBeenCalled()
+    expect(saveKit).toHaveBeenCalledTimes(1)
+    expect(result.warnings).toHaveLength(1)
   })
 
-  it('keeps reserved keys out of the pool when it cannot tell whether the delivery landed', async () => {
+  it('confirms an unconfirmed broadcast it can find on chain', async () => {
     saveKit.mockResolvedValue({ ...deliverable, $revision: 5 })
-    deliver.mockRejectedValue(new Error('504'))
-    loadDecrypted.mockRejectedValue(new Error('offline'))
-    const error = await recoveryErrorOf(fulfillOrder(input()))
-    expect(error.message).toMatch(/Could not confirm/)
-    // Restoring could hand the keys out twice; only the reservation was written.
-    expect(saveKit).toHaveBeenCalledTimes(1)
+    publish.mockResolvedValue({ delivery: { id: 'maybe' }, confirmed: false })
+    findSealed.mockResolvedValue({ id: 'landed', createdAt: new Date() })
+    createStatusUpdate.mockResolvedValue({ status: 'delivered' })
+    const result = await run()
+    expect(result.pending).toBe(false)
+    expect(createStatusUpdate).toHaveBeenCalled()
   })
 
   it('keeps the delivery when only the status update fails', async () => {
     saveKit.mockResolvedValue({ ...deliverable, $revision: 5 })
-    deliver.mockResolvedValue({ id: 'delivery' })
+    publish.mockResolvedValue({ delivery: { id: 'delivery' }, confirmed: true })
     createStatusUpdate.mockRejectedValue(new Error('timeout'))
-    const result = await fulfillOrder(input())
+    const result = await run()
     expect(result.delivery).toEqual({ id: 'delivery' })
     expect(result.warnings).toHaveLength(1)
   })

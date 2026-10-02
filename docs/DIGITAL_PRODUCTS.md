@@ -90,9 +90,19 @@ payload.
   1. The reduced pool is saved **before** the delivery is published, at the
      revision it was read. A pool changed elsewhere (another tab or device
      delivered meanwhile) refuses the write, and nothing is sent.
-  2. If the delivery then fails, the keys are put back. If even that fails, the
-     seller is told exactly which keys to re-add.
-  3. A bulk run re-plans each order against the pool the previous one left.
+  2. Every write whose response failed is reconciled against the chain, since a
+     broadcast can land after its response times out. A kit write is
+     recognised by its exact ciphertext, which is unique per attempt, so another
+     tab's identical reservation is never mistaken for this one. A delivery is
+     recognised by its nonce.
+  3. Keys go back into the pool only when the reservation itself was the step
+     that failed. A delivery that cannot be confirmed keeps its keys reserved,
+     because "not seen yet" does not prove it will never land. The seller gets
+     the exact keys to check (shown on screen, never logged).
+  4. A broadcast whose confirmation timed out stays *pending*: the order is not
+     marked Delivered and the keys stay reserved. The delivery shows in the
+     buyer's library once it lands.
+  5. A bulk run re-plans each order against the pool the previous one left.
 - The product editor writes the kit only when the seller changed it. It writes
   at the revision it read, so a stale editor can never restore keys that have
   since been sent.
