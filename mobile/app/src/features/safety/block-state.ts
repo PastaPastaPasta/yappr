@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
+import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
 import { useSessionStore, useViewerId } from '~/data/session';
 import { type WriteSpec } from '~/data/writes';
@@ -216,9 +217,12 @@ function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () =
     block && user ? { ...user, id: userId, resolved: true, message: message ?? null } : undefined;
   decide(viewerId, userId, { blocked: block, user: row });
   const undoProfiles = patchProfiles(userId, block);
+  // The decision lives in memory; the cached posts carry it across a relaunch (SR-25).
+  const undoPosts = setAuthorBlocked(userId, block);
   return () => {
     decide(viewerId, userId, before);
     undoProfiles();
+    undoPosts();
     refetch(queryKeys.profile.detail(userId));
   };
 }

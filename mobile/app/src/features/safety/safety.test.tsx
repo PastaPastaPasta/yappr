@@ -278,6 +278,17 @@ describe('blocking', () => {
     expect(screen.getByText('Carol says hi')).toBeTruthy();
   });
 
+  it('keeps a block made here across a relaunch, before the lists are read again (SR-25)', async () => {
+    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
+    renderPosts(bobPosts());
+    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+    expect(screen.queryByTestId('post-card-b1')).toBeNull();
+
+    // A relaunch: the decisions in memory are gone, the persisted feed is what the engine read before the block.
+    act(() => resetBlockDecisions());
+    expect(screen.queryByTestId('post-card-b1')).toBeNull();
+  });
+
   it('never caches a failed block-status read as "not blocked" (SR-31)', async () => {
     fakeEngine.method('safety.isBlocked').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));
     renderPosts([fixturePost({ id: 'q1', author: AUTHORS.alice, quotedPostId: 'b1', quoted: fixturePost({ id: 'b1' }) })]);
@@ -299,9 +310,11 @@ describe('blocking', () => {
     await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
 
-    // Signed out, then back in: an unblock made elsewhere meanwhile shows (the cached posts say not blocked).
+    // Signed out, then back in: an unblock made elsewhere meanwhile shows. (The sign-out resets the
+    // cache; the posts read again say not blocked.)
     act(() => useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] }));
     act(() => useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] }));
+    act(() => queryClient.setQueryData(queryKeys.feed.home({ tab: 'forYou' }), bobPosts()));
     expect(screen.getByTestId('post-card-b1')).toBeTruthy();
   });
 

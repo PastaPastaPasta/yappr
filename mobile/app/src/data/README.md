@@ -13,7 +13,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `session.ts` | `useSession()`, `useViewerId()`, `useCapabilities()` |
 | `require-auth.tsx` | `requireAuth(action)` / `useRequireAuth()`, and the "Sign in to continue" sheet |
 | `writes.ts` | `runWrite`, `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
-| `optimistic.ts` | `setViewerState`, `setFollowing`, `hidePost`, `markPostDeleted`, `updateCachedPosts` |
+| `optimistic.ts` | `setViewerState`, `setFollowing`, `setAuthorBlocked`, `hidePost`, `markPostDeleted`, `dropFromLists`, `updateCachedPosts` |
 | `sync.ts` | `startDataLayer()`: the root layout starts the app-wide subscriptions once |
 | `testing/fake-engine.ts` | A fake `~/engine` for Jest |
 
@@ -124,8 +124,11 @@ covered without registering it.
   moves the counts with the flags.
 - `setFollowing(authorId, follows)` updates the author's posts, profile
   (and its follower count) and user rows.
+- `setAuthorBlocked(authorId, blocked)` sets `viewer.authorBlocked` on the
+  author's cached posts and quotes, so a block survives a relaunch.
 - `hidePost(id)` removes a post from every `PostItem` at once.
-  `markPostDeleted(id)` turns every cached copy into the "deleted" line.
+  `markPostDeleted(id)` turns every cached copy into the "deleted" line, and
+  `dropFromLists(id)` takes it out of cached lists (not threads).
 - **Patches change only the patched marks.** A copy's unknown fields stay
   unknown, and counts move only where the copy knew the old mark.
 - **Each helper returns its undo.** The undo applies to every copy,
