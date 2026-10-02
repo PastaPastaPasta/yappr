@@ -30,15 +30,40 @@ if [[ "${YAPPR_SKIP_PREBUILD:-}" != "1" ]]; then
   (cd ios && pod install)
 fi
 
-workspace="$(ls -d ios/*.xcworkspace | head -n 1)"
+workspace="$(find ios -maxdepth 1 -name '*.xcworkspace' | head -n 1)"
 scheme="$(basename "$workspace" .xcworkspace)"
 mkdir -p "$out"
+
+# The bundle id and build number are baked in at prebuild; a reused project must match this build.
+application_id="$(node -p "require('./src/variants.ts').VARIANTS['$APP_VARIANT'].applicationId")"
+if ! grep -q "PRODUCT_BUNDLE_IDENTIFIER = $application_id;" "ios/$scheme.xcodeproj/project.pbxproj" ||
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "ios/$scheme/Info.plist")" != "$build_number" ]]; then
+  echo "ios/ was prebuilt for another variant or build number; rerun without YAPPR_SKIP_PREBUILD." >&2
+  exit 1
+fi
+
+# expo-dev-launcher strips its local-network keys from Release builds in a script phase that
+# declares no inputs, so an incremental build can skip it. Strip them here too (the products
+# are unsigned, so editing the Info.plist is safe). The app sets no keys of its own.
+strip_dev_launcher_keys() {
+  local plist="$1/Info.plist"
+  if /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' "$plist" 2>/dev/null | grep -q 'Expo Dev Launcher'; then
+    /usr/libexec/PlistBuddy -c 'Delete :NSLocalNetworkUsageDescription' "$plist"
+  fi
+  if /usr/libexec/PlistBuddy -c 'Print :NSBonjourServices' "$plist" 2>/dev/null | grep -q '_expo._tcp'; then
+    /usr/libexec/PlistBuddy -c 'Delete :NSBonjourServices' "$plist"
+  fi
+}
+
+log="$out/$name-$what.log"
+echo "xcodebuild log: $log"
 
 if [[ "$what" == "simulator" ]]; then
   xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
     -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-    -derivedDataPath "$derived" build | tail -n 5
+    -derivedDataPath "$derived" build >"$log" 2>&1 || { tail -n 40 "$log"; exit 1; }
   app="$derived/Build/Products/Release-iphonesimulator/$scheme.app"
+  strip_dev_launcher_keys "$app"
   rm -rf "$out/$name-simulator.app"
   cp -R "$app" "$out/$name-simulator.app"
   echo "Install: xcrun simctl install <udid> $out/$name-simulator.app"
@@ -50,12 +75,16 @@ archive="$out/$name.xcarchive"
 rm -rf "$archive"
 xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
   -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$archive" \
-  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive | tail -n 5
+  -derivedDataPath "$derived" \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive >"$log" 2>&1 ||
+  { tail -n 40 "$log"; exit 1; }
+strip_dev_launcher_keys "$archive/Products/Applications/$scheme.app"
 
 # An unsigned .ipa is the App Store upload's size before thinning and encryption.
 staging="$(mktemp -d)"
 mkdir "$staging/Payload"
 cp -R "$archive/Products/Applications/$scheme.app" "$staging/Payload/"
+rm -f "$out/$name-unsigned.ipa"
 (cd "$staging" && zip -qr -9 "$out/$name-unsigned.ipa" Payload)
 rm -rf "$staging"
 ls -l "$out/$name-unsigned.ipa"

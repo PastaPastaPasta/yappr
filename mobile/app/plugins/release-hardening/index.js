@@ -83,7 +83,8 @@ function withReleaseSigning(gradle) {
     `            keyPassword 'android'\n        }${SIGNING_CONFIG}`,
     'debug signing config',
   );
-  const release = gradle.indexOf('        release {', gradle.indexOf('buildTypes {'));
+  const buildTypes = gradle.indexOf('buildTypes {');
+  const release = buildTypes === -1 ? -1 : gradle.indexOf('        release {', buildTypes);
   if (release === -1) throw new Error('release-hardening: no release build type in android/app/build.gradle.');
   return gradle.slice(0, release) + replaceOnce(gradle.slice(release), 'signingConfig signingConfigs.debug', RELEASE_SIGNING, 'release signingConfig');
 }

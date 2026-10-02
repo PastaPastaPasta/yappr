@@ -28,7 +28,9 @@ and in the Play Console.
 - **Build number** (`CFBundleVersion`, `versionCode`): `YAPPR_BUILD_NUMBER`,
   default `1`. Both stores refuse a second upload with the same build number,
   so CI passes its run number. EAS keeps its own counter (`appVersionSource:
-  remote`, `autoIncrement`) and ignores this variable.
+  remote`, `autoIncrement`) and ignores this variable. The three counters are
+  independent, so upload to each app record through **one** channel only
+  (local/CI or EAS), or the numbers collide.
 
 ## Icons and splash
 
@@ -50,16 +52,32 @@ dark surface (`#171717`) in dark mode.
 
 ## What a release build contains
 
-- **iOS:** the privacy manifest (no tracking, no collected data; the
-  required-reason APIs UserDefaults `CA92.1`, file timestamps `C617.1` and
-  system boot time `35F9.1`), `ITSAppUsesNonExemptEncryption = YES`
-  (COMPLIANCE C8), and Face ID as the only usage description.
+- **iOS:**
+  - The privacy manifest: no tracking, no collected data, and the
+    required-reason APIs UserDefaults `CA92.1`, file timestamps `C617.1`,
+    system boot time `35F9.1` and disk space `E174.1`. Expo SDK 57 links some
+    modules as precompiled frameworks with empty privacy bundles, so the app
+    manifest declares their reasons. Check the first TestFlight upload's
+    email for ITMS-91053/91061.
+  - `ITSAppUsesNonExemptEncryption = YES` (COMPLIANCE C8). Before launch in
+    France, file the French encryption declaration, or leave France out.
+  - Face ID is the only usage description. expo-dev-launcher's local-network
+    keys (`NSLocalNetworkUsageDescription`, `NSBonjourServices`) are removed
+    from Release builds by its own script phase. That phase can be skipped on
+    an incremental build, so `release-ios.sh` removes them as well.
+  - ATS blocks `http://` loads, as on Android.
+  - Known leftover: expo-dev-client registers the `exp+yappr` scheme in every
+    build and every variant. The dev-client workflow (mobile/CLAUDE.md)
+    depends on it. It is harmless in Release, where the launcher is not
+    compiled in.
 - **Android:**
-  - 64-bit only: `arm64-v8a`, plus `x86_64` for emulators in debug builds.
-    The release scripts and EAS pass `-PreactNativeArchitectures=arm64-v8a`.
+  - 64-bit only. `gradle.properties` sets `arm64-v8a,x86_64`, so x86_64
+    emulators work. The release scripts and the EAS profiles narrow release
+    builds to `arm64-v8a` with `-PreactNativeArchitectures=arm64-v8a`.
   - R8 minify and resource shrinking.
   - Hermes.
-  - No cleartext traffic. Only the debug manifest allows it, for Metro.
+  - No cleartext traffic: `http://` media and endpoints fail in release.
+    Only the debug manifests allow cleartext, for Metro.
   - `allowBackup=false`, plus data extraction rules that exclude everything
     from device-to-device transfer.
   - Unused permissions are blocked: storage, media, `SYSTEM_ALERT_WINDOW`,
@@ -82,11 +100,12 @@ scripts/android-upload-keystore.sh ~/.yappr/yappr-upload.jks
 
 APP_VARIANT=devnet npm run release:android            # APK + AAB in build/release/
 APP_VARIANT=testnet npm run release:android -- aab    # just the AAB
-adb install -r build/release/yappr-devnet-1.0.0-1.apk
+adb install -r build/release/yappr-devnet-1.0.0-1.apk    # …-debugsigned.apk without an upload key
 ```
 
-Without the `YAPPR_UPLOAD_*` variables, the build is signed with the debug key.
-That's fine for installing on a device, but Play rejects it.
+Without the `YAPPR_UPLOAD_*` variables, the build is signed with the debug key
+and named `…-debugsigned.apk/.aab`. That's fine for installing on a device, but
+Play rejects it.
 
 | Variable | Meaning |
 | --- | --- |
@@ -94,7 +113,7 @@ That's fine for installing on a device, but Play rejects it.
 | `YAPPR_UPLOAD_STORE_PASSWORD`, `YAPPR_UPLOAD_KEY_PASSWORD` | Its passwords |
 | `YAPPR_UPLOAD_KEY_ALIAS` | Key alias (`yappr-upload` from the script) |
 | `YAPPR_ANDROID_ABIS` | ABIs to build (default `arm64-v8a`; `arm64-v8a,x86_64` for an x86 emulator) |
-| `YAPPR_SKIP_PREBUILD=1` | Reuse `android/` instead of `expo prebuild --clean` |
+| `YAPPR_SKIP_PREBUILD=1` | Reuse `android/` instead of `expo prebuild --clean`. It must have been prebuilt for the same variant and build number. |
 
 Keystores never go in git. `.gitignore` covers `*.jks` and `*.keystore`, and
 the script refuses to write one inside the repo.
@@ -116,13 +135,17 @@ upload, see [TestFlight](#testflight).
 `.github/workflows/mobile-release.yml` runs on manual dispatch, with inputs
 `variant` (devnet or testnet) and `build_number` (defaults to the run number).
 
-- **Android** (ubuntu): a release APK and AAB, uploaded as artifacts. Both are
-  signed with the debug key unless these repository secrets are set:
-  `ANDROID_UPLOAD_KEYSTORE_BASE64` (`base64 -i yappr-upload.jks`),
-  `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS` and
-  `ANDROID_UPLOAD_KEY_PASSWORD`.
+- **Android** (ubuntu): a release APK and AAB, uploaded as artifacts.
+  - Both are signed with the debug key unless these secrets are set:
+    `ANDROID_UPLOAD_KEYSTORE_BASE64` (`base64 -i yappr-upload.jks`),
+    `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS` and
+    `ANDROID_UPLOAD_KEY_PASSWORD`.
+  - Put them in the `mobile-release` GitHub environment, restricted to
+    protected branches or gated by a required reviewer. Anyone with write
+    access can dispatch the workflow.
+  - Only the decode step sees the secrets, and it runs after `npm ci`.
 - **iOS** (macos-26, Xcode 26): an unsigned archive, uploaded as an unsigned
-  `.ipa`.
+  `.ipa` together with the xcodebuild log.
 
 Neither job needs secrets to run.
 

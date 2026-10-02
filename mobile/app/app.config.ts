@@ -50,8 +50,9 @@ const DARK_BACKGROUND = '#171717';
 /**
  * Apple's required-reason APIs (C9). The app collects nothing and tracks
  * nothing (ADR-001: no analytics or crash SDKs); the reasons are React
- * Native's and Expo's own uses, for data on the device only. Bundled SDKs
- * ship their own manifests.
+ * Native's and Expo's own uses, for data on the device only. SDK 57 links
+ * some Expo modules as precompiled frameworks whose privacy bundles are
+ * empty, so their reasons (expo-file-system's disk space) are declared here.
  */
 const PRIVACY_MANIFEST = {
   NSPrivacyTracking: false,
@@ -64,6 +65,8 @@ const PRIVACY_MANIFEST = {
     { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryFileTimestamp', NSPrivacyAccessedAPITypeReasons: ['C617.1'] },
     // Elapsed time for timers and performance marks (React Native).
     { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategorySystemBootTime', NSPrivacyAccessedAPITypeReasons: ['35F9.1'] },
+    // Free space checked before writing files (expo-file-system).
+    { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryDiskSpace', NSPrivacyAccessedAPITypeReasons: ['E174.1'] },
   ],
 };
 

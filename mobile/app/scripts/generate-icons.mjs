@@ -18,8 +18,8 @@
  * corner ribbon on iOS, a pill under the fox on Android, where the launcher's
  * mask would clip a corner.
  *
- * sharp is not an app dependency. The script installs it into a cache folder
- * under the OS temp dir on first run.
+ * sharp is not an app dependency. The script installs it into a per-user cache
+ * folder (~/.cache/yappr-icon-tools-<version>) on first run.
  */
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -51,9 +51,10 @@ const BADGES = {
 };
 
 function loadSharp() {
-  const dir = path.join(os.tmpdir(), `yappr-icon-tools-${SHARP_VERSION}`);
+  const dir = path.join(os.homedir(), '.cache', `yappr-icon-tools-${SHARP_VERSION}`);
   const requireFromDir = createRequire(path.join(dir, 'package.json'));
-  if (!fs.existsSync(path.join(dir, 'node_modules/sharp'))) {
+  // A half-finished install has the folder but no package.json; npm install completes it.
+  if (!fs.existsSync(path.join(dir, 'node_modules/sharp/package.json'))) {
     fs.mkdirSync(dir, { recursive: true });
     execFileSync('npm', ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', dir, `sharp@${SHARP_VERSION}`], {
       stdio: 'inherit',

@@ -36,8 +36,17 @@ if [[ "${YAPPR_SKIP_PREBUILD:-}" != "1" ]]; then
   npx expo prebuild --clean --no-install --platform android
 fi
 
+# The package and versionCode are baked in at prebuild; a reused project must match this build.
+application_id="$(node -p "require('./src/variants.ts').VARIANTS['$APP_VARIANT'].applicationId")"
+if ! grep -q "applicationId '$application_id'" android/app/build.gradle ||
+  ! grep -q "versionCode $build_number\$" android/app/build.gradle; then
+  echo "android/ was prebuilt for another variant or build number; rerun without YAPPR_SKIP_PREBUILD." >&2
+  exit 1
+fi
+
 if [[ -z "${YAPPR_UPLOAD_STORE_FILE:-}" ]]; then
   echo "warning: YAPPR_UPLOAD_STORE_FILE is not set; signing with the debug key (not uploadable)." >&2
+  name="$name-debugsigned"
 fi
 
 tasks=()
