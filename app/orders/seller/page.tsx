@@ -20,7 +20,7 @@ import { DeliveryContents } from '@/components/digital'
 import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
-import { fulfillOrder, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
+import { fulfillOrder, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planBlockers, planDelivery } from '@/lib/services/digital-delivery-plan'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -338,9 +338,11 @@ function SellerOrdersPage() {
             for (const warning of result.warnings) toast.error(warning, { duration: 10_000 })
             delivered++
           } catch (error) {
-            logger.error(`Bulk delivery failed for order ${order.id}:`, error)
+            // Recovery details carry plaintext license keys: shown to the seller, never logged.
+            logger.error(`Bulk delivery failed for order ${order.id}:`, loggableFulfillmentError(error))
             skipped.push(formatOrderId(order.id))
             firstFailure ??= error instanceof Error ? error.message : 'unknown error'
+            if (error instanceof KeyRecoveryError) toast.error(`Order ${formatOrderId(order.id)}: ${error.recoveryText()}`, { duration: Infinity })
           }
         }
         setBulkProgress({ done: index + 1, total: batch.length })

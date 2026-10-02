@@ -701,12 +701,19 @@ function CheckoutPage() {
     setError(null)
 
     try {
-      // The checked lines, not `cartItems`: the check may have just updated their fulfillment.
       const checkedItems = await validateCartAvailability(cartItems)
       if (!checkedItems) return
+      // A product switched to or from digital since the buyer reviewed the order
+      // changes whether it ships, and so the address, shipping cost and total
+      // this handler captured. Send the buyer back to review instead of placing it.
+      if (checkedItems.some((item, index) => item.fulfillment !== cartItems[index]?.fulfillment)) {
+        setError('The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before placing it.')
+        setStep('details')
+        return
+      }
 
       const payload = storeOrderService.buildOrderPayload(
-        checkedItems,
+        cartItems,
         includeShipping ? shippingAddress : undefined,
         buyerContact,
         shippingCost,

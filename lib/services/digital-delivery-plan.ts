@@ -39,17 +39,25 @@ const CLOSED_STATUSES: ReadonlySet<OrderStatus> = new Set(['delivered', 'cancell
 /** Statuses that mean the seller has confirmed payment. */
 const PAID_STATUSES: ReadonlySet<OrderStatus> = new Set(['payment_received', 'processing', 'shipped'])
 
-export const isDigitalLine = (line: Pick<OrderItem, 'fulfillment'>) => line.fulfillment === 'digital'
+// Order payloads are decrypted buyer-written JSON, cast rather than validated:
+// these helpers run over every order on a page, so they tolerate any shape
+// (a malformed order counts as having no digital lines) instead of throwing
+// and taking the whole page down with it.
+const linesOf = <T>(payload: { items: readonly T[] } | undefined): readonly T[] =>
+  Array.isArray(payload?.items) ? payload.items : []
+
+export const isDigitalLine = (line: Pick<OrderItem, 'fulfillment'> | null | undefined) =>
+  typeof line === 'object' && line !== null && line.fulfillment === 'digital'
 export const digitalLines = <T extends Pick<OrderItem, 'fulfillment'>>(payload: { items: readonly T[] }) =>
-  payload.items.filter(isDigitalLine)
+  linesOf(payload).filter(isDigitalLine)
 /** Whether a (possibly not yet decrypted) order has anything to deliver online. */
 export const hasDigitalLines = (payload: { items: ReadonlyArray<Pick<OrderItem, 'fulfillment'>> } | undefined) =>
-  payload !== undefined && payload.items.some(isDigitalLine)
+  linesOf(payload).some(isDigitalLine)
 /** The orders whose decrypted payload has digital lines. */
 export const digitalOrders = <T extends Pick<StoreOrder, 'id'>>(orders: readonly T[], payloads: ReadonlyMap<string, Pick<OrderPayload, 'items'>>) =>
   orders.filter((order) => hasDigitalLines(payloads.get(order.id)))
 export const isDigitalOnly = (items: ReadonlyArray<Pick<OrderItem, 'fulfillment'>>) =>
-  items.length > 0 && items.every(isDigitalLine)
+  Array.isArray(items) && items.length > 0 && items.every(isDigitalLine)
 
 /** Assets that apply to one variant: those for every variant, plus those for this one. */
 export function assetsForVariant(assets: readonly DigitalAsset[], variantKey?: string): DigitalAsset[] {
@@ -72,6 +80,8 @@ export interface DeliveryPlan {
   shortOnKeys: string[]
   /** Titles of digital lines whose quantity is not a whole number from 1 to MAX_LINE_QUANTITY. */
   invalidQuantities: string[]
+  /** Titles of planned lines with nothing in them (no assets for their variant, keys or instructions). */
+  emptyLines: string[]
 }
 
 const validQuantity = (quantity: unknown): quantity is number =>
@@ -127,6 +137,9 @@ export function planDelivery(
     missingKits,
     shortOnKeys,
     invalidQuantities,
+    emptyLines: items
+      .filter((item) => item.assets.length === 0 && !item.licenseKeys?.length && !item.instructions)
+      .map((item) => item.itemTitle),
   }
 }
 
@@ -136,6 +149,7 @@ export function planBlockers(plan: DeliveryPlan): string[] {
     ...plan.invalidQuantities.map((title) => `"${title}" has an invalid quantity in the order. Check it with the buyer before delivering.`),
     ...plan.missingKits.map((title) => `"${title}" has no delivery content. Attach files or links for it below, or add them to the product.`),
     ...plan.shortOnKeys.map((title) => `"${title}" does not have enough license keys left. Add keys in the product's delivery settings.`),
+    ...plan.emptyLines.map((title) => `"${title}" would be delivered empty (nothing in its kit applies to this variant). Attach files or links for it below.`),
   ]
 }
 
