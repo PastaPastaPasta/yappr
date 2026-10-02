@@ -1,9 +1,10 @@
 # Key exchange with a wallet on another device (PRD AUTH-04, AUTH-06; ADR E5.4,
 # E8), answered by the test-wallet responder (mobile/tools), which run.sh
-# starts on RESPONDER_URL: the QR's dash-key: link goes to the responder as
-# PERSONA; a first login also answers the dash-st: key registration. From a
-# cleared install, through the terms gate, the account switcher, then signed
-# out again. Devnet (sakura) only: the responder refuses any other network.
+# starts on RESPONDER_URL: the QR's dash-key: link, read off the screen by the
+# QR bridge (BRIDGE_URL; release builds show the link only as a QR code), goes
+# to the responder as PERSONA; a first login also answers the dash-st: key
+# registration. From a cleared install, through the terms gate, the account
+# switcher, then signed out again. Devnet (sakura) only: the responder refuses any other network.
 appId: ${APP_ID}
 tags:
   - full
@@ -23,10 +24,13 @@ tags:
     visible:
       id: kx-qr
     timeout: 60000
+- assertVisible:
+    id: kx-copy-link
 - takeScreenshot: sign-in-qr
-- copyTextFrom:
-    text: "dash-key:.*"
-- runScript: ../../scripts/respond.js
+- runScript:
+    file: ../../scripts/respond.js
+    env:
+      KX: dash-key
 - extendedWaitUntil:
     visible:
       id: "terms-agree|kx-register-qr|home-header|kx-signed-in"
@@ -38,9 +42,10 @@ tags:
         id: kx-register-qr
     commands:
       - takeScreenshot: sign-in-register
-      - copyTextFrom:
-          text: "dash-st:.*"
-      - runScript: ../../scripts/respond.js
+      - runScript:
+          file: ../../scripts/respond.js
+          env:
+            KX: dash-st
 - extendedWaitUntil:
     visible:
       id: "terms-agree|home-header"

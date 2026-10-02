@@ -23,6 +23,7 @@
 #                            local equivalent) and deleted on exit.
 #   E2E_RESPONDER_ADDR       the test-wallet responder (default 127.0.0.1:8789)
 #   E2E_PEER_ADDR            the peer harness (default 127.0.0.1:8790)
+#   E2E_BRIDGE_ADDR          the QR bridge, which reads the wallet QR off this device (default 127.0.0.1:8791)
 #   Use a different persona pair and ports per device when running devices in parallel.
 #   The keys reach Maestro as MAESTRO_SIGN_IN_KEY_1..4 / MAESTRO_DM_KEY_1..4 environment
 #   variables, never on a command line, and are scrubbed from everything written (also
@@ -45,7 +46,7 @@ while [ $# -gt 0 ]; do
     --metro-port) metro_port="$2"; shift ;;
     --out) out="$2"; shift ;;
     --only) only="$2"; shift ;;
-    -h|--help) sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "run.sh: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -203,6 +204,15 @@ if [ "$suite" = full ]; then
   wait_up "http://$peer_addr/health" 420 "peer (persona $peer_persona)" "$out/logs/peer.raw.log" "$!" || exit 1
   curl -sf --max-time 2 "http://$peer_addr/health" | grep -q "\"identityId\":\"$peer_id\"" || die "the peer on $peer_addr is not persona $peer_persona"
 
+  # Release builds show the wallet link only as a QR code: the bridge reads it off this
+  # device's screen (macOS: Core Image). Bound to this device, so never reused.
+  bridge_addr="${E2E_BRIDGE_ADDR:-127.0.0.1:8791}"
+  curl -s --max-time 2 "http://$bridge_addr/health" >/dev/null && die "something already listens on $bridge_addr (E2E_BRIDGE_ADDR)"
+  node "$here/host/qr-bridge.mjs" --platform "$platform" --device "$device" --listen "$bridge_addr" \
+    >"$out/logs/qr-bridge.log" 2>&1 &
+  pids+=($!)
+  wait_up "http://$bridge_addr/health" 300 "QR bridge" "$out/logs/qr-bridge.log" "$!" || exit 1
+
   # Each key goes to Maestro in four parts (iOS can drop characters from one long input
   # into a secure field), through MAESTRO_* variables, which Maestro reads from its
   # environment: never on a command line. Exported only now, so the services don't inherit them.
@@ -220,7 +230,8 @@ if [ "$suite" = full ]; then
   unset value chunk
 
   env_args+=(-e "PERSONA=$persona" -e "SELF_ID=$self_id" -e "SELF_HANDLE=$self_handle"
-    -e "PEER_ID=$peer_id" -e "PEER_HANDLE=$peer_handle" -e "PEER_URL=http://$peer_addr" -e "RESPONDER_URL=http://$responder_addr")
+    -e "PEER_ID=$peer_id" -e "PEER_HANDLE=$peer_handle" -e "PEER_URL=http://$peer_addr" -e "RESPONDER_URL=http://$responder_addr"
+    -e "BRIDGE_URL=http://$bridge_addr")
 fi
 
 # --- Flows -------------------------------------------------------------------------------------

@@ -38,10 +38,15 @@ repo root, `mobile/engine` and `mobile/tools`. It starts:
 - the **peer** (`mobile/engine/harness/e2e-peer.ts`, `E2E_PEER_ADDR`): the engine
   in Node, signed in as the second persona. Flows reach it through
   `scripts/peer.js`: it publishes the posts that like, reply and report act
-  on (and deletes them), and answers the DM round trip.
+  on (and deletes them), and answers the DM round trip;
+- the **QR bridge** (`host/qr-bridge.mjs`, `E2E_BRIDGE_ADDR`): release builds
+  show the sign-in request only as a QR code (the `dash-key:` text is dev
+  only), so `scripts/respond.js` asks the bridge, which takes a screenshot of
+  the device (`adb screencap`, `simctl io`), decodes the QR code (Core Image,
+  so macOS only) and returns the link for the responder.
 
 Run devices in parallel with a different persona pair and different
-responder and peer ports for each, so no two writers share a persona.
+responder, peer and bridge ports for each, so no two writers share a persona.
 
 Output (`--out`, default `mobile/e2e/out/`, gitignored): `summary.md`,
 `junit.xml`, per-flow JUnit and logs, `screenshots/`, and `artifacts/` with
