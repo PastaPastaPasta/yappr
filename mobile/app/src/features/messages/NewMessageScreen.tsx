@@ -39,8 +39,13 @@ export function CloseButton() {
 
 function startFailedMessage(error: unknown): string {
   switch (errorCode(error)) {
-    case 'BAD_REQUEST':
-      return errorMessage(error).includes('yourself') ? "You can't message yourself" : 'No user found with this identity ID';
+    case 'BAD_REQUEST': {
+      const message = errorMessage(error);
+      if (message.includes('yourself')) return "You can't message yourself";
+      // The account exists but cannot receive encrypted messages (no encryption key yet): the engine says so.
+      if (message.includes('encryption key')) return message;
+      return 'No user found with this identity ID';
+    }
     case 'NO_KEY':
       return 'Unlock your messages first.';
     default:

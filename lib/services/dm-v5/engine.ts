@@ -106,6 +106,7 @@ export class DmEngine {
   private queue: Promise<unknown> = Promise.resolve()
   private started = false
   private stopped = false
+  /** Polling is off until `resume()` (a mobile app in the background); calls still run. */
   private paused = false
   private timer: ReturnType<typeof setTimeout> | null = null
   private openKey: string | null = null
@@ -218,8 +219,9 @@ export class DmEngine {
   }
 
   /**
-   * Stop polling until {@link resume} (the mobile app went to the background,
-   * where it must not poll). Saves and the user's own actions still run.
+   * Stop polling until `resume()`: no poll or sweep starts on its own. Calls
+   * made meanwhile (a send, a save) still run. For an app whose process
+   * keeps running in the background (Android), which must not poll there.
    */
   pause(): void {
     this.paused = true
@@ -227,7 +229,7 @@ export class DmEngine {
     this.timer = null
   }
 
-  /** Back from {@link pause}: poll now, then on the usual schedule. */
+  /** Poll now, and on the cadence again, after `pause()`. */
   resume(): Promise<void> {
     this.paused = false
     return this.tick()

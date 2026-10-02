@@ -278,6 +278,54 @@ describe('submitWrite', () => {
     expect(currentToast()).toMatchObject({ message: "Your like didn't go through. Try again." });
   });
 
+  it('adopts the ticket of a call that timed out long after the engine made it (SR-16)', async () => {
+    const onAdopted = jest.fn();
+    const matching = {
+      ...spec,
+      matches: (t: WriteTicket, vars: TargetRef) => t.op === 'like' && t.target === vars,
+      onAdopted,
+    };
+    const start = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(start);
+    try {
+      fakeEngine.method('engage.like').mockImplementationOnce(async () => {
+        // The engine made its ticket at once; the call gave up waiting 15 s later.
+        clock.mockReturnValue(start + 15_000);
+        throw Object.assign(new Error('timed out'), { code: 'ENGINE_TIMEOUT' });
+      });
+      expect((await runWrite(matching, target)).status).toBe('unknown');
+      const made = ticket({ state: 'unconfirmed', target, createdAt: new Date(start + 500) });
+      fakeEngine.method('writes.list').mockResolvedValueOnce([made]);
+      await act(async () => {
+        await adoptRestoredWrites();
+      });
+      expect(onAdopted).toHaveBeenCalledWith(made, target);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("never adopts another write's ticket that already settled, when it is listed again", async () => {
+    const onAdopted = jest.fn();
+    // As `dm.send`: any ticket of the op could be the cut-short call's.
+    const matching = { ...spec, matches: (t: WriteTicket) => t.op === 'like', onAdopted };
+    fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    expect((await runWrite(matching, target)).status).toBe('unknown');
+
+    // A later write lands and settles.
+    const other: TargetRef = { ...target, id: `${target.id}-other` };
+    const later = ticket({ target: other });
+    fakeEngine.method('engage.like').mockResolvedValueOnce(later);
+    expect((await runWrite(matching, other)).status).toBe('submitted');
+    act(() => fakeEngine.emit('write.status', advance(later, { state: 'confirmed' })));
+
+    fakeEngine.method('writes.list').mockResolvedValueOnce([advance(later, { state: 'confirmed' })]);
+    await act(async () => {
+      await adoptRestoredWrites();
+    });
+    expect(onAdopted).not.toHaveBeenCalled();
+  });
+
   it('undoes and toasts a refused call, and asks to sign in for NOT_SIGNED_IN', async () => {
     fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('bad'), { code: 'BAD_REQUEST' }));
     await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused' });

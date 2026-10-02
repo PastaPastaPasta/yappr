@@ -141,8 +141,8 @@ export interface TimelineOptions {
 
 /**
  * The conversation as rows, oldest first: day separators, bubbles with their
- * run edges, and one status line under the last own message ("Sending…",
- * "Sent", "Read"). A failed local send always shows its error, wherever it is.
+ * run edges, and one status line under the last own message ("Sending…"
+ * until the engine has read it back, then "Sent" or "Read"). A failed local send always shows its error, wherever it is.
  */
 export function buildTimeline(messages: readonly TimelineMessage[], options: TimelineOptions): TimelineItem[] {
   const now = options.now ?? new Date();
@@ -175,7 +175,8 @@ export function buildTimeline(messages: readonly TimelineMessage[], options: Tim
       statusIsError = true;
     } else if (index === lastOwn) {
       if (message.outbox) status = OUTBOX_LABEL[message.outbox];
-      else if (options.sending) status = OUTBOX_LABEL.sending;
+      // The engine holds it but has not read it back from the chain yet (ENGINE §7: `pending`).
+      else if (options.sending || message.pending) status = OUTBOX_LABEL.sending;
       else if (options.peerReadAt && options.peerReadAt.getTime() >= message.at.getTime()) status = 'Read';
       else status = 'Sent';
     }

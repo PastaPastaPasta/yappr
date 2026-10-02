@@ -1,6 +1,9 @@
 import { YAPPR_DM_CONTRACT_ID } from '@/lib/constants'
 import { logger } from '@/lib/logger'
+import { blockService } from '@/lib/services/block-service'
 import type { directMessageService } from '@/lib/services/direct-message-service'
+import { queryRawDocuments } from '@/lib/services/document-service'
+import type { DocumentOrderByClause, DocumentWhereClause } from '@/lib/services/sdk-helpers'
 import { useSettingsStore } from '@/lib/store'
 import type { Conversation, DirectMessage } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
@@ -14,6 +17,33 @@ export type LegacyDmService = Pick<
   typeof directMessageService,
   'getConversations' | 'getConversationMessages' | 'pollNewMessages' | 'sendMessage' | 'markAsRead' | 'getOrCreateConversation' | 'getParticipantLastRead'
 >
+
+/** Reads beside lib's DM service (tests pass fakes). */
+export interface LegacyReads {
+  /**
+   * Whether the account has any conversation invite (sent or received),
+   * throwing when the read fails: lib answers a failed list read with `[]`,
+   * so a first empty list is checked with this before it is believed.
+   */
+  hasConversations(identityId: string): Promise<boolean>
+  /** Which of `ids` the account blocks (`checkBlockedBatch`: own blocks and followed lists). */
+  blocked(identityId: string, ids: string[]): Promise<Map<string, boolean>>
+}
+
+const inviteQuery = (where: DocumentWhereClause[], orderBy: DocumentOrderByClause[]) =>
+  queryRawDocuments({ dataContractId: YAPPR_DM_CONTRACT_ID, documentTypeName: 'conversationInvite', where, orderBy, limit: 1 })
+
+const libReads: LegacyReads = {
+  async hasConversations(identityId) {
+    // The two indexes lib's `loadConversationIndex` lists conversations from.
+    const [received, sent] = await Promise.all([
+      inviteQuery([['recipientId', '==', identityId]], [['$createdAt', 'desc']]),
+      inviteQuery([['$ownerId', '==', identityId]], [['recipientId', 'asc']]),
+    ])
+    return received.length > 0 || sent.length > 0
+  },
+  blocked: (identityId, ids) => blockService.checkBlockedBatch(identityId, ids),
+}
 
 /** `legacy-messages.tsx`: the open conversation is polled every 3 s. */
 export const LEGACY_OPEN_POLL_MS = 3_000
@@ -47,6 +77,8 @@ interface LegacyState {
   /** Read here without a receipt (or before one lands): newest message time read, per conversation. */
   readUpTo: Map<string, number>
   peerRead: Map<string, number>
+  /** People the account blocks (SAFE-01): their conversations take no messages and count nothing unread (DM-10). */
+  blocked: Set<string>
   openId: string | null
   timer: ReturnType<typeof setTimeout> | null
   paused: boolean
@@ -70,8 +102,9 @@ const sendReceipts = () => useSettingsStore.getState().sendReadReceipts
  * Mirrors `components/messages/legacy-messages.tsx` over the same
  * `directMessageService` calls, with the same DTOs as DM v5.
  */
-export function createLegacyBackend(options: { service: LegacyDmService; emit: DmEmit; coalesceMs?: number }) {
+export function createLegacyBackend(options: { service: LegacyDmService; emit: DmEmit; coalesceMs?: number; reads?: LegacyReads }) {
   const { service } = options
+  const reads = options.reads ?? libReads
   const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
   let state: LegacyState | null = null
 
@@ -86,7 +119,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     if (state?.identityId === identityId) return state
     const next: LegacyState = {
       identityId, conversations: new Map(), drafts: new Set(), listedAt: 0, listing: null, threads: new Map(), loading: new Map(),
-      readUpTo: new Map(), peerRead: new Map(), openId: null, timer: null, paused: false, error: null,
+      readUpTo: new Map(), peerRead: new Map(), blocked: new Set(), openId: null, timer: null, paused: false, error: null,
     }
     replaceState(next)
     return next
@@ -95,8 +128,10 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
   function conversationOf(current: LegacyState, key: string): Conversation {
     const id = conversationIdOf(key)
     const found = id === null ? undefined : current.conversations.get(id)
-    if (!found) throw new RpcError('Conversation not found', 'BAD_REQUEST')
-    return found
+    if (found) return found
+    // Never listed (the first read failed): not "no such conversation", which nothing would retry.
+    if (current.listedAt === 0 && current.error) throw new RpcError(current.error, 'NETWORK')
+    throw new RpcError('Conversation not found', 'BAD_REQUEST')
   }
 
   /** `conversationOf`, reading the list first if it has not loaded yet (a key restored after an engine restart). */
@@ -121,7 +156,7 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
    */
   function unreadOf(current: LegacyState, conversation: Conversation): number {
     const last = conversation.lastMessage
-    if (!last || last.senderId === current.identityId) return 0
+    if (!last || last.senderId === current.identityId || current.blocked.has(conversation.participantId)) return 0
     return last.createdAt.getTime() <= (current.readUpTo.get(conversation.id) ?? 0) ? 0 : conversation.unreadCount
   }
 
@@ -145,7 +180,10 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
           lastMessage: last ? { text: last.content, at: last.createdAt, own: last.senderId === current.identityId } : null,
           lastActivity: last ? last.createdAt : null,
           unread: unreadOf(current, conversation),
-          flags: { hidden: false, unreadable: false, removed: false, ended: false, blocked: false, unsaved: false, draft: current.drafts.has(conversation.id) },
+          flags: {
+            hidden: false, unreadable: false, removed: false, ended: false,
+            blocked: current.blocked.has(conversation.participantId), unsaved: false, draft: current.drafts.has(conversation.id),
+          },
           peerReadAt: peerRead !== undefined && sendReceipts() ? new Date(peerRead) : null,
         }
       })
@@ -159,7 +197,12 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
         rows: rowsOf(current),
         ready: current.listedAt > 0,
         error: current.error,
-        messages: key => messagesOf(current, conversationIdOf(key) ?? ''),
+        // Nothing from someone blocked is announced (DM-10).
+        messages: key => {
+          const id = conversationIdOf(key) ?? ''
+          const peer = current.conversations.get(id)?.participantId
+          return peer && current.blocked.has(peer) ? [] : messagesOf(current, id)
+        },
         unread: badge(current),
       }
     })
@@ -171,10 +214,16 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     current.listing ??= (async () => {
       const fresh = await service.getConversations(current.identityId, { includeParticipantInfo: false })
       if (state !== current) return
-      // lib reports a failed read as an empty list: never let that wipe conversations we hold.
-      if (fresh.length === 0 && [...current.conversations.keys()].some(id => !current.drafts.has(id))) {
-        current.error = 'Could not load conversations'
-        return
+      // lib reports a failed read as an empty list: never let that wipe conversations we hold, and
+      // believe a first empty list only once a read that cannot fail silently agrees.
+      if (fresh.length === 0) {
+        const held = [...current.conversations.keys()].some(id => !current.drafts.has(id))
+        const believed = !held && (current.listedAt > 0 || await reads.hasConversations(current.identityId).then(any => !any, () => false))
+        if (state !== current) return
+        if (!believed) {
+          current.error = 'Could not load conversations'
+          return
+        }
       }
       for (const conversation of fresh) {
         current.drafts.delete(conversation.id)
@@ -188,11 +237,24 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       }
       current.listedAt = Date.now()
       current.error = null
+      await refreshBlocked(current)
     })().finally(() => {
       current.listing = null
     })
     await current.listing
     changed()
+  }
+
+  /** Who of the people the account talks to it blocks. A failed read keeps what was known. */
+  async function refreshBlocked(current: LegacyState): Promise<void> {
+    const peers = [...new Set([...current.conversations.values()].map(c => c.participantId))]
+    if (peers.length === 0) return
+    try {
+      const blocked = await reads.blocked(current.identityId, peers)
+      if (state === current) current.blocked = new Set(peers.filter(id => blocked.get(id) === true))
+    } catch (error) {
+      logger.debug('Legacy DM: could not read who is blocked:', error)
+    }
   }
 
   /** Merge messages into a thread (by id; a polled one replaces the optimistic copy of the same send). */
@@ -290,6 +352,9 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       replaceState(null)
     },
 
+    /** Legacy keeps nothing on the device for an account. */
+    forget(): void {},
+
     /** No polling in the background (PRD: only the DM flush runs there); the open thread resumes on return. */
     async lifecycle(lifecycle: AppLifecycleState): Promise<void> {
       if (!state || lifecycle === 'inactive') return
@@ -310,7 +375,16 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     async rows(identityId: string): Promise<ConversationRow[]> {
       const current = stateFor(identityId)
       await refreshList(current)
+      // The list never loaded: an error with "Try again", not an empty inbox (G-11).
+      if (current.listedAt === 0 && current.error) throw new RpcError(current.error, 'NETWORK')
       return rowsOf(current)
+    },
+
+    /** A block or unblock settled: re-read who is blocked, so the conversation and its badge follow. */
+    blocksChanged(): void {
+      const current = state
+      if (!current) return
+      refreshBlocked(current).then(changed, error => logger.debug('Legacy DM: block refresh failed:', error))
     },
 
     async messages(identityId: string, key: string): Promise<MessageDTO[]> {
@@ -344,7 +418,9 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
     },
 
     async assertSendable(identityId: string, key: string): Promise<void> {
-      await conversationFor(stateFor(identityId), key)
+      const current = stateFor(identityId)
+      const conversation = await conversationFor(current, key)
+      if (current.blocked.has(conversation.participantId)) throw new RpcError('Unblock this person to message them.', 'BAD_REQUEST')
     },
 
     /** Re-read the conversation's messages after the last one read ("check again"). */

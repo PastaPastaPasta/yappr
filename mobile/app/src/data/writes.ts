@@ -104,6 +104,22 @@ export type WriteResult =
   | { status: 'unknown'; error: unknown };
 
 const tracked = new Map<string, Tracked>();
+/**
+ * Every ticket a write has followed this session, kept after it settles: it
+ * is that write's, so a cut-short write never adopts it (a later write's
+ * ticket that landed, listed again by `writes.list`).
+ */
+const followed = new Set<string>();
+
+function track(id: string, entry: Tracked): void {
+  tracked.set(id, entry);
+  followed.add(id);
+}
+
+/** Whether a write of this session follows, or followed, ticket `id`. */
+export function isFollowedWrite(id: string): boolean {
+  return followed.has(id);
+}
 const latestByKey = new Map<string, string>();
 /**
  * Keys whose submit or retry hasn't answered yet, with what they ask for.
@@ -299,7 +315,7 @@ function dropQueued(key: string | undefined): void {
 
 /** An untracked ticket (restored after an engine restart): follow it if a cut-short write recognises it. */
 function adopt(ticket: WriteTicket): void {
-  if (tracked.has(ticket.id)) return;
+  if (followed.has(ticket.id)) return;
   const now = Date.now();
   orphans = orphans.filter((o) => now - o.at < ORPHAN_MS);
   const orphan = orphans.find(
@@ -307,7 +323,7 @@ function adopt(ticket: WriteTicket): void {
   );
   if (!orphan) return;
   orphans = orphans.filter((o) => o !== orphan);
-  tracked.set(ticket.id, { spec: orphan.spec, vars: orphan.vars, key: orphan.key, undo: orphan.undo, handled: '' });
+  track(ticket.id, { spec: orphan.spec, vars: orphan.vars, key: orphan.key, undo: orphan.undo, handled: '' });
   if (orphan.key !== undefined) {
     // Still the latest write for its key unless one was made after it.
     const latestId = latestByKey.get(orphan.key);
@@ -342,6 +358,7 @@ export function startWriteTracking(): () => void {
  */
 export function resetWriteTracking(): void {
   tracked.clear();
+  followed.clear();
   latestByKey.clear();
   queued.clear();
   orphans = [];
@@ -398,12 +415,14 @@ function runQueued(waiting: Waiting): Promise<WriteResult> {
 /** Sends a write; `waiting.undo` set means its optimistic change is already applied. */
 async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
+  // A ticket the call made is no older than the call (a timeout answers long after the engine made it).
+  const calledAt = Date.now();
   const done = markSubmitting(key, spec.intent?.(vars));
   let revert = waiting.undo;
   try {
     revert ??= spec.optimistic?.(vars) ?? null;
     const ticket = await spec.submit(engine.api, vars);
-    tracked.set(ticket.id, { spec, vars, key, undo: revert, handled: '' });
+    track(ticket.id, { spec, vars, key, undo: revert, handled: '' });
     if (key !== undefined) latestByKey.set(key, ticket.id);
     done();
     // `write.status` may have overtaken the call's answer: settle on the newest copy.
@@ -412,7 +431,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
     if (OUTCOME_UNKNOWN.has(errorCode(error) ?? '')) {
       // It may have run (PRD G-3): keep the change, say nothing, and follow the ticket the engine restores.
       appendLog('warn', 'host', `Write cut short: ${errorMessage(error)}`);
-      orphans.push({ spec, vars, key, undo: revert, at: Date.now() });
+      orphans.push({ spec, vars, key, undo: revert, at: calledAt });
       done();
       dropQueued(key);
       return { status: 'unknown', error };

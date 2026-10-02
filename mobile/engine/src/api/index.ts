@@ -58,6 +58,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
       secureDurable: runtime.secureDurable,
       stopDm: dm.hooks.stop,
       resumeDm: dm.hooks.resume,
+      forgetDm: dm.hooks.forget,
     }),
     dm: dm.api,
     settings,

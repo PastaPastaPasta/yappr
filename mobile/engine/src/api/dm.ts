@@ -8,7 +8,7 @@ import { splitText } from '@/lib/services/dm-v5/util'
 import { directMessageService } from '@/lib/services/direct-message-service'
 import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { identityService } from '@/lib/services/identity-service'
-import { hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
+import { findEncryptionKey, hasEncryptionKeyOnIdentity } from '@/lib/crypto/encryption-key-lookup'
 import { base58ToBytes, getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { logger } from '@/lib/logger'
@@ -16,13 +16,13 @@ import { RpcError } from '../protocol/envelope'
 import { badCursor, cursorInt, cursorString, decodeCursor } from '../dto/cursor'
 import { loadUserSummaries, notSupported } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
-import { createLegacyBackend, type LegacyDmService } from '../dm/legacy'
+import { createLegacyBackend, type LegacyDmService, type LegacyReads } from '../dm/legacy'
 import { createV5Backend, type DmEngineSource } from '../dm/v5'
 import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { SessionEvents } from './session'
-import { NotSentError, type TicketStore } from '../writes/tickets'
+import { NotSentError, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import { avatarFromField, type AuthorDTO, type Page } from './dto'
 
@@ -44,6 +44,12 @@ const GROUP_NAME_MAX_BYTES = 200
 const MAX_SEND_PARTS = 20
 /** A sent message's block time can trail its ticket by this much. */
 const SENT_MATCH_SLACK_MS = 60_000
+/**
+ * A `dm.send` call still before its ticket this long after it started is
+ * refused: the host gives a send's text back to the composer when no ticket
+ * shows 60 s after it (`UNTICKETED_WAIT_MS`), so none may appear later.
+ */
+const SEND_SUBMIT_DEADLINE_MS = 45_000
 
 export interface DmModuleOptions {
   emit(event: string, payload: unknown): void
@@ -56,6 +62,10 @@ export interface DmModuleOptions {
   v5Source?: DmEngineSource
   /** Default: lib's `directMessageService`. */
   legacyService?: LegacyDmService
+  /** Default: strict invite reads and lib's block status. */
+  legacyReads?: LegacyReads
+  /** The engine's plain storage, where DM v5 keeps its per-device state. Default: `localStorage`. */
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
   /** Default: lib's signed-in identity. */
   viewer?: () => string | null
   /** Names and avatars for peers. Default: `loadUserSummaries`. */
@@ -135,8 +145,12 @@ export function createDmModule(options: DmModuleOptions) {
   const viewer = options.viewer ?? getCurrentUserId
   const { emit } = options
   const backend = (options.backend ?? (dmIsV5() ? 'v5' : 'legacy')) === 'v5'
-    ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs })
-    : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs })
+    ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs, storage: options.storage })
+    : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs, reads: options.legacyReads })
+  // Legacy messages follow the account's blocks (DM-10): a settled block or unblock re-reads them.
+  options.tickets.observe(ticket => {
+    if (backend.kind === 'legacy' && (ticket.op === 'block' || ticket.op === 'unblock') && ticket.state !== 'pending') backend.blocksChanged()
+  })
   const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
   const fetchAuthors = options.authors ?? loadAuthors
 
@@ -178,11 +192,40 @@ export function createDmModule(options: DmModuleOptions) {
     })
   }
 
+  /**
+   * A long v5 send that failed part way: the messages its ticket makes (the
+   * parts, re-split past the ones already out, since lib trims what it
+   * sends) and how many are out, so a retry sends only the rest (SR-18).
+   */
+  const partial = new Map<string, { identityId: string; parts: string[]; sent: number }>()
+  const partsFor = (args: SendArgs, ticketId: string) => partial.get(ticketId)?.parts ?? partsOf(args.text)
+
+  /**
+   * After a v5 send failed: claim and record the parts that went out before
+   * it did. True when every part is out (lib failed after the last one was
+   * held), so the send is delivered and a retry would send it again.
+   */
+  async function notePartlySent(args: SendArgs, ticketId: string): Promise<boolean> {
+    if (backend.kind !== 'v5' || halted) return false
+    const parts = partsFor(args, ticketId)
+    const pool = await freshOwn(args, ticketId, 0)
+    let sent = 0
+    for (const part of parts) {
+      const index = pool.findIndex(m => m.text === part)
+      if (index < 0) break
+      claimed.set(claimKey(args.key, pool.splice(index, 1)[0].id), ticketId)
+      sent += 1
+    }
+    if (sent === parts.length) return true
+    if (sent > 0) partial.set(ticketId, { identityId: args.identityId, parts: [...parts.slice(0, sent), ...partsOf(parts.slice(sent).join(''))], sent })
+    return false
+  }
+
   /** Claim, for `ticketId`, one fresh message per part; false when a part has none. */
   function claimParts(args: SendArgs, ticketId: string, fresh: MessageDTO[]): boolean {
     const pool = [...fresh]
     const taken: MessageDTO[] = []
-    for (const part of partsOf(args.text)) {
+    for (const part of partsFor(args, ticketId)) {
       const index = pool.findIndex(m => m.text === part)
       if (index < 0) return false
       taken.push(...pool.splice(index, 1))
@@ -209,22 +252,39 @@ export function createDmModule(options: DmModuleOptions) {
       return await work()
     } catch (error) {
       // Locked since the ticket was issued: nothing went out, and the host is asked for the key (NO_KEY).
-      if (error instanceof RpcError && error.code === 'NO_KEY') throw new NotSentError(new Error(`Private key not found: ${error.message}`))
+      const cause = error instanceof NotSentError ? error.cause : error
+      if (cause instanceof RpcError && cause.code === 'NO_KEY') throw new NotSentError(new Error(`Private key not found: ${cause.message}`))
       throw error
     }
   }
 
   options.tickets.register<SendArgs>('dm.send', {
     run: async (args, ctx) => {
-      const result = await running(args.identityId, () => backend.send(args.identityId, args.key, args.text))
+      const id = ctx.ticket.id
+      // A retry after a long send failed part way sends only the parts that did not go out.
+      const earlier = partial.get(id)
+      const text = earlier ? earlier.parts.slice(earlier.sent).join('') : args.text
+      let result: WriteResult
+      try {
+        result = await running(args.identityId, () => backend.send(args.identityId, args.key, text))
+      } catch (error) {
+        const delivered = await notePartlySent(args, id).catch(cause => {
+          logger.debug('DM send: could not record the parts sent:', cause)
+          return false
+        })
+        if (!delivered) throw error
+        logger.debug('DM send: failed after every part was out, so it is sent:', error)
+        result = { state: 'confirmed' }
+      }
       // Which of my messages this send made, so no other ticket's check counts them. Best effort:
       // the message is out, so a failed read here must never fail the ticket (or start an engine
       // while messages are stopping).
       if (!halted) {
-        await freshOwn(args, ctx.ticket.id, 0)
-          .then(fresh => claimParts(args, ctx.ticket.id, fresh))
+        await freshOwn(args, id, 0)
+          .then(fresh => claimParts(args, id, fresh))
           .catch(error => logger.debug('DM send: could not record the sent messages:', error))
       }
+      partial.delete(id)
       return result
     },
     /**
@@ -367,6 +427,7 @@ export function createDmModule(options: DmModuleOptions) {
      * through `dm.changed` (`MessageDTO.pending` until read back on v5).
      */
     async send(key: string, text: string): Promise<WriteTicket> {
+      const calledAt = Date.now()
       const identityId = session()
       const conversation = keyOf(key)
       if (typeof text !== 'string' || !text.trim()) throw new RpcError('The message is empty', 'BAD_REQUEST')
@@ -377,6 +438,7 @@ export function createDmModule(options: DmModuleOptions) {
       // What is already mine, so "check again" never mistakes an earlier identical message for this one.
       const before = (await backend.messages(identityId, conversation)).filter(m => m.own).map(m => m.id)
       assertStill(identityId)
+      if (Date.now() - calledAt > SEND_SUBMIT_DEADLINE_MS) throw new RpcError('Sending took too long, so nothing was sent. Try again.', 'NETWORK')
       return options.tickets.submit<SendArgs>({ op: 'dm.send', args: { identityId, key: conversation, text, before }, target: { conversationKey: conversation } })
     },
 
@@ -466,7 +528,7 @@ export function createDmModule(options: DmModuleOptions) {
     /** v5 "Reclaim message fees" (PRD DM-12). */
     async setRetention(retention: DmRetention): Promise<void> {
       if (!RETENTIONS.includes(retention)) throw new RpcError(`retention is one of ${RETENTIONS.join(', ')}`, 'BAD_REQUEST')
-      v5('Reclaiming message fees').engine(session()).setRetention(retention)
+      v5('Reclaiming message fees').setRetention(session(), retention)
     },
 
     /**
@@ -497,6 +559,12 @@ export function createDmModule(options: DmModuleOptions) {
           if (validation.errorType === 'IDENTITY_NOT_FOUND') throw new RpcError(validation.error || 'Could not fetch identity data', 'NETWORK')
           if (validation.noKeyOnIdentity) return { unlocked: false, reason: 'no-key-on-identity' }
           throw new RpcError(validation.error || 'Invalid key', 'KEY_INVALID')
+        }
+        // lib accepts any of the identity's encryption keys, but messages (and every peer) use only
+        // the one `findEncryptionKey` picks: another key would unlock an inbox nobody can write to.
+        const messagingKey = findEncryptionKey(identity.publicKeys)
+        if (messagingKey && validation.keyId !== messagingKey.id) {
+          throw new RpcError(`This is not the encryption key messages use: enter key ${messagingKey.id} instead`, 'KEY_INVALID')
         }
         assertStill(identityId)
         storeEncryptionKey(identityId, key)
@@ -533,6 +601,11 @@ export function createDmModule(options: DmModuleOptions) {
     /** The sign-out that `stop` prepared failed: the account stays signed in, and so do its messages. */
     resume: (): void => {
       halted = false
+    },
+    /** `identityId` signed out: nothing of its messages may stay on the device (PRD AUTH-11). */
+    forget: (identityId: string): void => {
+      backend.forget(identityId)
+      for (const [ticketId, entry] of partial) if (entry.identityId === identityId) partial.delete(ticketId)
     },
     /** AppState: `background` resolves once the DM flush is done, or after the host's background budget. */
     lifecycle: (state: AppLifecycleState): Promise<void> => bounded(backend.lifecycle(state), LIFECYCLE_FLUSH_WAIT_MS, 'The DM lifecycle'),
