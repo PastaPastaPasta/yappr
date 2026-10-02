@@ -2,6 +2,7 @@ import type { PostDTO, UserSummaryDTO } from '@engine/api';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { Image } from 'expo-image';
 import { router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AppState,
@@ -317,15 +318,11 @@ function Composer({ identityId, username, context }: ComposerProps) {
     [identityId, context, persist],
   );
 
-  useEffect(
-    () =>
-      navigation.addListener('beforeRemove', (e) => {
-        if (leaving.current) return;
-        e.preventDefault();
-        askToLeave(() => navigation.dispatch(e.data.action));
-      }),
-    [navigation, askToLeave],
-  );
+  // The native stack's own dismissal (a swipe, Android back) is held too, not just the JS one.
+  usePreventRemove(true, ({ data }) => {
+    if (leaving.current) navigation.dispatch(data.action);
+    else askToLeave(() => navigation.dispatch(data.action));
+  });
 
   const close = () => askToLeave(() => router.back());
 

@@ -23,6 +23,13 @@ jest.mock('expo-router', () => ({
   useLocalSearchParams: jest.fn(() => ({})),
   useNavigation: () => mockNavigation,
 }));
+// The close guard: the latest callback the screen registered, as the native stack calls it on a swipe.
+let mockPreventRemove: ((options: { data: { action: { type: string } } }) => void) | null = null;
+jest.mock('expo-router/react-navigation', () => ({
+  usePreventRemove: (prevent: boolean, callback: typeof mockPreventRemove) => {
+    mockPreventRemove = prevent ? callback : null;
+  },
+}));
 jest.mock('@react-native-community/netinfo', () => ({
   ...jest.requireActual('@react-native-community/netinfo/jest/netinfo-mock.js'),
   useNetInfo: jest.fn(() => ({ isConnected: true })),
@@ -194,6 +201,23 @@ it('restores the draft, and closing asks Save draft / Delete draft', async () =>
   act(() => sheet?.choose('Delete draft'));
   expect(loadDraft(VIEWER_ID, POST)).toBeNull();
   expect(router.back).toHaveBeenCalled();
+});
+
+it('holds a native dismissal (a swipe) for Save draft / Delete draft / Cancel (COMP-09)', async () => {
+  await renderCompose();
+  type('swiped text');
+  const pop = { type: 'POP' };
+
+  act(() => mockPreventRemove?.({ data: { action: pop } }));
+  expect(sheet?.options).toEqual(['Save draft', 'Delete draft', 'Cancel']);
+  act(() => sheet?.choose('Cancel'));
+  expect(mockNavigation.dispatch).not.toHaveBeenCalled();
+  expect(byId('compose-input-0')).toHaveTextContent('swiped text');
+
+  act(() => mockPreventRemove?.({ data: { action: pop } }));
+  act(() => sheet?.choose('Save draft'));
+  expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('swiped text');
+  expect(mockNavigation.dispatch).toHaveBeenCalledWith(pop);
 });
 
 it('saves the draft 500 ms after a change', async () => {

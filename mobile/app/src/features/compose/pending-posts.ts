@@ -168,7 +168,9 @@ export function pendingStatus(entry: PendingPost): CardWriteState | null {
   }
   if (mayHaveLanded(ticket)) return { state: 'uncertain' };
   if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) return failed;
-  if (ticket.state === 'unconfirmed') return { state: 'unconfirmed' };
+  // A part that timed out before its id was known can never be checked (the engine's probe
+  // says unknown every time): Edit, to resume past what the profile shows, never a resend.
+  if (ticket.state === 'unconfirmed') return posted < total ? { state: 'uncertain' } : { state: 'unconfirmed' };
   return null;
 }
 
@@ -574,7 +576,7 @@ export function checkPending(localId: string): void {
   run().catch((error: unknown) => appendLog('warn', 'host', `Checking a post failed: ${errorMessage(error)}`));
 }
 
-/** Follows each orphan whose ticket the engine now lists (`writes.list`), oldest orphan first. */
+/** Follows each orphan whose ticket the engine now lists (`writes.list`). */
 async function adoptOrphans(): Promise<void> {
   const orphans = () => Object.values(usePendingPosts.getState().entries).filter((e) => e.orphaned && !e.ticketId);
   if (orphans().length === 0) return;
@@ -668,12 +670,16 @@ function confirmed(entry: PendingPost, ticket: WriteTicket): void {
   toast.success(total > 1 ? `Thread with ${total} posts created!` : SUCCESS[entry.context.mode]);
 }
 
-/** The orphan a ticket the app has not followed belongs to, oldest first; none while a submit still waits for its own. */
+/**
+ * The orphan a ticket the app has not followed belongs to: only when exactly
+ * one could have made it (two posts cut short together cannot be told apart,
+ * so neither is guessed; Check again then leaves each to Edit). None while a
+ * submit still waits for its own.
+ */
 function orphanFor(ticket: WriteTicket, entries: PendingPost[]): PendingPost | undefined {
   if (submitting > 0) return undefined;
-  return entries
-    .filter((e) => e.orphaned && !e.ticketId && ticketMatches(e, ticket))
-    .sort((a, b) => a.createdAt - b.createdAt)[0];
+  const candidates = entries.filter((e) => e.orphaned && !e.ticketId && ticketMatches(e, ticket));
+  return candidates.length === 1 ? candidates[0] : undefined;
 }
 
 /** A ticket update for a pending post: track it, finish it, or bring its text back to the draft. */
@@ -835,8 +841,9 @@ export function startPendingPosts(): () => void {
  * signed-in account (PostItem renders it as the optimistic variant).
  */
 export function usePendingWriteStatus(postId: string): WriteStatusProps | null {
+  // The card, or the real post it became (adopted, or the root a resumed thread already posted).
   const entry = usePendingPosts(
-    (s) => s.entries[postId] ?? Object.values(s.entries).find((e) => e.adoptedId === postId),
+    (s) => s.entries[postId] ?? Object.values(s.entries).find((e) => firstPostedId(e) === postId),
   );
   const viewerId = useSessionStore((s) => s.session?.identityId ?? null);
   if (!entry || entry.identityId !== viewerId) return null;

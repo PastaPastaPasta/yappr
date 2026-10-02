@@ -1,6 +1,6 @@
 import type { CapabilitiesDTO, EngineErrorData, Page, PostDTO, SessionDTO, ThreadDTO, WriteTicket } from '@engine/api';
 import { notifyManager, type InfiniteData } from '@tanstack/react-query';
-import { act } from '@testing-library/react-native';
+import { act, renderHook } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import { queryKeys } from '~/data/keys';
@@ -22,6 +22,7 @@ import {
   retryPending,
   startPendingPosts,
   usePendingPosts,
+  usePendingWriteStatus,
   viewerAuthor,
 } from './pending-posts';
 
@@ -221,7 +222,7 @@ it('retries a ticket the engine proved did not land in place', async () => {
   fakeEngine.method('posts.publish').mockResolvedValue(t);
   publish(['Hello']);
   await settle();
-  act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed' })));
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed', documents: [doc(0, 'real-1', false)] })));
   expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
 
   act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed', retryable: true, updatedAt: new Date(Date.now() + 5000) })));
@@ -311,6 +312,10 @@ it('a thread retried past its posted root keeps the root as its card', async () 
   const root = fixturePost({ id: 'root-1', content: 'root text', author: { ...AUTHORS.alice, id: VIEWER_ID } });
   queryClient.setQueryData(HOME, page([root, existing]));
   expect(homeIds()).toEqual(['root-1', 'existing-1']);
+  // The root carries the rest's write status, with no content.created ever seen for it.
+  const status = renderHook(() => usePendingWriteStatus('root-1'));
+  expect(status.result.current?.status).toEqual({ state: 'posting' });
+  status.unmount();
 
   act(() => fakeEngine.emit('write.status', advance(again, { state: 'confirmed', documents: [doc(1, 'second-1')] })));
   expect(only()?.post.id).toBe('root-1');
@@ -423,12 +428,47 @@ it('"Check again" on a cut-short post with no ticket: Edit only, never Retry', a
 
   // A ticket that shows up later is still followed.
   const late = publishTicket();
-  fakeEngine.method('writes.list').mockResolvedValue([advance(late, { state: 'unconfirmed' })]);
+  const lateUnconfirmed = advance(late, { state: 'unconfirmed', documents: [doc(0, 'real-1', false)] });
+  fakeEngine.method('writes.list').mockResolvedValue([lateUnconfirmed]);
   checkPending(localId);
-  fakeEngine.method('writes.check').mockResolvedValue(advance(late, { state: 'unconfirmed' }));
+  fakeEngine.method('writes.check').mockResolvedValue(lateUnconfirmed);
   await settle();
   expect(only()?.ticketId).toBe(late.id);
   expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
+});
+
+it('a part that never reported an id cannot be checked: Edit only, never Check again or Retry', async () => {
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  publish(['one', 'two']);
+  await settle();
+
+  // Part 2 timed out before its id was known: the engine's probe says unknown on every check.
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed', documents: [doc(0, 'one-1')] })));
+  expect(pendingStatus(only()!)).toEqual({ state: 'uncertain' });
+
+  // A single post whose only part has no id: the same.
+  usePendingPosts.setState({ entries: {} });
+  const single = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(single);
+  publish(['Hello']);
+  await settle();
+  act(() => fakeEngine.emit('write.status', advance(single, { state: 'unconfirmed', documents: [] })));
+  expect(pendingStatus(only()!)).toEqual({ state: 'uncertain' });
+});
+
+it('never guesses which of two cut-short posts a ticket belongs to', async () => {
+  fakeEngine.method('posts.publish').mockRejectedValue(Object.assign(new Error('restarted'), { code: 'ENGINE_RESTARTED' }));
+  fakeEngine.method('writes.list').mockResolvedValue([]);
+  publish(['first']);
+  publish(['second']);
+  await settle();
+
+  const restored = publishTicket();
+  act(() => fakeEngine.emit('write.status', advance(restored, { state: 'confirmed', documents: [doc(0, 'real-1')] })));
+  const entries = Object.values(usePendingPosts.getState().entries);
+  expect(entries).toHaveLength(2);
+  expect(entries.every((e) => !e.ticketId && !e.confirmedAt)).toBe(true);
 });
 
 it('a resume carries no image: it went with the first part', async () => {
