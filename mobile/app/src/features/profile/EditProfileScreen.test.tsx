@@ -1,4 +1,4 @@
-import type { CapabilitiesDTO, PostDTO, ProfileDTO, SessionDTO } from '@engine/api';
+import type { CapabilitiesDTO, PostDTO, ProfileDTO, SessionDTO, WriteTicket } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -202,6 +202,13 @@ describe('EditProfileScreen', () => {
 describe('BookmarksScreen', () => {
   const saved = (id: string, content: string): PostDTO =>
     fixturePost({ id, content, viewer: { ...fixturePost().viewer!, bookmarked: true } });
+  const unbookmarkTicket = (id: string) => ticket({ op: 'unbookmark', target: { id, kind: 'post', ownerId: 'x', rootPostId: null } });
+  /** Issues a pending ticket, then reports it as `settle` once the call has answered, as the engine does. */
+  const unbookmarkThen = (settle: Partial<WriteTicket>) => async (target: { id: string }) => {
+    const issued = unbookmarkTicket(target.id);
+    setTimeout(() => fakeEngine.emit('write.status', advance(issued, settle)), 0);
+    return issued;
+  };
 
   it('lists bookmarks and drops one as soon as it is removed', async () => {
     fakeEngine.method('engage.bookmarks').mockResolvedValue({
@@ -227,11 +234,7 @@ describe('BookmarksScreen', () => {
       cursor: null,
       hasMore: false,
     });
-    fakeEngine
-      .method('engage.unbookmark')
-      .mockImplementation(async (target: { id: string }) =>
-        ticket({ op: 'unbookmark', target: { id: target.id, kind: 'post', ownerId: 'x', rootPostId: null } }),
-      );
+    fakeEngine.method('engage.unbookmark').mockImplementation(unbookmarkThen({ state: 'confirmed' }));
     renderScreen(<BookmarksScreen />);
     await flush();
 
@@ -252,7 +255,7 @@ describe('BookmarksScreen', () => {
     });
     fakeEngine
       .method('engage.unbookmark')
-      .mockResolvedValueOnce(ticket({ op: 'unbookmark', target: { id: 'b1', kind: 'post', ownerId: 'x', rootPostId: null } }))
+      .mockImplementationOnce(unbookmarkThen({ state: 'unconfirmed' }))
       .mockRejectedValue(Object.assign(new Error('Not enough credits'), { code: 'FEE_UNPAYABLE' }));
     renderScreen(<BookmarksScreen />);
     await flush();
@@ -263,6 +266,49 @@ describe('BookmarksScreen', () => {
     expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledTimes(2);
     expect(useToastStore.getState().current?.message).toBe('Removed 1 of 3 bookmarks');
     expect(screen.getByText('Kiln day')).toBeTruthy();
+  });
+
+  it('waits for each removal to settle and stops at one that fails later', async () => {
+    fakeEngine.method('engage.bookmarks').mockResolvedValue({
+      items: [saved('b1', 'Film grain'), saved('b2', 'Salt is not optional')],
+      cursor: null,
+      hasMore: false,
+    });
+    fakeEngine.method('engage.unbookmark').mockImplementation(async (target: { id: string }) => unbookmarkTicket(target.id));
+    renderScreen(<BookmarksScreen />);
+    await flush();
+
+    fireEvent(screen.getByTestId('bookmarks-menu'), 'pressAction', { nativeEvent: { event: 'clear' } });
+    await act(async () => alert?.press('Clear all'));
+    await flush();
+    // The first removal is still pending: the second waits.
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('bookmarks-clearing')).toBeTruthy();
+
+    const issued = await fakeEngine.method('engage.unbookmark').mock.results[0]!.value;
+    act(() => fakeEngine.emit('write.status', advance(issued, { state: 'failed' })));
+    await flush();
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledTimes(1);
+    expect(useToastStore.getState().current?.message).toBe('Removed 0 of 2 bookmarks');
+    expect(screen.getByText('Film grain')).toBeTruthy();
+  });
+
+  it('offers to load more when a later page fails', async () => {
+    fakeEngine
+      .method('engage.bookmarks')
+      .mockResolvedValueOnce({ items: [saved('b1', 'Film grain')], cursor: 'c1', hasMore: true })
+      .mockRejectedValueOnce(new Error('timeout'))
+      .mockResolvedValueOnce({ items: [saved('b2', 'Kiln day')], cursor: null, hasMore: false });
+    renderScreen(<BookmarksScreen />);
+    await flush();
+    await act(async () => fireEvent(screen.getByTestId('bookmarks-list'), 'endReached'));
+    await flush();
+    // The failed page stops paging; the footer offers it again.
+    expect(screen.getByText('Film grain')).toBeTruthy();
+    await act(async () => fireEvent.press(screen.getByTestId('bookmarks-load-more')));
+    await flush();
+    expect(screen.getByText('Kiln day')).toBeTruthy();
+    expect(screen.queryByTestId('bookmarks-load-more')).toBeNull();
   });
 
   it('shows the empty state', async () => {

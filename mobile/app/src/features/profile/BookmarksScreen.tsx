@@ -1,4 +1,4 @@
-import type { PostDTO } from '@engine/api';
+import type { PostDTO, WriteTicket } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState, type ReactElement } from 'react';
@@ -6,6 +6,7 @@ import { Pressable, RefreshControl, View } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { BookmarkIcon, EllipsisHorizontalIcon, TrashIcon } from 'react-native-heroicons/outline';
 
+import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
 import { useEngineInfiniteQuery } from '~/data/queries';
 import { useSession } from '~/data/session';
@@ -13,6 +14,7 @@ import { runWrite, sendWrite } from '~/data/writes';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { bookmarkWrite } from '~/features/post/post-writes';
 import { PostItem } from '~/features/post/PostItem';
+import { Button } from '~/ui/Button';
 import { ContextMenu } from '~/ui/ContextMenu';
 import { confirmAlert } from '~/ui/Dialog';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -27,6 +29,33 @@ import { toast } from '~/ui/toast';
 import { filterBookmarks, stillBookmarked } from './bookmarks-filter';
 
 const remove = (post: PostDTO) => sendWrite(bookmarkWrite, { post, bookmark: false }, 'Removed from bookmarks');
+
+/**
+ * Resolves with the ticket once it leaves `pending` (its `write.status`), or
+ * null if the account changes first: that account's tickets never report again.
+ */
+function settled(ticket: WriteTicket, identityId: string | null): Promise<WriteTicket | null> {
+  if (ticket.state !== 'pending') return Promise.resolve(ticket);
+  return new Promise((resolve) => {
+    const stops: (() => void)[] = [];
+    const finish = (result: WriteTicket | null) => {
+      for (const stop of stops) stop();
+      resolve(result);
+    };
+    stops.push(
+      onEngineEvent('write.status', (next) => {
+        if (next.id === ticket.id && next.state !== 'pending') finish(next);
+      }),
+      onEngineEvent('session.changed', ({ session }) => {
+        if ((session?.identityId ?? null) !== identityId) finish(null);
+      }),
+    );
+  });
+}
+
+/** A removal that went through: confirmed, or unconfirmed but not proved absent (PRD G-3, as for every engagement). */
+const removedBy = (ticket: WriteTicket | null) =>
+  ticket !== null && (ticket.state === 'confirmed' || (ticket.state === 'unconfirmed' && !ticket.retryable));
 
 /** Swipe left for "Remove" (UX_SPEC §4.24); the card's own bookmark button works too. */
 function BookmarkRow({ post }: { post: PostDTO }) {
@@ -71,7 +100,7 @@ function BookmarkRow({ post }: { post: PostDTO }) {
  */
 export function BookmarksScreen() {
   const c = useColors();
-  const { signedIn, status } = useSession();
+  const { signedIn, status, identityId } = useSession();
   const [query, setQuery] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -117,12 +146,15 @@ export function BookmarksScreen() {
         more = complete && next.hasNextPage === true;
       }
       const all = (data?.pages ?? []).flatMap((page) => page.items).filter(stillBookmarked);
-      // One at a time, stopping at the first that doesn't go through: the tracker already
-      // says why, and the rest would most likely fail the same way, each with its own toast.
+      // One at a time, each settled before the next, stopping at the first that doesn't go
+      // through: the tracker already says why, and the rest would most likely fail the same
+      // way, each with its own toast. A queued removal (one for that post was already
+      // pending) isn't counted: its outcome is the pending write's.
       let removed = 0;
       for (const post of all) {
         const result = await runWrite(bookmarkWrite, { post, bookmark: false });
-        if (result.status !== 'submitted' && result.status !== 'queued') break;
+        if (result.status === 'queued') continue;
+        if (result.status !== 'submitted' || !removedBy(await settled(result.ticket, identityId))) break;
         removed += 1;
       }
       if (removed === all.length && complete) toast.success('All bookmarks cleared');
@@ -224,6 +256,17 @@ export function BookmarksScreen() {
           list.isFetchingNextPage ? (
             <View className="items-center p-6">
               <Spinner size="sm" />
+            </View>
+          ) : list.isFetchNextPageError ? (
+            <View className="items-center p-6">
+              <Button
+                label="Load more"
+                size="sm"
+                onPress={() => {
+                  list.fetchNextPage().catch(() => undefined);
+                }}
+                testID="bookmarks-load-more"
+              />
             </View>
           ) : null
         }
