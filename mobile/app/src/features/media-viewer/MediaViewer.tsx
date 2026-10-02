@@ -1,5 +1,6 @@
 import type { MediaDTO, PostDTO } from '@engine/api/dto';
 import { Image } from 'expo-image';
+import { NavigationBar } from 'expo-navigation-bar';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useState, type ComponentProps, type ReactNode } from 'react';
@@ -208,6 +209,8 @@ export function MediaViewer({ postId, initialIndex }: { postId: string; initialI
     return (
       <View className="flex-1 bg-black" testID="media-viewer">
         <StatusBar style="light" />
+        {/* Light handle and buttons on black, whatever the theme (Android). */}
+        <NavigationBar style="light" />
         <View className="flex-1 items-center justify-center gap-3">
           {isPending ? (
             <Spinner size="md" color={WHITE} />
@@ -452,6 +455,7 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
   return (
     <View className="flex-1" testID="media-viewer">
       <StatusBar style="light" hidden={!chrome} animated />
+      <NavigationBar style="light" />
       <Animated.View
         style={[{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.black }, backdropStyle]}
       />

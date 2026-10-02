@@ -121,7 +121,12 @@ before you change anything here.
 `useAppearance().setTheme('light' | 'dark' | 'system')` overrides it app-wide,
 and the choice is persisted and validated in MMKV. The root layout keeps the
 splash up until a persisted override has reached NativeWind, so there's no
-wrong-theme flash on cold start.
+wrong-theme flash on cold start. The status bar and Android's navigation bar
+follow the effective theme (`ThemedStatusBar`, `ThemedNavigationBar` in the
+root layout). A screen with a fixed background of its own mounts its own
+`<StatusBar>` and `<NavigationBar>` (expo-navigation-bar) over them, as the
+media viewer does. Only the bar's button style can be set: the app is edge to
+edge, so its background is whatever the screen draws behind it.
 
 ## Build variants
 
@@ -182,8 +187,8 @@ rebuild.** Screen PRs share one dev-client build, so they use only these:
 `expo` and its modules (`expo-application`, `expo-clipboard`,
 `expo-constants`, `expo-crypto`, `expo-dev-client`, `expo-file-system`,
 `expo-haptics`, `expo-image`, `expo-linking`, `expo-local-authentication`,
-`expo-router`, `expo-screen-capture` (iOS only), `expo-secure-store`, `expo-sharing`,
-`expo-splash-screen`, `expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
+`expo-navigation-bar` (Android), `expo-router`, `expo-screen-capture` (iOS
+only), `expo-secure-store`, `expo-sharing`, `expo-splash-screen`, `expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
 `@react-native-community/netinfo`, `@react-native-menu/menu` (native
 long-press and dropdown menus; zeego 3 cannot build on RN 0.86),
 `@react-native-segmented-control/segmented-control`,

@@ -24,6 +24,7 @@ import { MediaUrlProvider } from '~/ui/media-url';
 import { ToastHost } from '~/ui/ToastHost';
 import { persistOptions, queryClient } from '~/state/query-client';
 import { stackScreenOptions } from '~/ui/stack-options';
+import { ThemedNavigationBar } from '~/ui/ThemedNavigationBar';
 import { ThemedStatusBar } from '~/ui/ThemedStatusBar';
 import { navigationTheme } from '~/ui/tokens';
 
@@ -159,6 +160,7 @@ export default function RootLayout() {
                 {/* Welcome, the terms gate, the account switcher and the app lock (S1); the lock stays on top. */}
                 <AuthGates />
                 <ThemedStatusBar />
+                <ThemedNavigationBar />
               </BottomSheetModalProvider>
               {/* After the sheets' portal host, so an open sheet doesn't cover a toast. */}
               <Toasts />
