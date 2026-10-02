@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { AppState, Image, View } from 'react-native';
+import { Image } from 'expo-image';
+import { AppState, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cn } from '~/lib-allowlist';

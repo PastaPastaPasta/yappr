@@ -25,6 +25,7 @@ export function TopOverlay({ children }: { children: ReactNode }) {
       visible
       transparent
       animationType="none"
+      hardwareAccelerated
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={ignoreBack}
