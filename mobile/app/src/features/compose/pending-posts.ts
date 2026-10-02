@@ -598,12 +598,13 @@ export function startPendingPosts(): () => void {
       (event.type === 'added' && event.query.state.data !== undefined);
     if (loaded && listKind(event.query.queryKey)) placeCards([event.query]);
   });
-  let reconciledEpoch = -1;
+  // Once per engine boot and account.
+  let reconciled = '';
   const onSession = () => {
     const { status, session } = useSessionStore.getState();
-    const epoch = engineSupervisor.getStatus().epoch;
-    if (status !== 'signed-in' || !session || epoch === reconciledEpoch) return;
-    reconciledEpoch = epoch;
+    const key = `${engineSupervisor.getStatus().epoch}:${session?.identityId ?? ''}`;
+    if (status !== 'signed-in' || !session || key === reconciled) return;
+    reconciled = key;
     reconcile(session.identityId);
     placeCards();
   };
