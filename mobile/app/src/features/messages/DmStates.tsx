@@ -10,13 +10,13 @@ import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
-/** UX_SPEC §4.37: the Messages tab signed out. */
-export function DmSignedOut() {
+/** UX_SPEC §4.37: the Messages tab signed out (legacy DMs have no groups). */
+export function DmSignedOut({ groups = true }: { groups?: boolean }) {
   return (
     <EmptyState
       icon={EnvelopeIcon}
       title="Sign in to read your messages"
-      description="Private 1-on-1 and group conversations."
+      description={groups ? 'Private 1-on-1 and group conversations.' : 'Private 1-on-1 conversations.'}
       action={{ label: 'Sign in', onPress: () => router.push('/sign-in') }}
       testID="messages-signed-out"
     />

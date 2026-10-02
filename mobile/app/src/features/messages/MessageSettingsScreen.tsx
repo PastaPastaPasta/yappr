@@ -197,7 +197,8 @@ export function MessageSettingsScreen() {
         </View>
       )}
       <SectionHeader title="Blocked" />
-      {status.data ? <BlockedList ids={status.data.blocked} /> : <RowSkeleton />}
+      {/* Not before the saved state loads: an empty list would read as "Nobody". */}
+      {status.data?.ready ? <BlockedList ids={status.data.blocked} /> : <RowSkeleton />}
       <View className="h-10" />
     </Screen>
   );

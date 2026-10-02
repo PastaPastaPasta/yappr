@@ -205,7 +205,7 @@ export function InboxScreen() {
     return (
       <Screen scroll>
         {header}
-        <DmSignedOut />
+        <DmSignedOut groups={v5} />
       </Screen>
     );
   }
@@ -268,6 +268,7 @@ export function InboxScreen() {
         <LinkText
           label={showHidden ? 'Hide deleted conversations' : `Show ${hiddenCount} deleted conversation${hiddenCount === 1 ? '' : 's'}`}
           onPress={() => setShowHidden((shown) => !shown)}
+          className="self-center"
           testID="messages-toggle-hidden"
         />
       </View>

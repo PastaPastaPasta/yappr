@@ -1,4 +1,5 @@
 import type { AuthorDTO, ProfileDTO, UserSummaryDTO } from '@engine/api';
+import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 import { CheckCircleIcon, MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
@@ -134,10 +135,11 @@ export function UserPicker({
     (api, cursor) => api.graph.followers(viewerId, cursor),
     { enabled: text.length === 0 },
   );
+  // The last results stay while the next search loads, so rows don't flash (or move under a tap).
   const search = useEngineQuery<UserSummaryDTO[]>(
     queryKeys.explore.search('users', text),
     (api) => api.explore.searchUsers(text),
-    { enabled: searching },
+    { enabled: searching, placeholderData: keepPreviousData },
   );
   const lookup = useEngineQuery<ProfileDTO | null>(queryKeys.profile.detail(text), (api) => api.profiles.get(text), {
     enabled: byId,
@@ -182,13 +184,14 @@ export function UserPicker({
     else body = rows([lookup.data]);
   } else if (!searching) {
     body = <Hint text="Type at least 3 characters to search, or paste a full identity ID" testID="picker-hint" />;
-  } else if (search.isPending || typing) {
-    body = <Loading label="Searching…" />;
-  } else if (search.isError) {
+  } else if (search.isError && !search.data) {
     body = <Hint text="Search failed. Check your connection and try again." />;
+  } else if (!search.data) {
+    body = <Loading label="Searching…" />;
   } else {
-    const found = (search.data ?? []).filter((u) => u.id !== viewerId);
-    body = found.length === 0 ? <Hint text={`No users found for "${text}"`} /> : rows(found);
+    const found = search.data.filter((u) => u.id !== viewerId);
+    if (found.length > 0) body = rows(found);
+    else body = search.isPlaceholderData || typing ? <Loading label="Searching…" /> : <Hint text={`No users found for "${text}"`} />;
   }
 
   return (

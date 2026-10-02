@@ -1,4 +1,5 @@
 import type { ConversationDTO } from '@engine/api';
+import { useNetInfo } from '@react-native-community/netinfo';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
 import { router, Stack, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -15,6 +16,8 @@ import { IconButton } from '~/ui/IconButton';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
+import { toast } from '~/ui/toast';
+import { useColors } from '~/ui/tokens';
 
 import { Composer, ComposerBanner } from './Composer';
 import { ConversationAvatar } from './ConversationAvatar';
@@ -116,6 +119,7 @@ export function ConversationScreen() {
   const { signedIn, viewerId } = useDmViewer();
   const backend = useDmBackend();
   const v5 = backend !== 'legacy';
+  const c = useColors();
   const insets = useSafeAreaInsets();
   // The bottom follows the keyboard frame by frame (Android edge-to-edge never resizes the window).
   const keyboard = useAnimatedKeyboard();
@@ -131,7 +135,14 @@ export function ConversationScreen() {
   const conversation = useConversation(key, ready);
   const messages = useMessages(key, ready);
   const settings = useDmSettings(ready && backend === 'legacy');
-  const people = usePeople(conversation?.kind === 'group' ? conversation.members : [], ready);
+  // Members, and anyone who wrote here (a member who has left keeps their name on their messages).
+  const group = conversation?.kind === 'group';
+  const members = conversation?.members;
+  const senderIds = useMemo(
+    () => (group ? [...(members ?? []), ...messages.items.filter((m) => !m.own).map((m) => m.sender)] : []),
+    [group, members, messages.items],
+  );
+  const people = usePeople(senderIds, ready);
   const outbox = useOutboxFor(viewerId, key);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const closeUnlock = useCallback(() => setUnlockOpen(false), []);
@@ -186,9 +197,15 @@ export function ConversationScreen() {
     return () => sub.remove();
   }, [scrollToNewest]);
 
+  const offline = useNetInfo().isConnected === false;
   const send = () => {
     const text = draft;
     if (!viewerId || !text.trim()) return;
+    if (offline) {
+      // PRD G-1: nothing is sent, and the text stays in the composer.
+      toast("You're offline. Nothing was sent.");
+      return;
+    }
     setDraft('');
     sendInBackground(viewerId, key, text);
     scrollToNewest();
@@ -289,14 +306,13 @@ export function ConversationScreen() {
     );
   }
 
-  const group = conversation?.kind === 'group';
   const blockedReason = composerBlockedReason(conversation);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = messages;
 
   return (
     <Screen>
       {header}
-      <Animated.View style={[{ flex: 1 }, keyboardPadding]}>
+      <View className="flex-1">
         {empty ?? (
           <FlashList
             ref={listRef}
@@ -337,6 +353,9 @@ export function ConversationScreen() {
             testID="dm-messages"
           />
         )}
+      </View>
+      {/* The bar and the space under it (keyboard or home indicator) share its color. */}
+      <Animated.View style={[{ backgroundColor: blockedReason ? c.bgMuted : c.bg }, keyboardPadding]}>
         {blockedReason ? (
           <ComposerBanner text={blockedReason} />
         ) : (

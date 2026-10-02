@@ -1,6 +1,6 @@
 import type { ConversationDTO } from '@engine/api';
-import { Stack, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { EllipsisHorizontalIcon, PlusCircleIcon, UserGroupIcon } from 'react-native-heroicons/outline';
 
@@ -24,7 +24,7 @@ import { TextField } from '~/ui/TextField';
 import { tw, useColors } from '~/ui/tokens';
 
 import { ConversationAvatar } from './ConversationAvatar';
-import { useConversation, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
+import { useConversations, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
 import { conversationTitle, memberCount } from './dm-model';
 import {
   addMemberWrite,
@@ -130,7 +130,8 @@ export function GroupInfoScreen() {
   const backend = useDmBackend();
   const status = useDmStatus(signedIn);
   const ready = signedIn && status.data !== undefined && !status.data.locked;
-  const conversation = useConversation(key, ready);
+  const conversations = useConversations(ready);
+  const conversation = conversations.data?.find((c) => c.key === key);
   const people = usePeople(conversation?.members ?? [], ready);
 
   const rename = useWrite(renameGroupWrite);
@@ -140,6 +141,12 @@ export function GroupInfoScreen() {
   const leave = useWrite(leaveGroupWrite);
   const end = useWrite(endGroupWrite);
   const busy = [rename, add, remove, resend, leave, end].some((w) => w.status === 'pending');
+
+  // A member who left no longer holds the group: back to the inbox.
+  const left = leave.status === 'confirmed';
+  useEffect(() => {
+    if (left) router.dismissTo('/messages');
+  }, [left]);
 
   const [renaming, setRenaming] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -151,6 +158,21 @@ export function GroupInfoScreen() {
       <Screen>
         {header}
         <EmptyState icon={UserGroupIcon} title="Groups aren't available on this network" />
+      </Screen>
+    );
+  }
+  if (!conversation && conversations.data) {
+    // Gone from this device: left (and dropped), or never held here.
+    return (
+      <Screen>
+        {header}
+        <EmptyState
+          icon={UserGroupIcon}
+          title="This group isn't available"
+          description="You may have left it, or it is not on this device."
+          action={{ label: 'Back to messages', onPress: () => router.dismissTo('/messages') }}
+          testID="group-info-missing"
+        />
       </Screen>
     );
   }
