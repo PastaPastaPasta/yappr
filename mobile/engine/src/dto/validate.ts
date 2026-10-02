@@ -185,7 +185,7 @@ export const notificationDTO = object(
     target: nullable(object({ id, kind: literal('post', 'reply') })),
     preview: nullable(postDTO),
   },
-  { blog: object({ blogId: nonEmpty, slug: nonEmpty }) },
+  { blog: object({ blogId: nonEmpty, slug: nonEmpty }), likers: count, noticed: bool },
 )
 
 /** Every problem with `value`, as `path: message` lines; empty when it is valid. */

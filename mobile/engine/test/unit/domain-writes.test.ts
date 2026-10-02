@@ -586,6 +586,7 @@ describe('notifications', () => {
   beforeEach(() => {
     useNotificationStore.setState({ notifications: [], readIds: [], lastFetchTimestamp: 0 })
     useSettingsStore.getState().setNotificationSettings({ likes: true, follows: true })
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map())
   })
 
   it('loads once per account, filters by tab, pages by keyset and marks the visible ones read', async () => {
@@ -638,12 +639,76 @@ describe('notifications', () => {
     expect(m.notificationService.getInitialNotifications).toHaveBeenLastCalledWith(id('Other'), new Set())
   })
 
+  it('carries a v11 aggregated like\'s liker count and its noticed time (NOTIF-06)', async () => {
+    const notifications = createNotificationsModule(emit).api
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [
+        { ...notification('batch', 'like', 300), likerCount: 4, timeless: true },
+        { ...notification('single', 'like', 200), likerCount: 1, timeless: true },
+        notification('timed', 'like', 100),
+      ],
+      latestTimestamp: 100,
+    })
+    const { items } = await notifications.list({ filter: 'like' })
+    expect(validate(page(notificationDTO), { items, cursor: null, hasMore: false })).toEqual([])
+    expect(items.map(({ likers, noticed }) => ({ likers, noticed }))).toEqual([
+      { likers: 4, noticed: true },
+      { likers: undefined, noticed: true },
+      { likers: undefined, noticed: undefined },
+    ])
+  })
+
+  it('says "your reply" only when the topology tells what a reply answered', async () => {
+    const notifications = createNotificationsModule(emit).api
+    const reply = (key: string, at: number, targetKind?: 'post' | 'reply') =>
+      ({ ...notification(key, 'reply', at), post: { ...post(id(`N${key}`)), targetKind: 'reply' }, ...(targetKind ? { targetKind } : {}) })
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [reply('v2', 300), reply('toPost', 200, 'post'), reply('toReply', 100, 'reply')],
+      latestTimestamp: 300,
+    })
+    const { items } = await notifications.list({ filter: 'reply' })
+    expect(items.map(item => item.target?.kind)).toEqual(['post', 'post', 'reply'])
+  })
+
+  it('drops blocked actors from the list and the badge, and follows a block or unblock (NOTIF-08)', async () => {
+    const BLOCKED = id('Blocked')
+    const from = (key: string, type: string, at: number, actor: string) => ({ ...notification(key, type, at), from: { ...user(actor), displayName: 'B' } })
+    const notifications = createNotificationsModule(emit).api
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [from('x', 'like', 300, BLOCKED), notification('a', 'like', 200), from('y', 'follow', 100, BLOCKED)],
+      latestTimestamp: 300,
+    })
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, true], [AUTHOR, false]]))
+    expect((await notifications.list()).items.map(item => item.id)).toEqual(['a'])
+    expect(m.blockService.checkBlockedBatch).toHaveBeenCalledWith(VIEWER, [BLOCKED, AUTHOR])
+    expect(await notifications.unreadCount()).toBe(1)
+
+    // A failed block read keeps what was known rather than showing them again.
+    m.blockService.checkBlockedBatch.mockRejectedValue(new Error('timeout'))
+    m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [from('z', 'mention', 400, BLOCKED)], latestTimestamp: 400 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
+
+    // Unblocked: the next poll recounts the badge, says the lists changed, and the next first page shows them.
+    emitted = []
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, false], [AUTHOR, false]]))
+    m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [], latestTimestamp: 400 })
+    expect(await notifications.poll()).toEqual({ added: 0, unread: 4, blockedChanged: true })
+    expect(emitted).toEqual([{ event: 'notifications.count', payload: { unread: 4 } }])
+    expect((await notifications.list()).items.map(item => item.id)).toEqual(['z', 'x', 'a', 'y'])
+
+    // Blocked again, seen first by a list read: the badge follows.
+    emitted = []
+    m.blockService.checkBlockedBatch.mockResolvedValue(new Map([[BLOCKED, true], [AUTHOR, false]]))
+    expect((await notifications.list()).items.map(item => item.id)).toEqual(['a'])
+    expect(emitted).toEqual([{ event: 'notifications.count', payload: { unread: 1 } }])
+  })
+
   it('polls from the watermark and merges what arrived', async () => {
     const notifications = createNotificationsModule(emit).api
     m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 1 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 1, blockedChanged: false })
     m.notificationService.pollNewNotifications.mockResolvedValue({ notifications: [notification('b', 'follow', 200)], latestTimestamp: 200 })
-    expect(await notifications.poll()).toEqual({ added: 1, unread: 2 })
+    expect(await notifications.poll()).toEqual({ added: 1, unread: 2, blockedChanged: false })
     expect(m.notificationService.pollNewNotifications).toHaveBeenCalledWith(VIEWER, 100, expect.any(Set))
     expect(emitted.at(-1)).toEqual({ event: 'notifications.count', payload: { unread: 2 } })
     m.viewer = null

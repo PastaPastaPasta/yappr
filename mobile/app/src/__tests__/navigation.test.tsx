@@ -119,7 +119,7 @@ describe('app shell', () => {
     ['/explore', 'explore and search'],
     ['/explore/search?q=dash', 'explore and search'],
     ['/explore/search/people?q=dash', 'explore and search'],
-    ['/notifications', 'notifications'],
+    ['/notifications', null],
     ['/messages', 'messages'],
     ['/messages/settings', 'messages'],
     ['/messages/c1', 'messages'],
