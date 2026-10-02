@@ -1,7 +1,7 @@
 import type { ConversationDTO } from '@engine/api';
 import { useNetInfo } from '@react-native-community/netinfo';
 import { FlashList, type FlashListRef } from '@shopify/flash-list';
-import { router, Stack, useFocusEffect, useLocalSearchParams, useNavigation } from 'expo-router';
+import { router, Stack, useFocusEffect, useIsFocused, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Keyboard, Platform, Pressable, View } from 'react-native';
 import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
@@ -14,6 +14,7 @@ import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
 import { Screen } from '~/ui/Screen';
+import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
@@ -122,6 +123,7 @@ export function ConversationScreen() {
   const v5 = backend !== 'legacy';
   const c = useColors();
   const insets = useSafeAreaInsets();
+  useBlockScreenCapture('private', useIsFocused());
   // The bottom follows the keyboard frame by frame (Android edge-to-edge never resizes the window).
   const keyboard = useAnimatedKeyboard();
   const bottomInset = insets.bottom;

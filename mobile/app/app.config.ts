@@ -1,5 +1,6 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
+import pkg from './package.json';
 import { engineExtra } from './plugins/engine-assets';
 import { isVariant, VARIANTS, type Variant } from './src/variants.ts';
 
@@ -25,50 +26,129 @@ function resolveVariant(raw: string | undefined): Variant {
   return value;
 }
 
-// The icon's own background, so the splash and adaptive icon blend with it.
-const ICON_BACKGROUND = '#1088d2';
+/**
+ * The store build number: iOS `CFBundleVersion` and Android `versionCode`.
+ * Both stores need it to grow with every upload, so CI sets
+ * YAPPR_BUILD_NUMBER from its run counter; local builds default to 1. The
+ * user-facing version is `version` in package.json.
+ */
+export function resolveBuildNumber(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return 1;
+  const value = Number(raw);
+  // Google Play's versionCode ceiling.
+  if (!/^\d+$/.test(raw) || value < 1 || value > 2_100_000_000) {
+    throw new Error(`YAPPR_BUILD_NUMBER must be an integer from 1 to 2100000000, got "${raw}".`);
+  }
+  return value;
+}
+
+// The fox icon's own background (#0f87cf), so the splash and adaptive icon blend with it.
+const ICON_BACKGROUND = '#0f87cf';
+/** The app's dark page surface (`colors.neutral900` in src/ui/tokens.ts). */
+const DARK_BACKGROUND = '#171717';
+
+/**
+ * Apple's required-reason APIs (C9). The app collects nothing and tracks
+ * nothing (ADR-001: no analytics or crash SDKs); the reasons are React
+ * Native's and Expo's own uses, for data on the device only. SDK 57 links
+ * some Expo modules as precompiled frameworks whose privacy bundles are
+ * empty, so their reasons (expo-file-system's disk space) are declared here.
+ */
+const PRIVACY_MANIFEST = {
+  NSPrivacyTracking: false,
+  NSPrivacyTrackingDomains: [],
+  NSPrivacyCollectedDataTypes: [],
+  NSPrivacyAccessedAPITypes: [
+    // App-own preferences (React Native, Expo modules).
+    { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryUserDefaults', NSPrivacyAccessedAPITypeReasons: ['CA92.1'] },
+    // Timestamps of files inside the app container (caches, MMKV, the engine bundle).
+    { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryFileTimestamp', NSPrivacyAccessedAPITypeReasons: ['C617.1'] },
+    // Elapsed time for timers and performance marks (React Native).
+    { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategorySystemBootTime', NSPrivacyAccessedAPITypeReasons: ['35F9.1'] },
+    // Free space checked before writing files (expo-file-system).
+    { NSPrivacyAccessedAPIType: 'NSPrivacyAccessedAPICategoryDiskSpace', NSPrivacyAccessedAPITypeReasons: ['E174.1'] },
+  ],
+};
+
+/**
+ * Permissions that Expo's template or a library's manifest adds and the app
+ * never uses. Removed from the merged manifest (`tools:node="remove"`).
+ */
+const BLOCKED_ANDROID_PERMISSIONS = [
+  'android.permission.READ_EXTERNAL_STORAGE',
+  'android.permission.WRITE_EXTERNAL_STORAGE',
+  'android.permission.READ_MEDIA_IMAGES',
+  'android.permission.READ_MEDIA_VIDEO',
+  'android.permission.READ_MEDIA_AUDIO',
+  'android.permission.SYSTEM_ALERT_WINDOW',
+  'android.permission.RECORD_AUDIO',
+  'android.permission.CAMERA',
+  // Play install referrer, bundled by expo-application; the app never reads it.
+  'com.google.android.finsky.permission.BIND_GET_INSTALL_REFERRER_SERVICE',
+];
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const variant = resolveVariant(process.env.APP_VARIANT);
   const v = VARIANTS[variant];
+  const buildNumber = resolveBuildNumber(process.env.YAPPR_BUILD_NUMBER);
+  // Per-variant icons from scripts/generate-icons.mjs: devnet and testnet carry a DEV / BETA badge.
+  const icons = `./assets/images/icons/${variant}`;
 
   return {
     ...config,
     name: v.name,
     slug: 'yappr',
-    version: '1.0.0',
+    version: pkg.version,
     orientation: 'portrait',
-    icon: './assets/images/icon.png',
+    icon: `${icons}/ios-light.png`,
     scheme: v.scheme,
     userInterfaceStyle: 'automatic',
     ios: {
       bundleIdentifier: v.applicationId,
+      buildNumber: String(buildNumber),
       supportsTablet: false,
+      icon: {
+        light: `${icons}/ios-light.png`,
+        dark: `${icons}/ios-dark.png`,
+        tinted: `${icons}/ios-tinted.png`,
+      },
+      // secp256k1, XChaCha20-Poly1305 and AES-GCM from libraries, not iOS (COMPLIANCE.md, Encryption export).
+      config: { usesNonExemptEncryption: true },
+      privacyManifests: PRIVACY_MANIFEST,
     },
     android: {
       package: v.applicationId,
+      versionCode: buildNumber,
       adaptiveIcon: {
-        foregroundImage: './assets/images/icon.png',
+        foregroundImage: `${icons}/android-foreground.png`,
+        monochromeImage: `${icons}/android-monochrome.png`,
         backgroundColor: ICON_BACKGROUND,
       },
+      // Keys and their wrapped stores must never leave the device (plugins/release-hardening also
+      // opts out of Android 12+ device-to-device transfer, which allowBackup does not cover).
+      allowBackup: false,
+      blockedPermissions: BLOCKED_ANDROID_PERMISSIONS,
       predictiveBackGestureEnabled: false,
     },
     plugins: [
       'expo-router',
-      'expo-secure-store',
+      // The app opts out of Android backup entirely (above), so no secure-store backup rules.
+      ['expo-secure-store', { configureAndroidBackup: false }],
       'expo-web-browser',
       [
         'expo-local-authentication',
         { faceIDPermission: 'Allow Yappr to use Face ID to unlock your accounts.' },
       ],
       ['./plugins/engine-assets', { variant }],
+      './plugins/release-hardening',
       './plugins/wallet-schemes',
       [
         'expo-splash-screen',
         {
-          image: './assets/images/icon.png',
-          imageWidth: 160,
+          image: './assets/images/splash-icon.png',
+          imageWidth: 180,
           backgroundColor: ICON_BACKGROUND,
+          dark: { image: './assets/images/splash-icon.png', backgroundColor: DARK_BACKGROUND },
         },
       ],
     ],

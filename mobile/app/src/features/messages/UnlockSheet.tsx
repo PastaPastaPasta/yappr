@@ -10,6 +10,7 @@ import { appendLog, errorMessage } from '~/engine/logs';
 import { openExternal } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
+import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Sheet } from '~/ui/Sheet';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -49,6 +50,7 @@ function UnlockBody({
   const c = useColors();
   const [phase, setPhase] = useState<Phase>('recovering');
   const [key, setKey] = useState('');
+  useBlockScreenCapture('secret');
   const [error, setError] = useState<string | null>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 

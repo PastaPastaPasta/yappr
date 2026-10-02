@@ -15,6 +15,7 @@ import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
+import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { toast } from '~/ui/toast';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
@@ -159,6 +160,8 @@ export function InboxScreen() {
       return () => setFocused(false);
     }, []),
   );
+  // Conversation previews stay out of Android's Recents and screenshots.
+  useBlockScreenCapture('private', focused);
 
   const status = useDmStatus(signedIn);
   const locked = status.data?.locked === true;

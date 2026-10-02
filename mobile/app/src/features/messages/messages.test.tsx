@@ -1,7 +1,7 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -94,6 +94,17 @@ async function renderAt(initialUrl: string) {
   await act(async () => {});
 }
 
+const nativeCapture = jest.requireMock<{ isCaptureBlocked: () => boolean }>('../../../modules/secure-window');
+async function onAndroid(run: () => Promise<void>) {
+  const os = Platform.OS;
+  Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+  try {
+    await run();
+  } finally {
+    Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+  }
+}
+
 const signIn = () => useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
 
 beforeAll(() => notifyManager.setScheduler((callback) => callback()));
@@ -115,6 +126,19 @@ beforeEach(() => {
 });
 
 describe('Messages inbox (DM-01, DM-02)', () => {
+  it('keeps the inbox out of Android Recents and screenshots while it is open', async () => {
+    await onAndroid(async () => {
+      signIn();
+      fakeEngine.method('dm.status').mockResolvedValue(status());
+      fakeEngine.method('dm.conversations').mockResolvedValue([]);
+      await renderAt('/messages');
+      expect(nativeCapture.isCaptureBlocked()).toBe(true);
+      rendered?.unmount();
+      rendered = null;
+      expect(nativeCapture.isCaptureBlocked()).toBe(false);
+    });
+  });
+
   it('signed out, invites the user to sign in and reads nothing', async () => {
     await renderAt('/messages');
     expect(screen.getByText('Sign in to read your messages')).toBeTruthy();
@@ -128,10 +152,13 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     await renderAt('/messages');
     expect(screen.getByText('Unlock your messages')).toBeTruthy();
     expect(fakeEngine.method('dm.conversations')).not.toHaveBeenCalled();
+    // The inbox itself is Android-only private; on iOS only the key sheet blocks screenshots.
+    expect(nativeCapture.isCaptureBlocked()).toBe(false);
 
     fireEvent.press(screen.getByText('Enter encryption key'));
     await act(async () => {});
     expect(fakeEngine.method('dm.unlock')).toHaveBeenCalledWith({});
+    expect(nativeCapture.isCaptureBlocked()).toBe(true);
 
     fakeEngine.method('dm.unlock').mockResolvedValueOnce({ unlocked: true, status: status() });
     fireEvent.changeText(screen.getByTestId('dm-unlock-key'), 'cWIFkey');
@@ -271,6 +298,16 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('hey, coming?')).toBeTruthy();
     expect(fakeEngine.method('dm.open')).toHaveBeenCalledWith(KEY);
     expect(fakeEngine.method('dm.markRead')).toHaveBeenCalledWith(KEY);
+  });
+
+  it('keeps the conversation out of Android Recents and screenshots while it is open', async () => {
+    await onAndroid(async () => {
+      await openConversation();
+      expect(nativeCapture.isCaptureBlocked()).toBe(true);
+      rendered?.unmount();
+      rendered = null;
+      expect(nativeCapture.isCaptureBlocked()).toBe(false);
+    });
   });
 
   it('sends: a "Sending…" bubble at once, then the engine’s own message with "Sent"', async () => {

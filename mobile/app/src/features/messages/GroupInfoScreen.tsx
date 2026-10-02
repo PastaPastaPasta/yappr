@@ -1,5 +1,5 @@
 import type { ConversationDTO } from '@engine/api';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { EllipsisHorizontalIcon, PlusCircleIcon, UserGroupIcon } from 'react-native-heroicons/outline';
@@ -18,6 +18,7 @@ import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { RowSkeleton } from '~/ui/Skeleton';
 import { Screen } from '~/ui/Screen';
+import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
@@ -126,6 +127,7 @@ export function GroupInfoScreen() {
   const { conversationId } = useLocalSearchParams<{ conversationId?: string }>();
   const key = conversationId ?? '';
   const c = useColors();
+  useBlockScreenCapture('private', useIsFocused());
   const { signedIn, viewerId } = useDmViewer();
   const backend = useDmBackend();
   const status = useDmStatus(signedIn);

@@ -60,6 +60,17 @@ jest.mock('expo-secure-store', () => {
     __items: items,
   };
 });
+// FLAG_SECURE on Android, expo-screen-capture on iOS. Tests read `isCaptureBlocked()` and the call log.
+jest.mock('./modules/secure-window', () => {
+  let blocked = false;
+  return {
+    setCaptureBlocked: jest.fn(async (on) => {
+      blocked = on;
+      return true;
+    }),
+    isCaptureBlocked: () => blocked,
+  };
+});
 jest.mock('expo-file-system', () => ({
   Paths: { bundle: { uri: 'file:///bundle/' } },
   // The app bundle's engine page is there; nothing reads files in tests.

@@ -15,4 +15,9 @@ describe('dependencies', () => {
     const installed = Object.keys(lock.packages);
     expect(installed.filter((p) => /(^|\/)node_modules\/@dashevo\//.test(p))).toEqual([]);
   });
+
+  // OTA updates are off for 1.0 (ARCHITECTURE.md, EXECUTION M10); turning them on needs code signing first.
+  it('does not install expo-updates', () => {
+    expect(Object.keys(lock.packages).filter((p) => /(^|\/)node_modules\/expo-updates$/.test(p))).toEqual([]);
+  });
 });

@@ -1,4 +1,4 @@
-import { Stack } from 'expo-router';
+import { Stack, useIsFocused } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { CheckCircleIcon, ExclamationCircleIcon } from 'react-native-heroicons/outline';
@@ -11,6 +11,7 @@ import { isTransient, keyErrorText } from '~/features/auth/errors';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { SignInBody } from '~/features/auth/SignInChrome';
 import { Button } from '~/ui/Button';
+import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
@@ -56,6 +57,7 @@ export default function KeySignInScreen() {
   const activeId = useSessionStore((s) => s.session?.identityId ?? null);
   const [key, setKey] = useState('');
   const [check, setCheck] = useState<Check>({ state: 'idle' });
+  useBlockScreenCapture('secret', useIsFocused());
   const [signingIn, setSigningIn] = useState(false);
   const checkId = useRef(0);
 

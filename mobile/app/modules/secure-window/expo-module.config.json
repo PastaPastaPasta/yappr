@@ -1,0 +1,6 @@
+{
+  "platforms": ["android"],
+  "android": {
+    "modules": ["pr.yap.securewindow.SecureWindowModule"]
+  }
+}
