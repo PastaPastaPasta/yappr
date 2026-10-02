@@ -274,11 +274,13 @@ Arbitrary app routes like this work in dev builds only. Web-form links such as
 compose, media or the gates; reach those by navigating in the app.
 
 Some screens block capture on purpose (`src/ui/screen-capture.ts`, AUTH-12),
-so their screenshots, including `adb exec-out screencap`, come out black:
+so on Android their screenshots, including `adb exec-out screencap`, come out
+black:
 - `useBlockScreenCapture('secret')`: screens that show or take a private key
   (key sign-in, the DM unlock sheet), on both platforms. iOS uses
-  expo-screen-capture. Whether `simctl io screenshot` is blanked is noted
-  in the PR that added it.
+  expo-screen-capture, which blanks the user's screenshots and recordings.
+  `xcrun simctl io screenshot` reads the framebuffer, so it still shows
+  these screens.
 - `useBlockScreenCapture('private')`: the DM inbox, conversations and group
   info, and the whole app while the app lock is on. This is Android only
   (FLAG_SECURE, which also blanks the Recents thumbnail).
