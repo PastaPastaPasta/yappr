@@ -241,6 +241,60 @@ describe('Home', () => {
     expect(screen.queryByTestId('new-posts-pill')).toBeNull();
   });
 
+  it('polls an empty feed for its first posts, from when it was read (FEED-05)', async () => {
+    home().mockResolvedValue(page([]));
+    checkNew().mockResolvedValue({ count: 1, posts: [post('n1', 'the first post', 0)] });
+    await renderHome();
+
+    expect(checkNew()).toHaveBeenCalledWith({ tab: 'forYou', since: expect.any(Date), knownIds: [] });
+    expect(screen.getByTestId('new-posts-pill')).toBeTruthy();
+  });
+
+  it('reloads the first page for a full new-posts answer, the viewer’s pinned post included (FEED-05)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    home().mockResolvedValue(page([post('p1', 'first post', 60)]));
+    const mine = fixturePost({ id: 'mine', content: 'my new post', author: AUTHORS.alice, createdAt: at(0) });
+    const others = Array.from({ length: 49 }, (_, i) => post(`n${i}`, `new ${i}`, 1));
+    checkNew().mockResolvedValue({ count: 50, posts: [mine, ...others] });
+    await renderHome();
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.post.detail('mine'), mine);
+      fakeEngine.emit('content.created', { kind: 'post', id: 'mine', confirmed: false, post: mine });
+    });
+    expect(home()).toHaveBeenCalledTimes(1);
+
+    await act(async () => fireEvent.press(screen.getByTestId('new-posts-pill')));
+
+    // Not prepended: 49 shown, but the engine's answer was full, so there may be a gap behind it.
+    expect(home()).toHaveBeenCalledTimes(2);
+  });
+
+  it('never shows Recent’s new posts on Top (FEED-04, FEED-05)', async () => {
+    const first = post('p1', 'first post', 5);
+    home().mockResolvedValue(page([first]));
+    checkNew().mockResolvedValue({ count: 1, posts: [post('n1', 'newest', 0)] });
+    await renderHome();
+    expect(screen.getByTestId('new-posts-pill')).toBeTruthy();
+
+    // Top's newest is the same post, so the cached Recent answer has the same key.
+    fireEvent(screen.getByTestId('home-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
+    await act(async () => {});
+
+    expect(home()).toHaveBeenLastCalledWith(expect.objectContaining({ sort: 'top' }));
+    expect(screen.queryByTestId('new-posts-pill')).toBeNull();
+  });
+
+  it('pages on when the pages read so far show nothing (FEED-07)', async () => {
+    home().mockResolvedValueOnce(page([], true));
+    home().mockResolvedValueOnce(page([post('p2', 'deeper post', 6)]));
+    await renderHome();
+
+    expect(screen.queryByTestId('feed-empty')).toBeNull();
+    await act(async () => fireEvent.press(screen.getByTestId('feed-load-more')));
+
+    expect(screen.getByText('deeper post')).toBeTruthy();
+  });
+
   it('puts the viewer’s new post on top of For You (PD-3)', async () => {
     useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
     home().mockResolvedValue(page([post('p1', 'first post', 5)]));

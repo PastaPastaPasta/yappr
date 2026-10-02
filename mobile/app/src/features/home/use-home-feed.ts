@@ -72,11 +72,12 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
   };
 
   /**
-   * Put the pill's posts on top of the list. A full answer may have a gap
-   * behind it, so that one reloads the first page instead.
+   * Put the pill's posts on top of the list. A full answer (`full`, counted
+   * before the pinned posts were dropped) may have a gap behind it, so that
+   * one reloads the first page instead.
    */
-  const insertNew = async (posts: readonly PostDTO[]): Promise<Error | null> => {
-    if (posts.length >= NEW_POSTS_LIMIT) return refresh();
+  const insertNew = async ({ posts, full }: NewPosts): Promise<Error | null> => {
+    if (full) return refresh();
     queryClient.setQueryData<FeedData>(queryKeys.feed.home({ tab, sort, window }), (data) =>
       prependToFirstPage(data, posts),
     );
@@ -86,26 +87,37 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
   return { ...feed, refresh, insertNew };
 }
 
+/** The pill's posts, and whether `feed.checkNew` gave its maximum answer (there may be more behind it). */
+export interface NewPosts {
+  posts: PostDTO[];
+  full: boolean;
+}
+
+const NO_NEW_POSTS: NewPosts = { posts: [], full: false };
+
 /**
  * The posts newer than the feed's newest (`feed.checkNew`), polled every
  * 15 s while `enabled`, and once at once whenever it turns on (return to the
  * app or to Home, PRD FEED-05). Each answer is the whole set since the
- * feed's newest post, so nothing accumulates here; inserting them moves the
- * newest and starts over. `items` are the feed's own; `shown` adds what the
- * screen puts above them (the viewer's pinned posts), which the pill skips.
+ * feed's newest post (since `readAt`, when the feed was read, for an empty
+ * one), so nothing accumulates here; inserting them moves the newest and
+ * starts over. `items` are the feed's own; `shown` adds what the screen puts
+ * above them (the viewer's pinned posts), which the pill skips.
  */
 export function useNewPosts({
   tab,
   items,
   shown,
+  readAt,
   enabled,
 }: {
   tab: FeedTab;
   items: readonly PostDTO[];
   shown: readonly PostDTO[];
+  readAt: number;
   enabled: boolean;
-}): PostDTO[] {
-  const since = newestTimestamp(items) ?? 0;
+}): NewPosts {
+  const since = newestTimestamp(items) ?? readAt;
   // The ids from the overlap window the engine re-reads; the newest are first.
   const knownIds = items.slice(0, NEW_POSTS_LIMIT).map((item) => item.id);
   const { data } = useEngineQuery(
@@ -119,7 +131,8 @@ export function useNewPosts({
     },
   );
   return useMemo(() => {
+    if (!data) return NO_NEW_POSTS;
     const seen = new Set(shown.map((item) => item.id));
-    return (data?.posts ?? []).filter((post) => !seen.has(post.id));
+    return { posts: data.posts.filter((post) => !seen.has(post.id)), full: data.posts.length >= NEW_POSTS_LIMIT };
   }, [data, shown]);
 }

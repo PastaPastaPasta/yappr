@@ -143,21 +143,26 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     unpinOwnPosts(pins.filter((post) => inFeed.has(post.id)).map((post) => post.id));
   }, [pins, feedItems]);
 
-  const newPosts = useNewPosts({
+  const polled = useNewPosts({
     tab,
     // The pins are newer than the feed but say nothing about others' posts in between.
     items: feedItems,
     shown: items,
+    readAt: feed.dataUpdatedAt,
     // A failed next page or refresh keeps the pages read (status `error`); the polling goes on.
     enabled: live && !offline && readable && sort === 'recent' && feed.data !== undefined,
   });
+  // Only Recent takes new posts; a cached Recent answer for the same newest post must not leak into Top.
+  const pending = sort === 'recent' ? polled : null;
+  const newPosts = pending?.posts ?? NO_POSTS;
 
   const listRef = useRef<FlashListRef<PostDTO>>(null);
   const scrollToTop = () => listRef.current?.scrollToTop({ animated: !reduceMotion });
 
   const { insertNew, refresh } = feed;
   const showNew = () => {
-    insertNew(newPosts)
+    if (!pending) return;
+    insertNew(pending)
       .then((error) => {
         if (error) toast.error(readErrorMessage(error) ?? REFRESH_FAILED_MESSAGE);
         // After the inserted cells have laid out.
@@ -208,21 +213,23 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     if (paused) loadMore();
   };
 
+  // The engine filters (blocks, hidden content) after paging, so loaded pages can show nothing yet have more.
+  const nothingShown = items.length === 0;
   let footer = null;
-  if (items.length > 0) {
+  if (feed.data !== undefined) {
     if (isFetchingNextPage) {
       footer = (
         <View className="items-center p-6">
           <Spinner size="sm" testID="feed-next-page" />
         </View>
       );
-    } else if (hasNextPage && (isFetchNextPageError || paused)) {
+    } else if (hasNextPage && (isFetchNextPageError || paused || nothingShown)) {
       footer = (
         <View className="items-center p-6">
           <Button label="Load More" size="sm" onPress={loadMore} testID="feed-load-more" />
         </View>
       );
-    } else if (!hasNextPage && feed.isSuccess) {
+    } else if (!hasNextPage && feed.isSuccess && !nothingShown) {
       footer = <ListEnd />;
     }
   }
@@ -240,7 +247,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
         testID="feed-engine-down"
       />
     );
-  } else if (feed.isError) {
+  } else if (feed.isError && !(isFetchNextPageError && hasNextPage)) {
     empty = (
       <ErrorState
         message={readErrorMessage(feed.error)}
@@ -252,6 +259,9 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     );
   } else if (feed.isPending) {
     empty = <Connecting connecting={engineState !== 'ready' && engineState !== 'degraded'} />;
+  } else if (hasNextPage) {
+    // Nothing to show on the pages read so far: the footer pages on.
+    empty = null;
   } else {
     const copy = EMPTY_COPY[`${tab}:${sort}`];
     empty = (
