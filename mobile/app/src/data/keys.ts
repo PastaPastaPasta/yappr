@@ -55,6 +55,8 @@ export const queryKeys = {
     stats: (id: string) => [...root, 'post', id, 'stats'] as const,
     /** `posts.poll`. */
     poll: (pollId: string) => [...root, 'poll', pollId] as const,
+    /** `safety.ownReport`: the viewer's report on this post or reply. */
+    ownReport: (id: string) => [...root, 'post', id, 'ownReport'] as const,
   },
 
   profile: {
@@ -87,6 +89,10 @@ export const queryKeys = {
 
   /** `safety.blocked`. */
   blocked: [...root, 'blocked'] as const,
+  /** `safety.isBlocked` for one account (batched by the caller). */
+  blockStatus: (userId: string) => [...root, 'blockStatus', userId] as const,
+  /** Every `blockStatus`: a prefix of the key above. */
+  blockStatusAll: [...root, 'blockStatus'] as const,
 
   /** `settings.get`. */
   settings: [...root, 'settings'] as const,

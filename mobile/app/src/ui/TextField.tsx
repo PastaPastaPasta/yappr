@@ -27,6 +27,8 @@ export interface TextFieldProps extends Omit<TextInputProps, 'multiline' | 'secu
   secure?: boolean;
   /** Multi-line: min 3 lines, grows to 8, then scrolls. */
   multiline?: boolean;
+  /** Show the `maxLength` counter from the first character ("0 / 500"), not only near the limit. */
+  alwaysCount?: boolean;
   className?: string;
 }
 
@@ -40,6 +42,7 @@ export function TextField({
   error,
   secure = false,
   multiline = false,
+  alwaysCount = false,
   maxLength,
   value,
   editable = true,
@@ -53,7 +56,7 @@ export function TextField({
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
-  const showCounter = maxLength !== undefined && maxLength - length <= COUNTER_WITHIN;
+  const showCounter = maxLength !== undefined && (alwaysCount || maxLength - length <= COUNTER_WITHIN);
   let borderColor: string = tw.borderStrong;
   if (error) borderColor = 'border-red-600 dark:border-red-400';
   else if (focused) borderColor = 'border-yappr-500';
