@@ -1,11 +1,16 @@
 // Must stay the first import: it swaps in the storage shim before lib loads.
 import { engineStorage, misroutedStorageKeys } from './install-shims'
+// Second: installs the WASM source before any SDK code can ask for it.
+import './wasm-source'
 import { createEngineApi } from './api'
 import { createDispatcher } from './rpc/dispatcher'
 import { createWebViewTransport } from './rpc/transport'
 import { dispatchConnectivity, dispatchLifecycle } from './shims/lifecycle'
 import { bundleHash } from './build-info'
 import { LOG_LEVELS, type LogLevel } from './protocol/envelope'
+import initWasm from './shims/wasm-sdk'
+import { avatarStyles } from './avatar-source'
+import { preconnectQuorumService } from './preconnect'
 
 /**
  * The engine inside the hidden WebView. Serves the API over the
@@ -72,3 +77,17 @@ for (const [method, level] of Object.entries(levels) as [keyof typeof levels, Lo
 }
 
 dispatcher.hello({ bundleHash: bundleHash() })
+
+// Start on the WASM now rather than at engine.boot(): it streams in and compiles
+// while the hello crosses the bridge and the host answers. boot() joins this
+// init and reports a failure.
+initWasm().catch((error: unknown) => dispatcher.log('error', `The WASM did not load: ${describe(error)}`))
+
+avatarStyles.catch((error: unknown) => dispatcher.log('error', `Avatar styles did not load: ${describe(error)}`))
+
+try {
+  preconnectQuorumService()
+} catch (error) {
+  // Only an optimization: the SDK reports a bad quorum URL itself.
+  dispatcher.log('warn', `Quorum preconnect skipped: ${describe(error)}`)
+}

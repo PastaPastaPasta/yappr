@@ -27,7 +27,15 @@ jest.mock('expo-constants', () => {
 // The engine host's native dependencies. Nothing here talks to an engine: the
 // WebView renders nothing and never says hello, so the supervisor stays in its
 // handshake (tests that need an engine drive src/engine/supervisor directly).
-jest.mock('react-native-webview', () => ({ WebView: require('react-native').View }));
+jest.mock('react-native-webview', () => {
+  const React = require('react');
+  // Renders and loads nothing, and drops what the host injects.
+  const WebView = React.forwardRef(function WebView(_props, ref) {
+    React.useImperativeHandle(ref, () => ({ injectJavaScript: () => {} }));
+    return null;
+  });
+  return { WebView };
+});
 jest.mock('@react-native-community/netinfo', () =>
   require('@react-native-community/netinfo/jest/netinfo-mock.js'),
 );
@@ -65,10 +73,9 @@ jest.mock('./modules/secure-window', () => {
 });
 jest.mock('expo-file-system', () => ({
   Paths: { bundle: { uri: 'file:///bundle/' } },
+  // The app bundle's engine page is there; nothing reads files in tests.
   File: class {
-    async text() {
-      throw new Error('No engine bundle in tests');
-    }
+    exists = true;
   },
 }));
 // MMKV instances persist by id, as on a device, so "relaunch" and "reinstall" can be simulated

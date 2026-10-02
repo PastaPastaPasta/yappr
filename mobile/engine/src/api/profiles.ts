@@ -4,6 +4,7 @@ import { likesAreIndexOnly, repostsAreQuotes } from '@/lib/contract-topology'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
 import { generateAvatarSvg } from '@/lib/services/avatar-generator'
+import { avatarStylesReady } from '../avatar-styles'
 import { blockService, type BlockProvenance } from '@/lib/services/block-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
@@ -218,7 +219,9 @@ export const profiles = {
     const recipe = style && seed
       ? { style, seed }
       : (await avatarOf(identityId)).dicebear
-    return recipe ? generateAvatarSvg(recipe.style, recipe.seed) : null
+    if (!recipe) return null
+    await avatarStylesReady()
+    return generateAvatarSvg(recipe.style, recipe.seed)
   },
 }
 

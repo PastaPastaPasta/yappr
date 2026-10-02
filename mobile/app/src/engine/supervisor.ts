@@ -438,6 +438,11 @@ export class EngineSupervisor<Load = unknown> {
         this.noWebAssembly(errorMessage(error));
         return;
       }
+      // Its WASM or a sidecar script did not load: no retry in this page can fix that.
+      if (errorCode(error) === RpcErrorCode.LoadFailed) {
+        this.crashed(errorMessage(error), epoch);
+        return;
+      }
       // Offline or DAPI trouble: calls still go through; connectivity retries the boot.
       this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });

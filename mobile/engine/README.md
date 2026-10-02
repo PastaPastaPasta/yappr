@@ -12,10 +12,11 @@ mobile/engine/
   src/dm/                the DM backends (v5, legacy), their DTOs and the event diff
   src/dto/               cursors, paging, enrichment pipeline, thread port, capabilities, DTO validators
   src/entry.webview.ts   the WebView entry; src/install-shims.ts runs before lib loads
+  src/sidecar.ts         engine.wasm.js and engine.avatars.js, the scripts beside engine.js (wasm-source.ts, avatar-source.ts, avatars/)
   src/selftest.ts        selftest.html: engine + in-page host, for browsers nothing can drive
   test/unit/             codec, RPC, shims, DTO mappers (offline)
   test/contract/read/    the read API in Node against testnet, one file per module (ENGINE_VARIANT=devnet: sakura)
-  test/browser/          the built bundle in Playwright WebKit + Chromium, file:// and https origins
+  test/browser/          the built bundle in Playwright WebKit + Chromium, file:// and https origins, and engine.inline.html
 ```
 
 ## Commands
@@ -24,7 +25,7 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 
 | Command | What it does |
 | --- | --- |
-| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}` |
+| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.wasm.js, engine.avatars.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}` |
 | `npm run typecheck` | `tsc` over src, tests and the lib files they reach |
 | `npm run lint` | ESLint with the engine's own config (`.eslintrc.cjs`; the root config ignores `mobile/**`) |
 | `npm test` | Unit tests (offline) |
@@ -44,12 +45,21 @@ CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint
 
 ## How the wasm loads
 
-- **No separate wasm file.** evo-sdk's `dist/evo-sdk.module.js` is a self-contained webpack bundle. It carries its own wasm-bindgen glue and the gzip+base64 wasm inline (the `@dashevo/wasm-sdk/compressed` format). Nothing fetches a `.wasm` file, so the engine works from `file://` with no web server and no COOP/COEP headers.
+- **Three scripts, not one.** `engine.js` (1.5 MB) is the bundle: evo-sdk's unbundled entry (`dist/sdk.js`, aliased; the published `dist/evo-sdk.module.js` inlines its own glue and the WASM as 11 MB of base64), one copy of the wasm-bindgen glue, `lib/` and the API. Two **sidecar** scripts (`src/sidecar.ts`) each set one `window` global:
+  - `engine.wasm.js` (11.4 MB): the SDK's WASM, gzip + base64 in a single string literal (`__YAPPR_ENGINE_WASM__`);
+  - `engine.avatars.js` (2.0 MB): the DiceBear styles (`__YAPPR_ENGINE_AVATARS__`). In `engine.js`, `@dicebear/collection` is a stand-in (`src/avatars/collection-shim.ts`) whose styles read the real ones at call time.
+- **Order.** Every page runs `engine.js`, then `engine.avatars.js`, then `engine.wasm.js`. The engine says hello while the sidecars are still being read, and the avatar styles do not wait for the 11 MB WASM script (the host draws avatars on its cached screens before the engine is ready):
+  - iOS loads `index.html` (`engine.html` plus the host's CSP, written by the app's engine-assets plugin) by file URL;
+  - the Android loader page inserts the three scripts in order (`async = false`), and they download in parallel;
+  - `engine.inline.html` inlines all three (iOS dev builds against `YAPPR_ENGINE_DEV_URL`, and dev clients built before this split; the browser boot proof).
+  `engine.js` installs a capture-phase `load`/`error` listener as it evaluates, so it sees every sidecar's outcome whenever it happens. Nothing is ever fetched or injected: a page without a sidecar fails at once.
 - **The init path:**
-  1. `EvoSDK.connect()` decodes the base64.
-  2. It compiles in a blob `Worker` (with `DecompressionStream`).
-  3. If the worker fails, it falls back to decompressing and compiling on the main thread.
-- **How compilation is cheap:** V8 and JSC compile lazily, so the main-thread `WebAssembly.compile`/`instantiate` calls measure in tens of milliseconds, not seconds.
+  1. The entry starts the WASM right after its hello, not at `engine.boot()`: decode the base64 (`Uint8Array.fromBase64`, else `atob`), decompress with `DecompressionStream`, and `WebAssembly.instantiateStreaming` the decompressed stream, which compiles off the main thread while it streams. `boot()` joins that init (`src/shims/wasm-sdk.ts`, which every `@dashevo/wasm-sdk` import shares: one glue module, one instance).
+  2. It also preconnects to the quorum service the SDK reads first in `connect()` (`src/preconnect.ts`), so DNS and TLS overlap the compile.
+  3. `boot()` waits for the avatar styles too (lib draws default avatars while it enriches reads), and `profiles.avatarSvg` waits for them.
+  4. **Failure.** The WASM initializes once per page, failure included (as evo-sdk's `ensureInitialized` does). If it or the avatar styles did not load, `boot()` rejects with `ENGINE_LOAD_FAILED`, and the host's supervisor counts that as a crash and starts a fresh page (with backoff, then `failed`), instead of degrading and retrying a boot that cannot succeed.
+- **No `.wasm` fetch.** Nothing fetches a binary, so the engine works from `file://` with no web server, no native asset handler and no COOP/COEP headers. A binary sidecar would need a native request interceptor (Android `shouldInterceptRequest`, iOS `WKURLSchemeHandler`) and a dev-client rebuild. It would save the base64 work, which measured in the Android emulator's WebView (Chrome 124) at 60–110 ms to scan the 11.4 MB literal, 13–24 ms for `atob` and 10–30 ms for the byte loop: one main-thread stall of about 0.1–0.15 s after the hello, ahead of the SDK's first request.
+- **Node** (the test harness) gets the WASM from the package file instead (`test/setup/wasm.ts`), and the real DiceBear styles (the stand-in is aliased in `build.mjs` only).
 - **`target: safari16.4, chrome110`:** `DecompressionStream` needs iOS 16.4 or later.
 
 ## Shims and stubs inventory
@@ -88,7 +98,8 @@ No `next/*` module is reached. If a future lib change pulls in something browser
 - **Console:** forwarded to the host as `log` envelopes at or above a level (default `info`; `engine.setLogLevel('debug')` for diagnostics), filtered before formatting because devnet builds log at debug. tslog's `%c` styling is stripped.
 - **IndexedDB:** `window.indexedDB` is set to `undefined` (ENGINE.md §9.1). Nothing in lib uses it and nothing on the host backs it up, so an unexpected user fails loudly.
 - **`react-hot-toast`** (esbuild alias): lib's toasts become `engine.notice {level, message}` events.
-- **`@dashevo/wasm-sdk/compressed`** (esbuild alias, same in vitest): re-exports evo-sdk's own copy, so the first-login key-registration builder (`lib/services/identity-update-builder.ts`, reached through `lib/auth/platform-auth-adapters`) shares evo-sdk's WASM instance. Without it the bundle carries a second 11.2 MB WASM payload (26.3 MB instead of 15.0 MB).
+- **`@dashevo/evo-sdk`, `@dashevo/wasm-sdk` and `@dashevo/wasm-sdk/compressed`** (exact-match aliases in `aliases.mjs`, the same in vitest): evo-sdk's unbundled entry, and one shim (`src/shims/wasm-sdk.ts`) for both wasm-sdk entries, which re-exports the shared glue and loads the WASM from a source the host page or the harness installs. evo-sdk, `lib/utils/username.ts` (so its contested-name check works) and the first-login key-registration builder (`lib/services/identity-update-builder.ts`) share one WASM instance, and the bundle carries no WASM at all.
+- **`@dicebear/collection`** (`build.mjs` only): `src/avatars/collection-shim.ts`, filled from `engine.avatars.js` (above).
 - **Early error reporter:** `install-shims.ts` posts uncaught errors and unhandled rejections straight to the bridge. If a lib module throws while loading, the bundle stops before the dispatcher exists, and that log line plus the client's hello timeout are what the host sees.
 
 ## RPC
@@ -255,11 +266,30 @@ On v5, a call naming a conversation before the saved state has loaded (`status()
 - **Lost replace answers.** lib keeps an SDK-signed write (a roster or self-state replace) whose answer never came (a transport error after the broadcast) pending for 15 minutes, and refuses every DM write in between with `PENDING_WRITE`, even once the DM engine has read the replace back. Before each v5 write the engine calls lib's `settleSupersededReplaces`, which releases such an entry once Platform shows its document at the revision it writes, or later, and the nonce after the one Platform reported before it was signed consumed (a stale-revision replace still executes as a paid error and takes a nonce, so the revision alone is not enough; no nonce is guessed). A replace still unseen keeps holding writes back, as it must. The sakura write suite loses one rename answer on purpose and expects the next group change to confirm.
 - **Tests.** `test/unit/dm.test.ts` runs both backends offline: v5 on lib's in-memory test chain with three users on one ledger (round trip, events, paging, groups, block, hide, retention, lifecycle, the unconfirmed send), legacy over a fake service. `test/contract/read/dm.test.ts` checks the session gate and, on testnet, lists a public legacy inbox (v3 invites name both sides in the clear) without decrypting anything. `test/contract/write/dm.test.ts` is the sakura suite on personas 94–96 (1:1 round trip; group create, rename, add, leave, through account switches); it skips with the W-SAKURA reason until the cutover.
 
+## Cold start in the app (2026-10-02, devnet sakura, evo-sdk 5.0.0-beta.1)
+
+Release builds (`npm run release:android -- apk`, `npm run release:ios -- simulator`) of staging `c0f5e294` against this split, on the Android emulator `yappr_pixel_l4` (Android 15, System WebView 124, signed out) and the iOS 26.5 simulator (signed in). Cold launches, interleaved build by build, 6 per build; medians, with the range. Mount, hello, boot and ready are the supervisor's timings (Settings → Engine diagnostics). The host was shared with other agents (load average 35–55), and the network part of boot varies run to run.
+
+| | Android before | Android after | iOS before | iOS after |
+| --- | --- | --- | --- | --- |
+| Prepare (snapshot, page) | 130 ms | 70 ms | 390 ms | 63 ms |
+| Mount → hello | 946 ms (824–1415) | 594 ms (387–867) | 886 ms (834–1117) | 656 ms (636–829) |
+| Boot (`engine.boot()`) | 2012 ms (1509–2740) | 637 ms (268–1006) | 732 ms (657–870) | 215 ms (114–350) |
+| **Mount → ready** | **3448 ms (2521–4162)** | **1400 ms (1105–1891)** | **1620 ms (1503–2014)** | **996 ms (904–1466)** |
+| Launch → first avatar drawn (screen recording) | 3.60 s | 3.32 s | 2.80 s | 2.33 s |
+| JS heap after boot (Chromium) | 72 MB | 60 MB | | |
+| WebView renderer PSS | 251 MB | 236 MB | | |
+
+- **What each change bought** (Android, earlier interleaved rounds): moving the WASM out of `engine.js` took mount → hello from about 840 to 600 ms. The bundled TokenHistory contract (one `getDataContracts` round trip, 0.3–0.7 s), the WASM preload at hello and the quorum preconnect took boot from about 2 s to 0.6 s. On iOS, loading the page by file URL took prepare from 390 to 63 ms: the 15 MB page no longer goes through Hermes and the bridge.
+- **Launch → feed** stays about the same (2.7–2.9 s on Android, 1.6–1.7 s on iOS): the host shows the persisted feed before the engine is ready.
+- **Under heavy load** (another agent's builds, load average up to 200), the same comparison on Android gave mount → ready 8.6 s before and 4.3 s after (medians of 6), and the "4–5 s to parse engine.js" seen before was mostly that load: on a quiet emulator, the old 15 MB bundle loaded and ran in 0.4–1.2 s.
+
 ## Measurements (2026-10-01, testnet, evo-sdk 4.2.0-beta.7, Apple Silicon Mac)
 
 **Bundle:**
-- `engine.js` is **15.09 MB**, **9.45 MB gzip** as of M7b (14.92 MB at M2; M7b adds the composer, the notification and report services, and the services index `publishThread` imports). About 11.8 MB of it is evo-sdk with the inlined wasm.
-- The rest is wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
+- `engine.js` was **15.09 MB**, **9.45 MB gzip** as of M7b (14.92 MB at M2; M7b adds the composer, the notification and report services, and the services index `publishThread` imports). About 11.8 MB of it was evo-sdk with the inlined wasm.
+- The rest was wasm-sdk glue (0.5 MB), `lib/` (0.48 MB) and `@dicebear` avatar styles (about 2 MB).
+- **Since the split (2026-10-02):** `engine.js` is 1.53 MB (0.34 MB gzip), `engine.wasm.js` 11.40 MB and `engine.avatars.js` 2.03 MB.
 - The build takes about 0.4 s.
 
 **Browser boot proof:** `npm run test:browser`, 3 cold runs per configuration, each in a fresh browser context. Two more WebKit runs check the injected snapshot: a session read at call time (the feed comes back with viewer marks), and a persisted `yappr-settings` `feedLanguage: 'zz'` read by zustand `persist` when `lib/store.ts` loads (the v2 For You page comes back empty). Raw data is in `browser-boot-*.{json,tsv}`; the files for these numbers, the simulator screenshot and the reproducer below were saved **locally** on the build machine under `/tmp/claude/yappr-mobile/evidence/m2-engine/` and are not in the repo. "Boot" is the `engine.boot()` round trip (wasm decompress + compile, SDK connect, contract preload; testnet contracts are seeded from `lib/contracts/bundled`). "Feed" is the first For You page (`feed.home`), enriched.
@@ -291,7 +321,7 @@ On v5, a call naming a conversation before the saved state has loaded (`status()
 - **Both loading modes are viable for the host:**
   - `source={{ uri: 'file://…/engine.html' }}` (Android also needs `allowFileAccess`);
   - `source={{ html: inline, baseUrl: 'https://engine.yap.pr/' }}` with `engine.inline.html`.
-- **Recommendation:** prefer the https `baseUrl`. It gets the off-main-thread wasm compile on WebKit, and gives a stable non-null origin.
+- **What ships:** both platforms load by file URL (origin `null`): iOS `index.html` with read access to its directory, Android the loader page over `file:///android_asset/engine/`. Neither crosses the RN bridge with the bundle. The https base remains for `engine.inline.html` in iOS dev builds. (The https base was first preferred for WebKit's off-main-thread compile in a blob Worker; the engine now compiles with `instantiateStreaming` on both origins.)
 - **Not origin-related:** every run logs 3–9 failed requests to unhealthy testnet evonodes (`85.209.243.2–9`, which answer `ERR_INVALID_HTTP_RESPONSE` / "network connection was lost"). The SDK bans them and retries elsewhere. The same nodes fail from both origins.
 
 ## SDK and platform bugs found
@@ -319,5 +349,4 @@ On v5, a call naming a conversation before the saved state has loaded (`status()
 - Not in the read API yet: `explore.welcome` (signed-out homepage) and blog results in search (blogs are not in 1.0).
 - Testnet holds 2 `en` posts since the August rollback, so the contract suite cannot exercise a second page, rankings (v2 has none), trending or a native poll there; those paths run live only once sakura's contracts are published (the thread builders and cursors have unit tests).
 - The devnet variant can't boot until `.env.devnet` moves to sakura.
-- The bundle carries all 30 `@dicebear` styles (about 2 MB) because `unified-profile-service` imports the collection. Trimming it would need an alias.
 - **Not yet done** (they belong to M4, the EngineHost): the encrypted-MMKV and Keychain/Keystore write-through on the host side, the supervisor and replay of reads, and memory numbers on devices.
