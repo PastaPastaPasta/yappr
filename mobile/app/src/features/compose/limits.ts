@@ -78,7 +78,17 @@ export function overflowOffset(text: string, limits: ContentLimits): number | nu
   return null;
 }
 
-export type CounterTone = 'secondary' | 'warning' | 'error';
+/**
+ * `overflowOffset` for the editor's raw text, measured as it is posted:
+ * trimmed (the engine's `planPosts` trims each part), so leading and
+ * trailing whitespace never count, and the offset lands in the raw text.
+ */
+export function postedOverflowOffset(text: string, limits: ContentLimits): number | null {
+  const offset = overflowOffset(text.trim(), limits);
+  return offset === null ? null : offset + (text.length - text.trimStart().length);
+}
+
+export type CounterTone ='secondary' | 'warning' | 'error';
 
 /** The counter's color: gray, amber at 50 or fewer characters left, red when over either limit. */
 export function counterTone(text: string, limits: ContentLimits): CounterTone {

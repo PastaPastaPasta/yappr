@@ -56,6 +56,8 @@ const MAX_PARTS = 10;
 const SAVE_DELAY_MS = 500;
 /** `posts.publish` accepts an image hosted elsewhere (no upload in 1.0). */
 const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/;
+/** The contracts' `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), in code points. */
+const MAX_MEDIA_URL = 512;
 
 const EMPTY_PART: DraftPart = { text: '', postedId: null };
 const PREVIEW_DELAY_MS = 400;
@@ -92,12 +94,17 @@ function NsfwToggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
       onPress={onToggle}
       hitSlop={8}
       className={cn(
-        'h-8 justify-center rounded-full border px-3',
+        'min-h-8 justify-center rounded-full border px-3',
         on ? 'border-amber-500 bg-amber-500' : cn(tw.borderStrong, 'bg-transparent'),
       )}
       testID="compose-nsfw"
     >
-      <Text variant="chip" className={on ? 'text-black dark:text-black' : undefined} tone={on ? 'primary' : 'secondary'}>
+      <Text
+        variant="chip"
+        className={on ? 'text-black dark:text-black' : undefined}
+        tone={on ? 'primary' : 'secondary'}
+        maxFontSizeMultiplier={1.5}
+      >
         NSFW
       </Text>
     </Pressable>
@@ -214,9 +221,12 @@ function Composer({ identityId, username, context }: ComposerProps) {
     persist: true,
   });
   const targetPost: PostDTO | null = target.data ?? null;
-  // Only a tombstone is gone: `posts.get` also answers null when the read failed.
+  // A tombstone was deleted. `posts.get` answers null only when proved reads find nothing (a
+  // delete, or a moderator's removal, on v10); a read that failed rejects instead.
   const targetGone = context.mode !== 'post' && targetPost?.deleted === true;
-  const targetUnread = context.mode !== 'post' && !target.isFetching && targetPost === null && (target.isSuccess || target.isError);
+  const settledRead = context.mode !== 'post' && !target.isFetching && targetPost === null;
+  const targetMissing = settledRead && target.isSuccess;
+  const targetUnread = settledRead && !target.isSuccess && target.isError;
   const profile = useEngineQuery(queryKeys.profile.detail(identityId), (api) => api.profiles.get(identityId), {
     persist: true,
   });
@@ -227,7 +237,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const contentful = parts.filter((p) => p.postedId || hasVisibleContent(p.text));
   const hasContent = open.some((p) => hasVisibleContent(p.text)) || mediaUrl.trim() !== '';
   const overLimit = open.some((p) => isOverContentLimit(p.text.trim(), limits));
-  const mediaValid = mediaUrl.trim() === '' || HOSTED_URL.test(mediaUrl.trim());
+  const mediaTooLong = Array.from(mediaUrl.trim()).length > MAX_MEDIA_URL;
+  const mediaValid = mediaUrl.trim() === '' || (HOSTED_URL.test(mediaUrl.trim()) && !mediaTooLong);
   const targetReady = context.mode === 'post' || (targetPost !== null && !targetGone);
   const canPost = open.some((p) => hasVisibleContent(p.text)) && !overLimit && !offline && mediaValid && targetReady;
   const postLabel = context.mode === 'reply' ? 'Reply' : contentful.length > 1 ? `Post all (${contentful.length})` : 'Post';
@@ -327,7 +338,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const close = () => askToLeave(() => router.back());
 
   const post = () => {
-    if (!canPost) return;
+    // A second tap lands while the sheet slides away: it must not publish the same post again.
+    if (!canPost || posted.current) return;
     Keyboard.dismiss();
     posted.current = true;
     leaving.current = true;
@@ -401,7 +413,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
 
   return (
     <View className="flex-1 bg-white dark:bg-neutral-900" style={{ paddingTop: insets.top }} testID="compose-screen">
-      <View className={cn('h-14 flex-row items-center gap-2 px-2', tw.border)}>
+      <View className={cn('min-h-14 flex-row items-center gap-2 px-2 py-1', tw.border)} testID="compose-header">
         <CloseButton onPress={close} />
         <View className="flex-1" />
         <NsfwToggle on={sensitive} onToggle={() => setSensitive(!sensitive)} />
@@ -434,6 +446,13 @@ function Composer({ identityId, username, context }: ComposerProps) {
                   <PostStub state="deleted" variant="embed" />
                   <Text variant="caption" tone="error" className="mt-1">
                     This post was deleted, so it can&apos;t be replied to.
+                  </Text>
+                </View>
+              ) : targetMissing ? (
+                <View className="px-4" testID="compose-target-missing">
+                  <PostStub state="unavailable" variant="embed" />
+                  <Text variant="caption" tone="error" className="mt-1">
+                    This post is unavailable, so it can&apos;t be replied to.
                   </Text>
                 </View>
               ) : targetUnread ? (
@@ -486,8 +505,10 @@ function Composer({ identityId, username, context }: ComposerProps) {
                 testID="compose-media-url"
               />
               {!mediaValid ? (
-                <Text variant="caption" tone="error" className="mt-1">
-                  Use an https:// or ipfs:// link to an image.
+                <Text variant="caption" tone="error" className="mt-1" testID="compose-media-error">
+                  {mediaTooLong
+                    ? `This link is too long. Use one of up to ${MAX_MEDIA_URL} characters.`
+                    : 'Use an https:// or ipfs:// link to an image.'}
                 </Text>
               ) : null}
               {previewUri ? (
@@ -513,6 +534,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
                 <QuoteEmbed post={targetPost} nsfwGated={targetPost.sensitive} />
               ) : targetGone ? (
                 <PostStub state="deleted" variant="embed" />
+              ) : targetMissing ? (
+                <PostStub state="unavailable" variant="embed" testID="compose-target-missing" />
               ) : targetUnread ? (
                 <TargetUnread onRetry={() => target.refetch()} inset={false} />
               ) : (
@@ -523,7 +546,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
         </ScrollView>
         <MentionSuggestions query={mention?.query ?? ''} onSelect={selectMention} />
         <ComposeAccessoryBar
-          text={activeText}
+          text={activeText.trim()}
           limits={limits}
           offline={offline}
           canAddPart={canAddPart}

@@ -7,6 +7,7 @@ import {
   counterTone,
   hasVisibleContent,
   overflowOffset,
+  postedOverflowOffset,
   utf8ByteCount,
 } from './limits';
 
@@ -59,6 +60,19 @@ describe('overflowOffset', () => {
   it('starts where the byte limit binds first', () => {
     // 4 bytes per emoji: the third crosses 10 bytes.
     expect(overflowOffset('😀😀😀', { chars: 100, bytes: 10 })).toBe(4);
+  });
+});
+
+describe('postedOverflowOffset', () => {
+  const limits = { chars: 5, bytes: null };
+
+  it('ignores the whitespace that posting trims (PRD COMP-02)', () => {
+    expect(postedOverflowOffset('abcde\n\n', limits)).toBeNull();
+    expect(postedOverflowOffset('  abcde', limits)).toBeNull();
+  });
+
+  it('lands the highlight on the raw text, past the leading whitespace', () => {
+    expect(postedOverflowOffset('  abcdefg ', limits)).toBe(7);
   });
 });
 

@@ -454,6 +454,8 @@ describe('posts.publish and posts.delete', () => {
     await expect(posts.publish({ parts: [{ text: ' ​ ' }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x'.repeat(501) }] })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: 'javascript:alert(1)' })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    // The contract's mediaUrl maxLength (512): refused before a ticket, not after it, every retry.
+    await expect(posts.publish({ parts: [{ text: 'x' }], mediaUrl: `https://img.example/${'a'.repeat(600)}.png` })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(posts.publish({ parts: [{ text: 'x' }], replyTo: TARGET, quote: TARGET })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 
