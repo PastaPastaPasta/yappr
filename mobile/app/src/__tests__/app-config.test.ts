@@ -77,8 +77,6 @@ describe.each(Object.keys(VARIANTS) as Variant[])('app.config for %s (store read
         'android.permission.SYSTEM_ALERT_WINDOW',
       ]),
     );
-    // expo-screen-capture registers a capture callback on Android 14+, which needs it.
-    expect(config.android?.blockedPermissions).not.toContain('android.permission.DETECT_SCREEN_CAPTURE');
     expect(config.plugins).toContain('./plugins/release-hardening');
   });
 });
@@ -111,5 +109,17 @@ describe('release-ios.sh variant guard', () => {
     expect(matches('pr.yap.app.dev', 'pr.yap.app.beta')).toBe(false);
     expect(matches('pr.yap.app', 'pr.yap.app.dev')).toBe(false);
     expect(matches('pr.yap.app.dev', 'prXyapXappXdev')).toBe(false);
+  });
+});
+
+describe('screen capture blocking (AUTH-12)', () => {
+  it('links expo-screen-capture on iOS only', () => {
+    // On Android it registers a screenshot callback at startup, so Android 14+ would say
+    // "Yappr detected this screenshot" on every screen; modules/secure-window sets FLAG_SECURE instead.
+    expect(pkg.expo.autolinking.android.exclude).toContain('expo-screen-capture');
+    const secureWindow = JSON.parse(
+      fs.readFileSync(path.join(APP_DIR, 'modules/secure-window/expo-module.config.json'), 'utf8'),
+    ) as { platforms: string[] };
+    expect(secureWindow.platforms).toEqual(['android']);
   });
 });

@@ -73,9 +73,6 @@ const PRIVACY_MANIFEST = {
 /**
  * Permissions that Expo's template or a library's manifest adds and the app
  * never uses. Removed from the merged manifest (`tools:node="remove"`).
- * expo-screen-capture's storage and media permissions only feed its screenshot
- * listener, which the app doesn't use. Its DETECT_SCREEN_CAPTURE must stay: the
- * module registers a screen-capture callback on Android 14+, which throws without it.
  */
 const BLOCKED_ANDROID_PERMISSIONS = [
   'android.permission.READ_EXTERNAL_STORAGE',

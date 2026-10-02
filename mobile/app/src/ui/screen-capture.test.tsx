@@ -1,15 +1,28 @@
-import { renderHook } from '@testing-library/react-native';
+import { act, renderHook } from '@testing-library/react-native';
 import { Platform } from 'react-native';
+
+import { getLogs } from '~/engine/logs';
 
 import { blocksCapture, useBlockScreenCapture, type CaptureScope } from './screen-capture';
 
-const { __blocked: blocked } = jest.requireMock<{ __blocked: Set<string> }>('expo-screen-capture');
+const native = jest.requireMock<{ setCaptureBlocked: jest.Mock; isCaptureBlocked: () => boolean }>(
+  '../../modules/secure-window',
+);
 const realOS = Platform.OS;
 const setOS = (os: typeof Platform.OS) => Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+const mounted: { unmount: () => void }[] = [];
+const hook = (scope: CaptureScope, active?: boolean) => {
+  const view = renderHook(({ on }: { on?: boolean }) => useBlockScreenCapture(scope, on), {
+    initialProps: { on: active },
+  });
+  mounted.push(view);
+  return view;
+};
 
+beforeEach(() => native.setCaptureBlocked.mockClear());
 afterEach(() => {
+  mounted.splice(0).forEach((view) => view.unmount());
   setOS(realOS);
-  blocked.clear();
 });
 
 describe('blocksCapture', () => {
@@ -23,43 +36,49 @@ describe('blocksCapture', () => {
 });
 
 describe('useBlockScreenCapture', () => {
-  const hook = (scope: CaptureScope, active?: boolean) =>
-    renderHook(({ on }: { on?: boolean }) => useBlockScreenCapture(scope, on), { initialProps: { on: active } });
-
-  it('holds a block while active and releases it on unmount', () => {
+  it('holds a block while mounted and releases it on unmount', () => {
     setOS('android');
     const view = hook('private');
-    expect(blocked.size).toBe(1);
+    expect(native.isCaptureBlocked()).toBe(true);
     view.unmount();
-    expect(blocked.size).toBe(0);
+    expect(native.isCaptureBlocked()).toBe(false);
   });
 
   it('follows `active` (a screen losing focus releases its block)', () => {
     setOS('android');
     const view = hook('private', false);
-    expect(blocked.size).toBe(0);
+    expect(native.isCaptureBlocked()).toBe(false);
     view.rerender({ on: true });
-    expect(blocked.size).toBe(1);
+    expect(native.isCaptureBlocked()).toBe(true);
     view.rerender({ on: false });
-    expect(blocked.size).toBe(0);
+    expect(native.isCaptureBlocked()).toBe(false);
   });
 
   it('does not block private content on iOS, where the lock screen covers the snapshot', () => {
     setOS('ios');
     hook('private');
-    expect(blocked.size).toBe(0);
+    expect(native.setCaptureBlocked).not.toHaveBeenCalled();
     hook('secret');
-    expect(blocked.size).toBe(1);
+    expect(native.isCaptureBlocked()).toBe(true);
   });
 
-  it('keys each holder separately, so one leaving keeps the other blocked', () => {
-    setOS('android');
-    const lock = hook('private');
+  it('tells native only on the first hold and the last release', () => {
+    setOS('ios');
+    const sheet = hook('secret');
     const keyScreen = hook('secret');
-    expect(blocked.size).toBe(2);
+    expect(native.setCaptureBlocked.mock.calls).toEqual([[true]]);
+
+    sheet.unmount();
+    expect(native.isCaptureBlocked()).toBe(true);
     keyScreen.unmount();
-    expect(blocked.size).toBe(1);
-    lock.unmount();
-    expect(blocked.size).toBe(0);
+    expect(native.setCaptureBlocked.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it('logs instead of throwing when native refuses', async () => {
+    setOS('android');
+    native.setCaptureBlocked.mockRejectedValueOnce(new Error('no activity'));
+    hook('private');
+    await act(async () => {});
+    expect(getLogs().some((line) => line.message.includes('Blocking screen capture failed: no activity'))).toBe(true);
   });
 });

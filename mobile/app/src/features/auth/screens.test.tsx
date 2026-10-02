@@ -81,11 +81,12 @@ describe('private key sign-in (AUTH-08)', () => {
   });
 
   it('keeps the key out of screenshots while the screen is open', () => {
-    const { __blocked: blocked } = jest.requireMock<{ __blocked: Set<string> }>('expo-screen-capture');
+    // Focus is mocked as always true here; the blur release is covered in src/ui/screen-capture.test.tsx.
+    const native = jest.requireMock<{ isCaptureBlocked: () => boolean }>('../../../modules/secure-window');
     const view = render(<KeySignInScreen />);
-    expect(blocked.size).toBe(1);
+    expect(native.isCaptureBlocked()).toBe(true);
     view.unmount();
-    expect(blocked.size).toBe(0);
+    expect(native.isCaptureBlocked()).toBe(false);
   });
 
   it('shows the engine’s reason and keeps Sign in disabled', async () => {

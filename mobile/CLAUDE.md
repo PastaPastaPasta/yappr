@@ -178,7 +178,7 @@ rebuild.** Screen PRs share one dev-client build, so they use only these:
 `expo` and its modules (`expo-application`, `expo-clipboard`,
 `expo-constants`, `expo-crypto`, `expo-dev-client`, `expo-file-system`,
 `expo-haptics`, `expo-image`, `expo-linking`, `expo-local-authentication`,
-`expo-router`, `expo-screen-capture`, `expo-secure-store`, `expo-sharing`,
+`expo-router`, `expo-screen-capture` (iOS only), `expo-secure-store`, `expo-sharing`,
 `expo-splash-screen`, `expo-status-bar`, `expo-system-ui`, `expo-web-browser`),
 `@react-native-community/netinfo`, `@react-native-menu/menu` (native
 long-press and dropdown menus; zeego 3 cannot build on RN 0.86),
@@ -187,7 +187,7 @@ long-press and dropdown menus; zeego 3 cannot build on RN 0.86),
 `react-native-nitro-modules`), `react-native-reanimated` (+
 `react-native-worklets`), `react-native-safe-area-context`,
 `react-native-screens`, `react-native-svg`, `react-native-webview`, and the
-local `modules/background-flush`. JS-only packages (for example
+local `modules/background-flush` and `modules/secure-window`. JS-only packages (for example
 `react-native-qrcode-svg`) need no rebuild.
 
 ## Run
@@ -274,14 +274,25 @@ Arbitrary app routes like this work in dev builds only. Web-form links such as
 compose, media or the gates; reach those by navigating in the app.
 
 Some screens block capture on purpose (`src/ui/screen-capture.ts`, AUTH-12),
-so their screenshots come out black:
+so their screenshots, including `adb exec-out screencap`, come out black:
 - `useBlockScreenCapture('secret')`: screens that show or take a private key
-  (key sign-in, the DM unlock sheet), on both platforms;
-- `useBlockScreenCapture('private')`: the DM inbox and conversations, and
-  the whole app while the app lock is on (FLAG_SECURE, which also blanks the
-  Recents thumbnail). Android only.
+  (key sign-in, the DM unlock sheet), on both platforms. iOS uses
+  expo-screen-capture. Whether `simctl io screenshot` is blanked is noted
+  in the PR that added it.
+- `useBlockScreenCapture('private')`: the DM inbox, conversations and group
+  info, and the whole app while the app lock is on. This is Android only
+  (FLAG_SECURE, which also blanks the Recents thumbnail).
 
-Turn the app lock off before you capture evidence on Android.
+For Android evidence of those screens, turn the app lock off and say in the
+PR that the DM and key screens can't be captured.
+
+Android blocks capture through the local `modules/secure-window`
+(FLAG_SECURE, re-applied on every foreground). expo-screen-capture is linked
+on iOS only (`expo.autolinking.android.exclude` in `package.json`). On
+Android it registers a screenshot callback at startup, so Android 14+ would
+show "Yappr detected this screenshot" on every screen. Never import
+`expo-screen-capture` directly: `modules/secure-window/index.ios.ts` is the
+only file that may.
 
 `/__gallery` is dev-only. It renders the shared tokens and has a
 Light/Dark/System switch for testing the override.

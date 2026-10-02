@@ -3,6 +3,15 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "private": true,
+  "expo": {
+    "autolinking": {
+      "android": {
+        "exclude": [
+          "expo-screen-capture"
+        ]
+      }
+    }
+  },
   "scripts": {
     "start": "expo start --dev-client",
     "ios": "expo run:ios",

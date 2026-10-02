@@ -52,17 +52,15 @@ jest.mock('expo-secure-store', () => {
     __items: items,
   };
 });
-// FLAG_SECURE / the iOS screenshot block, keyed as in expo-screen-capture; tests read __blocked.
-jest.mock('expo-screen-capture', () => {
-  const blocked = new Set();
+// FLAG_SECURE on Android, expo-screen-capture on iOS. Tests read `isCaptureBlocked()` and the call log.
+jest.mock('./modules/secure-window', () => {
+  let blocked = false;
   return {
-    preventScreenCaptureAsync: async (key = 'default') => {
-      blocked.add(key);
-    },
-    allowScreenCaptureAsync: async (key = 'default') => {
-      blocked.delete(key);
-    },
-    __blocked: blocked,
+    setCaptureBlocked: jest.fn(async (on) => {
+      blocked = on;
+      return true;
+    }),
+    isCaptureBlocked: () => blocked,
   };
 });
 jest.mock('expo-file-system', () => ({

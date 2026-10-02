@@ -1,6 +1,9 @@
-import * as ScreenCapture from 'expo-screen-capture';
 import { useEffect, useId } from 'react';
 import { Platform } from 'react-native';
+
+import { appendLog, errorMessage } from '~/engine/logs';
+
+import { setCaptureBlocked } from '../../modules/secure-window';
 
 /**
  * Keeps what is on screen out of screenshots, screen recordings and, on
@@ -12,6 +15,9 @@ import { Platform } from 'react-native';
  *   every screen while the app lock is on. Android only (FLAG_SECURE). iOS
  *   covers the app-switcher snapshot with the lock screen instead
  *   (`AppLockOverlay`), and its screenshot block is only used for secrets.
+ *
+ * Android RN `Modal` windows (`Dialog`, sheets in a Modal) don't inherit
+ * FLAG_SECURE, so never show a secret in one.
  */
 export type CaptureScope = 'secret' | 'private';
 
@@ -20,19 +26,39 @@ export function blocksCapture(scope: CaptureScope, os: string = Platform.OS): bo
   return os === 'android';
 }
 
+/** Everyone currently asking for the block. Native is told only on 0 → 1 and 1 → 0. */
+const holders = new Set<string>();
+
+function apply(on: boolean): void {
+  setCaptureBlocked(on)
+    .then((applied) => {
+      if (!applied) appendLog('warn', 'host', 'Screen capture blocking is unavailable in this build');
+    })
+    .catch((error: unknown) => {
+      appendLog('warn', 'host', `${on ? 'Blocking' : 'Allowing'} screen capture failed: ${errorMessage(error)}`);
+    });
+}
+
+function hold(id: string): void {
+  holders.add(id);
+  if (holders.size === 1) apply(true);
+}
+
+function release(id: string): void {
+  if (holders.delete(id) && holders.size === 0) apply(false);
+}
+
 /**
  * Blocks screen capture while `active` (pass `useIsFocused()` from a screen,
- * since tab and stack screens stay mounted underneath others). Each caller
- * holds its own key, so capture is allowed again only when none is active.
+ * since tab and stack screens stay mounted underneath others). Capture comes
+ * back only when no holder is left.
  */
 export function useBlockScreenCapture(scope: CaptureScope, active = true): void {
-  const key = useId();
+  const id = useId();
   const on = active && blocksCapture(scope);
   useEffect(() => {
     if (!on) return;
-    ScreenCapture.preventScreenCaptureAsync(key).catch(() => undefined);
-    return () => {
-      ScreenCapture.allowScreenCaptureAsync(key).catch(() => undefined);
-    };
-  }, [key, on]);
+    hold(id);
+    return () => release(id);
+  }, [id, on]);
 }
