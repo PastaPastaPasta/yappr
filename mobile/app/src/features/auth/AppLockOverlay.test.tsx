@@ -5,7 +5,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAppLockSettings, useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 
-const native = jest.requireMock<{ isCaptureBlocked: () => boolean }>('../../../modules/secure-window');
+const native = jest.requireMock<{ isCaptureBlocked: () => boolean; isSwitcherProtected: () => boolean }>(
+  '../../../modules/secure-window',
+);
 const realOS = Platform.OS;
 const setOS = (os: typeof Platform.OS) => Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
 const METRICS = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 47, left: 0, right: 0, bottom: 34 } };
@@ -40,6 +42,24 @@ describe('app-switcher privacy (AUTH-12)', () => {
     setOS('android');
     renderOverlay().unmount();
     expect(native.isCaptureBlocked()).toBe(false);
+  });
+
+  it('on iOS, blurs the app natively as it leaves while the lock is on, not waiting on JS (SR-12)', () => {
+    setOS('ios');
+    useAppLockSettings.setState({ enabled: true });
+    const view = renderOverlay();
+    expect(native.isSwitcherProtected()).toBe(true);
+
+    act(() => useAppLockSettings.setState({ enabled: false }));
+    expect(native.isSwitcherProtected()).toBe(false);
+    view.unmount();
+  });
+
+  it('on Android, leaves app-switcher protection to FLAG_SECURE', () => {
+    setOS('android');
+    useAppLockSettings.setState({ enabled: true });
+    renderOverlay().unmount();
+    expect(native.isSwitcherProtected()).toBe(false);
   });
 
   it('on iOS, relies on the lock screen cover instead of blocking screenshots', () => {

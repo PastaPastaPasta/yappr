@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { cn } from '~/lib-allowlist';
 import { errorFeedback } from '~/ui/haptics';
 import { Button } from '~/ui/Button';
-import { useBlockScreenCapture } from '~/ui/screen-capture';
+import { useAppSwitcherProtection, useBlockScreenCapture } from '~/ui/screen-capture';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
@@ -39,6 +39,8 @@ export function AppLockOverlay() {
   // Android snapshots Recents as the app leaves, too early to count on the cover, so with the lock
   // on the whole app is FLAG_SECURE: a blank thumbnail, and no screenshots (AUTH-12).
   useBlockScreenCapture('private', enabled);
+  // iOS: the cover below is a JS render; a native blur covers the snapshot even when JS is late.
+  useAppSwitcherProtection(enabled);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => appStateChanged(state));
