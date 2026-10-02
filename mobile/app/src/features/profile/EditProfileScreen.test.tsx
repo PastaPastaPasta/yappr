@@ -129,6 +129,18 @@ beforeEach(() => {
 });
 
 describe('EditProfileScreen', () => {
+  it('shows the retry state, not the form, when the read of a stale copy fails', async () => {
+    // A copy persisted ten minutes ago, then the read this screen makes fails.
+    queryClient.setQueryData(queryKeys.profile.detail(VIEWER), PROFILE, { updatedAt: Date.now() - 600_000 });
+    fakeEngine.method('profiles.get').mockRejectedValue(new Error('offline'));
+    renderScreen(<EditProfileScreen />);
+    await flush();
+
+    expect(fakeEngine.method('profiles.get')).toHaveBeenCalled();
+    expect(screen.queryByText('DashPay profile')).toBeNull();
+    expect(screen.getByText('Try again')).toBeTruthy();
+  });
+
   it('groups the DashPay fields, saves only the change, and closes once confirmed', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });

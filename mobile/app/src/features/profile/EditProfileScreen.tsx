@@ -290,7 +290,8 @@ export function EditProfileScreen() {
       </Screen>
     );
   }
-  if (profile.data && (fresh || !profile.isFetching)) {
+  // A failed read keeps the cached copy: that is the retry state, not the form.
+  if (profile.data && (fresh || (!profile.isFetching && !profile.isError))) {
     return <EditProfileForm profile={profile.data} viewerId={viewerId} />;
   }
   return (

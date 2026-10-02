@@ -245,6 +245,22 @@ describe('ProfileScreen', () => {
     expect(screen.queryByText('Get a username')).toBeNull();
   });
 
+  it('keeps a non-followed banner gated until the media setting says otherwise', async () => {
+    let settle: (value: { gateMediaFromNonFollowed: boolean; sensitiveContentMode: 'blur' }) => void = () => undefined;
+    fakeEngine.method('settings.get').mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    fakeEngine.method('profiles.get').mockResolvedValue(profile({ bannerUrl: 'https://example.com/banner.jpg' }));
+    renderProfile();
+    await flush();
+    // The banner is decorative, so hidden from accessibility.
+    const hidden = { includeHiddenElements: true };
+    expect(screen.getByTestId('profile-banner', hidden)).toBeTruthy();
+    expect(screen.queryByTestId('profile-banner-image', hidden)).toBeNull();
+
+    await act(async () => settle({ gateMediaFromNonFollowed: false, sensitiveContentMode: 'blur' }));
+    await flush();
+    expect(screen.getByTestId('profile-banner-image', hidden)).toBeTruthy();
+  });
+
   it('gates an NSFW profile behind the interstitial', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(profile({ nsfw: true }));
     renderProfile();

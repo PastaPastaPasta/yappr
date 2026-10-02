@@ -1,7 +1,7 @@
 import type { PostDTO, ProfileDTO, UserSummaryDTO } from '@engine/api';
 
 import { filterBookmarks, stillBookmarked } from './bookmarks-filter';
-import { filterUsers } from './connections-search';
+import { filterUsers, isSearching } from './connections-search';
 import {
   avatarChoiceOf,
   avatarDtoOf,
@@ -153,6 +153,9 @@ describe('list filters', () => {
     expect(filterUsers(users, 'dubois').map((u) => u.id)).toEqual(['1']);
     expect(filterUsers(users, 'abcdef').map((u) => u.id)).toEqual(['3']);
     expect(filterUsers(users, 'zzz')).toEqual([]);
+    // The search mode counts the query as the filter does: a leading `@` is not a character.
+    expect(isSearching('@em')).toBe(false);
+    expect(isSearching(' emi ')).toBe(true);
   });
 
   it('drops un-bookmarked posts and searches the rest', () => {

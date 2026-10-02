@@ -21,7 +21,7 @@ import { useColors } from '~/ui/tokens';
 import { UserRow } from '~/ui/UserRow';
 
 import { toggleFollow } from './profile-actions';
-import { filterUsers, SEARCH_MIN } from './connections-search';
+import { filterUsers, isSearching } from './connections-search';
 
 /** Matches enough to fill the screen: search-driven paging stops there, and scrolling takes over. */
 const SEARCH_SCREENFUL = 20;
@@ -100,7 +100,7 @@ export function ConnectionsScreen({ id, kind }: { id: string; kind: ConnectionKi
   );
   // Everyone on the viewer's own followers list follows them: "Follow back".
   const followsYou = kind === 'followers' && id === viewerId;
-  const searching = query.trim().length >= SEARCH_MIN;
+  const searching = isSearching(query);
   const users = searching ? filterUsers(list.items, query) : list.items;
 
   // The filter covers the loaded pages: while it is on, keep paging until it has a screenful

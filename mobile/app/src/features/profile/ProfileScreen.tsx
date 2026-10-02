@@ -286,7 +286,8 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   const blockedHere = useAuthorBlocked(profile?.id, profile?.viewer?.blocks);
   const blocked = !isSelf && (viewerId ? blockedHere : profile?.viewer?.blocks === true);
   const following = profile?.viewer?.follows === true;
-  const bannerGated = !isSelf && !following && settings.data?.gateMediaFromNonFollowed === true;
+  // Gated until the setting says otherwise (the engine's default is on): not while it loads, nor if it can't be read.
+  const bannerGated = !isSelf && !following && settings.data?.gateMediaFromNonFollowed !== false;
   const nsfwGated =
     !!profile?.nsfw && !isSelf && settings.data?.sensitiveContentMode !== 'show' && !nsfwAcknowledged;
 
