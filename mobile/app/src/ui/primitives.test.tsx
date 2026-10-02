@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AccessibilityInfo, Alert } from 'react-native';
+import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 
 import { Avatar, svgFromDataUri } from './Avatar';
@@ -226,6 +226,21 @@ describe('WriteStatus', () => {
     expect(screen.getByText(text)).toBeTruthy();
     for (const link of links) expect(screen.getByRole('button', { name: link })).toBeTruthy();
     expect(screen.queryAllByRole('button')).toHaveLength(links.length);
+  });
+
+  it('gives each action a testID, and targets that never reach over a neighbour (A11Y-08, UX_SPEC §6.4)', () => {
+    const onRetry = jest.fn();
+    const onEdit = jest.fn();
+    render(<WriteStatus status={{ state: 'failed' }} onRetry={onRetry} onEdit={onEdit} />);
+    for (const id of ['write-status-retry', 'write-status-edit']) {
+      const link = screen.getByTestId(id);
+      expect(link.props.hitSlop).toMatchObject({ left: 0, right: 0 });
+      expect(link.props.hitSlop.top).toBeGreaterThan(0);
+      expect(StyleSheet.flatten(link.props.style).minWidth).toBeGreaterThanOrEqual(44);
+    }
+    fireEvent.press(screen.getByTestId('write-status-retry'));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onEdit).not.toHaveBeenCalled();
   });
 
   it('announces state changes, not its first appearance', () => {

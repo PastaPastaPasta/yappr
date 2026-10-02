@@ -4,7 +4,7 @@ import { ClockIcon, ExclamationCircleIcon } from 'react-native-heroicons/outline
 
 import { LinkText } from './LinkText';
 import { Text } from './Text';
-import { useColors } from './tokens';
+import { hitSlopFor, MIN_TARGET, useColors } from './tokens';
 
 export type WriteState =
   | { state: 'posting' }
@@ -29,6 +29,8 @@ export interface WriteStatusProps {
 export interface WriteStatusLink {
   label: string;
   onPress?: () => void;
+  /** `write-status-<id>` (PRD A11Y-08). */
+  id: 'check-again' | 'retry' | 'edit' | 'retry-rest';
 }
 
 /** The actions a state offers, also exposed as the optimistic card's screen-reader actions. */
@@ -41,16 +43,16 @@ export function writeStatusLinks({
 }: WriteStatusProps): WriteStatusLink[] {
   switch (status.state) {
     case 'unconfirmed':
-      return [{ label: 'Check again', onPress: onCheckAgain }];
+      return [{ label: 'Check again', onPress: onCheckAgain, id: 'check-again' }];
     case 'failed':
       return [
-        { label: 'Retry', onPress: onRetry },
-        { label: 'Edit', onPress: onEdit },
+        { label: 'Retry', onPress: onRetry, id: 'retry' },
+        { label: 'Edit', onPress: onEdit, id: 'edit' },
       ];
     case 'uncertain':
-      return [{ label: 'Edit', onPress: onEdit }];
+      return [{ label: 'Edit', onPress: onEdit, id: 'edit' }];
     case 'partial':
-      return [{ label: 'Retry the rest', onPress: onRetryRest }];
+      return [{ label: 'Retry the rest', onPress: onRetryRest, id: 'retry-rest' }];
     default:
       return [];
   }
@@ -73,6 +75,14 @@ function writeStatusText(status: WriteState): string {
       return `Posted ${status.posted} of ${status.total}`;
   }
 }
+
+/**
+ * Each action's target: its full height from vertical padding, and at least
+ * the minimum width from its own frame, never from sideways padding, which
+ * would reach over the "·" into its neighbour's (UX_SPEC §6.4).
+ */
+const LINK_SLOP = { ...hitSlopFor(20), left: 0, right: 0 };
+const LINK_FRAME = { minWidth: MIN_TARGET, alignItems: 'center' } as const;
 
 /**
  * The write-status line that replaces an optimistic card's action bar
@@ -114,7 +124,15 @@ export function WriteStatus(props: WriteStatusProps) {
           <Text variant="caption" tone="decorative">
             ·
           </Text>
-          <LinkText label={link.label} onPress={link.onPress} variant="caption" role="button" />
+          <LinkText
+            label={link.label}
+            onPress={link.onPress}
+            variant="caption"
+            role="button"
+            hitSlop={LINK_SLOP}
+            style={LINK_FRAME}
+            testID={`write-status-${link.id}`}
+          />
         </Fragment>
       ))}
     </View>
