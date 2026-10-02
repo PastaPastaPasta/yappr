@@ -7,10 +7,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import SignInScreen from '~/app/sign-in/index';
 import KeySignInScreen from '~/app/sign-in/key';
+import RegisterKeysScreen from '~/app/sign-in/register';
 import TermsGateScreen from '~/app/terms-gate';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 
+import { useKeyExchange } from './key-exchange';
 import { useTermsStore } from './terms';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -154,6 +156,39 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     expect(router.push).toHaveBeenCalledWith('/sign-in/key');
     // App Connect is flagged off in 1.0 (AUTH-13).
     expect(screen.queryByTestId('sign-in-app-connect')).toBeNull();
+  });
+});
+
+describe('key registration (AUTH-06)', () => {
+  const pending = { requestId: 'r1', uri: 'dash-key:r1', expiresAt: new Date(Date.now() + 600_000) };
+  const registration = { request: pending, uri: 'dash-st:r1', keys: [] };
+  it('"Try again" after the request ended goes back to the QR screen for the new request', () => {
+    fakeEngine.method('session.startKeyExchange').mockReturnValue(new Promise(() => undefined));
+    useKeyExchange.setState({
+      mode: 'qr',
+      phase: { name: 'error', title: 'Sign-in failed', message: 'Expired', retry: 'start' },
+      request: null,
+    });
+    render(<RegisterKeysScreen />);
+    fireEvent.press(screen.getByTestId('kx-try-again'));
+
+    expect(fakeEngine.method('session.startKeyExchange')).toHaveBeenCalled();
+    expect(router.replace).toHaveBeenCalledWith('/sign-in/qr');
+    expect(useKeyExchange.getState()).toMatchObject({ mode: 'qr', phase: { name: 'starting' } });
+  });
+
+  it('"Try again" after a failed check keeps checking the registration here', () => {
+    fakeEngine.method('session.awaitKeyRegistration').mockReturnValue(new Promise(() => undefined));
+    useKeyExchange.setState({
+      mode: 'wallet',
+      phase: { name: 'error', title: 'Sign-in failed', message: 'Offline', retry: 'registration', registration },
+      request: pending,
+    });
+    render(<RegisterKeysScreen />);
+    fireEvent.press(screen.getByTestId('kx-try-again'));
+
+    expect(fakeEngine.method('session.awaitKeyRegistration')).toHaveBeenCalled();
+    expect(router.replace).not.toHaveBeenCalled();
   });
 });
 

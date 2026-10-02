@@ -1,5 +1,5 @@
 import type { KeyToRegister } from '@engine/api';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { View } from 'react-native';
 import { ChatBubbleLeftRightIcon, LockClosedIcon } from 'react-native-heroicons/outline';
 
@@ -78,6 +78,8 @@ export default function RegisterKeysScreen() {
     content = <StatusBlock tone="done" title={copy.signin.signedIn} testID="kx-signed-in" />;
   } else if (phase.name === 'error') {
     content = <StatusBlock tone="error" title={phase.title} body={phase.message} testID="kx-error" />;
+    // Only a registration check is retried here; a new request (or a poll) shows on the wallet or QR screen.
+    const restarts = phase.retry !== 'registration';
     footer = (
       <Button
         label={copy.signin.tryAgain}
@@ -85,6 +87,7 @@ export default function RegisterKeysScreen() {
         testID="kx-try-again"
         onPress={() => {
           retry().catch(() => undefined);
+          if (restarts) router.replace(qr ? '/sign-in/qr' : '/sign-in/wallet');
         }}
       />
     );
