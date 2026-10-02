@@ -1,6 +1,7 @@
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type EngineSnapshot, type MessageView } from '@/lib/services/dm-v5'
 import { GroupError } from '@/lib/services/dm-v5/groups'
 import { logger } from '@/lib/logger'
+import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { ProbeResult, WriteResult } from '../writes/tickets'
@@ -17,6 +18,18 @@ export interface DmEngineSource {
    * touches another identity's engine.
    */
   release(identityId: string, engine: DmEngine): void
+}
+
+type KeyValueArea = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
+
+/**
+ * What DM v5 keeps in the engine's plain storage for an identity: lib's
+ * per-device cache (`lib/services/dm-v5/index.ts` names it), which holds who
+ * the account talks to, its blocks and read positions. Sign-out removes it
+ * (PRD AUTH-11).
+ */
+export function dmLocalKeys(identityId: string): string[] {
+  return [scopedKey(`yappr_dm_v5:${identityId}`)]
 }
 
 function toMessageDTO(view: MessageView): MessageDTO {
@@ -73,9 +86,12 @@ function view(engine: DmEngine): DmView {
  * maps its views to DTOs and its notifications to events, and stops it with
  * a flush when the session ends. Mirrors `components/messages/messages-v5.tsx`.
  */
-export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit; coalesceMs?: number }) {
+export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit; coalesceMs?: number; storage?: KeyValueArea }) {
   const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
+  const storage = (): KeyValueArea => options.storage ?? localStorage
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
+  /** Saves still running for engines already stopped: their end rewrites lib's cache. */
+  const flushes = new Map<string, Promise<unknown>>()
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
   function engineOf(identityId: string): DmEngine | null {
@@ -139,7 +155,27 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       stopping.unsubscribe()
       stopping.engine.stop()
       options.source.release(stopping.identityId, stopping.engine)
-      await stopping.engine.flush()
+      const saving = stopping.engine.flush()
+      const { identityId } = stopping
+      flushes.set(identityId, saving)
+      try {
+        await saving
+      } finally {
+        if (flushes.get(identityId) === saving) flushes.delete(identityId)
+      }
+    },
+
+    /**
+     * The identity signed out: remove what DM v5 keeps for it on this
+     * device. A save still running for it (sign-out waits for it only so
+     * long) rewrites lib's cache as it ends, so that is removed again then.
+     */
+    forget(identityId: string): void {
+      const remove = () => {
+        for (const key of dmLocalKeys(identityId)) storage().removeItem(key)
+      }
+      remove()
+      flushes.get(identityId)?.finally(remove).catch(() => undefined)
     },
 
     /**

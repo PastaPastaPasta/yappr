@@ -45,7 +45,12 @@ const authorOf = (id: string): AuthorDTO => ({ id, username: `u${id.slice(0, 4)}
 
 function memoryStorage() {
   const items = new Map<string, string>()
-  return { items, getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } }
+  return {
+    items,
+    getItem: (key: string) => items.get(key) ?? null,
+    setItem: (key: string, value: string) => { items.set(key, value) },
+    removeItem: (key: string) => { items.delete(key) },
+  }
 }
 
 /** A ledger whose block time is now, so its messages count as new for `dm.message`. */
@@ -71,6 +76,8 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
 function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}) {
   const events: Event[] = []
   const storage = memoryStorage()
+  /** The engine's plain storage, where DM v5 keeps its per-device state. */
+  const local = memoryStorage()
   const emit = (event: string, payload: unknown) => { events.push({ event, payload }) }
   let signedIn: string | null = me
   const keyRequired = vi.fn()
@@ -92,11 +99,11 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
     release: vi.fn(),
   }
   const authors = vi.fn(async (ids: string[]) => new Map(ids.map(id => [id, authorOf(id)])))
-  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, ...extra })
+  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, storage: local, ...extra })
   dm.hooks.sessionChanged(started(me))
   cleanups.push(() => dm.hooks.stop())
   return {
-    dm: dm.api, hooks: dm.hooks, events, storage, source, authors, tickets, keyRequired,
+    dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
     /** Whether this device holds no encryption key (the engine source answers null). */
@@ -147,6 +154,30 @@ describe('dm on DM v5: session lifecycle', () => {
     expect(user.source.release).toHaveBeenCalledWith(alice, engine)
     finish()
     await stopping
+  })
+
+  it('removes the account\'s DM cache on sign-out, again after a save that outlived the sign-out (SR-10)', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    const cacheKey = `yappr_dm_v5:${alice}`
+    user.local.setItem(cacheKey, '{"convs":{}}')
+    user.local.setItem(`yappr_dm_v5:${bob}`, '{"convs":{}}')
+    let finish = () => undefined as void
+    // lib's save ends with a write of its cache (DmEngine.emit persists it).
+    vi.spyOn(user.engine(), 'flush').mockReturnValue(new Promise(resolve => {
+      finish = () => {
+        user.local.setItem(cacheKey, '{"convs":{"rewritten":{}}}')
+        resolve(true)
+      }
+    }))
+    const stopping = user.hooks.stop()
+    user.hooks.forget(alice)
+    expect(user.local.getItem(cacheKey)).toBeNull()
+    finish()
+    await stopping
+    await settle()
+    expect(user.local.getItem(cacheKey)).toBeNull()
+    // Another account's cache stays.
+    expect(user.local.getItem(`yappr_dm_v5:${bob}`)).not.toBeNull()
   })
 
   it('saves the self-state before a background lifecycle resolves', async () => {

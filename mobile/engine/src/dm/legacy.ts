@@ -290,6 +290,9 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       replaceState(null)
     },
 
+    /** Legacy keeps nothing on the device for an account. */
+    forget(): void {},
+
     /** No polling in the background (PRD: only the DM flush runs there); the open thread resumes on return. */
     async lifecycle(lifecycle: AppLifecycleState): Promise<void> {
       if (!state || lifecycle === 'inactive') return

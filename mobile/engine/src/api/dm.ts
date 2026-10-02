@@ -56,6 +56,8 @@ export interface DmModuleOptions {
   v5Source?: DmEngineSource
   /** Default: lib's `directMessageService`. */
   legacyService?: LegacyDmService
+  /** The engine's plain storage, where DM v5 keeps its per-device state. Default: `localStorage`. */
+  storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
   /** Default: lib's signed-in identity. */
   viewer?: () => string | null
   /** Names and avatars for peers. Default: `loadUserSummaries`. */
@@ -135,7 +137,7 @@ export function createDmModule(options: DmModuleOptions) {
   const viewer = options.viewer ?? getCurrentUserId
   const { emit } = options
   const backend = (options.backend ?? (dmIsV5() ? 'v5' : 'legacy')) === 'v5'
-    ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs })
+    ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs, storage: options.storage })
     : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs })
   const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
   const fetchAuthors = options.authors ?? loadAuthors
@@ -539,6 +541,10 @@ export function createDmModule(options: DmModuleOptions) {
     /** The sign-out that `stop` prepared failed: the account stays signed in, and so do its messages. */
     resume: (): void => {
       halted = false
+    },
+    /** `identityId` signed out: nothing of its messages may stay on the device (PRD AUTH-11). */
+    forget: (identityId: string): void => {
+      backend.forget(identityId)
     },
     /** AppState: `background` resolves once the DM flush is done, or after the host's background budget. */
     lifecycle: (state: AppLifecycleState): Promise<void> => bounded(backend.lifecycle(state), LIFECYCLE_FLUSH_WAIT_MS, 'The DM lifecycle'),

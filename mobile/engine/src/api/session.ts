@@ -79,6 +79,8 @@ export interface SessionModuleOptions {
   stopDm?: () => Promise<void>
   /** Sign-out failed after `stopDm`: the account stays signed in, so its messages may run again. */
   resumeDm?: () => void
+  /** An account signed out (active or not): remove what its messages keep on the device (the `dm` module). */
+  forgetDm?: (identityId: string) => void
 }
 
 /** AuthUser.balance (a number of credits) as the DTOs carry credits. */
@@ -292,6 +294,7 @@ export function createSessionModule(options: SessionModuleOptions) {
       }
     }
     options.tickets?.forgetIdentity(identityId)
+    options.forgetDm?.(identityId)
     registry.remove(identityId, { live: isActive })
     await options.secureDurable?.()
     if (isActive) announce('signed-out')
