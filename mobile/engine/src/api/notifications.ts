@@ -1,4 +1,5 @@
 import { getVisibleUnreadNotificationCount, isNotificationEnabled } from '@/lib/notification-preferences'
+import { blockService } from '@/lib/services/block-service'
 import { notificationService } from '@/lib/services/notification-service'
 import { useSettingsStore } from '@/lib/store'
 import { useNotificationStore } from '@/lib/stores/notification-store'
@@ -33,6 +34,8 @@ export interface NotificationDTO {
    * The post or reply it is about (likes, reposts, quotes, replies,
    * mentions); `null` for follows and private-feed events. A v2 reply
    * notification opens its parent (`preview.parentId`), as web links it.
+   * For a reply, `kind` is what it answered ("replied to your reply"), as
+   * far as the topology tells; the reply itself is always a reply.
    */
   target: { id: string; kind: 'post' | 'reply' } | null
   preview: PostDTO | null
@@ -66,9 +69,28 @@ function inTab(notification: Notification, filter: NotificationFilter): boolean 
 const store = () => useNotificationStore.getState()
 const settings = () => useSettingsStore.getState().notificationSettings
 
-/** The list, tab counts and badge share one visibility rule: types turned off in settings are hidden. */
-const visible = () => store().notifications.filter(notification => isNotificationEnabled(notification, settings()))
-const unreadCount = () => getVisibleUnreadNotificationCount(store().notifications, settings())
+/**
+ * The list, tab counts and badge share one visibility rule: notifications
+ * from blocked actors (NOTIF-08) and types turned off in settings are hidden.
+ */
+const unblocked = (blocked: ReadonlySet<string>) => store().notifications.filter(notification => !blocked.has(notification.from.id))
+const visible = (blocked: ReadonlySet<string>) => unblocked(blocked).filter(notification => isNotificationEnabled(notification, settings()))
+const unreadCountOf = (blocked: ReadonlySet<string>) => getVisibleUnreadNotificationCount(unblocked(blocked), settings())
+
+/**
+ * The actors among these notifications the viewer blocks, by their own
+ * block or a followed list (`checkBlockedBatch`, which a local block or
+ * unblock updates). `null` when that can't be read: the caller keeps what
+ * it knew, as feeds fail soft to "not blocked".
+ */
+async function blockedAmong(viewer: string, notifications: Notification[]): Promise<Set<string> | null> {
+  const actors = Array.from(new Set(notifications.map(notification => notification.from.id)))
+  if (actors.length === 0) return new Set()
+  const result = await blockService.checkBlockedBatch(viewer, actors).catch(() => null)
+  return result ? new Set(actors.filter(actor => result.get(actor) === true)) : null
+}
+
+const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every(id => b.has(id))
 
 /** lib names an actor without a profile or name by a truncated id; the DTO's fallback is `User <last 6>`. */
 function actorOf(user: Notification['from'], avatars: Map<string, AuthorDTO['avatar']>): AuthorDTO {
@@ -79,6 +101,16 @@ function actorOf(user: Notification['from'], avatars: Map<string, AuthorDTO['ava
     profile: { displayName: placeholder ? undefined : user.displayName },
   })
   return { id, username, displayName, avatar: avatars.get(id) ?? avatar, resolved }
+}
+
+/**
+ * "Your post" or "your reply": lib's `targetKind` where the topology can tell
+ * (as web's `notificationMessage`). Otherwise the post's own kind, except for
+ * a reply notification, whose post is the new reply, not what it answered.
+ */
+function targetKindOf(notification: Notification, post: NonNullable<Notification['post']>): 'post' | 'reply' {
+  if (notification.targetKind) return notification.targetKind
+  return notification.type === 'reply' ? 'post' : post.targetKind ?? 'post'
 }
 
 async function toNotificationDTOs(notifications: Notification[]): Promise<NotificationDTO[]> {
@@ -94,7 +126,7 @@ async function toNotificationDTOs(notifications: Notification[]): Promise<Notifi
       actor: actorOf(notification.from, avatars),
       at: notification.createdAt,
       read: notification.read,
-      target: post ? { id: post.id, kind: notification.targetKind ?? post.targetKind ?? 'post' } : null,
+      target: post ? { id: post.id, kind: targetKindOf(notification, post) } : null,
       preview: post ? toPostDTO(post, { signedIn: true, avatars }) : null,
       ...(notification.blogId && notification.blogPostSlug ? { blog: { blogId: notification.blogId, slug: notification.blogPostSlug } } : {}),
       ...(notification.likerCount !== undefined && notification.likerCount > 1 ? { likers: notification.likerCount } : {}),
@@ -107,6 +139,9 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
   /** The account whose notifications the store holds; a first read per account loads the last 7 days. */
   let loadedFor: string | null = null
   let loading: { viewer: string; token: object; done: Promise<void> } | null = null
+  /** The blocked actors among the notifications held for `loadedFor`. */
+  let blocked: ReadonlySet<string> = new Set()
+  const unreadCount = () => unreadCountOf(blocked)
 
   const report = () => {
     if (viewerId()) emit('notifications.count', { unread: unreadCount() })
@@ -141,11 +176,13 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       restoreReadState()
       store().clearNotifications()
       const result = await notificationService.getInitialNotifications(viewer, store().getReadIdsSet())
+      const blockedNow = await blockedAmong(viewer, result.notifications)
       // Signed out, switched, or overtaken by another account's load: its result belongs to nobody now.
       if (viewerId() !== viewer || loading?.token !== token) throw new RpcError('The account changed while notifications loaded', 'NOT_SIGNED_IN')
       store().setNotifications(result.notifications)
       store().setLastFetchTimestamp(result.latestTimestamp)
       store().setHasFetchedOnce(true)
+      blocked = blockedNow ?? new Set()
       loadedFor = viewer
       report()
     })().finally(() => {
@@ -153,6 +190,17 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
     })
     loading = { viewer, token, done }
     return done
+  }
+
+  /**
+   * Re-reads which held actors are blocked, so a block or unblock (here or
+   * on another device) reaches the list and the badge. True when it changed.
+   */
+  async function refreshBlocked(viewer: string): Promise<boolean> {
+    const next = await blockedAmong(viewer, store().notifications)
+    if (!next || loadedFor !== viewer || viewerId() !== viewer || sameSet(next, blocked)) return false
+    blocked = next
+    return true
   }
 
   return {
@@ -166,7 +214,7 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
      * One tab of the viewer's notifications, newest first, 30 a page. The
      * first call per account reads the last 7 days; later calls page what
      * is held, which `poll()` keeps current. Types turned off in settings are
-     * left out.
+     * left out, as are those from actors the viewer blocks.
      */
     async list(query: { filter?: NotificationFilter; cursor?: string | null } = {}): Promise<Page<NotificationDTO>> {
       const filter = query.filter ?? 'all'
@@ -174,7 +222,8 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       const viewer = requireViewer('Notifications')
       const after = decodeCursor<{ after: string; at: number }>(query.cursor, `notifications:${filter}`)
       await ensureLoaded(viewer)
-      const items = visible().filter(notification => inTab(notification, filter))
+      if (!after && await refreshBlocked(viewer)) report()
+      const items = visible(blocked).filter(notification => inTab(notification, filter))
       let start = 0
       if (after) {
         // Keyset on (time, id): new notifications arriving at the top never shift a page.
@@ -204,8 +253,12 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       const before = store().notifications.length
       if (result.notifications.length > 0) store().addNotifications(result.notifications)
       store().setLastFetchTimestamp(result.latestTimestamp)
+      const added = store().notifications.length - before
+      // A block or unblock since the last poll changes the badge too.
+      await refreshBlocked(viewer)
+      if (viewerId() !== viewer) return { added: 0, unread: 0 }
       report()
-      return { added: store().notifications.length - before, unread: unreadCount() }
+      return { added, unread: unreadCount() }
     },
 
     /** Mark notifications read (a tap on one, `markAsRead`). */
