@@ -626,6 +626,33 @@ describe('posts.publish and posts.delete', () => {
     m.replyService.getReplyById.mockResolvedValue({ ...post(TARGET.id), parentId: id('P'), deleted: true })
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
   })
+
+  it('decides a delete\'s `false` with its probe: a send whose wait gave no verdict is not a refusal', async () => {
+    const { outcome, posts } = engine()
+    const own = { ...TARGET, ownerId: VIEWER }
+    m.postService.deleteOwnPost.mockResolvedValue(false)
+    // lib's deleteDocument answers false for a 504 too: the post proved gone is a delete that landed.
+    m.documentExists.mockResolvedValue(false)
+    expect(await outcome(posts.delete(own))).toMatchObject({ state: 'confirmed', error: null })
+    // Still there: refused, rolled back and retryable (SR-04).
+    m.documentExists.mockResolvedValue(true)
+    expect(await outcome(posts.delete(own)))
+      .toMatchObject({ state: 'failed', retryable: true, error: { code: 'UNKNOWN', outcome: 'refused' } })
+    // Unreadable: may have landed, so Check again.
+    m.documentExists.mockRejectedValue(new Error('read failed'))
+    expect(await outcome(posts.delete(own))).toMatchObject({ state: 'unconfirmed', retryable: false })
+  })
+
+  it('v10: an unrepost whose delete answers false is decided by the slot read back', async () => {
+    const { outcome, engage } = engine()
+    m.topology.repostsAreQuotes = true
+    m.strict.ownQuoteStrict.mockResolvedValue({ id: id('Bare'), bare: true })
+    m.postService.deleteOwnPost.mockResolvedValue(false)
+    m.strict.repostExists.mockResolvedValue(false)
+    expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'confirmed' })
+    m.strict.repostExists.mockResolvedValue(true)
+    expect(await outcome(engage.unrepost(TARGET))).toMatchObject({ state: 'failed', retryable: true })
+  })
 })
 
 describe('notifications', () => {

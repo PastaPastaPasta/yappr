@@ -52,12 +52,14 @@ export const BUILD_DEFECT_MESSAGE = 'Something went wrong building this action, 
 
 /**
  * The error `fromBoolean` stands in for what a lib service that answers
- * `false` swallowed (`likePost`, `bookmarkPost`, `deleteOwnPost`, ...). lib
+ * `false` swallowed (`likePost`, `bookmarkPost`, `removeRepost`, ...). lib
  * answers `false` when its write threw (a refusal, a missing key, a pending
- * nonce, a failed send); a broadcast whose wait gave no verdict answers
- * `true`. Web takes `false` as failed and rolls the change back, and so does
- * the app (PRD G-4), never as a silent "may have landed". A retry is safe:
- * each of those services reads for the document before it writes.
+ * nonce, a failed send). Web takes `false` as failed and rolls the change
+ * back, and so does the app (PRD G-4), never as a silent "may have landed". A
+ * retry is safe: each of those services reads for the document before it
+ * writes. The delete services (`deleteOwnPost`, `deleteOwnReply`) also answer
+ * `false` for a send whose wait gave no verdict, so their `false` is decided
+ * by a probe first (`fromDeleteBoolean`).
  */
 export const LIB_REFUSED_MESSAGE = 'The network did not accept this change'
 

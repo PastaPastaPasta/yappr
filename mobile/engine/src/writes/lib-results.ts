@@ -2,7 +2,7 @@ import { extractErrorMessage } from '@/lib/error-utils'
 import { getEvoSdk } from '@/lib/services/evo-sdk-service'
 import type { StateTransitionResult } from '@/lib/services/state-transition-service'
 import { LIB_REFUSED_MESSAGE } from './classify'
-import type { WriteResult } from './tickets'
+import type { ProbeResult, WriteResult } from './tickets'
 import type { TicketDocument } from './types'
 
 /**
@@ -30,6 +30,22 @@ export function fromBoolean(ok: boolean, documents?: TicketDocument[]): WriteRes
   return ok
     ? { state: 'confirmed', documents }
     : { state: 'failed', error: new Error(LIB_REFUSED_MESSAGE), documents }
+}
+
+/**
+ * A delete or tombstone service's boolean (`deleteOwnPost`, `deleteOwnReply`).
+ * lib's `deleteDocument` and `tombstoneDocument` send and wait in one call
+ * and answer `false` for any error, a gateway timeout included, so `false`
+ * does not prove the change was refused. The write's own probe decides: the
+ * document still there is `failed` and retryable (`fromBoolean`), proved gone
+ * (or blanked) is `confirmed`, and an unreadable answer is `unconfirmed`, for
+ * Check again.
+ */
+export async function fromDeleteBoolean(ok: boolean, probe: () => Promise<ProbeResult>): Promise<WriteResult> {
+  if (ok) return fromBoolean(true)
+  const proof = await probe()
+  if (proof.state === 'applied') return { state: 'confirmed' }
+  return proof.state === 'not-applied' ? fromBoolean(false) : { state: 'unconfirmed' }
 }
 
 /**

@@ -88,7 +88,7 @@ export function postedOverflowOffset(text: string, limits: ContentLimits): numbe
   return offset === null ? null : offset + (text.length - text.trimStart().length);
 }
 
-export type CounterTone ='secondary' | 'warning' | 'error';
+export type CounterTone = 'secondary' | 'warning' | 'error';
 
 /** The counter's color: gray, amber at 50 or fewer characters left, red when over either limit. */
 export function counterTone(text: string, limits: ContentLimits): CounterTone {

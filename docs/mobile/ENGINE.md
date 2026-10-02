@@ -916,7 +916,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 | # | Predicate | Code | Effect |
 | --- | --- | --- | --- |
 | 21a | "Insufficient identity … balance … required …" / "credits balance … is not enough to pay" (`IdentityInsufficientBalanceError`, `BalanceIsNotEnoughError`; `categorizeError` has no branch) | `INSUFFICIENT_CREDITS` | `failed`, not retryable; the app shows PRD G-5's copy |
-| 21b | `fromBoolean(false)`'s stand-in error (lib's boolean services swallow theirs) | `UNKNOWN`, outcome `refused` | `failed`, retryable, as web rolls it back |
+| 21b | `fromBoolean(false)`'s stand-in error (lib's boolean services swallow theirs) | `UNKNOWN`, outcome `refused` | `failed`, retryable, as web rolls it back. A delete's `false` (`deleteOwnPost`, `deleteOwnReply`) may hide a send whose wait gave no verdict, so the write's probe decides first: still there → this row; proved gone → `confirmed`; unreadable → `unconfirmed` |
 | 22 | `isDuplicateUniqueIndexError` :968 (40105) | `DUPLICATE` | `failed`; the v10 repost path recovers the existing slot (§6.3 `engage`) |
 | 23 | `isAlreadyExistsError` :116 (no consensus code) | `DUPLICATE` | `unconfirmed`, outcome `unknown`: the broadcast probably landed |
 | 24 | `isRateLimitedError` :106 | `RATE_LIMITED` | `failed`, retryable |
