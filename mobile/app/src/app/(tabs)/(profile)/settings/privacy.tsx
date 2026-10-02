@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { PrivacySettingsScreen } from '~/features/settings/ContentSettingsScreens';
 
-export default function PrivacySettingsScreen() {
-  return <Placeholder title="Privacy" comingIn="the settings and bookmarks PR" />;
-}
+export default PrivacySettingsScreen;

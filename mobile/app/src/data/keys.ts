@@ -82,6 +82,8 @@ export const queryKeys = {
 
   /** `notifications.list`. Never persisted. */
   notifications: (filter: NotificationFilter = 'all') => [...root, 'notifications', filter] as const,
+  /** Every `notifications.list` filter: a prefix of the key above. */
+  notificationsAll: [...root, 'notifications'] as const,
 
   /** `safety.blocked`. */
   blocked: [...root, 'blocked'] as const,

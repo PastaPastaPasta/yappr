@@ -1,0 +1,187 @@
+# Settings (PRD SET-01, SET-04, SET-05, SAFE-06; EXECUTION S10).
+#
+# Run against the devnet dev client with the bundle already loaded:
+#   maestro --device <udid|serial> test mobile/e2e/flows/settings.yaml
+# Signed in or out: theme and NSFW mode are device-wide content settings
+# (PRD SET-09). It switches the theme to Dark and Light and back to System,
+# then sets the NSFW mode to Hide, checks it survives leaving and reopening
+# Privacy & Safety, and puts it back to Warn first. Nothing here writes to
+# chain, and no key is needed.
+# Platform differences: "back" is the header button on iOS and the system back
+# on Android; a selected radio row reads "radio button, checked" on iOS and is
+# `checked` on Android.
+appId: pr.yap.app.dev
+---
+- openLink: yappr-dev:///settings
+- extendedWaitUntil:
+    visible:
+      id: settings-root
+    timeout: 60000
+- assertVisible:
+    id: settings-privacy
+- assertVisible:
+    id: settings-about
+
+# Theme: applies at once, and the root row shows it.
+- tapOn:
+    id: settings-appearance
+- tapOn:
+    id: appearance-theme-dark
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible:
+          id: appearance-theme-dark
+          text: "radio button, checked"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible:
+          id: appearance-theme-dark
+          checked: true
+- tapOn:
+    id: appearance-theme-light
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible:
+          id: appearance-theme-light
+          text: "radio button, checked"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible:
+          id: appearance-theme-light
+          checked: true
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: BackButton
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- waitForAnimationToEnd
+- assertVisible: "Appearance, Light"
+- tapOn:
+    id: settings-appearance
+- tapOn:
+    id: appearance-theme-system
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible:
+          id: appearance-theme-system
+          text: "radio button, checked"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible:
+          id: appearance-theme-system
+          checked: true
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: BackButton
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- waitForAnimationToEnd
+- assertVisible: "Appearance, System"
+
+# NSFW mode: Hide, kept after leaving the screen, then back to Warn first.
+- tapOn:
+    id: settings-privacy
+- extendedWaitUntil:
+    visible:
+      id: privacy-nsfw-blur
+    timeout: 30000
+- tapOn:
+    id: privacy-nsfw-hide
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible:
+          id: privacy-nsfw-hide
+          text: "radio button, checked"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible:
+          id: privacy-nsfw-hide
+          checked: true
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: BackButton
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- waitForAnimationToEnd
+- tapOn:
+    id: settings-privacy
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: privacy-nsfw-hide
+            text: "radio button, checked"
+          timeout: 30000
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: privacy-nsfw-hide
+            checked: true
+          timeout: 30000
+- tapOn:
+    id: privacy-nsfw-blur
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - assertVisible:
+          id: privacy-nsfw-blur
+          text: "radio button, checked"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - assertVisible:
+          id: privacy-nsfw-blur
+          checked: true
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: BackButton
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- waitForAnimationToEnd
