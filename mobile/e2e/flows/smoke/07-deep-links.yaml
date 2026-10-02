@@ -14,7 +14,10 @@ env:
 # load its bundle from Metro; it hands the link over once the app is up.
 - runFlow: ../../subflows/launch.yaml
 - stopApp
-- openLink: ${SCHEME}://hashtag?tag=${TAG}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://hashtag?tag=${TAG}
 - runFlow:
     when:
       true: ${DEV_CLIENT_URL != ''}
@@ -27,7 +30,10 @@ env:
 - takeScreenshot: deep-link-cold-hashtag
 
 # Warm: links push onto the running app.
-- openLink: ${SCHEME}://settings?section=appearance
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings?section=appearance
 - extendedWaitUntil:
     visible:
       id: appearance-settings
@@ -36,15 +42,19 @@ env:
     when:
       true: ${PROFILE_ID != ''}
     commands:
-      - openLink: ${SCHEME}://user?id=${PROFILE_ID}
+      - runFlow:
+          file: ../../subflows/open-link.yaml
+          env:
+            LINK: ${SCHEME}://user?id=${PROFILE_ID}
       # The link opened the profile screen; its data comes from sakura, which fails a
       # read now and then ("Something went wrong", profile-error). Then, as a user
       # would: wait a moment and "Try again" (a refetch keeps the error up until it
-      # lands, so wait for the header itself). Only the header passes.
+      # lands, so wait for the header itself; that wait counts from the tap). Only the
+      # header passes. A failing read can take a minute to give up (58 s in android-full-3).
       - extendedWaitUntil:
           visible:
             id: "profile-header|profile-error"
-          timeout: 60000
+          timeout: 90000
       - repeat:
           times: 3
           while:
@@ -52,15 +62,13 @@ env:
               id: profile-error
           commands:
             - takeScreenshot: deep-link-warm-profile-error
-            - extendedWaitUntil:
-                visible:
-                  id: profile-header
-                timeout: 10000
-                optional: true
-            - tapOn:
-                text: "Try again"
-                childOf:
-                  id: profile-error
+            - runScript:
+                file: ../../scripts/pause.js
+                env:
+                  PAUSE_MS: '10000'
+            # The only "Try again" on screen (Android flattens profile-error's children
+            # into siblings, so it can't be matched as its child).
+            - tapOn: "Try again"
             - extendedWaitUntil:
                 visible:
                   id: profile-header
@@ -70,7 +78,10 @@ env:
           id: profile-header
       - takeScreenshot: deep-link-warm-profile
 # A malformed id is refused: Home, not an error screen.
-- openLink: ${SCHEME}://post?id=not-a-post-id
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://post?id=not-a-post-id
 - extendedWaitUntil:
     visible:
       id: home-header
