@@ -34,6 +34,7 @@ type Status = {
   state: string;
   epoch: number;
   info: Partial<EngineInfo> | null;
+  unsupported?: 'lockdown' | 'webview-outdated' | null;
 };
 
 let status: Status = { state: 'handshaking', epoch: 1, info: null };

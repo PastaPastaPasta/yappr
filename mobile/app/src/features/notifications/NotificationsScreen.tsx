@@ -8,6 +8,7 @@ import { config } from '~/config';
 import { queryKeys } from '~/data/keys';
 import { lastIdentity, useSession } from '~/data/session';
 import { engineSupervisor } from '~/engine';
+import { EngineBanner } from '~/engine/EngineBanner';
 import { useEngineStatus } from '~/engine/hooks';
 import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
 import { useOffline } from '~/features/home/use-app-active';
@@ -254,6 +255,7 @@ export function NotificationsScreen() {
   return (
     <Screen>
       {header}
+      <EngineBanner />
       <FlashList
         data={rows}
         keyExtractor={(row) => row.key}

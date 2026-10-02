@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
+import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
 import { useSessionStore, useViewerId } from '~/data/session';
 import { type WriteSpec } from '~/data/writes';
@@ -61,6 +62,9 @@ export function useAuthorBlocked(authorId: string | undefined, fallback?: boolea
   return decided ?? fallback === true;
 }
 
+/** How often a failed block-status read is asked again (5, 10, 20 and 40 s apart). */
+const BLOCK_STATUS_RETRIES = 4;
+
 /** The engine's cap on one `safety.isBlocked` call. */
 const STATUS_BATCH_MAX = 100;
 let statusBatch: { ids: Set<string>; blocked: Promise<Record<string, boolean>> } | null = null;
@@ -68,7 +72,9 @@ let statusBatch: { ids: Set<string>; blocked: Promise<Record<string, boolean>> }
 /**
  * Whether the viewer blocks `userId` (own blocks and followed block lists),
  * asked in one `safety.isBlocked` call with every other card that asks in
- * the same tick. Fails soft to "not blocked", as web's block lookups do.
+ * the same tick. A failure rejects: cached as "not blocked", it would show a
+ * blocked author's quote until the card remounted (lib's block-service warns
+ * against exactly that false negative).
  */
 function readBlockStatus(api: EngineRemote, userId: string): Promise<boolean> {
   let batch = statusBatch;
@@ -78,8 +84,7 @@ function readBlockStatus(api: EngineRemote, userId: string): Promise<boolean> {
       .then(() => {
         if (statusBatch?.ids === ids) statusBatch = null;
         return api.safety.isBlocked([...ids]);
-      })
-      .catch((): Record<string, boolean> => ({}));
+      });
     batch = statusBatch = { ids, blocked };
   }
   batch.ids.add(userId);
@@ -98,6 +103,9 @@ export function useQuotedAuthorBlocked(authorId: string | undefined, fallback?: 
   const ask = viewerId !== null && id !== '' && id !== viewerId && fallback !== true;
   const { data: blocked } = useEngineQuery(queryKeys.blockStatus(id), (api) => readBlockStatus(api, id), {
     enabled: ask,
+    // Asked again with backoff, so an engine that was down (a cold start offline) answers once it is up.
+    retry: BLOCK_STATUS_RETRIES,
+    retryDelay: (attempt) => Math.min(5000 * 2 ** attempt, 60_000),
   });
   return useAuthorBlocked(authorId, fallback === true || (ask && blocked === true));
 }
@@ -209,9 +217,12 @@ function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () =
     block && user ? { ...user, id: userId, resolved: true, message: message ?? null } : undefined;
   decide(viewerId, userId, { blocked: block, user: row });
   const undoProfiles = patchProfiles(userId, block);
+  // The decision lives in memory; the cached posts carry it across a relaunch (SR-25).
+  const undoPosts = setAuthorBlocked(userId, block);
   return () => {
     decide(viewerId, userId, before);
     undoProfiles();
+    undoPosts();
     refetch(queryKeys.profile.detail(userId));
   };
 }

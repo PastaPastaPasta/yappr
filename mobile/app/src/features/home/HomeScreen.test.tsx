@@ -2,7 +2,7 @@ import type { CapabilitiesDTO, Page, PostDTO, SessionDTO } from '@engine/api';
 import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
-import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { act, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
 import { RefreshControl } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -408,7 +408,9 @@ describe('Home', () => {
 
     expect(screen.getByTestId('feed-engine-down')).toBeTruthy();
     expect(screen.getByText(/temporarily unavailable/)).toBeTruthy();
-    fireEvent.press(screen.getByText('Try again'));
+    // The "Couldn't connect" banner offers the same (NET-01).
+    expect(screen.getByTestId('engine-banner')).toBeTruthy();
+    fireEvent.press(within(screen.getByTestId('feed-engine-down')).getByText('Try again'));
     expect(restart).toHaveBeenCalled();
   });
 

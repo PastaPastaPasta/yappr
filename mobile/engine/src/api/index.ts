@@ -8,7 +8,7 @@ import { createNotificationsModule } from './notifications'
 import { createPostWrites, posts } from './posts'
 import { createProfileWrites, profiles } from './profiles'
 import { createSafetyModule } from './safety'
-import { createSessionModule, type SessionEvents } from './session'
+import { createMobileAuthController, createSessionModule, foregroundBalanceRefresh, type SessionEvents } from './session'
 import { settings } from './settings'
 import { retryReadsOnStaleQuorum } from './stale-quorum'
 import { createEngineTicketStore, createWritesModule } from './writes'
@@ -26,6 +26,8 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
   const dm = createDmModule({ emit, tickets, secureDurable: runtime.secureDurable })
   // Session changes reach notifications and direct messages too: what they hold belongs to one account.
   const notifications = createNotificationsModule(emit)
+  const controller = createMobileAuthController()
+  const balance = foregroundBalanceRefresh(controller)
   const sessionEmit: typeof emit = (event, payload) => {
     if (event === 'session.changed') {
       const change = payload as SessionEvents['session.changed']
@@ -40,6 +42,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
       // A backgrounded app is held until the DM state is saved (PRD DM-14).
       lifecycle: async state => {
         await runtime.lifecycle?.(state)
+        balance.lifecycle(state)
         await dm.hooks.lifecycle(state)
       },
     }),
@@ -50,6 +53,7 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
     profiles: { ...retryReadsOnStaleQuorum(profiles), ...createProfileWrites(tickets) },
     session: createSessionModule({
       emit: sessionEmit,
+      controller,
       tickets,
       secureDurable: runtime.secureDurable,
       stopDm: dm.hooks.stop,

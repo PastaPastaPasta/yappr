@@ -1,4 +1,4 @@
-import type { PostDTO, PostStatsDTO, ViewerStateDTO } from '@engine/api/dto';
+import type { Page, PostDTO, PostStatsDTO, ViewerStateDTO } from '@engine/api/dto';
 import { create } from 'zustand';
 
 import { queryClient } from '~/state/query-client';
@@ -193,6 +193,54 @@ export function setFollowing(authorId: string, follows: boolean): () => void {
     apply(!follows);
     queryClient.invalidateQueries({ queryKey: queryKeys.profile.detail(authorId) }).catch(() => undefined);
   };
+}
+
+/**
+ * The viewer's block of an author on every cached post of theirs (and every
+ * quote of one): `viewer.authorBlocked`, which hides the post from lists and
+ * collapses it in threads. Kept in the persisted cache, so a relaunch before
+ * the lists are read again still hides them. Returns the undo.
+ */
+export function setAuthorBlocked(authorId: string, blocked: boolean): () => void {
+  const apply = (value: boolean) =>
+    updateCache((object) => {
+      if (!isCachedPost(object) || object.author?.id !== authorId || object.viewer?.authorBlocked === value) return object;
+      return { ...object, viewer: { ...object.viewer, authorBlocked: value } };
+    });
+  apply(blocked);
+  return () => {
+    apply(!blocked);
+  };
+}
+
+const isPostPages = (data: unknown): data is { pages: Page<PostDTO>[] } =>
+  isPlainObject(data) &&
+  Array.isArray(data.pages) &&
+  data.pages.every((page: unknown) => isPlainObject(page) && Array.isArray(page.items));
+
+/**
+ * Takes a deleted post, and bare reposts of it, out of every cached list
+ * (feeds, profile tabs, bookmarks, search), so it stays out of them after a
+ * relaunch too, as the delete dialog promises. Threads, details and quotes
+ * keep their copy, which `markPostDeleted` turns into the "deleted" line.
+ */
+export function dropFromLists(postId: string): void {
+  // Posts only (`stats.likes`): a notification or user row may share the id or carry the post.
+  const gone = (item: unknown) =>
+    isPlainObject(item) &&
+    isCachedPost(item) &&
+    (item.id === postId || (item.bareRepost === true && item.quotedPostId === postId));
+  for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.all })) {
+    const data = query.state.data;
+    if (!isPostPages(data) || !data.pages.some((page) => page.items.some(gone))) continue;
+    if (query.state.fetchStatus === 'fetching') {
+      queryClient.cancelQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
+    }
+    const pages = data.pages.map((page) =>
+      page.items.some(gone) ? { ...page, items: page.items.filter((item) => !gone(item)) } : page,
+    );
+    queryClient.setQueryData(query.queryKey, { ...data, pages }, { updatedAt: query.state.dataUpdatedAt });
+  }
 }
 
 /** Marks every cached copy of a post deleted (the card renders the "deleted" line). */

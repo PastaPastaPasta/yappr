@@ -4,10 +4,18 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import type { ReactNode } from 'react';
 
 import { queryClient } from '~/state/query-client';
-import { POSTS, fixturePost } from '~/ui/post/fixtures';
+import { AUTHORS, POSTS, fixturePost } from '~/ui/post/fixtures';
 
 import { queryKeys } from './keys';
-import { hidePost, markPostDeleted, setFollowing, setViewerState, useRemovedPosts } from './optimistic';
+import {
+  dropFromLists,
+  hidePost,
+  markPostDeleted,
+  setAuthorBlocked,
+  setFollowing,
+  setViewerState,
+  useRemovedPosts,
+} from './optimistic';
 import { flattenPages, useEngineInfiniteQuery, useEngineQuery } from './queries';
 import { fakeEngine } from './testing/fake-engine';
 
@@ -191,6 +199,43 @@ describe('deletes', () => {
     markPostDeleted('target');
     expect(detail().deleted).toBe(true);
     expect(feed().pages[1].items[0].quoted?.deleted).toBe(true);
+  });
+
+  it('takes a deleted post, and bare reposts of it, out of every cached list but not threads (SR-25)', () => {
+    seed();
+    const repost = fixturePost({ id: 'repost', author: AUTHORS.carol, bareRepost: true, quoted: target, quotedPostId: 'target' });
+    const posts = queryKeys.profile.posts(AUTHORS.carol.id, 'posts');
+    queryClient.setQueryData<InfiniteData<Page<PostDTO>>>(posts, { pages: [page([repost, other])], pageParams: [null] });
+    const thread = { pages: [{ focus: target, ancestors: [], removedAncestorIds: [], replies: [] }], pageParams: [null] };
+    queryClient.setQueryData(queryKeys.post.thread('target'), thread);
+    // A notification that shares the post's id (a reply notification is the reply's id) is not a post.
+    const notifications = { pages: [page([{ id: 'target', type: 'reply', target: { id: 'target', kind: 'post' } }])], pageParams: [null] };
+    queryClient.setQueryData(queryKeys.notifications(), notifications);
+
+    dropFromLists('target');
+    expect(queryClient.getQueryData(queryKeys.notifications())).toBe(notifications);
+    expect(feed().pages.map((p) => p.items.map((item) => item.id))).toEqual([['other'], ['quoting']]);
+    expect(queryClient.getQueryData<InfiniteData<Page<PostDTO>>>(posts)!.pages[0].items.map((item) => item.id)).toEqual(['other']);
+    expect(queryClient.getQueryData(queryKeys.post.thread('target'))).toBe(thread);
+    expect(detail()).toBe(target);
+  });
+});
+
+describe('setAuthorBlocked', () => {
+  it("marks the author's cached posts and quotes blocked, leaves other authors alone, and undoes (SR-25)", () => {
+    seed();
+    const carols = fixturePost({ id: 'carols', author: AUTHORS.carol });
+    queryClient.setQueryData(queryKeys.post.detail('carols'), carols);
+    const undo = setAuthorBlocked(target.author.id, true);
+
+    expect(feed().pages[0].items[0].viewer?.authorBlocked).toBe(true);
+    expect(feed().pages[1].items[0].quoted?.viewer?.authorBlocked).toBe(true);
+    expect(detail().viewer?.authorBlocked).toBe(true);
+    expect(queryClient.getQueryData(queryKeys.post.detail('carols'))).toBe(carols);
+
+    undo();
+    expect(feed().pages[0].items[0].viewer?.authorBlocked).toBe(false);
+    expect(detail().viewer?.authorBlocked).toBe(false);
   });
 });
 

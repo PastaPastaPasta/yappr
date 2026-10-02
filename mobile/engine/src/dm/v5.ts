@@ -132,6 +132,8 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
   const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
   const storage = (): KeyValueArea => options.storage ?? localStorage
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
+  /** The app is in the background: an engine started now (a session restored there) starts paused. */
+  let backgrounded = false
   /** Saves still running for engines already stopped: their end rewrites lib's cache. */
   const flushes = new Map<string, Promise<unknown>>()
   /**
@@ -192,6 +194,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     current = { identityId, engine, unsubscribe }
     restoreOnceLoaded()
     engine.start().catch(error => logger.warn('DM v5 engine failed to start:', error))
+    if (backgrounded) engine.pause()
     return engine
   }
 
@@ -289,6 +292,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      * queues behind it). Active: poll now, and on the cadence again.
      */
     async lifecycle(state: AppLifecycleState): Promise<void> {
+      if (state !== 'inactive') backgrounded = state === 'background'
       const running = current?.engine
       if (!running) return
       if (state === 'background') {

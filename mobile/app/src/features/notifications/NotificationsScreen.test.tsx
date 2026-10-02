@@ -1,6 +1,6 @@
 import type { NotificationDTO, Page, SessionDTO, SettingsDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
+import { act, fireEvent, renderHook, screen, within } from '@testing-library/react-native';
 import { router, Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -374,7 +374,8 @@ describe('Notifications', () => {
     await renderScreen();
 
     expect(screen.getByTestId('notifications-engine-down')).toBeTruthy();
-    await act(async () => fireEvent.press(screen.getByText('Try again')));
+    expect(screen.getByTestId('engine-banner')).toBeTruthy();
+    await act(async () => fireEvent.press(within(screen.getByTestId('notifications-engine-down')).getByText('Try again')));
     expect(engineSupervisor.restart).toHaveBeenCalled();
   });
 

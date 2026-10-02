@@ -95,13 +95,17 @@ export interface SupervisorDeps<Load> {
 }
 
 export interface SupervisorOptions {
-  /** Restart delays, by the number of crashes in the failure window. */
+  /** Restart delays, by the number of recent failures (see `maxFailures`). */
   backoffMs?: number[];
-  /** This many crashes inside `failureWindowMs` → `failed`. */
+  /**
+   * This many crashes inside `failureWindowMs`, or this many boots in a row
+   * that never came up (however slowly each failed) → `failed`.
+   */
   maxFailures?: number;
   failureWindowMs?: number;
-  /** No ready (or degraded) within this long after mount → restart. */
+  /** No ready (or degraded) within this long in the foreground after mount → restart. */
   bootDeadlineMs?: number;
+  /** No hello within this long in the foreground after mount → restart. */
   helloTimeoutMs?: number;
   pingIntervalMs?: number;
   pingTimeoutMs?: number;
@@ -175,11 +179,16 @@ export class EngineSupervisor<Load = unknown> {
   private accepting = false;
   private queue: Job[] = [];
   private crashes: number[] = [];
+  /** Epochs in a row that crashed before reaching ready or degraded; any boot that comes up resets it. */
+  private failedBoots = 0;
   private timers = new Set<ReturnType<typeof setTimeout>>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private missedPings = 0;
   private awaitingPong = false;
   private foreground = true;
+  /** Foreground time before the current foreground stretch, and when that stretch began (null in the background). */
+  private foregroundBefore = 0;
+  private foregroundSince: number | null = null;
   /** stop() was called: calls fail instead of waiting for an engine that is not coming. */
   private stopped = false;
   /** Last connectivity NetInfo reported; replayed into every engine after boot (it starts out online). */
@@ -199,6 +208,7 @@ export class EngineSupervisor<Load = unknown> {
   ) {
     this.options = { ...DEFAULTS, ...options };
     this.now = deps.now ?? Date.now;
+    this.foregroundSince = this.now();
   }
 
   // ── observation ──────────────────────────────────────────────────────────
@@ -266,6 +276,7 @@ export class EngineSupervisor<Load = unknown> {
   restart(reason = 'Restart requested'): void {
     this.log('info', `${reason}; restarting the engine`);
     this.crashes = [];
+    this.failedBoots = 0;
     this.teardown(reason);
     this.launch(this.status.epoch + 1);
   }
@@ -282,25 +293,39 @@ export class EngineSupervisor<Load = unknown> {
       return;
     }
     this.log('error', `Engine crashed: ${cause}`);
+    // A boot that never came up counts however long it took to fail: a hello or boot deadline
+    // fails slower than the window, so the window alone would restart such an engine forever.
+    if (!['ready', 'degraded'].includes(this.status.state)) this.failedBoots += 1;
     this.teardown(`Engine crashed: ${cause}`);
     const now = this.now();
     this.crashes = [...this.crashes.filter((at) => now - at < this.options.failureWindowMs), now];
     this.update({ state: 'crashed', reason: cause, restarts: this.status.restarts + 1 });
-    if (this.crashes.length >= this.options.maxFailures) {
-      this.update({ state: 'failed', reason: `${this.crashes.length} engine failures in a row; last: ${cause}` });
+    const failures = Math.max(this.crashes.length, this.failedBoots);
+    if (failures >= this.options.maxFailures) {
+      this.update({ state: 'failed', reason: `${failures} engine failures in a row; last: ${cause}` });
       this.failQueue(new RpcError(`The engine keeps failing (${cause})`, EngineErrorCode.Unavailable));
       return;
     }
-    const delay = this.options.backoffMs[Math.min(this.crashes.length - 1, this.options.backoffMs.length - 1)];
+    const delay = this.options.backoffMs[Math.min(failures - 1, this.options.backoffMs.length - 1)];
     this.update({ state: 'restarting' });
     this.after(delay, () => this.launch(this.status.epoch + 1));
   }
 
-  /** AppState: pings pause in the background and run once on return; a failed engine gets a fresh try. */
+  /**
+   * AppState: pings pause in the background and run once on return; a failed
+   * engine, or one the WebView could not run (Lockdown Mode, an old WebView,
+   * which the user may have just fixed in Settings), gets a fresh try.
+   */
   setForeground(foreground: boolean): void {
+    if (foreground && this.foregroundSince === null) {
+      this.foregroundSince = this.now();
+    } else if (!foreground && this.foregroundSince !== null) {
+      this.foregroundBefore += this.now() - this.foregroundSince;
+      this.foregroundSince = null;
+    }
     this.foreground = foreground;
     if (!foreground) return;
-    if (this.status.state === 'failed') this.restart('Back in the foreground');
+    if (this.status.state === 'failed' || this.status.state === 'unsupported') this.restart('Back in the foreground');
     else {
       if (this.status.state === 'degraded') this.retryBoot(0);
       this.ping();
@@ -325,7 +350,7 @@ export class EngineSupervisor<Load = unknown> {
     const mountedAt = this.now();
     const client = createEngineClient<EngineApi>(transport, {
       timeoutMs: 0, // deadlines are per method kind, here
-      helloTimeoutMs: this.options.helloTimeoutMs,
+      helloTimeoutMs: 0, // counted in foreground time, here
       // Also filtered here: the engine forwards `info` until boot lowers its level.
       onLog: (level, message) => {
         if (LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(this.options.engineLogLevel)) {
@@ -350,10 +375,12 @@ export class EngineSupervisor<Load = unknown> {
 
     this.update({ state: 'handshaking', timings: { prepareMs, mountedAt } });
     this.setMount({ epoch, transport, load });
-    this.after(this.options.bootDeadlineMs, () => {
-      if (this.status.epoch === epoch && ['handshaking', 'booting'].includes(this.status.state)) {
-        this.crashed(`no ready within ${this.options.bootDeadlineMs / 1000} s`, epoch);
-      }
+    const { helloTimeoutMs, bootDeadlineMs } = this.options;
+    this.afterForeground(helloTimeoutMs, () => this.status.epoch === epoch && this.status.state === 'handshaking', () => {
+      this.crashed(`handshake failed: Engine did not say hello within ${helloTimeoutMs} ms`, epoch);
+    });
+    this.afterForeground(bootDeadlineMs, () => this.status.epoch === epoch && ['handshaking', 'booting'].includes(this.status.state), () => {
+      this.crashed(`no ready within ${bootDeadlineMs / 1000} s`, epoch);
     });
 
     client.ready.then(
@@ -416,6 +443,9 @@ export class EngineSupervisor<Load = unknown> {
       }
       if (this.options.engineLogLevel !== 'info') await client.api.engine.setLogLevel(this.options.engineLogLevel);
       if (!this.online) await client.api.engine.connectivity(false);
+      // Started in the background (a background launch, a restart while suspended): `background()`
+      // only reaches an engine that accepts calls, so say it here, before its polling starts.
+      if (!this.foreground) await client.api.engine.lifecycle('background');
       const bootStarted = this.now();
       const booted = client.api.engine.boot();
       // Queued calls go out after boot, so the SDK is initializing before any of them runs.
@@ -423,6 +453,7 @@ export class EngineSupervisor<Load = unknown> {
       const bootInfo = await booted;
       if (!current()) return;
       const readyAt = this.now();
+      this.failedBoots = 0;
       this.update({
         state: 'ready',
         reason: null,
@@ -444,6 +475,7 @@ export class EngineSupervisor<Load = unknown> {
         return;
       }
       // Offline or DAPI trouble: calls still go through; connectivity retries the boot.
+      this.failedBoots = 0;
       this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
@@ -532,6 +564,28 @@ export class EngineSupervisor<Load = unknown> {
       run();
     }, ms);
     this.timers.add(timer);
+  }
+
+  /** Time spent in the foreground since this supervisor was made. */
+  private foregroundElapsed(): number {
+    return this.foregroundBefore + (this.foregroundSince === null ? 0 : this.now() - this.foregroundSince);
+  }
+
+  /**
+   * `expire` once `ms` of foreground time has passed while `pending` holds.
+   * Time in the background does not count: iOS suspends the WebView with the
+   * app, and its timers fire late on return, so a wall-clock deadline would
+   * restart an engine (and cut short a wallet sign-in) that was only asleep.
+   */
+  private afterForeground(ms: number, pending: () => boolean, expire: () => void) {
+    const started = this.foregroundElapsed();
+    const check = () => {
+      if (!pending()) return;
+      const remaining = ms - (this.foregroundElapsed() - started);
+      if (remaining > 0) this.after(remaining, check);
+      else expire();
+    };
+    this.after(ms, check);
   }
 
   // ── health ───────────────────────────────────────────────────────────────

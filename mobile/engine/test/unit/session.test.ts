@@ -47,7 +47,7 @@ engineStorage.onBatch(batch => {
 })
 
 const auth = await import('platform-auth')
-const { createSessionModule, createMobileAuthController } = await import('../../src/api/session')
+const { createSessionModule, createMobileAuthController, foregroundBalanceRefresh } = await import('../../src/api/session')
 const { toNetworkWif, verifySignInKey } = await import('../../src/session/keys')
 const { createKeyExchange, PENDING_REQUEST_KEY } = await import('../../src/session/key-exchange')
 const { identityService } = await import('@/lib/services/identity-service')
@@ -567,5 +567,60 @@ describe('direct messages around sign-out and account changes', () => {
     await restored.signOut()
     expect(stops).toEqual(['key held', 'key held', 'key held'])
     expect(localStorage.getItem(`yappr_secure_pk_${id}`)).toBeNull()
+  })
+})
+
+describe('foregroundBalanceRefresh (SR-30, NET-08)', () => {
+  afterEach(() => vi.useRealTimers())
+
+  it('reads the balance on a timer only while signed in and in the foreground', async () => {
+    vi.useFakeTimers()
+    let user: { identityId: string } | null = null
+    const listeners = new Set<() => void>()
+    const refreshBalance = vi.fn(async () => undefined)
+    const controller = {
+      getState: () => ({ user }),
+      subscribe: (listener: () => void) => {
+        listeners.add(listener)
+        listener()
+        return () => listeners.delete(listener)
+      },
+      refreshBalance,
+    }
+    const balance = foregroundBalanceRefresh(controller, 1000)
+
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(refreshBalance).not.toHaveBeenCalled()
+
+    user = { identityId: 'alice' }
+    listeners.forEach(listener => listener())
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(refreshBalance).toHaveBeenCalledTimes(2)
+
+    balance.lifecycle('background')
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(refreshBalance).toHaveBeenCalledTimes(2)
+
+    // Back after longer than the interval: read at once, then on the timer again.
+    balance.lifecycle('inactive')
+    balance.lifecycle('active')
+    expect(refreshBalance).toHaveBeenCalledTimes(3)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refreshBalance).toHaveBeenCalledTimes(4)
+
+    // Back after a moment: the last read is recent enough, so the timer decides.
+    balance.lifecycle('background')
+    await vi.advanceTimersByTimeAsync(500)
+    balance.lifecycle('active')
+    expect(refreshBalance).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(refreshBalance).toHaveBeenCalledTimes(5)
+
+    user = null
+    listeners.forEach(listener => listener())
+    await vi.advanceTimersByTimeAsync(5000)
+    balance.lifecycle('background')
+    balance.lifecycle('active')
+    expect(refreshBalance).toHaveBeenCalledTimes(5)
   })
 })

@@ -197,6 +197,23 @@ describe('dm on DM v5: session lifecycle', () => {
     expect(tick).toHaveBeenCalledTimes(1)
   })
 
+  it('starts an engine paused when its session starts in the background, and polls it on return', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    await user.hooks.stop()
+    await user.hooks.lifecycle('background')
+    const raw = bs58.decode(alice)
+    const fresh = new Engine({ chain: new Chain(ledger, raw), identityId: raw, encPriv: PRIV[alice], kv: new MapKv(), cacheKey: 'dm', scheduler: manualScheduler })
+    user.source.engineFor.mockReturnValue(fresh)
+    const pause = vi.spyOn(fresh, 'pause')
+    const resume = vi.spyOn(fresh, 'resume')
+    user.hooks.sessionChanged(started(alice))
+    expect(pause).toHaveBeenCalledTimes(1)
+    expect(resume).not.toHaveBeenCalled()
+    await user.hooks.lifecycle('active')
+    expect(resume).toHaveBeenCalledTimes(1)
+  })
+
   it('reports locked without an encryption key, and starts once one exists', async () => {
     const user = userOn(ledgerNow(), alice)
     await user.hooks.stop()

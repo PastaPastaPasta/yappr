@@ -1,6 +1,6 @@
 import type { PostDTO, TargetRef, WriteTicket } from '@engine/api';
 
-import { hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
+import { dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
 import { errorCode, type WriteSpec } from '~/data/writes';
 
 /**
@@ -87,7 +87,8 @@ export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
 
 /**
  * Delete own post or reply (ENG-06). It leaves every list at once and comes
- * back if the delete fails; confirmed, every cached copy reads as deleted.
+ * back if the delete fails; confirmed, it leaves the cached lists too (so a
+ * relaunch keeps it out), and every other cached copy reads as deleted.
  * `target` is set for the viewer's v10 quote, deleted from the repost menu.
  */
 export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }> = {
@@ -104,7 +105,10 @@ export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }
   },
   // A second delete while the first is pending asks for the same thing: dropped, never sent.
   intent: () => 'deleted',
-  onConfirmed: (_ticket, { target }) => markPostDeleted(target.id),
+  onConfirmed: (_ticket, { target }) => {
+    markPostDeleted(target.id);
+    dropFromLists(target.id);
+  },
   matches: (ticket, { target }) => ticket.op === 'post.delete' && (ticket.target as { id?: string } | null)?.id === target.id,
   noun: 'delete',
   failureMessage: 'Failed to delete. Please try again.',
