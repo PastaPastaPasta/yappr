@@ -13,7 +13,7 @@ import { queryClient } from '~/state/query-client';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 
 import { ComposeScreen } from './ComposeScreen';
-import { deleteDraft, loadDraft, saveDraft, type ComposeContext } from './drafts';
+import { deleteDraft, isDraftSlotHeld, loadDraft, saveDraft, type ComposeContext } from './drafts';
 import { usePendingPosts } from './pending-posts';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -365,6 +365,13 @@ it('lets the header and the NSFW chip grow with the text size (G-12)', async () 
   expect(byId('compose-header').props.className).not.toMatch(/(^|\s)h-14/);
   expect(byId('compose-nsfw').props.className).not.toMatch(/(^|\s)h-8/);
   expect(screen.getByText('NSFW').props.maxFontSizeMultiplier).toBe(1.5);
+});
+
+it('holds its draft slot while open, so a failed post never lands where it saves (SR-06)', async () => {
+  await renderCompose();
+  expect(isDraftSlotHeld(VIEWER_ID, POST)).toBe(true);
+  screen.unmount();
+  expect(isDraftSlotHeld(VIEWER_ID, POST)).toBe(false);
 });
 
 it('a double tap on Post publishes once', async () => {

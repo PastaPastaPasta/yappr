@@ -40,6 +40,7 @@ import {
   contextKey,
   deleteDraft,
   deleteOwnDraft,
+  holdDraftSlot,
   loadDraft,
   saveDraft,
   type ComposeContext,
@@ -243,6 +244,9 @@ function Composer({ identityId, username, context }: ComposerProps) {
   const canPost = open.some((p) => hasVisibleContent(p.text)) && !overLimit && !offline && mediaValid && targetReady;
   const postLabel = context.mode === 'reply' ? 'Reply' : contentful.length > 1 ? `Post all (${contentful.length})` : 'Post';
   const canAddPart = context.mode === 'post' && parts.length < MAX_PARTS;
+
+  // While open, this composer owns its draft slot: a failed post's text goes elsewhere.
+  useEffect(() => holdDraftSlot(identityId, context), [identityId, context]);
 
   // Drafts: saved 500 ms after a change and when the app goes to the background (PRD COMP-09).
   const posted = useRef(false);

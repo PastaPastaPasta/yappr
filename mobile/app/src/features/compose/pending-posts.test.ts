@@ -12,7 +12,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { useRemovedPosts } from '~/data/optimistic';
 
-import { deleteDraft, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
+import { deleteDraft, holdDraftSlot, loadDraft, saveDraft, type ComposeContext, type DraftPart } from './drafts';
 import { hasVisibleContent } from './limits';
 import {
   checkPending,
@@ -309,6 +309,45 @@ it('Edit after a restart cut a thread short keeps the parts that landed posted (
 
   editPending(localId);
   expect(loadDraft(VIEWER_ID, POST)?.parts.map((p) => p.postedId)).toEqual(['root-real', null, null]);
+});
+
+it('a resumed thread that fails while a composer is open keeps its text, on a card (SR-06)', async () => {
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  // "Post all" on a partly posted thread: its root is on chain, so it has no card of its own.
+  const localId = publishPost(
+    {
+      identityId: VIEWER_ID,
+      context: POST,
+      parts: [{ text: 'one', postedId: 'root-1' }, ...parts('two', 'three')],
+      sensitive: false,
+      mediaUrl: null,
+      target: null,
+      author: viewerAuthor(VIEWER_ID, 'alice'),
+    },
+    hasVisibleContent,
+  );
+  await settle();
+  expect(only()?.placement).toBe('none');
+
+  // The user opens an empty composer at once; then the resume fails.
+  const release = holdDraftSlot(VIEWER_ID, POST);
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'failed', error: failedWith('refused') })));
+
+  // Not in the slot the open composer will save over: with the entry, now on a card.
+  expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+  expect(usePendingPosts.getState().entries[localId]).toMatchObject({ placement: 'feed' });
+  expect(homeIds()).toEqual([localId, 'existing-1']);
+  expect(pendingStatus(only()!)).toEqual({ state: 'partial', posted: 1, total: 3 });
+
+  // Once that composer is closed, Edit brings the text back to the draft.
+  release();
+  editPending(localId);
+  expect(loadDraft(VIEWER_ID, POST)?.parts).toEqual([
+    { text: 'one', postedId: 'root-1' },
+    { text: 'two', postedId: null },
+    { text: 'three', postedId: null },
+  ]);
 });
 
 it('a thread retried past its posted root keeps the root as its card', async () => {

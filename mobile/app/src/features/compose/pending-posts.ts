@@ -19,6 +19,7 @@ import type { WriteState as CardWriteState, WriteStatusProps } from '~/ui/WriteS
 import {
   deleteDraft,
   forgetDrafts,
+  isDraftSlotHeld,
   loadDraft,
   saveDraft,
   type ComposeContext,
@@ -420,8 +421,12 @@ export function pendingDraft(localId: string): ComposeDraft | null {
   };
 }
 
-/** Whether the post's own context has room for its text: no draft there, or the one it brought back. */
+/**
+ * Whether the post's own context has room for its text: no composer open on
+ * it (that one would save over it), and no draft there but the one it brought back.
+ */
 function draftSlotFree(entry: PendingPost): boolean {
+  if (isDraftSlotHeld(entry.identityId, entry.context)) return false;
   const existing = loadDraft(entry.identityId, entry.context);
   return !existing || existing.fromPending === entry.localId;
 }
@@ -469,9 +474,16 @@ async function submit(localId: string, retry: boolean): Promise<void> {
 /**
  * A post that will not land as it stands: its text back to the draft. One
  * with no card (a resumed thread) then goes, its text safe in the draft.
+ * When the draft is taken (another draft, or a composer open on it), the text
+ * stays with the entry, and one with no card gets one, to Retry or Edit from.
  */
 function settleFailure(entry: PendingPost): void {
-  if (returnToDraft(entry) && entry.placement === 'none') discardPending(entry.localId);
+  if (returnToDraft(entry)) {
+    if (entry.placement === 'none') discardPending(entry.localId);
+  } else if (entry.placement === 'none') {
+    patchEntry(entry.localId, { placement: 'feed' });
+    placeCards();
+  }
 }
 
 export interface PublishInput {
