@@ -288,6 +288,39 @@ describe('dm on DM v5: 1:1', () => {
     expect(a.eventsOf('dm.message').map(e => e.message.text)).toEqual(['hi alice'])
   })
 
+  it('shows a confirmed send as sent at once, and one held on trust as pending until a poll reads it back', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.dm.open(key)
+    expect(await a.settled(await a.dm.send(key, 'confirmed'))).toMatchObject({ state: 'confirmed' })
+    expect((await a.dm.messages(key)).items.map(m => [m.text, m.pending])).toEqual([['confirmed', false]])
+
+    // Both broadcasts time out and the slot reads empty each time: held on trust. The first one lands later.
+    const chain = a.engine().ctx.chain as MemoryChain
+    const landing: { late?: () => Promise<unknown> } = {}
+    chain.hook = (method, args) => {
+      if (method !== 'createMessage') return null
+      const [tag, body] = args as [Uint8Array, Uint8Array]
+      landing.late ??= () => chain.createMessage(tag, body)
+      return { ok: true, id: 'timed-out', confirmed: false }
+    }
+    expect(await a.settled(await a.dm.send(key, 'on trust'))).toMatchObject({ state: 'confirmed' })
+    chain.hook = null
+    expect((await a.dm.messages(key)).items.map(m => [m.text, m.pending])).toEqual([['on trust', true], ['confirmed', false]])
+
+    // A poll before it lands keeps it pending; the one after reads it back, and reports the change.
+    await a.engine().tick()
+    expect((await a.dm.messages(key)).items[0].pending).toBe(true)
+    await landing.late?.()
+    await settle()
+    const changes = a.eventsOf('dm.changed').length
+    await a.engine().tick()
+    expect((await a.dm.messages(key)).items.map(m => [m.text, m.pending])).toEqual([['on trust', false], ['confirmed', false]])
+    await vi.waitFor(() => expect(a.eventsOf('dm.changed').slice(changes).flatMap(e => e.changedKeys)).toContain(key))
+  })
+
   it('leaves a send whose broadcast timed out unconfirmed, and proves it on check by reading the chain', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))

@@ -19,6 +19,11 @@ export interface DmView {
   unread?: { unreadTotal: number; unreadConversations: number }
   /** The full timeline of one conversation, oldest first (asked only for changed conversations). */
   messages(key: string): MessageDTO[]
+  /**
+   * How many of my messages in a conversation are still `pending`: a read-back
+   * changes the thread's status line but not its row, and must still report it.
+   */
+  pendingIn?(key: string): number
 }
 
 export function unreadCounts(rows: ConversationRow[]): { unreadTotal: number; unreadConversations: number } {
@@ -28,9 +33,10 @@ export function unreadCounts(rows: ConversationRow[]): { unreadTotal: number; un
 
 /**
  * Turns backend snapshots into `dm.changed` and `dm.message` (ENGINE.md §8):
- * a conversation whose row differs from the last one reported is changed,
- * and its incoming messages not reported before are new, unless they predate
- * the session (a first load, or a recovery on a new device, is history).
+ * a conversation whose row (or count of pending messages) differs from the
+ * last one reported is changed, and its incoming messages not reported before
+ * are new, unless they predate the session (a first load, or a recovery on a
+ * new device, is history).
  */
 export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number }) {
   const coalesceMs = options.coalesceMs ?? DM_CHANGED_COALESCE_MS
@@ -43,7 +49,7 @@ export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number
   let pending: (() => DmView | null) | null = null
 
   function report(view: DmView): void {
-    const next = new Map(view.rows.map(row => [row.key, JSON.stringify(row)]))
+    const next = new Map(view.rows.map(row => [row.key, `${JSON.stringify(row)}|${view.pendingIn?.(row.key) ?? 0}`]))
     const changedKeys = [...next.keys()].filter(key => reported.get(key) !== next.get(key))
     for (const key of reported.keys()) if (!next.has(key)) changedKeys.push(key)
     reported = next
