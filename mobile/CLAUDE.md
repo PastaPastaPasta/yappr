@@ -254,6 +254,21 @@ Icons come from `npm run icons`. Release-only Android settings live in
 `plugins/release-hardening`. Never commit keystores, `.p8` keys or
 provisioning profiles.
 
+**iOS 27 SDK (Xcode 27) requires the UIScene life cycle.** Without it, iOS 27
+stops the app at launch (`EXC_BREAKPOINT` in
+`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`). SDK 57
+templates don't adopt it, so `app.config.ts` opts in with expo-build-properties
+`ios.enableSceneSupport` (expo/expo#46664). Prebuild then points Info.plist's
+`UIApplicationSceneManifest` at Expo's `EXExpoAppSceneDelegate`, which creates
+the window and forwards links and life-cycle events to the app delegate. SDK 58
+templates do this by default, so drop the setting on that upgrade.
+
+Known risk, expo/expo#50363 (open): on SDK 57, expo-modules-core's
+`currentViewController()` still reads `UIApplication.shared.keyWindow`, which is
+reported to be unreliable under scenes. It affects expo-sharing's share sheet
+and expo-file-system's file picker; expo-web-browser reads the same
+`keyWindow`. If one of them fails to present on iOS, check that issue first.
+
 ## Screenshots (agents)
 
 Every UI PR includes iOS and Android screenshots in light and dark

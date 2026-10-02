@@ -126,6 +126,13 @@ describe('iOS App Transport Security (SR-46)', () => {
   });
 });
 
+describe('iOS 27 UIScene life cycle', () => {
+  // The iOS 27 SDK stops apps without it at launch; SDK 57 opts in (expo/expo#46664).
+  it.each(Object.keys(VARIANTS) as Variant[])('enables scene support for %s', (variant) => {
+    expect(configFor(variant).plugins).toContainEqual(['expo-build-properties', { ios: { enableSceneSupport: true } }]);
+  });
+});
+
 describe('release-ios.sh variant guard', () => {
   const script = fs.readFileSync(path.join(APP_DIR, 'scripts/release-ios.sh'), 'utf8');
   const guard = /^bundle_id_matches\(\) \{[\s\S]*?^\}$/m.exec(script)?.[0];

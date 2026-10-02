@@ -152,6 +152,10 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       ['./plugins/engine-assets', { variant }],
       './plugins/release-hardening',
       './plugins/wallet-schemes',
+      // Apps built with the iOS 27 SDK (Xcode 27) must adopt the UIScene life cycle or iOS 27
+      // stops them at launch. SDK 57 opts in here (expo/expo#46664); SDK 58 templates do it by
+      // default, so remove this on the SDK 58 upgrade.
+      ['expo-build-properties', { ios: { enableSceneSupport: true } }],
       [
         'expo-splash-screen',
         {
