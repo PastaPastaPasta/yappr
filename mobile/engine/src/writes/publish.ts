@@ -125,9 +125,14 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
     const plan = planPosts(draft.parts.map((part, index) => ({ id: String(index), content: part.text, postedPostId: posted[index] ?? undefined })), undefined, false)
     if (plan.length === 0) return { state: 'confirmed' }
 
+    // The image goes on the first part. lib puts it on the first part it creates, so a resume past
+    // that part (a retry, or `resume.postedIds`) must not carry it onto the next one.
+    const firstPart = draft.parts.findIndex(part => hasVisibleContent(part.text))
+    const mediaUrl = firstPart >= 0 && posted[firstPart] ? null : draft.mediaUrl
+
     // Everything before publishThread is reads and local work: a failure there sent nothing.
     const [replyingTo, quotingPost, media] = await Promise.all([
-      loadTarget(draft.replyTo, load), loadTarget(draft.quote, load), mediaFields(draft.mediaUrl),
+      loadTarget(draft.replyTo, load), loadTarget(draft.quote, load), mediaFields(mediaUrl),
     ]).catch((error: unknown) => { throw new NotSentError(error) })
 
     const before = posted.filter(Boolean).length
