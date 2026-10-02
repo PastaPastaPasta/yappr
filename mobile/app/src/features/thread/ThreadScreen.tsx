@@ -76,7 +76,10 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   // Flat threads list only the root above a reply: read its direct parent for the context line.
   const parentId = focus?.parentId;
   const needsParent =
-    thread !== undefined && parentId !== undefined && !thread.ancestors.some((post) => post.id === parentId);
+    thread !== undefined &&
+    parentId !== undefined &&
+    !thread.ancestors.some((post) => post.id === parentId) &&
+    !thread.removedAncestorIds.includes(parentId);
   const parentQuery = useParentPost(needsParent ? parentId : undefined);
 
   const repliesError = query.isError && !query.isFetchNextPageError ? readErrorMessage(query.error) : null;

@@ -121,7 +121,7 @@ export function buildThreadRows({
 
   const parentId = focus.parentId;
   const parentInChain = parentId ? ancestors.find((post) => post.id === parentId) : undefined;
-  if (parentId && !parentInChain && thread) {
+  if (parentId && !parentInChain && thread && !thread.removedAncestorIds.includes(parentId)) {
     if (parent) rows.push({ type: 'ancestor', key: `ancestor:${parent.id}`, post: parent });
     else if (parentMissing) rows.push({ type: 'ancestorStub', key: `gone:${parentId}`, id: parentId, kind: 'reply' });
   }

@@ -83,9 +83,10 @@ describe('buildThreadRows', () => {
     expect(missing[2]).toMatchObject({ lineAbove: false, replyingTo: undefined });
   });
 
-  it('never claims a removed ancestor was removed or deleted', () => {
+  it('never claims a removed ancestor was removed or deleted, and stubs it once', () => {
     const focus = reply('r1');
-    const rows = buildThreadRows({ thread: thread({ focus, removedAncestorIds: ['root'] }) });
+    const rows = buildThreadRows({ thread: thread({ focus, removedAncestorIds: ['root'] }), parentMissing: true });
+    expect(types(rows)).toEqual(['ancestorStub', 'focus', 'repliesEmpty']);
     expect(rows[0]).toMatchObject({ type: 'ancestorStub', id: 'root' });
   });
 

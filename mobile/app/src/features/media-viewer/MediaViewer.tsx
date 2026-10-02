@@ -37,12 +37,13 @@ import { clampOffset, fittedSize, settlePage, shouldDismiss, MAX_ZOOM, DOUBLE_TA
 const WHITE = colors.white;
 const SPRING = { damping: 20, stiffness: 220, mass: 0.6 } as const;
 
-/** The post the viewer was opened from, found in the cache and refreshed (its like count, its media). */
+/** The post the viewer was opened from, found in the cache, else read. */
 function useViewerPost(postId: string) {
   return useEngineQuery<PostDTO | null>(queryKeys.post.detail(postId), (api) => api.posts.get(postId), {
     enabled: postId.length > 0,
+    // The card that opened the viewer already holds the media; likes on it update optimistically.
+    // No refetch at open: lib answers a failed read as "absent", which would blank the viewer.
     initialData: () => findCachedPost(postId),
-    initialDataUpdatedAt: 0,
   });
 }
 
@@ -169,6 +170,7 @@ function ChromeButton({
 
 function close() {
   if (router.canGoBack()) router.back();
+  else router.replace('/');
 }
 
 /**
@@ -377,8 +379,9 @@ function Pager({ post, start }: { post: PostDTO; start: number }) {
       scale.set(withTiming(DOUBLE_TAP_ZOOM));
       savedScale.set(DOUBLE_TAP_ZOOM);
       // Zoom in on the tapped point.
-      const x = (width / 2 - e.x) * (DOUBLE_TAP_ZOOM - 1);
-      const y = (height / 2 - e.y) * (DOUBLE_TAP_ZOOM - 1);
+      // Screen coordinates: `e.x` is measured across the whole strip of pages.
+      const x = (width / 2 - e.absoluteX) * (DOUBLE_TAP_ZOOM - 1);
+      const y = (height / 2 - e.absoluteY) * (DOUBLE_TAP_ZOOM - 1);
       offsetX.set(withTiming(clampOffset(x, fitW.value, width, DOUBLE_TAP_ZOOM)));
       offsetY.set(withTiming(clampOffset(y, fitH.value, height, DOUBLE_TAP_ZOOM)));
     });
