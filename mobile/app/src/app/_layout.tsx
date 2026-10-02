@@ -12,6 +12,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SignInPromptHost } from '~/data/require-auth';
 import { startDataLayer } from '~/data/sync';
 import { EngineHost } from '~/engine/EngineHost';
+import { AuthGates } from '~/features/auth/AuthGates';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { useAppearance } from '~/state/appearance';
 import { ActionSheetHost } from '~/ui/action-sheet';
@@ -110,7 +111,7 @@ export default function RootLayout() {
                   <Stack.Screen name="welcome" options={{ ...FULL_SCREEN, headerShown: false }} />
                   <Stack.Screen
                     name="terms-gate"
-                    options={{ ...FULL_SCREEN, gestureEnabled: false }}
+                    options={{ ...FULL_SCREEN, gestureEnabled: false, headerShown: false }}
                   />
                   <Stack.Screen
                     name="lockdown"
@@ -138,6 +139,8 @@ export default function RootLayout() {
                 <SignInPromptHost />
                 <ActionSheetHost />
                 <ToastHost />
+                {/* Welcome, the terms gate, the account switcher and the app lock (S1); the lock stays on top. */}
+                <AuthGates />
                 <StatusBar style="auto" />
               </BottomSheetModalProvider>
             </AvatarSvgProvider>
