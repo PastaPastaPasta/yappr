@@ -4,6 +4,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { CheckCircleIcon, XCircleIcon } from 'react-native-heroicons/solid';
 import Animated, { FadeOut, Keyframe } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { FullWindowOverlay } from 'react-native-screens';
 
 import { Text } from './Text';
 import { useToastStore, type ToastItem } from './toast';
@@ -72,12 +73,21 @@ function ToastView({ item }: { item: ToastItem }) {
 /**
  * Renders the current toast, top-center below the navigation bar, in the
  * same dark colors in both themes (as web). Mount it once, above the
- * navigator. `top` overrides the offset when it is mounted inside a screen.
+ * navigator and outside the bottom-sheet provider, whose sheets would
+ * otherwise cover it. `top` overrides the offset when it is mounted inside a
+ * screen.
+ *
+ * `aboveModals` (iOS): a modal (edit profile, new message) is its own view
+ * controller above the root view and hides a toast raised under it. A
+ * FullWindowOverlay is added to the window when it mounts, so one per toast
+ * lands above whatever is presented by then (without the fade-out). Turn it
+ * off while the app lock is up, which must stay on top. Android modals are
+ * screens in the root view, so it changes nothing there.
  */
-export function ToastHost({ top }: { top?: number }) {
+export function ToastHost({ top, aboveModals = false }: { top?: number; aboveModals?: boolean }) {
   const current = useToastStore((s) => s.current);
   const insets = useSafeAreaInsets();
-  return (
+  const host = (
     <View
       pointerEvents="box-none"
       style={{
@@ -90,5 +100,13 @@ export function ToastHost({ top }: { top?: number }) {
     >
       {current ? <ToastView key={current.id} item={current} /> : null}
     </View>
+  );
+  if (!aboveModals || Platform.OS !== 'ios') return host;
+  if (!current) return null;
+  return (
+    // Not an accessibility modal: VoiceOver stays free to leave the toast (it is announced anyway).
+    <FullWindowOverlay key={current.id} unstable_accessibilityContainerViewIsModal={false}>
+      {host}
+    </FullWindowOverlay>
   );
 }

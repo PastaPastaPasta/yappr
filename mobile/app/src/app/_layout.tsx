@@ -12,7 +12,7 @@ import { SignInPromptHost } from '~/data/require-auth';
 import { startDataLayer } from '~/data/sync';
 import { setHydrationGate } from '~/engine';
 import { EngineHost } from '~/engine/EngineHost';
-import { untilUnlocked } from '~/features/auth/app-lock';
+import { untilUnlocked, useLockState } from '~/features/auth/app-lock';
 import { AuthGates } from '~/features/auth/AuthGates';
 import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
@@ -49,6 +49,12 @@ const FULL_SCREEN = {
   presentation: 'transparentModal',
   animation: 'slide_from_bottom',
 } as const;
+
+/** Toasts draw over iOS modals, except over the app lock, which stays on top. */
+function Toasts() {
+  const lockUp = useLockState((s) => s.locked || s.covered);
+  return <ToastHost aboveModals={!lockUp} />;
+}
 
 /** Upper bound on holding the splash for the theme, in case no Appearance event arrives. */
 const SPLASH_MAX_HOLD_MS = 1000;
@@ -150,11 +156,12 @@ export default function RootLayout() {
                 <EngineHost />
                 <SignInPromptHost />
                 <ActionSheetHost />
-                <ToastHost />
                 {/* Welcome, the terms gate, the account switcher and the app lock (S1); the lock stays on top. */}
                 <AuthGates />
                 <ThemedStatusBar />
               </BottomSheetModalProvider>
+              {/* After the sheets' portal host, so an open sheet doesn't cover a toast. */}
+              <Toasts />
             </AvatarSvgProvider>
           </MediaUrlProvider>
         </ThemeProvider>
