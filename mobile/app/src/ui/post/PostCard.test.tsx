@@ -180,6 +180,19 @@ describe('PostCard gates', () => {
     expect(onRevealMedia).toHaveBeenCalled();
   });
 
+  it('gates a link-preview image like media, with the Show media action', () => {
+    const onRevealMedia = jest.fn();
+    render(
+      <PostCard post={POSTS.linkPreview} linkPreview={SAMPLE_PREVIEW} mediaGated onRevealMedia={onRevealMedia} />,
+    );
+    expect(screen.getByTestId('media-gate')).toBeTruthy();
+    const card = byId(`post-card-${POSTS.linkPreview.id}`);
+    const labels = card.props.accessibilityActions.map((a: { label: string }) => a.label);
+    expect(labels).toContain('Show media');
+    fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'showMedia' } });
+    expect(onRevealMedia).toHaveBeenCalled();
+  });
+
   it('renders a private post as the placeholder, with no reply', () => {
     const onOpenPrivate = jest.fn();
     render(<PostCard post={POSTS.private} actions={{ onOpenPrivate }} />);

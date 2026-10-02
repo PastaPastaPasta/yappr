@@ -496,7 +496,9 @@ export const PostCard = memo(function PostCard({
       for (const link of writeStatusLinks(writeStatus))
         a11yActions.push({ name: link.label, label: link.label, run: link.onPress });
     }
-    if (mediaGated && post.media.length > 0)
+    const previewImage =
+      typeof linkPreview === 'object' && Boolean(linkPreview.youtubeVideoId ?? linkPreview.image);
+    if (mediaGated && (post.media.length > 0 || previewImage))
       a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
     // Everything tappable inside the card, which VoiceOver can't reach on its own.
     if (!post.deleted && !post.encrypted) {

@@ -31,10 +31,24 @@ function reportFailureText(ticket: WriteTicket, { noun }: ReportVars): string | 
   }
 }
 
+/** Targets whose report sheet is on screen: it says how the report went itself. */
+const openSheets = new Map<string, number>();
+
+/** The report sheet for `targetId` is on screen until the returned cleanup runs. */
+export function watchReportSheet(targetId: string): () => void {
+  openSheets.set(targetId, (openSheets.get(targetId) ?? 0) + 1);
+  return () => {
+    const left = (openSheets.get(targetId) ?? 1) - 1;
+    if (left > 0) openSheets.set(targetId, left);
+    else openSheets.delete(targetId);
+  };
+}
+
 /**
  * Report a post or reply (`safety.report`, PRD SAFE-04). The report sheet
- * follows its status and says how it went, so the tracker announces only a
- * failure. Not optimistic: nothing shows a report until it exists.
+ * follows its status and says how it went; the tracker announces a failure,
+ * and a confirmation only when the sheet was closed first. Not optimistic:
+ * nothing shows a report until it exists.
  */
 export const reportWrite: WriteSpec<ReportVars> = {
   key: ({ target }) => `report:${target.id}`,
@@ -43,6 +57,7 @@ export const reportWrite: WriteSpec<ReportVars> = {
     ticket.op === 'report' && (ticket.target as { id?: string } | null)?.id === target.id,
   onConfirmed: (_ticket, { target }) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.post.ownReport(target.id) }).catch(() => undefined);
+    if (!openSheets.has(target.id)) toast.success(copy.toast.reportSent);
   },
   announceUnconfirmed: false,
   failureText: reportFailureText,

@@ -1,4 +1,5 @@
 import type { BlockedUserDTO, ProfileDTO, WriteTicket } from '@engine/api';
+import { type InvalidateQueryFilters } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 
@@ -24,6 +25,8 @@ interface Decision {
   blocked: boolean;
   /** Blocks: the account's row for the Blocked list, with the note given. */
   user?: BlockedUserDTO;
+  /** Blocked only by a followed block list (`STILL_BLOCKED`): no own block to list. */
+  listOnly?: boolean;
 }
 
 const useBlockDecisions = create<{ byKey: Readonly<Record<string, Decision>> }>()(() => ({ byKey: {} }));
@@ -51,7 +54,8 @@ export function useAuthorBlocked(authorId: string | undefined, fallback?: boolea
 
 /**
  * The Blocked list as the engine read it, with this device's decisions on
- * top: accounts unblocked here leave, accounts blocked here come first.
+ * top: accounts unblocked here leave (also when a followed block list still
+ * blocks them), accounts blocked here come first.
  */
 export function useBlockedList(viewerId: string, listed: readonly BlockedUserDTO[]): BlockedUserDTO[] {
   const byKey = useBlockDecisions((s) => s.byKey);
@@ -61,9 +65,10 @@ export function useBlockedList(viewerId: string, listed: readonly BlockedUserDTO
     for (const [key, decision] of Object.entries(byKey)) {
       if (key.startsWith(prefix)) decided.set(key.slice(prefix.length), decision);
     }
-    const kept = listed.filter((user) => decided.get(user.id)?.blocked !== false);
+    const ownBlock = (d: Decision | undefined) => d === undefined || (d.blocked && !d.listOnly);
+    const kept = listed.filter((user) => ownBlock(decided.get(user.id)));
     const shown = new Set(kept.map((user) => user.id));
-    const added = [...decided.values()].flatMap((d) => (d.blocked && d.user && !shown.has(d.user.id) ? [d.user] : []));
+    const added = [...decided.values()].flatMap((d) => (ownBlock(d) && d.user && !shown.has(d.user.id) ? [d.user] : []));
     return [...added.reverse(), ...kept];
   }, [byKey, viewerId, listed]);
 }
@@ -99,16 +104,41 @@ const refetch = (queryKey: readonly unknown[]) => {
   queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
 };
 
-/** Everything the engine filters by block status as it builds it. */
-const BLOCK_FILTERED = [
-  queryKeys.blocked,
-  queryKeys.feed.all,
-  queryKeys.explore.all,
-  queryKeys.profile.all,
-  queryKeys.post.all,
-  queryKeys.bookmarks,
-  queryKeys.notificationsAll,
+/** Queries under `prefix` for one id: the detail itself (`[...prefix, id]`) and `[...prefix, id, part]`. */
+const detailOr = (prefix: readonly unknown[], part: string): InvalidateQueryFilters => ({
+  queryKey: prefix,
+  predicate: ({ queryKey }) => {
+    const segment = queryKey[prefix.length + 1];
+    return segment === undefined || segment === part;
+  },
+});
+
+/**
+ * Everything the engine filters by block status as it builds it: lists, a
+ * post with its thread, a profile with its posts. Not a post's stats, poll
+ * or report check, which don't depend on it.
+ */
+const BLOCK_FILTERED: InvalidateQueryFilters[] = [
+  { queryKey: queryKeys.feed.all },
+  { queryKey: queryKeys.explore.all },
+  { queryKey: queryKeys.bookmarks },
+  { queryKey: queryKeys.notificationsAll },
+  detailOr(queryKeys.post.all, 'thread'),
+  detailOr(queryKeys.profile.all, 'posts'),
 ];
+
+/**
+ * After a confirmed block or unblock. A block needs nothing read now (this
+ * device's decision already hides the author everywhere), so lists are only
+ * marked stale for their next showing; an unblock reads what is on screen
+ * again, where the engine had left the author's posts out.
+ */
+function refetchFiltered(block: boolean): void {
+  refetch(queryKeys.blocked);
+  for (const filters of BLOCK_FILTERED) {
+    queryClient.invalidateQueries({ ...filters, refetchType: block ? 'none' : 'active' }).catch(() => undefined);
+  }
+}
 
 export interface BlockVars {
   /** The signed-in viewer, whose decision this is. */
@@ -142,7 +172,8 @@ const targetIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?:
  * user. Optimistic: the author's content goes (or comes back) at once.
  * Confirmed, the lists the engine filters by block status are read again.
  * An unblock that leaves a followed block list blocking the user fails with
- * `STILL_BLOCKED`: the posts stay hidden and the toast says why.
+ * `STILL_BLOCKED`: the posts stay hidden, the Blocked list drops the own
+ * block that is gone, and the toast says why.
  */
 export const blockWrite: WriteSpec<BlockVars> = {
   key: ({ userId }) => `block:${userId}`,
@@ -151,7 +182,13 @@ export const blockWrite: WriteSpec<BlockVars> = {
   optimistic: applyBlock,
   intent: ({ block }) => block,
   matches: (ticket, { userId, block }) => ticket.op === (block ? 'block' : 'unblock') && targetIdentity(ticket) === userId,
-  onConfirmed: () => BLOCK_FILTERED.forEach(refetch),
+  onConfirmed: (_ticket, { block }) => refetchFiltered(block),
+  // The own block is gone, but the user stays blocked: their posts stay hidden, their Blocked row goes.
+  onFailed: (ticket, { viewerId, userId, block }) => {
+    if (block || ticket.error?.code !== 'STILL_BLOCKED') return;
+    decide(viewerId, userId, { blocked: true, listOnly: true });
+    refetch(queryKeys.blocked);
+  },
   failureText: (ticket) => (ticket.error?.code === 'STILL_BLOCKED' ? copy.toast.stillBlocked : null),
   noun: 'block',
   failureMessage: copy.toast.blockFailed,

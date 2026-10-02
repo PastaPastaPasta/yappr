@@ -22,7 +22,6 @@ import { handleOf } from '~/ui/handle';
 import { RadioGroup } from '~/ui/RadioGroup';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
-import { toast } from '~/ui/toast';
 import { tw, useColors } from '~/ui/tokens';
 
 import { useAuthorBlocked } from './block-state';
@@ -36,7 +35,7 @@ import {
   reportReasonLabel,
   reportStatusLabel,
 } from './report-reasons';
-import { emailReport, reportWrite } from './report-actions';
+import { emailReport, reportWrite, watchReportSheet } from './report-actions';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
 
 const REASON_OPTIONS = REPORT_REASONS.map((reason) => ({
@@ -147,14 +146,13 @@ function ReportFlow({
   const write = useWrite(reportWrite);
   const [reason, setReason] = useState<number | null>(null);
   const [note, setNote] = useState('');
+  // From the tap until the engine answers: a second tap would queue a second, paid report.
+  const [sending, setSending] = useState(false);
   const outcome = write.status;
   const code = write.ticket?.error?.code;
 
-  // The network has it (or may: G-3) — say so once.
-  useEffect(() => {
-    if (outcome === 'confirmed') toast.success(copy.toast.reportSent);
-    else if (outcome === 'unconfirmed') toast.success(copy.toast.reportUnconfirmed);
-  }, [outcome]);
+  // The sheet says how it went while it is open; the write toasts only once it is gone.
+  useEffect(() => watchReportSheet(post.id), [post.id]);
 
   // A duplicate means a report exists after all: show it.
   const refetchOwn = own.refetch;
@@ -168,7 +166,10 @@ function ReportFlow({
   if (outcome === 'failed' && code === 'MODERATION_NOT_SEATED') {
     return <EmailReport postId={post.id} postUrl={postUrl} noun={noun} refusal={copy.report.notSeated} />;
   }
-  if (own.isPending) return <SheetLoading label={copy.report.checking} testID="report-checking" />;
+  // A cached "no report" is re-checked before the form shows: one may have been filed since.
+  if (own.isPending || (own.isFetching && own.data === null)) {
+    return <SheetLoading label={copy.report.checking} testID="report-checking" />;
+  }
   if (own.isError) {
     return (
       <SheetMessage
@@ -181,12 +182,16 @@ function ReportFlow({
   }
   if (own.data) return <ExistingReport report={own.data} noun={noun} resolves={resolves} />;
 
-  const busy = outcome === 'pending';
+  const busy = sending || outcome === 'pending';
   const valid = reportIsValid(reason, note);
   const submit = () => {
-    if (reason === null) return;
+    if (reason === null || busy) return;
     const trimmed = note.trim();
-    write.send({ target, reason, note: trimmed || undefined, noun }).catch(() => undefined);
+    setSending(true);
+    write
+      .send({ target, reason, note: trimmed || undefined, noun })
+      .catch(() => undefined)
+      .finally(() => setSending(false));
   };
 
   return (
@@ -206,21 +211,17 @@ function ReportFlow({
           />
         </View>
       </View>
-      <View className="gap-1">
-        <TextField
-          label={copy.report.details(reason === OTHER_REASON_CODE)}
-          placeholder={copy.report.placeholder}
-          value={note}
-          onChangeText={setNote}
-          maxLength={REPORT_NOTE_MAX_LENGTH}
-          editable={!busy}
-          multiline
-          testID="report-note"
-        />
-        <Text variant="caption" tone="secondary" tabular className="self-end">
-          {note.length}/{REPORT_NOTE_MAX_LENGTH}
-        </Text>
-      </View>
+      <TextField
+        label={copy.report.details(reason === OTHER_REASON_CODE)}
+        placeholder={copy.report.placeholder}
+        value={note}
+        onChangeText={setNote}
+        maxLength={REPORT_NOTE_MAX_LENGTH}
+        alwaysCount
+        editable={!busy}
+        multiline
+        testID="report-note"
+      />
       <Button
         label={busy ? copy.report.busy : copy.report.submit(noun)}
         size="block"

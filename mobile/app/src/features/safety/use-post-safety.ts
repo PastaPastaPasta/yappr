@@ -43,8 +43,8 @@ function withAuthorBlocked(post: PostDTO, blocked: boolean): PostDTO {
  *   of browsing lists, except a bare repost of one, which is judged by its
  *   target here, as web does. The viewer's own posts are never hidden.
  * - **Media (SAFE-07):** with the gate on, media from authors the viewer
- *   doesn't follow (everyone, signed out) waits behind "Show", which
- *   reveals all of the card's media. Own media is never gated, and a follow
+ *   doesn't follow (everyone, signed out), link-preview images included,
+ *   waits behind "Show", which reveals all of the card's media. Own media is never gated, and a follow
  *   lifts the gate on every card of that author at once.
  * - **Removed targets:** a bare repost whose target moderators removed
  *   leaves lists, except for its reposter, who sees the stub to undo it.
@@ -85,7 +85,8 @@ export function usePostSafety(
   const gates: PostGateProps = {
     nsfwGated: flagged(shown, nsfwMode),
     quoteNsfwGated: quoted ? flagged(quoted, nsfwMode) : undefined,
-    mediaGated: shown.media.length > 0 && gatedFor(shown.author.id, shown.viewer?.followsAuthor),
+    // Not just attachments: a link preview's image is the author's media too (web's useMediaGate).
+    mediaGated: gatedFor(shown.author.id, shown.viewer?.followsAuthor),
     quoteMediaGated: quoteAuthor !== undefined && gatedFor(quoteAuthor, quoted?.viewer?.followsAuthor),
     onRevealMedia,
   };

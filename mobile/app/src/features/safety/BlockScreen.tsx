@@ -13,6 +13,7 @@ import { Button } from '~/ui/Button';
 import { ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
 import { mediumImpact } from '~/ui/haptics';
+import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { monoFont, useColors } from '~/ui/tokens';
@@ -66,8 +67,10 @@ export function BlockScreen() {
       </>
     );
   }
-  if (profile.isPending) return <SheetLoading testID="block-loading" />;
-  if (profile.isError || profile.data === null) {
+  // A cached name and avatar paint the sheet at once; the actions wait for the block status.
+  if (profile.isPending && !seed) return <SheetLoading testID="block-loading" />;
+  // A failed refetch keeps the profile it had (a persisted one, offline): only an empty read is an error.
+  if ((profile.isError && !profile.data) || profile.data === null) {
     return (
       <>
         {header}
@@ -121,7 +124,11 @@ export function BlockScreen() {
             </View>
           </View>
         ) : null}
-        {blocked ? (
+        {profile.isPending ? (
+          <View className="items-center py-6" testID="block-loading">
+            <Spinner />
+          </View>
+        ) : blocked ? (
           <>
             <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.blockedTitle(handle)} body={copy.block.blockedBody} />
             <Button
