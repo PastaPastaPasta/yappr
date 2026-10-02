@@ -29,14 +29,23 @@ export function applyPatch(settings: SettingsDTO, patch: SettingsPatch): Setting
   };
 }
 
-/** The fields of `from` that `patch` touches: the undo of that patch. */
-function undoOf(from: SettingsDTO, patch: SettingsPatch): SettingsPatch {
+/** The fields a patch sets: `notificationSettings.<type>` for each notification type. */
+function fieldsOf(patch: SettingsPatch): string[] {
+  return Object.keys(patch).flatMap((key) =>
+    key === 'notificationSettings' ? Object.keys(patch.notificationSettings ?? {}).map((type) => `${key}.${type}`) : [key],
+  );
+}
+
+/** The fields of `from` that `patch` touches and `owns` still claims: the undo of that patch. */
+function undoOf(from: SettingsDTO, patch: SettingsPatch, owns: (field: string) => boolean): SettingsPatch {
   const undo: Record<string, unknown> = {};
   for (const key of Object.keys(patch) as (keyof SettingsPatch)[]) {
     if (key === 'notificationSettings') {
-      const types = Object.keys(patch.notificationSettings ?? {}) as (keyof SettingsDTO['notificationSettings'])[];
-      undo.notificationSettings = Object.fromEntries(types.map((type) => [type, from.notificationSettings[type]]));
-    } else {
+      const types = (Object.keys(patch.notificationSettings ?? {}) as (keyof SettingsDTO['notificationSettings'])[]).filter(
+        (type) => owns(`${key}.${type}`),
+      );
+      if (types.length > 0) undo.notificationSettings = Object.fromEntries(types.map((type) => [type, from.notificationSettings[type]]));
+    } else if (owns(key)) {
       undo[key] = from[key];
     }
   }
@@ -52,11 +61,17 @@ const refetch = (queryKey: readonly unknown[]) => {
 
 /** Saves not yet answered: a re-read while one is out could show the engine before it lands. */
 let saving = 0;
+/** A save was refused since the last time none was out: the cache may not match the engine. */
+let refused = false;
+/** Each field's latest save: only that one may put the field back. */
+const latestSave = new Map<string, number>();
+let saves = 0;
 
 /**
  * Changes settings at once (the control moves before the engine answers),
  * then saves them through the engine. A refused save puts back only the
- * fields this patch changed, so a later change to another field survives.
+ * fields it changed that no later save has changed since, so a later change
+ * survives. Once no save is out, any refusal re-reads the engine.
  */
 export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
   selectionTick();
@@ -64,6 +79,10 @@ export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
   await queryClient.cancelQueries({ queryKey: queryKeys.settings });
   const before = queryClient.getQueryData<SettingsDTO>(queryKeys.settings);
   if (before) queryClient.setQueryData<SettingsDTO>(queryKeys.settings, applyPatch(before, patch));
+  const id = ++saves;
+  const fields = fieldsOf(patch);
+  for (const field of fields) latestSave.set(field, id);
+  const owns = (field: string) => latestSave.get(field) === id;
   saving += 1;
   try {
     const saved = await engine.api.settings.set(patch);
@@ -77,15 +96,19 @@ export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
   } catch (error) {
     appendLog('warn', 'host', `Saving settings failed: ${errorMessage(error)}`);
     if (before) {
-      const undo = undoOf(before, patch);
+      const undo = undoOf(before, patch, owns);
       queryClient.setQueryData<SettingsDTO>(queryKeys.settings, (current) => (current ? applyPatch(current, undo) : current));
     }
-    // Two refused changes to one field can undo in the wrong order: once the last answer is in,
-    // settle on what the engine has.
-    if (saving === 1) refetch(queryKeys.settings);
+    refused = true;
     toast.error(copy.saveFailed);
     return false;
   } finally {
+    for (const field of fields) if (owns(field)) latestSave.delete(field);
     saving -= 1;
+    // Saves to one field can land in any order: once the last answer is in, settle on what the engine has.
+    if (saving === 0 && refused) {
+      refused = false;
+      refetch(queryKeys.settings);
+    }
   }
 }

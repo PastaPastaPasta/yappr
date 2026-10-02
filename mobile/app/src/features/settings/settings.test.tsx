@@ -4,7 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import type { ReactElement } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import { ActionSheetIOS, Alert, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -33,6 +33,12 @@ jest.mock('~/engine', () => {
 jest.mock('expo-router', () => ({
   router: { push: jest.fn(), navigate: jest.fn(), dismissAll: jest.fn(), canDismiss: jest.fn(() => true) },
   Stack: { Screen: () => null },
+}));
+// The sheet mock renders every sheet's content: a scrolling one passes it through too, and is recorded.
+const mockSheetScroll = jest.fn(({ children }: { children?: ReactNode }) => children);
+jest.mock('@gorhom/bottom-sheet', () => ({
+  ...jest.requireActual('@gorhom/bottom-sheet/mock'),
+  BottomSheetScrollView: (props: { children?: ReactNode }) => mockSheetScroll(props),
 }));
 jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(async () => true) }));
 jest.mock('expo-web-browser', () => ({ openBrowserAsync: jest.fn(async () => ({ type: 'opened' })) }));
@@ -249,6 +255,32 @@ describe('Privacy & Safety (SET-04, SAFE-06, SAFE-07)', () => {
     expect(fakeEngine.method('settings.get')).toHaveBeenCalledTimes(2);
     expect(cachedSettings()?.linkPreviewsEnabled).toBe(true);
     expect(byId('privacy-link-previews')).toBeChecked();
+  });
+
+  it('shows and keeps a later save to a field when an earlier save to it is refused', async () => {
+    let refuse: (error: Error) => void = () => {};
+    let confirm: (saved: SettingsDTO) => void = () => {};
+    const saved = { ...SETTINGS, sensitiveContentMode: 'show' as const };
+    fakeEngine
+      .method('settings.set')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)))
+      .mockImplementationOnce(() => new Promise((resolve) => (confirm = resolve)));
+    renderScreen(<PrivacySettingsScreen />);
+    await settle();
+
+    // Blur → hide → show, the hide refused while the show is still out.
+    await act(async () => fireEvent.press(byId('privacy-nsfw-hide')));
+    await act(async () => fireEvent.press(byId('privacy-nsfw-show')));
+    await act(async () => refuse(new Error('nope')));
+    expect(cachedSettings()?.sensitiveContentMode).toBe('show');
+    expect(fakeEngine.method('settings.get')).toHaveBeenCalledTimes(1);
+
+    // The show lands: then the screen re-reads the engine, which has it.
+    fakeEngine.method('settings.get').mockResolvedValue(saved);
+    await act(async () => confirm(saved));
+    expect(fakeEngine.method('settings.get')).toHaveBeenCalledTimes(2);
+    expect(cachedSettings()?.sensitiveContentMode).toBe('show');
+    expect(byId('privacy-nsfw-show')).toBeChecked();
   });
 
   it('keeps both of two quick changes while a fetch is cancelled', async () => {
@@ -551,5 +583,7 @@ describe('About (SET-06, SET-07)', () => {
     expect(byId('about-rules')).toHaveAccessibleName('Community rules summary');
     fireEvent.press(byId('about-rules'));
     expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
+    // A scrolling sheet, so large text still reaches every rule.
+    expect(mockSheetScroll).toHaveBeenCalledWith(expect.objectContaining({ testID: 'about-rules-sheet' }));
   });
 });

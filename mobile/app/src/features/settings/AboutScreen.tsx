@@ -31,10 +31,13 @@ function ExternalMark() {
   return <ArrowTopRightOnSquareIcon size={16} color={c.textDisabled} />;
 }
 
-/** The bundled community-rules summary (PRD SET-07, AUTH-09), readable offline. */
+/**
+ * The bundled community-rules summary (PRD SET-07, AUTH-09), readable offline.
+ * It scrolls, so large text or a short landscape screen still reaches every rule.
+ */
 function RulesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Sheet open={open} onClose={onClose} title={copy.about.rules} testID="about-rules-sheet">
+    <Sheet open={open} onClose={onClose} title={copy.about.rules} scrollable testID="about-rules-sheet">
       <View className="gap-3 pb-2">
         <Text variant="body">{copy.about.rulesIntro}</Text>
         {copy.about.rulesSummary.map((rule) => (
