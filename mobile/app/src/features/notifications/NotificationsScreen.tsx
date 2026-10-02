@@ -1,0 +1,295 @@
+import { useNetInfo } from '@react-native-community/netinfo';
+import { FlashList } from '@shopify/flash-list';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
+import { Platform, Pressable, RefreshControl, View } from 'react-native';
+import { BellIcon, CheckIcon, Cog6ToothIcon } from 'react-native-heroicons/outline';
+
+import { config } from '~/config';
+import { lastIdentity, useSession } from '~/data/session';
+import { engineSupervisor } from '~/engine';
+import { useEngineStatus } from '~/engine/hooks';
+import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
+import { Button } from '~/ui/Button';
+import { EmptyState, ErrorState } from '~/ui/EmptyState';
+import { IconButton } from '~/ui/IconButton';
+import { RowSkeleton, SkeletonGroup } from '~/ui/Skeleton';
+import { Screen } from '~/ui/Screen';
+import { Spinner } from '~/ui/Spinner';
+import { FilterChips } from '~/ui/Tabs';
+import { Text } from '~/ui/Text';
+import { toast } from '~/ui/toast';
+import { useColors } from '~/ui/tokens';
+
+import {
+  destinationOf,
+  emptyCopy,
+  groupNotifications,
+  parseFilter,
+  snippetOf,
+  visibleFilters,
+  type MobileFilter,
+  type NotificationRowModel,
+} from './notification-model';
+import { NotificationRow } from './NotificationRow';
+import {
+  markAllNotificationsRead,
+  markNotificationsRead,
+  pollNotifications,
+  useNotificationBadge,
+  useNotificationList,
+  useSettings,
+} from './notifications-data';
+import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
+
+/** UX_SPEC §5.8 (NOTIF-07): reply and quote sources are 3.5-day windows on the dev contract. */
+export const WINDOWED_FOOTER = 'Older replies and quotes may not appear here.';
+const OFFLINE_MESSAGE = "You're offline";
+
+function SignedOut() {
+  return (
+    <EmptyState
+      icon={BellIcon}
+      title="Sign in to see your notifications"
+      description="Likes, replies, follows and mentions show up here."
+      action={{ label: 'Sign in', onPress: () => router.push('/sign-in') }}
+      testID="notifications-signed-out"
+    />
+  );
+}
+
+function Loading() {
+  return (
+    <SkeletonGroup label="Loading notifications…" testID="notifications-loading">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <RowSkeleton key={i} />
+      ))}
+      <Text variant="subhead" tone="secondary" className="p-6 text-center">
+        Loading notifications…
+      </Text>
+    </SkeletonGroup>
+  );
+}
+
+function HeaderActions({ canMarkAll }: { canMarkAll: boolean }) {
+  // Settings live on the Profile tab; the anchor puts Profile under it, so Back works there.
+  const openSettings = () => router.push('/settings/notifications', { withAnchor: true });
+  const markAll = () => {
+    markAllNotificationsRead().catch(() => undefined);
+  };
+  return (
+    <View className="flex-row items-center gap-1">
+      {canMarkAll ? (
+        Platform.OS === 'ios' ? (
+          <Pressable
+            accessibilityRole="button"
+            onPress={markAll}
+            hitSlop={8}
+            className="px-2 active:opacity-60"
+            testID="notifications-mark-all"
+          >
+            <Text variant="subhead" tone="link">
+              Mark all as read
+            </Text>
+          </Pressable>
+        ) : (
+          <IconButton
+            icon={CheckIcon}
+            accessibilityLabel="Mark all as read"
+            // Android's tooltip for an icon-only button.
+            onLongPress={() => toast('Mark all as read')}
+            onPress={markAll}
+            testID="notifications-mark-all"
+          />
+        )
+      ) : null}
+      <IconButton
+        icon={Cog6ToothIcon}
+        accessibilityLabel="Notification settings"
+        onLongPress={Platform.OS === 'android' ? () => toast('Notification settings') : undefined}
+        onPress={openSettings}
+        testID="notifications-settings"
+      />
+    </View>
+  );
+}
+
+/**
+ * The Notifications tab (UX_SPEC §4.18, PRD NOTIF-01 – NOTIF-09): filter
+ * chips, the list with pull to refresh and paging, mark all as read, and
+ * the signed-out placeholder.
+ */
+export function NotificationsScreen() {
+  const c = useColors();
+  const params = useLocalSearchParams<{ filter?: string }>();
+  const [chosen, setChosen] = useState<MobileFilter>(() => parseFilter(params.filter));
+  const { status, identityId } = useSession();
+  // Before the engine restores the session, whoever was signed in last time counts (PRD G-2).
+  const signedIn = status === 'signed-in' || (status === 'unknown' && lastIdentity() !== null);
+  const viewerId = identityId ?? (status === 'unknown' ? lastIdentity() : null);
+  const { state: engineState } = useEngineStatus();
+  const offline = useNetInfo().isConnected === false;
+
+  const settings = useSettings();
+  const toggles = settings.data?.notificationSettings;
+  const sensitiveMode = settings.data?.sensitiveContentMode;
+  const filters = visibleFilters(toggles);
+  // A filter whose type was just turned off falls back to All (NOTIF-02).
+  const filter = filters.some((f) => f.value === chosen) ? chosen : 'all';
+
+  const list = useNotificationList(filter, signedIn);
+  const rows = useMemo(() => groupNotifications(list.items), [list.items]);
+  const badge = useNotificationBadge((s) => s.unread);
+  const canMarkAll = signedIn && (badge > 0 || rows.some((row) => row.unreadIds.length > 0));
+
+  const onRowPress = useCallback((row: NotificationRowModel) => {
+    markNotificationsRead(row.unreadIds);
+    const destination = destinationOf(row);
+    if (!destination) return;
+    if (destination.kind === 'post') openPost(destination.post ?? destination.id);
+    else if (destination.kind === 'user') openUser(destination.id);
+    else openExternal(`https://yap.pr${config.webBasePath}${destination.path}`);
+  }, []);
+
+  const [refreshing, setRefreshing] = useState(false);
+  const { refetch } = list;
+  const onRefresh = () => {
+    if (offline) {
+      toast(OFFLINE_MESSAGE);
+      return;
+    }
+    setRefreshing(true);
+    pollNotifications()
+      .then(() => refetch())
+      .catch(() => undefined)
+      .finally(() => setRefreshing(false));
+  };
+
+  const { hasNextPage, isFetchingNextPage, isFetchNextPageError, fetchNextPage } = list;
+  const loadMore = () => {
+    fetchNextPage().catch(() => undefined);
+  };
+  const onEndReached = () => {
+    if (hasNextPage && !isFetchingNextPage && !isFetchNextPageError) loadMore();
+  };
+
+  const header = (
+    <Stack.Screen
+      options={{
+        title: 'Notifications',
+        headerLargeTitle: true,
+        headerLargeTitleShadowVisible: false,
+        headerShadowVisible: false,
+        headerRight: signedIn ? () => <HeaderActions canMarkAll={canMarkAll} /> : undefined,
+      }}
+    />
+  );
+
+  if (!signedIn) {
+    return (
+      <Screen scroll>
+        {header}
+        <SignedOut />
+      </Screen>
+    );
+  }
+
+  let empty;
+  if (list.data === undefined && (engineState === 'failed' || engineState === 'unsupported')) {
+    empty = (
+      <ErrorState
+        message={UNAVAILABLE_MESSAGE}
+        onRetry={() => {
+          engineSupervisor.restart('Try again (Notifications)');
+          refetch().catch(() => undefined);
+        }}
+        testID="notifications-engine-down"
+      />
+    );
+  } else if (list.isError && list.data === undefined) {
+    empty = (
+      <ErrorState
+        message={readErrorMessage(list.error)}
+        onRetry={() => {
+          refetch().catch(() => undefined);
+        }}
+        testID="notifications-error"
+      />
+    );
+  } else if (list.isPending) {
+    empty = <Loading />;
+  } else {
+    empty = (
+      <EmptyState icon={BellIcon} title="No notifications yet" description={emptyCopy(filter)} testID="notifications-empty" />
+    );
+  }
+
+  let footer = null;
+  if (rows.length > 0) {
+    if (isFetchingNextPage) {
+      footer = (
+        <View className="items-center p-6">
+          <Spinner size="sm" testID="notifications-next-page" />
+        </View>
+      );
+    } else if (hasNextPage && isFetchNextPageError) {
+      footer = (
+        <View className="items-center p-6">
+          <Button label="Load More" size="sm" onPress={loadMore} testID="notifications-load-more" />
+        </View>
+      );
+    } else if (!hasNextPage && config.network === 'devnet') {
+      footer = (
+        <Text variant="subhead" tone="secondary" className="p-6 text-center" testID="notifications-windowed">
+          {WINDOWED_FOOTER}
+        </Text>
+      );
+    }
+  }
+
+  return (
+    <Screen>
+      {header}
+      <FlashList
+        data={rows}
+        keyExtractor={(row) => row.key}
+        getItemType={(row) => (row.preview ? 'post' : 'plain')}
+        renderItem={({ item }) => (
+          <NotificationRow
+            row={item}
+            snippet={snippetOf(item.preview, sensitiveMode, viewerId)}
+            onPress={onRowPress}
+            onActorPress={openUser}
+          />
+        )}
+        extraData={`${sensitiveMode}:${viewerId}`}
+        ListHeaderComponent={
+          <FilterChips
+            options={filters}
+            value={filter}
+            onChange={setChosen}
+            testID="notifications-filters"
+          />
+        }
+        ListEmptyComponent={empty}
+        ListFooterComponent={footer}
+        onEndReached={onEndReached}
+        onEndReachedThreshold={1.5}
+        // New notifications land on top and should show there. FlashList's default keeps the old
+        // first row in place, and its autoscroll-to-top scrolls under the iOS large title.
+        maintainVisibleContentPosition={{ disabled: true }}
+        contentInsetAdjustmentBehavior="automatic"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={c.accent}
+            colors={[c.accent]}
+            progressBackgroundColor={c.bg}
+          />
+        }
+        testID="notifications-list"
+      />
+    </Screen>
+  );
+}
