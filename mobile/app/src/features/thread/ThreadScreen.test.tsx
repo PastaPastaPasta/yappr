@@ -4,11 +4,12 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import { queryKeys } from '~/data/keys';
-import { useRemovedPosts } from '~/data/optimistic';
+import { hidePost, useRemovedPosts } from '~/data/optimistic';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { useToastStore } from '~/ui/toast';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 
 import { ThreadScreen } from './ThreadScreen';
@@ -145,6 +146,115 @@ describe('ThreadScreen', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('shows a spinner in place of Try again while it re-reads', async () => {
+    jest.useFakeTimers();
+    try {
+      fakeEngine.method('posts.thread').mockResolvedValue(threadOf([], { focus: null }));
+      renderThread('missing');
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(NOT_FOUND_RECHECK_MS);
+      });
+      await act(async () => fireEvent.press(screen.getByTestId('post-not-found-retry')));
+      expect(screen.getByTestId('post-not-found-checking')).toBeTruthy();
+      expect(screen.queryByTestId('post-not-found-retry')).toBeNull();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(NOT_FOUND_RECHECK_MS);
+      });
+      expect(screen.getByTestId('post-not-found-retry')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('says "Post not found" for an empty id, without reading', async () => {
+    renderThread('');
+    await act(async () => {});
+    expect(screen.getByText('Post not found')).toBeTruthy();
+    expect(screen.queryByTestId('post-not-found-retry')).toBeNull();
+    expect(fakeEngine.method('posts.thread')).not.toHaveBeenCalled();
+  });
+
+  it('keeps a loaded thread when a refresh comes back without the post', async () => {
+    jest.useFakeTimers();
+    try {
+      fakeEngine.method('posts.thread').mockResolvedValueOnce(threadOf([reply('r1', 'First reply')]));
+      renderThread();
+      await act(async () => {});
+      expect(screen.getByText('First reply')).toBeTruthy();
+
+      // A failed read: lib answers it as "absent", twice.
+      fakeEngine.method('posts.thread').mockResolvedValue(threadOf([], { focus: null }));
+      await act(async () => {
+        queryClient.refetchQueries({ queryKey: queryKeys.post.thread('root') }).catch(() => undefined);
+        await jest.advanceTimersByTimeAsync(NOT_FOUND_RECHECK_MS);
+      });
+      expect(fakeEngine.method('posts.thread')).toHaveBeenCalledTimes(3);
+      expect(screen.getByText('The root post')).toBeTruthy();
+      expect(screen.getByText('First reply')).toBeTruthy();
+      expect(screen.queryByText('No replies yet. Be the first to reply!')).toBeNull();
+      expect(screen.getByTestId('reply-bar')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('says why a post shown before takes no replies once the read loses it', async () => {
+    jest.useFakeTimers();
+    try {
+      queryClient.setQueryData(queryKeys.post.detail('root'), root);
+      fakeEngine.method('posts.thread').mockResolvedValue(threadOf([], { focus: null }));
+      renderThread();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(NOT_FOUND_RECHECK_MS);
+      });
+      expect(screen.getByTestId('thread-focus-stub')).toBeTruthy();
+      expect(screen.getByText("This post is unavailable, so it can't be replied to.")).toBeTruthy();
+      expect(screen.getByTestId('replies-error')).toBeTruthy();
+      expect(screen.queryByText('No replies yet. Be the first to reply!')).toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('toasts a failed pull to refresh and keeps the thread', async () => {
+    fakeEngine.method('posts.thread').mockResolvedValueOnce(threadOf([reply('r1', 'First reply')]));
+    renderThread();
+    await act(async () => {});
+    fakeEngine.method('posts.thread').mockRejectedValue(new Error('Request timed out'));
+    const list = screen.getByTestId('thread-list');
+    await act(async () => list.props.refreshControl.props.onRefresh());
+    await act(async () => {});
+    expect(screen.getByText('First reply')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toBe(
+      'Dash Platform is temporarily unavailable. Please try again in a few moments.',
+    );
+  });
+
+  it('shows a reply deleted on this device as the stub, and leaves when the focus is deleted', async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([reply('r1', 'Mine')]));
+    renderThread();
+    await act(async () => {});
+    act(() => {
+      hidePost('r1');
+    });
+    expect(screen.getByTestId('reply-stub-r1')).toBeTruthy();
+    expect(router.back).not.toHaveBeenCalled();
+    act(() => {
+      hidePost('root');
+    });
+    expect(router.back).toHaveBeenCalled();
+  });
+
+  it('opens a ?reply= target that is not a row here as its own detail', async () => {
+    fakeEngine
+      .method('posts.thread')
+      .mockResolvedValue(threadOf([reply('r1', 'Top reply', { hiddenReplyCount: 1 })]));
+    renderThread('root', 'deep');
+    await act(async () => {});
+    await act(async () => {});
+    expect(router.replace).toHaveBeenCalledWith({ pathname: '/post/[id]', params: { id: 'deep' } });
   });
 
   it('shows the error state with Try again when the first read fails and nothing is cached', async () => {

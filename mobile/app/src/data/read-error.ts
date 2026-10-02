@@ -1,6 +1,6 @@
 /** G-11's copy for DAPI unavailability (UX_SPEC §5.12). */
 export const UNAVAILABLE_MESSAGE = 'Dash Platform is temporarily unavailable. Please try again in a few moments.';
-const GENERIC_MESSAGE = "This couldn't be loaded. Please try again.";
+export const GENERIC_MESSAGE = "This couldn't be loaded. Please try again.";
 
 const TRANSPORT = /timed? ?out|timeout|unavailable|network|fetch|disconnect|restart|deadline|503|504|ECONN/i;
 

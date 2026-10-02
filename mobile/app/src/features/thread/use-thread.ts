@@ -4,10 +4,16 @@ import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { engine } from '~/engine';
-import { persistedQuery } from '~/state/query-client';
+import { persistedQuery, queryClient } from '~/state/query-client';
 
 /** How long to wait before re-reading a thread whose post came back missing. */
 export const NOT_FOUND_RECHECK_MS = 3000;
+
+/** Whether this device already holds the thread with its focused post. */
+function hasLoadedFocus(id: string): boolean {
+  const pages = queryClient.getQueryData<InfiniteData<ThreadDTO>>(queryKeys.post.thread(id))?.pages;
+  return Boolean(pages?.[pages.length - 1]?.focus);
+}
 
 /**
  * A post's thread (`posts.thread`). Its pages are cumulative: each one holds
@@ -21,12 +27,18 @@ export function useThread(id: string) {
     ...persistedQuery,
     queryKey: queryKeys.post.thread(id),
     queryFn: async ({ pageParam }) => {
-      const thread = await engine.api.posts.thread(id, pageParam);
-      if (thread.focus || pageParam !== null) return thread;
-      // lib answers a failed single read as "absent" (on sakura, often a "Quorum not found in cache"
-      // proof miss that clears in seconds): ask once more before saying "Post not found".
+      const read = () => engine.api.posts.thread(id, pageParam);
+      const first = await read();
+      if (first.focus) return first;
+      // lib answers a failed single read as "absent" (on sakura, often a proof miss that clears in
+      // seconds): ask once more before saying the post is gone.
       await new Promise((resolve) => setTimeout(resolve, NOT_FOUND_RECHECK_MS));
-      return engine.api.posts.thread(id, pageParam);
+      const second = await read();
+      if (second.focus) return second;
+      // A thread already shown (or a later page, which only exists once the focus was read) stays
+      // on screen: a read that can't find it is treated as failed, and the query keeps its data.
+      if (pageParam !== null || hasLoadedFocus(id)) throw new Error('Thread unavailable');
+      return second;
     },
     initialPageParam: null,
     getNextPageParam: (last) => (last.replies.hasMore && last.replies.cursor ? last.replies.cursor : undefined),
@@ -53,8 +65,6 @@ export function useSeedPost(id: string): PostDTO | null | undefined {
  */
 export function useParentPost(parentId: string | undefined) {
   const id = parentId ?? '';
-  return useEngineQuery(queryKeys.post.detail(id), (api) => api.posts.get(id), {
-    enabled: id.length > 0,
-    persist: true,
-  });
+  // Not persisted: a failed read also answers `null`, and that must not outlive this session.
+  return useEngineQuery(queryKeys.post.detail(id), (api) => api.posts.get(id), { enabled: id.length > 0 });
 }

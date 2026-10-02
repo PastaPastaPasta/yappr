@@ -13,11 +13,13 @@ import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
 /** Why the focus takes no replies; `null` when it does. */
-export type ReplyBlock = 'deleted' | 'private' | null;
+export type ReplyBlock = 'deleted' | 'unavailable' | 'private' | null;
 
-export function replyBlockOf(post: PostDTO | undefined, removedHere: boolean): ReplyBlock {
+/** `unavailable`: the thread read no longer finds the post shown. */
+export function replyBlockOf(post: PostDTO | undefined, removedHere: boolean, unavailable = false): ReplyBlock {
   if (!post) return null;
   if (post.deleted || removedHere) return 'deleted';
+  if (unavailable) return 'unavailable';
   return post.encrypted ? 'private' : null;
 }
 
@@ -38,17 +40,20 @@ function ViewerAvatar({ identityId }: { identityId: string }) {
 /**
  * The docked "Post your reply" bar under a thread (PRD POST-10, UX_SPEC
  * §4.9): opens compose in reply mode for the focused post. Signed out it
- * reads "Sign in to reply"; a deleted post shows why it takes no replies;
+ * reads "Sign in to reply"; a deleted or unavailable post shows why it takes no replies;
  * a private post (no replies in 1.0) shows nothing.
  */
 export function ReplyBar({ post, block }: { post: PostDTO; block: ReplyBlock }) {
   const { status, identityId } = useSession();
   if (block === 'private') return null;
-  if (block === 'deleted') {
+  if (block === 'deleted' || block === 'unavailable') {
+    const noun = post.kind === 'reply' ? 'reply' : 'post';
     return (
       <BarFrame>
-        <Text variant="subhead" tone="secondary" className="px-4 text-center" testID="reply-bar-deleted">
-          This post was deleted, so it can&apos;t be replied to.
+        <Text variant="subhead" tone="secondary" className="px-4 text-center" testID={`reply-bar-${block}`}>
+          {block === 'deleted'
+            ? "This post was deleted, so it can't be replied to."
+            : `This ${noun} is unavailable, so it can't be replied to.`}
         </Text>
       </BarFrame>
     );

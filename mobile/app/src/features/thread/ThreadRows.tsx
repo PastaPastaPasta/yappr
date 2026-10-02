@@ -9,6 +9,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import { usePostRemoved } from '~/data/optimistic';
 import { PostItem } from '~/features/post/PostItem';
 import { openPost } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
@@ -124,6 +125,43 @@ function RepliesEmpty() {
   );
 }
 
+/** The reply row: a reply proved deleted, or deleted on this device, keeps its place as a stub (PRD POST-04). */
+function ReplyRow({ row }: { row: Extract<ThreadRow, { type: 'reply' }> }) {
+  const { reply } = row;
+  const removedHere = usePostRemoved(reply.id);
+  const gone = reply.deletedStub || reply.deleted || removedHere;
+  return (
+    <View testID={`thread-reply-${reply.id}`} className={reply.depth === 1 ? INDENT : undefined}>
+      {row.highlighted ? <Highlight /> : null}
+      {row.authorThreadStart ? <AuthorThreadLabel /> : null}
+      <View>
+        {row.lineAbove ? <ThreadLine position="above" /> : null}
+        {gone ? (
+          <PostStub state="deleted" kind="reply" testID={`reply-stub-${reply.id}`} />
+        ) : (
+          <PostItem post={reply} replyingTo={row.replyingTo} />
+        )}
+        {row.lineBelow ? <ThreadLine position="below" /> : null}
+      </View>
+    </View>
+  );
+}
+
+/** A post above the focus; the "deleted" line once it is deleted, here or on chain. */
+function AncestorRow({ row }: { row: Extract<ThreadRow, { type: 'ancestor' }> }) {
+  const removedHere = usePostRemoved(row.post.id);
+  return (
+    <View testID={`ancestor-${row.post.id}`}>
+      {row.post.deleted || removedHere ? (
+        <PostStub state="deleted" kind={row.post.kind} variant="card" />
+      ) : (
+        <PostItem post={row.post} variant="compact" />
+      )}
+      <ThreadLine position="below" />
+    </View>
+  );
+}
+
 /** One row of the post detail list. */
 export const ThreadRowView = memo(function ThreadRowView({
   row,
@@ -134,16 +172,7 @@ export const ThreadRowView = memo(function ThreadRowView({
 }) {
   switch (row.type) {
     case 'ancestor':
-      return (
-        <View testID={`ancestor-${row.post.id}`}>
-          {row.post.deleted ? (
-            <PostStub state="deleted" kind={row.post.kind} variant="card" />
-          ) : (
-            <PostItem post={row.post} variant="compact" />
-          )}
-          <ThreadLine position="below" />
-        </View>
-      );
+      return <AncestorRow row={row} />;
     case 'ancestorStub':
       return <PostStub state="unavailable" kind={row.kind} testID={`ancestor-stub-${row.id}`} />;
     case 'focus':
@@ -157,26 +186,8 @@ export const ThreadRowView = memo(function ThreadRowView({
       return <PostStub state={row.state} kind={row.kind} testID="thread-focus-stub" />;
     case 'focusSkeleton':
       return <PostSkeleton />;
-    case 'reply': {
-      const { reply } = row;
-      // A reply proved deleted (a v10 stand-in or a tombstone) keeps its place as a stub (PRD POST-04).
-      const card = reply.deletedStub || reply.deleted ? (
-        <PostStub state="deleted" kind="reply" testID={`reply-stub-${reply.id}`} />
-      ) : (
-        <PostItem post={reply} replyingTo={row.replyingTo} />
-      );
-      return (
-        <View testID={`thread-reply-${reply.id}`} className={reply.depth === 1 ? INDENT : undefined}>
-          {row.highlighted ? <Highlight /> : null}
-          {row.authorThreadStart ? <AuthorThreadLabel /> : null}
-          <View>
-            {row.lineAbove ? <ThreadLine position="above" /> : null}
-            {card}
-            {row.lineBelow ? <ThreadLine position="below" /> : null}
-          </View>
-        </View>
-      );
-    }
+    case 'reply':
+      return <ReplyRow row={row} />;
     case 'continue':
       return <ContinueThread replyId={row.replyId} count={row.count} />;
     case 'repliesLoading':

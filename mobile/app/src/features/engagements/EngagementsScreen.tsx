@@ -1,25 +1,30 @@
 import type { EngagementDTO, PostDTO } from '@engine/api/dto';
 import type { EngagementTab } from '@engine/api/posts';
 import { FlashList } from '@shopify/flash-list';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { memo, useCallback, useState } from 'react';
 import { Pressable, RefreshControl, View } from 'react-native';
-import { ArrowPathIcon, ChatBubbleBottomCenterTextIcon, HeartIcon } from 'react-native-heroicons/outline';
+import {
+  ArrowPathIcon,
+  ChatBubbleBottomCenterTextIcon,
+  DocumentMagnifyingGlassIcon,
+  HeartIcon,
+} from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
+import { readErrorMessage } from '~/data/read-error';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { PostItem } from '~/features/post/PostItem';
 import { openPost, openUser } from '~/features/post/post-navigation';
 import { followWrite } from '~/features/post/post-writes';
-import { OfflineBanner } from '~/features/thread/OfflineBanner';
-import { readErrorMessage } from '~/features/thread/read-error';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { lightImpact } from '~/ui/haptics';
+import { OfflineBanner } from '~/ui/OfflineBanner';
 import { Screen } from '~/ui/Screen';
 import { PostSkeleton, RowSkeleton } from '~/ui/Skeleton';
 import { Spinner } from '~/ui/Spinner';
@@ -31,6 +36,11 @@ import { UserRow } from '~/ui/UserRow';
 import { EMPTY_COPY, engagementTabs, initialTab, tabLabel } from './engagement-tabs';
 
 const EMPTY_ICONS = { quotes: ChatBubbleBottomCenterTextIcon, reposts: ArrowPathIcon, likes: HeartIcon } as const;
+
+function goBack() {
+  if (router.canGoBack()) router.back();
+  else router.replace('/');
+}
 
 /** A row's identity: a quote by its post, everyone else by who they are. */
 const engagementId = (entry: EngagementDTO) => entry.quote?.id ?? entry.user.id;
@@ -66,7 +76,8 @@ const EngagementUser = memo(function EngagementUser({
 
 /**
  * A quote, as the quoting post's card (PRD POST-06). The list carries only
- * the quote's id and text, so each visible row reads its post; until it
+ * the quote's id and text, so each visible row reads its post (one
+ * `posts.get` per row; TODO post-1.0: a batched engine read); until it
  * arrives, or if it can't be read, the quoter's row with the quote text
  * stands in (web's engagements page).
  */
@@ -132,7 +143,7 @@ function EngagementList({
   const list = useEngineInfiniteQuery(
     queryKeys.post.engagements(id, tab),
     (api, cursor) => api.posts.engagements({ id, kind }, tab, cursor),
-    { itemId: engagementId },
+    { itemId: engagementId, enabled: id.length > 0 },
   );
   const [refreshing, setRefreshing] = useState(false);
   const { refetch, fetchNextPage, hasNextPage, isFetchingNextPage } = list;
@@ -227,13 +238,30 @@ export function EngagementsScreen({
   const [selected, setTab] = useState<EngagementTab>(() => initialTab(requestedTab, tabs));
   // Capabilities can arrive after the first render and take Reposts away.
   const tab = tabs.includes(selected) ? selected : 'likes';
-  const counts = useEngineQuery(queryKeys.post.engagementCounts(id), (api) =>
-    api.posts.engagementCounts({ id, kind }),
+  const counts = useEngineQuery(
+    queryKeys.post.engagementCounts(id),
+    (api) => api.posts.engagementCounts({ id, kind }),
+    { enabled: id.length > 0 },
   );
   const refetchCounts = counts.refetch;
   const refreshCounts = useCallback(() => {
     refetchCounts().catch(() => undefined);
   }, [refetchCounts]);
+
+  if (!id) {
+    return (
+      <Screen>
+        <Stack.Screen options={{ title: 'Post engagements' }} />
+        <EmptyState
+          title="Post not found"
+          description="It may have been deleted, or the link is wrong."
+          icon={DocumentMagnifyingGlassIcon}
+          action={{ label: 'Go back', onPress: goBack }}
+          testID="engagements-not-found"
+        />
+      </Screen>
+    );
+  }
 
   return (
     <Screen>

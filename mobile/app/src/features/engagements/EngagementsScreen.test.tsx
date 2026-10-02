@@ -143,4 +143,18 @@ describe('EngagementsScreen', () => {
     fireEvent.press(screen.getByLabelText('Quote: A quote'));
     expect(router.push).toHaveBeenCalledWith({ pathname: '/post/[id]', params: { id: 'q1' } });
   });
+
+  it('says "Post not found" for an empty id, without reading', async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <EngagementsScreen id="" kind="post" />
+      </QueryClientProvider>,
+    );
+    await act(async () => {});
+    expect(screen.getByText('Post not found')).toBeTruthy();
+    expect(fakeEngine.method('posts.engagementCounts')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('posts.engagements')).not.toHaveBeenCalled();
+    fireEvent.press(screen.getByText('Go back'));
+    expect(router.back).toHaveBeenCalled();
+  });
 });

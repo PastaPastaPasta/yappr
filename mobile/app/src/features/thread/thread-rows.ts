@@ -1,5 +1,7 @@
 import type { PostDTO, ThreadDTO, ThreadReplyDTO } from '@engine/api/dto';
 
+import { GENERIC_MESSAGE } from '~/data/read-error';
+
 /**
  * The post detail screen as one list (UX_SPEC §4.9): what is above the
  * focused post, the post itself, then its replies flattened to one indent
@@ -148,6 +150,11 @@ export function buildThreadRows({
         ? { type: 'repliesError', key: 'replies-error', message: repliesError }
         : { type: 'repliesLoading', key: 'replies-loading' },
     );
+    return rows;
+  }
+  if (!thread.focus) {
+    // The read came back without the post: its replies weren't read either, so never "No replies yet".
+    rows.push({ type: 'repliesError', key: 'replies-error', message: repliesError ?? GENERIC_MESSAGE });
     return rows;
   }
   const replies = thread.replies.items;

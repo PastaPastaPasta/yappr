@@ -3,8 +3,9 @@ import { View } from 'react-native';
 import { SignalSlashIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
-import { Text } from '~/ui/Text';
-import { tw, useColors } from '~/ui/tokens';
+
+import { Text } from './Text';
+import { tw, useColors } from './tokens';
 
 /** UX_SPEC §2.18: under the navigation bar while the OS reports no connectivity (PRD G-1). */
 export function OfflineBanner() {

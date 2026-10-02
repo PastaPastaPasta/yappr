@@ -55,6 +55,14 @@ describe('buildThreadRows', () => {
     expect(rows[0]).toMatchObject({ type: 'focusStub', state: 'unavailable', kind: 'post' });
   });
 
+  it('offers a retry, never "No replies yet", under a focus the read lost', () => {
+    const rows = buildThreadRows({ thread: thread({ focus: null }), seed: root });
+    expect(types(rows)).toEqual(['focusStub', 'repliesError']);
+    expect(rows[1]).toMatchObject({ message: "This couldn't be loaded. Please try again." });
+    const failed = buildThreadRows({ thread: thread({ focus: null }), seed: root, repliesError: 'Down' });
+    expect(failed[1]).toMatchObject({ type: 'repliesError', message: 'Down' });
+  });
+
   it('turns the focus into the deleted stub after the viewer deletes it here', () => {
     const rows = buildThreadRows({ thread: thread(), focusRemoved: true });
     expect(rows[0]).toMatchObject({ type: 'focusStub', state: 'deleted' });

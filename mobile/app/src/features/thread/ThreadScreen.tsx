@@ -5,17 +5,18 @@ import { RefreshControl, View } from 'react-native';
 import { DocumentMagnifyingGlassIcon } from 'react-native-heroicons/outline';
 
 import { usePostRemoved } from '~/data/optimistic';
+import { readErrorMessage } from '~/data/read-error';
 import { useEngineStatus } from '~/engine/hooks';
 import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { LinkText } from '~/ui/LinkText';
+import { OfflineBanner } from '~/ui/OfflineBanner';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
+import { toast } from '~/ui/toast';
 import { useColors } from '~/ui/tokens';
 
-import { OfflineBanner } from './OfflineBanner';
-import { readErrorMessage } from './read-error';
 import { ReplyBar, replyBlockOf } from './ReplyBar';
 import { buildThreadRows, threadRowType, type ThreadRow } from './thread-rows';
 import { ThreadRowView } from './ThreadRows';
@@ -103,6 +104,10 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     Promise.all([refetch(), needsParent ? refetchParent() : null])
+      .then(([result]) => {
+        // A failed refresh keeps what is shown; say so rather than fail silently.
+        if (result.isError && result.data) toast.error(readErrorMessage(result.error));
+      })
       .catch(() => undefined)
       .finally(() => setRefreshing(false));
   }, [refetch, refetchParent, needsParent]);
@@ -113,12 +118,20 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
     refetch().catch(() => undefined);
   }, [refetch]);
 
+  // The viewer deleted (or hid) the post this screen is about: leave it (data README, `removal`).
+  const wasRemoved = useRef(focusRemoved);
+  useEffect(() => {
+    if (focusRemoved && !wasRemoved.current) goBack();
+    wasRemoved.current = focusRemoved;
+  }, [focusRemoved]);
+
   // `?reply=`: scroll to the reply once it is in the list, reading a few more pages to find it.
   const listRef = useRef<FlashListRef<ThreadRow>>(null);
   const scrolledTo = useRef<string | null>(null);
   const searchedPages = useRef(0);
+  const { isFetching } = query;
   useEffect(() => {
-    if (!highlightId || scrolledTo.current === highlightId || !thread) return undefined;
+    if (!highlightId || scrolledTo.current === highlightId || !thread?.focus) return undefined;
     const index = rows.findIndex((row) => row.type === 'reply' && row.reply.id === highlightId);
     if (index >= 0) {
       // After the rows have laid out; a re-render before then reschedules it.
@@ -128,18 +141,26 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
       }, 250);
       return () => clearTimeout(timer);
     }
-    if (hasNextPage && !isFetchingNextPage && searchedPages.current < MAX_HIGHLIGHT_PAGES) {
+    if (isFetching) return undefined;
+    if (hasNextPage && searchedPages.current < MAX_HIGHLIGHT_PAGES) {
       searchedPages.current += 1;
       fetchNextPage().catch(() => undefined);
+      return undefined;
+    }
+    // Not a row here (nested behind "Continue thread", or past the pages read): open the reply itself,
+    // which shows this post above it.
+    if (highlightId !== id) {
+      scrolledTo.current = highlightId;
+      router.replace({ pathname: '/post/[id]', params: { id: highlightId } });
     }
     return undefined;
-  }, [highlightId, rows, thread, hasNextPage, isFetchingNextPage, fetchNextPage]);
+  }, [highlightId, id, rows, thread, hasNextPage, isFetching, fetchNextPage]);
 
   const title = focus?.kind === 'reply' ? 'Reply' : 'Post';
   const header = <Stack.Screen options={{ title }} />;
 
   // Nothing under the id, and nothing shown before (POST-01).
-  if (thread && !thread.focus && !seed) {
+  if (!id || (thread && !thread.focus && !seed)) {
     return (
       <Screen>
         {header}
@@ -151,7 +172,13 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
           testID="post-not-found"
         >
           {/* The engine can't tell a missing post from a failed read (posts.get), so offer a re-read. */}
-          <LinkText label="Try again" role="button" onPress={retry} className="mt-3 self-center" testID="post-not-found-retry" />
+          {!id ? null : query.isFetching ? (
+            <View className="mt-3 h-11 items-center justify-center" testID="post-not-found-checking">
+              <Spinner size="sm" />
+            </View>
+          ) : (
+            <LinkText label="Try again" role="button" onPress={retry} className="mt-3 self-center" testID="post-not-found-retry" />
+          )}
         </EmptyState>
       </Screen>
     );
@@ -167,7 +194,7 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
     );
   }
 
-  const block = replyBlockOf(focus ?? undefined, focusRemoved);
+  const block = replyBlockOf(focus ?? undefined, focusRemoved, thread !== undefined && !thread.focus);
   const connecting = !thread && !seed && engineState !== 'ready';
 
   return (
@@ -206,7 +233,7 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
         contentInsetAdjustmentBehavior="automatic"
         testID="thread-list"
       />
-      {focus && (!thread || thread.focus) ? <ReplyBar post={focus} block={block} /> : null}
+      {focus ? <ReplyBar post={focus} block={block} /> : null}
     </Screen>
   );
 }
