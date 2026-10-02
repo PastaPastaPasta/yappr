@@ -184,8 +184,9 @@ describe('engage writes', () => {
     // waiting-parent is left before lib's write, so a transport failure there is never "proved not sent".
     expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'signing', null])
 
+    // lib's boolean `false` carries no verdict (it swallows the error): it may have landed.
     m.likeService.likePost.mockResolvedValue(false)
-    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'failed', error: { code: 'UNKNOWN' } })
+    expect(await outcome(engage.like(TARGET))).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'UNKNOWN', outcome: 'unknown' } })
   })
 
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
@@ -302,8 +303,8 @@ describe('graph and safety writes', () => {
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.followService.getFollowing).toHaveBeenCalledWith(VIEWER, { throwOnError: true })
 
-    m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance' })
-    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed' })
+    m.followService.unfollowUser.mockResolvedValue({ success: false, error: 'Insufficient balance (code=30000)' })
+    expect(await outcome(graph.unfollow(AUTHOR))).toMatchObject({ state: 'failed', error: { outcome: 'refused' } })
     await expect(graph.follow(VIEWER)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
   })
 

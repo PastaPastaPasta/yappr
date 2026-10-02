@@ -392,9 +392,15 @@ describe('dm on DM v5: groups', () => {
     const ticket = await a.settled(await a.dm.createGroup('Team', [bob]))
     const key = (await a.dm.createdGroup(ticket.id))?.key ?? ''
     const chain = (a.engine().ctx.chain as MemoryChain)
-    chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'Insufficient identity balance' } : null)
+    chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'Insufficient identity balance (code=30000)' } : null)
     const failed = await a.settled(await a.dm.renameGroup(key, 'Nope'))
-    expect(failed).toMatchObject({ state: 'failed', error: expect.objectContaining({ code: expect.any(String) }) })
+    expect(failed).toMatchObject({ state: 'failed', error: expect.objectContaining({ code: expect.any(String), outcome: 'refused' }) })
+
+    // A transport failure carries no verdict: the rename may have landed, so it is checked, never retried blind.
+    // ('other' so lib's owner loop gives up at once instead of backing off for its transport retries.)
+    chain.hook = method => (method === 'replaceGroupDoc' ? { ok: false, failure: 'other', error: 'transport error: grpc error: Failed to fetch' } : null)
+    const uncertain = await a.settled(await a.dm.renameGroup(key, 'Maybe'))
+    expect(uncertain).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ code: 'NETWORK', outcome: 'unknown' }) })
   })
 })
 

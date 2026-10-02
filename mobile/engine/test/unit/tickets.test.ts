@@ -191,6 +191,62 @@ describe('safety', () => {
     expect(store.get('t5')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'TIMEOUT', outcome: 'not-sent' } })
   })
 
+  it('ends any failure without a verdict after run() started as unconfirmed: never failed, never retryable', async () => {
+    const { store } = setup()
+    const fetchFailed = 'transport error: grpc error: code: \'Internal error\', message: "Failed to call gRPC service: JS API error: TypeError: Failed to fetch"'
+    const failures: [op: 'like' | 'unlike' | 'follow' | 'unfollow' | 'block' | 'unblock', error: unknown][] = [
+      ['like', new Error(fetchFailed)],
+      ['unlike', new Error(fetchFailed.replace('Failed to fetch', 'Load failed'))],
+      ['follow', new Error('something unexpected happened')],
+      ['unfollow', 'a bare string'],
+      ['block', new Error('no available addresses to retry, last error: rate limited')],
+    ]
+    for (const [op, error] of failures) {
+      store.register(op, { async run(_args, ctx) { ctx.stage('broadcasting'); throw error } })
+      store.submit({ op, args: null })
+    }
+    // A result-shaped failure (lib's { success: false }) counts the same.
+    store.register('unblock', { async run() { return { state: 'failed', error: new Error(fetchFailed) } } })
+    store.submit({ op: 'unblock', args: null })
+    await settle()
+    for (const id of ['t1', 't2', 't3', 't4', 't5', 't6']) {
+      expect(store.get(id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { outcome: 'unknown', retryable: false } })
+      await expect(store.retry(id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+    }
+    expect(store.get('t1')?.error?.code).toBe('NETWORK')
+    expect(store.get('t3')?.error?.code).toBe('UNKNOWN')
+  })
+
+  it('still fails a write on a verdict: a consensus refusal, a proved absence, lib\'s pre-signing errors, the engine\'s own', async () => {
+    const { store } = setup()
+    const verdicts: [op: 'like' | 'unlike' | 'follow' | 'unfollow' | 'block', error: unknown, code: string][] = [
+      ['like', { name: 'Protocol', message: 'Failed to broadcast: Protocol error: invalid revision', code: 40106 }, 'UNKNOWN'],
+      ['unlike', new Error('This was not saved: the network used its place without recording it. Check, then try again.'), 'NOT_RECORDED'],
+      ['follow', new Error('An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'), 'PENDING_WRITE'],
+      ['unfollow', new Error('Private key not found. Please log in again.'), 'NO_KEY'],
+      ['block', Object.assign(new Error('The post you replied to is not confirmed yet'), { code: 'PARENT_UNCONFIRMED' }), 'PARENT_UNCONFIRMED'],
+    ]
+    for (const [op, error] of verdicts) {
+      store.register(op, { async run(_args, ctx) { ctx.stage('broadcasting'); throw error } })
+      store.submit({ op, args: null })
+    }
+    await settle()
+    verdicts.forEach(([, , code], i) => {
+      expect(store.get(`t${i + 1}`)).toMatchObject({ state: 'failed', error: { code } })
+    })
+  })
+
+  it('a transport failure the handler proves unsent stays failed and retryable', async () => {
+    const { store } = setup()
+    store.register('like', { async run() { throw new NotSentError(new Error('transport error: grpc error: Failed to fetch')) } })
+    store.register('unlike', { async run(_args, ctx) { ctx.stage('waiting-parent'); throw new Error('something unexpected happened') } })
+    store.submit({ op: 'like', args: null })
+    store.submit({ op: 'unlike', args: null })
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+    expect(store.get('t2')).toMatchObject({ state: 'failed', retryable: false, error: { code: 'UNKNOWN', outcome: 'not-sent' } })
+  })
+
   it('does not honour a not-sent claim once the ticket names an unconfirmed document', async () => {
     const { store } = setup()
     store.register('post.publish', {
