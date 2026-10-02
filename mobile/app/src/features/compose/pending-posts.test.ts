@@ -294,6 +294,23 @@ it("adopts a thread's first part as it lands, so a refetch never shows it twice"
   expect(pendingStatus(only()!)).toEqual({ state: 'posting' });
 });
 
+it('Edit after a restart cut a thread short keeps the parts that landed posted (SR-03)', async () => {
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  const localId = publish(['root text', 'second', 'third']);
+  await settle();
+  const root = fixturePost({ id: 'root-real', content: 'root text', author: { ...AUTHORS.alice, id: VIEWER_ID } });
+  act(() => fakeEngine.emit('content.created', { kind: 'post', id: root.id, confirmed: true, post: root }));
+
+  // The engine restarted mid-thread, and its ticket names no part.
+  const restarted = { code: 'ENGINE_RESTARTED', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' } as const;
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed', error: restarted, documents: [] })));
+  expect(pendingStatus(only()!)).toEqual({ state: 'uncertain' });
+
+  editPending(localId);
+  expect(loadDraft(VIEWER_ID, POST)?.parts.map((p) => p.postedId)).toEqual(['root-real', null, null]);
+});
+
 it('a thread retried past its posted root keeps the root as its card', async () => {
   const t = publishTicket();
   fakeEngine.method('posts.publish').mockResolvedValue(t);

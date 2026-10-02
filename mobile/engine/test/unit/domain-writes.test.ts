@@ -522,6 +522,32 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
   })
 
+  it('names each part on the ticket as it lands, so a restart mid-thread keeps what posted (SR-03)', async () => {
+    const kv = storage()
+    const options = { storage: kv, emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0 }
+    const before = createTicketStore(options)
+    const { publish } = createPostWrites(before, emit)
+    m.postService.createPost.mockImplementation(async () => post(id('post0')))
+    m.replyService.createReply
+      .mockImplementationOnce(async () => ({ ...post(id('reply1')), parentId: id('post0') }))
+      // The third part never answers: the engine is killed while it posts.
+      .mockImplementationOnce(() => new Promise(() => undefined))
+    const ticket = await publish({ parts: [{ text: 'one' }, { text: 'two' }, { text: 'three' }] })
+    await vi.waitFor(() => expect(before.get(ticket.id)?.documents).toHaveLength(2), { timeout: 10_000, interval: 5 })
+
+    // The next engine loads the persisted ticket: interrupted, but it still names parts 1 and 2.
+    const after = createTicketStore(options)
+    createPostWrites(after, emit)
+    expect(after.get(ticket.id)).toMatchObject({
+      state: 'unconfirmed',
+      error: { code: 'ENGINE_RESTARTED' },
+      documents: [
+        { type: 'post', id: id('post0'), part: 0, confirmed: true },
+        { type: 'reply', id: id('reply1'), part: 1, confirmed: true },
+      ],
+    })
+  })
+
   it('never fails a thread with a timed-out part: unconfirmed, unprovable, not retryable', async () => {
     const { tickets, outcome, posts } = engine()
     m.postService.createPost.mockImplementation(async () => post(id('post0')))

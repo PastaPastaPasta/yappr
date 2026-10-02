@@ -161,6 +161,15 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
         if (next !== stage) ctx.stage(stage = next)
         ctx.progress(before + current - 1, before + total)
       },
+      // On the ticket at once, not only once publishThread returns: a restart or a kill mid-thread
+      // must still know which parts landed, so Check again can prove them and Edit never reposts them.
+      onCreated: ({ index, postId, isReply }) => {
+        try {
+          ctx.documents([{ ...socialDoc(isReply ? 'reply' : 'post', postId, 'create', !isUnconfirmed(postId)), part: Number(plan[index].threadPostId) }])
+        } catch {
+          // The ticket is gone (dismissed): the final documents below are what count.
+        }
+      },
     })
 
     // publishThread creates a part right after waiting for its parent, with no progress call

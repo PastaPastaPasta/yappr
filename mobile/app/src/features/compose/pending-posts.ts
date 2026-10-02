@@ -400,6 +400,9 @@ export const publishWrite: WriteSpec<PublishVars> = {
 /** The draft a pending post came from, for Edit and for a failure (PRD G-4: text is never lost). */
 function draftPartsOf(entry: PendingPost): DraftPart[] {
   const posted = postedIds(entry);
+  // The first part landed (`content.created`) though no ticket names it, as after a restart cut the
+  // call short: Edit must show it posted, or Post would publish it again (PRD COMP-05).
+  if (!posted[0] && entry.adoptedId && !entry.ticket?.retryable) posted[0] = entry.adoptedId;
   return entry.draft.parts.map((part, i) => ({ text: part.text, postedId: posted[i] ?? null }));
 }
 
