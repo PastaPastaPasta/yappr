@@ -1,7 +1,7 @@
 import type { PostDTO, ViewerStateDTO } from '@engine/api';
 import { useCallback, useMemo, useState } from 'react';
 
-import { useAuthorBlocked } from './block-state';
+import { useAuthorBlocked, useQuotedAuthorBlocked } from './block-state';
 import { useContentSettings, type NsfwMode } from './content-settings';
 
 /** The PostCard props the content gates decide (PRD SAFE-06, SAFE-07). */
@@ -59,7 +59,7 @@ export function usePostSafety(
   const authorBlocked = useAuthorBlocked(shown.author.id, shown.viewer?.authorBlocked);
   const reposterBlocked = useAuthorBlocked(listed.bareRepost ? listed.author.id : undefined, listed.viewer?.authorBlocked);
   const quoted = shown.quoted;
-  const quoteBlocked = useAuthorBlocked(quoted?.author.id, quoted?.viewer?.authorBlocked);
+  const quoteBlocked = useQuotedAuthorBlocked(quoted?.author.id, quoted?.viewer?.authorBlocked);
   // Per card and post (a recycled cell starts gated again).
   const [revealedId, setRevealedId] = useState<string | null>(null);
   const shownId = shown.id;

@@ -1,6 +1,7 @@
 import type { TargetRef, WriteTicket } from '@engine/api';
 import * as Clipboard from 'expo-clipboard';
 import { Linking } from 'react-native';
+import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
 import type { WriteSpec } from '~/data/writes';
@@ -45,14 +46,32 @@ export function watchReportSheet(targetId: string): () => void {
 }
 
 /**
+ * The latest report ticket per target, so a sheet reopened while its report
+ * is on its way follows it instead of offering the form again.
+ */
+const useReportTickets = create<{ byTarget: Readonly<Record<string, string>> }>()(() => ({ byTarget: {} }));
+
+export function rememberReportTicket(targetId: string, ticketId: string): void {
+  useReportTickets.setState(({ byTarget }) => ({ byTarget: { ...byTarget, [targetId]: ticketId } }));
+}
+
+/** The id of the report ticket last submitted for `targetId`, from any sheet. */
+export function useReportTicketId(targetId: string): string | null {
+  return useReportTickets((s) => s.byTarget[targetId] ?? null);
+}
+
+/**
  * Report a post or reply (`safety.report`, PRD SAFE-04). The report sheet
  * follows its status and says how it went; the tracker announces a failure,
  * and a confirmation only when the sheet was closed first. Not optimistic:
- * nothing shows a report until it exists.
+ * nothing shows a report until it exists. One per target: a report sent
+ * while one is on its way is dropped, not queued behind it (a second paid
+ * write the engine would refuse as `DUPLICATE`).
  */
 export const reportWrite: WriteSpec<ReportVars> = {
   key: ({ target }) => `report:${target.id}`,
   submit: (api, { target, reason, note }) => api.safety.report(target, reason, note),
+  intent: () => 'report',
   matches: (ticket, { target }) =>
     ticket.op === 'report' && (ticket.target as { id?: string } | null)?.id === target.id,
   onConfirmed: (_ticket, { target }) => {

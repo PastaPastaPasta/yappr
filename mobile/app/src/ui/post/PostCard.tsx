@@ -423,6 +423,7 @@ export const PostCard = memo(function PostCard({
           post={post.quoted}
           nsfwGated={quoteNsfwGated ?? post.quoted.sensitive}
           mediaGated={quoteMediaGated}
+          onRevealMedia={onRevealMedia}
           onPress={actions.onQuotePress}
         />
       );
@@ -498,7 +499,15 @@ export const PostCard = memo(function PostCard({
     }
     const previewImage =
       typeof linkPreview === 'object' && Boolean(linkPreview.youtubeVideoId ?? linkPreview.image);
-    if (mediaGated && (post.media.length > 0 || previewImage))
+    const { quoted } = post;
+    const quoteMediaHidden =
+      quoteMediaGated &&
+      quoted !== undefined &&
+      !quoted.viewer?.authorBlocked &&
+      !quoted.deleted &&
+      !quoted.encrypted &&
+      quoted.media.length > 0;
+    if ((mediaGated && (post.media.length > 0 || previewImage)) || quoteMediaHidden)
       a11yActions.push({ name: 'showMedia', label: 'Show media', run: onRevealMedia });
     // Everything tappable inside the card, which VoiceOver can't reach on its own.
     if (!post.deleted && !post.encrypted) {

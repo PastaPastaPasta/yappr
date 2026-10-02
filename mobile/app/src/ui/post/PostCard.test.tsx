@@ -193,6 +193,27 @@ describe('PostCard gates', () => {
     expect(onRevealMedia).toHaveBeenCalled();
   });
 
+  it('gates quoted media alone behind its own Show, and the Show media action', () => {
+    const onRevealMedia = jest.fn();
+    // The quoting post has no media of its own: the quote's thumbnail is all there is to reveal.
+    render(<PostCard post={POSTS.quote} quoteMediaGated onRevealMedia={onRevealMedia} />);
+    expect(screen.queryByTestId('media-gate')).toBeNull();
+    fireEvent.press(byId('quote-media-gate'));
+    expect(onRevealMedia).toHaveBeenCalledTimes(1);
+    const card = byId(`post-card-${POSTS.quote.id}`);
+    const labels = card.props.accessibilityActions.map((a: { label: string }) => a.label);
+    expect(labels).toContain('Show media');
+    fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'showMedia' } });
+    expect(onRevealMedia).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the quoted thumbnail, with no Show, when its media is not gated', () => {
+    render(<PostCard post={POSTS.quote} onRevealMedia={jest.fn()} />);
+    expect(screen.queryByTestId('quote-media-gate')).toBeNull();
+    const card = byId(`post-card-${POSTS.quote.id}`);
+    expect(card.props.accessibilityActions.map((a: { label: string }) => a.label)).not.toContain('Show media');
+  });
+
   it('renders a private post as the placeholder, with no reply', () => {
     const onOpenPrivate = jest.fn();
     render(<PostCard post={POSTS.private} actions={{ onOpenPrivate }} />);

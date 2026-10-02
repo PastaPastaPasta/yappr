@@ -4,7 +4,8 @@ import { useMemo } from 'react';
 import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
-import { useViewerId } from '~/data/session';
+import { useEngineQuery, type EngineRemote } from '~/data/queries';
+import { useSessionStore, useViewerId } from '~/data/session';
 import { type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 
@@ -16,10 +17,10 @@ import { copy } from './copy';
  * its list (or collapses to the blocked stub in a thread), their profile
  * shows the blocked notice, and the Blocked list gains or loses the row.
  *
- * The decision is kept per viewer and author until the account changes, so
- * a list read while the write is in flight (or from the engine's own short
- * cache of the block list) can't undo it on screen. A failed write undoes
- * the decision, and everything returns.
+ * The decision is kept per viewer and author until the account changes (a
+ * sign-out or a switch), so a list read while the write is in flight (or
+ * from the engine's own short cache of the block list) can't undo it on
+ * screen. A failed write undoes the decision, and everything returns.
  */
 interface Decision {
   blocked: boolean;
@@ -33,10 +34,18 @@ const useBlockDecisions = create<{ byKey: Readonly<Record<string, Decision>> }>(
 
 const decisionKey = (viewerId: string, authorId: string) => `${viewerId}:${authorId}`;
 
-/** Forgets every decision (tests). */
+/** Forgets every decision. */
 export function resetBlockDecisions(): void {
   useBlockDecisions.setState({ byKey: {} });
 }
+
+// A change of account forgets them, as `startDataLayer` forgets writes: signed back in, the engine's word counts
+// again (an unblock made on web meanwhile shows).
+useSessionStore.subscribe((state, previous) => {
+  if (previous.status !== 'unknown' && state.session?.identityId !== previous.session?.identityId) {
+    resetBlockDecisions();
+  }
+});
 
 /**
  * Whether the viewer blocks `authorId`: the decision made on this device, else
@@ -50,6 +59,47 @@ export function useAuthorBlocked(authorId: string | undefined, fallback?: boolea
   );
   if (!viewerId || !authorId) return false;
   return decided ?? fallback === true;
+}
+
+/** The engine's cap on one `safety.isBlocked` call. */
+const STATUS_BATCH_MAX = 100;
+let statusBatch: { ids: Set<string>; blocked: Promise<Record<string, boolean>> } | null = null;
+
+/**
+ * Whether the viewer blocks `userId` (own blocks and followed block lists),
+ * asked in one `safety.isBlocked` call with every other card that asks in
+ * the same tick. Fails soft to "not blocked", as web's block lookups do.
+ */
+function readBlockStatus(api: EngineRemote, userId: string): Promise<boolean> {
+  let batch = statusBatch;
+  if (!batch || batch.ids.size >= STATUS_BATCH_MAX) {
+    const ids = new Set<string>();
+    const blocked = Promise.resolve()
+      .then(() => {
+        if (statusBatch?.ids === ids) statusBatch = null;
+        return api.safety.isBlocked([...ids]);
+      })
+      .catch((): Record<string, boolean> => ({}));
+    batch = statusBatch = { ids, blocked };
+  }
+  batch.ids.add(userId);
+  return batch.blocked.then((statuses) => statuses[userId] === true);
+}
+
+/**
+ * {@link useAuthorBlocked} for a quoted post's author. The engine reads
+ * block status only for the posts it lists, not for the posts they quote,
+ * so a quote's own flag can't tell a block made before this session: this
+ * asks the engine (batched across cards), unless the flag already says so.
+ */
+export function useQuotedAuthorBlocked(authorId: string | undefined, fallback?: boolean | null): boolean {
+  const viewerId = useViewerId();
+  const id = authorId ?? '';
+  const ask = viewerId !== null && id !== '' && id !== viewerId && fallback !== true;
+  const { data: blocked } = useEngineQuery(queryKeys.blockStatus(id), (api) => readBlockStatus(api, id), {
+    enabled: ask,
+  });
+  return useAuthorBlocked(authorId, fallback === true || (ask && blocked === true));
 }
 
 /**
@@ -123,6 +173,7 @@ const BLOCK_FILTERED: InvalidateQueryFilters[] = [
   { queryKey: queryKeys.explore.all },
   { queryKey: queryKeys.bookmarks },
   { queryKey: queryKeys.notificationsAll },
+  { queryKey: queryKeys.blockStatusAll },
   detailOr(queryKeys.post.all, 'thread'),
   detailOr(queryKeys.profile.all, 'posts'),
 ];

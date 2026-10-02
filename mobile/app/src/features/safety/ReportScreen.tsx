@@ -14,7 +14,7 @@ import { cn } from '~/lib-allowlist';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { useCapabilities, useSession } from '~/data/session';
-import { useWrite } from '~/data/writes';
+import { useWrite, useWriteTicket } from '~/data/writes';
 import { postWebUrl } from '~/features/post/post-navigation';
 import { targetOf } from '~/features/post/post-writes';
 import { Button } from '~/ui/Button';
@@ -35,7 +35,13 @@ import {
   reportReasonLabel,
   reportStatusLabel,
 } from './report-reasons';
-import { emailReport, reportWrite, watchReportSheet } from './report-actions';
+import {
+  emailReport,
+  rememberReportTicket,
+  reportWrite,
+  useReportTicketId,
+  watchReportSheet,
+} from './report-actions';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
 
 const REASON_OPTIONS = REPORT_REASONS.map((reason) => ({
@@ -144,12 +150,18 @@ function ReportFlow({
     staleTime: 0,
   });
   const write = useWrite(reportWrite);
+  // A report an earlier sheet for this post sent (dismissed, then reopened): followed from when it is
+  // seen on its way, to its outcome, instead of offering the form for a second report.
+  const earlier = useWriteTicket(useReportTicketId(post.id));
+  const [followed, setFollowed] = useState<string | null>(null);
+  if (earlier?.state === 'pending' && followed !== earlier.id) setFollowed(earlier.id);
+  const current = write.ticket ?? (earlier && earlier.id === followed ? earlier : null);
   const [reason, setReason] = useState<number | null>(null);
   const [note, setNote] = useState('');
   // From the tap until the engine answers: a second tap would queue a second, paid report.
   const [sending, setSending] = useState(false);
-  const outcome = write.status;
-  const code = write.ticket?.error?.code;
+  const outcome = current?.state ?? 'idle';
+  const code = current?.error?.code;
 
   // The sheet says how it went while it is open; the write toasts only once it is gone.
   useEffect(() => watchReportSheet(post.id), [post.id]);
@@ -190,6 +202,9 @@ function ReportFlow({
     setSending(true);
     write
       .send({ target, reason, note: trimmed || undefined, noun })
+      .then((result) => {
+        if (result.status === 'submitted') rememberReportTicket(post.id, result.ticket.id);
+      })
       .catch(() => undefined)
       .finally(() => setSending(false));
   };

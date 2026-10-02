@@ -260,6 +260,36 @@ describe('blocking', () => {
     expect(screen.getByTestId('post-card-q1')).toBeTruthy();
   });
 
+  it('asks the engine, in one batch, whether quoted authors are blocked from before this session', async () => {
+    fakeEngine.method('safety.isBlocked').mockResolvedValue({ [BOB.id]: true, [AUTHORS.carol.id]: false });
+    const quoteOf = (id: string, quoted: PostDTO) =>
+      fixturePost({ id, author: AUTHORS.alice, quotedPostId: quoted.id, quoted });
+    renderPosts([
+      quoteOf('q1', fixturePost({ id: 'b1' })),
+      quoteOf('q2', fixturePost({ id: 'c1', author: AUTHORS.carol, content: 'Carol says hi' })),
+    ]);
+    await settle();
+
+    expect(fakeEngine.method('safety.isBlocked')).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('safety.isBlocked').mock.calls[0][0]).toEqual(
+      expect.arrayContaining([BOB.id, AUTHORS.carol.id]),
+    );
+    expect(screen.getAllByText('Post from an account you blocked')).toHaveLength(1);
+    expect(screen.getByText('Carol says hi')).toBeTruthy();
+  });
+
+  it('forgets block decisions when the account changes, so the engine decides again', async () => {
+    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
+    renderPosts(bobPosts());
+    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+    expect(screen.queryByTestId('post-card-b1')).toBeNull();
+
+    // Signed out, then back in: an unblock made elsewhere meanwhile shows (the cached posts say not blocked).
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] }));
+    act(() => useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] }));
+    expect(screen.getByTestId('post-card-b1')).toBeTruthy();
+  });
+
   it('keeps a post the engine reports as blocked out of lists', () => {
     renderPosts([fixturePost({ id: 'b1', viewer: { ...fixturePost().viewer!, authorBlocked: true } })]);
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
@@ -424,6 +454,49 @@ describe('ReportScreen', () => {
     await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(toastMessage()).toBe('Report sent');
     // Nothing was queued behind the first report to go out now.
+    expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows a report still on its way when the sheet is dismissed and reopened, and sends no second one', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    const pending = ticket({ op: 'report', target: { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null } });
+    fakeEngine.method('safety.report').mockResolvedValue(pending);
+    const first = withProviders(<ReportScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+    first.unmount();
+
+    withProviders(<ReportScreen />);
+    await settle();
+    // The reopened sheet shows the first report going out, not a fresh form.
+    expect(screen.getByText('Reporting…')).toBeTruthy();
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(screen.getByTestId('report-sent')).toBeTruthy();
+    expect(toastMessage()).toBeUndefined();
+    expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a report sent from a reopened sheet before the first one has its ticket', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    const pending = ticket({ op: 'report', target: { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null } });
+    let answer: (value: typeof pending) => void = () => undefined;
+    fakeEngine.method('safety.report').mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    const first = withProviders(<ReportScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    fireEvent.press(screen.getByTestId('report-submit'));
+    first.unmount();
+
+    withProviders(<ReportScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('report-reason-1'));
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+    await act(async () => answer(pending));
+    expect(screen.getByText('Reporting…')).toBeTruthy();
+    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(screen.getByTestId('report-sent')).toBeTruthy();
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
   });
 

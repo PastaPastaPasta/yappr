@@ -89,6 +89,10 @@ export const queryKeys = {
 
   /** `safety.blocked`. */
   blocked: [...root, 'blocked'] as const,
+  /** `safety.isBlocked` for one account (batched by the caller). */
+  blockStatus: (userId: string) => [...root, 'blockStatus', userId] as const,
+  /** Every `blockStatus`: a prefix of the key above. */
+  blockStatusAll: [...root, 'blockStatus'] as const,
 
   /** `settings.get`. */
   settings: [...root, 'settings'] as const,
