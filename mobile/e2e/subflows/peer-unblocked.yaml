@@ -2,7 +2,10 @@
 # would hide the peer's posts and messages from the flows that use them.
 appId: ${APP_ID}
 ---
-- openLink: ${SCHEME}://user?id=${PEER_ID}
+- runFlow:
+    file: open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:
     visible:
       id: "profile-follow|profile-blocked"

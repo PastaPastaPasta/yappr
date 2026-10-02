@@ -28,7 +28,10 @@ appId: ${APP_ID}
     when:
       true: ${!output.devClientLoaded}
     commands:
-      - openLink: ${DEV_CLIENT_URL}
+      - runFlow:
+          file: open-link.yaml
+          env:
+            LINK: ${DEV_CLIENT_URL}
 - extendedWaitUntil:
     notVisible: "Development Build|DEVELOPMENT SERVERS|Development servers"
     timeout: 120000

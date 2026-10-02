@@ -132,7 +132,10 @@ env:
     optional: true
 
 # A hashtag page (a web-form link, which every build accepts); Latest, then Top where supported.
-- openLink: ${SCHEME}://hashtag?tag=${TAG}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://hashtag?tag=${TAG}
 - extendedWaitUntil:
     visible:
       id: "more-btn-.*|hashtag-posts-empty"

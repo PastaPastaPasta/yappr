@@ -26,7 +26,10 @@ tags:
 # Kept: the post opened again still shows it
 # (likely served from the app's cache, so this checks the optimistic state holds).
 - runFlow: ../../subflows/back.yaml
-- openLink: ${SCHEME}://post?id=${output.peerPostId}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://post?id=${output.peerPostId}
 - extendedWaitUntil:
     visible:
       id: like-btn-${output.peerPostId}
@@ -40,7 +43,10 @@ tags:
       text: "Like, 0 likes"
     timeout: 10000
 - runFlow: ../../subflows/back.yaml
-- openLink: ${SCHEME}://post?id=${output.peerPostId}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://post?id=${output.peerPostId}
 - extendedWaitUntil:
     visible:
       id: like-btn-${output.peerPostId}

@@ -9,7 +9,10 @@ tags:
   - smoke
 ---
 - runFlow: ../../subflows/launch.yaml
-- openLink: ${SCHEME}://settings
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings
 - extendedWaitUntil:
     visible:
       id: settings-root

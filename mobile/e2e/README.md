@@ -79,7 +79,8 @@ a flow that types one outside `run.sh`.
   in the full suite `SELF_ID`, `SELF_HANDLE`, `PEER_ID`, `PEER_HANDLE`,
   `PEER_URL`, `RESPONDER_URL` and `PERSONA` (the keys come as `MAESTRO_*`).
 - Navigate with taps (`subflows/open-tab.yaml`, `subflows/back.yaml`) and
-  web-form links (`${SCHEME}://post?id=…`, `user?id=`, `hashtag?tag=`,
+  links through `subflows/open-link.yaml` (iOS 27 asks before it opens one; never
+  `openLink` directly): web-form links (`${SCHEME}://post?id=…`, `user?id=`, `hashtag?tag=`,
   `settings?section=`), which every build accepts. App-route links such as
   `yappr-dev:///settings/diagnostics` work in dev builds only.
 - Match by `id` (testID) first. A post card on iOS is one accessibility

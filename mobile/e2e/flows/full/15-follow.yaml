@@ -8,7 +8,10 @@ tags:
 - runFlow: ../../subflows/launch.yaml
 - runFlow: ../../subflows/ensure-signed-in.yaml
 - runFlow: ../../subflows/peer-unblocked.yaml
-- openLink: ${SCHEME}://user?id=${PEER_ID}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:
     visible:
       id: profile-follow
@@ -44,7 +47,10 @@ tags:
 # Kept: the profile opened again still shows it
 # (likely served from the app's cache, so this checks the optimistic state holds).
 - runFlow: ../../subflows/back.yaml
-- openLink: ${SCHEME}://user?id=${PEER_ID}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:
     visible:
       id: profile-follow
@@ -62,7 +68,10 @@ tags:
       text: "Follow( .*)?"
     timeout: 10000
 - runFlow: ../../subflows/back.yaml
-- openLink: ${SCHEME}://user?id=${PEER_ID}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:
     visible:
       id: profile-follow

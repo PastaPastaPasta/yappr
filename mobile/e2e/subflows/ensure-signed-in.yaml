@@ -4,7 +4,10 @@
 # private-key sign-in. Ends on Settings. Needs a launched app (launch.yaml).
 appId: ${APP_ID}
 ---
-- openLink: ${SCHEME}://settings
+- runFlow:
+    file: open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings
 - extendedWaitUntil:
     visible:
       id: settings-root
@@ -32,7 +35,10 @@ appId: ${APP_ID}
       - tapOn:
           id: settings-sign-in
       - runFlow: sign-in-key.yaml
-      - openLink: ${SCHEME}://settings
+      - runFlow:
+          file: open-link.yaml
+          env:
+            LINK: ${SCHEME}://settings
 - extendedWaitUntil:
     visible:
       id: settings-account

@@ -8,7 +8,10 @@ tags:
 ---
 - runFlow: ../../subflows/launch.yaml
 - runFlow: ../../subflows/ensure-signed-in.yaml
-- openLink: ${SCHEME}://user?id=${PEER_ID}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:
     visible:
       id: profile-menu
@@ -49,7 +52,10 @@ tags:
 - takeScreenshot: blocked-profile
 
 # The Blocked list (Settings > Privacy & Safety) has them.
-- openLink: ${SCHEME}://settings?section=privacy
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings?section=privacy
 - extendedWaitUntil:
     visible:
       id: privacy-blocked
@@ -64,7 +70,10 @@ tags:
 
 # Unblock from the profile's menu (on iOS the list row's Unblock button is the
 # row's VoiceOver action, not an element of its own), and the row goes.
-- openLink: ${SCHEME}://user?id=${PEER_ID}
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
 - extendedWaitUntil:
     visible:
       id: profile-blocked
@@ -76,7 +85,10 @@ tags:
     visible:
       id: profile-follow
     timeout: 60000
-- openLink: ${SCHEME}://settings?section=privacy
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings?section=privacy
 - tapOn:
     id: privacy-blocked
 - extendedWaitUntil:

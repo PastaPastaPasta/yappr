@@ -2,7 +2,10 @@
 # one is signed in. Ends on Settings, signed out.
 appId: ${APP_ID}
 ---
-- openLink: ${SCHEME}://settings
+- runFlow:
+    file: open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings
 - extendedWaitUntil:
     visible:
       id: "settings-account|settings-sign-in"
@@ -44,7 +47,10 @@ appId: ${APP_ID}
         enabled: true
     commands:
       - waitForAnimationToEnd
-      - openLink: ${SCHEME}://settings
+      - runFlow:
+          file: open-link.yaml
+          env:
+            LINK: ${SCHEME}://settings
       - extendedWaitUntil:
           visible:
             id: settings-sign-in

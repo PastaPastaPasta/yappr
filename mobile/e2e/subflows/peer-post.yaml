@@ -6,7 +6,10 @@ appId: ${APP_ID}
     file: ../scripts/peer.js
     env:
       PEER_OP: post
-- openLink: ${SCHEME}://post?id=${output.peerPostId}
+- runFlow:
+    file: open-link.yaml
+    env:
+      LINK: ${SCHEME}://post?id=${output.peerPostId}
 - extendedWaitUntil:
     visible:
       id: thread-focus
