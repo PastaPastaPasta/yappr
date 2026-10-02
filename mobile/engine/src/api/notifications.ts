@@ -38,6 +38,10 @@ export interface NotificationDTO {
   preview: PostDTO | null
   /** Blog events (shown under All with "View on web"; blogs are not in 1.0). */
   blog?: { blogId: string; slug: string }
+  /** v11 aggregated like (NOTIF-06): how many identities it stands for, when more than one; `actor` is the first. */
+  likers?: number
+  /** v11 like: `at` is when this device first noticed it, not an on-chain time ("Noticed 2h ago"). */
+  noticed?: true
 }
 
 export interface NotificationCountEvent {
@@ -93,6 +97,8 @@ async function toNotificationDTOs(notifications: Notification[]): Promise<Notifi
       target: post ? { id: post.id, kind: notification.targetKind ?? post.targetKind ?? 'post' } : null,
       preview: post ? toPostDTO(post, { signedIn: true, avatars }) : null,
       ...(notification.blogId && notification.blogPostSlug ? { blog: { blogId: notification.blogId, slug: notification.blogPostSlug } } : {}),
+      ...(notification.likerCount !== undefined && notification.likerCount > 1 ? { likers: notification.likerCount } : {}),
+      ...(notification.timeless ? { noticed: true as const } : {}),
     }
   })
 }

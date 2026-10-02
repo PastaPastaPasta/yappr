@@ -590,6 +590,25 @@ describe('notifications', () => {
     expect(m.notificationService.getInitialNotifications).toHaveBeenLastCalledWith(id('Other'), new Set())
   })
 
+  it('carries a v11 aggregated like\'s liker count and its noticed time (NOTIF-06)', async () => {
+    const notifications = createNotificationsModule(emit).api
+    m.notificationService.getInitialNotifications.mockResolvedValue({
+      notifications: [
+        { ...notification('batch', 'like', 300), likerCount: 4, timeless: true },
+        { ...notification('single', 'like', 200), likerCount: 1, timeless: true },
+        notification('timed', 'like', 100),
+      ],
+      latestTimestamp: 100,
+    })
+    const { items } = await notifications.list({ filter: 'like' })
+    expect(validate(page(notificationDTO), { items, cursor: null, hasMore: false })).toEqual([])
+    expect(items.map(({ likers, noticed }) => ({ likers, noticed }))).toEqual([
+      { likers: 4, noticed: true },
+      { likers: undefined, noticed: true },
+      { likers: undefined, noticed: undefined },
+    ])
+  })
+
   it('polls from the watermark and merges what arrived', async () => {
     const notifications = createNotificationsModule(emit).api
     m.notificationService.getInitialNotifications.mockResolvedValue({ notifications: [notification('a', 'like', 100)], latestTimestamp: 100 })
