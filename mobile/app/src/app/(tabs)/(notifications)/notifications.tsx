@@ -1,5 +1,3 @@
-import { Placeholder } from '~/ui/Placeholder';
+import { NotificationsScreen } from '~/features/notifications/NotificationsScreen';
 
-export default function NotificationsScreen() {
-  return <Placeholder title="Notifications" comingIn="the notifications PR" />;
-}
+export default NotificationsScreen;

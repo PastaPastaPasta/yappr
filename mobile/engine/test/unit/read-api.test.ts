@@ -6,6 +6,7 @@
  * authenticity, repost ordering).
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import bs58 from 'bs58'
 import type { Post, Reply, User } from '@/lib/types'
 
 const m = vi.hoisted(() => ({
@@ -28,6 +29,7 @@ const m = vi.hoisted(() => ({
   provenAbsent: vi.fn(),
   getPoll: vi.fn(), getTally: vi.fn(), getMyVotes: vi.fn(),
   loadFollowingFeed: vi.fn(),
+  documentExists: vi.fn(),
 }))
 
 const FLAGS = ['likesAreIndexOnly', 'repostsAreQuotes', 'hasFlatThreads', 'hashtagsAreInline', 'authorDeletesLeaveHoles', 'referencesMayDangle']
@@ -47,6 +49,7 @@ vi.mock('@/lib/feed/resolve-user-reposts', async (load) => ({ ...await load<obje
 vi.mock('@/lib/feed/prove-absent', () => ({ provenAbsent: m.provenAbsent }))
 vi.mock('@/lib/feed/load-following-feed', () => ({ loadFollowingFeed: m.loadFollowingFeed }))
 vi.mock('@/lib/services/pollr-poll-service', async (load) => ({ ...await load<object>(), pollrPollService: { getPoll: m.getPoll } }))
+vi.mock('../../src/writes/lib-results', async (load) => ({ ...await load<object>(), documentExists: m.documentExists }))
 vi.mock('@/lib/services/pollr-vote-service', async (load) => ({ ...await load<object>(), pollrVoteService: { getTally: m.getTally, getMyVotes: m.getMyVotes } }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
   const actual = await load<{ unifiedProfileService: object }>()
@@ -76,6 +79,8 @@ const reply = (key: string, at: number, under?: string): Reply => ({
   parentId: id('Root'), parentOwnerId: AUTHOR, rootPostId: id('Root'), ...(under ? { replyToReplyId: id(under) } : {}),
 })
 const ids = (items: { id: string }[]) => items.map(item => item.id)
+/** A real 32-byte document id (`id()`'s padded tags need not decode to 32 bytes). */
+const docId = (tag: string) => bs58.encode(new TextEncoder().encode(tag.padEnd(32, '.')))
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -136,6 +141,59 @@ describe('posts.thread on flat threads (v9/v10)', () => {
       [id('Gone'), 0, true], [id('Orphan'), 1, false],
     ])
     expect(thread.replies.items[0].author).toEqual({ id: '', username: null, displayName: '', avatar: { uri: null, dicebear: null }, resolved: false })
+  })
+})
+
+describe('posts.get and posts.thread: missing vs unreadable', () => {
+  const POST_ID = docId('Gone')
+
+  it('answers null only when proved reads find neither a post nor a reply', async () => {
+    m.postService.getPostById.mockResolvedValue(null)
+    m.replyService.getReplyById.mockResolvedValue(null)
+    m.documentExists.mockResolvedValue(false)
+    expect(await posts.get(POST_ID)).toBeNull()
+    expect((await posts.thread(POST_ID)).focus).toBeNull()
+    expect(m.documentExists.mock.calls.map(([doc]) => doc.type).sort()).toEqual(['post', 'post', 'reply', 'reply'])
+  })
+
+  it('answers null without a read for an id no document can have', async () => {
+    m.postService.getPostById.mockResolvedValue(null)
+    m.replyService.getReplyById.mockResolvedValue(null)
+    expect(await posts.get('1'.repeat(44))).toBeNull()
+    expect(m.documentExists).not.toHaveBeenCalled()
+  })
+
+  it('rejects, with the failure classified, when lib\'s read and the proof both fail', async () => {
+    m.postService.getPostById.mockResolvedValue(null)
+    m.replyService.getReplyById.mockResolvedValue(null)
+    m.documentExists.mockRejectedValue(new Error('transport error: grpc error: Failed to fetch'))
+    await expect(posts.get(POST_ID)).rejects.toMatchObject({ code: 'NETWORK', message: expect.stringContaining('Failed to fetch') })
+    await expect(posts.thread(POST_ID)).rejects.toMatchObject({ code: 'NETWORK' })
+    m.documentExists.mockRejectedValue(new Error('wait_for_state_transition_result timed out'))
+    await expect(posts.get(POST_ID)).rejects.toMatchObject({ code: 'TIMEOUT' })
+  })
+
+  it('reads again when the proof finds the post lib reported missing, and rejects if it still cannot', async () => {
+    m.postService.getPostById.mockResolvedValueOnce(null).mockResolvedValueOnce({ ...post('Gone', 1), id: POST_ID })
+    m.replyService.getReplyById.mockResolvedValue(null)
+    m.documentExists.mockImplementation(async (doc: { type: string }) => doc.type === 'post')
+    expect((await posts.get(POST_ID))?.id).toBe(POST_ID)
+
+    m.postService.getPostById.mockResolvedValue(null)
+    await expect(posts.get(POST_ID)).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  it('flat threads: reports a root as removed only when proved absent', async () => {
+    m.topology = { hasFlatThreads: true, referencesMayDangle: true }
+    const root = docId('Root')
+    m.postService.getPostById.mockResolvedValue(null)
+    m.replyService.getReplyById.mockResolvedValue({ ...reply('Leaf', 2), parentId: root, rootPostId: root })
+    m.replyService.getReplies.mockResolvedValue({ documents: [] })
+    m.documentExists.mockResolvedValue(false)
+    expect((await posts.thread(id('Leaf'))).removedAncestorIds).toEqual([root])
+
+    m.documentExists.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(posts.thread(id('Leaf'))).rejects.toMatchObject({ code: 'NETWORK' })
   })
 })
 
@@ -227,6 +285,16 @@ describe('posts.poll', () => {
     m.getTally.mockResolvedValue({ counts: [2, 1], total: 3 })
     m.getMyVotes.mockResolvedValue([0])
     expect(await posts.poll({ id: id('Poll') })).toMatchObject({ totalVotes: 3, myVotes: [0], options: [{ votes: 2 }, { votes: 1 }] })
+  })
+
+  it('answers null for a poll proved missing, and rejects one it cannot read', async () => {
+    const poll = docId('Poll')
+    m.getPoll.mockResolvedValue(null)
+    m.documentExists.mockResolvedValue(false)
+    expect(await posts.poll({ id: poll })).toBeNull()
+    expect(m.documentExists).toHaveBeenCalledWith(expect.objectContaining({ type: 'poll', id: poll }))
+    m.documentExists.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(posts.poll({ id: poll })).rejects.toMatchObject({ code: 'NETWORK' })
   })
 })
 
