@@ -12,7 +12,7 @@ mobile/engine/
   src/dm/                the DM backends (v5, legacy), their DTOs and the event diff
   src/dto/               cursors, paging, enrichment pipeline, thread port, capabilities, DTO validators
   src/entry.webview.ts   the WebView entry; src/install-shims.ts runs before lib loads
-  src/sidecar.ts         engine.wasm.js and engine.avatars.js, the scripts beside engine.js (wasm-source.ts, avatars/)
+  src/sidecar.ts         engine.wasm.js and engine.avatars.js, the scripts beside engine.js (wasm-source.ts, avatar-source.ts, avatars/)
   src/selftest.ts        selftest.html: engine + in-page host, for browsers nothing can drive
   test/unit/             codec, RPC, shims, DTO mappers (offline)
   test/contract/read/    the read API in Node against testnet, one file per module (ENGINE_VARIANT=devnet: sakura)
@@ -58,7 +58,7 @@ CI: `.github/workflows/mobile-engine.yml` (read-only token) runs typecheck, lint
   2. It also preconnects to the quorum service the SDK reads first in `connect()` (`src/preconnect.ts`), so DNS and TLS overlap the compile.
   3. `boot()` waits for the avatar styles too (lib draws default avatars while it enriches reads), and `profiles.avatarSvg` waits for them.
   4. **Failure.** The WASM initializes once per page, failure included (as evo-sdk's `ensureInitialized` does). If it or the avatar styles did not load, `boot()` rejects with `ENGINE_LOAD_FAILED`, and the host's supervisor counts that as a crash and starts a fresh page (with backoff, then `failed`), instead of degrading and retrying a boot that cannot succeed.
-- **No `.wasm` fetch.** Nothing fetches a binary, so the engine works from `file://` with no web server, no native asset handler and no COOP/COEP headers. A binary sidecar would need a native request interceptor (Android `shouldInterceptRequest`, iOS `WKURLSchemeHandler`) and a dev-client rebuild. It would save the base64 work, which measured in the Android emulator's WebView (Chrome 124) at 60–110 ms to scan the 11.4 MB literal, 13–24 ms for `atob` and 10–30 ms for the byte loop: one main-thread stall of about 0.1–0.15 s, after the hello and off the boot's network path.
+- **No `.wasm` fetch.** Nothing fetches a binary, so the engine works from `file://` with no web server, no native asset handler and no COOP/COEP headers. A binary sidecar would need a native request interceptor (Android `shouldInterceptRequest`, iOS `WKURLSchemeHandler`) and a dev-client rebuild. It would save the base64 work, which measured in the Android emulator's WebView (Chrome 124) at 60–110 ms to scan the 11.4 MB literal, 13–24 ms for `atob` and 10–30 ms for the byte loop: one main-thread stall of about 0.1–0.15 s after the hello, ahead of the SDK's first request.
 - **Node** (the test harness) gets the WASM from the package file instead (`test/setup/wasm.ts`), and the real DiceBear styles (the stand-in is aliased in `build.mjs` only).
 - **`target: safari16.4, chrome110`:** `DecompressionStream` needs iOS 16.4 or later.
 

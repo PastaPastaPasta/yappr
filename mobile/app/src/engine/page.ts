@@ -48,7 +48,11 @@ async function fetchDev(name: string): Promise<Response> {
  */
 const CSP = cspPolicy.policy;
 /** The inline page loads no script by URL, and its https base is a real origin: no 'self' for it. */
-const INLINE_CSP = CSP.replace(" 'self' file:", '');
+const INLINE_CSP = (() => {
+  const policy = CSP.replace(" 'self' file:", '');
+  if (policy === CSP) throw new Error("csp.json no longer reads script-src 'self' file:");
+  return policy;
+})();
 
 export type Simulation = 'no-webassembly' | 'old-webview';
 

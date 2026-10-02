@@ -6,23 +6,8 @@
  * streams (`instantiateStreaming`, off the main thread), and the base64 string
  * is dropped once decoded.
  */
-import initWasm, { setWasmSource } from './shims/wasm-sdk'
-import { loadSidecar, SIDECARS } from './sidecar'
-
-export { initWasm }
-
-declare global {
-  interface Window {
-    /** Set by engine.wasm.js: the WASM, gzip + base64. */
-    __YAPPR_ENGINE_WASM__?: string
-  }
-}
-
-function takePayload(): string | undefined {
-  const payload = window.__YAPPR_ENGINE_WASM__
-  delete window.__YAPPR_ENGINE_WASM__
-  return payload
-}
+import { setWasmSource } from './shims/wasm-sdk'
+import { loadSidecar } from './sidecar'
 
 function decodeBase64(text: string): Uint8Array<ArrayBuffer> {
   const typed = Uint8Array as { fromBase64?: (text: string) => Uint8Array<ArrayBuffer> }
@@ -35,7 +20,7 @@ function decodeBase64(text: string): Uint8Array<ArrayBuffer> {
 
 /** The module as a streaming `application/wasm` response, decompressed on the fly. */
 async function webViewWasm(): Promise<Response> {
-  const gzipped = decodeBase64(await loadSidecar(SIDECARS.wasm, takePayload))
+  const gzipped = decodeBase64(await loadSidecar('engine.wasm.js'))
   const body = new Blob([gzipped]).stream().pipeThrough(new DecompressionStream('gzip'))
   return new Response(body, { headers: { 'Content-Type': 'application/wasm' } })
 }

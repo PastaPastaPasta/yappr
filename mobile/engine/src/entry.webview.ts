@@ -1,16 +1,15 @@
 // Must stay the first import: it swaps in the storage shim before lib loads.
 import { engineStorage, misroutedStorageKeys } from './install-shims'
 // Second: installs the WASM source before any SDK code can ask for it.
-import { initWasm } from './wasm-source'
+import './wasm-source'
 import { createEngineApi } from './api'
 import { createDispatcher } from './rpc/dispatcher'
 import { createWebViewTransport } from './rpc/transport'
 import { dispatchConnectivity, dispatchLifecycle } from './shims/lifecycle'
 import { bundleHash } from './build-info'
 import { LOG_LEVELS, type LogLevel } from './protocol/envelope'
-import { setAvatarStylesReady } from './avatar-styles'
-import { installAvatarStyles } from './avatars/collection-shim'
-import { loadSidecar, SIDECARS } from './sidecar'
+import initWasm from './shims/wasm-sdk'
+import { avatarStyles } from './avatar-source'
 import { preconnectQuorumService } from './preconnect'
 
 /**
@@ -84,12 +83,6 @@ dispatcher.hello({ bundleHash: bundleHash() })
 // init and reports a failure.
 initWasm().catch((error: unknown) => dispatcher.log('error', `The WASM did not load: ${describe(error)}`))
 
-const avatarStyles = loadSidecar(SIDECARS.avatars, () => {
-  const styles = window.__YAPPR_ENGINE_AVATARS__
-  delete window.__YAPPR_ENGINE_AVATARS__
-  return styles
-}).then(installAvatarStyles)
-setAvatarStylesReady(avatarStyles)
 avatarStyles.catch((error: unknown) => dispatcher.log('error', `Avatar styles did not load: ${describe(error)}`))
 
 try {
