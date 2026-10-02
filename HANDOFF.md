@@ -54,7 +54,7 @@ Screens were verified on the iOS 26.5 simulator and Android 15 emulator, in ligh
 
 ## 3. In-flight at handoff
 
-1. **M9, Maestro regression suite and CI.** Branch `mobile/maestro-suite` (commit `e1cd6a6a` plus whatever its final push adds). It consolidates the per-screen flows into a suite with shared subflows, a `mobile/e2e/run.sh` runner and `.github/workflows/mobile-e2e.yml`. The exit check (full suite green on both platforms, twice) was still in progress. **No PR was opened.** Next: run the suite on the Studio, fix flakes, open the PR, and merge. See §8 for the agent's final status, if it arrived before handoff.
+1. **M9, Maestro regression suite and CI.** Branch `mobile/maestro-suite` (commit `e1cd6a6a` plus whatever its final push adds). It consolidates the per-screen flows into a suite with shared subflows, a `mobile/e2e/run.sh` runner and `.github/workflows/mobile-e2e.yml`. The exit check (full suite green on both platforms, twice) was still in progress. **No PR was opened.** Next: run the suite on the Studio, fix flakes, open the PR, and merge. **Final status at handoff:** branch pushed at `c78dc096` (adds a hardening commit that keeps keys off argv and out of Maestro logs). **Run 1: 18/18 passed on iOS and 18/18 on Android.** Run 2 was in progress, all passing so far, when it was stopped for the handoff. The agent was last looking at `18-report` and a follow-sheet flake on iOS. To finish: run the suite twice on both platforms with `mobile/e2e/run.sh`, then open the PR and merge.
 2. **QA phase, the next big step. Not started on devices.**
    - The plan, harness and stream assignment are ready in `qa-harness/`.
    - The release candidate build (`bin/build-candidate staging`) was started and stopped at handoff, so rebuild on the Studio.
