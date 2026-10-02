@@ -1,5 +1,5 @@
 import type { Page, PostDTO } from '@engine/api';
-import { InfiniteQueryObserver, type InfiniteData } from '@tanstack/react-query';
+import { InfiniteQueryObserver, QueryObserver, type InfiniteData } from '@tanstack/react-query';
 
 import { engine } from '~/engine';
 import { queryClient } from '~/state/query-client';
@@ -69,6 +69,25 @@ describe('content.created', () => {
     expect(fakeEngine.method('feed.home')).not.toHaveBeenCalled();
     expect(fakeEngine.method('feed.hashtag')).not.toHaveBeenCalled();
     expect(queryClient.getQueryData(queryKeys.post.detail('mine'))).toBe(mine);
+  });
+
+  it('refetches the author\'s profile header, but only marks the profile\'s paged tabs stale', () => {
+    const profile = queryKeys.profile.detail('me');
+    const tab = queryKeys.profile.posts('me', 'posts');
+    queryClient.setQueryData(profile, { id: 'me' });
+    seed(tab);
+    const observe = (queryKey: readonly unknown[], read: () => Promise<unknown>) =>
+      new QueryObserver(queryClient, { queryKey, queryFn: read, staleTime: Infinity }).subscribe(() => undefined);
+    const stops = [
+      observe(profile, () => engine.api.profiles.get('me')),
+      observe(tab, () => engine.api.profiles.posts({ id: 'me', tab: 'posts' })),
+    ];
+    fakeEngine.method('profiles.get').mockResolvedValue({ id: 'me' });
+    fakeEngine.emit('content.created', { kind: 'post', id: mine.id, confirmed: true, post: mine });
+    stops.forEach((stop) => stop());
+    expect(fakeEngine.method('profiles.get')).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('profiles.posts')).not.toHaveBeenCalled();
+    expect(queryClient.getQueryState(tab)?.isInvalidated).toBe(true);
   });
 
   it('replaces a copy a feed already holds instead of adding a second', () => {

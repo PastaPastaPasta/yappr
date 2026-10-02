@@ -38,24 +38,25 @@ function insertIntoHomeFeeds(post: PostDTO): void {
 
 /**
  * A post or reply this device published: seed its detail, show a post at the
- * top of the Recent home feeds, and refetch the author's profile and the
- * thread and quoted post it belongs to.
+ * top of the Recent home feeds, and refetch the author's profile header and
+ * the thread and quoted post it belongs to.
  *
- * Feeds are only marked stale, never refetched here: refetching an infinite
- * query re-reads every page it holds, one after another, and reshuffles the
- * list under the reader. They refresh on their next refetch (pull to
- * refresh, a remount).
+ * Feeds and the author's profile tabs are only marked stale, never refetched
+ * here: refetching an infinite query re-reads every page it holds, one after
+ * another, and reshuffles the list under the reader. They refresh on their
+ * next refetch (pull to refresh, a remount).
  */
 function contentCreated({ kind, post }: ContentCreatedEvent): void {
   queryClient.setQueryData(queryKeys.post.detail(post.id), post);
   if (kind === 'post') insertIntoHomeFeeds(post);
-  queryClient.invalidateQueries({ queryKey: queryKeys.feed.all, refetchType: 'none' }).catch(() => undefined);
-  const stale = [
-    queryKeys.profile.detail(post.author.id),
-    ...[post.parentId, post.rootPostId, post.quotedPostId].flatMap((id) => (id ? [queryKeys.post.detail(id)] : [])),
-  ];
-  for (const queryKey of stale) {
-    queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
+  const profile = queryKeys.profile.detail(post.author.id);
+  // The feeds and the author's profile tabs (paged) are marked stale; the profile header refetches.
+  for (const queryKey of [queryKeys.feed.all, profile]) {
+    queryClient.invalidateQueries({ queryKey, refetchType: 'none' }).catch(() => undefined);
+  }
+  queryClient.invalidateQueries({ queryKey: profile, exact: true }).catch(() => undefined);
+  for (const id of [post.parentId, post.rootPostId, post.quotedPostId]) {
+    if (id) queryClient.invalidateQueries({ queryKey: queryKeys.post.detail(id) }).catch(() => undefined);
   }
 }
 
