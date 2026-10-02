@@ -180,11 +180,34 @@ export function createDmModule(options: DmModuleOptions) {
     })
   }
 
+  /**
+   * A long v5 send that failed part way: the messages its ticket makes (the
+   * parts, re-split past the ones already out, since lib trims what it
+   * sends) and how many are out, so a retry sends only the rest (SR-18).
+   */
+  const partial = new Map<string, { parts: string[]; sent: number }>()
+  const partsFor = (args: SendArgs, ticketId: string) => partial.get(ticketId)?.parts ?? partsOf(args.text)
+
+  /** After a long send failed: claim and record the parts that went out before it did. */
+  async function notePartlySent(args: SendArgs, ticketId: string): Promise<void> {
+    const parts = partsFor(args, ticketId)
+    if (parts.length < 2 || halted) return
+    const pool = await freshOwn(args, ticketId, 0)
+    let sent = 0
+    for (const part of parts) {
+      const index = pool.findIndex(m => m.text === part)
+      if (index < 0) break
+      claimed.set(claimKey(args.key, pool.splice(index, 1)[0].id), ticketId)
+      sent += 1
+    }
+    if (sent > 0) partial.set(ticketId, { parts: [...parts.slice(0, sent), ...partsOf(parts.slice(sent).join(''))], sent })
+  }
+
   /** Claim, for `ticketId`, one fresh message per part; false when a part has none. */
   function claimParts(args: SendArgs, ticketId: string, fresh: MessageDTO[]): boolean {
     const pool = [...fresh]
     const taken: MessageDTO[] = []
-    for (const part of partsOf(args.text)) {
+    for (const part of partsFor(args, ticketId)) {
       const index = pool.findIndex(m => m.text === part)
       if (index < 0) return false
       taken.push(...pool.splice(index, 1))
@@ -211,22 +234,34 @@ export function createDmModule(options: DmModuleOptions) {
       return await work()
     } catch (error) {
       // Locked since the ticket was issued: nothing went out, and the host is asked for the key (NO_KEY).
-      if (error instanceof RpcError && error.code === 'NO_KEY') throw new NotSentError(new Error(`Private key not found: ${error.message}`))
+      const cause = error instanceof NotSentError ? error.cause : error
+      if (cause instanceof RpcError && cause.code === 'NO_KEY') throw new NotSentError(new Error(`Private key not found: ${cause.message}`))
       throw error
     }
   }
 
   options.tickets.register<SendArgs>('dm.send', {
     run: async (args, ctx) => {
-      const result = await running(args.identityId, () => backend.send(args.identityId, args.key, args.text))
+      const id = ctx.ticket.id
+      // A retry after a long send failed part way sends only the parts that did not go out.
+      const earlier = partial.get(id)
+      const text = earlier ? earlier.parts.slice(earlier.sent).join('') : args.text
+      let result: Awaited<ReturnType<typeof backend.send>>
+      try {
+        result = await running(args.identityId, () => backend.send(args.identityId, args.key, text))
+      } catch (error) {
+        await notePartlySent(args, id).catch(cause => logger.debug('DM send: could not record the parts sent:', cause))
+        throw error
+      }
       // Which of my messages this send made, so no other ticket's check counts them. Best effort:
       // the message is out, so a failed read here must never fail the ticket (or start an engine
       // while messages are stopping).
       if (!halted) {
-        await freshOwn(args, ctx.ticket.id, 0)
-          .then(fresh => claimParts(args, ctx.ticket.id, fresh))
+        await freshOwn(args, id, 0)
+          .then(fresh => claimParts(args, id, fresh))
           .catch(error => logger.debug('DM send: could not record the sent messages:', error))
       }
+      partial.delete(id)
       return result
     },
     /**

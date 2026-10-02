@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
-import type { ProbeResult, WriteResult } from '../writes/tickets'
+import { NotSentError, type ProbeResult, type WriteResult } from '../writes/tickets'
 import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit, type DmView } from './changes'
 import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
 
@@ -58,6 +58,15 @@ function readPendingRetention(storage: KeyValueArea, identityId: string): Pendin
   }
   return null
 }
+
+/** A send in progress: its broadcasts, and my messages the conversation held at the latest one. */
+interface SendAttempt {
+  key: string
+  broadcasts: number
+  heldAtBroadcast: number
+}
+
+const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
 
 function toMessageDTO(view: MessageView): MessageDTO {
   return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.createdAt), own: view.own, pending: view.pending }
@@ -119,6 +128,30 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
   /** Saves still running for engines already stopped: their end rewrites lib's cache. */
   const flushes = new Map<string, Promise<unknown>>()
+  /** Sends run one at a time here, so a broadcast seen during one is its own (or, harmlessly, a group write's). */
+  let sending: Promise<unknown> = Promise.resolve()
+  let attempt: SendAttempt | null = null
+  const watched = new WeakSet<DmEngine>()
+
+  /**
+   * Count `createMessage` broadcasts on the engine's chain for the send in
+   * progress. lib sends a long text part by part inside one call and reports
+   * a failure without saying whether the failing part was broadcast; this
+   * tells (SR-17).
+   */
+  function watchBroadcasts(running: DmEngine): void {
+    if (watched.has(running)) return
+    watched.add(running)
+    const { chain } = running.ctx
+    const createMessage = chain.createMessage.bind(chain)
+    chain.createMessage = (tag, body) => {
+      if (attempt) {
+        attempt.broadcasts += 1
+        attempt.heldAtBroadcast = ownMessages(running, attempt.key)
+      }
+      return createMessage(tag, body)
+    }
+  }
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
   function engineOf(identityId: string): DmEngine | null {
@@ -313,10 +346,29 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     /**
      * `DmEngine.send` settles uncertain broadcasts itself (it reads the slot
      * back), so a resolve is `confirmed` and a reject is classified
-     * (ENGINE.md §7.1). Long text goes out as several messages (§5.7).
+     * (ENGINE.md §7.1). Long text goes out as several messages (§5.7). A
+     * failure before the failing part was broadcast (a read, the group's
+     * state) is a `NotSentError`: nothing of that part can land, so it is
+     * failed, not "maybe sent".
      */
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
-      await engine(identityId).send(key, text)
+      const running = engine(identityId)
+      watchBroadcasts(running)
+      const turn = sending.then(async () => {
+        const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0 }
+        attempt = current
+        try {
+          await running.send(key, text)
+        } catch (error) {
+          // No broadcast at all, or the part last broadcast is held (it landed) and the next failed before its own.
+          if (current.broadcasts === 0 || ownMessages(running, key) > current.heldAtBroadcast) throw new NotSentError(error)
+          throw error
+        } finally {
+          if (attempt === current) attempt = null
+        }
+      })
+      sending = turn.catch(() => undefined)
+      await turn
       return { state: 'confirmed' }
     },
 

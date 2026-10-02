@@ -345,6 +345,83 @@ describe('dm on DM v5: 1:1', () => {
     expect(a.keyRequired).toHaveBeenCalledWith(alice)
   })
 
+  it('fails a send whose read before the broadcast failed, retryably, and sends it on retry (SR-17)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    const written = ledger.messages.length
+    vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(new Error('transport error: grpc error: Failed to fetch'))
+    const ticket = await a.settled(await a.dm.send(key, 'second'))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+    expect(ledger.messages).toHaveLength(written)
+    await a.tickets.retry(ticket.id)
+    expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+    expect(ledger.messages).toHaveLength(written + 1)
+  })
+
+  describe('a long send (several messages) that fails part way (SR-18)', () => {
+    const PART = 4081
+    const text = `${'a'.repeat(PART)}${'b'.repeat(PART)}${'c'.repeat(100)}`
+
+    async function sending() {
+      const ledger = ledgerNow()
+      const a = await ready(userOn(ledger, alice))
+      const b = await ready(userOn(ledger, bob))
+      const key = await a.dm.startDirect(bob)
+      await a.settled(await a.dm.send(key, 'hi'))
+      return { ledger, a, b, key, chain: a.engine().ctx.chain as MemoryChain }
+    }
+
+    /** What Bob reads: each part once, in order. */
+    async function bobReads(b: Awaited<ReturnType<typeof sending>>['b']) {
+      await b.engine().tick()
+      const [conversation] = await b.dm.conversations()
+      await b.engine().pollOwn(conversation.key)
+      await b.dm.open(conversation.key)
+      return (await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()
+    }
+
+    it('retries only the parts that did not go out after a refusal', async () => {
+      const { a, b, key, chain } = await sending()
+      let writes = 0
+      chain.hook = method => (method === 'createMessage' && ++writes === 2
+        ? { ok: false, failure: 'other', error: 'An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.' }
+        : null)
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'PENDING_WRITE' }) })
+      chain.hook = null
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('fails a part whose read before its broadcast failed as not sent, and retries the rest', async () => {
+      const { a, b, key, chain } = await sending()
+      let broadcasts = 0
+      let failed = false
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      const read = chain.messagesByTags.bind(chain)
+      vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+        if (broadcasts === 1 && !failed) {
+          failed = true
+          throw new Error('transport error: grpc error: Failed to fetch')
+        }
+        return read(tags)
+      })
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+  })
+
   it('pages messages newest first, 50 at a time, with a cursor tied to the conversation', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))
