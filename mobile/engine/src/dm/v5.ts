@@ -168,16 +168,17 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     if (!engine || current) return engine
     tracker.reset()
     let loaded = false
-    const onChange = () => {
-      if (!loaded && engine.getSnapshot().ready) {
-        loaded = true
-        restoreRetention(identityId, engine)
-      }
-      tracker.changed(() => (current?.engine === engine ? view(engine) : null))
+    const restoreOnceLoaded = () => {
+      if (loaded || !engine.getSnapshot().ready) return
+      loaded = true
+      restoreRetention(identityId, engine)
     }
-    const unsubscribe = engine.subscribe(onChange)
+    const unsubscribe = engine.subscribe(() => {
+      restoreOnceLoaded()
+      tracker.changed(() => (current?.engine === engine ? view(engine) : null))
+    })
     current = { identityId, engine, unsubscribe }
-    onChange()
+    restoreOnceLoaded()
     engine.start().catch(error => logger.warn('DM v5 engine failed to start:', error))
     return engine
   }

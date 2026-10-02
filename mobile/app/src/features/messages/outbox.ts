@@ -189,13 +189,14 @@ export async function resolveFailed(entryId: string): Promise<void> {
     await resolveUnticketed(entry);
     return;
   }
-  remove(entry.id);
   // A long send refused part way: only the parts that did not go out come back (the rest is in the conversation).
-  useDrafts.getState().restore(entry.identityId, entry.key, unsentText(entry));
+  const unsent = unsentText(entry);
+  remove(entry.id);
+  if (unsent) useDrafts.getState().restore(entry.identityId, entry.key, unsent);
 }
 
-/** A cut-short call's ticket is made as the call reaches the engine: not before it (clock skew). */
-const TICKET_SKEW_MS = 5_000;
+/** A cut-short call's ticket is made after the call started (one device clock; a margin for rounding). */
+const TICKET_SKEW_MS = 1_000;
 /**
  * How long a cut-short send may still get its ticket: the engine keeps
  * running a call the host stopped waiting for (its reads before submitting).
@@ -297,9 +298,11 @@ function partsOfSend(
   let cursor = 0;
   while (cursor < sent.length) {
     let index = at(cursor);
-    // A retry sends the rest of a long text trimmed, so a part may start past the spaces at the cut.
-    const spaces = /^\s*/.exec(sent.slice(cursor))?.[0].length ?? 0;
-    if (index < 0 && spaces > 0) index = at((cursor += spaces));
+    if (index < 0) {
+      // A retry sends the rest of a long text trimmed, so a part may start past the spaces at the cut.
+      const spaces = /^\s+/.exec(sent.slice(cursor))?.[0].length ?? 0;
+      if (spaces > 0) index = at((cursor += spaces));
+    }
     if (index < 0) break;
     const [part] = pool.splice(index, 1);
     taken.push(part);

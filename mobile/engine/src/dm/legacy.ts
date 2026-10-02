@@ -218,9 +218,9 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       // believe a first empty list only once a read that cannot fail silently agrees.
       if (fresh.length === 0) {
         const held = [...current.conversations.keys()].some(id => !current.drafts.has(id))
-        const empty = held || current.listedAt > 0 || await reads.hasConversations(current.identityId).then(any => !any, () => false)
+        const believed = !held && (current.listedAt > 0 || await reads.hasConversations(current.identityId).then(any => !any, () => false))
         if (state !== current) return
-        if (held || !empty) {
+        if (!believed) {
           current.error = 'Could not load conversations'
           return
         }
