@@ -79,19 +79,21 @@ export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disab
           <>
             <textarea
               aria-label="Unique codes or links, one per line"
+              autoComplete="off"
+              spellCheck={false}
               value={keysText}
               onChange={(e) => {
                 setKeysText(e.target.value)
                 const keys = parseKeys(e.target.value)
                 onChange((current) => ({ ...current, licenseKeys: keys }))
               }}
-              placeholder={'One per line: license keys, vouchers or single-use links\nXXXX-XXXX-XXXX\nhttps://example.com/redeem?code=YYYY'}
+              placeholder={'One per line: license keys, vouchers or single-use links\nXXXX-XXXX-XXXX\nhttps://example.com/redeem?code=YYYY\nhttps://example.com/invite/ZZZZ PASSWORD'}
               rows={5}
               disabled={disabled}
               className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
             />
             <p className="text-xs text-gray-500">
-              {kit.licenseKeys?.length ?? 0} left. Each delivered unit takes the next one, and a line that is a link reaches the buyer as a link. When they run out, orders wait until you add more.
+              {kit.licenseKeys?.length ?? 0} left. Each delivered unit takes the next one. A line that starts with a link reaches the buyer as a link, and anything after it (after a space) as that link&apos;s own access code. When they run out, orders wait until you add more.
             </p>
           </>
         )}

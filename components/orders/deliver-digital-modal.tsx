@@ -143,7 +143,7 @@ export function DeliverDigitalModal({
               </p>
               {planned ? (
                 <p className="text-xs text-gray-500">
-                  {planned.assets.length} link{planned.assets.length === 1 ? '' : 's'}/code{planned.assets.length === 1 ? '' : 's'}/file{planned.assets.length === 1 ? '' : 's'}
+                  {planned.assets.length} item{planned.assets.length === 1 ? '' : 's'}
                   {planned.licenseKeys ? ` · ${planned.licenseKeys.length} unique code${planned.licenseKeys.length === 1 ? '' : 's'}` : ''}
                   {planned.instructions ? ' · instructions' : ''}
                 </p>
@@ -180,7 +180,7 @@ export function DeliverDigitalModal({
             />
             <span className="text-sm">
               Issue new unique codes
-              <span className="block text-xs text-gray-500">The keys from the earlier delivery stay in the buyer&apos;s library either way.</span>
+              <span className="block text-xs text-gray-500">The codes from the earlier delivery stay in the buyer&apos;s library either way.</span>
             </span>
           </label>
         )}

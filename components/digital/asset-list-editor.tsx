@@ -1,13 +1,13 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import Link from 'next/link'
 import { ArrowUpTrayIcon, DocumentIcon, KeyIcon, LinkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { getUploadErrorMessage, isUploadException, UploadErrorCode } from '@/lib/upload'
 import { formatFileSize, uploadEncryptedFile } from '@/lib/services/digital-file-service'
-import { isSafeDeliveryUrl, MAX_CODE_LENGTH, MAX_DIGITAL_FILE_BYTES } from '@/lib/services/digital-delivery-plan'
+import { isSafeDeliveryUrl, MAX_CODE_LENGTH, MAX_DIGITAL_FILE_BYTES, normalizeLinkInput } from '@/lib/services/digital-delivery-plan'
 import type { DigitalAsset } from '@/lib/types'
 
 interface DigitalAssetListEditorProps {
@@ -51,6 +51,19 @@ const ADD_MODES: Array<{ mode: AddMode; label: string }> = [
 ]
 
 const inputClass = 'px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm'
+
+/** Secrets: kept out of autofill history and the browser's (possibly cloud) spellcheck. */
+const secretInputProps = { autoComplete: 'off', spellCheck: false } as const
+
+/**
+ * Enter adds the entry. The editor sits inside the product form, where Enter
+ * would otherwise submit the product and drop what was typed here.
+ */
+const addOnEnter = (add: () => void) => (e: KeyboardEvent<HTMLInputElement>) => {
+  if (e.key !== 'Enter') return
+  e.preventDefault()
+  add()
+}
 
 /**
  * What a digital product (or one order) delivers. Most sellers already host
@@ -111,7 +124,8 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
   }
 
   const handleAddLink = () => {
-    const url = linkUrl.trim()
+    if (!linkUrl.trim()) return
+    const url = normalizeLinkInput(linkUrl)
     if (!isSafeDeliveryUrl(url)) {
       setError('Links must start with https://, http://, magnet: or ipfs://. Send any other kind of address as a code.')
       return
@@ -129,9 +143,10 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
     resetForm()
   }
 
+  // Each tab starts empty: a code typed under Code must not become a link's access code.
   const switchMode = (next: AddMode) => {
     setMode(next)
-    setError(null)
+    resetForm()
     setNeedsProvider(false)
   }
 
@@ -213,6 +228,7 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
               aria-label="Link label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
+              onKeyDown={addOnEnter(handleAddLink)}
               placeholder="Label (e.g., Download)"
               maxLength={100}
               disabled={disabled}
@@ -223,6 +239,8 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
               aria-label="Link URL"
               value={linkUrl}
               onChange={(e) => setLinkUrl(e.target.value)}
+              onKeyDown={addOnEnter(handleAddLink)}
+              {...secretInputProps}
               placeholder="https://… (your site, Drive, Dropbox, a course portal)"
               disabled={disabled}
               className={inputClass}
@@ -234,6 +252,8 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
               aria-label="Access code or password for the link"
               value={code}
               onChange={(e) => setCode(e.target.value)}
+              onKeyDown={addOnEnter(handleAddLink)}
+              {...secretInputProps}
               placeholder="Access code or password (optional)"
               maxLength={MAX_CODE_LENGTH}
               disabled={disabled}
@@ -258,6 +278,7 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
               aria-label="Code label"
               value={label}
               onChange={(e) => setLabel(e.target.value)}
+              onKeyDown={addOnEnter(handleAddCode)}
               placeholder="Label (e.g., Voucher)"
               maxLength={100}
               disabled={disabled}
@@ -268,6 +289,8 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
               aria-label="Code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
+              onKeyDown={addOnEnter(handleAddCode)}
+              {...secretInputProps}
               placeholder="Code, password or invite"
               maxLength={MAX_CODE_LENGTH}
               disabled={disabled}

@@ -243,13 +243,39 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const optionalString = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value : undefined
 
+/** A URL this app can fetch a file from: http(s) or ipfs (a CID). */
+const isFetchableUrl = (url: string) => SAFE_HTTP_URL.test(url) || SAFE_IPFS_URL.test(url)
+
 /**
  * A URL the buyer's browser may safely open: http(s), ipfs (a CID) or magnet.
  * Anything else (`javascript:`, `data:`) is refused; a seller with another
  * kind of address can send it as a code instead.
  */
-export const isSafeDeliveryUrl = (url: string) =>
-  SAFE_HTTP_URL.test(url) || SAFE_IPFS_URL.test(url) || SAFE_MAGNET_URL.test(url)
+export const isSafeDeliveryUrl = (url: string) => isFetchableUrl(url) || SAFE_MAGNET_URL.test(url)
+
+/**
+ * A link as the seller typed it, made openable where that is unambiguous: a
+ * bare host such as `drive.google.com/…` gets `https://`.
+ */
+export function normalizeLinkInput(input: string): string {
+  const url = input.trim()
+  const hasScheme = /^[a-z][a-z0-9+.-]*:/i.test(url)
+  const looksLikeHost = /^[^\s/]+\.[^\s/]+/.test(url)
+  return !hasScheme && looksLikeHost ? `https://${url}` : url
+}
+
+/**
+ * One entry of a unique-codes pool, as the buyer gets it. An entry that starts
+ * with a URL is a link, and anything after the URL (separated by whitespace)
+ * is that link's own access code: `https://example.com/invite/abc PASS-123`.
+ * Anything else is a code.
+ */
+export function splitPoolEntry(entry: string): { url?: string; code?: string } {
+  const [first, ...rest] = entry.trim().split(/\s+/)
+  if (!isSafeDeliveryUrl(first)) return { code: entry }
+  const code = rest.join(' ')
+  return code ? { url: first, code } : { url: first }
+}
 
 const safeUrl = (value: unknown): string | undefined =>
   typeof value === 'string' && isSafeDeliveryUrl(value) ? value : undefined
@@ -260,9 +286,9 @@ function parseAsset(value: unknown): DigitalAsset | null {
   const variant = variantKey ? { variantKey } : {}
   const code = optionalString(value.code)
   if (value.kind === 'file') {
-    const url = safeUrl(value.url)
     // A file is fetched and decrypted here, which a magnet link cannot be.
-    if (!url || SAFE_MAGNET_URL.test(url)) return null
+    const url = typeof value.url === 'string' && isFetchableUrl(value.url) ? value.url : undefined
+    if (!url) return null
     if (typeof value.name !== 'string' || !value.name) return null
     if (typeof value.key !== 'string' || !BASE64_KEY.test(value.key)) return null
     if (typeof value.size !== 'number' || !Number.isFinite(value.size) || value.size < 0) return null
@@ -293,7 +319,7 @@ const decodeJson = (bytes: Uint8Array): unknown => JSON.parse(new TextDecoder().
 export function encodeKit(kit: ItemDeliverablePayload): Uint8Array {
   const bytes = encodeJson(kit)
   if (bytes.length > MAX_KIT_PLAINTEXT_BYTES) {
-    throw new Error(`Delivery content is too large to store (${bytes.length} of ${MAX_KIT_PLAINTEXT_BYTES} bytes). Remove some license keys or links.`)
+    throw new Error(`Delivery content is too large to store (${bytes.length} of ${MAX_KIT_PLAINTEXT_BYTES} bytes). Remove some unique codes or links.`)
   }
   return bytes
 }

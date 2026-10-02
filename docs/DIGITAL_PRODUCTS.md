@@ -15,18 +15,19 @@ is as private as a license key.
 | Seller has | Use | Buyer sees |
 | --- | --- | --- |
 | A download page, cloud drive, course portal, invite or video link | **Link** (`https://…`, `http://…`) | the link, with a copy button |
-| A link with the secret in it (`…/dl?q=s3cr3t`, a signed URL) | **Link**, as is | the same |
+| A link with the secret in it (`…/dl?q=s3cr3t`) | **Link**, as is | the same |
+| A link that expires (an S3 or GCS signed URL) | the deliver modal's per-order link, made fresh for each order (a product's links are reused for months) | the same |
 | A link plus a password or access code | **Link** with its access code | the link, and the code to copy |
 | A code every buyer shares (voucher, password, account login) | **Code** | the code to copy |
-| A different code or link per unit (license keys, gift cards, single-use invites) | **Unique codes**, one per line | one per unit; a line that is a URL is a link |
+| A different code or link per unit (license keys, gift cards, single-use invites) | **Unique codes**, one per line; `https://… PASSWORD` pairs a link with its own code | one per unit; a line that starts with a URL is a link |
 | A torrent | **Link** (`magnet:?…`) | the link (opens their torrent client) |
 | A file to hand over directly | **File** (needs IPFS storage connected) | a download, decrypted in the browser |
 | Something only this buyer gets (a custom build, a personal invite) | the deliver modal's per-order link, code or file, plus the message | the same, for this order only |
 | Steps to redeem or install | **Instructions** | the text, with every delivery |
 
-Links accept http(s), magnet, and ipfs:// URLs that name a CID. Any other
-scheme (`javascript:`, `data:`) is refused, so the seller sends such an address
-as a code instead.
+Links accept http(s), magnet, and ipfs:// URLs that name a CID; a bare host
+(`drive.google.com/…`) gets `https://`. Any other scheme (`javascript:`,
+`data:`) is refused, so the seller sends such an address as a code instead.
 
 Client gate: `NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v6` (`storefrontSupportsDigital()`
 in `lib/constants.ts`). Below v6 nothing changes: the digital UI is hidden, no

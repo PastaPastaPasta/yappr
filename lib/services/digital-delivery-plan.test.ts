@@ -3,6 +3,8 @@ import {
   MAX_BULK_KEYS_PER_LINE,
   MAX_DELIVERY_PLAINTEXT_BYTES,
   isSafeDeliveryUrl,
+  normalizeLinkInput,
+  splitPoolEntry,
   planBlockers,
   digitalOrders,
   hasDigitalLines,
@@ -184,6 +186,22 @@ describe('wire format', () => {
       ],
     })
     expect(decodeKit(encodeKit(original))).toEqual(original)
+  })
+
+  it('adds https:// to a bare host, and leaves anything with a scheme alone', () => {
+    expect(normalizeLinkInput(' drive.google.com/file/d/abc?usp=sharing ')).toBe('https://drive.google.com/file/d/abc?usp=sharing')
+    expect(normalizeLinkInput('http://example.com')).toBe('http://example.com')
+    expect(normalizeLinkInput('magnet:?xt=urn:btih:abc')).toBe('magnet:?xt=urn:btih:abc')
+    expect(normalizeLinkInput('javascript:alert(1)')).toBe('javascript:alert(1)')
+    expect(normalizeLinkInput('not a link')).toBe('not a link')
+  })
+
+  it('reads a unique-code entry as a link (with its own access code) or a code', () => {
+    expect(splitPoolEntry('XXXX-YYYY')).toEqual({ code: 'XXXX-YYYY' })
+    expect(splitPoolEntry('https://example.com/invite/abc')).toEqual({ url: 'https://example.com/invite/abc' })
+    expect(splitPoolEntry('https://example.com/invite/abc  PASS 123')).toEqual({ url: 'https://example.com/invite/abc', code: 'PASS 123' })
+    expect(splitPoolEntry('user@example.com hunter2')).toEqual({ code: 'user@example.com hunter2' })
+    expect(splitPoolEntry('javascript:alert(1) x')).toEqual({ code: 'javascript:alert(1) x' })
   })
 
   it('drops a code with nothing in it and a file that points at a magnet link', () => {
