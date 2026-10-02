@@ -10,7 +10,8 @@ const ignoreBack = () => undefined;
  * controller, above the root view, so the overlay is a FullWindowOverlay: a
  * view react-native-screens adds to the app's window when it mounts. It is
  * above every modal presented before that, but not one presented after, so
- * nothing may open while the app lock shows (AuthGates, inbound-links).
+ * nothing may open while the app lock shows (AuthGates, inbound-links), and
+ * the lock mounts again when a root modal opens anyway (AppLockOverlay).
  * On Android the sheets' portal host renders after the root layout's
  * children, so a plain view would sit under an open sheet: the overlay is a
  * dialog window instead, which also takes the back button (ignored, so

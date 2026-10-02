@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { AppState, View } from 'react-native';
+import { useRootNavigationState } from 'expo-router';
+import { AppState, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { cn } from '~/lib-allowlist';
@@ -26,6 +27,22 @@ function promptUnlock(): void {
 }
 
 /**
+ * On iOS the lock is a FullWindowOverlay: above the modals presented before
+ * it showed, not one presented after. A new root route (a modal) remounts
+ * it, which adds it to the window again, on top. A frame late, so the
+ * modal has been presented by then.
+ */
+function useRootLayer(): string {
+  const signature = useRootNavigationState()?.routes?.map((route) => route.key).join('|') ?? '';
+  const [layer, setLayer] = useState(signature);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setLayer(signature));
+    return () => cancelAnimationFrame(frame);
+  }, [signature]);
+  return layer;
+}
+
+/**
  * The app lock screen (UX_SPEC §4.36): the app icon, "Yappr is locked" and
  * "Unlock". It also covers the app while inactive, so the app-switcher
  * snapshot shows it rather than content (AUTH-12).
@@ -36,6 +53,7 @@ export function AppLockOverlay() {
   const covered = useLockState((s) => s.covered);
   const insets = useSafeAreaInsets();
   const prompted = useRef(false);
+  const layer = useRootLayer();
   // Android snapshots Recents as the app leaves, too early to count on the cover, so with the lock
   // on the whole app is FLAG_SECURE: a blank thumbnail, and no screenshots (AUTH-12).
   useBlockScreenCapture('private', enabled);
@@ -60,7 +78,7 @@ export function AppLockOverlay() {
 
   if (!enabled || (!locked && !covered)) return null;
   return (
-    <TopOverlay>
+    <TopOverlay key={Platform.OS === 'ios' ? layer : undefined}>
       <View
         className={cn('flex-1 items-center justify-center gap-6 px-8', tw.bg)}
         style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}

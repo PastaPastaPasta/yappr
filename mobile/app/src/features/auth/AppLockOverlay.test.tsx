@@ -5,6 +5,11 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAppLockSettings, useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 
+const mockRoutes = { current: [{ key: 'tabs' }] };
+jest.mock('expo-router', () => ({
+  useRootNavigationState: () => ({ key: 'root', routes: mockRoutes.current }),
+}));
+
 const native = jest.requireMock<{ isCaptureBlocked: () => boolean; isSwitcherProtected: () => boolean }>(
   '../../../modules/secure-window',
 );
@@ -19,6 +24,7 @@ const renderOverlay = () =>
   );
 
 beforeEach(() => {
+  mockRoutes.current = [{ key: 'tabs' }];
   useLockState.setState({ locked: false, covered: false, authenticating: false, backgroundAt: null });
 });
 afterEach(() => {
@@ -70,6 +76,45 @@ describe('app-switcher privacy (AUTH-12)', () => {
 
     act(() => useLockState.setState({ covered: true }));
     expect(view.getByTestId('app-lock')).toBeTruthy();
+    view.unmount();
+  });
+});
+
+describe('staying on top (SR-01)', () => {
+  it('on iOS, mounts the lock again when a modal opens under it, so the modal stays covered', async () => {
+    setOS('ios');
+    useAppLockSettings.setState({ enabled: true });
+    useLockState.setState({ locked: true, authenticating: true });
+    const view = renderOverlay();
+    const before = view.getByTestId('app-lock');
+
+    // Something async presents a root modal while the lock shows.
+    mockRoutes.current = [{ key: 'tabs' }, { key: 'sign-in' }];
+    view.rerender(
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <AppLockOverlay />
+      </SafeAreaProvider>,
+    );
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(view.getByTestId('app-lock')).not.toBe(before);
+    view.unmount();
+  });
+
+  it('on Android, keeps the same lock dialog: a modal screen opens under it anyway', async () => {
+    setOS('android');
+    useAppLockSettings.setState({ enabled: true });
+    useLockState.setState({ locked: true, authenticating: true });
+    const view = renderOverlay();
+    const before = view.getByTestId('app-lock');
+
+    mockRoutes.current = [{ key: 'tabs' }, { key: 'sign-in' }];
+    view.rerender(
+      <SafeAreaProvider initialMetrics={METRICS}>
+        <AppLockOverlay />
+      </SafeAreaProvider>,
+    );
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+    expect(view.getByTestId('app-lock')).toBe(before);
     view.unmount();
   });
 });
