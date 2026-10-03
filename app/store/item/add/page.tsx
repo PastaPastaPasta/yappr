@@ -1,14 +1,16 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useMemo, useEffect, useId } from 'react'
+import { useState, useMemo, useEffect, useId, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   ArrowLeftIcon,
   XMarkIcon,
   PlusIcon,
-  TrashIcon
+  TrashIcon,
+  TruckIcon,
+  CloudArrowDownIcon
 } from '@heroicons/react/24/outline'
 import { Sidebar } from '@/components/layout/sidebar'
 import { RightSidebar } from '@/components/layout/right-sidebar'
@@ -22,11 +24,29 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeService } from '@/lib/services/store-service'
 import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
-import type { VariantAxis, VariantCombination, ItemVariants } from '@/lib/types'
+import { itemDeliverableService, KitWriteUncertainError } from '@/lib/services/item-deliverable-service'
+import { DigitalKitEditor } from '@/components/digital'
+import { storefrontSupportsDigital } from '@/lib/constants'
+import { encodeKit } from '@/lib/services/digital-delivery-plan'
+import { getEncryptionKeyBytes } from '@/lib/secure-storage'
+import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
+import type { VariantAxis, VariantCombination, ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
+const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
+const kitHasContent = (kit: ItemDeliverablePayload) =>
+  kit.assets.length > 0 || kit.licenseKeys !== undefined || Boolean(kit.instructions)
+
+/**
+ * The digital kit's state on this device: `ready` (editable), `locked` (one
+ * exists but this device has no key), `unreadable` (it does not decrypt with
+ * the key here, e.g. one written before a key change), `loading`, or `error`
+ * (the read failed). A locked or unreadable kit is never overwritten by a
+ * product save; only an explicit "replace" makes it editable (and empty).
+ */
+type KitState = 'ready' | 'loading' | 'locked' | 'unreadable' | 'error'
 
 function AddItemPage() {
   const formId = useId()
@@ -37,6 +57,28 @@ function AddItemPage() {
   const isEditMode = !!itemId
   const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
+  const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
+  const supportsDigital = storefrontSupportsDigital()
+
+  // Digital delivery (storefront v6)
+  const [fulfillment, setFulfillment] = useState<ItemFulfillment>('shipped')
+  const [kit, setKit] = useState<ItemDeliverablePayload>(EMPTY_KIT)
+  const [existingDeliverable, setExistingDeliverable] = useState<ItemDeliverable | null>(null)
+  const [kitState, setKitState] = useState<KitState>('ready')
+  // Only a kit the seller changed is written: re-saving an untouched copy could
+  // put back license keys a delivery elsewhere has taken since it was read.
+  const [kitDirty, setKitDirty] = useState(false)
+  // A file's key joins the kit only when its upload finishes: no saving before then.
+  const [isKitUploading, setIsKitUploading] = useState(false)
+  const updateKit = useCallback((update: (current: ItemDeliverablePayload) => ItemDeliverablePayload) => {
+    setKit(update)
+    setKitDirty(true)
+  }, [])
+  // A create whose kit failed to save keeps its form; the next submit edits this item.
+  const [createdItemId, setCreatedItemId] = useState<string | null>(null)
+  /** The item being edited: the URL's, or the one this form just created. */
+  const editingItemId = itemId || createdItemId
+  const isDigital = supportsDigital && fulfillment === 'digital'
 
   const [isLoading, setIsLoading] = useState(isEditMode || !!storeId)
   const [title, setTitle] = useState('')
@@ -113,6 +155,7 @@ function AddItemPage() {
         setCategory(item.category || '')
         setImageUrls(item.imageUrls || [])
         setLoadedStoreId(item.storeId)
+        setFulfillment(item.fulfillment === 'digital' ? 'digital' : 'shipped')
 
         // Convert price from smallest unit to display value
         if (item.basePrice !== undefined) {
@@ -150,6 +193,41 @@ function AddItemPage() {
 
     loadItem().catch((err) => logger.error('Failed to load item:', err))
   }, [sdkReady, isEditMode, itemId])
+
+  /** Read and decrypt the item's kit, or mark it locked when this device lacks the key. */
+  const loadKit = useCallback(async (id: string, ownerId: string) => {
+    setKitState('loading')
+    try {
+      const deliverable = await itemDeliverableService.getForItem(id)
+      setExistingDeliverable(deliverable)
+      if (!deliverable) {
+        setKitState('ready')
+        return
+      }
+      const privateKey = getEncryptionKeyBytes(ownerId)
+      if (!privateKey) {
+        setKitState('locked')
+        return
+      }
+      try {
+        setKit(await itemDeliverableService.decryptKit(deliverable, privateKey))
+      } catch (decryptError) {
+        logger.warn('Delivery content does not decrypt with this key:', decryptError)
+        setKitState('unreadable')
+        return
+      }
+      setKitDirty(false)
+      setKitState('ready')
+    } catch (err) {
+      logger.error('Failed to load delivery content:', err)
+      setKitState('error')
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!sdkReady || !supportsDigital || !itemId || !user?.identityId) return
+    loadKit(itemId, user.identityId).catch((err) => logger.error(err))
+  }, [sdkReady, supportsDigital, itemId, user?.identityId, loadKit])
 
   // Generate all combinations from axes
   const combinations = useMemo(() => {
@@ -208,7 +286,33 @@ function AddItemPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user?.identityId || !title.trim()) return
-    if (!isEditMode && (!storeId || loadedStoreId !== storeId)) return
+    if (!editingItemId && (!storeId || loadedStoreId !== storeId)) return
+
+    if (isKitUploading) {
+      setError('Wait for the file upload to finish before saving.')
+      return
+    }
+    if (isDigital && (kitState === 'loading' || kitState === 'error')) {
+      setError('The delivery content has not loaded yet. Wait a moment or reload the page.')
+      return
+    }
+    const willSaveKit = isDigital && kitState === 'ready' && kitDirty && (existingDeliverable !== null || kitHasContent(kit))
+    // The kit is encrypted to the seller's own key, so writing one needs it here.
+    const sellerPrivateKey = willSaveKit ? getEncryptionKeyBytes(user.identityId) : null
+    if (willSaveKit) {
+      if (!sellerPrivateKey) {
+        openEncryptionKeyModal('sell_digital')
+        setError('Add your encryption key to save the delivery content of a digital product.')
+        return
+      }
+      // Refuse an oversized kit before the product is written, not after.
+      try {
+        encodeKit(kit)
+      } catch (sizeError) {
+        setError(sizeError instanceof Error ? sizeError.message : 'Delivery content is too large')
+        return
+      }
+    }
 
     setIsSubmitting(true)
     setError(null)
@@ -248,28 +352,62 @@ function AddItemPage() {
         stockQuantity: hasVariants ? undefined : (stockQuantity ? parseInt(stockQuantity, 10) : undefined),
         // No status: an edit keeps a paused or sold-out product so, and a create defaults to active.
         // variants is always named, so unticking "has variants" removes the stored ones.
-        variants
+        variants,
+        // Only named on v6, which is the first cut that has the property.
+        ...(supportsDigital ? { fulfillment } : {})
       }
 
       // An EDIT must use the item's own store, never the URL's: v2 freezes
       // `storeItem.storeId`, so a stale or wrong `?storeId=` would turn a title
       // change into a 40128 rejection (and a 40127 if that store is not yours).
       // A create has no stored value to defer to, so the URL leads there.
-      const effectiveStoreId = isEditMode ? (loadedStoreId || storeId) : (storeId || loadedStoreId)
+      const effectiveStoreId = editingItemId ? (loadedStoreId || storeId) : (storeId || loadedStoreId)
 
-      if (isEditMode && itemId && effectiveStoreId) {
-        await storeItemService.updateItem(itemId, user.identityId, effectiveStoreId, itemData)
+      let savedItemId: string
+      if (editingItemId && effectiveStoreId) {
+        await storeItemService.updateItem(editingItemId, user.identityId, effectiveStoreId, itemData)
+        savedItemId = editingItemId
       } else if (effectiveStoreId) {
-        await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+        const created = await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+        savedItemId = created.id
+        setCreatedItemId(created.id)
+        setLoadedStoreId(effectiveStoreId)
       } else {
         setError('Store ID is required')
         return
       }
 
+      // A locked or unreadable kit, or an untouched one, is left as it is.
+      if (willSaveKit && sellerPrivateKey) {
+        try {
+          const saved = await itemDeliverableService.saveKit(user.identityId, savedItemId, kit, sellerPrivateKey, existingDeliverable)
+          setExistingDeliverable(saved)
+          setKitDirty(false)
+        } catch (kitError) {
+          logger.error('Failed to save delivery content:', kitError)
+          // Re-read what is on chain: a create that landed despite the error must
+          // be replaced next time, not created twice (unique per item), and a kit
+          // changed elsewhere (a delivery took keys) must not be overwritten.
+          const onChain = await itemDeliverableService.getForItem(savedItemId).catch(() => existingDeliverable)
+          if (onChain && existingDeliverable && onChain.$revision !== existingDeliverable.$revision) {
+            await loadKit(savedItemId, user.identityId)
+            setError('The product was saved, but its delivery content changed elsewhere (for example, a delivery used unique codes) and was reloaded. Review it and save again.')
+          } else if (kitError instanceof KitWriteUncertainError) {
+            // It may yet land: the next save re-reads and replaces it rather than creating twice.
+            setExistingDeliverable(onChain)
+            setError('The product was saved. Its delivery content was sent but is not confirmed yet; wait a moment, then save again to make sure it is stored.')
+          } else {
+            setExistingDeliverable(onChain)
+            setError(`The product was saved, but its delivery content was not: ${kitError instanceof Error ? kitError.message : 'unknown error'}. Save again to retry.`)
+          }
+          return
+        }
+      }
+
       router.push('/store/manage')
     } catch (err) {
-      logger.error(`Failed to ${isEditMode ? 'update' : 'create'} item:`, err)
-      setError(err instanceof ListLimitError ? err.message : `Failed to ${isEditMode ? 'update' : 'create'} product. Please try again.`)
+      logger.error(`Failed to ${editingItemId ? 'update' : 'create'} item:`, err)
+      setError(err instanceof ListLimitError ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
     }
@@ -350,6 +488,44 @@ function AddItemPage() {
                 maxLength={2000}
               />
             </div>
+
+            {/* Product type (storefront v6) */}
+            {supportsDigital && (
+              <fieldset>
+                <legend className="block text-sm font-medium mb-2">Product type</legend>
+                <div className="grid grid-cols-2 gap-2">
+                  {([
+                    { value: 'shipped', label: 'Physical', hint: 'Shipped to the buyer', Icon: TruckIcon },
+                    { value: 'digital', label: 'Digital', hint: 'Files, links or keys delivered online', Icon: CloudArrowDownIcon },
+                  ] as const).map(({ value, label, hint, Icon }) => (
+                    <label
+                      key={value}
+                      className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${isKitUploading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'} ${
+                        fulfillment === value
+                          ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20'
+                          : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name={`${formId}-fulfillment`}
+                        value={value}
+                        checked={fulfillment === value}
+                        onChange={() => setFulfillment(value)}
+                        // Switching away unmounts the kit editor, which would drop an in-flight upload's key.
+                        disabled={isKitUploading}
+                        className="sr-only"
+                      />
+                      <Icon className="h-5 w-5 mt-0.5 text-yappr-500 flex-shrink-0" aria-hidden="true" />
+                      <span>
+                        <span className="block text-sm font-medium">{label}</span>
+                        <span className="block text-xs text-gray-500">{hint}</span>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+            )}
 
             {/* Images */}
             <div>
@@ -622,16 +798,77 @@ function AddItemPage() {
               </div>
             )}
 
+            {/* Digital delivery content */}
+            {isDigital && user?.identityId && (
+              <section className="border-t border-gray-200 dark:border-gray-800 pt-6 space-y-3">
+                <h2 className="font-medium flex items-center gap-2">
+                  <CloudArrowDownIcon className="h-5 w-5 text-yappr-500" aria-hidden="true" />
+                  Digital delivery
+                </h2>
+                {kitState === 'loading' && <Spinner size="sm" />}
+                {kitState === 'error' && (
+                  <p role="alert" className="text-sm text-red-600">Could not load this product&apos;s delivery content. Reload the page to try again.</p>
+                )}
+                {kitState === 'locked' && (
+                  <div className="p-3 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg space-y-2">
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                      This product&apos;s delivery content is encrypted to your encryption key. Add it on this device to view or change it. Saving now leaves it unchanged.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => openEncryptionKeyModal('sell_digital', () => {
+                        if (editingItemId) loadKit(editingItemId, user.identityId).catch((err) => logger.error(err))
+                      })}
+                    >
+                      Add Encryption Key
+                    </Button>
+                  </div>
+                )}
+                {kitState === 'unreadable' && (
+                  <div className="p-3 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg space-y-2">
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                      This product&apos;s delivery content does not decrypt with the encryption key on this device (it may have been saved under an earlier key). Saving the product leaves it unchanged. You can replace it with new content instead.
+                    </p>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setKit(EMPTY_KIT)
+                        setKitDirty(true)
+                        setKitState('ready')
+                      }}
+                    >
+                      Replace delivery content
+                    </Button>
+                  </div>
+                )}
+                {kitState === 'ready' && (
+                  <DigitalKitEditor
+                    // Remount on each saved or reloaded revision: the editor seeds local text from the kit.
+                    key={existingDeliverable?.$revision ?? 'new'}
+                    kit={kit}
+                    onChange={updateKit}
+                    onBusyChange={setIsKitUploading}
+                    identityId={user.identityId}
+                    variantKeys={hasVariants ? combinations : undefined}
+                    disabled={isSubmitting}
+                  />
+                )}
+              </section>
+            )}
+
             {/* Submit */}
             <div className="pt-4">
               <Button
                 type="submit"
-                disabled={isSubmitting || !title.trim()}
+                disabled={isSubmitting || isKitUploading || !title.trim()}
                 className="w-full"
               >
                 {isSubmitting
-                  ? (isEditMode ? 'Saving...' : 'Creating...')
-                  : (isEditMode ? 'Save Changes' : 'Create Product')}
+                  ? (editingItemId ? 'Saving...' : 'Creating...')
+                  : (editingItemId ? 'Save Changes' : 'Create Product')}
               </Button>
             </div>
           </form>

@@ -19,3 +19,4 @@ export type { StorachaCredentials } from './providers/storacha/storacha-provider
 // Pinata provider
 export { getPinataProvider } from './providers/pinata/pinata-provider'
 export type { PinataCredentials } from './providers/pinata/pinata-provider'
+export { getUploadProvider } from './active-provider'
