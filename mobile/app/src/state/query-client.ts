@@ -1,10 +1,11 @@
 import { parse, stringify } from '@engine/protocol/codec';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { QueryClient, type Query } from '@tanstack/react-query';
+import { QueryCache, QueryClient, type Query, type QueryKey } from '@tanstack/react-query';
 import type { PersistedClient, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
 
 import { config } from '~/config';
 import { ENGINE_BUNDLE_HASH } from '~/engine/bundle-hash';
+import { appendLog, errorMessage } from '~/engine/logs';
 
 import { syncStorage } from './storage';
 
@@ -34,13 +35,38 @@ export const persistedQuery = {
   gcTime: PERSIST_MAX_AGE_MS,
 } as const;
 
+/** A query key as a diagnostics label: its path after `['engine', <network>]`, ids included, objects left out. */
+export function describeQueryKey(key: QueryKey): string {
+  return key
+    .slice(2)
+    .filter((part): part is string | number => typeof part === 'string' || typeof part === 'number')
+    .join('.');
+}
+
+/**
+ * Every failed read goes to the diagnostics log (PRD SET-08: the engine's
+ * recent errors) with its code, so a read that fails in a way the screen can
+ * only call "Something went wrong" can still be told apart. The message is
+ * redacted by `appendLog`.
+ */
+function logReadFailure(error: unknown, query: Query<unknown, unknown, unknown>): void {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  const what = describeQueryKey(query.queryKey) || 'query';
+  appendLog('warn', 'host', `Read ${what} failed${typeof code === 'string' ? ` (${code})` : ''}: ${errorMessage(error)}`);
+}
+
 export const queryClient = new QueryClient({
+  queryCache: new QueryCache({ onError: logReadFailure }),
   defaultOptions: {
     queries: {
       gcTime: 5 * 60_000,
       staleTime: 30_000,
       // DAPI flakiness is handled inside the engine; one UI-level retry is enough.
       retry: 1,
+      // Reads go to the engine, which answers offline too (its local state, a categorized
+      // failure); TanStack's online state (NetInfo, `data/connectivity.ts`) only drives the
+      // refetch when connectivity returns, it never parks a read.
+      networkMode: 'always',
     },
   },
 });
@@ -124,4 +150,19 @@ export const persistOptions: PersistQueryClientProviderProps['persistOptions'] =
 export async function clearAccountCache(): Promise<void> {
   queryClient.removeQueries({ type: 'inactive' });
   await Promise.all([persister.removeClient(), queryClient.resetQueries()]);
+}
+
+/**
+ * Reads a screen is showing that failed, read again once (PRD G-1, NET-04):
+ * after connectivity returns, the engine comes up, or an account switch
+ * settles. A failed read is otherwise only retried by its "Try again" (the
+ * home feeds never refetch by themselves). `why` goes to the diagnostics log.
+ */
+export async function refetchFailedReads(why: string): Promise<void> {
+  const failed = (query: Query) => query.state.status === 'error';
+  const count = queryClient.getQueryCache().findAll({ type: 'active', predicate: failed }).length;
+  if (count === 0) return;
+  appendLog('info', 'host', `${why}: retrying ${count} failed ${count === 1 ? 'read' : 'reads'}`);
+  // A read already in flight again (TanStack's own reconnect refetch) is joined, not restarted.
+  await queryClient.refetchQueries({ type: 'active', predicate: failed }, { cancelRefetch: false });
 }

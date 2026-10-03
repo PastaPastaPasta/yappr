@@ -106,3 +106,25 @@ describe('content.created', () => {
     expect(feed(recent)?.pages[0].items.map((item) => item.id)).toEqual(['older']);
   });
 });
+
+describe('engine ready', () => {
+  it('re-reads a failed read a screen shows once the engine comes up, and only then (NET-04)', async () => {
+    const read = jest.fn().mockRejectedValueOnce(new Error('SDK not configured. Call initialize() first.')).mockResolvedValue('fresh');
+    const observer = new QueryObserver(queryClient, { queryKey: queryKeys.post.detail('p1'), queryFn: read, retry: false });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(observer.getCurrentResult().status).toBe('error');
+
+    fakeEngine.setStatus({ state: 'booting' });
+    expect(read).toHaveBeenCalledTimes(1);
+    fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(observer.getCurrentResult().data).toBe('fresh');
+
+    // Staying ready re-reads nothing.
+    fakeEngine.setStatus({ state: 'ready', epoch: 2 });
+    expect(read).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+});

@@ -3,10 +3,11 @@ import { router } from 'expo-router';
 import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
-import { useSessionStore } from '~/data/session';
+import { accountCacheSettled, useSessionStore } from '~/data/session';
 import { clearSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { refetchFailedReads } from '~/state/query-client';
 import { handleOf } from '~/ui/handle';
 import { toast } from '~/ui/toast';
 
@@ -93,6 +94,11 @@ async function restartEngine(reason: string): Promise<SessionDTO | null> {
     },
     Math.max(deadline - Date.now(), 0),
   );
+  // The screens behind re-read for the new account as the session settled; one that failed (a read the
+  // restart cut short, a DAPI hiccup) would otherwise wait for its "Try again" (AUTH-10: all screens reload).
+  accountCacheSettled()
+    .then(() => refetchFailedReads('Account change settled'))
+    .catch((error: unknown) => appendLog('warn', 'host', `Reading again after the account change failed: ${errorMessage(error)}`));
   return session;
 }
 

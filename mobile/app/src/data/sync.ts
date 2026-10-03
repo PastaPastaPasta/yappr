@@ -3,7 +3,7 @@ import type { InfiniteData, QueryKey } from '@tanstack/react-query';
 
 import { engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { queryClient } from '~/state/query-client';
+import { queryClient, refetchFailedReads } from '~/state/query-client';
 
 import { startConnectivity } from './connectivity';
 import { onEngineEvent } from './events';
@@ -83,6 +83,21 @@ export function startDataLayer(): () => void {
       appendLog('warn', 'host', `Reading restored writes failed: ${errorMessage(error)}`),
     );
   });
+  // The engine came up (a boot, a restart, a degraded boot that finished): reads that failed
+  // while it could not answer are read again once (PRD NET-04: visible reads resume by themselves).
+  let ready = engineSupervisor.getStatus().state === 'ready';
+  let readyEpoch = engineSupervisor.getStatus().epoch;
+  const stopReady = engineSupervisor.subscribeStatus(() => {
+    const status = engineSupervisor.getStatus();
+    const nowReady = status.state === 'ready';
+    const cameUp = nowReady && (!ready || status.epoch !== readyEpoch);
+    ready = nowReady;
+    readyEpoch = status.epoch;
+    if (!cameUp) return;
+    refetchFailedReads('Engine ready').catch((error: unknown) =>
+      appendLog('warn', 'host', `Reading again after the engine came up failed: ${errorMessage(error)}`),
+    );
+  });
   const stops = [
     startSessionSync(),
     startWriteTracking(),
@@ -90,6 +105,7 @@ export function startDataLayer(): () => void {
     onEngineEvent('content.created', contentCreated),
     stopAccount,
     stopRestored,
+    stopReady,
   ];
   return () => stops.forEach((stop) => stop());
 }

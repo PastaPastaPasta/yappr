@@ -1,7 +1,9 @@
-import { dehydrate, InfiniteQueryObserver, QueryClient, type InfiniteData } from '@tanstack/react-query';
+import { dehydrate, InfiniteQueryObserver, QueryClient, QueryObserver, type InfiniteData } from '@tanstack/react-query';
 import type { PersistedClient } from '@tanstack/react-query-persist-client';
 
-import { cacheBuster, forDisk, persistedQuery, persistOptions } from './query-client';
+import { getLogs } from '~/engine/logs';
+
+import { cacheBuster, describeQueryKey, forDisk, persistedQuery, persistOptions, queryClient, refetchFailedReads } from './query-client';
 
 type Feed = InfiniteData<{ items: number[] }, number>;
 
@@ -67,5 +69,41 @@ describe('query persistence', () => {
   it('busts the cache per app version, engine build and network', () => {
     expect(cacheBuster).toBe('1.0.0:no-engine:devnet');
     expect(persistOptions.buster).toBe(cacheBuster);
+  });
+});
+
+describe('failed reads', () => {
+  afterEach(() => queryClient.clear());
+
+  it('go to the diagnostics log with their code (SET-08)', async () => {
+    const error = Object.assign(new Error('SDK not configured. Call initialize() first.'), { code: 'X_CODE' });
+    await queryClient
+      .fetchQuery({ queryKey: ['engine', 'devnet', 'feed', 'home', { tab: 'forYou' }], queryFn: () => Promise.reject(error), retry: false })
+      .catch(() => undefined);
+    expect(getLogs().at(-1)).toMatchObject({
+      level: 'warn',
+      source: 'host',
+      message: 'Read feed.home failed (X_CODE): SDK not configured. Call initialize() first.',
+    });
+    expect(describeQueryKey(['engine', 'devnet', 'post', 'abc', 'thread'])).toBe('post.abc.thread');
+  });
+
+  it('are read again when a screen shows them, and only those', async () => {
+    const shown = jest.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue('back');
+    const hidden = jest.fn().mockRejectedValue(new Error('down'));
+    const fine = jest.fn().mockResolvedValue('ok');
+    const observe = (key: string, queryFn: jest.Mock) =>
+      new QueryObserver(queryClient, { queryKey: ['engine', 'devnet', key], queryFn, retry: false }).subscribe(() => undefined);
+    const stops = [observe('shown', shown), observe('fine', fine)];
+    await queryClient.fetchQuery({ queryKey: ['engine', 'devnet', 'hidden'], queryFn: hidden, retry: false }).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await refetchFailedReads('Test');
+    expect(shown).toHaveBeenCalledTimes(2);
+    expect(hidden).toHaveBeenCalledTimes(1);
+    expect(fine).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData(['engine', 'devnet', 'shown'])).toBe('back');
+    expect(getLogs().some((line) => line.message === 'Test: retrying 1 failed read')).toBe(true);
+    stops.forEach((stop) => stop());
   });
 });
