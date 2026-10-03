@@ -60,14 +60,23 @@ const answers = new Map<string, { state: 'waiting' | 'replied' | 'failed'; error
  * Run a write to `confirmed`, as a patient user would: an unconfirmed ticket
  * is checked ("Check again"), and one proved not applied, or refused
  * retryably (sakura's "Quorum not found in cache" while the SDK's quorum list
- * lags), is retried, 5 s apart, up to 4 more steps.
+ * lags), is retried, 5 s apart, up to 4 more steps. `seen` hears of every
+ * ticket the write goes through (the first and each retry's).
  */
-async function settled(ticket: NonNullable<WriteTicket>): Promise<NonNullable<WriteTicket>> {
+async function settled(
+  ticket: NonNullable<WriteTicket>,
+  seen: (ticket: NonNullable<WriteTicket>) => void = () => undefined,
+): Promise<NonNullable<WriteTicket>> {
+  seen(ticket)
   let current = await pollSettled(id => engine.api.writes.get(id), ticket.id)
   for (let attempt = 0; attempt < 4 && current.state !== 'confirmed'; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 5_000))
-    if (current.retryable) current = await pollSettled(id => engine.api.writes.get(id), (await engine.api.writes.retry(current.id)).id)
-    else if (current.state === 'unconfirmed') current = await engine.api.writes.check(current.id)
+    if (current.retryable) {
+      // A retry is a new ticket: report it before waiting on it, so its documents are known even if this throws.
+      const retried = await engine.api.writes.retry(current.id)
+      seen(retried)
+      current = await pollSettled(id => engine.api.writes.get(id), retried.id)
+    } else if (current.state === 'unconfirmed') current = await engine.api.writes.check(current.id)
     else break
   }
   if (current.state !== 'confirmed') {
@@ -138,13 +147,17 @@ async function route(req: IncomingMessage): Promise<[number, unknown]> {
   switch (url.pathname) {
     case '/post': {
       const submitted = await engine.api.posts.publish({ parts: [{ text: text(body.text, 'text') }] })
+      const tickets: NonNullable<WriteTicket>[] = []
       let ticket = submitted
       try {
-        ticket = await settled(submitted)
+        ticket = await settled(submitted, seen => tickets.push(seen))
       } finally {
-        // A post that may have landed unconfirmed is still deleted on shutdown.
-        const latest = (await engine.api.writes.get(ticket.id).catch(() => null)) ?? ticket
-        for (const doc of latest.documents) posted.add(doc.id)
+        // A post that may have landed unconfirmed, by any of its tickets (a retry is a new one),
+        // is still deleted on shutdown.
+        for (const each of tickets) {
+          const latest = (await engine.api.writes.get(each.id).catch(() => null)) ?? each
+          for (const doc of [...each.documents, ...latest.documents]) posted.add(doc.id)
+        }
       }
       const id = ticket.documents.find(doc => doc.part === 0)?.id
       if (!id) throw new Error('The post has no document id')
@@ -199,7 +212,13 @@ const server = createServer((req, res) => {
   )
 })
 
-async function shutdown(): Promise<void> {
+/** Delete what the peer posted, sign out, exit. Runs once, however many signals arrive (run.sh bounds the wait). */
+let stopping: Promise<void> | null = null
+function shutdown(): Promise<void> {
+  stopping ??= cleanUp()
+  return stopping
+}
+async function cleanUp(): Promise<void> {
   server.close()
   let failed = 0
   for (const id of posted) {
@@ -216,6 +235,7 @@ async function shutdown(): Promise<void> {
   process.exit(failed ? 1 : 0)
 }
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
+  // A second signal (Ctrl-C reaches the whole process group, then run.sh sends SIGTERM) joins the first cleanup.
   process.on(signal, () => {
     shutdown().catch(() => process.exit(1))
   })
