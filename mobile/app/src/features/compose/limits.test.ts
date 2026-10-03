@@ -94,4 +94,11 @@ describe('the counter', () => {
     expect(counterLabel('x'.repeat(10), limits)).toBe('10 of 100 characters');
     expect(counterLabel('x'.repeat(103), limits)).toBe('103 of 100 characters, 3 over limit');
   });
+
+  it('says the bytes are over when only they are (D-L2i-001)', () => {
+    expect(counterLabel('😀'.repeat(501), { chars: 1000, bytes: 2000 })).toBe(
+      '501 of 1000 characters, 4 bytes over the size limit',
+    );
+    expect(counterLabel('😀'.repeat(500), { chars: 1000, bytes: 2000 })).toBe('500 of 1000 characters');
+  });
 });

@@ -470,8 +470,9 @@ All fire `selectionAsync()` on change. a11y: tabs role `tab` with selected state
 - Editor: borderless multi-line input, `body.large`, placeholder per mode, grows with content. Leading avatar `sm` per item; thread items are joined by a 2 pt `border` line between avatars (web thread line).
 - Inline highlighting: mentions, hashtags and links in `link` color; over-limit text gets `error.bg` background from the first over-limit grapheme.
 - Footer row per item (above the keyboard for the active item): counter right-aligned; on dev the byte-overflow line under the editor in `error` `caption`.
+- Editors grow rather than scroll themselves, so compose scrolls for them: when text is added at an item's end (typing, a paste) or the item goes over a limit, its end, with the byte-overflow line, is scrolled above the keyboard.
 - **Limits and counting:** the limits come from `engine.info()` capabilities (`contentLimits`); the UI counts locally on each keystroke with the rules of `lib/compose/limits.ts` (code points, UTF-8 bytes, default-ignorable characters), without importing it at runtime (PRD COMP-02).
-- **Counter:** "{current} / {limit}" with tabular figures, `caption`; `text.secondary`, `warning` at ≤ 50 left, `error` when over. The "/" is `text.decorative`. a11y label "{current} of {limit} characters" (+ ", {N} over limit"), not live.
+- **Counter:** "{current} / {limit}" with tabular figures, `caption`; `text.secondary`, `warning` at ≤ 50 left, `error` when over. The "/" is `text.decorative`. a11y label "{current} of {limit} characters" (+ ", {N} over limit", or ", {N} bytes over the size limit" when only the bytes are over), not live.
 - **Keyboard accessory bar** (sticks above the keyboard): "Add to thread" (`PlusCircleIcon` + label, `link`; hidden in reply and quote modes and at 10 items), then the counter of the active item.
 - **Mention suggestions:** a list docked above the accessory bar, max 4 visible rows (`md` avatars, name, handle), `bg.elevated`, `shadow-lg`, `radius.lg` top corners.
 
@@ -1566,7 +1567,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | compose.remove | Remove this post **(web)** |
 | compose.nsfw | NSFW |
 | compose.nsfwLabel | Mark this post as NSFW **(web)** |
-| compose.counterLabel | {current} of {limit} characters / , {N} over limit **(web)** |
+| compose.counterLabel | {current} of {limit} characters / , {N} over limit **(web)** / , {N} bytes over the size limit (only the bytes over) |
 | compose.bytesOver | {N} bytes over the size limit. Emoji and non-Latin text count extra. **(web)** |
 | compose.tagTooLong | Tags can be up to {N} characters |
 | compose.firstMention | Only the first @mention notifies the person. |
