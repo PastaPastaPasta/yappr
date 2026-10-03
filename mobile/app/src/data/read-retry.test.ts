@@ -1,12 +1,12 @@
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
-import { notifyManager, QueryObserver } from '@tanstack/react-query';
+import { notifyManager, QueryObserver, type QueryObserverOptions } from '@tanstack/react-query';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { getLogs } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
 
 import { startConnectivity } from './connectivity';
-import { EARLY_RETRY_GAP_MS, startReadRetry } from './read-retry';
+import { EARLY_RETRY_GAP_MS, NO_READ_RETRY, startReadRetry } from './read-retry';
 import { fakeEngine } from './testing/fake-engine';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -17,8 +17,8 @@ const unavailable = () => Object.assign(new Error('DAPI request timed out'), { c
 const stops: (() => void)[] = [];
 
 /** A screen showing `key`, read by `read`. */
-function show(key: string, read: jest.Mock) {
-  const observer = new QueryObserver(queryClient, { queryKey: ['engine', 'devnet', key], queryFn: read, retry: false });
+function show(key: string, read: jest.Mock, options: Partial<QueryObserverOptions> = {}) {
+  const observer = new QueryObserver(queryClient, { queryKey: ['engine', 'devnet', key], queryFn: read, retry: false, ...options });
   stops.push(observer.subscribe(() => undefined));
   return observer;
 }
@@ -105,6 +105,32 @@ it('leaves a read that failed for good, one no screen shows, and one still showi
   expect(refused).toHaveBeenCalledTimes(1);
   expect(hidden).toHaveBeenCalledTimes(1);
   expect(cached).toHaveBeenCalledTimes(1);
+});
+
+it('leaves reads with a schedule of their own alone: a poll, their own backoff, a read embedded in a card', async () => {
+  const retried = () => getLogs().filter((line) => line.message.startsWith('Dash Platform unavailable: retrying')).length;
+  const before = retried();
+  const poll = jest.fn().mockRejectedValue(unavailable());
+  show('newPosts', poll, { refetchInterval: 15_000 });
+  const dm = jest.fn().mockRejectedValue(unavailable());
+  show('dm', dm, { retry: 0, retryDelay: 1_000 });
+  const embedded = jest.fn().mockRejectedValue(unavailable());
+  show('poll', embedded, { meta: NO_READ_RETRY });
+  await jest.advanceTimersByTimeAsync(0);
+
+  await jest.advanceTimersByTimeAsync(2_000 + 4_000 + 8_000 + 30_000);
+  // The poll keeps its own 15 s, with nothing on top of it; the others are not read again.
+  expect(retried()).toBe(before);
+  expect(poll.mock.calls.length).toBeLessThanOrEqual(4);
+  expect(dm).toHaveBeenCalledTimes(1);
+  expect(embedded).toHaveBeenCalledTimes(1);
+});
+
+it('reads a failure every screen shows as "temporarily unavailable" again, an engine turned away included', async () => {
+  const busy = jest.fn().mockRejectedValueOnce(Object.assign(new Error('Too many calls waiting'), { code: 'ENGINE_BUSY' })).mockResolvedValue('posts');
+  const observer = show('hashtag', busy);
+  await jest.advanceTimersByTimeAsync(2_000);
+  expect(observer.getCurrentResult().data).toBe('posts');
 });
 
 it('sends nothing while offline or with the engine down, and goes on once it can', async () => {

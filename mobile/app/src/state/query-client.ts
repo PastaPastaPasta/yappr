@@ -15,6 +15,8 @@ declare module '@tanstack/react-query' {
     queryMeta: {
       /** Opt this query into the on-disk cache. Use `persistedQuery` rather than setting it directly. */
       persist?: boolean;
+      /** `false` keeps NET-03's backoff away from this read (`data/read-retry.ts`). Use `NO_READ_RETRY`. */
+      readRetry?: boolean;
     };
   }
 }

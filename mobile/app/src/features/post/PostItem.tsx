@@ -5,6 +5,7 @@ import { memo, useMemo } from 'react';
 import { queryKeys } from '~/data/keys';
 import { usePostRemoved } from '~/data/optimistic';
 import { useEngineQuery } from '~/data/queries';
+import { NO_READ_RETRY } from '~/data/read-retry';
 import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
@@ -77,7 +78,7 @@ function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean; re
       const stats = await readEngageStats(targetId, targetKind);
       return stats ? { id: targetId, ...stats } : null;
     },
-    { enabled: target !== undefined },
+    { enabled: target !== undefined, meta: NO_READ_RETRY },
   );
   const shown = useMemo(() => {
     if (!target) return post;
@@ -114,7 +115,7 @@ function usePoll(post: PostDTO): Loadable<CardPoll> | undefined {
   const { data, isError } = useEngineQuery(
     queryKeys.post.poll(pollId),
     (api) => api.posts.poll({ contractId, id: pollId }),
-    { enabled: poll !== undefined },
+    { enabled: poll !== undefined, meta: NO_READ_RETRY },
   );
   return useMemo(() => {
     if (!poll) return undefined;

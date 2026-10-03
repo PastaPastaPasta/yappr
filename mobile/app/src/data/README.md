@@ -55,11 +55,13 @@ const feed = useEngineInfiniteQuery(
   when the engine comes up (`sync.ts`), and when an account change settles
   (`features/auth/accounts.ts`): `refetchFailedReads()` in
   `state/query-client.ts`. A read that found Dash Platform unavailable
-  (G-11's "temporarily unavailable", `isTemporaryReadFailure`) is also read
-  again with backoff while the app is in the foreground, since a stalled DAPI
-  changes neither connectivity nor the engine's state (PRD NET-03: 2 s, 4 s,
-  8 s, then every 30 s; `read-retry.ts`). A list whose *next page* failed is
-  left out of all of these: it keeps its pages behind the "Load More" footer
+  (G-11's "temporarily unavailable", `isTemporaryReadFailure`, which the lists'
+  copy uses too) is also read again with backoff while the app is in
+  the foreground, since a stalled DAPI changes neither connectivity nor the
+  engine's state (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s; `read-retry.ts`).
+  Polls (`refetchInterval`), reads with their own `retryDelay` and reads given
+  `meta: NO_READ_RETRY` (a card's embedded read) keep their own schedule. A
+  list whose *next page* failed is left out of all of these: it keeps its pages behind the "Load More" footer
   (G-11), since a refetch would re-read every loaded page. Every failed read is logged to
   Engine diagnostics with its code (the key's path, without search text or
   DM members). Reads use `networkMode: 'always'`: offline they still reach

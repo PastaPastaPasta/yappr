@@ -312,8 +312,9 @@ export async function signOutAccount(identityId: string): Promise<boolean> {
     } else if (active) {
       // This engine booted with the account's keys in its page (and RN holds that page's source):
       // only a fresh engine drops them (ENGINE.md §11.1). A switch above restarts anyway. Like a switch,
-      // the restart then reads again what the screens behind failed to read for the signed-out reader
-      // (Home's For You, cut short by the restart and replayed on the booting engine: D-L2i-004).
+      // the restart then reads again, once, what the screens behind failed to read for the signed-out
+      // reader (a read cut short by the restart and replayed on the booting engine; one suspect for
+      // D-L2i-004, which device QA could not reproduce).
       restartEngine('Signed out').catch((error: unknown) =>
         appendLog('warn', 'host', `Restarting after sign-out failed: ${errorMessage(error)}`),
       );

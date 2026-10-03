@@ -22,12 +22,30 @@ export const EARLY_RETRY_GAP_MS = 8_000;
 const SHORTEST = READ_RETRY_DELAYS_MS[0];
 
 /**
+ * `meta` for a read embedded in a card (a bare repost's marks, a poll) rather
+ * than the list a screen shows: NET-03's backoff leaves it alone, so an
+ * outage over a feed of such cards doesn't add a read per card every 30 s.
+ */
+export const NO_READ_RETRY = { readRetry: false } as const;
+
+/**
+ * A read that re-reads on a schedule of its own: a poll (the new-posts
+ * pill, the DM status), one with its own retry backoff (DMs, the block
+ * state), or one that opted out ({@link NO_READ_RETRY}).
+ */
+const ownSchedule = (query: Query) =>
+  query.meta?.readRetry === false ||
+  query.options.retryDelay !== undefined ||
+  query.observers.some((observer) => Boolean(observer.options.refetchInterval));
+
+/**
  * A failed read showing G-11's inline error for an unavailable Platform. A
  * read that still has data shows it (a failed refresh was a toast), and
  * re-reading a list whole would reshuffle it under the reader: its next
  * pull to refresh, or the reconnect and engine re-reads, bring it up to date.
  */
-const unavailableInline = (query: Query) => query.state.data === undefined && isTemporaryReadFailure(query.state.error);
+const unavailableInline = (query: Query) =>
+  query.state.data === undefined && isTemporaryReadFailure(query.state.error) && !ownSchedule(query);
 
 /**
  * Reads a screen shows that failed because Dash Platform could not be
@@ -38,9 +56,11 @@ const unavailableInline = (query: Query) => query.state.data === undefined && is
  * (`connectivity.ts`) nor "Engine ready" (`sync.ts`) would ever re-read them.
  *
  * - "A screen shows" is TanStack's active queries: the screens mounted in
- *   the tab stacks. Only reads showing the inline error are retried
- *   ({@link unavailableInline}); a list whose next page failed keeps its
- *   "Load More".
+ *   the tab stacks, a screen kept behind the current one included (PRD
+ *   NET-03 says visible; see its 1.0 note). Only reads showing the inline
+ *   error are retried ({@link unavailableInline}): not a poll, a read with
+ *   its own backoff or one embedded in a card ({@link ownSchedule}); a list
+ *   whose next page failed keeps its "Load More".
  * - Offline, or with the engine down, a retry sends nothing and the backoff
  *   goes on: going back online and the engine coming up re-read every
  *   failed read themselves.

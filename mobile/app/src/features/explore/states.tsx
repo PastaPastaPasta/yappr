@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { View } from 'react-native';
 import { SignalSlashIcon } from 'react-native-heroicons/outline';
 
+import { isTemporaryReadFailure } from '~/data/read-error';
 import { cn } from '~/lib-allowlist';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -13,29 +14,17 @@ export const UNAVAILABLE_MESSAGE = 'Dash Platform is temporarily unavailable. Pl
 export const NETWORK_MESSAGE = 'Network error. Please check your connection and try again.';
 export const OFFLINE_MESSAGE = "You're offline. Connect to the internet and try again.";
 
-const UNAVAILABLE_CODES = new Set([
-  'ENGINE_UNAVAILABLE',
-  'ENGINE_BUSY',
-  'ENGINE_RESTARTED',
-  'ENGINE_DISCONNECTED',
-  'ENGINE_HELLO_TIMEOUT',
-  'RPC_TIMEOUT',
-  'UNAVAILABLE',
-  'TIMEOUT',
-]);
-
 /**
- * The categorized copy for a failed read (PRD G-11), from the engine's
- * error code. Undefined when there is nothing specific to say: the error
- * state then shows only "Something went wrong".
+ * The categorized copy for a failed read (PRD G-11): the unavailability copy
+ * for `isTemporaryReadFailure`, which also decides NET-03's retry.
+ * Undefined when there is nothing specific to say: the error state then
+ * shows only "Something went wrong".
  */
 export function readErrorMessage(error: unknown, offline = false): string | undefined {
   if (offline) return OFFLINE_MESSAGE;
   const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
-  if (typeof code !== 'string') return undefined;
-  if (UNAVAILABLE_CODES.has(code)) return UNAVAILABLE_MESSAGE;
   if (code === 'NETWORK') return NETWORK_MESSAGE;
-  return undefined;
+  return isTemporaryReadFailure(error) ? UNAVAILABLE_MESSAGE : undefined;
 }
 
 /** True when the OS reports no connectivity (PRD G-1); unknown counts as online. */
