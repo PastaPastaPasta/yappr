@@ -6,7 +6,7 @@ import { queryKeys } from '~/data/keys';
 import { usePostRemoved } from '~/data/optimistic';
 import { useEngineQuery } from '~/data/queries';
 import { requireAuth } from '~/data/require-auth';
-import { useCapabilities, useViewerId } from '~/data/session';
+import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
 import { usePostSafety } from '~/features/safety/use-post-safety';
@@ -220,8 +220,11 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
   const removed = listedRemoved || shownRemoved;
   const asStub = removed && removal === 'stub';
   const viewerId = useViewerId();
+  // While the engine restores the session, the cached feed is the last account's: its own and followed
+  // media stay ungated meanwhile (SAFE-07), and with nobody signed in last time everything is gated.
+  const safetyViewerId = useProvisionalViewerId();
   // Blocks, the NSFW mode and the media gate (PRD G-6, SAFE-06, SAFE-07).
-  const safety = usePostSafety(listed, shownPost, removal, viewerId);
+  const safety = usePostSafety(listed, shownPost, removal, safetyViewerId);
   const safePost = safety.post;
   const post = useMemo(() => (asStub ? { ...safePost, deleted: true } : safePost), [asStub, safePost]);
   // A post compose is still publishing: the optimistic card with its write status (PRD COMP-10).

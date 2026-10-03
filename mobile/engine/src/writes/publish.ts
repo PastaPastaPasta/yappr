@@ -1,6 +1,7 @@
 import { planPosts, publishThread, type PostToCreate, type PublishOutcome } from '@/lib/compose/publish-thread'
 import { hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaCarriesHashes, threadRootIdOf } from '@/lib/contract-topology'
+import { extractErrorMessage } from '@/lib/error-utils'
 import { imageDigestForUrl } from '@/lib/media/image-digest'
 import type { MediaHashes } from '@/lib/media/media-fingerprint'
 import type { Post } from '@/lib/types'
@@ -173,12 +174,45 @@ async function loadTarget(ref: TargetRef | null | undefined, load: (id: string) 
   return post
 }
 
+/**
+ * Whether a fingerprint failure is the link's own: its host refuses it (lib's
+ * `(HTTP 4xx)`, bar 408 and 429, which pass), or what it serves is not an
+ * image this WebView decodes (`createImageBitmap`'s InvalidStateError).
+ * Anything else (a fetch that failed in transit, a 5xx, a canvas failure)
+ * may pass, so it is classified like any error: a host with no CORS headers
+ * fails as a network error too, since fetch() can't tell the two apart.
+ */
+function linkUnreadable(error: unknown): boolean {
+  const message = extractErrorMessage(error)
+  const status = /\(HTTP (\d{3})\)/.exec(message)?.[1]
+  if (status !== undefined) {
+    const code = Number(status)
+    return code >= 400 && code < 500 && code !== 408 && code !== 429
+  }
+  return (error as { name?: unknown } | null)?.name === 'InvalidStateError' || /\bdecode/i.test(message)
+}
+
+/**
+ * The image at `url`, fingerprinted. When the link itself is at fault
+ * (`linkUnreadable`), the post fails `MEDIA_UNREADABLE` before anything is
+ * sent: posting the same link again fails the same way, so the user fixes
+ * the link instead (QA D-L3a-012).
+ */
+async function digestOf(url: string): ReturnType<typeof imageDigestForUrl> {
+  try {
+    return await imageDigestForUrl(url)
+  } catch (error) {
+    if (linkUnreadable(error)) throw new RpcError(extractErrorMessage(error), 'MEDIA_UNREADABLE')
+    throw error
+  }
+}
+
 /** v10 posts carry the image's sha256 and dHash beside its URL; they are computed here, once, from the URL. */
 async function mediaFields(url: string | null | undefined): Promise<{ mediaUrlField?: string; mediaHashes?: MediaHashes }> {
   if (!url) return {}
   const mediaUrlField = mediaUrlForContract(url)
   if (!mediaCarriesHashes()) return { mediaUrlField }
-  const digest = await imageDigestForUrl(url)
+  const digest = await digestOf(url)
   return { mediaUrlField, mediaHashes: { mediaHash: digest.hash, mediaFingerprint: digest.fingerprint } }
 }
 

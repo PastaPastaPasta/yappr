@@ -46,7 +46,7 @@ const m = vi.hoisted(() => ({
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
   },
-  reportService: { fileReport: vi.fn(), getOwnReport: vi.fn() },
+  reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
@@ -406,6 +406,35 @@ describe('graph and safety writes', () => {
     m.topology.contractTakesReports = false
     await expect(safety.report(TARGET, 0)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
   })
+
+  it('withdraws the viewer\'s report by deleting it, says when it is already gone, and checks it by its absence', async () => {
+    const { tickets, outcome, safety } = engine()
+    const REPORT = id('Report')
+    await expect(safety.withdrawReport(TARGET, 'nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    m.reportService.withdrawReport.mockResolvedValue({ success: true, transactionHash: REPORT })
+    expect(await outcome(safety.withdrawReport(TARGET, REPORT))).toMatchObject({
+      op: 'report.withdraw', state: 'confirmed', target: TARGET,
+      documents: [{ type: 'report', id: REPORT, action: 'delete', confirmed: true, contractId: YAPPR_CONTRACT_ID }],
+    })
+    expect(m.reportService.withdrawReport).toHaveBeenCalledWith(VIEWER, REPORT)
+
+    // 40101: dismissed (v9) or withdrawn on another device. Web's words, never a retry.
+    m.reportService.withdrawReport.mockResolvedValue({ success: false, error: `Document ${REPORT} not found (code=40101)` })
+    expect(await outcome(safety.withdrawReport(TARGET, REPORT))).toMatchObject({
+      state: 'failed', retryable: false,
+      error: { code: 'REPORT_GONE', userMessage: expect.stringMatching(/already gone/) },
+    })
+
+    // A gateway timeout may have landed: the report proved absent confirms it.
+    m.reportService.withdrawReport.mockResolvedValue({ success: false, error: 'Request timeout' })
+    const timedOut = await outcome(safety.withdrawReport(TARGET, REPORT))
+    expect(timedOut).toMatchObject({ state: 'unconfirmed' })
+    m.documentExists.mockResolvedValue(false)
+    expect(await tickets.check(timedOut.id)).toMatchObject({ state: 'confirmed' })
+
+    m.topology.contractTakesReports = false
+    await expect(safety.withdrawReport(TARGET, REPORT)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
+  })
 })
 
 describe('profiles.update', () => {
@@ -728,6 +757,43 @@ describe('posts.publish and posts.delete', () => {
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'pic', expect.objectContaining({
       mediaUrl: 'https://img.example/a.png', mediaHashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) },
     }))
+  })
+
+  it('fails an image link that cannot be read as MEDIA_UNREADABLE, before anything is sent', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.mediaCarriesHashes = true
+    m.imageDigest.mockRejectedValue(new Error('Could not read the image to fingerprint it (HTTP 403)'))
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/refused.png' }))
+    expect(ticket).toMatchObject({
+      state: 'failed',
+      retryable: false,
+      error: { code: 'MEDIA_UNREADABLE', outcome: 'local', userMessage: 'Could not read the image to fingerprint it (HTTP 403)' },
+    })
+    expect(m.postService.createPost).not.toHaveBeenCalled()
+
+    // What it serves is no image this WebView decodes (createImageBitmap's InvalidStateError).
+    m.imageDigest.mockRejectedValue(Object.assign(new Error('The source image could not be decoded.'), { name: 'InvalidStateError' }))
+    expect(await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/page.html' })))
+      .toMatchObject({ state: 'failed', error: { code: 'MEDIA_UNREADABLE' } })
+  })
+
+  it('fails a fingerprint that may pass next time as itself, not MEDIA_UNREADABLE', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.mediaCarriesHashes = true
+    // The fetch failed in transit: a network failure, nothing sent, and Retry may work.
+    m.imageDigest.mockRejectedValue(new TypeError('Failed to fetch'))
+    expect(await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' })))
+      .toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+    // The host is down for now (5xx), or asks to slow down (429).
+    for (const status of [503, 429]) {
+      m.imageDigest.mockRejectedValue(new Error(`Could not read the image to fingerprint it (HTTP ${status})`))
+      const ticket = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' }))
+      expect(ticket.state).toBe('failed')
+      expect(ticket.error?.code).not.toBe('MEDIA_UNREADABLE')
+    }
+    expect(m.postService.createPost).not.toHaveBeenCalled()
   })
 
   it('emits content.created with the created post as a DTO', async () => {

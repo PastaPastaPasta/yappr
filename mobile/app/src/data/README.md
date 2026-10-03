@@ -10,7 +10,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `keys.ts` | `queryKeys`: the one key factory |
 | `queries.ts` | `useEngineQuery`, `useEngineInfiniteQuery`, `engineQueryOptions`, `flattenPages` |
 | `events.ts` | `useEngineEvent(name, handler)`, `onEngineEvent`: typed engine events |
-| `session.ts` | `useSession()`, `useViewerId()`, `useCapabilities()` |
+| `session.ts` | `useSession()`, `useViewerId()`, `useProvisionalViewerId()`, `useCapabilities()` |
 | `require-auth.tsx` | `requireAuth(action)` / `useRequireAuth()`, and the "Sign in to continue" sheet |
 | `writes.ts` | `runWrite`, `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
 | `optimistic.ts` | `setViewerState`, `setFollowing`, `setAuthorBlocked`, `hidePost`, `markPostDeleted`, `dropFromLists`, `updateCachedPosts` |
@@ -97,13 +97,15 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   - `failed`: the change is undone, an error haptic fires, and a toast shows
     the engine's `categorizeError` text (or `failureMessage` when the engine
     has nothing specific, or the spec's `failureText` for the ticket). The
-    toast offers **Retry** when the engine allows one. `onFailed` runs after
-    the undo, for a failure that changed state anyway.
+    toast offers **Retry** when the engine allows one, unless the spec's
+    `failureAction` has a better action for it. `failureNeutral` makes the
+    toast neutral (no haptic, no action) for a failure that needs no fix.
+    `onFailed` runs after the undo, for a failure that changed state anyway.
   - `unconfirmed`: the write may have landed, so the change stays (PRD G-3).
     A "Not confirmed yet" toast offers **Check again**. If the check proves
     the write absent, the change is undone and the toast offers **Retry**.
     Engagements set `announceUnconfirmed: false`: G-3 counts them as done,
-    with no toast.
+    with no toast. A function decides per ticket (a sheet that says it).
   - Nothing is retried automatically. Retry applies only to the latest write
     for a key, and never while another is in flight. A failure of an older
     write for a key says nothing: the newer write decides the state.
@@ -218,6 +220,10 @@ Other session hooks:
 - `useSession()`: `status` (`unknown` / `signed-out` / `signed-in`),
   `session`, `accounts`, `identityId` and `signedIn`.
 - `useViewerId()`: the identity id alone, which re-renders less.
+- `useProvisionalViewerId()`: the same, but while the session is `unknown`
+  whoever was signed in last time (`lastIdentity()`), whose account the
+  persisted cache belongs to. For what a cached card shows during a cold
+  launch (the media gate), never for writes.
 - `useCapabilities()`: `engine.info().capabilities`, remembered across
   launches for the same engine bundle.
 

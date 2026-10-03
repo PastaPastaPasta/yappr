@@ -36,9 +36,10 @@ export interface WriteSpec<V> {
   /**
    * Toast "Not confirmed yet · Check again" when it goes `unconfirmed`
    * (default). Engagements set false: PRD G-3 counts them as done, and the
-   * next refresh shows the chain's truth.
+   * next refresh shows the chain's truth. A function decides per ticket (a
+   * sheet on screen that says it itself).
    */
-  announceUnconfirmed?: boolean;
+  announceUnconfirmed?: boolean | ((ticket: WriteTicket, vars: V) => boolean);
   onConfirmed?: (ticket: WriteTicket, vars: V) => void;
   /**
    * The failure toast for a ticket, when the write has something more
@@ -46,6 +47,18 @@ export interface WriteSpec<V> {
    * null falls back to the default.
    */
   failureText?: (ticket: WriteTicket, vars: V) => string | null;
+  /**
+   * The failure toast's action, when the write has a better one than Retry
+   * (a post whose image link can't be read: Edit, to fix the link); null
+   * keeps the default.
+   */
+  failureAction?: (ticket: WriteTicket, vars: V) => ToastAction | null;
+  /**
+   * A failure that is nobody's fault and needs no fix (a report withdrawn
+   * that was already gone): its toast is neutral, with no error haptic and
+   * no action.
+   */
+  failureNeutral?: (ticket: WriteTicket, vars: V) => boolean;
   /**
    * The latest write for its key failed, after its optimistic change was
    * undone: for a failure that changed state anyway (an unblock that deleted
@@ -274,7 +287,9 @@ function settle(ticket: WriteTicket): void {
       if (sessionFailed) {
         failSessionExpired(signerOf(ticket));
       } else {
-        fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
+        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage);
+        if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
+        else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
       }
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
@@ -288,7 +303,8 @@ function settle(ticket: WriteTicket): void {
         fail(`Your ${spec.noun} didn't go through. Try again.`, retry);
         release(entry.key, false);
       } else {
-        if (spec.announceUnconfirmed !== false) {
+        const { announceUnconfirmed: announce } = spec;
+        if (typeof announce === 'function' ? announce(ticket, entry.vars) : announce !== false) {
           toast('Not confirmed yet', {
             action: { label: 'Check again', onPress: () => checkWrite(ticket.id) },
           });

@@ -371,9 +371,15 @@ function bumpTarget(entry: PendingPost | undefined): () => void {
 
 const partText = (index: number) => `Post ${index + 1}`;
 
+/** The engine could not read the post's image link (`MEDIA_UNREADABLE`, UX_SPEC §5.4 toast.mediaUnreadable). */
+export const MEDIA_UNREADABLE_TEXT =
+  "Couldn't read the image at that link, so nothing was posted. Edit the post to fix the link or remove the image.";
+
 /** "Thread partly posted. Post {n} failed: {reason}" (UX_SPEC §5.4), or the deleted-target line for a reply. */
 function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): string | null {
   if (!entry) return null;
+  // Posting the same link again fails the same way: say what to fix (QA D-L3a-012).
+  if (ticket.error?.code === 'MEDIA_UNREADABLE') return MEDIA_UNREADABLE_TEXT;
   // PRD G-5's copy when credits or YAPP ran short, else the engine's message.
   const reason = ticket.error ? writeFailureText(ticket.error, ticket.error.userMessage || 'Something went wrong.') : 'Something went wrong.';
   if (entry.draft.replyTo && /not found|deleted/i.test(reason) && ticket.error?.outcome !== 'unknown') {
@@ -414,6 +420,9 @@ export const publishWrite: WriteSpec<PublishVars> = {
   noun: 'post',
   failureMessage: "Couldn't post. Please try again.",
   failureText: (ticket, { localId }) => failureTextFor(ticket, getEntry(localId)),
+  // An unreadable image link is fixed in compose, never by a retry.
+  failureAction: (ticket, { localId }) =>
+    ticket.error?.code === 'MEDIA_UNREADABLE' ? { label: 'Edit', onPress: () => editPending(localId) } : null,
   matches: (ticket, { localId }) => {
     const entry = getEntry(localId);
     return entry !== undefined && ticketMatches(entry, ticket);

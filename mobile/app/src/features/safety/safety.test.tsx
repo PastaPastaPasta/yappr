@@ -12,7 +12,7 @@ import { act, fireEvent, render, renderHook, screen } from '@testing-library/rea
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
 import type { ReactElement } from 'react';
-import { Linking, View } from 'react-native';
+import { Alert, Linking, View, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -22,6 +22,7 @@ import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { resetWriteTracking, sendWrite } from '~/data/writes';
 import { PostItem } from '~/features/post/PostItem';
 import { queryClient } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
@@ -207,6 +208,34 @@ describe('content gates on posts', () => {
 
     act(() => setSettings({ gateMediaFromNonFollowed: false }));
     expect(screen.queryByTestId('media-gate')).toBeNull();
+  });
+
+  describe('while the engine restores the session (D-L3a-009)', () => {
+    const stranger = () =>
+      fixturePost({ id: 'stranger', media: [IMAGE], viewer: { ...fixturePost().viewer!, followsAuthor: false } });
+    const cards = () => [
+      fixturePost({ id: 'own', author: AUTHORS.alice, media: [IMAGE] }),
+      fixturePost({ id: 'friend', media: [IMAGE] }),
+      stranger(),
+    ];
+
+    beforeEach(() => useSessionStore.setState({ status: 'unknown', session: null, accounts: [] }));
+    afterEach(() => syncStorage.removeItem('yappr.session.identity'));
+
+    it("never flashes the gate on the last account's own or followed media", () => {
+      syncStorage.setItem('yappr.session.identity', VIEWER_ID);
+      renderPosts(cards());
+      expect(screen.getAllByTestId('media-gate')).toHaveLength(1);
+
+      // Restored signed out after all: everything waits behind Show again.
+      act(() => useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] }));
+      expect(screen.getAllByTestId('media-gate')).toHaveLength(3);
+    });
+
+    it('gates everything when nobody was signed in last time', () => {
+      renderPosts(cards());
+      expect(screen.getAllByTestId('media-gate')).toHaveLength(3);
+    });
   });
 
   it('gates until the settings answer (nothing flagged shows before)', () => {
@@ -584,6 +613,165 @@ describe('ReportScreen', () => {
     expect(screen.getByText('Same link everywhere')).toBeTruthy();
     expect(screen.getByText(/Resolved by the moderators: Content removed/)).toBeTruthy();
     expect(screen.queryByTestId('report-submit')).toBeNull();
+  });
+
+  describe('withdrawing an existing report (SAFE-04)', () => {
+    const report: OwnReportDTO = {
+      id: 'r1',
+      reason: 8,
+      note: 'Phishing link',
+      createdAt: new Date('2026-09-30T12:00:00Z'),
+      status: null,
+      resolution: null,
+      moderatedAt: null,
+    };
+    const target = { id: 'p1', kind: 'post' as const, ownerId: BOB.id, rootPostId: null };
+    let answer: (choice: 'Withdraw' | 'Cancel') => void = () => undefined;
+
+    beforeEach(() => {
+      fakeEngine.method('safety.ownReport').mockResolvedValue(report);
+      jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons?: AlertButton[]) => {
+        answer = (choice) => buttons?.find((button) => button.text === choice)?.onPress?.();
+      });
+    });
+
+    afterEach(() => jest.mocked(Alert.alert).mockRestore());
+
+    it('asks first, withdraws the report, then closes with "Report withdrawn"', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      withProviders(<ReportScreen />);
+      await settle();
+
+      expect(screen.getByTestId('report-done')).toBeTruthy();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      expect(Alert.alert).toHaveBeenCalledWith(
+        copy.report.withdrawTitle,
+        copy.report.withdrawBody,
+        expect.arrayContaining([expect.objectContaining({ text: 'Withdraw', style: 'destructive' })]),
+        expect.anything(),
+      );
+      await act(async () => answer('Withdraw'));
+      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledWith(target, 'r1');
+      expect(screen.getByText(copy.report.withdrawing)).toBeTruthy();
+      expect(router.back).not.toHaveBeenCalled();
+
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(toastMessage()).toBe('Report withdrawn');
+      expect(router.back).toHaveBeenCalledTimes(1);
+      // A reopened sheet re-checks before offering the form.
+      expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toBeNull();
+    });
+
+    it('sends nothing when the confirmation is cancelled', async () => {
+      withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Cancel'));
+      expect(fakeEngine.method('safety.withdrawReport')).not.toHaveBeenCalled();
+      expect(screen.getByText(copy.report.withdraw)).toBeTruthy();
+    });
+
+    it("says so in a neutral toast when the report is already gone, and closes, as on web", async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+
+      fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            error: { code: 'REPORT_GONE', consensusCode: null, outcome: 'local', retryable: false, userMessage: 'x' },
+          }),
+        ),
+      );
+      await settle();
+      expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: copy.toast.reportGone });
+      expect(router.back).toHaveBeenCalledTimes(1);
+      // The viewer's report is read again: a reopened sheet offers the form.
+      expect(fakeEngine.method('safety.ownReport')).toHaveBeenCalledTimes(2);
+    });
+
+    it('never offers Withdraw again while an unconfirmed withdrawal may land, and checks it', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+
+      // A wait timeout (a DAPI 504): it may have landed.
+      const unconfirmed = advance(pending, {
+        state: 'unconfirmed',
+        error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+      });
+      act(() => fakeEngine.emit('write.status', unconfirmed));
+      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      expect(screen.queryByTestId('report-withdraw')).toBeNull();
+      // The open sheet says it; no toast on top.
+      expect(toastMessage()).toBeUndefined();
+      expect(router.back).not.toHaveBeenCalled();
+
+      const confirmed = advance(unconfirmed, { state: 'confirmed', error: null, lastCheckedAt: new Date() });
+      fakeEngine.method('writes.check').mockImplementation(async () => {
+        fakeEngine.emit('write.status', confirmed);
+        return confirmed;
+      });
+      await act(async () => fireEvent.press(screen.getByTestId('report-withdraw-check')));
+      expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
+      expect(toastMessage()).toBe('Report withdrawn');
+      expect(router.back).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
+    });
+
+    it('a reopened sheet follows the withdrawal an earlier one sent', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      const first = withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+      first.unmount();
+
+      // Reopened while it is on its way: Withdrawing…, never a second delete.
+      const second = withProviders(<ReportScreen />);
+      await settle();
+      expect(screen.getByText(copy.report.withdrawing)).toBeTruthy();
+      act(() =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'unconfirmed',
+            error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+          }),
+        ),
+      );
+      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      second.unmount();
+
+      // Reopened after it went unconfirmed: it says so, with Check again.
+      withProviders(<ReportScreen />);
+      await settle();
+      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
+    });
+
+    it('toasts "Not confirmed yet" when no sheet is open to say it', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      const sheet = withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+      sheet.unmount();
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
+      expect(toastMessage()).toBe('Not confirmed yet');
+    });
   });
 
   it('never offers a second report when the check fails', async () => {

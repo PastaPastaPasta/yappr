@@ -1,7 +1,8 @@
 # Report a post (PRD SAFE-04, SAFE-05; ADR E8): a fresh post by the peer
 # persona, so every run files a new report rather than finding an old one.
 # The sheet asks for a reason and submits; a community whose moderation team
-# is not seated yet refuses it with the email fallback, which also passes.
+# is not seated yet refuses it with the email fallback, which also passes. A
+# sent report shows when the sheet opens again, and is withdrawn from there.
 # The peer deletes its post afterwards.
 appId: ${APP_ID}
 tags:
@@ -43,6 +44,7 @@ tags:
             id: "report-sent|report-refused|report-existing"
           timeout: 120000
 - takeScreenshot: report-result
+# Sent: reopening the sheet shows the report, which is then withdrawn (SAFE-04).
 - runFlow:
     when:
       visible:
@@ -50,10 +52,49 @@ tags:
     commands:
       - tapOn:
           id: report-done
+      - tapOn:
+          id: more-btn-${output.peerPostId}
+      - tapOn: "Report post"
+      - extendedWaitUntil:
+          visible:
+            id: report-existing
+          timeout: 60000
 - runFlow:
     when:
       visible:
-        id: "report-refused|report-existing"
+        id: report-existing
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: report-withdraw
+          direction: DOWN
+      - tapOn:
+          id: report-withdraw
+      - extendedWaitUntil:
+          visible: "Withdraw your report\\?"
+          timeout: 10000
+      # The alert's confirm button, beside Cancel (Android's alert buttons are upper case).
+      - tapOn:
+          text: "Withdraw|WITHDRAW"
+          rightOf: "Cancel|CANCEL"
+      # Withdrawn, the sheet closes; or the network has not confirmed it yet (a DAPI wait
+      # timeout), and the sheet says so with Check again instead of Withdraw. Both pass.
+      - extendedWaitUntil:
+          notVisible:
+            id: report-existing
+          timeout: 120000
+      - takeScreenshot: report-withdrawn
+- runFlow:
+    when:
+      visible:
+        id: report-withdraw-unconfirmed
+    commands:
+      - tapOn:
+          id: report-done
+- runFlow:
+    when:
+      visible:
+        id: report-refused
     commands:
       - tapOn:
           id: "report-done|report-cancel|sheet-close"

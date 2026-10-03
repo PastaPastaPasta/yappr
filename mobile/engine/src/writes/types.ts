@@ -22,6 +22,10 @@ export type EngineErrorCode =
   | 'DUPLICATE' | 'QUOTE_HAS_TEXT' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PRIVATE_FEED_SYNC_REQUIRED' | 'UNKNOWN'
   // domain writes (M7b): the own block is gone, a followed block list still blocks
   | 'STILL_BLOCKED'
+  // a report to withdraw is already gone (dismissed, or withdrawn elsewhere)
+  | 'REPORT_GONE'
+  // the image a post names could not be read (an HTTP error, not an image, or no CORS) to fingerprint it
+  | 'MEDIA_UNREADABLE'
 
 /**
  * What is known about a write that did not confirm:
@@ -45,7 +49,7 @@ export interface EngineErrorData {
 
 export type WriteOp =
   | 'post.publish' | 'post.delete' | 'like' | 'unlike' | 'repost' | 'unrepost' | 'bookmark' | 'unbookmark'
-  | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'profile.update'
+  | 'follow' | 'unfollow' | 'block' | 'unblock' | 'report' | 'report.withdraw' | 'profile.update'
   | 'dm.send' | 'dm.group'
 
 export type WriteState = 'pending' | 'confirmed' | 'unconfirmed' | 'failed'
