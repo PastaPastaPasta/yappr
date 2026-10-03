@@ -250,6 +250,12 @@ describe('states', () => {
     expect(onPress).toHaveBeenCalled();
   });
 
+  // D-L4a-011: the signed-out "Sign in" buttons had no test ID (PRD A11Y-08).
+  it('EmptyState gives its action a test ID derived from its own', () => {
+    render(<EmptyState title="Sign in" action={{ label: 'Sign in', onPress: jest.fn() }} testID="signed-out-notifications" />);
+    expect(screen.getByRole('button', { name: 'Sign in' }).props.testID).toBe('signed-out-notifications-action');
+  });
+
   it('ErrorState has no button without a retry', () => {
     render(<ErrorState message="Nope" />);
     expect(screen.queryByRole('button')).toBeNull();

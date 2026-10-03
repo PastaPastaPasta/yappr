@@ -14,6 +14,7 @@ import { openPost, openUser } from '~/features/post/post-navigation';
 import { NotificationSettingsScreen } from '~/features/settings/ContentSettingsScreens';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
+import { largeTitleScrollView } from '~/ui/testing/large-title';
 import { useToastStore } from '~/ui/toast';
 
 import { NotificationsScreen, WINDOWED_FOOTER } from './NotificationsScreen';
@@ -130,7 +131,7 @@ beforeEach(() => {
   queryClient.clear();
   fakeEngine.setStatus({ state: 'ready', info: {} });
   useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
-  useNotificationBadge.setState({ unread: 0 });
+  useNotificationBadge.setState({ viewer: null, unread: 0 });
   useToastStore.setState({ current: null });
   fakeEngine.method('settings.get').mockResolvedValue(settings());
   fakeEngine.method('notifications.markRead').mockResolvedValue(undefined);
@@ -146,6 +147,31 @@ describe('Notifications', () => {
     expect(screen.getByText('Sign in')).toBeTruthy();
     expect(list()).not.toHaveBeenCalled();
     expect(screen.queryByTestId('notifications-settings')).toBeNull();
+  });
+
+  // D-L4i-004: the iOS large title stayed drawn over the rows. It only collapses for a scroll view
+  // first in the screen, mounted with it: not behind a banner, nor swapped in for a placeholder.
+  it('keeps one list, first in the screen, from signed out to signed in (UX_SPEC §3.4)', async () => {
+    await renderScreen();
+    const scroller = largeTitleScrollView(screen.UNSAFE_root);
+    expect(scroller?.props.testID).toBe('notifications-placeholder');
+    expect(screen.getByTestId('signed-out-notifications-action')).toBeTruthy();
+
+    list().mockResolvedValue(page(NOTIFICATIONS));
+    await act(async () => signIn());
+    expect(screen.getByText(/started following you$/)).toBeTruthy();
+    expect(largeTitleScrollView(screen.UNSAFE_root)).toBe(scroller);
+    expect(scroller?.props.testID).toBe('notifications-list');
+  });
+
+  it('keeps the list first in the screen under the engine banner', async () => {
+    signIn();
+    fakeEngine.setStatus({ state: 'failed' });
+    list().mockReturnValue(new Promise(() => undefined));
+    await renderScreen();
+
+    expect(screen.getByTestId('engine-banner')).toBeTruthy();
+    expect(largeTitleScrollView(screen.UNSAFE_root)?.props.testID).toBe('notifications-list');
   });
 
   it('lists notifications with grouped likes, phrases, snippets and unread marks (NOTIF-01)', async () => {
@@ -171,7 +197,7 @@ describe('Notifications', () => {
 
   it('marks a row read and opens its target (NOTIF-01)', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     await renderScreen();
 
@@ -193,7 +219,7 @@ describe('Notifications', () => {
 
   it('puts the row and the badge back when a read mark is refused', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     fakeEngine.method('notifications.markRead').mockRejectedValue(new Error('nope'));
     fakeEngine.method('notifications.unreadCount').mockResolvedValue(3);
@@ -240,7 +266,7 @@ describe('Notifications', () => {
 
   it('marks all as read (NOTIF-04)', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     await renderScreen();
 
@@ -253,7 +279,7 @@ describe('Notifications', () => {
 
   it('keeps mark all as read when the first list fetch lands after it', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     let landStale: (value: Page<NotificationDTO>) => void = () => undefined;
     const allRead = NOTIFICATIONS.map((n) => ({ ...n, read: true }));
     list()
@@ -270,7 +296,7 @@ describe('Notifications', () => {
 
   it('says so and restores the badge when mark all as read is refused', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     fakeEngine.method('notifications.markVisibleRead').mockRejectedValue(new Error('nope'));
     fakeEngine.method('notifications.unreadCount').mockResolvedValue(3);
@@ -481,6 +507,66 @@ describe('the tab badge (NOTIF-03)', () => {
     // The old account's answer lands late and changes nothing.
     await act(async () => finish({ added: 0, unread: 0 }));
     expect(result.current).toBe(7);
+  });
+
+  // D-L4a-008: an Android font-scale change recreates the activity, which remounts the tab bar;
+  // the badge used to drop to 0 there until the next poll answered.
+  it('keeps the count when the tab bar remounts for the same account', async () => {
+    signIn();
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 5 });
+    const first = renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+    expect(first.result.current).toBe(5);
+    first.unmount();
+
+    let finish: (value: { added: number; unread: number }) => void = () => undefined;
+    fakeEngine.method('notifications.poll').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    const { result } = renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+    expect(result.current).toBe(5);
+    await act(async () => finish({ added: 0, unread: 6 }));
+    expect(result.current).toBe(6);
+  });
+
+  it('starts the next account from 0 until its own poll answers', async () => {
+    signIn();
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 5 });
+    const { result } = renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+    expect(result.current).toBe(5);
+
+    let finish: (value: { added: number; unread: number }) => void = () => undefined;
+    fakeEngine.method('notifications.poll').mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    act(() => useSessionStore.setState({ session: { ...viewer, identityId: AUTHORS.bob.id } }));
+    await act(async () => {});
+    expect(result.current).toBe(0);
+    await act(async () => finish({ added: 0, unread: 2 }));
+    expect(result.current).toBe(2);
+  });
+
+  it("never shows the last account's count to the next one, signed out in between", async () => {
+    signIn();
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 7 });
+    const rendered: number[] = [];
+    renderHook(
+      () => {
+        const unread = useNotificationsBadge();
+        rendered.push(unread);
+        return unread;
+      },
+      { wrapper },
+    );
+    await act(async () => {});
+    expect(rendered.at(-1)).toBe(7);
+
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    fakeEngine.method('notifications.poll').mockReturnValue(new Promise(() => undefined));
+    rendered.length = 0;
+    act(() => useSessionStore.setState({ status: 'signed-in', session: { ...viewer, identityId: AUTHORS.bob.id } }));
+    await act(async () => {});
+    // Every render, the first included, shows 0 until the new account's own count lands.
+    expect(rendered.length).toBeGreaterThan(0);
+    expect(rendered.every((unread) => unread === 0)).toBe(true);
   });
 
   it('refetches the lists when a poll brings something new', async () => {

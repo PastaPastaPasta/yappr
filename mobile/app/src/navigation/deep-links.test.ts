@@ -128,6 +128,13 @@ describe('toAppRoute: cold vs warm links', () => {
     expect(toAppRoute(`yappr://post?id=${X}`, release)).toBe(`/post/${X}`);
   });
 
+  it('pins notification settings to Profile for the launch link only', () => {
+    const url = 'https://yap.pr/settings?section=notifications';
+    expect(toAppRoute(url, cold)).toBe('/(profile)/settings/notifications');
+    expect(toAppRoute(url, release)).toBe('/settings/notifications');
+    expect(toAppRoute('https://yap.pr/settings?section=privacy', cold)).toBe('/settings/privacy');
+  });
+
   it('leaves tab roots and conversations alone', () => {
     expect(toAppRoute('yappr://explore', cold)).toBe('/explore');
     expect(toAppRoute(`yappr://messages/${CONVO}`, cold)).toBe(`/messages/${CONVO}`);

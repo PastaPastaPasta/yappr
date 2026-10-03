@@ -25,10 +25,25 @@ import type { MobileFilter } from './notification-model';
 /** NOTIF-03: every 30 s while the app is in the foreground and signed in. */
 export const POLL_INTERVAL_MS = 30_000;
 
-/** The unread count of enabled types, from the engine's `notifications.count` and polls. */
-export const useNotificationBadge = create<{ unread: number }>()(() => ({ unread: 0 }));
+/**
+ * The unread count of enabled types, from the engine's `notifications.count`
+ * and polls, with the account it belongs to. Each account has its own read
+ * state, so the count is only read for that account (`useUnreadCount`): the
+ * next one never sees it, not even for the render before its own count lands.
+ */
+export const useNotificationBadge = create<{ viewer: string | null; unread: number }>()(() => ({
+  viewer: null,
+  unread: 0,
+}));
 
-const setUnread = (unread: number) => useNotificationBadge.setState({ unread: Math.max(0, unread) });
+/** Sets the count, for `viewer` (by default the account it already belongs to: read marks). */
+const setUnread = (unread: number, viewer = useNotificationBadge.getState().viewer) =>
+  useNotificationBadge.setState({ viewer, unread: Math.max(0, unread) });
+
+/** The unread count for `viewer`; 0 signed out, or while the count is still another account's. */
+export function useUnreadCount(viewer: string | null): number {
+  return useNotificationBadge((s) => (viewer !== null && s.viewer === viewer ? s.unread : 0));
+}
 
 type ListData = InfiniteData<Page<NotificationDTO>>;
 
@@ -56,7 +71,7 @@ export function pollNotifications(viewer: string | null): Promise<boolean> {
       .then(
         async ({ added, unread, blockedChanged }) => {
           if (polling !== current) return false;
-          setUnread(unread);
+          setUnread(unread, viewer);
           if (added === 0 && !blockedChanged) return false;
           await refetchLists();
           return true;
@@ -84,11 +99,12 @@ export function useNotificationsBadge(): number {
   const viewerId = useViewerId();
   const active = useAppActive();
 
-  // Each account has its own read state: the old count means nothing to the next one.
-  useEffect(() => setUnread(0), [viewerId]);
-
+  // The count stays with its account (`useUnreadCount`), so the tab bar remounting (an Android
+  // font-scale or other configuration change recreates the activity) keeps it until the next
+  // poll lands, instead of hiding the badge until then (D-L4a-008), and the next account starts
+  // from 0, never from the last one's count.
   useEngineEvent('notifications.count', ({ unread }) => {
-    if (viewerId) setUnread(unread);
+    if (viewerId) setUnread(unread, viewerId);
   });
 
   useEffect(() => {
@@ -100,8 +116,7 @@ export function useNotificationsBadge(): number {
     return () => clearInterval(timer);
   }, [viewerId, active]);
 
-  const unread = useNotificationBadge((s) => s.unread);
-  return viewerId ? unread : 0;
+  return useUnreadCount(viewerId);
 }
 
 /** One filter of the list, 30 a page, newest first (`notifications.list`). */

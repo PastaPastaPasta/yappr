@@ -10,7 +10,7 @@ import { lastIdentity, useSession } from '~/data/session';
 import { engineSupervisor } from '~/engine';
 import { EngineBanner } from '~/engine/EngineBanner';
 import { useEngineStatus } from '~/engine/hooks';
-import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
+import { SignedOutEmptyState } from '~/features/auth/SignedOutPlaceholder';
 import { useOffline } from '~/features/home/use-app-active';
 import { openExternal, openPost, openUser } from '~/features/post/post-navigation';
 import { useSettings } from '~/features/settings/settings-data';
@@ -19,7 +19,6 @@ import { Button } from '~/ui/Button';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
 import { RowSkeleton, SkeletonGroup } from '~/ui/Skeleton';
-import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { FilterChips } from '~/ui/Tabs';
 import { Text } from '~/ui/Text';
@@ -41,8 +40,8 @@ import {
   markAllNotificationsRead,
   markNotificationsRead,
   pollNotifications,
-  useNotificationBadge,
   useNotificationList,
+  useUnreadCount,
 } from './notifications-data';
 import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
 
@@ -65,8 +64,8 @@ function Loading() {
 }
 
 function HeaderActions({ canMarkAll }: { canMarkAll: boolean }) {
-  // Settings live on the Profile tab; the anchor puts Profile under it, so Back works there.
-  const openSettings = () => router.push('/settings/notifications', { withAnchor: true });
+  // A shared route: it opens on this tab's stack, so Back returns here (UX_SPEC §3.2).
+  const openSettings = () => router.push('/settings/notifications');
   const markAll = () => {
     markAllNotificationsRead().catch(() => undefined);
   };
@@ -138,7 +137,7 @@ export function NotificationsScreen() {
 
   const list = useNotificationList(filter, signedIn);
   const rows = useMemo(() => groupNotifications(list.items), [list.items]);
-  const badge = useNotificationBadge((s) => s.unread);
+  const badge = useUnreadCount(viewerId);
   const canMarkAll = signedIn && (badge > 0 || rows.some((row) => row.unreadIds.length > 0));
 
   const onRowPress = useCallback((row: NotificationRowModel) => {
@@ -190,17 +189,10 @@ export function NotificationsScreen() {
     />
   );
 
-  if (!signedIn) {
-    return (
-      <>
-        {header}
-        <SignedOutPlaceholder kind="notifications" />
-      </>
-    );
-  }
-
   let empty;
-  if (list.data === undefined && (engineState === 'failed' || engineState === 'unsupported')) {
+  if (!signedIn) {
+    empty = <SignedOutEmptyState kind="notifications" />;
+  } else if (list.data === undefined && (engineState === 'failed' || engineState === 'unsupported')) {
     empty = (
       <ErrorState
         message={UNAVAILABLE_MESSAGE}
@@ -252,12 +244,18 @@ export function NotificationsScreen() {
     }
   }
 
+  // The list is the screen's first native view from the first render, in every state (signed
+  // out, loading, empty, error): iOS only collapses a large title into the bar for a scroll view
+  // it finds down the first-subview chain when the screen appears, so a banner in front of the
+  // list, or a list swapped in after a placeholder, leaves the title fixed over the rows
+  // (UX_SPEC §3.4). Banners sit in the list header instead, and scroll with it (UX_SPEC §2.18).
+  // Part of D-L4i-004: QA also saw it in a steady state this doesn't explain, still to be checked
+  // on a device.
   return (
-    <Screen>
+    <>
       {header}
-      <EngineBanner />
       <FlashList
-        data={rows}
+        data={signedIn ? rows : []}
         keyExtractor={(row) => row.key}
         getItemType={(row) => (row.preview ? 'post' : 'plain')}
         renderItem={({ item }) => (
@@ -270,12 +268,12 @@ export function NotificationsScreen() {
         )}
         extraData={`${sensitiveMode}:${viewerId}`}
         ListHeaderComponent={
-          <FilterChips
-            options={filters}
-            value={filter}
-            onChange={setChosen}
-            testID="notifications-filters"
-          />
+          signedIn ? (
+            <>
+              <EngineBanner />
+              <FilterChips options={filters} value={filter} onChange={setChosen} testID="notifications-filters" />
+            </>
+          ) : null
         }
         ListEmptyComponent={empty}
         ListFooterComponent={footer}
@@ -286,16 +284,20 @@ export function NotificationsScreen() {
         maintainVisibleContentPosition={{ disabled: true }}
         contentInsetAdjustmentBehavior="automatic"
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={c.accent}
-            colors={[c.accent]}
-            progressBackgroundColor={c.bg}
-          />
+          signedIn ? (
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={c.accent}
+              colors={[c.accent]}
+              progressBackgroundColor={c.bg}
+            />
+          ) : undefined
         }
-        testID="notifications-list"
+        style={{ backgroundColor: c.bg }}
+        // `notifications-list` only once there is a list to show (the e2e flows rely on it).
+        testID={signedIn ? 'notifications-list' : 'notifications-placeholder'}
       />
-    </Screen>
+    </>
   );
 }

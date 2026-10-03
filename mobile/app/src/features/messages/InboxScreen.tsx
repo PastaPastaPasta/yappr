@@ -14,7 +14,6 @@ import { ContextMenu } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
-import { Screen } from '~/ui/Screen';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { toast } from '~/ui/toast';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
@@ -149,6 +148,7 @@ function SwipeToDelete({ conversation, children }: { conversation: ConversationD
  * conversations behind a footer link, and the signed-out and locked states.
  */
 export function InboxScreen() {
+  const c = useColors();
   const { signedIn } = useDmViewer();
   const backend = useDmBackend();
   const v5 = backend !== 'legacy';
@@ -173,9 +173,9 @@ export function InboxScreen() {
   const [query, setQuery] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const all = useMemo(() => sortConversations(list.data ?? []), [list.data]);
-  const hiddenCount = all.filter((c) => c.flags.hidden).length;
+  const hiddenCount = all.filter((convo) => convo.flags.hidden).length;
   const rows = useMemo(
-    () => all.filter((c) => (showHidden || !c.flags.hidden) && matchesSearch(c, query)),
+    () => all.filter((convo) => (showHidden || !convo.flags.hidden) && matchesSearch(convo, query)),
     [all, showHidden, query],
   );
 
@@ -214,28 +214,13 @@ export function InboxScreen() {
     />
   );
 
-  if (!signedIn) {
-    return (
-      <Screen scroll>
-        {header}
-        <DmSignedOut groups={v5} />
-      </Screen>
-    );
-  }
-
-  if (locked) {
-    return (
-      <Screen scroll>
-        {header}
-        <DmLocked onUnlock={() => setUnlockOpen(true)} />
-        <UnlockSheet open={unlockOpen} onClose={closeUnlock} />
-      </Screen>
-    );
-  }
-
   const error = status.error ?? list.error;
   let empty;
-  if ((status.isError && !status.data) || (list.isError && !list.data)) {
+  if (!signedIn) {
+    empty = <DmSignedOut groups={v5} />;
+  } else if (locked) {
+    empty = <DmLocked onUnlock={() => setUnlockOpen(true)} />;
+  } else if ((status.isError && !status.data) || (list.isError && !list.data)) {
     empty = (
       <ErrorState
         message={readErrorMessage(error)}
@@ -273,8 +258,10 @@ export function InboxScreen() {
     );
   }
 
+  // Signed in with the key: the inbox, its header and footer (else just the empty state).
+  const inbox = signedIn && !locked;
   const recovery = status.data?.recovery ?? null;
-  const listHeader = (
+  const listHeader = inbox ? (
     <View>
       {all.length > 0 ? <SearchBox value={query} onChange={setQuery} /> : null}
       {offline ? <InboxNotice text="You're offline. New messages show up when you reconnect." testID="messages-offline" /> : null}
@@ -283,10 +270,10 @@ export function InboxScreen() {
       ) : null}
       {recovery ? <RestoringBanner recovery={recovery} /> : null}
     </View>
-  );
+  ) : null;
 
   const footer =
-    v5 && hiddenCount > 0 && !query.trim() ? (
+    inbox && v5 && hiddenCount > 0 && !query.trim() ? (
       <View className="items-center py-4">
         <LinkText
           label={showHidden ? 'Hide deleted conversations' : `Show ${hiddenCount} deleted conversation${hiddenCount === 1 ? '' : 's'}`}
@@ -297,11 +284,16 @@ export function InboxScreen() {
       </View>
     ) : null;
 
+  // The list is the screen's first native view from the first render, in every state (signed
+  // out, locked, loading, empty): iOS only collapses a large title into the bar for a scroll view
+  // it finds down the first-subview chain when the screen appears, so a placeholder swapped for
+  // the list later leaves the title fixed over the rows (UX_SPEC §3.4). Part of D-L4i-004: QA
+  // also saw it in a steady state this doesn't explain, still to be checked on a device.
   return (
-    <Screen>
+    <>
       {header}
       <FlashList
-        data={rows}
+        data={inbox ? rows : []}
         keyExtractor={(item) => item.key}
         getItemType={(item) => (swipes(item) ? 'swipe' : 'row')}
         renderItem={({ item }) => {
@@ -320,9 +312,16 @@ export function InboxScreen() {
         contentInsetAdjustmentBehavior="automatic"
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.yappr500} colors={[colors.yappr500]} />}
-        testID="messages-list"
+        refreshControl={
+          inbox ? (
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.yappr500} colors={[colors.yappr500]} />
+          ) : undefined
+        }
+        style={{ backgroundColor: c.bg }}
+        // `messages-list` only once there is an inbox to show (the e2e flows rely on it).
+        testID={inbox ? 'messages-list' : 'messages-placeholder'}
       />
-    </Screen>
+      {locked ? <UnlockSheet open={unlockOpen} onClose={closeUnlock} /> : null}
+    </>
   );
 }
