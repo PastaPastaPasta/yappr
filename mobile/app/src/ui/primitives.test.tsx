@@ -8,6 +8,7 @@ import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
 import { badgeLabel, CountBadge } from './Badge';
 import { Button } from './Button';
+import { relativeTimeCadence } from './clock';
 import { ConfirmDialog, confirmAlert } from './Dialog';
 import { EmptyState, ErrorState } from './EmptyState';
 import { IconButton } from './IconButton';
@@ -21,7 +22,6 @@ import { Text } from './Text';
 import { TextField } from './TextField';
 import { toast, toastDuration, useToastStore } from './toast';
 import { ToastHost } from './ToastHost';
-import { nextUpdateDelayMs } from './use-relative-time';
 import { followLabel, UserRow } from './UserRow';
 import { WriteStatus } from './WriteStatus';
 
@@ -472,12 +472,16 @@ describe('UserRow', () => {
   });
 });
 
-describe('nextUpdateDelayMs', () => {
-  it('ticks every second, then on the minute, hour and day boundary, then stops', () => {
-    const now = 1_000_000_000_000;
-    expect(nextUpdateDelayMs(now - 10_000, now)).toBe(1000);
-    expect(nextUpdateDelayMs(now - 90_000, now)).toBe(30_000);
-    expect(nextUpdateDelayMs(now - 3_600_000 * 2.5, now)).toBe(1_800_000);
-    expect(nextUpdateDelayMs(now - 8 * 86_400_000, now)).toBeNull();
+describe('relativeTimeCadence', () => {
+  it('ticks every second under a minute, then each minute, and stops at a fixed date', () => {
+    expect(relativeTimeCadence(0)).toBe('second');
+    expect(relativeTimeCadence(10_000)).toBe('second');
+    // Ahead of this device's clock: "0s" until then, checked each second only when close.
+    expect(relativeTimeCadence(-5_000)).toBe('second');
+    expect(relativeTimeCadence(-3_600_000)).toBe('minute');
+    expect(relativeTimeCadence(90_000)).toBe('minute');
+    expect(relativeTimeCadence(3_600_000 * 2.5)).toBe('minute');
+    expect(relativeTimeCadence(8 * 86_400_000)).toBeNull();
+    expect(relativeTimeCadence(Number.NaN)).toBeNull();
   });
 });
