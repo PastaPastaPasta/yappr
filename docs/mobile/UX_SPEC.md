@@ -941,7 +941,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - **Header title:** "Post" or "Reply". "⋯" opens the focused item's context menu.
-- **Counts row** shows only non-zero counts; each opens Engagements on that tab.
+- **Counts row** shows only non-zero counts; each opens Engagements on that tab. On dev (`repostsAreQuotes`) a bare repost is a quote post, so reposts and quotes are told apart by `posts.engagementCounts` (the Engagements screen's split) and stay out of the row until it answers; counts read off a quote list that filled up show as floors ("100+ Reposts").
 - **Missing focused item:** stub (2.5) as the focused item; replies still listed (POST-05); reply bar replaced by the disabled note.
 - **Not found:** empty state "Post not found" with "Go back".
 - **Loading:** focused post skeleton; "Loading replies…" row under it.
