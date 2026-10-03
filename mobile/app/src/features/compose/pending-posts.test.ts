@@ -240,6 +240,44 @@ it('retries a ticket the engine proved did not land in place', async () => {
   expect(pendingStatus(only()!)).toEqual({ state: 'posting' });
 });
 
+it("a quote on v10 takes the viewer's one slot on the quoted post once confirmed (D-L3i-002)", async () => {
+  fakeEngine.setStatus({
+    state: 'ready',
+    info: { capabilities: { contentLimits: { chars: 1000, bytes: 2000 }, repostsAreQuotes: true } as CapabilitiesDTO },
+  });
+  const quoted = fixturePost({ id: 'quoted-1', author: AUTHORS.bob, stats: { likes: 0, reposts: 0, replies: 0, quotes: 0 } });
+  // The feed's card of the quoted post, read before the quote.
+  queryClient.setQueryData(HOME, page([quoted]));
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+
+  publish(['My take'], { mode: 'quote', targetId: 'quoted-1' }, quoted);
+  await settle();
+  const card = () => queryClient.getQueryData<InfiniteData<Page<PostDTO>>>(HOME)?.pages[0]?.items.find((p) => p.id === 'quoted-1');
+  expect(card()).toMatchObject({ stats: { quotes: 1 }, viewer: { reposted: false } });
+
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'confirmed', documents: [doc(0, 'quote-1')] })));
+  // Its sheet now offers the quote, never a second repost the one slot would refuse.
+  expect(card()).toMatchObject({
+    stats: { quotes: 1 },
+    viewer: { reposted: true, ownQuoteId: 'quote-1', ownQuoteBare: false },
+  });
+});
+
+it('a quote off v10 leaves the repost mark alone: there a quote is not a repost', async () => {
+  const quoted = fixturePost({ id: 'quoted-2', author: AUTHORS.bob });
+  queryClient.setQueryData(queryKeys.post.detail('quoted-2'), quoted);
+  const t = publishTicket();
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  publish(['My take'], { mode: 'quote', targetId: 'quoted-2' }, quoted);
+  await settle();
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'confirmed', documents: [doc(0, 'quote-2')] })));
+  expect(queryClient.getQueryData<PostDTO>(queryKeys.post.detail('quoted-2'))).toMatchObject({
+    stats: { quotes: quoted.stats.quotes + 1 },
+    viewer: { reposted: false, ownQuoteId: null },
+  });
+});
+
 it('a reply goes under its parent in the thread and moves its reply count', async () => {
   const parent = fixturePost({ id: 'parent-1', author: AUTHORS.bob });
   const thread: ThreadDTO = {

@@ -8,8 +8,8 @@ import { engine, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import { EMPTY_VIEWER, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
-import { useSessionStore } from '~/data/session';
+import { EMPTY_VIEWER, holdOwnQuote, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
+import { getCapabilities, useSessionStore } from '~/data/session';
 import { checkWrite, runWrite, writeFailureText, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
@@ -747,7 +747,8 @@ const SUCCESS = {
  * The post landed: the card becomes the real post (seeded by
  * `content.created` when it arrived) and stays pinned for a while. `ticket`
  * is the ticket that confirmed it; null for a cut-short call whose post a
- * list showed, which settles quietly (the user asked for nothing).
+ * list showed, which settles quietly (the user asked for nothing). On dev a
+ * quote takes the viewer's one slot on the quoted post (PRD ENG-02).
  */
 function confirmed(entry: PendingPost, ticket: WriteTicket | null): void {
   const realId = firstPostedId(ticket ? { ...entry, ticket } : entry);
@@ -756,6 +757,8 @@ function confirmed(entry: PendingPost, ticket: WriteTicket | null): void {
   if (post) patchEntry(entry.localId, { ...(ticket ? { ticket } : {}), post, confirmedAt: Date.now(), orphaned: false });
   else dropEntry(entry.localId);
   replaceInCaches(entry.localId, post);
+  const quoted = entry.draft.quote;
+  if (quoted && realId && getCapabilities()?.repostsAreQuotes) holdOwnQuote(quoted.id, realId);
   deleteDraft(entry.identityId, entry.context, entry.localId);
   deleteDraft(entry.identityId, { ...entry.context, pendingId: entry.localId });
   if (!ticket) return;

@@ -146,8 +146,11 @@ Anything with a post's `id` and `stats` is a post: feed pages, threads,
 details, quoted posts and `engage.stats` entries. So a new query shape is
 covered without registering it.
 
-- `setViewerState(postId, { liked | reposted | bookmarked | ownQuoteId })`
-  moves the counts with the flags.
+- `setViewerState(postId, { liked | reposted | bookmarked | ownQuoteId | ownQuoteBare })`
+  moves the counts with the flags. On v10 a repost read back with its slot
+  (`ownQuoteId`) is counted among the quotes, so undoing it moves `quotes`.
+- `holdOwnQuote(quotedId, quoteId)` marks the viewer's v10 slot held by a
+  quote with text once it is published (the quote count moved with it).
 - `setFollowing(authorId, follows)` updates the author's posts, profile
   (and its follower count) and user rows.
 - `setAuthorBlocked(authorId, blocked)` sets `viewer.authorBlocked` on the
@@ -157,9 +160,10 @@ covered without registering it.
   `dropFromLists(id)` takes it out of cached lists (not threads).
 - **Patches change only the patched marks.** A copy's unknown fields stay
   unknown, and counts move only where the copy knew the old mark.
-- **Each helper returns its undo.** The undo applies to every copy,
-  including copies cached after the change (a detail screen seeded from a
-  patched card). It also refetches the post's (or the author's profile's)
+- **Each helper returns its undo.** The undo applies to every copy the
+  change touched and to copies cached after it (a detail screen seeded from
+  a patched card); `setViewerState`'s leaves a copy that already read that
+  way alone. It also refetches the post's (or the author's profile's)
   detail family, so a copy that was already right comes back right.
 - **Patches don't disturb queries.** Untouched objects keep their identity,
   so memoized cells don't re-render. A patched query keeps its age, so stale

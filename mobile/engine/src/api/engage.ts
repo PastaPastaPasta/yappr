@@ -50,7 +50,7 @@ export const engage = {
         stats: { likes: counts?.likes ?? 0, reposts: counts?.reposts ?? 0, replies: counts?.replies ?? 0, quotes: counts?.quotes ?? 0 },
       }
       if (signedIn) {
-        entry.viewer = { liked: mark?.liked === true, reposted: mark?.reposted === true, bookmarked: mark?.bookmarked === true, ownQuoteId: mark?.ownQuote?.id ?? null }
+        entry.viewer = { liked: mark?.liked === true, reposted: mark?.reposted === true, bookmarked: mark?.bookmarked === true, ownQuoteId: mark?.ownQuote?.id ?? null, ownQuoteBare: mark?.ownQuote?.bare === true }
       }
       return [id, entry]
     }))

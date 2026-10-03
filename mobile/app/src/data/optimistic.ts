@@ -98,15 +98,27 @@ export const EMPTY_VIEWER: ViewerStateDTO = {
   reposted: false,
   bookmarked: false,
   ownQuoteId: null,
+  ownQuoteBare: false,
   authorBlocked: false,
   followsAuthor: false,
 };
 
 /** The viewer marks an engagement toggles; the counts follow the flags. */
-export type ViewerPatch = Partial<Pick<ViewerStateDTO, 'liked' | 'reposted' | 'bookmarked' | 'ownQuoteId'>>;
+export type ViewerPatch = Partial<Pick<ViewerStateDTO, 'liked' | 'reposted' | 'bookmarked' | 'ownQuoteId' | 'ownQuoteBare'>>;
 
 const FLAGS = ['liked', 'reposted', 'bookmarked'] as const;
 const COUNTED: Partial<Record<(typeof FLAGS)[number], 'likes' | 'reposts'>> = { liked: 'likes', reposted: 'reposts' };
+
+/**
+ * The count the viewer's repost is in. v10 has no repost documents: the
+ * slot's post (`ownQuoteId`, a bare repost or a quote with text) is read back
+ * among the quotes. A repost made here, its post not read back yet, is in
+ * `reposts` until then, as every repost is on v2 and v9.
+ */
+function repostCount(before: Partial<ViewerStateDTO> | undefined, after: Partial<ViewerStateDTO>): 'reposts' | 'quotes' {
+  const slot = after.reposted ? after : before;
+  return slot?.ownQuoteId ? 'quotes' : 'reposts';
+}
 
 /**
  * Changes only the patched marks; fields the copy doesn't know stay unknown.
@@ -118,44 +130,72 @@ function applyViewerPatch(post: CachedPost, patch: ViewerPatch): CachedPost {
   const viewer: Partial<ViewerStateDTO> = { ...known };
   const stats = { ...post.stats };
   let changed = false;
+  if (patch.ownQuoteId !== undefined && viewer.ownQuoteId !== patch.ownQuoteId) {
+    viewer.ownQuoteId = patch.ownQuoteId;
+    changed = true;
+  }
+  if (patch.ownQuoteBare !== undefined && viewer.ownQuoteBare !== patch.ownQuoteBare) {
+    viewer.ownQuoteBare = patch.ownQuoteBare;
+    changed = true;
+  }
   for (const flag of FLAGS) {
     const value = patch[flag];
     if (value === undefined || viewer[flag] === value) continue;
     const knewIt = typeof known?.[flag] === 'boolean';
     viewer[flag] = value;
     changed = true;
-    const count = COUNTED[flag];
+    const count = flag === 'reposted' ? repostCount(known, viewer) : COUNTED[flag];
     if (count && knewIt) stats[count] = Math.max(0, stats[count] + (value ? 1 : -1));
-  }
-  if (patch.ownQuoteId !== undefined && viewer.ownQuoteId !== patch.ownQuoteId) {
-    viewer.ownQuoteId = patch.ownQuoteId;
-    changed = true;
   }
   return changed ? { ...post, viewer, stats } : post;
 }
 
+/** The hashes of the cached engine queries. */
+const cachedQueries = () =>
+  new Set(queryClient.getQueryCache().findAll({ queryKey: queryKeys.all }).map((query) => query.queryHash));
+
 /**
  * Sets the viewer's marks on every cached copy of a post, moving the like and
  * repost counts with the flags (a copy already in that state is left alone).
- * The undo sets the opposite marks on every copy, including copies cached
- * since (a detail screen seeded from a patched card), and refetches the
- * post's detail family so a copy that was already right comes back right.
+ * The undo sets the opposite marks on the copies it changed and on copies
+ * cached since (a detail screen seeded from a patched card), never on a copy
+ * that already read that way (a stale feed card would gain a repost), and
+ * refetches the post's detail family so a copy that was already right comes
+ * back right.
  */
 export function setViewerState(postId: string, patch: ViewerPatch): () => void {
-  let previousQuote: string | null | undefined;
-  updateCachedPosts(postId, (post) => {
-    previousQuote ??= post.viewer?.ownQuoteId ?? null;
+  let previous: Partial<ViewerStateDTO> | undefined;
+  const before = cachedQueries();
+  const changed = updateCachedPosts(postId, (post) => {
+    previous ??= post.viewer;
     return applyViewerPatch(post, patch);
   });
   const undo: ViewerPatch = {};
   for (const flag of FLAGS) {
     if (patch[flag] !== undefined) undo[flag] = !patch[flag];
   }
-  if (patch.ownQuoteId !== undefined) undo.ownQuoteId = previousQuote ?? null;
+  if (patch.ownQuoteId !== undefined) undo.ownQuoteId = previous?.ownQuoteId ?? null;
+  if (patch.ownQuoteBare !== undefined) undo.ownQuoteBare = previous?.ownQuoteBare ?? false;
   return () => {
-    updateCachedPosts(postId, (post) => applyViewerPatch(post, undo));
+    const touched = new Set([...cachedQueries()].filter((hash) => changed.has(hash) || !before.has(hash)));
+    updateCachedPosts(postId, (post) => applyViewerPatch(post, undo), touched);
     queryClient.invalidateQueries({ queryKey: queryKeys.post.detail(postId) }).catch(() => undefined);
   };
+}
+
+/**
+ * The viewer's quote with text `quoteId` of `quotedId`, published on dev
+ * (`repostsAreQuotes`), fills their one quote-or-repost slot: every cached
+ * copy of the quoted post reads as reposted by that quote, so its repost
+ * sheet offers "Delete your quote" / "View your quote" and never a second
+ * repost (PRD ENG-02). The counts stay: the quote count moved with the publish.
+ */
+export function holdOwnQuote(quotedId: string, quoteId: string): void {
+  updateCachedPosts(quotedId, (post) =>
+    post.viewer?.reposted === true && post.viewer.ownQuoteId === quoteId && post.viewer.ownQuoteBare === false
+      ? post
+      : { ...post, viewer: { ...post.viewer, reposted: true, ownQuoteId: quoteId, ownQuoteBare: false } },
+  );
 }
 
 /**

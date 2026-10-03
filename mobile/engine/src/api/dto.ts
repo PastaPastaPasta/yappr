@@ -80,6 +80,12 @@ export interface ViewerStateDTO {
   bookmarked: boolean
   /** v10: the viewer's own quote or bare repost of this target (the one slot), for undo. */
   ownQuoteId: string | null
+  /**
+   * v10: `ownQuoteId` is a bare repost (no text, media or embed of its own;
+   * web's `ownQuote.bare`), undone with "Undo repost". False for a quote with
+   * text, which is deleted as a post ("Delete your quote"), and when there is none.
+   */
+  ownQuoteBare: boolean
   /** The viewer blocked the author (web hides or collapses the card). */
   authorBlocked: boolean
   followsAuthor: boolean
@@ -168,7 +174,7 @@ export interface EngagementDTO {
 /** `engage.stats`: fresh counts and, signed in, the viewer's marks. */
 export interface EngageStatsDTO {
   stats: PostStatsDTO
-  viewer?: Pick<ViewerStateDTO, 'liked' | 'reposted' | 'bookmarked' | 'ownQuoteId'>
+  viewer?: Pick<ViewerStateDTO, 'liked' | 'reposted' | 'bookmarked' | 'ownQuoteId' | 'ownQuoteBare'>
 }
 
 /**
@@ -409,6 +415,7 @@ export function toPostDTO(post: Post, options: PostMappingOptions): PostDTO {
           reposted: post.reposted === true,
           bookmarked: post.bookmarked === true,
           ownQuoteId: post.ownQuote?.id ?? null,
+          ownQuoteBare: post.ownQuote?.bare === true,
           authorBlocked: post._enrichment?.authorIsBlocked === true,
           followsAuthor: post._enrichment?.authorIsFollowing === true,
         }

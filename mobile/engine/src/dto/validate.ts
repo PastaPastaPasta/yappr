@@ -73,7 +73,7 @@ export const authorDTO = object(authorKeys)
 export const userSummaryDTO = object(authorKeys, { bio: str, followers: count, following: count, viewerFollows: bool })
 
 const stats = object({ likes: count, reposts: count, replies: count, quotes: count })
-const viewerMarks = { liked: bool, reposted: bool, bookmarked: bool, ownQuoteId: nullable(id) }
+const viewerMarks = { liked: bool, reposted: bool, bookmarked: bool, ownQuoteId: nullable(id), ownQuoteBare: bool }
 
 const postRequired = {
   id,

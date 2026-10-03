@@ -10,6 +10,7 @@ import { queryKeys } from './keys';
 import {
   dropFromLists,
   hidePost,
+  holdOwnQuote,
   markPostDeleted,
   setAuthorBlocked,
   setFollowing,
@@ -40,7 +41,7 @@ function seed() {
   queryClient.setQueryData(queryKeys.post.stats('target'), {
     id: 'target',
     stats: target.stats,
-    viewer: { liked: false, reposted: false, bookmarked: false, ownQuoteId: null },
+    viewer: { liked: false, reposted: false, bookmarked: false, ownQuoteId: null, ownQuoteBare: false },
   });
   // Another network's cache is never touched.
   queryClient.setQueryData(['engine', 'testnet', 'post', 'target'], target);
@@ -143,18 +144,61 @@ describe('setViewerState', () => {
   });
 
   it('restores the v10 quote slot on undo', () => {
-    const reposted = fixturePost({ id: 'r', viewer: { ...target.viewer!, reposted: true, ownQuoteId: 'q1' } });
+    // v10 reads the slot's bare repost back among the quotes: it has no repost documents.
+    const reposted = fixturePost({
+      id: 'r',
+      stats: { likes: 0, reposts: 0, replies: 0, quotes: 3 },
+      viewer: { ...target.viewer!, reposted: true, ownQuoteId: 'q1', ownQuoteBare: true },
+    });
     queryClient.setQueryData(queryKeys.post.detail('r'), reposted);
-    const undo = setViewerState('r', { reposted: false, ownQuoteId: null });
+    const undo = setViewerState('r', { reposted: false, ownQuoteId: null, ownQuoteBare: false });
     expect(queryClient.getQueryData(queryKeys.post.detail('r'))).toMatchObject({
-      stats: { reposts: 2 },
-      viewer: { reposted: false, ownQuoteId: null },
+      stats: { reposts: 0, quotes: 2 },
+      viewer: { reposted: false, ownQuoteId: null, ownQuoteBare: false },
     });
     undo();
     expect(queryClient.getQueryData(queryKeys.post.detail('r'))).toMatchObject({
-      stats: { reposts: 3 },
-      viewer: { reposted: true, ownQuoteId: 'q1' },
+      stats: { reposts: 0, quotes: 3 },
+      viewer: { reposted: true, ownQuoteId: 'q1', ownQuoteBare: true },
     });
+  });
+
+  it('counts a repost made here in reposts until it is read back (v2, or v10 before a read)', () => {
+    queryClient.setQueryData(queryKeys.post.detail('fresh'), fixturePost({ id: 'fresh' }));
+    setViewerState('fresh', { reposted: true });
+    expect(queryClient.getQueryData(queryKeys.post.detail('fresh'))).toMatchObject({ stats: { reposts: 4, quotes: 0 } });
+    setViewerState('fresh', { reposted: false, ownQuoteId: null, ownQuoteBare: false });
+    expect(queryClient.getQueryData(queryKeys.post.detail('fresh'))).toMatchObject({ stats: { reposts: 3, quotes: 0 } });
+  });
+
+  it('leaves a copy that already read that way alone on undo (D-L3i-002: a stale card gained a repost)', () => {
+    const slot = { reposted: true, ownQuoteId: 'q1', ownQuoteBare: false };
+    const stats = { likes: 0, reposts: 0, replies: 0, quotes: 1 };
+    queryClient.setQueryData(queryKeys.post.detail('t'), fixturePost({ id: 't', stats, viewer: { ...target.viewer!, ...slot } }));
+    // The feed's copy predates the quote: not reposted.
+    queryClient.setQueryData<InfiniteData<Page<PostDTO>>>(queryKeys.feed.home({ tab: 'forYou' }), {
+      pages: [page([fixturePost({ id: 't', stats })])],
+      pageParams: [null],
+    });
+    const undo = setViewerState('t', { reposted: false });
+    undo();
+    expect(feed().pages[0].items[0]).toMatchObject({ stats: { reposts: 0, quotes: 1 }, viewer: { reposted: false } });
+    expect(queryClient.getQueryData(queryKeys.post.detail('t'))).toMatchObject({ stats: { quotes: 1 }, viewer: slot });
+  });
+});
+
+describe('holdOwnQuote', () => {
+  it("fills the viewer's v10 slot on every copy of the quoted post, counts untouched", () => {
+    seed();
+    holdOwnQuote('target', 'my-quote');
+    const held = { reposted: true, ownQuoteId: 'my-quote', ownQuoteBare: false };
+    expect(detail()).toMatchObject({ stats: target.stats, viewer: held });
+    expect(feed().pages[0].items[0]).toMatchObject({ stats: target.stats, viewer: held });
+    expect(feed().pages[1].items[0].quoted).toMatchObject({ viewer: held });
+    // Already held: nothing rebuilt.
+    const before = detail();
+    holdOwnQuote('target', 'my-quote');
+    expect(detail()).toBe(before);
   });
 });
 

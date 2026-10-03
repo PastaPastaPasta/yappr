@@ -47,7 +47,8 @@ export const repostWrite: WriteSpec<RepostVars> = {
   key: ({ post }) => `repost:${post.id}`,
   submit: (api, { post, repost }) => (repost ? api.engage.repost(targetOf(post)) : api.engage.unrepost(targetOf(post))),
   // Undoing a v10 repost deletes the bare quote, which frees the slot.
-  optimistic: ({ post, repost }) => setViewerState(post.id, repost ? { reposted: true } : { reposted: false, ownQuoteId: null }),
+  optimistic: ({ post, repost }) =>
+    setViewerState(post.id, repost ? { reposted: true } : { reposted: false, ownQuoteId: null, ownQuoteBare: false }),
   intent: ({ repost }) => repost,
   matches: ticketOnPost('repost', 'unrepost', ({ repost }: RepostVars) => repost),
   noun: 'repost',
@@ -89,15 +90,18 @@ export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
  * Delete own post or reply (ENG-06). It leaves every list at once and comes
  * back if the delete fails; confirmed, it leaves the cached lists too (so a
  * relaunch keeps it out), and every other cached copy reads as deleted.
- * `target` is set for the viewer's v10 quote, deleted from the repost menu.
+ * `quotedPostId` is set for the viewer's v10 quote (from the repost menu's
+ * "Delete your quote", or its own menu): the post whose one slot it holds.
  */
 export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }> = {
   key: ({ target }) => `delete:${target.id}`,
   submit: (api, { target }) => api.posts.delete(target),
   optimistic: ({ target, quotedPostId }) => {
     const unhide = hidePost(target.id);
-    // Deleting the viewer's quote frees their slot on the quoted post.
-    const unslot = quotedPostId ? setViewerState(quotedPostId, { ownQuoteId: null }) : undefined;
+    // Deleting the viewer's quote frees their slot on the quoted post, and takes it out of its count.
+    const unslot = quotedPostId
+      ? setViewerState(quotedPostId, { reposted: false, ownQuoteId: null, ownQuoteBare: false })
+      : undefined;
     return () => {
       unhide();
       unslot?.();
