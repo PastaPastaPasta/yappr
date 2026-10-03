@@ -15,9 +15,9 @@ import { newEncryptionKey } from '~/engine/storage/engine-storage';
  * encrypted, so it goes to an encrypted MMKV instance of its own, whose
  * AES-256 key is in the Keychain / Keystore (this device only), like the
  * engine's storage. Saved 500 ms after a change and whenever the app leaves
- * the foreground, as compose drafts are (PRD COMP-09). An account's drafts
- * are read when one of its conversations opens, and deleted when it signs
- * out (`forgetDmDrafts`, PRD AUTH-11).
+ * the foreground, as compose drafts are (PRD COMP-09), and at once when one
+ * is sent. An account's drafts are read when one of its conversations opens,
+ * and deleted when it signs out (`forgetDmDrafts`, PRD AUTH-11).
  */
 interface DraftsState {
   byKey: Record<string, string>;
@@ -44,6 +44,11 @@ let store: MMKV | null = null;
 let opening: Promise<MMKV> | null = null;
 /** Accounts whose saved drafts are in memory: memory is then the whole truth for them. */
 const loaded = new Set<string>();
+/**
+ * Before an account's saved drafts are in memory: the conversations whose
+ * draft was cleared or sent meanwhile, so the saved copy never comes back.
+ */
+const cleared = new Map<string, Set<string>>();
 /** Accounts with changes not saved yet. */
 const dirty = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | undefined;
@@ -106,12 +111,19 @@ export function flushDmDrafts(): void {
   if (dirty.size === 0) return;
   const { byKey } = useDrafts.getState();
   // Taken now: memory may be cleared (an account change) before the store opens.
-  const writes = Array.from(dirty, (identityId) => ({ identityId, drafts: draftsOf(byKey, identityId), whole: loaded.has(identityId) }));
+  const writes = Array.from(dirty, (identityId) => ({
+    identityId,
+    drafts: draftsOf(byKey, identityId),
+    whole: loaded.has(identityId),
+    gone: new Set(cleared.get(identityId)),
+  }));
   dirty.clear();
   withStore((opened) => {
-    for (const { identityId, drafts, whole } of writes) {
-      // Typed before the saved drafts were read: keep the other conversations' saved ones.
-      const all = whole ? drafts : { ...readSaved(opened, identityId), ...drafts };
+    for (const { identityId, drafts, whole, gone } of writes) {
+      // Typed before the saved drafts were read: keep the other conversations' saved ones, not those cleared since.
+      const saved = whole ? {} : readSaved(opened, identityId);
+      gone.forEach((key) => delete saved[key]);
+      const all = { ...saved, ...drafts };
       if (Object.keys(all).length > 0) opened.set(storeKey(identityId), JSON.stringify(all));
       else opened.remove(storeKey(identityId));
     }
@@ -130,9 +142,20 @@ function changed(identityId: string): void {
   timer = setTimeout(flushDmDrafts, SAVE_DELAY_MS);
 }
 
+/** Before the account's saved drafts are read: a cleared draft stays cleared, a typed one wins anyway. */
+function noteCleared(identityId: string, key: string, isCleared: boolean): void {
+  if (loaded.has(identityId)) return;
+  const keys = cleared.get(identityId) ?? new Set<string>();
+  if (isCleared) keys.add(key);
+  else keys.delete(key);
+  if (keys.size > 0) cleared.set(identityId, keys);
+  else cleared.delete(identityId);
+}
+
 export const useDrafts = create<DraftsState>()((set) => ({
   byKey: {},
   set: (identityId, key, text) => {
+    noteCleared(identityId, key, !text);
     set(({ byKey }) => {
       const next = { ...byKey };
       if (text) next[slot(identityId, key)] = text;
@@ -142,6 +165,7 @@ export const useDrafts = create<DraftsState>()((set) => ({
     changed(identityId);
   },
   restore: (identityId, key, text) => {
+    noteCleared(identityId, key, false);
     set(({ byKey }) => {
       const current = byKey[slot(identityId, key)]?.trim();
       return { byKey: { ...byKey, [slot(identityId, key)]: current ? `${text.trim()}\n${current}` : text.trim() } };
@@ -151,6 +175,7 @@ export const useDrafts = create<DraftsState>()((set) => ({
   clearAll: () => {
     flushDmDrafts();
     loaded.clear();
+    cleared.clear();
     set({ byKey: {} });
   },
 }));
@@ -162,9 +187,11 @@ function loadDmDrafts(identityId: string): void {
     if (loaded.has(identityId)) return;
     loaded.add(identityId);
     const saved = readSaved(opened, identityId);
+    const gone = cleared.get(identityId);
+    cleared.delete(identityId);
     useDrafts.setState(({ byKey }) => {
       const next = { ...byKey };
-      for (const [key, text] of Object.entries(saved)) next[slot(identityId, key)] ??= text;
+      for (const [key, text] of Object.entries(saved)) if (!gone?.has(key)) next[slot(identityId, key)] ??= text;
       return { byKey: next };
     });
   });
@@ -174,16 +201,24 @@ function loadDmDrafts(identityId: string): void {
 export function forgetDmDrafts(identityId: string): void {
   dirty.delete(identityId);
   loaded.delete(identityId);
+  cleared.delete(identityId);
   useDrafts.setState(({ byKey }) => ({
     byKey: Object.fromEntries(Object.entries(byKey).filter(([key]) => !key.startsWith(`${identityId}${SEPARATOR}`))),
   }));
   withStore((opened) => opened.remove(storeKey(identityId)));
 }
 
-/** Takes the draft to send it: read at call time (two quick taps send it once) and cleared. */
+/**
+ * Takes the draft to send it: read at call time (two quick taps send it once)
+ * and cleared, saved at once, so a crash right after the send never brings
+ * the sent text back as a draft.
+ */
 export function takeDraft(identityId: string, key: string): string {
   const text = useDrafts.getState().byKey[slot(identityId, key)] ?? '';
-  if (text) useDrafts.getState().set(identityId, key, '');
+  if (text) {
+    useDrafts.getState().set(identityId, key, '');
+    flushDmDrafts();
+  }
   return text;
 }
 

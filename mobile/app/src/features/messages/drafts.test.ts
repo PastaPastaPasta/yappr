@@ -99,6 +99,37 @@ describe('DM drafts on the device (PRD DM-04, QA E-20)', () => {
     expect(await draftAfterLaunch(ALICE, 'g:team')).toBe('');
   });
 
+  it('never brings back a draft cleared or sent before the saved drafts were read', async () => {
+    useDrafts.getState().set(ALICE, 'd:bob', 'old to bob');
+    useDrafts.getState().set(ALICE, 'g:team', 'old to the team');
+    useDrafts.getState().set(ALICE, 'd:dan', 'old to dan');
+    flushDmDrafts();
+    await settle();
+    relaunch();
+    // Within the read: one draft cleared and saved, one typed and sent, one cleared and not saved yet.
+    useDrafts.getState().set(ALICE, 'd:bob', '');
+    flushDmDrafts();
+    useDrafts.getState().set(ALICE, 'g:team', 'new to the team');
+    expect(takeDraft(ALICE, 'g:team')).toBe('new to the team');
+    useDrafts.getState().set(ALICE, 'd:dan', '');
+    expect(await draftAfterLaunch(ALICE, 'd:bob')).toBe('');
+    expect(useDrafts.getState().byKey).toEqual({});
+    relaunch();
+    expect(await draftAfterLaunch(ALICE, 'd:bob')).toBe('');
+    expect(useDrafts.getState().byKey).toEqual({});
+  });
+
+  it('saves a sent draft as gone at once, so a crash right after the send never brings it back', async () => {
+    await draftAfterLaunch(ALICE, 'd:bob');
+    useDrafts.getState().set(ALICE, 'd:bob', 'sent text');
+    flushDmDrafts();
+    await settle();
+    const saved = () => createMMKV({ id: 'yappr.dm-drafts' }).getString(`drafts.${ALICE}`) ?? '';
+    expect(saved()).toContain('sent text');
+    expect(takeDraft(ALICE, 'd:bob')).toBe('sent text');
+    expect(saved()).not.toContain('sent text');
+  });
+
   it("deletes an account's drafts when it signs out, from memory and from the device (PRD AUTH-11)", async () => {
     useDrafts.getState().set(ALICE, 'd:bob', 'alice draft');
     useDrafts.getState().set(CAROL, 'd:bob', 'carol draft');

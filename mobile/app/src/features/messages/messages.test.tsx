@@ -913,6 +913,36 @@ describe('New group (DM-06)', () => {
     expect(useToastStore.getState().current?.message).toBe('1 member(s) did not get the group key yet.');
   });
 
+  it('waits out the first load (a cold start) instead of failing the creation', async () => {
+    await fillForm();
+    const created = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.status').mockResolvedValueOnce(status({ ready: false }));
+    fakeEngine.method('dm.createGroup').mockRejectedValueOnce(busy()).mockResolvedValue(created);
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    // renderRouter runs Jest's fake timers.
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(1100);
+      });
+    }
+    expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('new-group-progress')).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
+  });
+
+  it('never retries a creation the engine refuses because another one is running', async () => {
+    await fillForm();
+    fakeEngine.method('dm.createGroup').mockRejectedValue(Object.assign(new Error('A group is still being created'), { code: 'ENGINE_BUSY' }));
+    fireEvent.press(screen.getByTestId('new-group-create'));
+    for (let i = 0; i < 3; i += 1) {
+      await act(async () => {
+        jest.advanceTimersByTime(1100);
+      });
+    }
+    expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
+    expect(useToastStore.getState().current?.message).toBe('Could not create the group');
+  });
+
   it('says a name over the byte limit is too long instead of letting the engine refuse it (SR-38)', async () => {
     await fillForm();
     // 70 characters pass the 100-character cap, but are 210 UTF-8 bytes.

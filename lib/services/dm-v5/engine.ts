@@ -46,7 +46,10 @@ export interface MessageView {
   id: string
   senderId: string
   text: string
+  /** Block time: the order of messages. */
   createdAt: number
+  /** The time to show: `createdAt`, or for my message sent this session the device's send time (`HeldMessage.sentAt`). */
+  shownAt: number
   own: boolean
   pending: boolean
 }
@@ -66,7 +69,7 @@ export interface ConversationView {
   hidden: boolean
   /** Newly found conversation that could not be saved (the self-state cap). */
   unsaved: boolean
-  /** Groups: I cannot read it (ask the owner to resend keys), I was removed or left it, or it ended. */
+  /** Groups: I cannot read it (ask the owner to resend keys), I was removed, or it ended. */
   unreadable: boolean
   /** I was removed, or I left and the owner has not removed me yet (§6.4): either way I can no longer send. */
   removed: boolean
@@ -321,6 +324,7 @@ export class DmEngine {
       senderId: bs58.encode(held.sender),
       text: held.content.text,
       createdAt: held.createdAt,
+      shownAt: held.sentAt ?? held.createdAt,
       own: isMe(this.ctx, held.sender),
       pending: held.local === true,
     }

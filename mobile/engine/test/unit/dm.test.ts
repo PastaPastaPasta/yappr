@@ -73,7 +73,8 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
   ({ session: { identityId, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })
 
 /** One user's engine: a dm module over a ticket store, signed in as `me`. */
-function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}) {
+/** `kv`: the device's DM v5 store, kept across a relaunch (else a fresh device). */
+function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}, kv?: InstanceType<typeof MapKv>) {
   const events: Event[] = []
   const storage = memoryStorage()
   /** The engine's plain storage, where DM v5 keeps its per-device state. */
@@ -91,7 +92,7 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
       if (!engine) {
         const raw = bs58.decode(id)
         ledger.register(raw, PRIV[id])
-        engine = new Engine({ chain: new Chain(ledger, raw), identityId: raw, encPriv: PRIV[id], kv: new MapKv(), cacheKey: 'dm', scheduler: manualScheduler })
+        engine = new Engine({ chain: new Chain(ledger, raw), identityId: raw, encPriv: PRIV[id], kv: kv ?? new MapKv(), cacheKey: 'dm', scheduler: manualScheduler })
         engines.set(id, engine)
       }
       return engine
@@ -318,6 +319,29 @@ describe('dm on DM v5: 1:1', () => {
     // Each incoming message is announced once; own messages never.
     await settle()
     expect(a.eventsOf('dm.message').map(e => e.message.text)).toEqual(['hi alice'])
+  })
+
+  it('shows the history a thread loads when it opens after a cold launch, naming it in dm.changed at once (QA D-L4i-002)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const kv = new MapKv()
+    const b = await ready(userOn(ledger, bob, {}, kv))
+    const key = await a.dm.startDirect(bob)
+    for (const text of ['one', 'two', 'three']) await a.settled(await a.dm.send(key, text))
+    await b.engine().tick()
+    const [row] = await b.dm.conversations()
+    await b.dm.markRead(row.key)
+    await b.hooks.stop()
+
+    // A cold launch on Bob's device: everything is read, so its first poll holds only the newest message.
+    const other = await ready(userOn(ledger, bob, {}, kv))
+    await vi.waitFor(async () => expect((await other.dm.conversations()).map(c => c.key)).toEqual([row.key]))
+    expect((await other.dm.messages(row.key)).items.map(m => m.text)).toEqual(['three'])
+    other.events.length = 0
+    await other.dm.open(row.key)
+    // Opening loads the rest: the open thread is told to re-read it now, not on the next 4 s poll.
+    await vi.waitFor(() => expect(other.eventsOf('dm.changed').some(e => e.changedKeys.includes(row.key))).toBe(true))
+    expect((await other.dm.messages(row.key)).items.map(m => m.text)).toEqual(['three', 'two', 'one'])
   })
 
   it('shows a confirmed send as sent at once, and one held on trust as pending until a poll reads it back', async () => {

@@ -1,5 +1,8 @@
+import type { WriteTicket } from '@engine/api';
+
 import { queryKeys } from '~/data/keys';
-import { sendWrite, type WriteSpec } from '~/data/writes';
+import type { EngineRemote } from '~/data/queries';
+import { errorCode, sendWrite, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { toast } from '~/ui/toast';
 
@@ -83,9 +86,30 @@ export interface CreateGroupVars {
   memberIds: string[];
 }
 
+/** How long a creation waits for v5's saved state to load (the reads' `ENGINE_BUSY` budget, as `startDirectWhenReady`). */
+const LOAD_WAIT_MS = 60_000;
+
+/**
+ * `dm.createGroup`, waiting out the first load: until v5's saved state has
+ * loaded the engine cannot list the groups there are (to tell the new one
+ * apart) and answers `ENGINE_BUSY`. A creation already running is
+ * `ENGINE_BUSY` too, with the state loaded: that one is not waited out.
+ */
+async function createGroupWhenLoaded(api: EngineRemote, { name, memberIds }: CreateGroupVars): Promise<WriteTicket> {
+  const deadline = Date.now() + LOAD_WAIT_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await api.dm.createGroup(name, memberIds);
+    } catch (error) {
+      if (errorCode(error) !== 'ENGINE_BUSY' || Date.now() >= deadline || (await api.dm.status()).ready) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * 2 ** attempt, 4000)));
+  }
+}
+
 /** DM-06: one creation at a time (the engine refuses a second with `ENGINE_BUSY`). */
 export const createGroupWrite: WriteSpec<CreateGroupVars> = {
-  submit: (api, { name, memberIds }) => api.dm.createGroup(name, memberIds),
+  submit: createGroupWhenLoaded,
   key: () => 'dm.createGroup',
   noun: 'group',
   failureMessage: 'Could not create the group',

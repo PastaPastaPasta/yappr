@@ -82,8 +82,9 @@ function pendingIn(engine: DmEngine, key: string): number {
   return conv ? Array.from(conv.held.values()).filter(held => held.local === true).length : 0
 }
 
+/** `at` is the time to show (my send: when I sent it, QA D-L4i-007); the order is lib's, by block time. */
 function toMessageDTO(view: MessageView): MessageDTO {
-  return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.createdAt), own: view.own, pending: view.pending }
+  return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.shownAt), own: view.own, pending: view.pending }
 }
 
 /**
@@ -110,7 +111,7 @@ function toRow(view: ConversationView, conv: Conv | undefined): ConversationRow 
     name: group ? view.name : null,
     members: group ? view.memberIds : [],
     isOwner: view.isOwner,
-    lastMessage: last ? { text: last.text, at: new Date(last.createdAt), own: last.own } : null,
+    lastMessage: last ? { text: last.text, at: new Date(last.shownAt), own: last.own } : null,
     lastActivity: lastActivityOf(view, conv),
     unread: view.unread,
     flags: {

@@ -44,6 +44,23 @@ describe('DmEngine views', () => {
     expect(bob.getSnapshot().unreadTotal).toBe(0)
   })
 
+  it('shows my send at the device clock, but keeps a reply after it below it and unread (QA D-L4i-007)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    // The engines' device clock (Date.now()) runs far ahead of this ledger's block time.
+    const key = await alice.startDirect(bob58)
+    await alice.openConversation(key)
+    await alice.send(key, 'question')
+    const [question] = alice.messages(key)
+    expect(question.shownAt).toBe(question.createdAt + 3 * 60_000)
+    await bob.tick()
+    await bob.send(bob.getSnapshot().conversations[0].key, 'answer')
+    await alice.tick()
+    expect(alice.messages(key).map((m) => [m.text, m.shownAt === m.createdAt])).toEqual([['question', false], ['answer', true]])
+    expect(alice.getSnapshot().conversations[0].unread).toBe(1)
+  })
+
   it('shows a draft only while it is open, and never writes until the first send', async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
@@ -151,9 +168,6 @@ describe('DmEngine views', () => {
 describe('DmEngine.pollOwn', () => {
   it('reads back my own message that landed although its send reported a failure, without the thread open', async () => {
     const ledger = new MemoryLedger()
-    // Block time and the device clock agree, as on a device whose clock is right: a send is dated
-    // by the device clock while block time lags (sender.ts `sentAt`), here far behind it otherwise.
-    ledger.time = Date.now()
     const chain = new MemoryChain(ledger, ALICE_ID)
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV, new MapKv(), chain))
     engine(ledger, BOB_ID, BOB_PRIV)

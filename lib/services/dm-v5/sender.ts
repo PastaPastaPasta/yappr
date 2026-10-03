@@ -36,11 +36,11 @@ const BLOCK_TIME_LAG_MS = 3 * 60_000
 export class SendError extends Error {}
 
 /**
- * The time a message I just wrote carries until a read gives the block's: it
- * lands in a block made after the send, so the chain's (stale) time is caught
- * up to the device clock, but never by more than the block time lag, so a
- * device clock that runs fast cannot move my read position far ahead. Weeks
- * stay on block time alone (§4.1).
+ * The time to show for a message I just wrote (QA D-L4i-007): it lands in a
+ * block made after the send, so the chain's (stale) time is caught up to the
+ * device clock, but never by more than the block time lag. Shown only: the
+ * message's order, the read position and weeks stay on block time (§4.1), so
+ * a device clock that runs fast moves none of them.
  */
 function sentAt(ctx: DmContext): number {
   const chainTime = ctx.chain.now()
@@ -172,7 +172,7 @@ function hold(
   trustBody?: Uint8Array
 ): HeldMessage {
   const trust = trustBody ? { local: true, body: trustBody } : {}
-  const held: HeldMessage = { sender: ctx.me.id, pointer, docId, createdAt: sentAt(ctx), content, prev, ...trust }
+  const held: HeldMessage = { sender: ctx.me.id, pointer, docId, createdAt: ctx.chain.now(), sentAt: sentAt(ctx), content, prev, ...trust }
   conv.held.set(pointerKey(ctx.me.id, pointer), held)
   if (!st.cur || pointer.w > st.cur.w || (pointer.w === st.cur.w && pointer.j > st.cur.j)) st.cur = { w: pointer.w, j: pointer.j }
   if (trustBody) st.stale.push({ w: pointer.w, j: pointer.j, until: ctx.chain.now() + STALE_WINDOW_MS, held: true })

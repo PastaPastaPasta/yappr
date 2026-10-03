@@ -485,7 +485,7 @@ describe('sender', () => {
     expect(stream(conv, ALICE_ID, readBack.pointer)?.stale).toEqual([])
   })
 
-  it('dates a send by the device clock while the chain time lags, but never more than 3 minutes past it (QA D-L4i-007)', async () => {
+  it('shows a send at the device clock while the chain time lags, never more than 3 minutes past it, and keeps order and reads on block time (QA D-L4i-007)', async () => {
     const ledger = new MemoryLedger()
     const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
     makeContext(ledger, BOB_ID, BOB_PRIV)
@@ -494,14 +494,17 @@ describe('sender', () => {
     // A quiet network: the newest block a read returned is two minutes old.
     alice.ctx.wallClock = () => ledger.time + 120_000
     const sent = await sendContent(alice.ctx, conv, { type: 'text', text: 'now' })
-    expect(sent.createdAt).toBe(ledger.time + 120_000)
-    expect(conv.entry.readAt).toBe(sent.createdAt)
+    expect(sent.sentAt).toBe(ledger.time + 120_000)
+    // Order and the read position stay on the chain's time: a reply landing after it is still unread.
+    expect(sent.createdAt).toBe(ledger.time)
+    expect(conv.entry.readAt).toBe(ledger.time)
     // A device clock an hour fast moves it no further than the block time lag.
     alice.ctx.wallClock = () => ledger.time + 60 * 60_000
-    expect((await sendContent(alice.ctx, conv, { type: 'text', text: 'fast clock' })).createdAt).toBe(ledger.time + 3 * 60_000)
+    expect((await sendContent(alice.ctx, conv, { type: 'text', text: 'fast clock' })).sentAt).toBe(ledger.time + 3 * 60_000)
+    expect(conv.entry.readAt).toBe(ledger.time)
     // A slow one never dates it before the chain's time.
     alice.ctx.wallClock = () => ledger.time - 60_000
-    expect((await sendContent(alice.ctx, conv, { type: 'text', text: 'slow clock' })).createdAt).toBe(ledger.time)
+    expect((await sendContent(alice.ctx, conv, { type: 'text', text: 'slow clock' })).sentAt).toBe(ledger.time)
   })
 
   it('keeps a message held on trust local until a poll reads its slot back, even with the thread closed', async () => {
