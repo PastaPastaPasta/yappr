@@ -116,6 +116,26 @@ describe('v10 profile writes', () => {
     );
   });
 
+  it('reports each document it is about to write, as "1 of 2" then "2 of 2"', async () => {
+    const profiles = await service();
+    const progress: unknown[] = [];
+    const order: string[] = [];
+    updateDocument.mockImplementation(async (_contract, type, id, owner, data, revision) => {
+      order.push(`write ${type}`);
+      return { success: true, document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data } };
+    });
+    await profiles.updateProfile(ownerId, { bio: 'new bio', pronouns: 'she/her' }, {
+      onProgress: (step) => { progress.push(step); order.push(`step ${step.step}`); },
+    });
+    expect(progress).toEqual([{ step: 1, total: 2 }, { step: 2, total: 2 }]);
+    expect(order).toEqual(['step 1', 'write profile', 'step 2', 'write yapprProfile']);
+
+    // An edit of one group writes one document.
+    progress.length = 0;
+    await profiles.updateProfile(ownerId, { bio: 'newer bio' }, { onProgress: (step) => progress.push(step) });
+    expect(progress).toEqual([{ step: 1, total: 1 }]);
+  });
+
   it('fingerprints a new image avatar into DashPay and keeps the recipe as the fallback', async () => {
     const profiles = await service();
     await profiles.updateProfile(ownerId, { avatar: 'ipfs://avatar' });

@@ -327,7 +327,16 @@ export function createProfileWrites(tickets: TicketStore) {
     persistArgs: true,
     async run(update, ctx) {
       try {
-        await unifiedProfileService.updateProfile(signer(ctx), update)
+        await unifiedProfileService.updateProfile(signer(ctx), update, {
+          // "Saving… (1 of 2)" (UX_SPEC edit.saving): v10 writes the DashPay profile, then yapprProfile.
+          onProgress: ({ step, total }) => {
+            try {
+              ctx.progress(step - 1, total)
+            } catch {
+              // Progress is cosmetic: it never stops a save between its two documents.
+            }
+          },
+        })
       } catch (error) {
         // The plan's own refusals (lengths, list limits, URL rules) come before anything is signed.
         if (error instanceof ListLimitError) throw new NotSentError(badRequest(error.message))

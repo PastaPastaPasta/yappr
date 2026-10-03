@@ -1,4 +1,4 @@
-import type { AvatarDTO, CapabilitiesDTO, ProfileDTO, ProfilePatchDTO } from '@engine/api';
+import type { AvatarDTO, CapabilitiesDTO, ProfileDTO, ProfilePatchDTO, WriteTicket } from '@engine/api';
 
 /**
  * The Edit profile form as plain data (PRD PROF-06 – PROF-08): its values
@@ -124,4 +124,14 @@ export function randomSeed(maxLength: number, random: () => number = Math.random
   let seed = '';
   for (let i = 0; i < length; i += 1) seed += alphabet[Math.floor(random() * alphabet.length)];
   return seed;
+}
+
+/**
+ * The navigation-bar title while a save runs (UX_SPEC edit.saving): "Saving…",
+ * and "Saving… (1 of 2)" / "(2 of 2)" while a dev save writes the DashPay
+ * profile and then the Yappr profile (the engine reports each on the ticket).
+ */
+export function savingTitle(progress: WriteTicket['progress'] | undefined): string {
+  if (!progress || progress.total < 2) return 'Saving…';
+  return `Saving… (${Math.min(progress.done + 1, progress.total)} of ${progress.total})`;
 }
