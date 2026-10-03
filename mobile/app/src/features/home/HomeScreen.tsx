@@ -88,6 +88,16 @@ export function HomeScreen() {
   useEffect(() => {
     if (pageWidth > 0) pager.current?.scrollTo({ x: tabIndex * pageWidth, animated: !reduceMotion });
   }, [tabIndex, pageWidth, reduceMotion]);
+  // The pages get their width in the same commit as the scroll above, and Android clamps a scroll to the
+  // content laid out so far (none on a cold launch): a launch restoring Following stayed on the empty first
+  // page (D-L2a-004). Each time the pages get a new width, the pager settles on the tab again.
+  const alignedWidth = useRef(0);
+  const onContentSizeChange = (width: number) => {
+    // Rounding can leave the content a fraction of a point short of the pages' sum.
+    if (pageWidth <= 0 || width + 1 < PAGES.length * pageWidth || alignedWidth.current === width) return;
+    alignedWidth.current = width;
+    pager.current?.scrollTo({ x: tabIndex * pageWidth, animated: false });
+  };
 
   const selectTab = (next: FeedTab) => {
     visit([next]);
@@ -154,6 +164,7 @@ export function HomeScreen() {
         showsHorizontalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
         onLayout={(e: LayoutChangeEvent) => setPageWidth(e.nativeEvent.layout.width)}
+        onContentSizeChange={onContentSizeChange}
         onScrollBeginDrag={() => visit(PAGES)}
         onMomentumScrollEnd={onPagerSettled}
         contentOffset={{ x: tabIndex * pageWidth, y: 0 }}
