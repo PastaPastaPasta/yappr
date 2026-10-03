@@ -1848,6 +1848,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | offline.banner | You're offline. Showing saved posts. |
 | offline.toast | You're offline. Nothing was sent. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
+| engine.closedBeforeSent | The app closed before this was sent. Nothing was posted. Try again. (a write an engine restart cut short before it sent anything, with "Retry") |
 | engine.tryAgain | Try again |
 | lockdown.title | Lockdown Mode is blocking Yappr |
 | lockdown.body | Yappr needs WebAssembly to verify Dash Platform data, and Lockdown Mode turns it off for apps. You can exclude Yappr: |

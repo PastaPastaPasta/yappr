@@ -74,6 +74,84 @@ function postedIds(draft: DraftDTO, documents: TicketDocument[]): (string | null
   return posted
 }
 
+/** One of the author's own posts or replies, as publish's probe compares them with a draft's parts. */
+export interface OwnDocument {
+  id: string
+  type: 'post' | 'reply'
+  content: string
+  /** `$createdAt`, epoch ms. */
+  createdAt: number
+  /** A reply's direct parent. */
+  parentId: string | null
+  /** The post or reply a post quotes. */
+  quotedId: string | null
+}
+
+/**
+ * The author's newest posts and replies, by proved reads that throw when
+ * they cannot tell. `completeSince` is the time (epoch ms, the chain's)
+ * from which they hold every one: 0 unless a read hit its limit, else the
+ * newest of the oldest dates the capped reads reached. No lower date bound
+ * is asked for: a device clock ahead of the chain's then cannot hide a post.
+ */
+export type FindOwnDocuments = (authorId: string) => Promise<{ documents: OwnDocument[]; completeSince: number }>
+
+/**
+ * How far before the ticket a found part may be dated: a device clock
+ * behind the chain's. A part with the same text dated further back may be
+ * an older post of the same words, so it proves nothing either way.
+ */
+const FOUND_SKEW_MS = 5 * 60_000
+/** How far back the reads must reach to prove a part absent (`FOUND_SKEW_MS` is ambiguous beyond). */
+const SEARCH_BACK_MS = 60 * 60_000
+/**
+ * How long after the attempt stopped running a part not found counts as
+ * absent: a transition that went out executes within a block or two (lib's
+ * `identity-nonce.ts`), so after this it is not still on its way.
+ */
+export const ABSENCE_AFTER_MS = 2 * 60_000
+
+type PartSearch = { found: TicketDocument[]; absent: number; unclear: string | null }
+
+/**
+ * Look for the parts no ticket document names (an engine restart, or a
+ * timeout, cut the write short before lib said their ids) among the
+ * author's own documents, by their text and where they hang. A part found
+ * once is named; a part whose text is nowhere is absent; anything else
+ * (older posts of the same words, two candidates, a capped read) is unclear.
+ */
+function searchParts(plan: PostToCreate[], draft: DraftDTO, ticket: WriteTicket, own: Awaited<ReturnType<FindOwnDocuments>>): PartSearch {
+  const result: PartSearch = { found: [], absent: 0, unclear: null }
+  const earliest = ticket.createdAt.getTime() - FOUND_SKEW_MS
+  const complete = own.completeSince <= ticket.createdAt.getTime() - SEARCH_BACK_MS
+  const used = new Set<string>()
+  let previous: string | null | undefined
+  plan.forEach((part, index) => {
+    // Where this part hangs, when that is known: the post replied to, the posted part it follows,
+    // the part found before it; a first part with neither is a top-level post.
+    const parent = index === 0 && draft.replyTo ? draft.replyTo.id : part.predecessorPostedId ?? (index === 0 ? null : previous)
+    const quoted = index === 0 && draft.quote ? draft.quote.id : null
+    const sameText = own.documents.filter(doc => doc.content === part.content)
+    const matches = sameText.filter(doc =>
+      !used.has(doc.id) &&
+      doc.createdAt >= earliest &&
+      (parent === undefined || (parent === null ? doc.type === 'post' && doc.parentId === null : doc.parentId === parent)) &&
+      (quoted === null || doc.quotedId === quoted))
+    previous = undefined
+    if (matches.length === 1 && sameText.length === 1) {
+      const [doc] = matches
+      used.add(doc.id)
+      previous = doc.id
+      result.found.push({ ...socialDoc(doc.type, doc.id, 'create', true), part: Number(part.threadPostId) })
+    } else if (sameText.length === 0 && complete) {
+      result.absent++
+    } else {
+      result.unclear ??= `Part ${Number(part.threadPostId) + 1} could not be told apart from your other posts: see your profile`
+    }
+  })
+  return result
+}
+
 /** Load what a reply or quote names, as web's composer holds it; a private (encrypted) target is not in 1.0. */
 async function loadTarget(ref: TargetRef | null | undefined, load: (id: string) => Promise<Post | null>): Promise<Post | null> {
   if (!ref) return null
@@ -124,7 +202,7 @@ function failureOf(error: Error | null): unknown {
     : error ?? new Error(message)
 }
 
-export function createPublishHandler(load: (id: string) => Promise<Post | null>): WriteHandler<DraftDTO> {
+export function createPublishHandler(load: (id: string) => Promise<Post | null>, findOwn: FindOwnDocuments): WriteHandler<DraftDTO> {
   async function run(draft: DraftDTO, ctx: WriteRunContext): Promise<WriteResult> {
     const authorId = signer(ctx)
     const posted = postedIds(draft, ctx.ticket.documents)
@@ -181,28 +259,59 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>)
       return { state: 'failed', error: new RpcError('Private feed keys need syncing', 'PRIVATE_FEED_SYNC_REQUIRED'), documents }
     }
     // A part that timed out may have landed with no id known: never `failed` (a retry would post it
-    // again). Unconfirmed, the probe keeps it unprovable and points the user to resume (ENGINE §7.1).
+    // again). Unconfirmed, the probe looks for it by its text (ENGINE §7.2).
     if (outcome.timedOut.length > 0) return { state: 'unconfirmed', documents }
     if (outcome.failedAtIndex !== null) return { state: 'failed', error: failureOf(outcome.failureError), documents }
     const unconfirmed = documents.some(doc => !doc.confirmed)
     return { state: unconfirmed ? 'unconfirmed' : 'confirmed', documents }
   }
 
+  /** The parts no document names, looked for among the author's own documents. */
+  async function search(ticket: WriteTicket, plan: PostToCreate[], draft: DraftDTO): Promise<PartSearch> {
+    const authorId = ticket.identityId
+    if (!authorId) return { found: [], absent: 0, unclear: 'This post has no author to look under' }
+    return searchParts(plan, draft, ticket, await findOwn(authorId))
+  }
+
   /**
-   * "Check again": every part must have landed. A part that timed out before
-   * its id was known cannot be proved either way, so the ticket stays
-   * unconfirmed; resume the thread (`resume.postedIds`) once the profile shows
-   * what posted.
+   * "Check again": every part must have landed. The documents the ticket
+   * names are proved by id. A part with no id (an engine restart, or a
+   * timeout, cut the write short before lib said it) is looked for by its
+   * text among the author's own posts and replies: found, it is named and
+   * counts as landed; nowhere on two reads, once the attempt stopped long
+   * enough ago that nothing of it is still on its way (`ABSENCE_AFTER_MS`),
+   * it is absent, and the write may be retried (the rest of it, for a
+   * thread). Anything else stays unproved: never a resend that could post it
+   * twice.
    */
   async function probe(ticket: WriteTicket, draft: DraftDTO | undefined, kit: ProbeKit): Promise<ProbeResult> {
     if (!draft) return { state: 'unknown', error: new Error('This post can no longer be checked: its draft was not kept') }
     const posted = postedIds(draft, ticket.documents)
-    const missing = draft.parts.findIndex((part, index) => !posted[index] && hasVisibleContent(part.text))
-    if (missing >= 0) {
-      return { state: 'unknown', error: new Error(`Part ${missing + 1} never reported an id, so it cannot be checked: see your profile, then resume the thread`) }
+    const plan = planPosts(draft.parts.map((part, index) => ({ id: String(index), content: part.text, postedPostId: posted[index] ?? undefined })), undefined, false)
+    if (plan.length === 0) return kit.proveDocuments(ticket.documents)
+
+    const named = ticket.documents.filter(doc => !doc.confirmed)
+    const proved: ProbeResult = named.length > 0 ? await kit.proveDocuments(named) : { state: 'applied' }
+    if (proved.state === 'unknown') return proved
+    // Named documents proved present are confirmed now, so a retry of the rest never posts them again.
+    const present = proved.state === 'applied' ? named.map(doc => ({ ...doc, confirmed: true })) : []
+    let found = await search(ticket, plan, draft)
+    if (!found.unclear && found.absent > 0) {
+      const since = kit.sinceSettled()
+      if (since === null || since < ABSENCE_AFTER_MS) {
+        const error = new Error('Not found yet: a post sent just before it was cut short can take a moment to show')
+        return { state: 'unknown', error, documents: [...present, ...found.found] }
+      }
+      // One node can lag: absent only when a second read agrees.
+      await kit.recheckDelay()
+      found = await search(ticket, plan, draft)
     }
-    return kit.proveDocuments(ticket.documents)
+    const documents = [...present, ...found.found]
+    if (found.unclear) return { state: 'unknown', error: new Error(found.unclear), documents }
+    if (proved.state === 'applied' && found.absent === 0) return { state: 'applied', documents }
+    return { state: 'not-applied', documents }
   }
 
-  return { run, probe, persistArgs: true }
+  // run() reports 'waiting-parent' or 'broadcasting' (publishThread's progress) before lib's first write.
+  return { run, probe, persistArgs: true, stagedSends: true }
 }

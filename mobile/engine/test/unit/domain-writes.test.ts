@@ -39,8 +39,9 @@ const m = vi.hoisted(() => ({
   postService: {
     createPost: vi.fn(), deleteOwnPost: vi.fn(), getOwnQuotes: vi.fn(), getPostById: vi.fn(),
     getPostsByIdsForDisplay: vi.fn(), enrichPostsBatch: vi.fn(async (posts: unknown[]) => posts),
+    getUserPosts: vi.fn(),
   },
-  replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn() },
+  replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn(), getUserReplies: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
@@ -115,6 +116,7 @@ const { ListLimitError } = await import('@/lib/typed-array-codecs')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
 const { validate, page, postDTO, notificationDTO, blockedUserDTO } = await import('../../src/dto/validate')
 type WriteTicket = import('../../src/writes/types').WriteTicket
+type DraftDTO = import('../../src/writes/publish').DraftDTO
 
 /** A 44-character base58 id. */
 const id = (tag: string) => tag.replace(/[0OIl]/g, 'z').padEnd(44, 'x')
@@ -170,6 +172,8 @@ beforeEach(() => {
   m.unconfirmed.clear()
   m.settle.mockResolvedValue(true)
   m.documentExists.mockResolvedValue(true)
+  m.postService.getUserPosts.mockResolvedValue({ documents: [] })
+  m.replyService.getUserReplies.mockResolvedValue({ documents: [] })
   emitted = []
 })
 
@@ -545,6 +549,113 @@ describe('posts.publish and posts.delete', () => {
         { type: 'post', id: id('post0'), part: 0, confirmed: true },
         { type: 'reply', id: id('reply1'), part: 1, confirmed: true },
       ],
+    })
+  })
+
+  describe('a post an engine restart cut short (D-L1a-001, D-L1i-005)', () => {
+    /** Publishes on one engine that never hears back from lib, then boots the next one on its storage. */
+    async function cutShort(draft: DraftDTO, hang: 'send' | 'read' = 'send') {
+      let clock = Date.now()
+      const kv = storage()
+      const options = { storage: kv, emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0, now: () => clock }
+      const before = createTicketStore(options)
+      const { publish } = createPostWrites(before, emit)
+      if (hang === 'send') m.postService.createPost.mockImplementation(() => new Promise(() => undefined))
+      else m.postService.getPostById.mockImplementation(() => new Promise(() => undefined))
+      const ticket = await publish(draft)
+      if (hang === 'send') await vi.waitFor(() => expect(m.postService.createPost).toHaveBeenCalled(), { timeout: 10_000, interval: 5 })
+      else await vi.waitFor(() => expect(m.postService.getPostById).toHaveBeenCalled(), { timeout: 10_000, interval: 5 })
+
+      const after = createTicketStore(options)
+      createPostWrites(after, emit)
+      const restored = after.get(ticket.id)
+      if (!restored) throw new Error('the restart lost the ticket')
+      return { ticket: restored, tickets: after, advance: (ms: number) => { clock += ms } }
+    }
+    const own = (postId: string, content: string, createdAt: number, extra: Partial<Post> = {}) => post(postId, { content, createdAt: new Date(createdAt), ...extra })
+
+    it('is failed and retryable when the restart came before it sent anything', async () => {
+      const { ticket, tickets } = await cutShort({ parts: [{ text: 'hi' }], replyTo: TARGET }, 'read')
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: { code: 'ENGINE_RESTARTED', outcome: 'not-sent' } })
+      expect(m.replyService.createReply).not.toHaveBeenCalled()
+      m.postService.getPostById.mockResolvedValue(post(TARGET.id))
+      creating()
+      await tickets.retry(ticket.id)
+      expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed', documents: [{ type: 'reply', part: 0 }] })
+      expect(m.replyService.createReply).toHaveBeenCalledTimes(1)
+    })
+
+    it('is unconfirmed once it may have gone out, and Check again finds it by its text', async () => {
+      const { ticket, tickets } = await cutShort({ parts: [{ text: 'hello world' }] })
+      expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'ENGINE_RESTARTED' }, documents: [] })
+      const landed = id('Landed')
+      m.postService.getUserPosts.mockResolvedValue({
+        documents: [own(id('Other'), 'something else', ticket.createdAt.getTime()), own(landed, 'hello world', ticket.createdAt.getTime() + 1500)],
+      })
+      expect(await tickets.check(ticket.id)).toMatchObject({
+        state: 'confirmed',
+        documents: [{ type: 'post', id: landed, action: 'create', confirmed: true, part: 0 }],
+      })
+      expect(m.postService.getUserPosts).toHaveBeenCalledWith(VIEWER, { limit: 100 })
+    })
+
+    it('proves it absent only on two reads, once nothing of it can still be on its way, then allows a retry', async () => {
+      const { ticket, tickets, advance } = await cutShort({ parts: [{ text: 'hello world' }] })
+      // Right after the restart a post not found yet may still land: unproved, no retry.
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      await expect(tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+      expect(m.postService.getUserPosts).toHaveBeenCalledTimes(1)
+
+      advance(2 * 60_000)
+      m.postService.getUserPosts.mockClear()
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
+      expect(m.postService.getUserPosts).toHaveBeenCalledTimes(2)
+      creating()
+      await tickets.retry(ticket.id)
+      expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed', documents: [{ id: id('post0'), part: 0 }] })
+    })
+
+    it('stays unproved when its words match an older post, a reply elsewhere, or a read that hit its limit', async () => {
+      const { ticket, tickets, advance } = await cutShort({ parts: [{ text: 'gm' }] })
+      advance(5 * 60_000)
+      const at = ticket.createdAt.getTime()
+      for (const documents of [
+        [own(id('Old'), 'gm', at - 10 * 60_000)],
+        [own(id('Two'), 'gm', at + 1000), own(id('Three'), 'gm', at + 2000)],
+      ]) {
+        m.postService.getUserPosts.mockResolvedValue({ documents })
+        expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, documents: [] })
+      }
+      m.postService.getUserPosts.mockResolvedValue({ documents: [] })
+      m.replyService.getUserReplies.mockResolvedValue({ documents: [{ ...own(id('Reply'), 'gm', at + 1000), parentId: TARGET.id }] })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      m.replyService.getUserReplies.mockResolvedValue({ documents: [] })
+      // A capped read that does not reach an hour before the post proves nothing; one that does, does.
+      m.postService.getUserPosts.mockResolvedValue({ documents: Array.from({ length: 100 }, (_, n) => own(id(`Filler${n}`), `post ${n}`, at - n)) })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      // A device clock ahead of the chain's: the post dated before the ticket still blocks a retry.
+      m.postService.getUserPosts.mockResolvedValue({ documents: [own(id('Skewed'), 'gm', at - 3 * 60 * 60_000)] })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      m.postService.getUserPosts.mockRejectedValue(new Error('no available addresses for retry'))
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      m.postService.getUserPosts.mockResolvedValue({ documents: Array.from({ length: 100 }, (_, n) => own(id(`Filler${n}`), `post ${n}`, at - n * 60_000)) })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
+    })
+
+    it('names the parts of a thread it finds, and lets only the rest be retried', async () => {
+      const { ticket, tickets, advance } = await cutShort({ parts: [{ text: 'one' }, { text: 'two' }] })
+      const at = ticket.createdAt.getTime()
+      m.postService.getUserPosts.mockResolvedValue({ documents: [own(id('Root'), 'one', at + 1000)] })
+      advance(2 * 60_000)
+      expect(await tickets.check(ticket.id)).toMatchObject({
+        state: 'unconfirmed', retryable: true, documents: [{ type: 'post', id: id('Root'), part: 0, confirmed: true }],
+      })
+      creating()
+      m.postService.createPost.mockClear()
+      await tickets.retry(ticket.id)
+      expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
+      expect(m.postService.createPost).not.toHaveBeenCalled()
+      expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.objectContaining({ rootPostId: id('Root') }), expect.anything())
     })
   })
 

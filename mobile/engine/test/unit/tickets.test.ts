@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { NotSentError, RESTARTED_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
+import { NotSentError, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
 import type { TicketDocument, WriteTicket } from '../../src/writes/types'
 import { fromBoolean, fromTransitionResult } from '../../src/writes/lib-results'
 
@@ -422,6 +422,74 @@ describe('persistence and restart reconciliation', () => {
     await restarted.store.retry('t1')
     await settle()
     expect(run).toHaveBeenCalledWith({ text: 'hi' }, expect.anything())
+  })
+
+  it('fails a write a restart caught still queued, retryably, when its handler stages its sends (D-L1i-005)', async () => {
+    const storage = memoryStorage()
+    const first = setup({ storage })
+    // Never reaches a stage: the engine dies before the handler's first send.
+    first.store.register('post.publish', { run: () => new Promise(() => undefined), persistArgs: true, stagedSends: true })
+    first.store.submit({ op: 'post.publish', args: { text: 'hi' } })
+    await settle()
+
+    const run = vi.fn(async (_args: unknown, ctx: { stage(stage: 'broadcasting'): void }) => {
+      ctx.stage('broadcasting')
+      return new Promise<WriteResult>(() => undefined)
+    })
+    const restarted = setup({ storage })
+    restarted.store.register('post.publish', { run, persistArgs: true, stagedSends: true })
+    expect(restarted.store.get('t1')).toMatchObject({ state: 'failed', stage: null, retryable: true, error: RESTARTED_UNSENT_ERROR })
+    await settle()
+    expect(restarted.events.map(e => [e.id, e.state])).toEqual([['t1', 'failed']])
+    expect(run).not.toHaveBeenCalled()
+
+    // Retried, it staged a send this time: the next restart can no longer prove it unsent.
+    await restarted.store.retry('t1')
+    await settle()
+    expect(run).toHaveBeenCalledWith({ text: 'hi' }, expect.anything())
+    const third = setup({ storage })
+    third.store.register('post.publish', { run, persistArgs: true, stagedSends: true })
+    expect(third.store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: RESTARTED_ERROR })
+  })
+
+  it('never reads a queued ticket as unsent without the handler\'s word, nor with an unproved document', async () => {
+    const storage = memoryStorage()
+    const first = setup({ storage })
+    first.store.register('like', { run: () => new Promise(() => undefined), persistArgs: true })
+    first.store.register('post.publish', { run: () => new Promise(() => undefined), persistArgs: true, stagedSends: true })
+    first.store.submit({ op: 'like', args: null })
+    first.store.submit({ op: 'post.publish', args: {}, documents: [POST] })
+    await settle()
+    const restarted = setup({ storage })
+    expect(restarted.store.get('t1')).toMatchObject({ state: 'unconfirmed', error: RESTARTED_ERROR })
+    expect(restarted.store.get('t2')).toMatchObject({ state: 'unconfirmed', error: RESTARTED_ERROR })
+  })
+
+  it('lends probes the time since the attempt stopped, and records the documents a probe found', async () => {
+    const storage = memoryStorage()
+    const first = setup({ storage })
+    first.store.register('post.publish', { run: () => new Promise(() => undefined), persistArgs: true })
+    first.store.submit({ op: 'post.publish', args: {} })
+    await settle()
+
+    const seen: (number | null)[] = []
+    let found = false
+    const restarted = setup({ storage })
+    restarted.store.register('post.publish', {
+      run: () => new Promise(() => undefined),
+      persistArgs: true,
+      probe: async (_ticket, _args, kit) => {
+        seen.push(kit.sinceSettled())
+        return found ? { state: 'applied', documents: [POST] } : { state: 'unknown', error: new Error('not yet'), documents: [] }
+      },
+    })
+    await restarted.store.check('t1')
+    restarted.advance(90_000)
+    await restarted.store.check('t1')
+    // Counted from the restart that cut it short, not from each check.
+    expect(seen).toEqual([0, 90_000])
+    found = true
+    expect(await restarted.store.check('t1')).toMatchObject({ state: 'confirmed', documents: [{ ...POST, confirmed: true }] })
   })
 
   it('reports reconciled tickets of the active account only', async () => {

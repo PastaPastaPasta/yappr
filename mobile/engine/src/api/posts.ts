@@ -25,7 +25,7 @@ import { RpcError } from '../protocol/envelope'
 import { assembleFlatThread, assembleV2Thread, flattenThreads, RENDERED_DEPTH, type FlatReply } from '../dto/thread'
 import { assertTarget, badRequest, relationProbe, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { documentExists, fromDeleteBoolean } from '../writes/lib-results'
-import { createPublishHandler, validateDraft, type DraftDTO } from '../writes/publish'
+import { createPublishHandler, validateDraft, type DraftDTO, type FindOwnDocuments, type OwnDocument } from '../writes/publish'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import {
@@ -117,6 +117,35 @@ async function provedMissing<T>(
 /** `read`, with `null` kept for a post or reply proved missing; a failed read rejects. */
 async function load(id: string): Promise<Post | null> {
   return (await read(id)) ?? provedMissing(id, ['post', 'reply'], () => read(id))
+}
+
+/** The most documents of each type publish's probe reads (Platform's page). */
+const OWN_RECENT_LIMIT = 100
+
+/**
+ * The author's newest posts and replies, for publish's "check again"
+ * (`ownerAndTime [$ownerId, $createdAt]`, newest first). lib's queries throw
+ * on a failed read, so an empty answer is a real one.
+ */
+const findOwnDocuments: FindOwnDocuments = async (authorId) => {
+  const options = { limit: OWN_RECENT_LIMIT }
+  const [posts, replies] = await Promise.all([
+    postService.getUserPosts(authorId, options),
+    replyService.getUserReplies(authorId, { ...options, skipEnrichment: true }),
+  ])
+  const documents: OwnDocument[] = [
+    ...posts.documents.map((doc): OwnDocument => ({
+      id: doc.id, type: 'post', content: doc.content, createdAt: doc.createdAt.getTime(), parentId: null,
+      quotedId: doc.quotedPostId ?? doc.quotedReplyId ?? null,
+    })),
+    ...replies.documents.map((doc): OwnDocument => ({
+      id: doc.id, type: 'reply', content: doc.content, createdAt: doc.createdAt.getTime(), parentId: doc.parentId ?? null, quotedId: null,
+    })),
+  ]
+  // A capped read holds every document only back to the oldest one it reached.
+  const reach = (read: { documents: { createdAt: Date }[] }) =>
+    read.documents.length < OWN_RECENT_LIMIT ? 0 : Math.min(...read.documents.map(doc => doc.createdAt.getTime()))
+  return { documents, completeSince: Math.max(reach(posts), reach(replies)) }
 }
 
 /** `load`, following a v10 bare repost to its target, as web's post page redirects to it. */
@@ -447,7 +476,7 @@ export function createPostWrites(tickets: TicketStore, emit: (event: 'content.cr
     if (!post) throw new Error('The post could not be read')
     return post.deleted !== true
   }, false)
-  tickets.register<DraftDTO>('post.publish', createPublishHandler(load))
+  tickets.register<DraftDTO>('post.publish', createPublishHandler(load, findOwnDocuments))
   tickets.register<{ target: TargetRef }>('post.delete', {
     persistArgs: true,
     async run({ target }, ctx) {

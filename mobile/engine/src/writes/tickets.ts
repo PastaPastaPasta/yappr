@@ -15,7 +15,9 @@ import type {
  * ticket, `pending` until lib answers, then `confirmed`, `unconfirmed` (it may
  * have landed: check again) or `failed`. Tickets persist in engine kv, so they
  * survive engine restarts; a ticket still `pending` at load was interrupted,
- * and becomes `unconfirmed`. Nothing is ever re-sent on its own.
+ * and becomes `unconfirmed`, or `failed` and retryable when its handler
+ * proves that attempt sent nothing (`stagedSends`). Nothing is ever re-sent
+ * on its own.
  */
 
 /** Engine kv key (write-through to the host's MMKV). */
@@ -30,8 +32,15 @@ export type WriteResult =
   | { state: 'confirmed' | 'unconfirmed'; documents?: TicketDocument[] }
   | { state: 'failed'; error: unknown; documents?: TicketDocument[] }
 
-/** Whether an unconfirmed write took effect: proved either way, or not provable now. */
-export type ProbeResult = { state: 'applied' } | { state: 'not-applied' } | { state: 'unknown'; error: unknown }
+/**
+ * Whether an unconfirmed write took effect: proved either way, or not
+ * provable now. `documents` are ones the probe found that the ticket did not
+ * name yet (a post found by its content); `check` records them.
+ */
+export type ProbeResult =
+  | { state: 'applied'; documents?: TicketDocument[] }
+  | { state: 'not-applied'; documents?: TicketDocument[] }
+  | { state: 'unknown'; error: unknown; documents?: TicketDocument[] }
 
 export interface WriteRunContext {
   /** The ticket as it stands (on a retry: its documents name what already landed). */
@@ -50,6 +59,13 @@ export interface ProbeKit {
   proveDocuments(documents: TicketDocument[]): Promise<ProbeResult>
   /** The gap before a second read confirms an absence (`absenceRecheckMs`). */
   recheckDelay(): Promise<void>
+  /**
+   * How long ago the write's last attempt stopped running (it settled, or a
+   * restart cut it short), in ms; null while it runs. A transition that went
+   * out executes within a block or two, so an absence read long after this
+   * is not a write still on its way.
+   */
+  sinceSettled(): number | null
 }
 
 /** How one kind of write runs, and how its outcome is proved. M7b registers one per `WriteOp`. */
@@ -64,6 +80,13 @@ export interface WriteHandler<A = unknown> {
    * private-feed content).
    */
   persistArgs?: boolean
+  /**
+   * `run()` reports a stage (`ctx.stage`) before any write call it makes, so
+   * a restart that finds this write still `queued` proves that attempt sent
+   * nothing: it is `failed`, outcome `not-sent`, and retryable, instead of
+   * "may have landed". Off by default: most handlers call lib's write first.
+   */
+  stagedSends?: boolean
 }
 
 /**
@@ -91,6 +114,10 @@ interface TicketRecord {
   ticket: WriteTicket
   /** Absent when the handler forbids persisting them and the engine restarted since. */
   args?: unknown
+  /** The running attempt has sent nothing yet: its handler has `stagedSends` and reported no stage so far. */
+  unsent?: boolean
+  /** When the last attempt stopped running (epoch ms): `ProbeKit.sinceSettled`. */
+  settledAt?: number
 }
 
 /** The persisted form: dates as epoch ms. */
@@ -103,6 +130,8 @@ interface StoredTicket extends Omit<WriteTicket, 'createdAt' | 'updatedAt' | 'la
 interface StoredRecord {
   ticket: StoredTicket
   args?: unknown
+  unsent?: boolean
+  settledAt?: number
 }
 
 export interface TicketStoreOptions {
@@ -126,6 +155,15 @@ export const RESTARTED_ERROR: EngineErrorData = {
   outcome: 'unknown',
   retryable: false,
   userMessage: 'The app closed before this was confirmed. Check again to see whether it went through.',
+}
+
+/** A restart cut the write short before it sent anything (`stagedSends`): it may simply be sent again. */
+export const RESTARTED_UNSENT_ERROR: EngineErrorData = {
+  code: 'ENGINE_RESTARTED',
+  consensusCode: null,
+  outcome: 'not-sent',
+  retryable: true,
+  userMessage: 'The app closed before this was sent. Nothing was posted. Try again.',
 }
 
 const NOT_FOUND_ERROR: EngineErrorData = {
@@ -167,7 +205,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       if (records.size <= MAX_TICKETS) break
       records.delete(ticket.id)
     }
-    const stored: StoredRecord[] = [...records.values()].map(({ ticket, args }) => ({
+    const stored: StoredRecord[] = [...records.values()].map(({ ticket, args, unsent, settledAt }) => ({
       ticket: {
         ...ticket,
         createdAt: ticket.createdAt.getTime(),
@@ -175,6 +213,8 @@ export function createTicketStore(options: TicketStoreOptions) {
         lastCheckedAt: ticket.lastCheckedAt?.getTime() ?? null,
       },
       ...(args !== undefined && keepsArgs(ticket.op) ? { args } : {}),
+      ...(unsent ? { unsent } : {}),
+      ...(settledAt !== undefined ? { settledAt } : {}),
     }))
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
   }
@@ -185,21 +225,31 @@ export function createTicketStore(options: TicketStoreOptions) {
   function load() {
     const stored = readJson<unknown>(options.storage, WRITES_STORAGE_KEY, [])
     const valid = (Array.isArray(stored) ? stored : []).filter((r): r is StoredRecord => typeof r?.ticket?.id === 'string')
-    for (const { ticket, args } of valid) {
+    for (const { ticket, args, unsent, settledAt } of valid) {
       const restored: WriteTicket = {
         ...ticket,
         createdAt: new Date(ticket.createdAt),
         updatedAt: new Date(ticket.updatedAt),
         lastCheckedAt: ticket.lastCheckedAt === null ? null : new Date(ticket.lastCheckedAt),
       }
-      // Interrupted by a crash or restart: whether it went out is unknown, and it is never re-sent.
+      // Older records carry no settle time: count from this boot, which only delays an absence proof.
+      let settled = typeof settledAt === 'number' ? settledAt : now()
       if (restored.state === 'pending') {
-        Object.assign(restored, { state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(now()) } satisfies Partial<WriteTicket>)
+        settled = now()
+        // Interrupted by a crash or restart, and never re-sent. Still `queued` under a handler that
+        // reports a stage before it sends anything, the attempt sent nothing: failed, and it may be
+        // sent again (the parts an earlier attempt posted are confirmed documents, kept for the
+        // resume). Otherwise whether it went out is unknown.
+        const notSent = unsent === true && restored.stage === 'queued' && restored.documents.every(doc => doc.confirmed)
+        const interrupted: Partial<WriteTicket> = notSent
+          ? { state: 'failed', stage: null, error: RESTARTED_UNSENT_ERROR, retryable: true, updatedAt: new Date(settled) }
+          : { state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(settled) }
+        Object.assign(restored, interrupted)
         reconciled.push(restored.id)
       }
       // Without its arguments (never persisted) a write cannot be re-run.
       if (args === undefined) restored.retryable = false
-      records.set(restored.id, { ticket: restored, args })
+      records.set(restored.id, { ticket: restored, args, settledAt: settled })
     }
   }
 
@@ -220,7 +270,13 @@ export function createTicketStore(options: TicketStoreOptions) {
 
   function update(id: string, patch: Partial<WriteTicket>): WriteTicket {
     const record = recordOf(id)
-    record.ticket = { ...record.ticket, ...patch, updatedAt: new Date(now()) }
+    const at = now()
+    // Leaving `pending`: the attempt stopped running, and nothing of it is still on its way out.
+    if (record.ticket.state === 'pending' && patch.state !== undefined && patch.state !== 'pending') {
+      record.settledAt = at
+      record.unsent = false
+    }
+    record.ticket = { ...record.ticket, ...patch, updatedAt: new Date(at) }
     return commit(record)
   }
 
@@ -296,7 +352,11 @@ export function createTicketStore(options: TicketStoreOptions) {
   function start(id: string, handler: WriteHandler, args: unknown): void {
     const ctx: WriteRunContext = {
       get ticket() { return clone(recordOf(id).ticket) },
-      stage: stage => { update(id, { stage }) },
+      stage: stage => {
+        // From here the attempt may send: a restart no longer proves it sent nothing.
+        recordOf(id).unsent = false
+        update(id, { stage })
+      },
       progress: (done, total) => { update(id, { progress: { done, total } }) },
       documents: documents => { update(id, { documents: withDocuments(id, documents) }) },
       probe: () => probe(clone(recordOf(id).ticket), args),
@@ -345,10 +405,16 @@ export function createTicketStore(options: TicketStoreOptions) {
     }
   }
 
-  const kit: ProbeKit = { proveDocuments, recheckDelay }
-
   async function probe(ticket: WriteTicket, args: unknown): Promise<ProbeResult> {
     const handler = handlers.get(ticket.op)
+    const kit: ProbeKit = {
+      proveDocuments,
+      recheckDelay,
+      sinceSettled: () => {
+        const record = records.get(ticket.id)
+        return !record || record.ticket.state === 'pending' || record.settledAt === undefined ? null : now() - record.settledAt
+      },
+    }
     try {
       if (handler?.probe) return await handler.probe(clone(ticket), args, kit)
     } catch (error) {
@@ -416,6 +482,7 @@ export function createTicketStore(options: TicketStoreOptions) {
           lastCheckedAt: null,
         },
         args: request.args,
+        unsent: handler.stagedSends === true,
       }
       records.set(record.ticket.id, record)
       const issued = commit(record)
@@ -457,13 +524,15 @@ export function createTicketStore(options: TicketStoreOptions) {
       // (Every update replaces the ticket object, so identity tells whether it changed.)
       const current = records.get(id)?.ticket
       if (current !== ticket) return current ? clone(current) : { ...clone(ticket), lastCheckedAt }
+      // What the probe found beyond the ticket's documents (a post found by its content) is kept either way.
+      const documents = withDocuments(id, result.documents)
       switch (result.state) {
         case 'applied':
-          return update(id, { state: 'confirmed', error: null, retryable: false, lastCheckedAt, documents: allConfirmed(ticket.documents) })
+          return update(id, { state: 'confirmed', error: null, retryable: false, lastCheckedAt, documents: allConfirmed(documents) })
         case 'not-applied':
-          return update(id, { error: NOT_FOUND_ERROR, retryable: true, lastCheckedAt })
+          return update(id, { error: NOT_FOUND_ERROR, retryable: true, lastCheckedAt, documents })
         case 'unknown':
-          return update(id, { error: { ...classify(result.error), retryable: false }, retryable: false, lastCheckedAt })
+          return update(id, { error: { ...classify(result.error), retryable: false }, retryable: false, lastCheckedAt, documents })
       }
     },
 
@@ -486,6 +555,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       // nonce gives fresh ids, which the new attempt records. Confirmed ones (thread parts) stay.
       // A delete names the same document again, so its id stays for the next check.
       const documents = ticket.documents.filter(doc => doc.confirmed || doc.action === 'delete')
+      recordOf(id).unsent = handler.stagedSends === true
       const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents })
       start(id, handler, args)
       return restarted

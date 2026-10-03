@@ -837,6 +837,7 @@ interface WriteTicket {
 | A create with a known document id | `stateTransitionService.waitForDocument(contractId, type, id, {attempts: 2, intervalMs: 2000})` (`state-transition-service.ts:302`). If the document is found: `confirmed`, and `settleUnconfirmed` is satisfied as a side effect. |
 | A delete | The document is proved absent with `documents.get` → `confirmed`. |
 | An index-only like (v9/v10, `confirmation: 'affectedState'`) | Read it back with `likeService.isLiked` (`like-service.ts:676`). |
+| A `post.publish` part with no known id (an engine restart, or a timeout, cut it short before `lib/` said it) | Looked for by its text among the author's newest posts and replies (`getUserPosts` / `getUserReplies`, `ownerAndTime`, 100 each, no lower date bound, so a device clock ahead of the chain's hides nothing). Found exactly once, dated no more than 5 minutes before the ticket and hanging where the part would (its reply target, the part before it, its quote): the part is named on the ticket and counts as landed. Its text nowhere, on two reads that reach at least an hour before the ticket, at least 2 minutes after the attempt stopped running (a transition that went out executes within a block or two): absent, and `writes.retry` posts it (the rest of a thread). Anything else (an older post with the same words, two candidates, a read that failed or did not reach back far enough, too soon) stays unconfirmed. |
 | Not found, or the probe errors | Stays `unconfirmed`. `lastCheckedAt` updates, and `error` records the probe failure for display. |
 
 **`writes.retry(ticketId)`** re-runs the same operation through `lib/`, with a fresh nonce, only when:
@@ -934,7 +935,8 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 ### 7.4 Persistence and engine restarts
 
 - **Where tickets live.** Tickets persist in engine kv under `yappr_engine_writes`, which is MMKV through write-through: a JSON array, at most 100 tickets, with confirmed tickets pruned after 24 h.
-- **On boot,** a ticket left in `pending` was interrupted by a crash, so whether it went out is unknown. The engine moves it to `unconfirmed`, with stage `null` and error `ENGINE_RESTARTED`/outcome `unknown`. It emits `write.status`, and the UI shows "not confirmed: check again". It is never re-sent.
+- **On boot,** a ticket left in `pending` was interrupted by a crash, so whether it went out is unknown. The engine moves it to `unconfirmed`, with stage `null` and error `ENGINE_RESTARTED`/outcome `unknown`. It emits `write.status`, and the UI shows "Not confirmed yet · Check again". It is never re-sent.
+- **Unless it provably sent nothing.** A handler with `stagedSends` (`posts.publish`: `publishThread` reports its progress before each part's write) reports a stage before any write call. A ticket of such a handler that a restart finds still `queued`, naming no unconfirmed document, sent nothing in that attempt: it becomes `failed`, error `ENGINE_RESTARTED`/outcome `not-sent`, retryable when its arguments were kept, and the UI shows "Couldn't post · Retry · Edit". The record persists that flag beside the ticket, and the time the attempt stopped running, which "check again" uses (§7.2).
 - **What makes "check again" survive a restart.** `lib/`'s pending-transition cache (`yappr:pending-st:*`) and its nonce reservations (`yappr:nonce-reservation:*`, 15-minute lifetime, `identity-nonce.ts:60,72`) also live in the kv store. That is why a `check` or `retry` after a restart is still safe.
 
 ---
