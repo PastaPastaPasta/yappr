@@ -86,6 +86,7 @@ function setup(
     prepare: async (epoch) => `load-${epoch}`,
     onStorage: jest.fn(),
     log: jest.fn(),
+    error: jest.fn(),
   };
   const supervisor = new EngineSupervisor(deps, {
     backoffMs: [10, 20, 40],
@@ -766,6 +767,39 @@ describe('EngineSupervisor', () => {
     await boot(s, 2);
     s.engines[2].hostMessage({ t: 'evt', v: PROTOCOL_VERSION, event: 'write.status', payload: { id: 'w2' } });
     expect(seen).toEqual([{ id: 'w1' }, { id: 'w2' }]);
+    s.supervisor.stop();
+  });
+
+  it('reports every failed call to diagnostics with its path, reads included, but not the arguments (SET-08)', async () => {
+    const s = setup({
+      configure: (engine) => {
+        engine.handlers['engine.boot'] = () => {
+          throw new RpcError('Failed to fetch', 'NETWORK');
+        };
+        engine.handlers['profiles.get'] = () => {
+          throw new RpcError('Dash Platform is temporarily unavailable', 'UNAVAILABLE');
+        };
+        engine.handlers['feed.home'] = () => ({ items: [], cursor: null });
+        engine.hold.add('posts.thread');
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    expect(s.deps.error).toHaveBeenCalledWith('engine.boot', 'Failed to fetch');
+
+    await expect(s.supervisor.call('profiles.get', ['secret-arg'])).rejects.toMatchObject({ code: 'UNAVAILABLE' });
+    expect(s.deps.error).toHaveBeenLastCalledWith('profiles.get', 'Dash Platform is temporarily unavailable');
+
+    const hung = s.supervisor.call('posts.thread', ['id']);
+    hung.catch(() => undefined);
+    await settle(30_000);
+    await expect(hung).rejects.toMatchObject({ code: 'RPC_TIMEOUT' });
+    expect(s.deps.error).toHaveBeenCalledWith('posts.thread', 'Engine call posts.thread timed out after 30000 ms');
+
+    await expect(s.supervisor.call('feed.home', [])).resolves.toEqual({ items: [], cursor: null });
+    const operations = (s.deps.error as jest.Mock).mock.calls.map(([operation]: string[]) => operation);
+    expect(operations).not.toContain('feed.home');
+    expect(JSON.stringify((s.deps.error as jest.Mock).mock.calls)).not.toContain('secret-arg');
     s.supervisor.stop();
   });
 

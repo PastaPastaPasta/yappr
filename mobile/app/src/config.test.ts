@@ -10,7 +10,14 @@ describe('resolveAppConfig', () => {
       applicationId: 'pr.yap.app.beta',
       appVersion: '1.2.3',
       engine: null,
+      commit: null,
     });
+  });
+
+  it('carries the commit baked in at build time (SET-06)', () => {
+    const sha = '3d328f5c0123456789abcdef0123456789abcdef';
+    expect(resolveAppConfig('pr.yap.app.beta', { variant: 'testnet', commit: sha }, '1.2.3').commit).toBe(sha);
+    expect(resolveAppConfig('pr.yap.app.beta', { variant: 'testnet', commit: 42 }, '1.2.3').commit).toBeNull();
   });
 
   it('refuses a bundle built for another variant', () => {

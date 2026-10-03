@@ -89,6 +89,11 @@ export interface SupervisorDeps<Load> {
   /** Persist a write-through batch; a secure batch resolves once durable. */
   onStorage(batch: StorageBatch): void | Promise<void>;
   log(level: LogLevel, source: 'engine' | 'host', message: string): void;
+  /**
+   * An engine call failed (`operation` is its path, or `engine.boot`): Engine
+   * diagnostics' recent errors (PRD SET-08). Never given the call's arguments.
+   */
+  error?(operation: string, message: string): void;
   /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */
   platform: 'ios' | 'android';
   now?: () => number;
@@ -267,6 +272,10 @@ export class EngineSupervisor<Load = unknown> {
 
   private log(level: LogLevel, message: string) {
     this.deps.log(level, 'host', message);
+  }
+
+  private reportError(operation: string, error: unknown) {
+    this.deps.error?.(operation, errorMessage(error));
   }
 
   // ── lifecycle ────────────────────────────────────────────────────────────
@@ -493,6 +502,7 @@ export class EngineSupervisor<Load = unknown> {
       this.failedBoots = 0;
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
+      this.reportError('engine.boot', error);
       this.acceptCalls({ app: true });
       this.retryBoot(0);
       this.startPings();
@@ -696,7 +706,7 @@ export class EngineSupervisor<Load = unknown> {
       const oldestRead = this.queue.findIndex((queued) => queued.kind === 'read');
       if (oldestRead >= 0) {
         const [dropped] = this.queue.splice(oldestRead, 1);
-        dropped.reject(new RpcError('Too many calls waiting for the engine', EngineErrorCode.Busy));
+        this.failCall(dropped, new RpcError('Too many calls waiting for the engine', EngineErrorCode.Busy));
       }
     }
     this.update({});
@@ -730,7 +740,7 @@ export class EngineSupervisor<Load = unknown> {
     const timeoutMs = methodTimeoutMs(job.path);
     const timer = setTimeout(() => {
       if (settle()) {
-        job.reject(new RpcError(`Engine call ${job.path} timed out after ${timeoutMs} ms`, EngineErrorCode.Timeout));
+        this.failCall(job, new RpcError(`Engine call ${job.path} timed out after ${timeoutMs} ms`, EngineErrorCode.Timeout));
       }
     }, timeoutMs);
 
@@ -743,15 +753,21 @@ export class EngineSupervisor<Load = unknown> {
       (error: unknown) => {
         if (!settle()) return;
         if (!ENGINE_GONE.has(String(errorCode(error)))) {
-          job.reject(error);
+          this.failCall(job, error);
         } else if (job.kind === 'read' && !job.replayed) {
           this.log('info', `Replaying ${job.path} on the restarted engine`);
           this.dispatch({ ...job, replayed: true });
         } else {
-          job.reject(new RpcError(`The engine restarted during ${job.path}`, EngineErrorCode.Restarted));
+          this.failCall(job, new RpcError(`The engine restarted during ${job.path}`, EngineErrorCode.Restarted));
         }
       },
     );
+  }
+
+  /** A call that failed on its own (not refused up front): rejected, and listed in diagnostics. */
+  private failCall(job: Job, error: unknown) {
+    this.reportError(job.path, error);
+    job.reject(error);
   }
 
   private recordFirstCall(epoch: number, path: string, started: number) {

@@ -5,6 +5,7 @@ import { Platform } from 'react-native';
 import { config } from '~/config';
 import { clearAccountCache } from '~/state/query-client';
 
+import { recordEngineError } from './errors';
 import { appendLog, errorMessage } from './logs';
 import { loadEnginePage, type EngineLoad, type Simulation } from './page';
 import { createRemote } from './remote';
@@ -65,6 +66,7 @@ export const engineSupervisor = new EngineSupervisor<EngineLoad>({
     return written;
   },
   log: appendLog,
+  error: recordEngineError,
 }, { engineLogLevel: __DEV__ ? 'info' : 'warn' });
 
 export interface Engine {

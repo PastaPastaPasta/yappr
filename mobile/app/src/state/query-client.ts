@@ -140,8 +140,10 @@ export function forDisk(client: PersistedClient): PersistedClient {
   return { ...client, clientState: { ...client.clientState, queries } };
 }
 
+const PERSIST_KEY = 'yappr-query-cache';
+
 const persister = createAsyncStoragePersister({
-  key: 'yappr-query-cache',
+  key: PERSIST_KEY,
   storage: syncStorage,
   // The engine's codec, so a restored post keeps its Dates (and bigints, Maps...).
   serialize: (client) => stringify(forDisk(client)),
@@ -195,4 +197,28 @@ export async function refetchFailedReads(why: string): Promise<void> {
   appendLog('info', 'host', `${why}: retrying ${count} failed ${count === 1 ? 'read' : 'reads'}`);
   // A read already in flight again (TanStack's own reconnect refetch) is joined, not restarted.
   await queryClient.refetchQueries({ type: 'active', predicate: failed }, { cancelRefetch: false });
+}
+
+/** UTF-8 length without encoding a copy (the cache can run to megabytes). */
+function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code < 0xdc00 && i + 1 < text.length) {
+      // A surrogate pair: one 4-byte code point.
+      bytes += 4;
+      i += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
+/**
+ * The on-disk cache's size in bytes: what "Clear cache" deletes (Engine
+ * diagnostics, PRD SET-08). MMKV stores the string as UTF-8.
+ */
+export function persistedCacheBytes(): number {
+  return utf8Bytes(syncStorage.getItem(PERSIST_KEY) ?? '');
 }

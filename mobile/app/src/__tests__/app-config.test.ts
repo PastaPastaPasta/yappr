@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import appConfig, { resolveBuildNumber } from '../../app.config';
+import appConfig, { resolveBuildNumber, resolveCommit } from '../../app.config';
 import pkg from '../../package.json';
 import { VARIANTS, type Variant } from '../variants';
 
@@ -32,6 +32,21 @@ describe('resolveBuildNumber', () => {
 
   it.each(['0', '-3', '1.5', '1e3', 'abc', '2100000001'])('refuses %p', (raw) => {
     expect(() => resolveBuildNumber(raw)).toThrow(/YAPPR_BUILD_NUMBER/);
+  });
+});
+
+describe('resolveCommit (About, SET-06)', () => {
+  const SHA = '3d328f5c0123456789abcdef0123456789abcdef';
+
+  it('takes CI\'s commit, then EAS\'s, then this checkout\'s HEAD, without the network', () => {
+    expect(resolveCommit({ YAPPR_COMMIT: SHA.toUpperCase(), EAS_BUILD_GIT_COMMIT_HASH: 'abcdef1' })).toBe(SHA);
+    expect(resolveCommit({ EAS_BUILD_GIT_COMMIT_HASH: 'abcdef1' })).toBe('abcdef1');
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: APP_DIR, encoding: 'utf8' }).trim();
+    expect(resolveCommit({ YAPPR_COMMIT: 'not a sha' })).toBe(head);
+  });
+
+  it('is baked into extra', () => {
+    expect(configFor('devnet', { YAPPR_COMMIT: SHA }).extra?.commit).toBe(SHA);
   });
 });
 

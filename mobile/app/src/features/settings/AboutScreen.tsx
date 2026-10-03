@@ -1,4 +1,5 @@
 import { Image } from 'expo-image';
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { Platform, View } from 'react-native';
 import {
@@ -8,6 +9,7 @@ import {
   GlobeAltIcon,
   LifebuoyIcon,
   LockClosedIcon,
+  ShieldCheckIcon,
   UserGroupIcon,
 } from 'react-native-heroicons/outline';
 
@@ -15,6 +17,7 @@ import icon from '@assets/images/icon.png';
 
 import { config } from '~/config';
 import { useEngineStatus } from '~/engine/hooks';
+import { COMMUNITY_RULES } from '~/features/auth/terms';
 import { Sheet } from '~/ui/Sheet';
 import { Text } from '~/ui/Text';
 import { colors, useColors } from '~/ui/tokens';
@@ -55,10 +58,32 @@ function RulesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
+/**
+ * The full community rules (PRD SET-07), the text the terms gate shows under
+ * "Community rules". Bundled: yap.pr has no rules page yet (COMPLIANCE C4).
+ */
+function CommunityRulesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Sheet open={open} onClose={onClose} title={copy.about.communityRules} scrollable testID="about-community-rules-sheet">
+      <View className="gap-4 pb-2">
+        {COMMUNITY_RULES.map((rule) => (
+          <View key={rule.title} className="gap-1">
+            <Text variant="bodyStrong">{rule.title}</Text>
+            <Text variant="body" tone="secondary">
+              {rule.body}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </Sheet>
+  );
+}
+
 /** Settings → About (UX_SPEC §4.31; PRD SET-06, SET-07). */
 export function AboutScreen() {
   const status = useEngineStatus();
-  const [rulesOpen, setRulesOpen] = useState(false);
+  const [sheet, setSheet] = useState<'rules' | 'summary' | null>(null);
+  const closeSheet = () => setSheet(null);
   const evoSdk = status.info?.evoSdkVersion ?? config.engine?.evoSdkVersion;
   const bundle = (status.hello?.bundleHash ?? config.engine?.bundleHash)?.slice(0, 8);
   const engineLine = [evoSdk ? `evo-sdk ${evoSdk}` : null, bundle].filter(Boolean).join(' · ');
@@ -81,6 +106,9 @@ export function AboutScreen() {
         <SettingsRow label={copy.about.version} value={appVersion} testID="about-version" />
         <SettingsRow label={copy.about.network} value={config.network} testID="about-network" />
         {engineLine ? <SettingsRow label={copy.about.engine} value={engineLine} testID="about-engine" /> : null}
+        {config.commit ? (
+          <SettingsRow label={copy.about.commit} value={config.commit.slice(0, 8)} testID="about-commit" />
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup>
@@ -103,10 +131,17 @@ export function AboutScreen() {
           testID="about-privacy"
         />
         <SettingsRow
+          label={copy.about.communityRules}
+          icon={ShieldCheckIcon}
+          iconTint={colors.amber500}
+          onPress={() => setSheet('rules')}
+          testID="about-community-rules"
+        />
+        <SettingsRow
           label={copy.about.rules}
           icon={UserGroupIcon}
           iconTint={colors.amber500}
-          onPress={() => setRulesOpen(true)}
+          onPress={() => setSheet('summary')}
           testID="about-rules"
         />
       </SettingsGroup>
@@ -127,9 +162,7 @@ export function AboutScreen() {
           label={copy.about.licenses}
           icon={CodeBracketIcon}
           iconTint={colors.gray700}
-          accessibilityRole="link"
-          trailing={<ExternalMark />}
-          onPress={() => openInApp(links.licenses)}
+          onPress={() => router.push('/settings/licenses')}
           testID="about-licenses"
         />
         <SettingsRow
@@ -148,7 +181,8 @@ export function AboutScreen() {
         {copy.about.poweredBy}
       </Text>
 
-      <RulesSheet open={rulesOpen} onClose={() => setRulesOpen(false)} />
+      <CommunityRulesSheet open={sheet === 'rules'} onClose={closeSheet} />
+      <RulesSheet open={sheet === 'summary'} onClose={closeSheet} />
     </SettingsScroll>
   );
 }

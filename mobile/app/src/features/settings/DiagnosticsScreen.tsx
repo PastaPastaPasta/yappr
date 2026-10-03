@@ -1,18 +1,37 @@
-import type { LogLevel } from '@engine/protocol/envelope';
+import type { EngineDiagnostics } from '@engine/api';
+import { RpcErrorCode, type LogLevel } from '@engine/protocol/envelope';
 import * as Clipboard from 'expo-clipboard';
 import { Stack } from 'expo-router';
-import { useEffect, useState, useSyncExternalStore } from 'react';
-import { Alert, Platform, Text as RNText, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Alert, AppState, Platform, Pressable, Text as RNText, Share, TextInput, View } from 'react-native';
+import { ChevronDownIcon, ClipboardDocumentIcon } from 'react-native-heroicons/outline';
 
 import { config } from '~/config';
 import { useEngineEvent } from '~/data/events';
+import { getEngineErrors, subscribeEngineErrors } from '~/engine/errors';
 import { useEngineStatus } from '~/engine/hooks';
 import { engine, engineNetworkKey, engineStorage, engineSupervisor, resetEngineData, simulateOnNextBoot } from '~/engine/index';
-import { getLogs, subscribeLogs } from '~/engine/logs';
+import { appendLog, errorMessage, getLogs, subscribeLogs } from '~/engine/logs';
 import type { EngineStatus } from '~/engine/supervisor';
 import { ActionButton, Row, Section, type Tone } from '~/engine/ui';
-import { clearAccountCache } from '~/state/query-client';
+import { clearAccountCache, persistedCacheBytes } from '~/state/query-client';
 import { Screen } from '~/ui/Screen';
+import { Text } from '~/ui/Text';
+import { toast } from '~/ui/toast';
+import { useColors } from '~/ui/tokens';
+
+import { copy } from './copy';
+import {
+  capabilityRows,
+  CONTRACTS,
+  dapiEndpointCount,
+  diagCopy,
+  diagnosticsText,
+  formatAgo,
+  formatBytes,
+  shortId,
+  type DiagnosticsSnapshot,
+} from './diagnostics';
 
 const STATE_LABEL: Record<EngineStatus['state'], { label: string; tone?: Tone }> = {
   idle: { label: 'Stopped' },
@@ -39,38 +58,130 @@ const LEVEL_COLOR: Record<LogLevel, string> = {
   warn: 'text-amber-600',
   error: 'text-red-600',
 };
-const short = (value: string | undefined) => (value ? `${value.slice(0, 6)}…${value.slice(-4)}` : '—');
 const errorText = (error: unknown) => (error instanceof Error ? `${error.name}: ${error.message}` : String(error));
-
-/** Shared text: status and redacted logs only, never keys or message content (UX_SPEC §4.32). */
-function diagnosticsText(status: EngineStatus): string {
-  const { hello, info, caps, timings } = status;
-  return [
-    `Yappr ${config.appVersion} (${config.variant}, ${Platform.OS} ${Platform.Version})`,
-    `engine: ${status.state}${status.reason ? ` (${status.reason})` : ''}, epoch ${status.epoch}, restarts ${status.restarts}`,
-    `network: ${info?.network ?? config.network} (${engineNetworkKey}), topology ${info?.topology ?? '?'}`,
-    `evo-sdk ${info?.evoSdkVersion ?? '?'}, bundle ${hello?.bundleHash ?? '?'}`,
-    `timings: ${JSON.stringify(timings)}`,
-    `webview: ${caps?.userAgent ?? '?'}`,
-    '',
-    ...getLogs()
-      .slice(-200)
-      .map((line) => `${new Date(line.at).toISOString()} ${line.source} ${line.level} ${line.message}`),
-  ].join('\n');
-}
 
 function useLogs() {
   return useSyncExternalStore(subscribeLogs, getLogs);
 }
 
-/** Storage counts are not observable; re-read them every 2 s while the screen is up. */
-function useStorageStats() {
-  const [stats, setStats] = useState(() => engineStorage.stats());
+function useEngineErrors() {
+  return useSyncExternalStore(subscribeEngineErrors, getEngineErrors);
+}
+
+/** The engine is taking calls: a diagnostics read now answers rather than queueing. */
+const accepting = (state: EngineStatus['state']) => state === 'ready' || state === 'degraded';
+
+const readStats = () => ({ storage: engineStorage.stats(), cacheBytes: persistedCacheBytes(), now: Date.now() });
+
+/**
+ * What is not observable (storage counts, the cache size, the engine's WASM
+ * and DAPI figures, the clock for "last ok"): re-read every 2 s while the
+ * screen is up and the app is in the foreground (UX_SPEC §4.32).
+ */
+function useLiveStats(state: EngineStatus['state']) {
+  const [stats, setStats] = useState(readStats);
+  const [diagnostics, setDiagnostics] = useState<EngineDiagnostics | null>(null);
+  const live = accepting(state);
+  // An engine built before `engine.diagnostics` (a dev URL, an older dev client) answers UNKNOWN_METHOD:
+  // stop asking, rather than fill recent errors with one failure every 2 s.
+  const unsupported = useRef(false);
   useEffect(() => {
-    const timer = setInterval(() => setStats(engineStorage.stats()), 2000);
-    return () => clearInterval(timer);
-  }, []);
-  return stats;
+    let mounted = true;
+    const tick = () => {
+      if (AppState.currentState === 'background') return;
+      setStats(readStats());
+      if (!live || unsupported.current) return;
+      engine.api.engine
+        .diagnostics()
+        .then((next) => {
+          if (mounted) setDiagnostics(next);
+        })
+        // A failed call is listed under recent errors by the supervisor; the last figures stay.
+        .catch((error: unknown) => {
+          if ((error as { code?: unknown } | null)?.code === RpcErrorCode.UnknownMethod) unsupported.current = true;
+        });
+    };
+    tick();
+    const timer = setInterval(tick, 2000);
+    return () => {
+      mounted = false;
+      clearInterval(timer);
+    };
+  }, [live]);
+  return { ...stats, diagnostics };
+}
+
+/** A section header that opens a list in place (the spec's `›` rows). */
+function Disclosure({ title, value, testID, children }: { title: string; value?: string; testID: string; children: ReactNode }) {
+  const c = useColors();
+  const [open, setOpen] = useState(false);
+  return (
+    <View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        onPress={() => setOpen((was) => !was)}
+        testID={testID}
+        className="min-h-11 flex-row items-center gap-3 px-4 py-2 active:opacity-70"
+      >
+        <Text className="flex-1">{title}</Text>
+        {value ? <RNText className="font-mono text-sm text-gray-900 dark:text-gray-100">{value}</RNText> : null}
+        <View style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}>
+          <ChevronDownIcon size={16} color={c.textSecondary} />
+        </View>
+      </Pressable>
+      {open ? <View className="pb-2">{children}</View> : null}
+    </View>
+  );
+}
+
+/** A contract id, shortened, with its copy action (PRD SET-08). */
+function ContractRow({ label, id, testID }: { label: string; id: string | undefined; testID: string }) {
+  const c = useColors();
+  return (
+    <View className="flex-row items-center gap-3 px-4 py-1">
+      <Text className="flex-1">{label}</Text>
+      <RNText selectable className="font-mono text-sm text-gray-900 dark:text-gray-100">
+        {shortId(id)}
+      </RNText>
+      {id ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={diagCopy.copyContract(label)}
+          hitSlop={8}
+          onPress={() => {
+            Clipboard.setStringAsync(id)
+              .then(() => toast(diagCopy.contractCopied(label)))
+              .catch((error: unknown) => appendLog('warn', 'host', `Copying ${label} failed: ${errorMessage(error)}`));
+          }}
+          testID={testID}
+          className="p-1 active:opacity-60"
+        >
+          <ClipboardDocumentIcon size={18} color={c.textSecondary} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+/** Newest first; a row opens to the full message (UX_SPEC §4.32). */
+function ErrorRow({ at, operation, message }: { at: number; operation: string; message: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open }}
+      onPress={() => setOpen((was) => !was)}
+      className="gap-0.5 px-4 py-1.5 active:opacity-70"
+    >
+      <RNText className="font-mono text-xs text-gray-600 dark:text-gray-400">
+        {new Date(at).toISOString().slice(11, 19)} {operation}
+      </RNText>
+      <RNText selectable numberOfLines={open ? undefined : 2} className="font-mono text-xs text-red-600">
+        {message}
+      </RNText>
+    </Pressable>
+  );
 }
 
 function confirm(title: string, message: string, action: string, run: () => void) {
@@ -137,14 +248,32 @@ function DevSignIn() {
   );
 }
 
-export default function DiagnosticsScreen() {
+/** Settings → Engine diagnostics (UX_SPEC §4.32, PRD SET-08). Available signed out. */
+export function DiagnosticsScreen() {
   const status = useEngineStatus();
   const logs = useLogs();
-  const stats = useStorageStats();
+  const errors = useEngineErrors();
+  const { storage: stats, cacheBytes, diagnostics, now } = useLiveStats(status.state);
   const [result, setResult] = useState<string | null>(null);
   const { hello, info, caps, timings } = status;
   const state = STATE_LABEL[status.state];
   const bundleMismatch = hello && config.engine && hello.bundleHash !== config.engine.bundleHash;
+  const snapshot = (): DiagnosticsSnapshot => ({
+    status,
+    diagnostics,
+    cacheBytes,
+    errors,
+    logs,
+    networkKey: engineNetworkKey,
+    now: Date.now(),
+  });
+  const share = () => {
+    Share.share({ message: diagnosticsText(snapshot()) }).catch((error: unknown) =>
+      appendLog('warn', 'host', `Sharing diagnostics failed: ${errorMessage(error)}`),
+    );
+  };
+  const dapi = diagnostics?.dapi;
+  const capabilities = capabilityRows(info?.capabilities);
 
   /** Dev builds: call the engine from the UI and show what came back. */
   const debugCall = async (label: string, run: () => Promise<string>) => {
@@ -160,16 +289,26 @@ export default function DiagnosticsScreen() {
 
   return (
     <Screen scroll>
-      <Stack.Screen options={{ title: 'Engine diagnostics' }} />
+      <Stack.Screen
+        options={{
+          title: copy.sections.diagnostics,
+          headerRight: () => (
+            <Pressable accessibilityRole="button" onPress={share} hitSlop={8} testID="diagnostics-share-header">
+              <Text tone="link">{diagCopy.share}</Text>
+            </Pressable>
+          ),
+        }}
+      />
 
       <Section title="Status">
         <Row label="Engine" value={`● ${state.label}`} tone={state.tone} />
         {status.reason ? <Row label="Reason" value={status.reason} tone="warn" /> : null}
+        <Row label={diagCopy.boot} value={ms(timings?.bootMs ?? info?.bootMs)} />
+        <Row label={diagCopy.wasm} value={ms(diagnostics?.wasmMs ?? undefined)} />
         <Row label="Epoch / restarts" value={`${status.epoch} / ${status.restarts}`} />
         <Row label="Queued calls" value={String(status.queued)} />
         <Row label="Prepare (storage, page)" value={ms(timings?.prepareMs)} />
         <Row label="Mount → hello" value={ms(timings?.helloMs)} />
-        <Row label="Boot (SDK, contracts)" value={ms(timings?.bootMs)} />
         <Row label="Mount → ready" value={ms(timings?.readyMs)} />
         <Row
           label="First call"
@@ -184,9 +323,28 @@ export default function DiagnosticsScreen() {
         <Row label="Engine bundle" value={(hello?.bundleHash ?? config.engine?.bundleHash ?? '—').slice(0, 12)} />
         {bundleMismatch ? <Row label="" value="differs from the build's engine (dev URL?)" tone="warn" /> : null}
         <Row label="Topology" value={info?.topology ?? config.engine?.topology ?? '—'} />
-        <Row label="Social contract" value={short(info?.contracts.social)} />
-        <Row label="Profile contract" value={short(info?.contracts.profile)} />
-        <Row label="DM contract" value={short(info?.contracts.dm)} />
+        {CONTRACTS.map(({ key, label }) => (
+          <ContractRow key={key} label={label} id={info?.contracts[key]} testID={`diagnostics-copy-${key}`} />
+        ))}
+        <Disclosure
+          title={diagCopy.dapi}
+          value={dapi ? diagCopy.dapiSummary(dapiEndpointCount(dapi), formatAgo(dapi.lastOkAt, now)) : '—'}
+          testID="diagnostics-dapi"
+        >
+          {(dapi?.endpoints ?? []).map((endpoint) => (
+            <Row
+              key={endpoint.origin}
+              label={endpoint.origin.replace(/^https?:\/\//, '')}
+              value={`last ok ${formatAgo(endpoint.lastOkAt, now)} · ${endpoint.failures}/${endpoint.requests} failed`}
+              tone={endpoint.lastErrorAt !== null && (endpoint.lastOkAt ?? 0) < endpoint.lastErrorAt ? 'warn' : undefined}
+            />
+          ))}
+        </Disclosure>
+        <Disclosure title={diagCopy.capabilities} value={capabilities.length ? String(capabilities.length) : '—'} testID="diagnostics-capabilities">
+          {capabilities.map(({ label, value }) => (
+            <Row key={label} label={label} value={value} />
+          ))}
+        </Disclosure>
       </Section>
 
       <Section title="WebView">
@@ -201,16 +359,31 @@ export default function DiagnosticsScreen() {
         <Row label="Plain keys (encrypted MMKV)" value={String(stats.localKeys)} />
         <Row label="Secure keys / identities" value={`${stats.secureKeys} / ${stats.identities}`} />
         <Row label="Snapshot at boot" value={`${(stats.snapshotChars / 1024).toFixed(1)} KB`} />
+        <Row label={diagCopy.cache} value={formatBytes(cacheBytes)} />
+      </Section>
+
+      <Section title={diagCopy.recentErrors(errors.length)}>
+        <View testID="diagnostics-errors" className="py-1">
+          {errors.length === 0 ? (
+            <Row label={diagCopy.noErrors} value="" />
+          ) : (
+            [...errors].reverse().map((error) => <ErrorRow key={error.id} {...error} />)
+          )}
+        </View>
       </Section>
 
       <View className="gap-3 px-4 pt-6">
         <ActionButton
           kind="outline"
-          label="Copy diagnostics"
+          label={diagCopy.copy}
+          testID="diagnostics-copy"
           onPress={() => {
-            Clipboard.setStringAsync(diagnosticsText(status)).catch(() => undefined);
+            Clipboard.setStringAsync(diagnosticsText(snapshot())).catch((error: unknown) =>
+              appendLog('warn', 'host', `Copying diagnostics failed: ${errorMessage(error)}`),
+            );
           }}
         />
+        <ActionButton kind="outline" label={diagCopy.shareDiagnostics} testID="diagnostics-share" onPress={share} />
         <ActionButton
           kind="danger"
           label="Restart engine"

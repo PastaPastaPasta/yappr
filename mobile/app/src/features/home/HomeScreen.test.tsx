@@ -3,7 +3,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
 import { act, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
-import { RefreshControl } from 'react-native';
+import { Alert, RefreshControl } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
@@ -118,6 +118,17 @@ describe('Home', () => {
     expect(screen.getByTestId('network-chip')).toBeTruthy();
     expect(screen.getByText("You've reached the end.")).toBeTruthy();
     expect(screen.getByTestId('compose-fab')).toBeTruthy();
+  });
+
+  it('opens the network sheet from the header chip, not an alert (NET-07)', async () => {
+    const alert = jest.spyOn(Alert, 'alert');
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+
+    fireEvent.press(screen.getByTestId('network-chip'));
+    expect(alert).not.toHaveBeenCalled();
+    expect(screen.getByTestId('network-sheet-engine')).toBeTruthy();
+    expect(screen.getByTestId('network-sheet-diagnostics')).toBeTruthy();
   });
 
   it('asks a signed-out reader to sign in for Following (AUTH-02)', async () => {

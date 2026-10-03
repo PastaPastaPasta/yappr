@@ -24,6 +24,7 @@
     "bundle": "expo export --platform ios --platform android",
     "engine:serve": "python3 -m http.server 8092 --bind 127.0.0.1 --directory ../engine/dist/${APP_VARIANT:-devnet}",
     "icons": "node scripts/generate-icons.mjs",
+    "licenses": "node plugins/licenses/generate.js",
     "release:android": "scripts/release-android.sh",
     "release:ios": "scripts/release-ios.sh",
     "eas-build-post-install": "npm ci --prefix ../.. && npm ci --prefix ../engine"

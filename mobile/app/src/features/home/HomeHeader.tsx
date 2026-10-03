@@ -1,30 +1,10 @@
-import { Alert, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { config } from '~/config';
-import { useEngineStatus } from '~/engine/hooks';
+import { NetworkChipButton } from '~/features/network/NetworkChipButton';
 import { cn } from '~/lib-allowlist';
-import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
-
-/** UX_SPEC §5.11 (web's network banner copy). */
-const NETWORK_COPY: Record<string, { title: string; body: string }> = {
-  devnet: { title: 'Devnet', body: 'Running on a Dash Platform devnet. Data may be reset.' },
-  testnet: { title: 'Testnet', body: 'Running on Dash Platform Testnet. Data may be reset.' },
-};
-
-function HomeNetworkChip() {
-  const { state } = useEngineStatus();
-  const copy = NETWORK_COPY[config.network];
-  return (
-    <NetworkChip
-      network={config.network}
-      state={chipStateOf(state)}
-      onPress={copy ? () => Alert.alert(copy.title, copy.body) : undefined}
-    />
-  );
-}
 
 /** The navigation bar's height: 44 pt on iOS, Material 3's 64 dp app bar on Android. */
 const BAR_HEIGHT = Platform.OS === 'ios' ? 44 : 64;
@@ -54,7 +34,7 @@ export function HomeHeader() {
         </Text>
         {/* The chip aligns itself to the start; its own row centers it on the wordmark. */}
         <View className="flex-row items-center">
-          <HomeNetworkChip />
+          <NetworkChipButton />
         </View>
       </View>
     </View>

@@ -5,9 +5,10 @@ import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import type { ReactElement, ReactNode } from 'react';
-import { Alert, type AlertButton } from 'react-native';
+import { Alert, BackHandler, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { config } from '~/config';
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
@@ -21,6 +22,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { AboutScreen } from './AboutScreen';
 import { AccountSettingsScreen } from './AccountSettingsScreen';
+import { licenses, LicensesScreen } from './LicensesScreen';
 import { AppearanceSettingsScreen, NotificationSettingsScreen, PrivacySettingsScreen } from './ContentSettingsScreens';
 import { SettingsScreen } from './SettingsScreen';
 
@@ -139,6 +141,25 @@ describe('Settings root (SET-01)', () => {
     expect(router.push).toHaveBeenCalledWith('/settings/account');
     fireEvent.press(byId('settings-messages'));
     expect(router.push).toHaveBeenCalledWith('/messages/settings');
+  });
+
+  it('the footer chip opens the network sheet: what the network means, the engine state, diagnostics (NET-07)', () => {
+    const back = jest.spyOn(BackHandler, 'addEventListener');
+    renderScreen(<SettingsScreen />);
+
+    expect(byId('network-chip')).not.toBeDisabled();
+    fireEvent.press(byId('network-chip'));
+    expect(Alert.alert).not.toHaveBeenCalled();
+    // A bottom sheet, so Android Back closes it.
+    expect(back).toHaveBeenCalledWith('hardwareBackPress', expect.any(Function));
+    expect(screen.getByText('Running on a Dash Platform devnet. Data may be reset.')).toBeTruthy();
+    expect(byId('network-sheet-engine')).toHaveTextContent('Engine: Ready');
+
+    act(() => fakeEngine.setStatus({ state: 'restarting' }));
+    expect(byId('network-sheet-engine')).toHaveTextContent('Engine: Restarting');
+
+    fireEvent.press(byId('network-sheet-diagnostics'));
+    expect(router.push).toHaveBeenCalledWith('/settings/diagnostics');
   });
 
   it('signed out: sign-in instead of the account, content settings only', () => {
@@ -593,6 +614,9 @@ describe('About (SET-06, SET-07)', () => {
 
     expect(byId('about-version')).toHaveAccessibleName('Version, 1.0.0');
     expect(byId('about-network')).toHaveAccessibleName('Network, devnet');
+    // Baked in at build time (app.config.ts), never fetched.
+    expect(config.commit).toMatch(/^[0-9a-f]{7,40}$/);
+    expect(byId('about-commit')).toHaveAccessibleName(`Commit, ${config.commit!.slice(0, 8)}`);
 
     fireEvent.press(byId('about-terms'));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/terms');
@@ -604,5 +628,34 @@ describe('About (SET-06, SET-07)', () => {
     expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
     // A scrolling sheet, so large text still reaches every rule.
     expect(mockSheetScroll).toHaveBeenCalledWith(expect.objectContaining({ testID: 'about-rules-sheet' }));
+  });
+
+  it('has Community rules apart from the summary: the full rules the terms gate shows', () => {
+    renderScreen(<AboutScreen />);
+
+    expect(byId('about-community-rules')).toHaveAccessibleName('Community rules');
+    fireEvent.press(byId('about-community-rules'));
+    expect(mockSheetScroll).toHaveBeenCalledWith(expect.objectContaining({ testID: 'about-community-rules-sheet' }));
+    expect(screen.getByText('Zero tolerance for abuse')).toBeTruthy();
+  });
+
+  it('opens the native open-source licenses list, not a web page', () => {
+    renderScreen(<AboutScreen />);
+
+    fireEvent.press(byId('about-licenses'));
+    expect(router.push).toHaveBeenCalledWith('/settings/licenses');
+    expect(WebBrowser.openBrowserAsync).not.toHaveBeenCalled();
+  });
+
+  it('lists every shipped package with its license, and opens one to its license text', () => {
+    renderScreen(<LicensesScreen />);
+
+    expect(licenses.packages.length).toBeGreaterThan(500);
+    const pkg = licenses.packages.slice(0, 10).find((item) => item.texts.length > 0)!;
+    const id = `${pkg.name}@${pkg.version}`;
+    expect(byId(`license-${id}`)).toHaveAccessibleName(`${pkg.name} ${pkg.version}, ${pkg.license}`);
+    expect(screen.queryByTestId(`license-text-${id}`)).toBeNull();
+    fireEvent.press(byId(`license-${id}`));
+    expect(byId(`license-text-${id}`)).toHaveTextContent(licenses.texts[pkg.texts[0]].slice(0, 40), { exact: false });
   });
 });

@@ -12,14 +12,12 @@ import {
   UserGroupIcon,
 } from 'react-native-heroicons/outline';
 
-import { config } from '~/config';
 import { useCapabilities, useSession } from '~/data/session';
-import { useEngineStatus } from '~/engine/hooks';
 import { accountName } from '~/features/auth/accounts';
+import { NetworkChipButton } from '~/features/network/NetworkChipButton';
 import { cn } from '~/lib-allowlist';
 import { useAppearance } from '~/state/appearance';
 import { Avatar } from '~/ui/Avatar';
-import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { colors, tw, useColors } from '~/ui/tokens';
 
@@ -70,7 +68,6 @@ function AccountSummary() {
 export function SettingsScreen() {
   const { signedIn, status, accounts } = useSession();
   const capabilities = useCapabilities();
-  const engineStatus = useEngineStatus();
   const theme = useAppearance((s) => s.theme);
   const go = (href: Href) => () => router.push(href);
 
@@ -162,7 +159,7 @@ export function SettingsScreen() {
       <View className="items-center gap-2 px-4 pt-8" testID="settings-version">
         {/* The chip aligns itself to the start; this row centers it. */}
         <View className="flex-row justify-center">
-          <NetworkChip network={config.network} state={chipStateOf(engineStatus.state)} />
+          <NetworkChipButton />
         </View>
         <Text variant="caption" tone="secondary" selectable>
           {versionLine}

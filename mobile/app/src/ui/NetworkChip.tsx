@@ -70,10 +70,11 @@ export interface NetworkChipProps {
   state: EngineState;
   /** Opens the network sheet (UX_SPEC §4.34). */
   onPress?: () => void;
+  testID?: string;
 }
 
 /** The amber DEVNET / TESTNET chip (UX_SPEC §2.17). Nothing on mainnet. */
-export function NetworkChip({ network, state, onPress }: NetworkChipProps) {
+export function NetworkChip({ network, state, onPress, testID = 'network-chip' }: NetworkChipProps) {
   if (network === 'mainnet') return null;
   return (
     <Pressable
@@ -82,7 +83,7 @@ export function NetworkChip({ network, state, onPress }: NetworkChipProps) {
       hitSlop={hitSlopFor(20)}
       onPress={onPress}
       disabled={!onPress}
-      testID="network-chip"
+      testID={testID}
       className="min-h-5 flex-row items-center gap-1.5 self-start rounded-full bg-amber-500 px-2 active:opacity-80"
     >
       <StateDot state={state} />
