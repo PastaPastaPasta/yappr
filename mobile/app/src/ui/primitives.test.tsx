@@ -166,6 +166,15 @@ describe('badges and chips', () => {
     expect(chipStateOf('booting')).toBe('booting');
     expect(chipStateOf('restarting')).toBe('booting');
   });
+
+  it('lays its label out as measured, so Android never clips a letter (D-L3a-008)', () => {
+    render(<NetworkChip network="devnet" state="ready" />);
+    const label = screen.getByTestId('network-chip-label', { includeHiddenElements: true });
+    // The high-quality breaker wrapped the last letter onto a clipped second line ("DEVNE").
+    expect(label.props.textBreakStrategy).toBe('simple');
+    expect(label.props.children).toBe('DEVNET');
+    expect(label.props.numberOfLines).toBeUndefined();
+  });
 });
 
 describe('states', () => {
@@ -435,6 +444,18 @@ describe('Avatar', () => {
     );
     expect(screen.getByTestId('avatar-svg', { includeHiddenElements: true })).toBeTruthy();
     expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts transparent DiceBear art on a backdrop that stays light in dark mode (D-L3a-007)', () => {
+    const { rerender } = render(<Avatar uri={FIXTURE_AVATARS.alice.uri} testID="avatar" />);
+    const svgCircle = screen.getByTestId('avatar', { includeHiddenElements: true }).props.className as string;
+    // Black line-art strokes (lorelei, notionists, micah) vanish on the dark page (neutral-900).
+    expect(svgCircle).toContain('dark:bg-gray-200');
+    expect(svgCircle).not.toContain('dark:bg-neutral-900');
+
+    // A photo covers its circle: the skeleton color shows only while it loads.
+    rerender(<Avatar uri="https://example.com/a.png" testID="avatar" />);
+    expect(screen.getByTestId('avatar', { includeHiddenElements: true }).props.className).toContain('dark:bg-gray-800');
   });
 
   it('is a labelled button only when tappable', () => {

@@ -92,7 +92,7 @@ export const Avatar = memo(function Avatar({
   const fallbackMarkup = useMemo(() => svgMarkup(fallback), [fallback]);
 
   let content = null;
-  // DiceBear art is transparent, so it sits on the page color, as on web.
+  // DiceBear art is transparent: it gets a backdrop that keeps black line art visible in dark mode.
   let transparent = false;
   if (markup) {
     transparent = true;
@@ -122,7 +122,7 @@ export const Avatar = memo(function Avatar({
       accessibilityElementsHidden={!onPress}
       className={cn(
         'overflow-hidden rounded-full',
-        transparent ? tw.bg : tw.bgSkeleton,
+        transparent ? tw.avatarBackdrop : tw.bgSkeleton,
         size === 'profile' && 'border-4 border-white dark:border-neutral-900',
         className,
       )}
