@@ -147,8 +147,65 @@ describe('PostItem actions', () => {
     expect(router.push).toHaveBeenCalledWith({ pathname: '/post/[id]', params: { id: 'my-quote' } });
   });
 
+  it('offers a v10 own quote with text, reposted as on web, "Delete your quote" / "View your quote" (D-L3a-002)', async () => {
+    const post = fixturePost({
+      id: 'qw',
+      stats: { likes: 0, reposts: 0, replies: 0, quotes: 1 },
+      viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: 'qw-quote', ownQuoteBare: false },
+    });
+    fakeEngine.method('posts.delete').mockResolvedValue(ticket({ op: 'post.delete' }));
+    renderPost(post);
+    expect(byId('repost-btn-qw')).toHaveAccessibleName('Repost or quote, 1 repost, reposted');
+
+    fireEvent.press(byId('repost-btn-qw'));
+    expect(sheet?.options).toEqual(['Delete your quote', 'View your quote', 'Cancel']);
+    await act(async () => sheet?.choose('Delete your quote'));
+    expect(alert?.title).toBe('Delete post?');
+    await act(async () => alert?.press('Delete'));
+    expect(fakeEngine.method('engage.unrepost')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('posts.delete')).toHaveBeenCalledWith({ id: 'qw-quote', kind: 'post', ownerId: VIEWER_ID, rootPostId: null });
+    expect(toastMessage()).toBe('Quote deleted');
+    // The slot is free and the quote out of the count at once, not after a refetch.
+    expect(byId('repost-btn-qw')).toHaveAccessibleName('Repost or quote, 0 reposts');
+    fireEvent.press(byId('repost-btn-qw'));
+    expect(sheet?.options).toEqual(['Repost', 'Quote', 'Cancel']);
+  });
+
+  it('offers a v10 bare repost only "Undo repost", taking it out of the quotes it was read back in', async () => {
+    const post = fixturePost({
+      id: 'bare',
+      stats: { likes: 0, reposts: 0, replies: 0, quotes: 2 },
+      viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: 'b1', ownQuoteBare: true },
+    });
+    fakeEngine.method('engage.unrepost').mockResolvedValue(ticket({ op: 'unrepost' }));
+    renderPost(post);
+    fireEvent.press(byId('repost-btn-bare'));
+    expect(sheet?.options).toEqual(['Undo repost', 'Cancel']);
+    await act(async () => sheet?.choose('Undo repost'));
+    expect(fakeEngine.method('engage.unrepost')).toHaveBeenCalledWith(expect.objectContaining({ id: 'bare' }));
+    expect(byId('repost-btn-bare')).toHaveAccessibleName('Repost or quote, 1 repost');
+  });
+
+  it('frees the v10 slot when the own quote is deleted from its own menu', async () => {
+    const target = fixturePost({
+      id: 'tq',
+      stats: { likes: 0, reposts: 0, replies: 0, quotes: 1 },
+      viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: 'own-quote-post', ownQuoteBare: false },
+    });
+    const mine = fixturePost({ id: 'own-quote-post', author: AUTHORS.alice, quotedPostId: 'tq', quoted: target });
+    fakeEngine.method('posts.delete').mockResolvedValue(ticket({ op: 'post.delete' }));
+    renderPost(mine);
+    selectMenu('own-quote-post', 'delete');
+    await act(async () => alert?.press('Delete'));
+    expect(fakeEngine.method('posts.delete')).toHaveBeenCalledWith(expect.objectContaining({ id: 'own-quote-post' }));
+    expect(queryClient.getQueryData(queryKeys.post.detail('own-quote-post'))).toMatchObject({
+      quoted: { stats: { quotes: 0 }, viewer: { reposted: false, ownQuoteId: null } },
+    });
+  });
+
   it('confirms deleting the own quote when undoing a repost meets QUOTE_HAS_TEXT', async () => {
-    const post = fixturePost({ id: 'qt', viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: 'q1' } });
+    // The cache read the slot as a bare repost; the engine found text in it.
+    const post = fixturePost({ id: 'qt', viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: 'q1', ownQuoteBare: true } });
     fakeEngine.method('engage.unrepost').mockRejectedValue(Object.assign(new Error('text'), { code: 'QUOTE_HAS_TEXT' }));
     fakeEngine.method('posts.delete').mockResolvedValue(ticket({ op: 'post.delete' }));
     renderPost(post);

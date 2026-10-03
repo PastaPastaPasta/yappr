@@ -20,6 +20,7 @@ import { SwitchRow } from './Switch';
 import { FilterChips, TopTabs } from './Tabs';
 import { Text } from './Text';
 import { TextField } from './TextField';
+import { colors } from './tokens';
 import { toast, toastDuration, useToastStore } from './toast';
 import { ToastHost } from './ToastHost';
 import { followLabel, UserRow } from './UserRow';
@@ -44,6 +45,32 @@ describe('Button', () => {
     expect(screen.getByRole('button')).toBeBusy();
     expect(screen.getByTestId('button-spinner')).toBeTruthy();
     expect(onPress).not.toHaveBeenCalled();
+  });
+});
+
+describe('Button variants', () => {
+  const labelColor = () => StyleSheet.flatten(screen.getByText(/^Follow/).props.style)?.color;
+
+  it('restyles its label when the variant changes on a mounted button (D-L3a-001)', () => {
+    // Follow → Following → Follow, as the profile header does.
+    const { rerender } = render(<Button label="Follow" variant="primary" size="sm" />);
+    expect(labelColor()).toBe(colors.white);
+    const first = screen.getByText('Follow');
+    rerender(<Button label="Following" variant="outline" size="sm" />);
+    expect(labelColor()).toBe(colors.gray900);
+    rerender(<Button label="Follow" variant="primary" size="sm" />);
+    expect(labelColor()).toBe(colors.white);
+    // A fresh label: nothing of the outline style stays on it.
+    expect(screen.getByText('Follow')).not.toBe(first);
+  });
+
+  it('colors the label like its icon and spinner, for every variant', () => {
+    const { rerender } = render(<Button label="Follow" variant="link" />);
+    expect(labelColor()).toBe(colors.yappr700);
+    rerender(<Button label="Follow" variant="destructive" />);
+    expect(labelColor()).toBe(colors.white);
+    rerender(<Button label="Follow" variant="ghost" />);
+    expect(labelColor()).toBe(colors.gray900);
   });
 });
 

@@ -65,7 +65,9 @@ function storedCapabilities(): CapabilitiesDTO | null {
 
 let lastCapabilities: CapabilitiesDTO | null = storedCapabilities();
 
-const getCapabilities = () => engineSupervisor.getStatus().info?.capabilities ?? lastCapabilities;
+/** `useCapabilities` outside React (a write's follow-up). */
+export const getCapabilities = (): CapabilitiesDTO | null =>
+  engineSupervisor.getStatus().info?.capabilities ?? lastCapabilities;
 
 /**
  * What the active contract can serve (`engine.info().capabilities`): ranking

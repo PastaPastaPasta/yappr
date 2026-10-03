@@ -342,6 +342,48 @@ describe('BookmarksScreen', () => {
     expect(screen.queryByTestId('bookmarks-load-more')).toBeNull();
   });
 
+  it('removes a bookmark from the card menu, on both platforms (UX_SPEC 4.24, D-L3a-003)', async () => {
+    fakeEngine.method('engage.bookmarks').mockResolvedValue({
+      items: [saved('b1', 'Film grain'), saved('b2', 'Salt is not optional')],
+      cursor: null,
+      hasMore: false,
+    });
+    fakeEngine.method('engage.unbookmark').mockResolvedValue(unbookmarkTicket('b1'));
+    renderScreen(<BookmarksScreen />);
+    await flush();
+
+    const menu = screen.getByTestId('more-menu-b1');
+    const items = (menu.props.actions as { id: string; title: string }[]).map((item) => item.title);
+    expect(items.slice(items.indexOf('Share…'), items.indexOf('Share…') + 2)).toEqual(['Share…', 'Remove bookmark']);
+    await act(async () => fireEvent(menu, 'pressAction', { nativeEvent: { event: 'remove-bookmark' } }));
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledWith(expect.objectContaining({ id: 'b1' }));
+    expect(useToastStore.getState().current?.message).toBe('Removed from bookmarks');
+    expect(screen.queryByText('Film grain')).toBeNull();
+    expect(screen.getByText('Salt is not optional')).toBeTruthy();
+  });
+
+  it("keeps a blocked author's bookmark as the blocked stub, never a blank list (G-6, G-7, D-L3i-003)", async () => {
+    const blocked = fixturePost({
+      id: 'b1',
+      content: 'Film grain',
+      viewer: { ...fixturePost().viewer!, bookmarked: true, authorBlocked: true },
+    });
+    fakeEngine.method('engage.bookmarks').mockResolvedValue({ items: [blocked], cursor: null, hasMore: false });
+    renderScreen(<BookmarksScreen />);
+    await flush();
+
+    expect(screen.getByText('Post from an account you blocked')).toBeTruthy();
+    expect(screen.queryByText('Film grain')).toBeNull();
+    // Still removable, by its swipe action or its menu, which has nothing else.
+    expect(screen.getByTestId('bookmark-remove-b1')).toBeTruthy();
+    const menu = screen.getByTestId('more-menu-b1');
+    expect((menu.props.actions as { title: string }[]).map((item) => item.title)).toEqual(['Remove bookmark']);
+    expect(screen.getByTestId('stub-blocked').props.accessibilityActions).toEqual([{ name: 'more', label: 'More' }]);
+    fakeEngine.method('engage.unbookmark').mockResolvedValue(unbookmarkTicket('b1'));
+    await act(async () => fireEvent(menu, 'pressAction', { nativeEvent: { event: 'remove-bookmark' } }));
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledWith(expect.objectContaining({ id: 'b1' }));
+  });
+
   it('shows the empty state', async () => {
     fakeEngine.method('engage.bookmarks').mockResolvedValue({ items: [], cursor: null, hasMore: false });
     renderScreen(<BookmarksScreen />);

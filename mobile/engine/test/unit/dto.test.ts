@@ -50,9 +50,16 @@ describe('toPostDTO', () => {
   it('adds viewer marks and author relations only when signed in', () => {
     const marked = post({ liked: true, ownQuote: { id: ID('Q'), bare: true }, _enrichment: { authorIsBlocked: true, authorIsFollowing: false, authorAvatarUrl: '' } })
     expect(toPostDTO(marked, signedIn).viewer).toEqual({
-      liked: true, reposted: false, bookmarked: false, ownQuoteId: ID('Q'), authorBlocked: true, followsAuthor: false,
+      liked: true, reposted: false, bookmarked: false, ownQuoteId: ID('Q'), ownQuoteBare: true, authorBlocked: true, followsAuthor: false,
     })
+    expect(validate(postDTO, toPostDTO(marked, signedIn))).toEqual([])
     expect(toPostDTO(marked, signedOut).viewer).toBeUndefined()
+  })
+
+  it('tells a v10 quote with text in the viewer\'s slot from a bare repost (web ownQuote.bare)', () => {
+    const quoted = post({ reposted: true, ownQuote: { id: ID('Q'), bare: false } })
+    expect(toPostDTO(quoted, signedIn).viewer).toMatchObject({ reposted: true, ownQuoteId: ID('Q'), ownQuoteBare: false })
+    expect(toPostDTO(post(), signedIn).viewer).toMatchObject({ reposted: false, ownQuoteId: null, ownQuoteBare: false })
   })
 
   it('never ships a generated avatar as a data URI: the stored recipe wins, else the default', () => {

@@ -150,6 +150,7 @@ describe('PostCard (feed)', () => {
             reposted: false,
             bookmarked: false,
             ownQuoteId: null,
+            ownQuoteBare: false,
             authorBlocked: true,
             followsAuthor: false,
           },
@@ -157,6 +158,9 @@ describe('PostCard (feed)', () => {
       />,
     );
     expect(screen.getByText('Post from an account you blocked')).toBeTruthy();
+    // No menu given: no "⋯" and no "More" action.
+    expect(screen.queryByTestId('more-menu-post-basic')).toBeNull();
+    expect(screen.getByTestId('stub-blocked').props.accessibilityActions).toBeUndefined();
   });
 });
 

@@ -43,10 +43,17 @@ export interface PostItemProps
   /**
    * A post this device deleted: `hide` (default) leaves lists at once;
    * `stub` shows the "deleted" line in its place, for threads (replies
-   * below it keep their parent) and detail screens (which should pop when
-   * their root is deleted: `usePostRemoved(id)`).
+   * below it keep their parent), detail screens (which should pop when
+   * their root is deleted: `usePostRemoved(id)`) and Bookmarks (PRD ENG-04).
+   * A blocked author's post goes the same way: hidden, or its blocked stub.
    */
   removal?: 'hide' | 'stub';
+  /**
+   * The Bookmarks screen's "Remove bookmark" in the card's menu (PRD ENG-04,
+   * UX_SPEC §4.24), called with the listed post; a blocked author's stub
+   * keeps it as its only item.
+   */
+  onRemoveBookmark?: (post: PostDTO) => void;
 }
 
 /**
@@ -133,26 +140,31 @@ function repostSheet(
   const slotRules = capabilities?.repostsAreQuotes === true;
   const canQuote = !post.encrypted;
   const quote = canQuote ? [{ label: 'Quote', onPress: run.quote }] : [];
-  if (viewer?.reposted) {
-    // v10's one slot holds the repost: no quote beside it.
-    return [{ label: 'Undo repost', onPress: run.undo }, ...(slotRules ? [] : quote)];
-  }
-  const ownQuote = slotRules ? viewer?.ownQuoteId : null;
+  // v10's one slot holds a quote with text (`reposted` too, as on web): it is deleted as a post, or visited.
+  const ownQuote = slotRules && viewer?.ownQuoteBare === false ? viewer.ownQuoteId : null;
   if (ownQuote) {
     return [
       { label: 'Delete your quote', destructive: true, onPress: run.deleteQuote },
       { label: 'View your quote', onPress: () => openPost(ownQuote) },
     ];
   }
+  if (viewer?.reposted) {
+    // v10's one slot holds the repost: no quote beside it.
+    return [{ label: 'Undo repost', onPress: run.undo }, ...(slotRules ? [] : quote)];
+  }
   return [{ label: 'Repost', onPress: run.repost }, ...quote];
 }
 
-/** The ⋯ and long-press menu (PRD ENG-08), in its order. */
-function menuItems(post: PostDTO, own: boolean, followKnown: boolean): MenuItem[] {
+const REMOVE_BOOKMARK: MenuItem = { id: 'remove-bookmark', title: 'Remove bookmark', systemImage: 'bookmark.slash' };
+
+/** The ⋯ and long-press menu (PRD ENG-08), in its order; a screen's own item (Bookmarks) after "Share…". */
+function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBookmark: boolean): MenuItem[] {
   const handle = post.author.username ? `@${post.author.username}` : post.author.displayName;
   const follows = post.viewer?.followsAuthor === true;
   const noun = post.kind === 'reply' ? 'reply' : 'post';
   const items: MenuItem[] = [];
+  // A blocked author's post is its stub: nothing to follow, block or report.
+  if (post.viewer?.authorBlocked) return removeBookmark ? [REMOVE_BOOKMARK] : items;
   if (!own && followKnown) {
     items.push({
       id: 'follow',
@@ -165,6 +177,7 @@ function menuItems(post: PostDTO, own: boolean, followKnown: boolean): MenuItem[
     { id: 'copy-link', title: 'Copy link', systemImage: 'link' },
     { id: 'share', title: 'Share…', systemImage: 'square.and.arrow.up' },
   );
+  if (removeBookmark) items.push(REMOVE_BOOKMARK);
   if (own && !post.deleted) {
     items.push({ id: 'delete', title: `Delete ${noun}`, systemImage: 'trash', destructive: true });
   }
@@ -212,7 +225,12 @@ async function confirmDelete(
  * sign-in sheet. Feed, thread, profile and bookmark lists all render this.
  * Pass card props (`variant`, `replyingTo`, ...) through.
  */
-export const PostItem = memo(function PostItem({ post: listed, removal = 'hide', ...cardProps }: PostItemProps) {
+export const PostItem = memo(function PostItem({
+  post: listed,
+  removal = 'hide',
+  onRemoveBookmark,
+  ...cardProps
+}: PostItemProps) {
   const { post: shownPost, marksPending, reloadMarks } = useShownPost(listed);
   const poll = usePoll(shownPost);
   const listedRemoved = usePostRemoved(listed.id);
@@ -292,7 +310,9 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
       'copy-link': () => copyText(postWebUrl(post), 'Link copied to clipboard'),
       share: () => sharePost(post),
       delete: () => {
-        confirmDelete(targetOf(post), post.kind, capabilities).catch(() => undefined);
+        // A v10 quote holds the viewer's one slot on the post it quotes: deleting it frees that.
+        const quotedPostId = capabilities?.repostsAreQuotes ? post.quotedPostId : undefined;
+        confirmDelete(targetOf(post), post.kind, capabilities, quotedPostId).catch(() => undefined);
       },
       block: () => requireAuth(() => router.push({ pathname: '/block/[userId]', params: { userId: post.author.id } })),
       report: () => {
@@ -302,6 +322,7 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
         if (capabilities?.reports === false) openReport();
         else requireAuth(openReport);
       },
+      ...(onRemoveBookmark ? { 'remove-bookmark': () => onRemoveBookmark(listed) } : {}),
     };
     const onSelect = (id: string) => menuActions[id]?.();
 
@@ -338,9 +359,10 @@ export const PostItem = memo(function PostItem({ post: listed, removal = 'hide',
       onVotePress: openOnWeb,
       onOpenPrivate: openOnWeb,
     };
-    const menu: PostCardMenu = { items: menuItems(post, own, followKnown), onSelect };
+    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);
+    const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
     return { actions, menu };
-  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail]);
+  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
 
   if ((removed && !asStub) || safety.hidden) return null;
 
