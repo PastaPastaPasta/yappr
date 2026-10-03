@@ -6,6 +6,7 @@ import {
   groupNameError,
   isIdentityIdText,
   isPartOfSend,
+  isValidIdentityId,
   matchesSearch,
   memberCount,
   previewText,
@@ -64,8 +65,15 @@ describe('search and order', () => {
   it('orders by last activity, with fresh drafts on top', () => {
     const old = conversation({ key: 'old', lastActivity: new Date(1000) });
     const recent = conversation({ key: 'recent', lastActivity: new Date(5000) });
-    const draft = conversation({ key: 'draft', lastActivity: null });
+    const draft = conversation({ key: 'draft', lastActivity: null, lastMessage: null, flags: { ...FLAGS, draft: true } });
     expect(sortConversations([old, recent, draft]).map((c) => c.key)).toEqual(['draft', 'recent', 'old']);
+  });
+
+  it('never puts a conversation without activity above active ones (QA D-L4i-003)', () => {
+    const active = conversation({ key: 'active', lastActivity: new Date(5000) });
+    const quiet = conversation({ key: 'quiet', kind: 'group', peer: null, name: 'Quiet', lastMessage: null, lastActivity: null });
+    const joined = conversation({ key: 'joined', kind: 'group', peer: null, name: 'Joined', lastMessage: null, lastActivity: new Date(3000) });
+    expect(sortConversations([quiet, joined, active]).map((c) => c.key)).toEqual(['active', 'joined', 'quiet']);
   });
 });
 
@@ -76,6 +84,17 @@ describe('isIdentityIdText', () => {
     expect(isIdentityIdText('writes-mina4')).toBe(false);
     // 0, O, I and l are not base58.
     expect(isIdentityIdText('0CtPfY75SUK6S47ipXyeUxHWcWWKBAnQreiZ1SZznMHs')).toBe(false);
+  });
+
+  it('tells a real id (32 bytes) from base58 text that only looks like one (QA D-L4a-007)', () => {
+    expect(isValidIdentityId('BCtPfY75SUK6S47ipXyeUxHWcWWKBAnQreiZ1SZznMHs')).toBe(true);
+    expect(isValidIdentityId(' 3ZMisEx3ybPn4b1JMEppThBoKu3fLHRvNSd7HiZwLSG2 ')).toBe(true);
+    // The all-zero id: 32 "1"s.
+    expect(isValidIdentityId('1'.repeat(32))).toBe(true);
+    // 44 "1"s decode to 44 zero bytes; "z" × 44 to a number far past 32 bytes.
+    expect(isValidIdentityId('1'.repeat(44))).toBe(false);
+    expect(isValidIdentityId('z'.repeat(44))).toBe(false);
+    expect(isValidIdentityId('writes-mina4')).toBe(false);
   });
 });
 

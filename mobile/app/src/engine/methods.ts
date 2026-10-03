@@ -49,6 +49,8 @@ const READS = new Set([
   'dm.search',
   'dm.messages',
   'dm.createdGroup',
+  // A poll now (pull to refresh, "Try again"): a fresh engine polls on its own, so a replay changes nothing.
+  'dm.refresh',
 ]);
 const READ_MODULES = new Set(['feed', 'explore']);
 

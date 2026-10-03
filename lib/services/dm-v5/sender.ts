@@ -26,7 +26,26 @@ import { withNonceRetry } from './write-failure'
 
 const MAX_J_ATTEMPTS = 20
 
+/**
+ * How far the chain's clock can trail real time. `chain.now()` is the newest
+ * block time a read returned, and a quiet Platform network makes a block only
+ * every 3 minutes, so between messages it is up to that much behind.
+ */
+const BLOCK_TIME_LAG_MS = 3 * 60_000
+
 export class SendError extends Error {}
+
+/**
+ * The time to show for a message I just wrote (QA D-L4i-007): it lands in a
+ * block made after the send, so the chain's (stale) time is caught up to the
+ * device clock, but never by more than the block time lag. Shown only: the
+ * message's order, the read position and weeks stay on block time (§4.1), so
+ * a device clock that runs fast moves none of them.
+ */
+function sentAt(ctx: DmContext): number {
+  const chainTime = ctx.chain.now()
+  return Math.max(chainTime, Math.min(ctx.wallClock(), chainTime + BLOCK_TIME_LAG_MS))
+}
 
 /**
  * Catch up on my own stream for this conversation before choosing `j`: a
@@ -64,7 +83,8 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
     if (!isFresh(ctx, conv) && !(await applyGroups(ctx, [conv]))) {
       throw new SendError('Could not check the group for changes. Try again in a moment.')
     }
-    if (conv.removed || conv.ended) throw new SendError('You are no longer a member of this group.')
+    // Left: the owner removes me later (§6.4), but nothing more goes out from here meanwhile.
+    if (conv.removed || conv.ended || ctx.cache.hasLeft(conv.key)) throw new SendError('You are no longer a member of this group.')
     if (conv.unreadable) throw new SendError('Ask the group owner to resend your keys.')
   }
   const epoch = currentEpoch(conv)
@@ -152,7 +172,7 @@ function hold(
   trustBody?: Uint8Array
 ): HeldMessage {
   const trust = trustBody ? { local: true, body: trustBody } : {}
-  const held: HeldMessage = { sender: ctx.me.id, pointer, docId, createdAt: ctx.chain.now(), content, prev, ...trust }
+  const held: HeldMessage = { sender: ctx.me.id, pointer, docId, createdAt: ctx.chain.now(), sentAt: sentAt(ctx), content, prev, ...trust }
   conv.held.set(pointerKey(ctx.me.id, pointer), held)
   if (!st.cur || pointer.w > st.cur.w || (pointer.w === st.cur.w && pointer.j > st.cur.j)) st.cur = { w: pointer.w, j: pointer.j }
   if (trustBody) st.stale.push({ w: pointer.w, j: pointer.j, until: ctx.chain.now() + STALE_WINDOW_MS, held: true })

@@ -154,6 +154,14 @@ export class LocalCache {
     this.dirty = true
   }
 
+  /** The owner added me back after I left: the group is mine to read and write again. */
+  clearLeft(convKey: string): void {
+    const conv = this.data.convs[convKey]
+    if (!conv?.left) return
+    delete conv.left
+    this.dirty = true
+  }
+
   /** The read and hidden positions last set on this device, if any. */
   positions(convKey: string): { readAt?: number; hiddenAt?: number } | null {
     const conv = this.data.convs[convKey]

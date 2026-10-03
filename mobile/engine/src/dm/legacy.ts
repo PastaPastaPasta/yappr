@@ -380,6 +380,11 @@ export function createLegacyBackend(options: { service: LegacyDmService; emit: D
       return rowsOf(current)
     },
 
+    /** Pull to refresh, "Try again": the list is read again once it is older than the TTL (at once if it never loaded). */
+    async refresh(identityId: string): Promise<void> {
+      await refreshList(stateFor(identityId))
+    },
+
     /** A block or unblock settled: re-read who is blocked, so the conversation and its badge follow. */
     blocksChanged(): void {
       const current = state

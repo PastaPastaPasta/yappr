@@ -55,7 +55,14 @@ export interface HeldMessage {
   sender: IdentityId
   pointer: MessagePointer
   docId: string
+  /** Block time: the timeline's order and the read position (a sent message's is the chain's time when sent). */
   createdAt: number
+  /**
+   * My message sent this session: the time to show for it (`sender.ts`
+   * `sentAt`), which the block time trails. Display only, never order or
+   * read state: a device clock that runs fast must not move those.
+   */
+  sentAt?: number
   content: DmContent
   prev: MessagePointer | null
   /**

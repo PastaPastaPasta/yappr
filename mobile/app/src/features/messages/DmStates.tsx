@@ -36,14 +36,24 @@ export function DmLocked({ onUnlock }: { onUnlock: () => void }) {
   );
 }
 
-/** UX_SPEC §2.15 conversation skeleton: a 40 circle, two bars and a time bar. */
-export function InboxSkeleton() {
+/**
+ * UX_SPEC §2.15 conversation skeleton: a 40 circle, two bars and a time bar;
+ * while the engine boots, "Connecting to Dash Platform…" under it (§4.34).
+ */
+export function InboxSkeleton({ connecting = false }: { connecting?: boolean }) {
   return (
-    <SkeletonGroup label="Loading conversations…" testID="messages-loading">
-      {[0, 1, 2, 3, 4, 5].map((i) => (
-        <RowSkeleton key={i} withTime />
-      ))}
-    </SkeletonGroup>
+    <View>
+      <SkeletonGroup label="Loading conversations…" testID="messages-loading">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <RowSkeleton key={i} withTime />
+        ))}
+      </SkeletonGroup>
+      {connecting ? (
+        <Text variant="subhead" tone="secondary" className="p-6 text-center" testID="messages-connecting">
+          Connecting to Dash Platform…
+        </Text>
+      ) : null}
+    </View>
   );
 }
 

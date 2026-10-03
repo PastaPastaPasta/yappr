@@ -704,7 +704,8 @@ Conversation keys are `d:…` or `g:…:…` for v5 (`ConversationView.key`, `en
 | Method | Signature | v5 wraps | Legacy wraps |
 | --- | --- | --- | --- |
 | `status` | `() => Promise<DmStatusDTO>` | `getDmEngine(id)` (`dm-v5/index.ts:58`) → `getSnapshot()` (`engine.ts:141`): `ready`, `unreadTotal`, `capReached`, `retention`, `recovery`, `error` | `getUnreadTotal` (:340) |
-| `conversations` | `() => Promise<ConversationDTO[]>` | `snapshot.conversations` | `getConversations(userId, {includeParticipantInfo:true})` (:375) |
+| `conversations` | `() => Promise<ConversationDTO[]>` | `snapshot.conversations`; before the saved state has loaded, `ENGINE_BUSY`, or the first load's failure (`TIMEOUT` / `NETWORK`) once it failed, never an empty list. A group with no message is dated by when this device joined it (`entry.anchorChangedAt`). | `getConversations(userId, {includeParticipantInfo:true})` (:375); a first list read that failed rejects `NETWORK` |
+| `refresh` | `() => Promise<void>` | `tick()`: poll now, the first load too if it failed (pull to refresh, "Try again"); a failure shows in `status().error` | re-reads the list once it is older than its TTL |
 | `messages` | `(key: string, cursor?: Cursor) => Promise<Page<MessageDTO>>` | `engine.messages(key)` (:363), newest-first slices of 50 | `getConversationMessages` (:458) / `pollNewMessages` (:504) |
 | `open` | `(key: string \| null) => Promise<void>` | `openConversation` (:376); polls every 4 s while open (`OPEN_POLL_MS`, :38) | starts a 3 s poll as `legacy-messages.tsx:342-412` |
 | `markRead` | `(key: string) => Promise<void>` | `markRead` (:397) | `markAsRead` (:569) only if `sendReadReceipts` |

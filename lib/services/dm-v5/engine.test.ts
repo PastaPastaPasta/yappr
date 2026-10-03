@@ -44,6 +44,23 @@ describe('DmEngine views', () => {
     expect(bob.getSnapshot().unreadTotal).toBe(0)
   })
 
+  it('shows my send at the device clock, but keeps a reply after it below it and unread (QA D-L4i-007)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    // The engines' device clock (Date.now()) runs far ahead of this ledger's block time.
+    const key = await alice.startDirect(bob58)
+    await alice.openConversation(key)
+    await alice.send(key, 'question')
+    const [question] = alice.messages(key)
+    expect(question.shownAt).toBe(question.createdAt + 3 * 60_000)
+    await bob.tick()
+    await bob.send(bob.getSnapshot().conversations[0].key, 'answer')
+    await alice.tick()
+    expect(alice.messages(key).map((m) => [m.text, m.shownAt === m.createdAt])).toEqual([['question', false], ['answer', true]])
+    expect(alice.getSnapshot().conversations[0].unread).toBe(1)
+  })
+
   it('shows a draft only while it is open, and never writes until the first send', async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
@@ -69,6 +86,32 @@ describe('DmEngine views', () => {
     await alice.send(aliceKey, 'direct hello')
     await bob.tick()
     expect(bob.getSnapshot().conversations.map((c) => c.kind).sort()).toEqual(['direct', 'group'])
+  })
+
+  it('shows a group I left as no longer mine, refuses to send to it, and lets me back in when the owner re-adds me (QA D-L4a-003)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    await started(engine(ledger, CAROL_ID, CAROL_PRIV))
+    const { key } = await alice.createGroup('Team', [bob58, carol58])
+    await bob.tick()
+    const group = () => bob.getSnapshot().conversations.find((c) => c.key === key)
+    expect(group()?.removed).toBe(false)
+
+    await bob.leaveGroup(key)
+    // The owner has not removed Bob yet, but he left: no longer a member here (PRD DM-08).
+    expect(group()).toMatchObject({ removed: true, hidden: true })
+    const written = ledger.messages.length
+    await expect(bob.send(key, 'still here?')).rejects.toThrow(/no longer a member/)
+    expect(ledger.messages).toHaveLength(written)
+
+    // The owner removes him on its next poll, then adds him back: he can send again.
+    await alice.tick()
+    await alice.addMember(key, bob58)
+    await bob.tick()
+    expect(group()?.removed).toBe(false)
+    await bob.send(key, 'back again')
+    expect(bob.messages(key).map((m) => m.text)).toContain('back again')
   })
 
   it('"delete conversation" hides it until a newer message arrives', async () => {

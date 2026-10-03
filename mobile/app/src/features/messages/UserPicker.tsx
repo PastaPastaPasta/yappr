@@ -13,7 +13,7 @@ import { RowSkeleton } from '~/ui/Skeleton';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, monoFont, tw, useColors } from '~/ui/tokens';
 
-import { isIdentityIdText } from './dm-model';
+import { isIdentityIdText, isValidIdentityId } from './dm-model';
 
 /** A person the picker offers. */
 export type PickerUser = Pick<AuthorDTO, 'id' | 'username' | 'displayName' | 'avatar'>;
@@ -128,6 +128,7 @@ export function UserPicker({
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
   const byId = isIdentityIdText(text);
+  const validId = byId && isValidIdentityId(text);
   const searching = !byId && text.length >= MIN_QUERY;
 
   const followers = useEngineInfiniteQuery<UserSummaryDTO>(
@@ -142,7 +143,7 @@ export function UserPicker({
     { enabled: searching, placeholderData: keepPreviousData },
   );
   const lookup = useEngineQuery<ProfileDTO | null>(queryKeys.profile.detail(text), (api) => api.profiles.get(text), {
-    enabled: byId,
+    enabled: validId,
   });
 
   const rows = (users: readonly PickerUser[]) =>
@@ -178,6 +179,8 @@ export function UserPicker({
     }
   } else if (byId) {
     if (text === viewerId) body = <Hint text="You can't message yourself" testID="picker-self" />;
+    // Looks like an id but is not one (it does not decode to 32 bytes): never blame the connection.
+    else if (!validId) body = typing ? <Loading label="Searching…" /> : <Hint text="Invalid identity ID" testID="picker-invalid" />;
     else if (lookup.isPending || typing) body = <Loading label="Searching…" />;
     else if (lookup.isError) body = <Hint text="Couldn't look up this identity. Check your connection and try again." />;
     else if (!lookup.data) body = <Hint text="No user found with this identity ID" />;

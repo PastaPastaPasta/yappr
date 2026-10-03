@@ -1162,7 +1162,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Unread rows:** name and preview in `text.primary` weight 600; read rows' preview `text.secondary`.
 - **Swipe (iOS) / long-press menu (Android):** "Delete conversation" (v5).
 - **Locked (no encryption key):** the whole tab shows the unlock empty state (copy 5.8) with "Enter encryption key" opening the unlock sheet (4.38).
-- **Empty:** welcome empty state with "New message".
+- **Order:** last activity, newest first. A group with no message yet is placed by when this device joined it (or created it); a 1:1 just opened to write is on top; nothing without a time goes above active conversations.
+- **Loading:** until the engine has loaded the saved conversations, the conversation skeleton (2.15), with "Connecting to Dash Platform…" under it while the engine boots (4.34). If that first load fails: the inline error state (2.16) with the categorized message and "Try again", which checks again at once (as pull to refresh does). Neither shows the welcome or the "Couldn't check for new messages" notice; the notice is only for a list already on screen.
+- **Empty:** welcome empty state with "New message", only once the conversations have loaded and there are none.
 
 ### 4.20 Conversation
 
@@ -1745,6 +1747,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | dm.picker.search | Search by username... **(web)** |
 | dm.picker.hint | Type at least 3 characters to search, or paste a full identity ID **(web)** |
 | dm.picker.notFound | No user found with this identity ID **(web)** |
+| dm.picker.invalid | Invalid identity ID **(web, `profile.invalid`)** (pasted text that looks like an identity ID but does not decode to 32 bytes) |
 | dm.picker.noFollowers | No followers yet — search for a username above. **(web)** |
 | dm.picker.self | You can't message yourself |
 | dm.newGroup.desc | Name the group and pick its members. **(web)** |

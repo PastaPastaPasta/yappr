@@ -39,18 +39,52 @@ export function matchesSearch(conversation: ConversationDTO, query: string): boo
   );
 }
 
-/** The inbox order: last activity first; conversations with none (fresh drafts) on top. */
+/**
+ * The inbox order (PRD DM-01): by last activity, newest first. A 1:1 just
+ * opened to write (a draft) goes on top; anything else without a time (no
+ * message, no known join time) goes last, never above active conversations.
+ */
 export function sortConversations(conversations: readonly ConversationDTO[]): ConversationDTO[] {
-  const at = (c: ConversationDTO) => (c.lastActivity ? new Date(c.lastActivity).getTime() : Number.MAX_SAFE_INTEGER);
-  return [...conversations].sort((a, b) => at(b) - at(a));
+  const at = (c: ConversationDTO) => {
+    if (c.lastActivity) return new Date(c.lastActivity).getTime();
+    return c.flags.draft ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+  };
+  return [...conversations].sort((a, b) => {
+    const x = at(a);
+    const y = at(b);
+    return x === y ? 0 : y > x ? 1 : -1;
+  });
 }
 
 const BASE58 = /^[1-9A-HJ-NP-Za-km-z]+$/;
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
 /** True for a pasted base58 identity id (32 bytes: 43 or 44 characters, rarely fewer). */
 export function isIdentityIdText(text: string): boolean {
   const value = text.trim();
   return value.length >= 32 && value.length <= 44 && BASE58.test(value);
+}
+
+/** How many bytes base58 `text` decodes to: each leading "1" is a zero byte, the rest a big number. */
+function base58ByteLength(text: string): number {
+  const bytes: number[] = [];
+  for (const char of text) {
+    let carry = BASE58_ALPHABET.indexOf(char);
+    for (let i = 0; i < bytes.length; i++) {
+      carry += bytes[i] * 58;
+      bytes[i] = carry & 0xff;
+      carry >>= 8;
+    }
+    for (; carry > 0; carry >>= 8) bytes.push(carry & 0xff);
+  }
+  const zeros = text.length - text.replace(/^1+/, '').length;
+  return zeros + bytes.length;
+}
+
+/** A pasted id (`isIdentityIdText`) that is really one: it decodes to 32 bytes, so it is worth looking up. */
+export function isValidIdentityId(text: string): boolean {
+  const value = text.trim();
+  return isIdentityIdText(value) && base58ByteLength(value) === 32;
 }
 
 /** Why the composer is replaced by a banner (DM-08, DM-10), or null when the user can send. */

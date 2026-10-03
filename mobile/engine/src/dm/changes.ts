@@ -24,6 +24,12 @@ export interface DmView {
    * changes the thread's status line but not its row, and must still report it.
    */
   pendingIn?(key: string): number
+  /**
+   * How many messages the backend holds for a conversation: older history
+   * loaded when a thread opens changes neither its row nor its pending count,
+   * and the open thread must still re-read it.
+   */
+  heldIn?(key: string): number
 }
 
 export function unreadCounts(rows: ConversationRow[]): { unreadTotal: number; unreadConversations: number } {
@@ -33,7 +39,7 @@ export function unreadCounts(rows: ConversationRow[]): { unreadTotal: number; un
 
 /**
  * Turns backend snapshots into `dm.changed` and `dm.message` (ENGINE.md §8):
- * a conversation whose row (or count of pending messages) differs from the
+ * a conversation whose row (or count of pending or held messages) differs from the
  * last one reported is changed, and its incoming messages not reported before
  * are new, unless they predate the session (a first load, or a recovery on a
  * new device, is history).
@@ -49,7 +55,7 @@ export function createChangeTracker(options: { emit: DmEmit; coalesceMs?: number
   let pending: (() => DmView | null) | null = null
 
   function report(view: DmView): void {
-    const next = new Map(view.rows.map(row => [row.key, `${JSON.stringify(row)}|${view.pendingIn?.(row.key) ?? 0}`]))
+    const next = new Map(view.rows.map(row => [row.key, `${JSON.stringify(row)}|${view.pendingIn?.(row.key) ?? 0}|${view.heldIn?.(row.key) ?? 0}`]))
     const changedKeys = [...next.keys()].filter(key => reported.get(key) !== next.get(key))
     for (const key of reported.keys()) if (!next.has(key)) changedKeys.push(key)
     reported = next

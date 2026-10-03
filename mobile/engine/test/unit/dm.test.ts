@@ -73,7 +73,8 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
   ({ session: { identityId, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })
 
 /** One user's engine: a dm module over a ticket store, signed in as `me`. */
-function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}) {
+/** `kv`: the device's DM v5 store, kept across a relaunch (else a fresh device). */
+function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}, kv?: InstanceType<typeof MapKv>) {
   const events: Event[] = []
   const storage = memoryStorage()
   /** The engine's plain storage, where DM v5 keeps its per-device state. */
@@ -91,7 +92,7 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
       if (!engine) {
         const raw = bs58.decode(id)
         ledger.register(raw, PRIV[id])
-        engine = new Engine({ chain: new Chain(ledger, raw), identityId: raw, encPriv: PRIV[id], kv: new MapKv(), cacheKey: 'dm', scheduler: manualScheduler })
+        engine = new Engine({ chain: new Chain(ledger, raw), identityId: raw, encPriv: PRIV[id], kv: kv ?? new MapKv(), cacheKey: 'dm', scheduler: manualScheduler })
         engines.set(id, engine)
       }
       return engine
@@ -244,6 +245,38 @@ describe('dm on DM v5: session lifecycle', () => {
   })
 })
 
+describe('dm on DM v5: before the saved state has loaded (G-2, G-11)', () => {
+  it('answers ENGINE_BUSY for the inbox while the first load runs, never an empty list that reads as a first visit', async () => {
+    let release = () => undefined as void
+    const load = vi.spyOn(Chain.prototype, 'selfState').mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(null) }))
+    try {
+      const user = userOn(ledgerNow(), alice)
+      await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'ENGINE_BUSY' })
+      expect(await user.dm.status()).toMatchObject({ ready: false, error: null })
+      release()
+      await ready(user)
+      expect(await user.dm.conversations()).toEqual([])
+    } finally {
+      load.mockRestore()
+    }
+  })
+
+  it('answers a failed first load with its error, and loads on refresh', async () => {
+    const load = vi.spyOn(Chain.prototype, 'selfState').mockRejectedValueOnce(new Error('Request timeout after 8000ms'))
+    try {
+      const user = userOn(ledgerNow(), alice)
+      await vi.waitFor(async () => expect((await user.dm.status()).error).toBe('Request timeout after 8000ms'))
+      expect((await user.dm.status()).ready).toBe(false)
+      await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'TIMEOUT', message: 'Request timeout after 8000ms' })
+      await user.dm.refresh()
+      expect(await user.dm.status()).toMatchObject({ ready: true, error: null })
+      expect(await user.dm.conversations()).toEqual([])
+    } finally {
+      load.mockRestore()
+    }
+  })
+})
+
 describe('dm on DM v5: 1:1', () => {
   it('round trip: start, send with a ticket, receive with events, read', async () => {
     const ledger = ledgerNow()
@@ -286,6 +319,29 @@ describe('dm on DM v5: 1:1', () => {
     // Each incoming message is announced once; own messages never.
     await settle()
     expect(a.eventsOf('dm.message').map(e => e.message.text)).toEqual(['hi alice'])
+  })
+
+  it('shows the history a thread loads when it opens after a cold launch, naming it in dm.changed at once (QA D-L4i-002)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const kv = new MapKv()
+    const b = await ready(userOn(ledger, bob, {}, kv))
+    const key = await a.dm.startDirect(bob)
+    for (const text of ['one', 'two', 'three']) await a.settled(await a.dm.send(key, text))
+    await b.engine().tick()
+    const [row] = await b.dm.conversations()
+    await b.dm.markRead(row.key)
+    await b.hooks.stop()
+
+    // A cold launch on Bob's device: everything is read, so its first poll holds only the newest message.
+    const other = await ready(userOn(ledger, bob, {}, kv))
+    await vi.waitFor(async () => expect((await other.dm.conversations()).map(c => c.key)).toEqual([row.key]))
+    expect((await other.dm.messages(row.key)).items.map(m => m.text)).toEqual(['three'])
+    other.events.length = 0
+    await other.dm.open(row.key)
+    // Opening loads the rest: the open thread is told to re-read it now, not on the next 4 s poll.
+    await vi.waitFor(() => expect(other.eventsOf('dm.changed').some(e => e.changedKeys.includes(row.key))).toBe(true))
+    expect((await other.dm.messages(row.key)).items.map(m => m.text)).toEqual(['three', 'two', 'one'])
   })
 
   it('shows a confirmed send as sent at once, and one held on trust as pending until a poll reads it back', async () => {
@@ -688,8 +744,27 @@ describe('dm on DM v5: groups', () => {
     expect((await c.dm.conversations()).some(conv => conv.key === key)).toBe(true)
 
     expect(await b.settled(await b.dm.leaveGroup(key))).toMatchObject({ state: 'confirmed' })
-    // Left: hidden here until the owner removes the member (docs/DM_V5.md §6.4).
-    expect((await b.dm.conversations()).find(conv => conv.key === key)?.flags.hidden).toBe(true)
+    // Left: hidden here until the owner removes the member (docs/DM_V5.md §6.4), and no longer
+    // a member meanwhile: the conversation shows it and nothing more is sent (PRD DM-08).
+    expect((await b.dm.conversations()).find(conv => conv.key === key)?.flags).toMatchObject({ hidden: true, removed: true })
+    await expect(b.dm.send(key, 'still here?')).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'You are no longer a member of this group.' })
+    await expect(b.dm.leaveGroup(key)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('places a group with no messages by when this device joined it, not without a time (PRD DM-01)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const { key } = await a.engine().createGroup('Quiet', [bob])
+    const before = ledger.time
+    await b.engine().tick()
+    const group = (await b.dm.conversations()).find(conv => conv.key === key)
+    expect(group?.lastMessage).toBeNull()
+    // Joined during that poll (block time; the join's own save moves the ledger on after it).
+    expect(group?.lastActivity?.getTime()).toBeGreaterThanOrEqual(before)
+    expect(group?.lastActivity?.getTime()).toBeLessThanOrEqual(ledger.time)
+    // The owner's is dated by its creation, as before.
+    expect((await a.dm.conversations()).find(conv => conv.key === key)?.lastActivity).toBeInstanceOf(Date)
   })
 
   it('reports a failed group write on its ticket', async () => {
