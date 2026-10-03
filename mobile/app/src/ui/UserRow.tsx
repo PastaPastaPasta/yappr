@@ -9,6 +9,7 @@ import { Text } from './Text';
 import { handleOf } from './handle';
 import type { CardAvatar } from './post/types';
 import { useRipple } from './ripple';
+import { directionStyle, firstStrongDirection } from './rich-text/direction';
 import { monoFont, tw, useLargeText } from './tokens';
 
 /** The fields a user row needs; the engine's AuthorDTO / ProfileDTO both carry them. */
@@ -136,7 +137,8 @@ export function UserRow({
           {largeText ? null : followButton}
         </View>
         {user.bio ? (
-          <Text variant="subhead" numberOfLines={2}>
+          // One clamped <Text>, so it takes the bio's first strong direction (PRD G-9).
+          <Text variant="subhead" numberOfLines={2} style={directionStyle(firstStrongDirection(user.bio))}>
             {user.bio}
           </Text>
         ) : null}

@@ -2,7 +2,7 @@ import type { CapabilitiesDTO, ProfileDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
-import { ActionSheetIOS } from 'react-native';
+import { ActionSheetIOS, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -130,6 +130,7 @@ describe('ProfileScreen', () => {
     expect(screen.getByTestId('profile-handle')).toHaveTextContent('@sigrid');
     expect(screen.getByText('· she/her')).toBeTruthy();
     expect(screen.getByText('Home cook.')).toBeTruthy();
+    expect(StyleSheet.flatten(screen.getByText('Home cook.').props.style)).toMatchObject({ textAlign: 'left' });
     expect(screen.getByText('Colombo')).toBeTruthy();
     expect(screen.getByTestId('profile-website')).toHaveTextContent('sigrid.dev');
     expect(screen.getByText('Joined Oct 2026')).toBeTruthy();
@@ -139,6 +140,16 @@ describe('ProfileScreen', () => {
     expect(screen.getByTestId('profile-tabs-top')).toBeTruthy();
     expect(fakeEngine.method('profiles.posts')).toHaveBeenCalledWith({ id: OTHER, tab: 'posts', cursor: null });
     expect(await screen.findByText('No original posts yet')).toBeTruthy();
+  });
+
+  it('right-aligns an RTL paragraph of the bio', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profile({ bio: 'Home cook.\nשלום עולם' }));
+    renderProfile();
+    await flush();
+
+    const style = (text: string) => StyleSheet.flatten(screen.getByText(text).props.style);
+    expect(style('Home cook.')).toMatchObject({ textAlign: 'left', writingDirection: 'ltr' });
+    expect(style('שלום עולם')).toMatchObject({ textAlign: 'right', writingDirection: 'rtl' });
   });
 
   it('follows at once, and asks before unfollowing', async () => {

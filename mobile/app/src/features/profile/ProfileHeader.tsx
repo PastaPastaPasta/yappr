@@ -9,6 +9,7 @@ import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { IconButton } from '~/ui/IconButton';
 import { Skeleton, SkeletonGroup } from '~/ui/Skeleton';
+import { directionBlocks, directionStyle } from '~/ui/rich-text/direction';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, monoFont, tw, useColors } from '~/ui/tokens';
 
@@ -174,9 +175,14 @@ export function ProfileHeader({
         </View>
 
         {profile.bio ? (
-          <Text className="mt-3" testID="profile-bio">
-            {profile.bio}
-          </Text>
+          // One <Text> per run of same-direction paragraphs, so RTL ones align right (PRD G-9).
+          <View className="mt-3" testID="profile-bio">
+            {directionBlocks(profile.bio).map((block, i) => (
+              <Text key={i} style={directionStyle(block.direction)}>
+                {block.text}
+              </Text>
+            ))}
+          </View>
         ) : null}
 
         {profile.location || website || joined ? (

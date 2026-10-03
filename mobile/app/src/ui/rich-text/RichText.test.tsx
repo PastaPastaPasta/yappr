@@ -114,5 +114,34 @@ describe('RichText', () => {
     rerender(<RichText text={text} numberOfLines={2} />);
     expect(screen.queryByText('שלום')).toBeNull();
     expect(screen.queryByText('english two')).toBeNull();
+    // The budget ran out at a block boundary: an ellipsis says the text goes on.
+    expect(screen.getByText('english one \u2026').props.numberOfLines).toBe(2);
+  });
+
+  it('shows a later block only once the blocks above it are laid out, so a clamp never overshoots', () => {
+    const text = 'four english lines\nשלום';
+    render(<RichText text={text} numberOfLines={4} />);
+    // First frame: only the first block, which may take every line.
+    expect(screen.getByText('four english lines').props.numberOfLines).toBe(4);
+    expect(screen.queryByText('שלום')).toBeNull();
+
+    fireEvent(screen.getByText('four english lines'), 'textLayout', { nativeEvent: { lines: [{}, {}] } });
+    expect(screen.getByText('שלום').props.numberOfLines).toBe(2);
+    expect(screen.queryByText(/\u2026/)).toBeNull();
+
+    // It grew to the whole budget: the Hebrew block goes, and the English one ends in an ellipsis.
+    fireEvent(screen.getByText('four english lines'), 'textLayout', {
+      nativeEvent: { lines: [{}, {}, {}, {}] },
+    });
+    expect(screen.queryByText('שלום')).toBeNull();
+    expect(screen.getByText('four english lines \u2026')).toBeTruthy();
+  });
+
+  it('reports a single block straight from its layout', () => {
+    const onLineCount = jest.fn();
+    render(<RichText text={'one\ntwo'} onLineCount={onLineCount} testID="body" />);
+    fireEvent(screen.getByTestId('body'), 'textLayout', { nativeEvent: { lines: [{}, {}, {}] } });
+    expect(onLineCount).toHaveBeenCalledTimes(1);
+    expect(onLineCount).toHaveBeenCalledWith(3);
   });
 });

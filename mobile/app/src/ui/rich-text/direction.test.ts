@@ -121,8 +121,12 @@ describe('blockLineCaps', () => {
     expect(blockLineCaps([], 3, undefined)).toEqual([undefined, undefined, undefined]);
   });
 
-  it('counts an unmeasured block as one line', () => {
-    expect(blockLineCaps([], 3, 4)).toEqual([4, 3, 2]);
+  it('holds the blocks after an unmeasured one back, so the text only grows', () => {
+    expect(blockLineCaps([], 3, 4)).toEqual([4, 0, 0]);
+    expect(blockLineCaps([2], 3, 4)).toEqual([4, 2, 0]);
+    expect(blockLineCaps([2, 1], 3, 4)).toEqual([4, 2, 1]);
+    // A later block measured before an earlier one still waits for it.
+    expect(blockLineCaps([undefined, 1], 2, 4)).toEqual([4, 0]);
   });
 
   it('gives each block what the blocks above it left, then hides the rest', () => {

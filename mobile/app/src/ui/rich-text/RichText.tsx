@@ -48,6 +48,10 @@ interface Block {
 }
 
 const LINE_BREAK: ContentPart = { type: 'text', value: '\n' };
+/** Ends the last shown block when the blocks after it are cut. */
+const ELLIPSIS = ' \u2026';
+
+const capLines = (lines: number, cap: number | undefined) => Math.min(lines, cap ?? lines);
 
 /** The text's paragraphs grouped into runs of one direction (PRD G-9). */
 function paragraphBlocks(parts: ContentPart[]): Block[] {
@@ -65,7 +69,7 @@ function laidOutLines(measured: readonly (number | undefined)[], caps: readonly 
     if (cap === 0) continue;
     const lines = measured[i];
     if (lines === undefined) return undefined;
-    total += Math.min(lines, cap ?? lines);
+    total += capLines(lines, cap);
   }
   return total;
 }
@@ -129,16 +133,24 @@ export const RichText = memo(function RichText({
   const shown = useMemo(() => displayText(text, hideFirstUrl), [text, hideFirstUrl]);
   const blocks = useMemo(() => paragraphBlocks(parseContent(shown)), [shown]);
   const emojiOnly = useMemo(() => isEmojiOnly(shown), [shown]);
+  const single = blocks.length === 1;
   const [blockLines, recordLines] = useBlockLines(shown);
   // RN's numberOfLines 0 means no limit.
   const caps = blockLineCaps(blockLines, blocks.length, numberOfLines || undefined);
-  // Laid-out line counts matter only to fit several blocks in `numberOfLines`, or to report them.
-  const measure = onLineCount !== undefined || (caps[0] !== undefined && blocks.length > 1);
 
-  const lineCount = laidOutLines(blockLines, caps);
+  // Several blocks keep their laid-out line counts, to share `numberOfLines` and to report the sum.
+  const lineCount = single ? undefined : laidOutLines(blockLines, caps);
   useEffect(() => {
     if (lineCount !== undefined) onLineCount?.(lineCount);
   }, [lineCount, onLineCount]);
+  // A single block reports straight from its layout: no state, no re-render.
+  const onTextLayout = (i: number) => {
+    if (single) {
+      return onLineCount && ((e: TextLayoutEvent) => onLineCount(capLines(e.nativeEvent.lines.length, caps[0])));
+    }
+    const measure = onLineCount !== undefined || caps[0] !== undefined;
+    return measure ? (e: TextLayoutEvent) => recordLines(i, e.nativeEvent.lines.length) : undefined;
+  };
 
   const inline = (part: InlinePart, key: string | number): ReactNode => {
     switch (part.type) {
@@ -216,19 +228,23 @@ export const RichText = memo(function RichText({
   const rendered = blocks.flatMap((block, i) => {
     const cap = caps[i];
     if (cap === 0) return [];
+    // The line budget ran out at this block's end: mark the hidden blocks after it,
+    // which its own truncation ellipsis can't. Laid out, so the blocks after it aren't just waiting.
+    const hidesRest = blockLines[i] !== undefined && caps[i + 1] === 0;
     return [
       <Text
         key={i}
         variant={variant}
         className={emojiOnly ? 'text-4xl leading-snug' : undefined}
         numberOfLines={cap}
-        onTextLayout={measure ? (e: TextLayoutEvent) => recordLines(i, e.nativeEvent.lines.length) : undefined}
+        onTextLayout={onTextLayout(i)}
         style={directionStyle(block.direction)}
-        testID={blocks.length === 1 ? testID : undefined}
+        testID={single ? testID : undefined}
       >
         {content(block.parts)}
+        {hidesRest ? ELLIPSIS : null}
       </Text>,
     ];
   });
-  return blocks.length === 1 ? (rendered[0] ?? null) : <View testID={testID}>{rendered}</View>;
+  return single ? (rendered[0] ?? null) : <View testID={testID}>{rendered}</View>;
 });

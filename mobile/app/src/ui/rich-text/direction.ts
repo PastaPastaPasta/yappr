@@ -98,21 +98,23 @@ export function directionBlocks(text: string): { direction: Direction | null; te
 
 /**
  * Each block's `numberOfLines`, so the blocks together show at most
- * `maxLines`: a block gets what the blocks above it left (0: not shown). A
- * block not laid out yet counts as one line, its minimum, so a cap only ever
- * shrinks as the layouts come in. A layout's lines are counted up to the
- * block's cap, whether or not the platform reports the hidden ones.
+ * `maxLines`: a block gets what the blocks above it left (0: not shown). The
+ * blocks after one not laid out yet wait at 0, so the text only grows as the
+ * layouts come in and never shows more than `maxLines` lines. A layout's
+ * lines are counted up to the block's cap, whether or not the platform
+ * reports the hidden ones.
  */
 export function blockLineCaps(
   measured: readonly (number | undefined)[],
   blocks: number,
   maxLines: number | undefined,
 ): (number | undefined)[] {
+  if (maxLines === undefined) return Array.from({ length: blocks }, () => undefined);
   let remaining = maxLines;
   return Array.from({ length: blocks }, (_, i) => {
-    if (remaining === undefined) return undefined;
     const cap = Math.max(remaining, 0);
-    remaining -= Math.min(measured[i] ?? 1, cap);
+    const lines = measured[i];
+    remaining = lines === undefined ? 0 : remaining - Math.min(lines, cap);
     return cap;
   });
 }
