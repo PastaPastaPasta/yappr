@@ -349,7 +349,7 @@ describe('ThreadScreen', () => {
     renderThread();
     await act(async () => {});
 
-    expect(fakeEngine.method('posts.engagementCounts')).toHaveBeenCalledWith({ id: 'root', kind: 'post' });
+    expect(fakeEngine.method('posts.engagementCounts')).toHaveBeenCalledWith({ id: 'root', kind: 'post' }, false);
     expect(screen.getByTestId('count-reposts')).toHaveProp('accessibilityLabel', '1 Repost');
     expect(screen.queryByTestId('count-quotes')).toBeNull();
     expect(screen.getByTestId('count-likes')).toHaveProp('accessibilityLabel', '2 Likes');
@@ -364,5 +364,37 @@ describe('ThreadScreen', () => {
     expect(screen.queryByTestId('count-quotes')).toBeNull();
     expect(screen.queryByTestId('count-reposts')).toBeNull();
     expect(screen.getByTestId('count-likes')).toBeTruthy();
+  });
+
+  it('splits the quote list again when a refresh moves its count (D-L4a-009)', async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([]));
+    fakeEngine.method('posts.engagementCounts').mockResolvedValue({ likes: 2, reposts: 0, quotes: 1, truncated: false });
+    renderThread();
+    await act(async () => {});
+    expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '1 Quote');
+
+    // Someone quoted the post with text since.
+    const quoted = { ...root, stats: { ...root.stats, quotes: 2 } };
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([], { focus: quoted }));
+    fakeEngine.method('posts.engagementCounts').mockResolvedValue({ likes: 2, reposts: 0, quotes: 2, truncated: false });
+    await act(async () => screen.getByTestId('thread-list').props.refreshControl.props.onRefresh());
+    await act(async () => {});
+
+    // Past the engine's cached split, once.
+    expect(fakeEngine.method('posts.engagementCounts')).toHaveBeenLastCalledWith({ id: 'root', kind: 'post' }, true);
+    expect(fakeEngine.method('posts.engagementCounts')).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '2 Quotes');
+    expect(screen.queryByTestId('count-reposts')).toBeNull();
+  });
+
+  it("falls back to the post's own counts when the split cannot be read (D-L4a-009)", async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([]));
+    fakeEngine.method('posts.engagementCounts').mockRejectedValue(new Error('Request timed out'));
+    renderThread();
+    await act(async () => {});
+
+    // Still a way into the engagements screen, which splits the list again.
+    expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '1 Quote');
+    expect(screen.getByTestId('count-likes')).toHaveProp('accessibilityLabel', '2 Likes');
   });
 });
