@@ -42,3 +42,30 @@ it('drives TanStack online state, and re-reads failed reads a screen shows when 
   queryClient.clear();
   stop();
 });
+
+it('keeps the offline flag current while TanStack has dropped its event source', () => {
+  const stop = startConnectivity();
+  const subscriptions = jest.mocked(NetInfo.addEventListener).mock.calls.length;
+  const listener = jest.mocked(NetInfo.addEventListener).mock.calls.at(-1)![0];
+  const stopNetInfo = jest.mocked(NetInfo.addEventListener).mock.results.at(-1)!.value as jest.Mock;
+  stopNetInfo.mockClear();
+  const report = (isConnected: boolean | null) => listener({ isConnected } as NetInfoState);
+
+  // The last TanStack subscriber leaving (the query provider unmounting) runs the event source's cleanup:
+  // NetInfo is still followed.
+  const unsubscribe = onlineManager.subscribe(() => undefined);
+  unsubscribe();
+  expect(stopNetInfo).not.toHaveBeenCalled();
+  report(false);
+  expect(isOffline()).toBe(true);
+  expect(NetInfo.addEventListener).toHaveBeenCalledTimes(subscriptions);
+
+  // A new subscriber gets the current state.
+  const again = onlineManager.subscribe(() => undefined);
+  expect(onlineManager.isOnline()).toBe(false);
+  report(true);
+  expect(onlineManager.isOnline()).toBe(true);
+  again();
+  stop();
+  expect(stopNetInfo).toHaveBeenCalledTimes(1);
+});

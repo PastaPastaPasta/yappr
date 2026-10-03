@@ -1,4 +1,4 @@
-import { dehydrate, InfiniteQueryObserver, QueryClient, QueryObserver, type InfiniteData } from '@tanstack/react-query';
+import { dehydrate, InfiniteQueryObserver, onlineManager, QueryClient, QueryObserver, type InfiniteData } from '@tanstack/react-query';
 import type { PersistedClient } from '@tanstack/react-query-persist-client';
 
 import { getLogs } from '~/engine/logs';
@@ -86,6 +86,46 @@ describe('failed reads', () => {
       message: 'Read feed.home failed (X_CODE): SDK not configured. Call initialize() first.',
     });
     expect(describeQueryKey(['engine', 'devnet', 'post', 'abc', 'thread'])).toBe('post.abc.thread');
+  });
+
+  it('are labelled without what the viewer typed or who they message', () => {
+    expect(describeQueryKey(['engine', 'devnet', 'explore', 'search', 'posts', 'my secret'])).toBe('explore.search.posts');
+    expect(describeQueryKey(['engine', 'devnet', 'explore', 'mentions', 'ali'])).toBe('explore.mentions');
+    expect(describeQueryKey(['engine', 'devnet', 'explore', 'trending', 'day'])).toBe('explore.trending.day');
+    expect(describeQueryKey(['engine', 'devnet', 'dm', 'messages', 'conv-key'])).toBe('dm.messages');
+    expect(describeQueryKey(['engine', 'devnet', 'dm', 'people', 'id1,id2'])).toBe('dm.people');
+  });
+
+  it('leave a list whose next page failed to its "Load More", on retry and on reconnect (G-11)', async () => {
+    const read = jest.fn(async ({ pageParam }: { pageParam: number }) => {
+      if (pageParam > 0) throw new Error('DAPI 504');
+      return { items: [pageParam] };
+    });
+    const observer = new InfiniteQueryObserver(queryClient, {
+      queryKey: ['engine', 'devnet', 'feed'],
+      queryFn: read,
+      initialPageParam: 0,
+      getNextPageParam: (_last: { items: number[] }, pages: { items: number[] }[]) => pages.length,
+      retry: false,
+      staleTime: Infinity,
+    });
+    const stop = observer.subscribe(() => undefined);
+    queryClient.mount();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await observer.fetchNextPage();
+    expect(observer.getCurrentResult().isFetchNextPageError).toBe(true);
+    expect(read).toHaveBeenCalledTimes(2);
+
+    await refetchFailedReads('Test');
+    onlineManager.setOnline(false);
+    onlineManager.setOnline(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(observer.getCurrentResult().data?.pages).toEqual([{ items: [0] }]);
+
+    queryClient.unmount();
+    stop();
+    queryClient.clear();
   });
 
   it('are read again when a screen shows them, and only those', async () => {

@@ -2,7 +2,7 @@ import type { PostDTO, ThreadDTO } from '@engine/api/dto';
 import { useInfiniteQuery, type InfiniteData } from '@tanstack/react-query';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineQuery } from '~/data/queries';
+import { useEngineQuery, useFetchNextPageAfterRefetch } from '~/data/queries';
 import { engine } from '~/engine';
 import { persistedQuery, queryClient } from '~/state/query-client';
 
@@ -60,7 +60,9 @@ export function useThread(id: string) {
     enabled: id.length > 0,
   });
   const thread = query.data?.pages[query.data.pages.length - 1];
-  return { ...query, thread };
+  // Paging while a pull to refresh runs would cancel the refresh.
+  const fetchNextPage = useFetchNextPageAfterRefetch(queryKeys.post.thread(id), query.fetchNextPage);
+  return { ...query, thread, fetchNextPage };
 }
 
 /**

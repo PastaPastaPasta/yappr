@@ -2,9 +2,13 @@
 export const UNAVAILABLE_MESSAGE = 'Dash Platform is temporarily unavailable. Please try again in a few moments.';
 export const GENERIC_MESSAGE = "This couldn't be loaded. Please try again.";
 
-const TRANSPORT = /timed? ?out|timeout|unavailable|network|fetch|disconnect|restart|deadline|503|504|ECONN|request error|sending request|quorum/i;
+const TRANSPORT = /timed? ?out|timeout|unavailable|network|fetch|disconnect|restart|deadline|503|504|ECONN|request error|sending request/i;
 
-/** A failure of the way to Dash Platform (DAPI, the quorum service, the engine), by its text: G-11's "unavailable" category. */
+/**
+ * A failure of the way to Dash Platform (DAPI, the quorum service, the
+ * engine), by its text: G-11's "unavailable" category. A proof or quorum
+ * verification failure is not one: trying again later won't clear it.
+ */
 export function isTransportFailure(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const code = (error as { code?: unknown }).code;

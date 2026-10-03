@@ -2,10 +2,12 @@ import type { EngineApi } from '@engine/api';
 import type { Page } from '@engine/api/dto';
 import type { Remote } from '@engine/rpc/client';
 import {
+  hashKey,
   queryOptions,
   useInfiniteQuery,
   type FetchNextPageOptions,
   useQuery,
+  useQueryClient,
   type InfiniteData,
   type QueryKey,
   type UseInfiniteQueryOptions,
@@ -107,12 +109,8 @@ export function flattenPages<T>(
  *     { persist: true },
  *   );
  *
- * `fetchNextPage` joins a refetch in flight instead of cancelling it
- * (TanStack's default `cancelRefetch: true`): a list that reaches its end
- * while a pull to refresh runs (the refresh trims it to one page, which
- * brings the end near) would otherwise throw the fresh first page away and
- * append a next page to the old one, and the refresh would show nothing
- * new without an error.
+ * `fetchNextPage` never cancels a refetch in flight
+ * ({@link useFetchNextPageAfterRefetch}).
  */
 export function useEngineInfiniteQuery<T>(
   key: QueryKey,
@@ -128,10 +126,35 @@ export function useEngineInfiniteQuery<T>(
     getNextPageParam: (last) => (last.hasMore && last.cursor ? last.cursor : undefined),
   });
   const items = useMemo(() => flattenPages(query.data, itemId), [query.data, itemId]);
-  const { fetchNextPage: fetchNext } = query;
-  const fetchNextPage = useCallback(
-    (options?: FetchNextPageOptions) => fetchNext({ cancelRefetch: false, ...options }),
-    [fetchNext],
-  );
+  const fetchNextPage = useFetchNextPageAfterRefetch(key, query.fetchNextPage);
   return { ...query, items, fetchNextPage };
+}
+
+/**
+ * An infinite query's `fetchNextPage` that waits for a refetch in flight
+ * instead of cancelling it (TanStack's default `cancelRefetch: true`), then
+ * asks for the next page of the fresh list if it has one. A list that
+ * reaches its end while a pull to refresh runs (the refresh trims it to one
+ * page, which brings the end near) would otherwise throw the fresh first page
+ * away and append a next page to the old one: the refresh would show nothing
+ * new, without an error. Merely joining the refetch would drop the page
+ * request instead, and a caller that asks once (a search filling a
+ * screenful) would stall.
+ */
+export function useFetchNextPageAfterRefetch<R extends { hasNextPage: boolean; isError: boolean }>(
+  key: QueryKey,
+  fetchNext: (options?: FetchNextPageOptions) => Promise<R>,
+) {
+  const client = useQueryClient();
+  const hash = hashKey(key);
+  return useCallback(
+    (options?: FetchNextPageOptions): Promise<R> => {
+      const state = client.getQueryCache().get(hash)?.state;
+      const refetching = state !== undefined && state.fetchStatus !== 'idle' && state.fetchMeta?.fetchMore === undefined;
+      const next = () => fetchNext({ cancelRefetch: false, ...options });
+      if (!refetching || options?.cancelRefetch) return next();
+      return next().then((result) => (result.hasNextPage && !result.isError ? next() : result));
+    },
+    [client, hash, fetchNext],
+  );
 }

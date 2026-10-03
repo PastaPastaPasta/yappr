@@ -276,6 +276,41 @@ describe('engine queries', () => {
     expect(result.current.hasNextPage).toBe(false);
   });
 
+  it('asks for the next page after a refetch in flight, instead of cancelling or dropping it (D-L1a-003)', async () => {
+    const read = fakeEngine.method('feed.home');
+    read.mockResolvedValueOnce(page([target], 'c1'));
+    const { result } = renderHook(
+      () =>
+        useEngineInfiniteQuery(queryKeys.feed.home({ tab: 'forYou' }), (api, cursor) =>
+          api.feed.home({ tab: 'forYou', cursor }),
+        ),
+      { wrapper },
+    );
+    await waitFor(() => expect(result.current.items).toHaveLength(1));
+
+    let answer!: (value: Page<PostDTO>) => void;
+    read.mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    read.mockResolvedValueOnce(page([quoting]));
+    let refetched!: Promise<unknown>;
+    let paged!: Promise<unknown>;
+    act(() => {
+      refetched = result.current.refetch();
+    });
+    act(() => {
+      paged = result.current.fetchNextPage();
+    });
+    // Only the refetch is in flight: the page request waits for it.
+    expect(read).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      answer(page([other], 'c2'));
+      await Promise.all([refetched, paged]);
+    });
+
+    expect(read).toHaveBeenCalledTimes(3);
+    expect(read).toHaveBeenLastCalledWith({ tab: 'forYou', cursor: 'c2' });
+    await waitFor(() => expect(result.current.items.map((p) => p.id)).toEqual(['other', 'quoting']));
+  });
+
   it('flattens items without ids as they come', () => {
     const data = { pages: [page([{ n: 1 }]), page([{ n: 1 }])], pageParams: [null, 'x'] };
     expect(flattenPages(data)).toHaveLength(2);

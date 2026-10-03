@@ -17,34 +17,43 @@ import { refetchFailedReads } from '~/state/query-client';
  */
 
 let offline = false;
-let started = false;
+let stop: (() => void) | null = null;
 
 /**
- * Follows NetInfo for the app's lifetime, as TanStack's `onlineManager`
- * event source (replacing its browser listener). Started by
- * `startDataLayer` (and on the first write).
+ * Follows NetInfo for the app's lifetime. Started by `startDataLayer` (and on
+ * the first write). The offline flag has its own NetInfo listener and only
+ * forwards its value to TanStack's `onlineManager` (replacing its browser
+ * listener), so it stays current even while TanStack has nothing subscribed
+ * (it drops its event source then, e.g. when the query provider unmounts).
  */
 export function startConnectivity(): () => void {
-  if (!started) {
-    started = true;
-    onlineManager.setEventListener((setOnline) =>
-      NetInfo.addEventListener((state) => {
-        const wasOffline = offline;
-        offline = state.isConnected === false;
-        setOnline(!offline);
-        if (wasOffline && !offline) {
-          refetchFailedReads('Back online').catch((error: unknown) =>
-            appendLog('warn', 'host', `Reading again after reconnecting failed: ${errorMessage(error)}`),
-          );
-        }
-      }),
-    );
+  if (!stop) {
+    let setOnline: ((online: boolean) => void) | null = null;
+    const stopNetInfo = NetInfo.addEventListener((state) => {
+      const wasOffline = offline;
+      offline = state.isConnected === false;
+      setOnline?.(!offline);
+      if (wasOffline && !offline) {
+        refetchFailedReads('Back online').catch((error: unknown) =>
+          appendLog('warn', 'host', `Reading again after reconnecting failed: ${errorMessage(error)}`),
+        );
+      }
+    });
+    onlineManager.setEventListener((set) => {
+      setOnline = set;
+      set(!offline);
+      return () => {
+        if (setOnline === set) setOnline = null;
+      };
+    });
+    stop = () => {
+      stopNetInfo();
+      onlineManager.setEventListener(() => undefined);
+    };
   }
   return () => {
-    if (!started) return;
-    started = false;
-    // Runs the NetInfo unsubscribe the listener above returned.
-    onlineManager.setEventListener(() => undefined);
+    stop?.();
+    stop = null;
   };
 }
 
