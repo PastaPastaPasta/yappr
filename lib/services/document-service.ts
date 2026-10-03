@@ -98,10 +98,12 @@ export async function queryPostsSince(
  * `$createdAt` with the block time, so the document a write returns without
  * reading it back (the one it built) has none, and `new Date(undefined)` is
  * an Invalid Date that renders as no time at all. Until a read returns the
- * real one, the moment the write went through stands in for it.
+ * real one, `startedAt` (when the write began) stands in for it: it is no
+ * later than the block time, so a feed's newer-than cursor built from it
+ * never skips another post that landed while the write was confirming.
  */
-export function withCreationTime(doc: Record<string, unknown>, now = Date.now()): Record<string, unknown> {
-  return doc.$createdAt == null && doc.createdAt == null ? { ...doc, $createdAt: now } : doc;
+export function withCreationTime(doc: Record<string, unknown>, startedAt: number): Record<string, unknown> {
+  return doc.$createdAt == null && doc.createdAt == null ? { ...doc, $createdAt: startedAt } : doc;
 }
 
 export abstract class BaseDocumentService<T> {
@@ -276,6 +278,7 @@ export abstract class BaseDocumentService<T> {
     try {
       logger.debug(`Creating ${this.documentType} document`);
 
+      const startedAt = Date.now();
       const result = await stateTransitionService.createDocument(
         this.contractId,
         this.documentType,
@@ -291,7 +294,7 @@ export abstract class BaseDocumentService<T> {
       // Clear relevant caches
       this.clearCache();
 
-      const transformed = this.transformDocument(withCreationTime(result.document));
+      const transformed = this.transformDocument(withCreationTime(result.document, startedAt));
 
       // Preserve creation confirmation status for callers that need UX handling.
       if (typeof result.confirmed === 'boolean' && transformed && typeof transformed === 'object') {

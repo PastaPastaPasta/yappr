@@ -17,13 +17,19 @@ const OWNER = bs58.encode(new Uint8Array(32).fill(5))
 const ROOT = bs58.encode(new Uint8Array(32).fill(1))
 const NOW = Date.UTC(2026, 9, 3, 1, 6)
 
-/** What `createDocument` returns for a write it did not read back. */
-const built = (type: string, data: Record<string, unknown>) => ({
-  success: true,
-  transactionHash: ID,
-  document: { $id: ID, $ownerId: OWNER, $type: type, ...data },
-  confirmed: true,
-})
+/** How long the write takes to confirm in these tests. */
+const CONFIRMATION_MS = 5_000
+
+/** What `createDocument` returns for a write it did not read back, once it has confirmed. */
+const built = (type: string, data: Record<string, unknown>) => {
+  vi.setSystemTime(Date.now() + CONFIRMATION_MS)
+  return {
+    success: true,
+    transactionHash: ID,
+    document: { $id: ID, $ownerId: OWNER, $type: type, ...data },
+    confirmed: true,
+  }
+}
 
 beforeEach(() => {
   vi.resetModules()
@@ -37,7 +43,9 @@ afterEach(() => {
 })
 
 describe('a created document without $createdAt', () => {
-  it('gives a new post the time the write went through', async () => {
+  // When the write began, not when it confirmed: the block time is no earlier, so a
+  // newer-than cursor built from it never skips a post that landed meanwhile.
+  it('gives a new post the time its write began', async () => {
     createDocument.mockImplementation(async (_contract, type, _owner, data) => built(type, data))
     const { postService } = await import('./post-service')
     const post = await postService.createPost(OWNER, 'hello')
@@ -45,7 +53,7 @@ describe('a created document without $createdAt', () => {
     expect(post.createdAt.getTime()).toBe(NOW)
   })
 
-  it('gives a new reply the time the write went through', async () => {
+  it('gives a new reply the time its write began', async () => {
     createDocument.mockImplementation(async (_contract, type, _owner, data) => built(type, data))
     const { replyService } = await import('./reply-service')
     const reply = await replyService.createReply(OWNER, 'hi', { rootPostId: ROOT, parentOwnerId: OWNER })
