@@ -401,11 +401,17 @@ export interface ContentCreatedEvent {
 
 let contentSink: ((event: ContentCreatedEvent) => void) | null = null
 
-/** A `post-created` / `reply-created` event's document as lib's `Post`. */
+/**
+ * A `post-created` / `reply-created` event's document as lib's `Post`. One
+ * without a valid creation time (lib stamps it, but a write path that did
+ * not would be an Invalid Date in the cached feeds) is given this moment.
+ */
 function createdPost(kind: 'post' | 'reply', detail: Record<string, unknown>): Post | null {
   const document = detail[kind]
   if (!document || typeof document !== 'object') return null
-  return kind === 'reply' ? replyToPost(document as Reply) : document as Post
+  const post = kind === 'reply' ? replyToPost(document as Reply) : document as Post
+  const createdAt: unknown = post.createdAt
+  return createdAt instanceof Date && Number.isFinite(createdAt.getTime()) ? post : { ...post, createdAt: new Date() }
 }
 let forwarding = false
 
