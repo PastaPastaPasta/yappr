@@ -460,6 +460,16 @@ describe('Avatar', () => {
     // A photo covers its circle: the skeleton color shows only while it loads.
     rerender(<Avatar uri="https://example.com/a.png" testID="avatar" />);
     expect(screen.getByTestId('avatar', { includeHiddenElements: true }).props.className).toContain('dark:bg-gray-800');
+
+    // A recipe still rendering already sits on the backdrop: no dark skeleton turning light.
+    const pending = { uri: null, dicebear: { style: 'lorelei', seed: 'seed-pending' } };
+    render(
+      <AvatarSvgProvider resolve={() => new Promise<string | null>(() => undefined)}>
+        <Avatar avatar={pending} identityId="id-pending" testID="pending-avatar" />
+      </AvatarSvgProvider>,
+    );
+    expect(screen.queryByTestId('avatar-svg', { includeHiddenElements: true })).toBeNull();
+    expect(screen.getByTestId('pending-avatar', { includeHiddenElements: true }).props.className).toContain('dark:bg-gray-200');
   });
 
   it('is a labelled button only when tappable', () => {

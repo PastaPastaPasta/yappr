@@ -113,6 +113,9 @@ export const Avatar = memo(function Avatar({
   } else if (fallbackMarkup) {
     transparent = true;
     content = <SvgXml xml={fallbackMarkup} width={inner} height={inner} testID="avatar-fallback" />;
+  } else if (avatar?.dicebear) {
+    // A recipe still rendering waits on its backdrop, so a dark feed does not flash dark to light.
+    transparent = true;
   }
 
   const circle = (

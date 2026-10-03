@@ -280,7 +280,7 @@ Each component lives in `mobile/app/src/ui/` and has a gallery entry showing eve
 
 - Always round, `object-cover` (`contentFit="cover"` in `expo-image`).
 - Source: the profile avatar URL; a DiceBear recipe is rendered by the engine into an SVG data URI (`lib/services/avatar-generator`), cached per recipe, and drawn locally with no network fetch; with no avatar, DiceBear `thumbs` seeded by the identity ID. IPFS URLs go through the gateway fallback (2.4.6).
-- Loading: a `bg.skeleton` circle. Error: the default `thumbs` avatar.
+- Loading: a `bg.skeleton` circle; a DiceBear recipe still rendering waits on its backdrop (below) instead. Error: the default `thumbs` avatar.
 - DiceBear art is transparent. It sits on `bg` (white) in light mode, as on web, and on a gray-200 (`#e5e7eb`) disc in dark mode, where the line-art styles' black strokes (Lorelei, Notionists, Micah, Croodles) would vanish into the page. Web draws it on the page color in both modes.
 - Media gate does **not** apply to avatars (as web).
 - a11y: decorative inside a card (the card is the element); standalone tappable avatars are labelled "{name}'s profile".
