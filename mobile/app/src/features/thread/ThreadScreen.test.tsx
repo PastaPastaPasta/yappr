@@ -341,4 +341,28 @@ describe('ThreadScreen', () => {
       params: { id: 'root', kind: 'post', tab: 'likes' },
     });
   });
+
+  it('counts a bare repost as a repost, not a quote, where reposts are quote posts (D-L4a-009)', async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([]));
+    // The root's one quote post is a bare repost.
+    fakeEngine.method('posts.engagementCounts').mockResolvedValue({ likes: 2, reposts: 1, quotes: 0, truncated: false });
+    renderThread();
+    await act(async () => {});
+
+    expect(fakeEngine.method('posts.engagementCounts')).toHaveBeenCalledWith({ id: 'root', kind: 'post' });
+    expect(screen.getByTestId('count-reposts')).toHaveProp('accessibilityLabel', '1 Repost');
+    expect(screen.queryByTestId('count-quotes')).toBeNull();
+    expect(screen.getByTestId('count-likes')).toHaveProp('accessibilityLabel', '2 Likes');
+  });
+
+  it('leaves reposts and quotes out of the counts row until they are told apart (D-L4a-009)', async () => {
+    fakeEngine.method('posts.thread').mockResolvedValue(threadOf([]));
+    fakeEngine.method('posts.engagementCounts').mockReturnValue(new Promise(() => undefined));
+    renderThread();
+    await act(async () => {});
+
+    expect(screen.queryByTestId('count-quotes')).toBeNull();
+    expect(screen.queryByTestId('count-reposts')).toBeNull();
+    expect(screen.getByTestId('count-likes')).toBeTruthy();
+  });
 });

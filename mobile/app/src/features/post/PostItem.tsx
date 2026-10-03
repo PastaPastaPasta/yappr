@@ -37,6 +37,7 @@ import {
   sharePost,
 } from './post-navigation';
 import { readEngageStats } from './post-stats';
+import { useRepostQuoteCounts } from './repost-quote-counts';
 import { bookmarkWrite, deleteWrite, followWrite, likeWrite, repostWrite, targetOf } from './post-writes';
 
 export interface PostItemProps
@@ -254,6 +255,7 @@ export const PostItem = memo(function PostItem({
 
   const own = viewerId !== null && viewerId === post.author.id;
   const detail = cardProps.variant === 'detail';
+  const repostQuoteCounts = useRepostQuoteCounts(post, detail && capabilities?.repostsAreQuotes === true);
   // A bare repost's target comes without the viewer's follow of its author: offer no follow item then.
   const followKnown =
     viewerId === null || !listed.bareRepost || typeof listed.quoted?.viewer?.followsAuthor === 'boolean';
@@ -393,6 +395,7 @@ export const PostItem = memo(function PostItem({
       // A tag opens the page it was indexed under: its first 61 characters on dev, 63 elsewhere.
       tagMaxLength={tagMaxLength(capabilities?.hashtagsInline === true)}
       poll={poll}
+      repostQuoteCounts={repostQuoteCounts}
       actions={actions}
       menu={menu}
     />
