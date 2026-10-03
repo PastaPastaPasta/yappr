@@ -15,6 +15,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `writes.ts` | `runWrite`, `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
 | `optimistic.ts` | `setViewerState`, `setFollowing`, `setAuthorBlocked`, `hidePost`, `markPostDeleted`, `dropFromLists`, `updateCachedPosts` |
 | `sync.ts` | `startDataLayer()`: the root layout starts the app-wide subscriptions once |
+| `read-retry.ts` | `startReadRetry()`: NET-03's backoff for reads that found Dash Platform unavailable (started by `startDataLayer`) |
 | `testing/fake-engine.ts` | A fake `~/engine` for Jest |
 
 ## Reads
@@ -53,9 +54,13 @@ const feed = useEngineInfiniteQuery(
   `onlineManager`, `connectivity.ts`, so `refetchOnReconnect` works too),
   when the engine comes up (`sync.ts`), and when an account change settles
   (`features/auth/accounts.ts`): `refetchFailedReads()` in
-  `state/query-client.ts`. A list whose *next page* failed is left out of
-  both: it keeps its pages behind the "Load More" footer (G-11), since a
-  refetch would re-read every loaded page. Every failed read is logged to
+  `state/query-client.ts`. A read that found Dash Platform unavailable
+  (G-11's "temporarily unavailable", `isTemporaryReadFailure`) is also read
+  again with backoff while the app is in the foreground, since a stalled DAPI
+  changes neither connectivity nor the engine's state (PRD NET-03: 2 s, 4 s,
+  8 s, then every 30 s; `read-retry.ts`). A list whose *next page* failed is
+  left out of all of these: it keeps its pages behind the "Load More" footer
+  (G-11), since a refetch would re-read every loaded page. Every failed read is logged to
   Engine diagnostics with its code (the key's path, without search text or
   DM members). Reads use `networkMode: 'always'`: offline they still reach
   the engine, which answers or fails with a categorized error.

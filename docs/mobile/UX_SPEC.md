@@ -517,7 +517,7 @@ Map of react-hot-toast in `app/layout.tsx`:
 ```
 
 - Vertical padding 48. Copy from section 5.
-- Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple).
+- Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A read that failed with the "temporarily unavailable" category is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while its screen is mounted and the app is in the foreground; sooner once another read answers). The error stays on screen while it retries, and gives way to the content as soon as a retry answers.
 - List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding) and the legacy link; "Load More" pill (`primary` `sm`) for paused or failed paging.
 
 ### 2.17 Network chip

@@ -16,6 +16,16 @@ export function isTransportFailure(error: unknown): boolean {
 }
 
 /**
+ * A failed read that reading again later may fix (PRD NET-03): a transport
+ * failure, or a call the engine turned away because too many were waiting.
+ * Not a refusal, a missing session or a failed proof: those fail the same way
+ * every time.
+ */
+export function isTemporaryReadFailure(error: unknown): boolean {
+  return isTransportFailure(error) || (error as { code?: unknown } | null)?.code === 'ENGINE_BUSY';
+}
+
+/**
  * The inline error a failed read shows (PRD G-11): the unavailability copy
  * for transport failures, else a plain sentence. Raw SDK text never reaches
  * the screen.
