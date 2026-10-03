@@ -70,6 +70,9 @@ async function processGrant(ctx: DmContext, grant: PendingGrant): Promise<'done'
     // Keys and flags change outside a full apply: the next send re-reads the group first.
     markStale(existing)
     existing.keys.set(epoch, grant.key)
+    // Added back after I left (the owner removed me, then granted me a later base): a member again,
+    // who can send. A resend of keys I already had a base for is no re-add.
+    if (existing.removed || epoch.b > existing.epoch.b) ctx.cache.clearLeft(existing.key)
     existing.removed = false
     existing.unreadable = false
     // The apply below walks the keyrings from the current epoch: one with no slot for me before the

@@ -66,8 +66,9 @@ export interface ConversationView {
   hidden: boolean
   /** Newly found conversation that could not be saved (the self-state cap). */
   unsaved: boolean
-  /** Groups: I cannot read it (ask the owner to resend keys), I was removed, or it ended. */
+  /** Groups: I cannot read it (ask the owner to resend keys), I was removed or left it, or it ended. */
   unreadable: boolean
+  /** I was removed, or I left and the owner has not removed me yet (§6.4): either way I can no longer send. */
   removed: boolean
   ended: boolean
   blocked: boolean
@@ -354,7 +355,7 @@ export class DmEngine {
       hidden,
       unsaved: conv.kind === 'direct' ? !conv.draft && !ctx.store.isSaved(conv.entry) : !ctx.store.isSaved(conv.entry),
       unreadable: conv.kind === 'group' && conv.unreadable,
-      removed: conv.kind === 'group' && conv.removed,
+      removed: conv.kind === 'group' && (conv.removed || ctx.cache.hasLeft(conv.key)),
       ended: conv.kind === 'group' && conv.ended,
       blocked,
       draft: conv.kind === 'direct' && conv.draft,

@@ -485,6 +485,25 @@ describe('sender', () => {
     expect(stream(conv, ALICE_ID, readBack.pointer)?.stale).toEqual([])
   })
 
+  it('dates a send by the device clock while the chain time lags, but never more than 3 minutes past it (QA D-L4i-007)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)
+    makeContext(ledger, BOB_ID, BOB_PRIV)
+    const conv = await openDirect(alice.ctx, BOB_ID)
+    await ensureStarted(alice.ctx, conv)
+    // A quiet network: the newest block a read returned is two minutes old.
+    alice.ctx.wallClock = () => ledger.time + 120_000
+    const sent = await sendContent(alice.ctx, conv, { type: 'text', text: 'now' })
+    expect(sent.createdAt).toBe(ledger.time + 120_000)
+    expect(conv.entry.readAt).toBe(sent.createdAt)
+    // A device clock an hour fast moves it no further than the block time lag.
+    alice.ctx.wallClock = () => ledger.time + 60 * 60_000
+    expect((await sendContent(alice.ctx, conv, { type: 'text', text: 'fast clock' })).createdAt).toBe(ledger.time + 3 * 60_000)
+    // A slow one never dates it before the chain's time.
+    alice.ctx.wallClock = () => ledger.time - 60_000
+    expect((await sendContent(alice.ctx, conv, { type: 'text', text: 'slow clock' })).createdAt).toBe(ledger.time)
+  })
+
   it('keeps a message held on trust local until a poll reads its slot back, even with the thread closed', async () => {
     const ledger = new MemoryLedger()
     const alice = makeContext(ledger, ALICE_ID, ALICE_PRIV)

@@ -71,6 +71,32 @@ describe('DmEngine views', () => {
     expect(bob.getSnapshot().conversations.map((c) => c.kind).sort()).toEqual(['direct', 'group'])
   })
 
+  it('shows a group I left as no longer mine, refuses to send to it, and lets me back in when the owner re-adds me (QA D-L4a-003)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    await started(engine(ledger, CAROL_ID, CAROL_PRIV))
+    const { key } = await alice.createGroup('Team', [bob58, carol58])
+    await bob.tick()
+    const group = () => bob.getSnapshot().conversations.find((c) => c.key === key)
+    expect(group()?.removed).toBe(false)
+
+    await bob.leaveGroup(key)
+    // The owner has not removed Bob yet, but he left: no longer a member here (PRD DM-08).
+    expect(group()).toMatchObject({ removed: true, hidden: true })
+    const written = ledger.messages.length
+    await expect(bob.send(key, 'still here?')).rejects.toThrow(/no longer a member/)
+    expect(ledger.messages).toHaveLength(written)
+
+    // The owner removes him on its next poll, then adds him back: he can send again.
+    await alice.tick()
+    await alice.addMember(key, bob58)
+    await bob.tick()
+    expect(group()?.removed).toBe(false)
+    await bob.send(key, 'back again')
+    expect(bob.messages(key).map((m) => m.text)).toContain('back again')
+  })
+
   it('"delete conversation" hides it until a newer message arrives', async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
@@ -125,6 +151,9 @@ describe('DmEngine views', () => {
 describe('DmEngine.pollOwn', () => {
   it('reads back my own message that landed although its send reported a failure, without the thread open', async () => {
     const ledger = new MemoryLedger()
+    // Block time and the device clock agree, as on a device whose clock is right: a send is dated
+    // by the device clock while block time lags (sender.ts `sentAt`), here far behind it otherwise.
+    ledger.time = Date.now()
     const chain = new MemoryChain(ledger, ALICE_ID)
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV, new MapKv(), chain))
     engine(ledger, BOB_ID, BOB_PRIV)
