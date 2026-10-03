@@ -4,7 +4,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { RelativeTime } from './RelativeTime';
 
 const MINUTE = 60_000;
-// Mid-minute, so the first minute tick is half a minute away.
+// Mid-minute, so a label's boundaries are not the wall clock's.
 const START = Date.UTC(2026, 9, 2, 23, 20, 30);
 
 const ago = (ms: number) => new Date(START - ms);
@@ -34,7 +34,10 @@ describe('RelativeTime on the shared clock (G-13, QA D-L3i-007)', () => {
     render(<RelativeTime testID="time" date={ago(38 * MINUTE + 45_000)} prefix="· " />);
     expect(labels()).toEqual(['· 38m']);
 
-    act(() => jest.advanceTimersByTime(30_000));
+    // It turns 39 minutes old in 15 seconds, not on the wall-clock minute.
+    act(() => jest.advanceTimersByTime(14_999));
+    expect(labels()).toEqual(['· 38m']);
+    act(() => jest.advanceTimersByTime(1));
     expect(labels()).toEqual(['· 39m']);
 
     act(() => jest.advanceTimersByTime(4 * MINUTE));
@@ -45,33 +48,35 @@ describe('RelativeTime on the shared clock (G-13, QA D-L3i-007)', () => {
     render(
       <>
         {Array.from({ length: 30 }, (_, i) => (
-          <RelativeTime key={i} testID="time" date={ago((i + 2) * MINUTE + 45_000)} />
+          // Each turns a minute older 0.1 s before the one above it.
+          <RelativeTime key={i} testID="time" date={ago((i + 2) * MINUTE + 57_000 + i * 100)} />
         ))}
       </>,
     );
+    expect(labels().slice(0, 3)).toEqual(['2m', '3m', '4m']);
     expect(jest.getTimerCount()).toBe(1);
-    act(() => jest.advanceTimersByTime(30_000));
+    // Each card turns on its own boundary.
+    act(() => jest.advanceTimersByTime(2850));
+    expect(labels().slice(0, 3)).toEqual(['2m', '3m', '5m']);
+    expect(jest.getTimerCount()).toBe(1);
+    act(() => jest.advanceTimersByTime(150));
     expect(labels().slice(0, 3)).toEqual(['3m', '4m', '5m']);
     expect(jest.getTimerCount()).toBe(1);
   });
 
-  it('ticks each second under a minute, then moves to the minute clock', () => {
+  it('ticks each second under a minute, then on each minute of its age', () => {
     render(<RelativeTime testID="time" date={ago(50_000)} />);
     expect(labels()).toEqual(['50s']);
     act(() => jest.advanceTimersByTime(1000));
     expect(labels()).toEqual(['51s']);
     act(() => jest.advanceTimersByTime(9000));
     expect(labels()).toEqual(['1m']);
-    // Past the minute the one timer waits for the next wall-clock minute, not the next second.
+    // Past the minute the one timer waits for the next minute of its age, not the next second.
     act(() => jest.advanceTimersByTime(1000));
     expect(jest.getTimerCount()).toBe(1);
-    act(() => jest.advanceTimersByTime(58_000));
+    act(() => jest.advanceTimersByTime(58_999));
     expect(labels()).toEqual(['1m']);
-    // Nothing re-renders between minute ticks, even once the label is due to change...
-    act(() => jest.advanceTimersByTime(10_000));
-    expect(labels()).toEqual(['1m']);
-    // ...and the next wall-clock minute brings it up to date.
-    act(() => jest.advanceTimersByTime(11_000));
+    act(() => jest.advanceTimersByTime(1));
     expect(labels()).toEqual(['2m']);
   });
 

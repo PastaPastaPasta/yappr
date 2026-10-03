@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 import { singleAspectRatio } from './MediaGrid';
 import { displayHost } from './LinkPreviewCard';
@@ -104,6 +104,20 @@ describe('PostCard (feed)', () => {
     );
     fireEvent(card, 'accessibilityAction', { nativeEvent: { actionName: 'like' } });
     expect(onLike).toHaveBeenCalled();
+  });
+
+  it('keeps the spoken time in its screen-reader summary current', () => {
+    jest.useFakeTimers({ now: Date.UTC(2026, 9, 3, 12, 0, 30) });
+    try {
+      render(<PostCard post={{ ...POSTS.liked, createdAt: new Date(Date.now() - 5 * 60_000) }} />);
+      const label = () => screen.getByTestId('post-card-post-liked').props.accessibilityLabel as string;
+      expect(label()).toContain('5 minutes ago.');
+      act(() => jest.advanceTimersByTime(5 * 60_000));
+      expect(label()).toContain('10 minutes ago.');
+      expect(screen.getByText('· 10m')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('names the reposter, or "You" for the viewer', () => {

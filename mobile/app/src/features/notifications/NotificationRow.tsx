@@ -14,9 +14,10 @@ import {
   UserPlusIcon,
 } from 'react-native-heroicons/outline';
 
-import { cn, formatTime } from '~/lib-allowlist';
+import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { RelativeTime } from '~/ui/RelativeTime';
+import { useRelativeTime } from '~/ui/use-relative-time';
 import { Text } from '~/ui/Text';
 import { useRipple } from '~/ui/ripple';
 import { colors, tw, type IconComponent } from '~/ui/tokens';
@@ -95,11 +96,12 @@ export const NotificationRow = memo(function NotificationRow({
   const name = actor?.displayName || 'Unknown User';
   const phrase = phraseOf(row);
   const { Icon, color } = ICONS[row.type] ?? FALLBACK_ICON;
+  const spokenTime = useRelativeTime(row.at, 'spoken');
   const label = [
     unread ? 'Unread.' : null,
     `${name} ${phrase}.`,
     snippet ? `${snippet}.` : null,
-    row.noticed ? `Noticed ${formatTime(row.at)}` : formatTime(row.at),
+    row.noticed ? `Noticed ${spokenTime}` : spokenTime,
   ]
     .filter(Boolean)
     .join(' ');

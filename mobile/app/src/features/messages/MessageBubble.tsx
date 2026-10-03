@@ -4,7 +4,7 @@ import { memo, type ReactNode } from 'react';
 import { Pressable, Text as RNText, View } from 'react-native';
 
 import { openExternal } from '~/features/post/post-navigation';
-import { cn, formatTime, isEmojiOnly } from '~/lib-allowlist';
+import { cn, isEmojiOnly } from '~/lib-allowlist';
 import { showActionSheet } from '~/ui/action-sheet';
 import { Avatar } from '~/ui/Avatar';
 import { selectionTick } from '~/ui/haptics';
@@ -13,6 +13,7 @@ import type { CardAvatar } from '~/ui/post/types';
 import { splitUrl } from '~/ui/rich-text/parse';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
+import { useRelativeTime } from '~/ui/use-relative-time';
 
 import { dayLabel, timeLabel, type TimelineItem } from './dm-model';
 
@@ -94,6 +95,7 @@ export const MessageBubble = memo(function MessageBubble({
   const emoji = isEmojiOnly(message.text);
   const failed = statusIsError && !!message.outbox;
   const othersInGroup = group && !own;
+  const spokenTime = useRelativeTime(message.at, 'spoken');
 
   const onPress = () => {
     if (failed) onResolve?.(message.id);
@@ -115,7 +117,7 @@ export const MessageBubble = memo(function MessageBubble({
   const a11y = [
     own ? 'You' : (senderName ?? 'Them'),
     message.text,
-    formatTime(message.at),
+    spokenTime,
     status,
   ]
     .filter(Boolean)

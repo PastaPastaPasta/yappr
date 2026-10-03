@@ -11,7 +11,7 @@ import * as clock from './clock';
 import { Text } from './Text';
 
 const MINUTE = 60_000;
-// Mid-minute, so the next minute tick is half a minute away.
+// Mid-minute, so a label's boundaries are not the wall clock's.
 const START = Date.UTC(2026, 9, 2, 23, 20, 30);
 
 /**
@@ -21,14 +21,21 @@ const START = Date.UTC(2026, 9, 2, 23, 20, 30);
  * memoizes it on `date` alone: the label froze at its first value on device
  * (QA D-L3i-007) while the uncompiled hook passed every test.
  */
-function compiledUseRelativeTime(): (date: Date) => string {
+function compiledUseRelativeTime(): typeof import('./use-relative-time').useRelativeTime {
   const file = path.join(__dirname, 'use-relative-time.ts');
   const output = transformSync(fs.readFileSync(file, 'utf8'), {
     filename: file,
     babelrc: false,
     configFile: false,
     presets: ['@babel/preset-typescript'],
-    plugins: ['babel-plugin-react-compiler', '@babel/plugin-transform-modules-commonjs'],
+    plugins: [
+      // The options babel-preset-expo (configs/expo.js) gives the compiler in a release build.
+      [
+        'babel-plugin-react-compiler',
+        { target: '19', panicThreshold: 'NONE', environment: { enableResetCacheOnSourceFileChanges: false } },
+      ],
+      '@babel/plugin-transform-modules-commonjs',
+    ],
   });
   const code = output?.code ?? '';
   expect(code).toContain('react/compiler-runtime');
@@ -38,7 +45,7 @@ function compiledUseRelativeTime(): (date: Date) => string {
     '~/lib-allowlist': libAllowlist,
     './clock': clock,
   };
-  const module = { exports: {} as { useRelativeTime?: (date: Date) => string } };
+  const module = { exports: {} as Partial<typeof import('./use-relative-time')> };
   const load = new Function('require', 'module', 'exports', code) as (
     require: (id: string) => unknown,
     module: unknown,
@@ -63,10 +70,23 @@ describe('useRelativeTime under the React Compiler (QA D-L3i-007)', () => {
     render(<Time />);
     expect(screen.getByTestId('time')).toHaveTextContent('38m');
 
-    act(() => jest.advanceTimersByTime(30_000));
+    act(() => jest.advanceTimersByTime(15_000));
     expect(screen.getByTestId('time')).toHaveTextContent('39m');
 
     act(() => jest.advanceTimersByTime(4 * MINUTE));
     expect(screen.getByTestId('time')).toHaveTextContent('43m');
+  });
+
+  it('keeps the spoken time, which screen readers announce, ticking once compiled', () => {
+    const useRelativeTime = compiledUseRelativeTime();
+    const date = new Date(START - (38 * MINUTE + 45_000));
+    function Time() {
+      return <Text testID="time">{useRelativeTime(date, 'spoken')}</Text>;
+    }
+    render(<Time />);
+    expect(screen.getByTestId('time')).toHaveTextContent('38 minutes ago');
+
+    act(() => jest.advanceTimersByTime(5 * MINUTE));
+    expect(screen.getByTestId('time')).toHaveTextContent('43 minutes ago');
   });
 });

@@ -8,7 +8,7 @@ import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
 import { badgeLabel, CountBadge } from './Badge';
 import { Button } from './Button';
-import { relativeTimeCadence } from './clock';
+import { nextLabelChangeAt } from './clock';
 import { ConfirmDialog, confirmAlert } from './Dialog';
 import { EmptyState, ErrorState } from './EmptyState';
 import { IconButton } from './IconButton';
@@ -472,16 +472,20 @@ describe('UserRow', () => {
   });
 });
 
-describe('relativeTimeCadence', () => {
-  it('ticks every second under a minute, then each minute, and stops at a fixed date', () => {
-    expect(relativeTimeCadence(0)).toBe('second');
-    expect(relativeTimeCadence(10_000)).toBe('second');
-    // Ahead of this device's clock: "0s" until then, checked each second only when close.
-    expect(relativeTimeCadence(-5_000)).toBe('second');
-    expect(relativeTimeCadence(-3_600_000)).toBe('minute');
-    expect(relativeTimeCadence(90_000)).toBe('minute');
-    expect(relativeTimeCadence(3_600_000 * 2.5)).toBe('minute');
-    expect(relativeTimeCadence(8 * 86_400_000)).toBeNull();
-    expect(relativeTimeCadence(Number.NaN)).toBeNull();
+describe('nextLabelChangeAt', () => {
+  it('turns each label on its own second, minute, hour and day boundary, then stops', () => {
+    const now = 1_000_000_000_000;
+    expect(nextLabelChangeAt(now - 10_400, now)).toBe(now + 600);
+    expect(nextLabelChangeAt(now - 90_000, now)).toBe(now + 30_000);
+    expect(nextLabelChangeAt(now - 3_600_000 * 2.5, now)).toBe(now + 1_800_000);
+    expect(nextLabelChangeAt(now - 86_400_000 * 1.25, now)).toBe(now + 86_400_000 * 0.75);
+    expect(nextLabelChangeAt(now - 8 * 86_400_000, now)).toBeNull();
+    expect(nextLabelChangeAt(Number.NaN, now)).toBeNull();
+  });
+
+  it('ticks a time just ahead of this device each second, and waits for one far ahead', () => {
+    const now = 1_000_000_000_000;
+    expect(nextLabelChangeAt(now + 5_000, now)).toBe(now + 1_000);
+    expect(nextLabelChangeAt(now + 3_600_000, now)).toBe(now + 3_540_000);
   });
 });
