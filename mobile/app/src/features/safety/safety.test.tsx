@@ -12,7 +12,7 @@ import { act, fireEvent, render, renderHook, screen } from '@testing-library/rea
 import * as Clipboard from 'expo-clipboard';
 import { router, useLocalSearchParams } from 'expo-router';
 import type { ReactElement } from 'react';
-import { Linking, View } from 'react-native';
+import { Alert, Linking, View, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -613,6 +613,88 @@ describe('ReportScreen', () => {
     expect(screen.getByText('Same link everywhere')).toBeTruthy();
     expect(screen.getByText(/Resolved by the moderators: Content removed/)).toBeTruthy();
     expect(screen.queryByTestId('report-submit')).toBeNull();
+  });
+
+  describe('withdrawing an existing report (SAFE-04)', () => {
+    const report: OwnReportDTO = {
+      id: 'r1',
+      reason: 8,
+      note: 'Phishing link',
+      createdAt: new Date('2026-09-30T12:00:00Z'),
+      status: null,
+      resolution: null,
+      moderatedAt: null,
+    };
+    const target = { id: 'p1', kind: 'post' as const, ownerId: BOB.id, rootPostId: null };
+    let answer: (choice: 'Withdraw' | 'Cancel') => void = () => undefined;
+
+    beforeEach(() => {
+      fakeEngine.method('safety.ownReport').mockResolvedValue(report);
+      jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons?: AlertButton[]) => {
+        answer = (choice) => buttons?.find((button) => button.text === choice)?.onPress?.();
+      });
+    });
+
+    afterEach(() => jest.mocked(Alert.alert).mockRestore());
+
+    it('asks first, withdraws the report, then closes with "Report withdrawn"', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      withProviders(<ReportScreen />);
+      await settle();
+
+      expect(screen.getByTestId('report-done')).toBeTruthy();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      expect(Alert.alert).toHaveBeenCalledWith(
+        copy.report.withdrawTitle,
+        copy.report.withdrawBody,
+        expect.arrayContaining([expect.objectContaining({ text: 'Withdraw', style: 'destructive' })]),
+        expect.anything(),
+      );
+      await act(async () => answer('Withdraw'));
+      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledWith(target, 'r1');
+      expect(screen.getByText(copy.report.withdrawing)).toBeTruthy();
+      expect(router.back).not.toHaveBeenCalled();
+
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(toastMessage()).toBe('Report withdrawn');
+      expect(router.back).toHaveBeenCalledTimes(1);
+      // A reopened sheet re-checks before offering the form.
+      expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toBeNull();
+    });
+
+    it('sends nothing when the confirmation is cancelled', async () => {
+      withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Cancel'));
+      expect(fakeEngine.method('safety.withdrawReport')).not.toHaveBeenCalled();
+      expect(screen.getByText(copy.report.withdraw)).toBeTruthy();
+    });
+
+    it("says so when the report is already gone, and reads the viewer's report again", async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+
+      fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            error: { code: 'REPORT_GONE', consensusCode: null, outcome: 'local', retryable: false, userMessage: 'x' },
+          }),
+        ),
+      );
+      await settle();
+      expect(toastMessage()).toBe(copy.toast.reportGone);
+      expect(router.back).not.toHaveBeenCalled();
+      expect(screen.getByTestId('report-sheet')).toBeTruthy();
+    });
   });
 
   it('never offers a second report when the check fails', async () => {

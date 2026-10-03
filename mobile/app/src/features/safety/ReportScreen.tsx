@@ -18,6 +18,7 @@ import { useWrite, useWriteTicket } from '~/data/writes';
 import { postWebUrl } from '~/features/post/post-navigation';
 import { targetOf } from '~/features/post/post-writes';
 import { Button } from '~/ui/Button';
+import { confirmAlert } from '~/ui/Dialog';
 import { handleOf } from '~/ui/handle';
 import { RadioGroup } from '~/ui/RadioGroup';
 import { Text } from '~/ui/Text';
@@ -41,6 +42,7 @@ import {
   reportWrite,
   useReportTicketId,
   watchReportSheet,
+  withdrawReportWrite,
 } from './report-actions';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
 
@@ -162,6 +164,12 @@ function ReportFlow({
   const [sending, setSending] = useState(false);
   const outcome = current?.state ?? 'idle';
   const code = current?.error?.code;
+  const withdraw = useWrite(withdrawReportWrite);
+  // The report the viewer chose to withdraw: still shown while the sheet closes (the cache drops it).
+  const [withdrawing, setWithdrawing] = useState<OwnReportDTO | null>(null);
+  // From the confirmation until the engine answers: a second tap would send a second delete.
+  const [sendingWithdraw, setSendingWithdraw] = useState(false);
+  const withdrawn = withdraw.status === 'confirmed' && withdrawing !== null;
 
   // The sheet says how it went while it is open; the write toasts only once it is gone.
   useEffect(() => watchReportSheet(post.id), [post.id]);
@@ -172,6 +180,31 @@ function ReportFlow({
     if (code === 'DUPLICATE') refetchOwn().catch(() => undefined);
   }, [code, refetchOwn]);
 
+  // Withdrawn: the write says so ("Report withdrawn"), and the sheet goes, as on web.
+  useEffect(() => {
+    if (withdrawn) closeSheet();
+  }, [withdrawn]);
+
+  const askWithdraw = (report: OwnReportDTO) => {
+    if (sendingWithdraw || withdraw.status === 'pending') return;
+    confirmAlert({
+      title: copy.report.withdrawTitle,
+      message: copy.report.withdrawBody,
+      confirmText: copy.report.withdrawConfirm,
+      destructive: true,
+    })
+      .then(async (confirmed) => {
+        if (!confirmed) return;
+        setWithdrawing(report);
+        setSendingWithdraw(true);
+        await withdraw.send({ target, reportId: report.id }).finally(() => setSendingWithdraw(false));
+      })
+      .catch(() => undefined);
+  };
+
+  if (withdrawn) {
+    return <ExistingReport report={withdrawing} noun={noun} resolves={resolves} withdrawing onWithdraw={askWithdraw} />;
+  }
   if (outcome === 'confirmed' || outcome === 'unconfirmed') {
     return <ReportSent author={post.author} unconfirmed={outcome === 'unconfirmed'} />;
   }
@@ -192,7 +225,17 @@ function ReportFlow({
       />
     );
   }
-  if (own.data) return <ExistingReport report={own.data} noun={noun} resolves={resolves} />;
+  if (own.data) {
+    return (
+      <ExistingReport
+        report={own.data}
+        noun={noun}
+        resolves={resolves}
+        withdrawing={sendingWithdraw || withdraw.status === 'pending'}
+        onWithdraw={askWithdraw}
+      />
+    );
+  }
 
   const busy = sending || outcome === 'pending';
   const valid = reportIsValid(reason, note);
@@ -250,8 +293,23 @@ function ReportFlow({
   );
 }
 
-/** "You reported this post": what, when, and how the moderators resolved it (v10). */
-function ExistingReport({ report, noun, resolves }: { report: OwnReportDTO; noun: ReportNoun; resolves: boolean }) {
+/**
+ * "You reported this post": what, when, and how the moderators resolved it
+ * (v10), with "Withdraw report" (PRD SAFE-04) and "Done".
+ */
+function ExistingReport({
+  report,
+  noun,
+  resolves,
+  withdrawing,
+  onWithdraw,
+}: {
+  report: OwnReportDTO;
+  noun: ReportNoun;
+  resolves: boolean;
+  withdrawing: boolean;
+  onWithdraw: (report: OwnReportDTO) => void;
+}) {
   const c = useColors();
   const summary = `${copy.report.existing(shortDate(report.createdAt), reportReasonLabel(report.reason))} ${
     resolves ? (report.status === null ? copy.report.pending(noun) : '') : copy.report.pendingUnresolved(noun)
@@ -281,7 +339,15 @@ function ExistingReport({ report, noun, resolves }: { report: OwnReportDTO; noun
           </View>
         </View>
       ) : null}
-      <Button label={copy.report.done} size="block" onPress={closeSheet} testID="report-done" />
+      <Button
+        label={withdrawing ? copy.report.withdrawing : copy.report.withdraw}
+        variant="outline"
+        size="block"
+        loading={withdrawing}
+        onPress={() => onWithdraw(report)}
+        testID="report-withdraw"
+      />
+      <Button label={copy.report.done} size="block" onPress={closeSheet} disabled={withdrawing} testID="report-done" />
     </SheetBody>
   );
 }

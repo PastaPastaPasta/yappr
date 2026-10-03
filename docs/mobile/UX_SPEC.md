@@ -1397,7 +1397,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ### 4.39 Report sheet and block sheet
 
-- **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The disclosure paragraph (`subhead`, `text.secondary`). "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`). "Details (optional)" text area with counter "0/500". "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). Already-reported state replaces the form with the summary, "Withdraw report" (outline) and "Done" (primary).
+- **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The disclosure paragraph (`subhead`, `text.secondary`). "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`). "Details (optional)" text area with counter "0/500". "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). Already-reported state replaces the form with the summary, "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), shows "Withdrawing…" until the network answers, then closes the sheet with toast "Report withdrawn".
 - **Block** (SAFE-01): bottom sheet, medium detent. Title "Block @x?", explanation paragraph, "Add a note (optional)" field with counter at 260+/280 and the note "Visible to anyone on Dash Platform", "Block" (destructive block), "Cancel" (ghost).
 
 ---
@@ -1797,6 +1797,9 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | report.resolved | Resolved by the moderators: {No action taken \| Content removed \| Author actioned} on {date}. **(web)** |
 | report.withdraw / withdrawing | Withdraw report / Withdrawing… **(web)** |
 | toast.reportWithdrawn | Report withdrawn **(web)** |
+| report.withdrawConfirm | Withdraw your report? / The moderators will no longer see it. / Withdraw |
+| toast.reportGone | This report is already gone: the moderators dismissed it, or it was withdrawn elsewhere. **(web)** |
+| toast.withdrawFailed | Failed to withdraw the report. Please try again. |
 | report.email | Email the Yappr team |
 | report.emailSubject | Report: post {id} |
 | toast.reportCopied | Report address copied. Send it from any email app. |

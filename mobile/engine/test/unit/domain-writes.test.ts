@@ -45,7 +45,7 @@ const m = vi.hoisted(() => ({
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
   },
-  reportService: { fileReport: vi.fn(), getOwnReport: vi.fn() },
+  reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
@@ -401,6 +401,35 @@ describe('graph and safety writes', () => {
 
     m.topology.contractTakesReports = false
     await expect(safety.report(TARGET, 0)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
+  })
+
+  it('withdraws the viewer\'s report by deleting it, says when it is already gone, and checks it by its absence', async () => {
+    const { tickets, outcome, safety } = engine()
+    const REPORT = id('Report')
+    await expect(safety.withdrawReport(TARGET, 'nope')).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    m.reportService.withdrawReport.mockResolvedValue({ success: true, transactionHash: REPORT })
+    expect(await outcome(safety.withdrawReport(TARGET, REPORT))).toMatchObject({
+      op: 'report.withdraw', state: 'confirmed', target: TARGET,
+      documents: [{ type: 'report', id: REPORT, action: 'delete', confirmed: true, contractId: YAPPR_CONTRACT_ID }],
+    })
+    expect(m.reportService.withdrawReport).toHaveBeenCalledWith(VIEWER, REPORT)
+
+    // 40101: dismissed (v9) or withdrawn on another device. Web's words, never a retry.
+    m.reportService.withdrawReport.mockResolvedValue({ success: false, error: `Document ${REPORT} not found (code=40101)` })
+    expect(await outcome(safety.withdrawReport(TARGET, REPORT))).toMatchObject({
+      state: 'failed', retryable: false,
+      error: { code: 'REPORT_GONE', userMessage: expect.stringMatching(/already gone/) },
+    })
+
+    // A gateway timeout may have landed: the report proved absent confirms it.
+    m.reportService.withdrawReport.mockResolvedValue({ success: false, error: 'Request timeout' })
+    const timedOut = await outcome(safety.withdrawReport(TARGET, REPORT))
+    expect(timedOut).toMatchObject({ state: 'unconfirmed' })
+    m.documentExists.mockResolvedValue(false)
+    expect(await tickets.check(timedOut.id)).toMatchObject({ state: 'confirmed' })
+
+    m.topology.contractTakesReports = false
+    await expect(safety.withdrawReport(TARGET, REPORT)).rejects.toMatchObject({ code: 'NOT_SUPPORTED' })
   })
 })
 

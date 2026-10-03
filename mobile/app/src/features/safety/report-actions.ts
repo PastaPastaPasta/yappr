@@ -84,6 +84,38 @@ export const reportWrite: WriteSpec<ReportVars> = {
   failureMessage: 'Failed to send the report. Please try again.',
 };
 
+export interface WithdrawReportVars {
+  target: TargetRef;
+  /** `OwnReportDTO.id`. */
+  reportId: string;
+}
+
+/**
+ * Withdraw the viewer's report (`safety.withdrawReport`, PRD SAFE-04): the
+ * report is deleted, so the sheet that asked closes once it confirms, and
+ * "Report withdrawn" shows. Not optimistic. It shares the report's key: one
+ * write per target at a time. A report already gone (`REPORT_GONE`) says
+ * so, as web does, and the sheet reads the viewer's report again.
+ */
+export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
+  key: ({ target }) => `report:${target.id}`,
+  submit: (api, { target, reportId }) => api.safety.withdrawReport(target, reportId),
+  intent: () => 'withdraw',
+  matches: (ticket, { target }) =>
+    ticket.op === 'report.withdraw' && (ticket.target as { id?: string } | null)?.id === target.id,
+  onConfirmed: (_ticket, { target }) => {
+    queryClient.setQueryData(queryKeys.post.ownReport(target.id), null);
+    toast.success(copy.toast.reportWithdrawn);
+  },
+  onFailed: (ticket, { target }) => {
+    if (ticket.error?.code !== 'REPORT_GONE') return;
+    queryClient.invalidateQueries({ queryKey: queryKeys.post.ownReport(target.id) }).catch(() => undefined);
+  },
+  failureText: (ticket) => (ticket.error?.code === 'REPORT_GONE' ? copy.toast.reportGone : null),
+  noun: 'report withdrawal',
+  failureMessage: copy.toast.withdrawFailed,
+};
+
 /** The mail draft to the Yappr team (PRD SAFE-05, PD-13): subject "Report: post {id}", the link and a "Reason:" line. */
 export function reportMailUrl(postId: string, postUrl: string): string {
   const subject = encodeURIComponent(copy.report.emailSubject(postId));

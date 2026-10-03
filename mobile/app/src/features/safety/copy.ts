@@ -38,6 +38,9 @@ export const copy = {
     reportUnconfirmed:
       'Report sent. The network has not confirmed it yet; it reaches the moderators once it does.',
     reportCopied: 'Report address copied. Send it from any email app.',
+    reportWithdrawn: 'Report withdrawn',
+    reportGone: 'This report is already gone: the moderators dismissed it, or it was withdrawn elsewhere.',
+    withdrawFailed: 'Failed to withdraw the report. Please try again.',
   },
   blocked: {
     title: 'Blocked accounts',
@@ -72,6 +75,11 @@ export const copy = {
     sentTitle: 'Report sent',
     sentBody: 'Thanks. The moderators will review it.',
     alsoBlock: (handle: string) => `Also block ${handle}?`,
+    withdraw: 'Withdraw report',
+    withdrawing: 'Withdrawing…',
+    withdrawTitle: 'Withdraw your report?',
+    withdrawBody: 'The moderators will no longer see it.',
+    withdrawConfirm: 'Withdraw',
     done: 'Done',
     own: (noun: ReportNoun) => `You cannot report your own ${noun}`,
     gone: (noun: ReportNoun) => `This ${noun} is gone, so there is nothing to report.`,

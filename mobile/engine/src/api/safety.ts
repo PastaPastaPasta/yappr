@@ -1,13 +1,13 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { contractTakesReports } from '@/lib/contract-topology'
-import { reportInputProblem, type ReportStatus } from '@/lib/reports'
+import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
-import { assertId, assertTarget, characters, relationProbe, signer, ticketIdentity, ticketTarget } from '../writes/handler-kit'
+import { assertId, assertTarget, characters, relationProbe, signer, socialDoc, ticketIdentity, ticketTarget } from '../writes/handler-kit'
 import { createdDocument, fromTransitionResult } from '../writes/lib-results'
 import { ownBlockExists } from '../writes/strict-reads'
 import type { TicketStore } from '../writes/tickets'
@@ -48,6 +48,10 @@ interface ReportArgs {
   target: TargetRef
   reason: number
   note?: string
+}
+
+interface WithdrawReportArgs {
+  reportId: string
 }
 
 const blockLists = new TtlMap<string, { blockedId: string; message?: string }[]>(60_000)
@@ -114,6 +118,19 @@ export function createSafetyModule(tickets: TicketStore) {
       const target = ticketTarget(ticket)
       return (await reportService.getOwnReport(viewer, target.kind, target.id)) !== null
     }, true),
+  })
+
+  tickets.register<WithdrawReportArgs>('report.withdraw', {
+    persistArgs: true,
+    async run({ reportId }, ctx) {
+      const result = await reportService.withdrawReport(signer(ctx), reportId)
+      // 40101: a moderator dismissed it (v9), or it was withdrawn from another device. Web says so.
+      if (!result.success && isReportGoneError(result.error)) {
+        return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'REPORT_GONE') }
+      }
+      return fromTransitionResult(result)
+    },
+    // The default probe: the report proved absent (its `delete` document).
   })
 
   function submitBlock(op: 'block' | 'unblock', targetId: string, message?: string): WriteTicket {
@@ -203,6 +220,25 @@ export function createSafetyModule(tickets: TicketStore) {
       if (target.ownerId === viewer) throw badRequest('You cannot report your own post')
       const trimmed = note?.trim()
       return tickets.submit<ReportArgs>({ op: 'report', args: { target, reason, ...(trimmed ? { note: trimmed } : {}) }, target })
+    },
+
+    /**
+     * Withdraw the viewer's own report (`ownReport().id`) on a target: the
+     * reporter deletes it (`reportService.withdrawReport`), and the
+     * moderators never see it again. A report that is already gone fails
+     * `REPORT_GONE`, with web's message. Gated by `capabilities.reports`.
+     */
+    async withdrawReport(target: TargetRef, reportId: string): Promise<WriteTicket> {
+      assertTarget(target)
+      assertId(reportId, 'reportId')
+      requireViewer('Withdrawing a report')
+      if (!contractTakesReports()) throw notSupported('Withdrawing a report')
+      return tickets.submit<WithdrawReportArgs>({
+        op: 'report.withdraw',
+        args: { reportId },
+        target,
+        documents: [socialDoc('report', reportId, 'delete')],
+      })
     },
 
     /** The viewer's own report on a target, or `null`. Rejects when it cannot be read, so the UI never offers a second (paid) report. */

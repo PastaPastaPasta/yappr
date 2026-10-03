@@ -20,7 +20,7 @@ describe('engine method kinds', () => {
     expect(methodTimeoutMs(path)).toBe(30_000);
   });
 
-  it.each(['safety.block', 'safety.report', 'engage.like', 'writes.retry', 'dm.send', 'dm.open', 'dm.markRead', 'posts.publish'])(
+  it.each(['safety.block', 'safety.report', 'safety.withdrawReport', 'engage.like', 'writes.retry', 'dm.send', 'dm.open', 'dm.markRead', 'posts.publish'])(
     '%s is a write: never replayed, 15 s deadline',
     (path) => {
       expect(methodKind(path)).toBe('write');
