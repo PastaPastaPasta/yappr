@@ -1,5 +1,7 @@
 import {
+  DAPI_ADDRESSES,
   DPNS_CONTRACT_ID,
+  POLLR_CONTRACT_ID,
   YAPPR_CONTRACT_ID,
   YAPPR_DM_CONTRACT_ID,
   YAPPR_DM_V5_CONTRACT_ID,
@@ -18,6 +20,8 @@ import { platformInfo, type PlatformInfoDTO } from '../dto/capabilities'
 import { avatarStylesReady } from '../avatar-styles'
 // The engine's shim (src/shims/wasm-sdk.ts) through its alias, typed as the package.
 import initWasm from '@dashevo/wasm-sdk/compressed'
+import { wasmInitMs } from '../wasm-timing'
+import { dapiMonitor, type DapiStatusDTO } from '../dapi-monitor'
 
 /** Part of the engine itself did not load (its WASM, a sidecar): the host starts a fresh page. */
 function engineLoaded<T>(loading: Promise<T>, what: string): Promise<T> {
@@ -56,6 +60,7 @@ export interface EngineInfo extends PlatformInfoDTO {
     dpns: string
     dm: string
     dmV5: string
+    pollr: string
   }
   /** The SDK is connected and the contracts are preloaded. */
   ready: boolean
@@ -63,6 +68,13 @@ export interface EngineInfo extends PlatformInfoDTO {
   webAssembly: boolean
   /** Wall time of the first successful boot's SDK initialization. */
   bootMs?: number
+}
+
+/** What Engine diagnostics refreshes while it is open (PRD SET-08); `engine.info()` holds the fixed facts. */
+export interface EngineDiagnostics {
+  /** Loading, decompressing, compiling and instantiating the SDK's WASM, once done. */
+  wasmMs: number | null
+  dapi: DapiStatusDTO
 }
 
 export function createEngineModule(runtime: EngineRuntime) {
@@ -84,6 +96,7 @@ export function createEngineModule(runtime: EngineRuntime) {
       dpns: DPNS_CONTRACT_ID,
       dm: YAPPR_DM_CONTRACT_ID,
       dmV5: YAPPR_DM_V5_CONTRACT_ID,
+      pollr: POLLR_CONTRACT_ID,
     },
     ready: evoSdkService.isReady(),
     webAssembly: typeof WebAssembly !== 'undefined',
@@ -126,6 +139,10 @@ export function createEngineModule(runtime: EngineRuntime) {
 
     async info(): Promise<EngineInfo> {
       return info()
+    },
+
+    async diagnostics(): Promise<EngineDiagnostics> {
+      return { wasmMs: wasmInitMs() ?? null, dapi: dapiMonitor.status(DAPI_ADDRESSES.length) }
     },
 
     /** The host forwards React Native AppState changes here. */

@@ -2,6 +2,7 @@
 import { engineStorage, misroutedStorageKeys } from './install-shims'
 // Second: installs the WASM source before any SDK code can ask for it.
 import './wasm-source'
+import { installDapiMonitor } from './dapi-monitor'
 import { createEngineApi } from './api'
 import { createDispatcher } from './rpc/dispatcher'
 import { createWebViewTransport } from './rpc/transport'
@@ -20,6 +21,9 @@ import { preconnectQuorumService } from './preconnect'
  */
 
 let forwardFrom: LogLevel = 'info'
+
+// Before the SDK's first request: Engine diagnostics shows each DAPI endpoint's last answer.
+installDapiMonitor()
 
 const dispatcher = createDispatcher({
   api: createEngineApi({

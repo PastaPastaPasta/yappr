@@ -76,7 +76,8 @@ export function createEngineApi(runtime: EngineRuntime = {}) {
 
 export type EngineApi = ReturnType<typeof createEngineApi>
 
-export type { EngineInfo, EngineRuntime } from './engine'
+export type { EngineDiagnostics, EngineInfo, EngineRuntime } from './engine'
+export type { DapiEndpointDTO, DapiStatusDTO } from '../dapi-monitor'
 export type * from './dto'
 export type * from './dm'
 export type { ContentCreatedEvent, DraftDTO } from './posts'

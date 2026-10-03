@@ -9,6 +9,11 @@ describeRead('engine', 'engine', () => {
     expect(info.contracts.social).toBe(EXPECTED.social)
     expect(info.bootMs).toBeGreaterThan(0)
     expect((await engine.engine.boot()).bootMs).toBe(info.bootMs)
+    expect(info.contracts.pollr).toMatch(/^[1-9A-HJ-NP-Za-km-z]{43,44}$/)
+    // Engine diagnostics (SET-08). The DAPI monitor is the WebView entry's, so the Node harness counts nothing.
+    const diagnostics = await engine.engine.diagnostics()
+    expect(diagnostics.wasmMs).toBeGreaterThan(0)
+    expect(diagnostics.dapi.endpoints).toEqual([])
 
     const caps = info.capabilities
     expect(caps.contentLimits.chars).toBeGreaterThan(0)
