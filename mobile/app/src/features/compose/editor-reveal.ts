@@ -29,6 +29,13 @@ export function revealsEnd(before: string, after: string, limits: ContentLimits)
 }
 
 /**
+ * How long after an edit its part's layout is still the edit's: the new
+ * height arrives within a few frames. A later layout (the media row opening,
+ * a part removed so the indexes shift) must not scroll.
+ */
+const EDIT_LAYOUT_MS = 500;
+
+/**
  * Keeps the end of the part just edited in view (PRD COMP-12, D-L2i-001).
  * Each editor grows instead of scrolling itself (`scrollEnabled={false}`),
  * so after a long paste nothing scrolled the caret, the overflow highlight
@@ -39,7 +46,7 @@ export function revealsEnd(before: string, after: string, limits: ContentLimits)
 export function useEditorReveal(scroll: RefObject<ScrollView | null>) {
   const parts = useRef<Frame[]>([]);
   const viewport = useRef<Frame>({ y: 0, height: 0 });
-  const pending = useRef<number | null>(null);
+  const pending = useRef<{ index: number; at: number } | null>(null);
 
   const reveal = useCallback(
     (index: number) => {
@@ -52,14 +59,15 @@ export function useEditorReveal(scroll: RefObject<ScrollView | null>) {
   return useMemo(
     () => ({
       onEdit(index: number, before: string, after: string, limits: ContentLimits) {
-        pending.current = revealsEnd(before, after, limits) ? index : null;
-        if (pending.current !== null) requestAnimationFrame(() => reveal(index));
+        pending.current = revealsEnd(before, after, limits) ? { index, at: Date.now() } : null;
+        if (pending.current) requestAnimationFrame(() => reveal(index));
       },
       onPartLayout(index: number, frame: Frame) {
         parts.current[index] = frame;
-        if (pending.current !== index) return;
+        const edit = pending.current;
+        if (edit?.index !== index) return;
         pending.current = null;
-        reveal(index);
+        if (Date.now() - edit.at <= EDIT_LAYOUT_MS) reveal(index);
       },
       onViewportLayout(e: LayoutChangeEvent) {
         viewport.current = { ...viewport.current, height: e.nativeEvent.layout.height };

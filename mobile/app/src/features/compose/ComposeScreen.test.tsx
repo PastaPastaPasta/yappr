@@ -152,6 +152,29 @@ it('scrolls the end of a long paste, and the line saying why it is over, into vi
   expect(scrollTo).not.toHaveBeenCalled();
 });
 
+it('leaves a later layout of the part, not an edit, where it is', async () => {
+  const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+  await renderCompose();
+  const layout = (id: string, y: number, height: number) =>
+    fireEvent(byId(id), 'layout', { nativeEvent: { layout: { x: 0, y, width: 390, height } } });
+  layout('compose-scroll', 0, 300);
+  layout('compose-part-0', 8, 60);
+  // Typed at the end without growing the editor: no layout follows the edit.
+  type('Hi');
+  // The frame after the edit has revealed what it had to (nothing: it fits).
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  scrollTo.mockClear();
+  const now = Date.now();
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(now + 2_000);
+  try {
+    // Seconds later the part lays out taller for another reason (its media row, a part removed above).
+    layout('compose-part-0', 8, 520);
+    expect(scrollTo).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
+
 it('is offline: Post disabled and the bar says so', async () => {
   jest.mocked(useNetInfo).mockReturnValue({ isConnected: false } as ReturnType<typeof useNetInfo>);
   await renderCompose();
