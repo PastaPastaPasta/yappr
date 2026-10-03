@@ -15,6 +15,8 @@ declare module '@tanstack/react-query' {
     queryMeta: {
       /** Opt this query into the on-disk cache. Use `persistedQuery` rather than setting it directly. */
       persist?: boolean;
+      /** `false` keeps NET-03's backoff away from this read (`data/read-retry.ts`). Use `NO_READ_RETRY`. */
+      readRetry?: boolean;
     };
   }
 }
@@ -193,21 +195,37 @@ export async function clearAccountCache(): Promise<void> {
   await Promise.all([persister.removeClient(), queryClient.resetQueries()]);
 }
 
+/** Which failed reads to read again; every one by default. */
+export type FailedReadFilter = (query: Query) => boolean;
+
+/** Failed reads a screen is showing, other than a list whose next page failed ({@link nextPageFailed}). */
+const failedReads = (only: FailedReadFilter) => ({
+  type: 'active' as const,
+  predicate: (query: Query) => query.state.status === 'error' && !nextPageFailed(query) && only(query),
+});
+
+const anyFailure: FailedReadFilter = () => true;
+
+/** How many reads a screen is showing failed (those {@link refetchFailedReads} would read again). */
+export function failedReadCount(only: FailedReadFilter = anyFailure): number {
+  return queryClient.getQueryCache().findAll(failedReads(only)).length;
+}
+
 /**
  * Reads a screen is showing that failed, read again once (PRD G-1, NET-04):
  * after connectivity returns, the engine comes up, or an account switch
- * settles. A failed read is otherwise only retried by its "Try again" (the
- * home feeds never refetch by themselves). A list whose next page failed is
- * left to its "Load More" ({@link nextPageFailed}). `why` goes to the
- * diagnostics log.
+ * settles; and with backoff while Dash Platform is unavailable (NET-03,
+ * `data/read-retry.ts`, with `only` the inline errors of that category).
+ * The home feeds never refetch by themselves otherwise. A list whose next
+ * page failed is left to its "Load More" ({@link nextPageFailed}). `why`
+ * goes to the diagnostics log.
  */
-export async function refetchFailedReads(why: string): Promise<void> {
-  const failed = (query: Query) => query.state.status === 'error' && !nextPageFailed(query);
-  const count = queryClient.getQueryCache().findAll({ type: 'active', predicate: failed }).length;
+export async function refetchFailedReads(why: string, only: FailedReadFilter = anyFailure): Promise<void> {
+  const count = failedReadCount(only);
   if (count === 0) return;
   appendLog('info', 'host', `${why}: retrying ${count} failed ${count === 1 ? 'read' : 'reads'}`);
   // A read already in flight again (TanStack's own reconnect refetch) is joined, not restarted.
-  await queryClient.refetchQueries({ type: 'active', predicate: failed }, { cancelRefetch: false });
+  await queryClient.refetchQueries(failedReads(only), { cancelRefetch: false });
 }
 
 /** UTF-8 length without encoding a copy (the cache can run to megabytes). */

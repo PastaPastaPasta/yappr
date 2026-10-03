@@ -15,14 +15,43 @@ export function isTransportFailure(error: unknown): boolean {
   return TRANSPORT.test(`${error.name} ${error.message} ${String(code ?? '')}`);
 }
 
+const codeOf = (error: unknown) =>
+  typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+
+/** Engine and RPC codes for a Dash Platform, or an engine, that could not be reached right now. */
+const UNAVAILABLE_CODES: ReadonlySet<string> = new Set([
+  'ENGINE_UNAVAILABLE',
+  'ENGINE_BUSY',
+  'ENGINE_RESTARTED',
+  'ENGINE_DISCONNECTED',
+  'ENGINE_HELLO_TIMEOUT',
+  'RPC_TIMEOUT',
+  'UNAVAILABLE',
+  'TIMEOUT',
+]);
+
+/**
+ * G-11's "temporarily unavailable" category, the one place it is decided: an
+ * engine code for an unreachable Platform or engine (a call turned away
+ * because too many were waiting too), or a transport failure by its text (an
+ * SDK error keeps its own code). Every screen's categorized copy shows
+ * UX_SPEC §5.12's unavailability message for these (or the network message,
+ * for `NETWORK`), and these are the reads NET-03's backoff reads again
+ * (`read-retry.ts`), so the copy and the retry always agree. Not a refusal,
+ * a missing session or a failed proof: those fail the same way every time.
+ */
+export function isTemporaryReadFailure(error: unknown): boolean {
+  const code = codeOf(error);
+  if (code === 'NOT_SIGNED_IN') return false;
+  return (typeof code === 'string' && UNAVAILABLE_CODES.has(code)) || isTransportFailure(error);
+}
+
 /**
  * The inline error a failed read shows (PRD G-11): the unavailability copy
- * for transport failures, else a plain sentence. Raw SDK text never reaches
- * the screen.
+ * for {@link isTemporaryReadFailure}, else a plain sentence. Raw SDK text
+ * never reaches the screen.
  */
 export function readErrorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return GENERIC_MESSAGE;
-  const code = (error as { code?: unknown }).code;
-  if (code === 'NOT_SUPPORTED') return 'This contract does not support this view.';
-  return isTransportFailure(error) ? UNAVAILABLE_MESSAGE : GENERIC_MESSAGE;
+  if (codeOf(error) === 'NOT_SUPPORTED') return 'This contract does not support this view.';
+  return isTemporaryReadFailure(error) ? UNAVAILABLE_MESSAGE : GENERIC_MESSAGE;
 }

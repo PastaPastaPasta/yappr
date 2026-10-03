@@ -1013,6 +1013,7 @@ As a user on a train, I want to keep reading when the connection drops, so that 
 #### NET-03 · Dash Platform unavailable · P0 · all
 As a user, I want an honest message when Dash Platform is down, so that I don't blame my phone.
 - When reads fail with the "temporarily unavailable" category, lists show G-11 inline errors. The engine retries with backoff (2 s, 4 s, 8 s, then every 30 s) while the screen is visible and the app is in the foreground.
+- 1.0 note: the retry runs for every screen mounted in the tab stacks, not only the visible one (a screen kept behind the current one, another tab's stack, Home's other feed page). Native stacks keep those screens and their reads alive, and telling them apart would need focus tracking in every screen's reads. Only a list's own read is retried, not a poll or a card's embedded read, so the extra cost during an outage is one read per hidden failed list every 30 s.
 
 #### NET-04 · Engine restart · P0 · all
 As a user, I want a crash in the engine to be invisible, so that I can keep going.

@@ -1,7 +1,7 @@
 import type { Page, PostDTO } from '@engine/api';
 import type { InfiniteData } from '@tanstack/react-query';
 
-import { isTransportFailure } from '~/data/read-error';
+import { isTemporaryReadFailure } from '~/data/read-error';
 
 /**
  * Pure helpers over the home feed's cached pages (TanStack `InfiniteData`)
@@ -63,21 +63,11 @@ export const UNAVAILABLE_MESSAGE = 'Dash Platform is temporarily unavailable. Pl
 export const NETWORK_MESSAGE = 'Network error. Please check your connection and try again.';
 export const SESSION_MESSAGE = 'Your session has expired. Please sign in again.';
 
-const UNAVAILABLE_CODES = new Set([
-  'ENGINE_UNAVAILABLE',
-  'ENGINE_BUSY',
-  'ENGINE_RESTARTED',
-  'ENGINE_DISCONNECTED',
-  'ENGINE_HELLO_TIMEOUT',
-  'RPC_TIMEOUT',
-  'UNAVAILABLE',
-  'TIMEOUT',
-]);
-
 /**
  * The categorized copy for a failed read (PRD G-11), from the engine's error
  * code; for an error without one (lib's own text, such as a quorum or DAPI
- * request failure during boot), from what it says. While the phone is
+ * request failure during boot), from what it says (`isTemporaryReadFailure`,
+ * which also decides NET-03's retry). While the phone is
  * `offline`, the network copy. Undefined when there is nothing specific to
  * say: the error state then shows only "Something went wrong".
  */
@@ -85,8 +75,7 @@ export function readErrorMessage(error: unknown, { offline = false }: { offline?
   const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
   if (code === 'NOT_SIGNED_IN') return SESSION_MESSAGE;
   if (offline) return NETWORK_MESSAGE;
-  if (typeof code === 'string' && UNAVAILABLE_CODES.has(code)) return UNAVAILABLE_MESSAGE;
   if (code === 'NETWORK') return NETWORK_MESSAGE;
-  if (isTransportFailure(error)) return UNAVAILABLE_MESSAGE;
+  if (isTemporaryReadFailure(error)) return UNAVAILABLE_MESSAGE;
   return undefined;
 }
