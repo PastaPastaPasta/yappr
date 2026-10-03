@@ -41,17 +41,11 @@ const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded
   defaultVariants: { variant: 'primary', size: 'md' },
 });
 
-// Each color names its dark value too: it must replace both halves of Text's default tone.
+// The label's size. Its color is `contentColor`, as the icon's and the spinner's: a
+// NativeWind color class swapped on a mounted label (Follow → Following → Follow)
+// can leave the label unpainted on device.
 const labelVariants = cva('text-center', {
   variants: {
-    variant: {
-      primary: 'text-white dark:text-white',
-      secondary: 'text-gray-900 dark:text-gray-100',
-      outline: 'text-gray-900 dark:text-gray-100',
-      ghost: 'text-gray-900 dark:text-gray-100',
-      destructive: 'text-white dark:text-white',
-      link: 'text-yappr-700 dark:text-yappr-400',
-    },
     size: {
       sm: typeScale.buttonSm,
       md: typeScale.button,
@@ -59,7 +53,7 @@ const labelVariants = cva('text-center', {
       block: typeScale.button,
     },
   },
-  defaultVariants: { variant: 'primary', size: 'md' },
+  defaultVariants: { size: 'md' },
 });
 
 type Variant = NonNullable<VariantProps<typeof buttonVariants>['variant']>;
@@ -119,11 +113,13 @@ export function Button({
     >
       {({ pressed }) => (
         <>
-          {/* Loading keeps the label's width: it goes invisible under the spinner. */}
-          <View className="flex-row items-center gap-1.5" style={loading ? { opacity: 0 } : undefined}>
+          {/* Loading keeps the label's width: it goes invisible under the spinner. A new variant
+              mounts a new label, so nothing of the old variant's style stays on it. */}
+          <View key={variant} className="flex-row items-center gap-1.5" style={loading ? { opacity: 0 } : undefined}>
             {Icon ? <Icon size={16} color={color} /> : null}
             <Text
-              className={cn(labelVariants({ variant, size }), variant === 'link' && pressed && 'underline')}
+              className={cn(labelVariants({ size }), variant === 'link' && pressed && 'underline')}
+              style={{ color }}
             >
               {label}
             </Text>
