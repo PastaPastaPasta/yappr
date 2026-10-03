@@ -237,6 +237,39 @@ describe('submitWrite', () => {
     expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a key busy while its call still runs past the engine\'s deadline (STILL_SENDING), then sends what was queued', async () => {
+    const toggle: WriteSpec<{ on: boolean }> = {
+      key: () => `like:${target.id}`,
+      submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
+      optimistic: apply,
+      intent: ({ on }) => on,
+      noun: 'like',
+      failureMessage: 'x',
+      announceUnconfirmed: false,
+    };
+    const like = ticket();
+    fakeEngine.method('engage.like').mockResolvedValueOnce(like);
+    await runWrite(toggle, { on: true });
+    await expect(runWrite(toggle, { on: false })).resolves.toEqual({ status: 'queued' });
+
+    // A minute without an answer: unconfirmed, but the like's call still runs. The unlike would race it.
+    const stalled = advance(like, {
+      state: 'unconfirmed',
+      error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+    });
+    await act(async () => fakeEngine.emit('write.status', stalled));
+    expect(fakeEngine.method('engage.unlike')).not.toHaveBeenCalled();
+    // A tap meanwhile queues too (back to what the like asks: nothing more to send).
+    await expect(runWrite(toggle, { on: true })).resolves.toEqual({ status: 'queued' });
+    await expect(runWrite(toggle, { on: false })).resolves.toEqual({ status: 'queued' });
+
+    // The call answers: the queued unlike goes out once.
+    fakeEngine.method('engage.unlike').mockResolvedValueOnce(ticket({ op: 'unlike' }));
+    await act(async () => fakeEngine.emit('write.status', advance(stalled, { state: 'confirmed', error: null })));
+    expect(fakeEngine.method('engage.unlike')).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+  });
+
   it('drops a queued write that asks for what the pending one asked (like, unlike, like)', async () => {
     const toggle: WriteSpec<{ on: boolean }> = {
       key: () => `like:${target.id}`,

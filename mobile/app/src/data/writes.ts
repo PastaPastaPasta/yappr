@@ -180,6 +180,14 @@ const MAX_TICKETS = 200;
 
 const time = (date: Date | null | undefined) => (date ? new Date(date).getTime() : 0);
 
+/**
+ * The write's call still runs: pending, or unconfirmed by the engine's
+ * deadline (`STILL_SENDING`, PRD G-3) while it waits on the network. Its
+ * answer will settle it, so its key stays busy.
+ */
+const stillRunning = (ticket: WriteTicket | undefined) =>
+  ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && ticket.error?.code === 'STILL_SENDING');
+
 /** The engine error code of a rejected call (`RemoteError.code`), if any. */
 export function errorCode(error: unknown): string | undefined {
   const code = (error as { code?: unknown } | null)?.code;
@@ -309,8 +317,9 @@ function settle(ticket: WriteTicket): void {
             action: { label: 'Check again', onPress: () => checkWrite(ticket.id) },
           });
         }
-        // It may have landed: send the newer intent, which is harmless if it did not.
-        release(entry.key, true);
+        // It may have landed: send the newer intent, which is harmless if it did not. Not while its
+        // call still runs: the newer one would race it, so it waits for the call's answer.
+        if (!stillRunning(ticket)) release(entry.key, true);
       }
   }
 }
@@ -413,7 +422,7 @@ function pendingIntent(key: string): unknown {
   if (marked) return marked.intent;
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
-  if (!entry || useWriteTickets.getState().byId[id!]?.state !== 'pending') return NO_INTENT;
+  if (!entry || !stillRunning(useWriteTickets.getState().byId[id!])) return NO_INTENT;
   return entry.spec.intent?.(entry.vars);
 }
 

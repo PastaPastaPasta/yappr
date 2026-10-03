@@ -170,9 +170,10 @@ const mayHaveLanded = (ticket: WriteTicket) =>
  * The write-status row for an entry (UX_SPEC §2.4.11); null once confirmed.
  * A write that may have landed is "Not confirmed yet · Check again" (PRD
  * COMP-10, NET-04), however it got there (an engine restart, a timeout, a
- * part whose id lib never said): the engine's check looks for it by id or by
- * its text, and only a proved absence offers Retry. One that checking cannot
- * settle also offers Edit, so no card is stuck for good.
+ * call that has not answered for a minute, a part whose id lib never said):
+ * the engine's check looks for it by id or by its text, and only a proved
+ * absence offers Retry. One that checking cannot settle also offers Edit, so
+ * no card is stuck for good.
  */
 export function pendingStatus(entry: PendingPost): CardWriteState | null {
   const total = entry.draft.parts.length;
@@ -638,10 +639,20 @@ function settleNeverTaken(entry: PendingPost, tickets: WriteTicket[], now = Date
  */
 const UNPROVABLE_AFTER_MS = 10 * 60_000;
 
-/** A check left the post unconfirmed: once waiting cannot settle it, the card offers Edit too. */
+/**
+ * The engine's call for the post still runs past its deadline (a DAPI stall):
+ * it may still land, and its answer will settle the card. Waiting does tell.
+ */
+const stillSending = (entry: PendingPost) => entry.ticket?.error?.code === 'STILL_SENDING';
+
+/**
+ * A check left the post unconfirmed: once waiting cannot settle it, the card
+ * offers Edit too. Never while its call still runs: a post edited and posted
+ * again then would land twice.
+ */
 function noteUnsettled(localId: string, now = Date.now()): void {
   const entry = getEntry(localId);
-  if (!entry || entry.unprovable || pendingStatus(entry)?.state !== 'unconfirmed') return;
+  if (!entry || entry.unprovable || stillSending(entry) || pendingStatus(entry)?.state !== 'unconfirmed') return;
   if (now - (entry.submittedAt ?? entry.createdAt) >= UNPROVABLE_AFTER_MS) patchEntry(localId, { unprovable: true });
 }
 
@@ -807,11 +818,16 @@ function receiveTicket(ticket: WriteTicket): void {
   }
   patchEntry(entry.localId, { ticket });
   const after = pendingStatus(next)?.state;
-  if (before === after) return;
+  // Unconfirmed while its call ran, then still unconfirmed once it answered: that answer counts.
+  const answered = stillSending(entry) && !stillSending(next);
+  if (before === after && !answered) return;
   if (after === 'failed' || after === 'partial') settleFailure(next);
   // A resumed thread has no card to check again from: with a part whose id is not known, its text
-  // returns to the draft (the parts known to have posted marked as posted).
-  else if (after === 'unconfirmed' && next.placement === 'none' && postedIds(next).some((id) => !id)) settleFailure(next);
+  // returns to the draft (the parts known to have posted marked as posted). Not while its call
+  // still runs: those parts may still land, and posted again from the draft they would land twice.
+  else if (after === 'unconfirmed' && next.placement === 'none' && !stillSending(next) && postedIds(next).some((id) => !id)) {
+    settleFailure(next);
+  }
 }
 
 /** Whether `post` is what an entry's card shows: same author, kind, parent, quote and text. */
