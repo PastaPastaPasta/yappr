@@ -74,6 +74,10 @@ esac
 maestro="${MAESTRO_BIN:-$(command -v maestro || echo "$HOME/.maestro/bin/maestro")}"
 [ -x "$maestro" ] || die "maestro not found (install it, or set MAESTRO_BIN)"
 export MAESTRO_CLI_NO_ANALYTICS=1 MAESTRO_CLI_ANALYSIS_NOTIFICATION_DISABLED=true
+# Each flow starts Maestro's driver again. On a loaded host the iOS XCTest driver can take
+# longer than Maestro's 120 s default to come up (the previous flow's xcodebuild is often
+# still collecting simulator diagnostics), which fails the flow before its first step.
+export MAESTRO_DRIVER_STARTUP_TIMEOUT="${MAESTRO_DRIVER_STARTUP_TIMEOUT:-300000}"
 
 out="${out:-$here/out/$platform-$(date +%Y%m%d-%H%M%S)}"
 mkdir -p "$out"/{junit,screenshots,logs,artifacts}
