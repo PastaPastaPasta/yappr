@@ -96,6 +96,17 @@ export function lastIdentity(): string | null {
   return syncStorage.getItem(LAST_IDENTITY_KEY);
 }
 
+/**
+ * The viewer a cached screen is drawn for: before the engine restores the
+ * session (`unknown`), whoever was signed in last time, whose account the
+ * persisted cache belongs to (PRD G-2); then the signed-in identity, or null
+ * signed out. For what may be the viewer's own content during a cold launch
+ * (the media gate, SAFE-07), never for writes.
+ */
+export function useProvisionalViewerId(): string | null {
+  return useSessionStore((s) => (s.status === 'unknown' ? lastIdentity() : (s.session?.identityId ?? null)));
+}
+
 let accountsRead = 0;
 
 function applySession(session: SessionDTO | null): void {

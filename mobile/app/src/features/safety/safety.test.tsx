@@ -22,6 +22,7 @@ import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { resetWriteTracking, sendWrite } from '~/data/writes';
 import { PostItem } from '~/features/post/PostItem';
 import { queryClient } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
@@ -207,6 +208,34 @@ describe('content gates on posts', () => {
 
     act(() => setSettings({ gateMediaFromNonFollowed: false }));
     expect(screen.queryByTestId('media-gate')).toBeNull();
+  });
+
+  describe('while the engine restores the session (D-L3a-009)', () => {
+    const stranger = () =>
+      fixturePost({ id: 'stranger', media: [IMAGE], viewer: { ...fixturePost().viewer!, followsAuthor: false } });
+    const cards = () => [
+      fixturePost({ id: 'own', author: AUTHORS.alice, media: [IMAGE] }),
+      fixturePost({ id: 'friend', media: [IMAGE] }),
+      stranger(),
+    ];
+
+    beforeEach(() => useSessionStore.setState({ status: 'unknown', session: null, accounts: [] }));
+    afterEach(() => syncStorage.removeItem('yappr.session.identity'));
+
+    it("never flashes the gate on the last account's own or followed media", () => {
+      syncStorage.setItem('yappr.session.identity', VIEWER_ID);
+      renderPosts(cards());
+      expect(screen.getAllByTestId('media-gate')).toHaveLength(1);
+
+      // Restored signed out after all: everything waits behind Show again.
+      act(() => useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] }));
+      expect(screen.getAllByTestId('media-gate')).toHaveLength(3);
+    });
+
+    it('gates everything when nobody was signed in last time', () => {
+      renderPosts(cards());
+      expect(screen.getAllByTestId('media-gate')).toHaveLength(3);
+    });
   });
 
   it('gates until the settings answer (nothing flagged shows before)', () => {

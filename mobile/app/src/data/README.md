@@ -10,7 +10,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `keys.ts` | `queryKeys`: the one key factory |
 | `queries.ts` | `useEngineQuery`, `useEngineInfiniteQuery`, `engineQueryOptions`, `flattenPages` |
 | `events.ts` | `useEngineEvent(name, handler)`, `onEngineEvent`: typed engine events |
-| `session.ts` | `useSession()`, `useViewerId()`, `useCapabilities()` |
+| `session.ts` | `useSession()`, `useViewerId()`, `useProvisionalViewerId()`, `useCapabilities()` |
 | `require-auth.tsx` | `requireAuth(action)` / `useRequireAuth()`, and the "Sign in to continue" sheet |
 | `writes.ts` | `runWrite`, `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
 | `optimistic.ts` | `setViewerState`, `setFollowing`, `setAuthorBlocked`, `hidePost`, `markPostDeleted`, `dropFromLists`, `updateCachedPosts` |
@@ -202,6 +202,10 @@ Other session hooks:
 - `useSession()`: `status` (`unknown` / `signed-out` / `signed-in`),
   `session`, `accounts`, `identityId` and `signedIn`.
 - `useViewerId()`: the identity id alone, which re-renders less.
+- `useProvisionalViewerId()`: the same, but while the session is `unknown`
+  whoever was signed in last time (`lastIdentity()`), whose account the
+  persisted cache belongs to. For what a cached card shows during a cold
+  launch (the media gate), never for writes.
 - `useCapabilities()`: `engine.info().capabilities`, remembered across
   launches for the same engine bundle.
 
