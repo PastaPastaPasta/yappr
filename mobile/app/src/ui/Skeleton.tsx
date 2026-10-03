@@ -1,35 +1,19 @@
-import { useEffect, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { View, type DimensionValue } from 'react-native';
-import Animated, {
-  Easing,
-  cancelAnimation,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { cubicBezier, type CSSAnimationProperties } from 'react-native-reanimated';
 
 import { cn } from '~/lib-allowlist';
 
+import { usePulse } from './pulse';
 import { motion, tw } from './tokens';
 
-const PULSE_EASING = Easing.bezier(0.4, 0, 0.6, 1);
-
 /** The web's `animate-pulse`: opacity 1 → 0.5 → 1 every 2 s; still under Reduce Motion. */
-function usePulse() {
-  const reduceMotion = useReducedMotion();
-  const opacity = useSharedValue(1);
-  useEffect(() => {
-    if (reduceMotion) {
-      opacity.set(1);
-      return undefined;
-    }
-    opacity.set(withRepeat(withTiming(0.5, { duration: motion.pulse / 2, easing: PULSE_EASING }), -1, true));
-    return () => cancelAnimation(opacity);
-  }, [opacity, reduceMotion]);
-  return useAnimatedStyle(() => ({ opacity: opacity.value }));
-}
+const SKELETON_PULSE = {
+  animationName: { from: { opacity: 1 }, '50%': { opacity: 0.5 }, to: { opacity: 1 } },
+  animationDuration: motion.pulse,
+  animationIterationCount: 'infinite',
+  animationTimingFunction: cubicBezier(0.4, 0, 0.6, 1),
+} satisfies CSSAnimationProperties;
 
 export interface SkeletonProps {
   width?: DimensionValue;
@@ -42,7 +26,7 @@ export interface SkeletonProps {
 
 /** One pulsing placeholder bar or circle in `bg.skeleton`. */
 export function Skeleton({ width = '100%', height = 12, circle = false, className }: SkeletonProps) {
-  const pulse = usePulse();
+  const pulse = usePulse(SKELETON_PULSE);
   // className stays on a plain View: NativeWind does not style Reanimated's components.
   return (
     <Animated.View style={[{ width: circle ? height : width, height }, pulse]}>

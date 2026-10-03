@@ -7,6 +7,7 @@ import { config } from '~/config';
 import { ENGINE_BUNDLE_HASH } from '~/engine/bundle-hash';
 import { appendLog, errorMessage } from '~/engine/logs';
 
+import { installQueryBudget, isPagedData } from './query-budget';
 import { syncStorage } from './storage';
 
 declare module '@tanstack/react-query' {
@@ -28,7 +29,8 @@ const PERSIST_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
  *   useQuery({ queryKey, queryFn, ...persistedQuery })
  *
  * Never use it for decrypted DMs, notifications or balances: MMKV is not
- * encrypted. The long gcTime keeps the entry alive as long as the persisted copy.
+ * encrypted. The long gcTime keeps the entry alive as long as the persisted copy;
+ * `installQueryBudget` bounds what such entries keep once no screen shows them.
  */
 export const persistedQuery = {
   meta: { persist: true },
@@ -98,15 +100,10 @@ export const queryClient = new QueryClient({
     },
   },
 });
+installQueryBudget(queryClient);
 
 /** PRD FEED-11: a persisted list holds at most this many items. */
 const PERSISTED_LIST_MAX = 200;
-
-const isPagedData = (data: unknown): data is { pages: unknown[]; pageParams: unknown[] } =>
-  typeof data === 'object' &&
-  data !== null &&
-  Array.isArray((data as { pages?: unknown }).pages) &&
-  Array.isArray((data as { pageParams?: unknown }).pageParams);
 
 /** A paged list keeps its first page only (a restored infinite query refetches every page it holds), capped. */
 function firstPageOnly(data: unknown): unknown {

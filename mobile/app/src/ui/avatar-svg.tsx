@@ -23,12 +23,64 @@ export function AvatarSvgProvider({
   return <ResolverContext.Provider value={resolve}>{children}</ResolverContext.Provider>;
 }
 
-/** Rendered markup by `style:seed`, shared by every avatar for the app's lifetime. */
+/**
+ * DiceBear's `<metadata>` (title, creator, licence) never renders, and its
+ * `viewboxMask` with a 0 radius is a rect covering the whole viewBox: an
+ * identity mask, since the avatar's viewport clips to the viewBox anyway.
+ * react-native-svg still parses the one into every avatar's tree, and makes
+ * the other two more native views per avatar, drawn through offscreen layers
+ * on Android. `<metadata>` goes from any SVG; the mask only when it is
+ * exactly DiceBear's identity mask. Anything else passes through untouched.
+ */
+const METADATA = /<metadata[\s>][\s\S]*?<\/metadata>/g;
+const VIEWBOX = /^\s*<svg\b[^>]*\sviewBox="([^"]+)"/;
+const IDENTITY_MASK =
+  /<mask id="viewboxMask"><rect width="([\d.]+)" height="([\d.]+)" rx="0" ry="0" x="([-\d.]+)" y="([-\d.]+)" fill="#fff" ?\/><\/mask>/;
+
+/** `svg` without what never changes a pixel (see above): less to keep, parse and draw. */
+export function slimDicebearSvg(svg: string): string {
+  let out = svg.replace(METADATA, '');
+  const mask = IDENTITY_MASK.exec(out);
+  const viewBox = VIEWBOX.exec(out)?.[1]?.trim().split(/[\s,]+/).map(Number);
+  if (mask && viewBox?.length === 4) {
+    const [, width, height, x, y] = mask.map(Number);
+    if (x === viewBox[0] && y === viewBox[1] && width === viewBox[2] && height === viewBox[3]) {
+      out = out.replace(mask[0], '').replaceAll(' mask="url(#viewboxMask)"', '');
+    }
+  }
+  return out;
+}
+
+/** Recipes kept rendered; the web keeps 500 (lib/services/avatar-generator). */
+export const AVATAR_SVG_CACHE_MAX = 300;
+
+/** Rendered markup by `style:seed`, shared by every avatar, least recently used first. */
 const cache = new Map<string, string>();
+
+function cached(key: string): string | undefined {
+  const svg = cache.get(key);
+  if (svg !== undefined) {
+    cache.delete(key);
+    cache.set(key, svg);
+  }
+  return svg;
+}
+
+function remember(key: string, svg: string) {
+  cache.delete(key);
+  cache.set(key, svg);
+  for (const oldest of cache.keys()) {
+    if (cache.size <= AVATAR_SVG_CACHE_MAX) break;
+    cache.delete(oldest);
+  }
+}
 
 /**
  * The SVG for a DiceBear recipe: cached at once, else resolved through the
  * provider. `undefined` while loading, with no recipe, or with no provider.
+ *
+ * The markup this avatar shows is also kept in its own state, so a mounted
+ * avatar never loses it to the shared cache evicting its recipe.
  */
 export function useDicebearSvg(
   identityId: string | undefined,
@@ -38,14 +90,18 @@ export function useDicebearSvg(
   const style = recipe?.style;
   const seed = recipe?.seed;
   const key = style && seed ? `${style}:${seed}` : undefined;
-  const [loaded, setLoaded] = useState<{ key: string; svg: string }>();
+  const [loaded, setLoaded] = useState<{ key: string; svg: string } | undefined>(() => {
+    const svg = key === undefined ? undefined : cache.get(key);
+    return key !== undefined && svg !== undefined ? { key, svg } : undefined;
+  });
 
   useEffect(() => {
     if (!key || !style || !seed || !identityId || !resolve || cache.has(key)) return undefined;
     let current = true;
-    const apply = (svg: string | null) => {
-      if (!svg) return;
-      cache.set(key, svg);
+    const apply = (raw: string | null) => {
+      if (!raw) return;
+      const svg = slimDicebearSvg(raw);
+      remember(key, svg);
       if (current) setLoaded({ key, svg });
     };
     // A synchronous resolver (fixtures) applies inside this effect, with no extra tick.
@@ -61,5 +117,9 @@ export function useDicebearSvg(
   }, [key, style, seed, identityId, resolve]);
 
   if (!key) return undefined;
-  return cache.get(key) ?? (loaded?.key === key ? loaded.svg : undefined);
+  const hit = cached(key);
+  // Shown from the cache: keep it here too (state adjusted while rendering, as
+  // React advises over an effect), so its eviction cannot blank this avatar.
+  if (hit !== undefined && (loaded?.key !== key || loaded.svg !== hit)) setLoaded({ key, svg: hit });
+  return hit ?? (loaded?.key === key ? loaded.svg : undefined);
 }

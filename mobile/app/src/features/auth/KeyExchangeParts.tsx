@@ -5,18 +5,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppState, View } from 'react-native';
 import { CheckCircleIcon, ExclamationTriangleIcon, WalletIcon } from 'react-native-heroicons/outline';
 import QRCode from 'react-native-qrcode-svg';
-import Animated, {
-  cancelAnimation,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { type CSSAnimationProperties } from 'react-native-reanimated';
 
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
 import { selectionTick } from '~/ui/haptics';
+import { usePulse } from '~/ui/pulse';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { colors, motion, tw, useColors } from '~/ui/tokens';
@@ -25,21 +19,19 @@ import { copy } from './copy';
 import { cancelKeyExchange, resetKeyExchange, useKeyExchange, walletReturned } from './key-exchange';
 import { useCloseSignIn } from './navigation';
 
+/** The glyph's breathing: scale 1 ↔ 1.08, a second each way. */
+const BREATHE = {
+  animationName: { from: { transform: [{ scale: 1 }] }, to: { transform: [{ scale: 1.08 }] } },
+  animationDuration: motion.pulse / 2,
+  animationDirection: 'alternate',
+  animationIterationCount: 'infinite',
+  animationTimingFunction: 'ease-in-out',
+} satisfies CSSAnimationProperties;
+
 /** The 64 pt wallet glyph; it breathes while the app waits on the wallet (UX_SPEC §4.3). */
 export function WalletGlyph({ pulsing }: { pulsing: boolean }) {
   const c = useColors();
-  const reduceMotion = useReducedMotion();
-  const scale = useSharedValue(1);
-  const animate = pulsing && !reduceMotion;
-  useEffect(() => {
-    if (!animate) {
-      scale.set(1);
-      return undefined;
-    }
-    scale.set(withRepeat(withTiming(1.08, { duration: motion.pulse / 2 }), -1, true));
-    return () => cancelAnimation(scale);
-  }, [animate, scale]);
-  const style = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+  const style = usePulse(BREATHE, pulsing);
   return (
     <Animated.View style={style} importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
       <View className="h-24 w-24 items-center justify-center rounded-full bg-yappr-50 dark:bg-yappr-950/40">

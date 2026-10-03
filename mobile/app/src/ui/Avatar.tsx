@@ -5,7 +5,7 @@ import { SvgXml } from 'react-native-svg';
 
 import { cn } from '~/lib-allowlist';
 
-import { useDicebearSvg } from './avatar-svg';
+import { slimDicebearSvg, useDicebearSvg } from './avatar-svg';
 import { useMediaUrls } from './media-url';
 import type { CardAvatar } from './post/types';
 import { hitSlopFor, motion, tw } from './tokens';
@@ -56,9 +56,11 @@ export interface AvatarProps {
   className?: string;
 }
 
+/** Markup from a prop or data URI, slimmed as recipe markup already is. */
 function svgMarkup(source: string | undefined): string | null {
   if (!source) return null;
-  return source.trimStart().startsWith('<') ? source : svgFromDataUri(source);
+  const markup = source.trimStart().startsWith('<') ? source : svgFromDataUri(source);
+  return markup === null ? null : slimDicebearSvg(markup);
 }
 
 /**
@@ -81,13 +83,15 @@ export const Avatar = memo(function Avatar({
   const recipeSvg = useDicebearSvg(identityId, avatar?.dicebear);
   const urls = useMediaUrls();
   const storedUri = avatar?.uri ?? uriProp ?? undefined;
-  const svg = svgProp ?? recipeSvg;
   const diameter = AVATAR_SIZES[size];
   // The profile avatar's 4 pt ring sits inside its diameter; the picture fills the rest.
   const inner = size === 'profile' ? diameter - 8 : diameter;
   // Keyed by URL, so a recycled cell showing someone else retries.
   const [failedUri, setFailedUri] = useState<string>();
-  const markup = useMemo(() => svgMarkup(svg ?? storedUri), [svg, storedUri]);
+  const markup = useMemo(
+    () => (svgProp === undefined && recipeSvg !== undefined ? recipeSvg : svgMarkup(svgProp ?? storedUri)),
+    [svgProp, recipeSvg, storedUri],
+  );
   const uri = urls.media(storedUri);
   const fallbackMarkup = useMemo(() => svgMarkup(fallback), [fallback]);
 
