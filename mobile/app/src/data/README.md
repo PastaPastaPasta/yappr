@@ -82,13 +82,14 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     the engine's `categorizeError` text (or `failureMessage` when the engine
     has nothing specific, or the spec's `failureText` for the ticket). The
     toast offers **Retry** when the engine allows one, unless the spec's
-    `failureAction` has a better action for it. `onFailed` runs after
-    the undo, for a failure that changed state anyway.
+    `failureAction` has a better action for it. `failureNeutral` makes the
+    toast neutral (no haptic, no action) for a failure that needs no fix.
+    `onFailed` runs after the undo, for a failure that changed state anyway.
   - `unconfirmed`: the write may have landed, so the change stays (PRD G-3).
     A "Not confirmed yet" toast offers **Check again**. If the check proves
     the write absent, the change is undone and the toast offers **Retry**.
     Engagements set `announceUnconfirmed: false`: G-3 counts them as done,
-    with no toast.
+    with no toast. A function decides per ticket (a sheet that says it).
   - Nothing is retried automatically. Retry applies only to the latest write
     for a key, and never while another is in flight. A failure of an older
     write for a key says nothing: the newer write decides the state.

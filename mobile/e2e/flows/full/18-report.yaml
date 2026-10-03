@@ -77,12 +77,20 @@ tags:
       - tapOn:
           text: "Withdraw|WITHDRAW"
           rightOf: "Cancel|CANCEL"
-      # Withdrawn, the sheet closes.
+      # Withdrawn, the sheet closes; or the network has not confirmed it yet (a DAPI wait
+      # timeout), and the sheet says so with Check again instead of Withdraw. Both pass.
       - extendedWaitUntil:
           notVisible:
             id: report-existing
           timeout: 120000
       - takeScreenshot: report-withdrawn
+- runFlow:
+    when:
+      visible:
+        id: report-withdraw-unconfirmed
+    commands:
+      - tapOn:
+          id: report-done
 - runFlow:
     when:
       visible:

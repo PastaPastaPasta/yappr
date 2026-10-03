@@ -672,7 +672,7 @@ describe('ReportScreen', () => {
       expect(screen.getByText(copy.report.withdraw)).toBeTruthy();
     });
 
-    it("says so when the report is already gone, and reads the viewer's report again", async () => {
+    it("says so in a neutral toast when the report is already gone, and closes, as on web", async () => {
       const pending = ticket({ op: 'report.withdraw', target });
       fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
       withProviders(<ReportScreen />);
@@ -691,9 +691,86 @@ describe('ReportScreen', () => {
         ),
       );
       await settle();
-      expect(toastMessage()).toBe(copy.toast.reportGone);
+      expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: copy.toast.reportGone });
+      expect(router.back).toHaveBeenCalledTimes(1);
+      // The viewer's report is read again: a reopened sheet offers the form.
+      expect(fakeEngine.method('safety.ownReport')).toHaveBeenCalledTimes(2);
+    });
+
+    it('never offers Withdraw again while an unconfirmed withdrawal may land, and checks it', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+
+      // A wait timeout (a DAPI 504): it may have landed.
+      const unconfirmed = advance(pending, {
+        state: 'unconfirmed',
+        error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+      });
+      act(() => fakeEngine.emit('write.status', unconfirmed));
+      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      expect(screen.queryByTestId('report-withdraw')).toBeNull();
+      // The open sheet says it; no toast on top.
+      expect(toastMessage()).toBeUndefined();
       expect(router.back).not.toHaveBeenCalled();
-      expect(screen.getByTestId('report-sheet')).toBeTruthy();
+
+      const confirmed = advance(unconfirmed, { state: 'confirmed', error: null, lastCheckedAt: new Date() });
+      fakeEngine.method('writes.check').mockImplementation(async () => {
+        fakeEngine.emit('write.status', confirmed);
+        return confirmed;
+      });
+      await act(async () => fireEvent.press(screen.getByTestId('report-withdraw-check')));
+      expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
+      expect(toastMessage()).toBe('Report withdrawn');
+      expect(router.back).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
+    });
+
+    it('a reopened sheet follows the withdrawal an earlier one sent', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      const first = withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+      first.unmount();
+
+      // Reopened while it is on its way: Withdrawing…, never a second delete.
+      const second = withProviders(<ReportScreen />);
+      await settle();
+      expect(screen.getByText(copy.report.withdrawing)).toBeTruthy();
+      act(() =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'unconfirmed',
+            error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+          }),
+        ),
+      );
+      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      second.unmount();
+
+      // Reopened after it went unconfirmed: it says so, with Check again.
+      withProviders(<ReportScreen />);
+      await settle();
+      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
+    });
+
+    it('toasts "Not confirmed yet" when no sheet is open to say it', async () => {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      const sheet = withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+      sheet.unmount();
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
+      expect(toastMessage()).toBe('Not confirmed yet');
     });
   });
 

@@ -872,7 +872,7 @@ type EngineErrorCode =
   // domain writes, raised by the engine itself (outcome `local`, never retryable)
   | 'STILL_BLOCKED'      // an unblock a followed block list overrides
   | 'REPORT_GONE'        // safety.withdrawReport: the report is already gone
-  | 'MEDIA_UNREADABLE'   // posts.publish: the image link could not be read to fingerprint it (v10), nothing sent
+  | 'MEDIA_UNREADABLE'   // posts.publish: the image link's host refuses it (HTTP 4xx) or it is no decodable image (v10), nothing sent
 interface EngineErrorData {
   code: EngineErrorCode
   consensusCode: number | null            // consensusCodeOf() (error-utils.ts:52)

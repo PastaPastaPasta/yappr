@@ -640,6 +640,29 @@ describe('posts.publish and posts.delete', () => {
       error: { code: 'MEDIA_UNREADABLE', outcome: 'local', userMessage: 'Could not read the image to fingerprint it (HTTP 403)' },
     })
     expect(m.postService.createPost).not.toHaveBeenCalled()
+
+    // What it serves is no image this WebView decodes (createImageBitmap's InvalidStateError).
+    m.imageDigest.mockRejectedValue(Object.assign(new Error('The source image could not be decoded.'), { name: 'InvalidStateError' }))
+    expect(await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/page.html' })))
+      .toMatchObject({ state: 'failed', error: { code: 'MEDIA_UNREADABLE' } })
+  })
+
+  it('fails a fingerprint that may pass next time as itself, not MEDIA_UNREADABLE', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.mediaCarriesHashes = true
+    // The fetch failed in transit: a network failure, nothing sent, and Retry may work.
+    m.imageDigest.mockRejectedValue(new TypeError('Failed to fetch'))
+    expect(await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' })))
+      .toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+    // The host is down for now (5xx), or asks to slow down (429).
+    for (const status of [503, 429]) {
+      m.imageDigest.mockRejectedValue(new Error(`Could not read the image to fingerprint it (HTTP ${status})`))
+      const ticket = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' }))
+      expect(ticket.state).toBe('failed')
+      expect(ticket.error?.code).not.toBe('MEDIA_UNREADABLE')
+    }
+    expect(m.postService.createPost).not.toHaveBeenCalled()
   })
 
   it('emits content.created with the created post as a DTO', async () => {

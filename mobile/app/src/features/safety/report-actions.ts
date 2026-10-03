@@ -46,10 +46,14 @@ export function watchReportSheet(targetId: string): () => void {
 }
 
 /**
- * The latest report ticket per target, so a sheet reopened while its report
- * is on its way follows it instead of offering the form again.
+ * The latest report and withdrawal tickets per target, so a sheet reopened
+ * while either is on its way (or not confirmed yet) follows it instead of
+ * offering the form, or Withdraw, again.
  */
-const useReportTickets = create<{ byTarget: Readonly<Record<string, string>> }>()(() => ({ byTarget: {} }));
+const useReportTickets = create<{
+  byTarget: Readonly<Record<string, string>>;
+  withdrawals: Readonly<Record<string, string>>;
+}>()(() => ({ byTarget: {}, withdrawals: {} }));
 
 export function rememberReportTicket(targetId: string, ticketId: string): void {
   useReportTickets.setState(({ byTarget }) => ({ byTarget: { ...byTarget, [targetId]: ticketId } }));
@@ -58,6 +62,24 @@ export function rememberReportTicket(targetId: string, ticketId: string): void {
 /** The id of the report ticket last submitted for `targetId`, from any sheet. */
 export function useReportTicketId(targetId: string): string | null {
   return useReportTickets((s) => s.byTarget[targetId] ?? null);
+}
+
+export function rememberWithdrawTicket(targetId: string, ticketId: string): void {
+  useReportTickets.setState(({ withdrawals }) => ({ withdrawals: { ...withdrawals, [targetId]: ticketId } }));
+}
+
+/** The id of the withdrawal ticket last submitted for `targetId`, from any sheet. */
+export function useWithdrawTicketId(targetId: string): string | null {
+  return useReportTickets((s) => s.withdrawals[targetId] ?? null);
+}
+
+/**
+ * Whether a withdrawal may yet land: on its way, or `unconfirmed` with no
+ * check proving it absent. Sending another then could only be refused, and
+ * charged (a delete of a report already gone).
+ */
+export function withdrawalUnsettled(ticket: WriteTicket | null): boolean {
+  return ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && !ticket.retryable);
 }
 
 /**
@@ -94,8 +116,10 @@ export interface WithdrawReportVars {
  * Withdraw the viewer's report (`safety.withdrawReport`, PRD SAFE-04): the
  * report is deleted, so the sheet that asked closes once it confirms, and
  * "Report withdrawn" shows. Not optimistic. It shares the report's key: one
- * write per target at a time. A report already gone (`REPORT_GONE`) says
- * so, as web does, and the sheet reads the viewer's report again.
+ * write per target at a time. Not confirmed yet, the open sheet says so
+ * itself (with Check again); a closed one leaves it to the toast. A report
+ * already gone (`REPORT_GONE`) says so in a neutral toast and the sheet
+ * closes, as on web; the viewer's report is read again.
  */
 export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
   key: ({ target }) => `report:${target.id}`,
@@ -107,11 +131,13 @@ export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
     queryClient.setQueryData(queryKeys.post.ownReport(target.id), null);
     toast.success(copy.toast.reportWithdrawn);
   },
+  announceUnconfirmed: (_ticket, { target }) => !openSheets.has(target.id),
   onFailed: (ticket, { target }) => {
     if (ticket.error?.code !== 'REPORT_GONE') return;
     queryClient.invalidateQueries({ queryKey: queryKeys.post.ownReport(target.id) }).catch(() => undefined);
   },
   failureText: (ticket) => (ticket.error?.code === 'REPORT_GONE' ? copy.toast.reportGone : null),
+  failureNeutral: (ticket) => ticket.error?.code === 'REPORT_GONE',
   noun: 'report withdrawal',
   failureMessage: copy.toast.withdrawFailed,
 };

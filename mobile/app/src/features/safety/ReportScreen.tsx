@@ -14,7 +14,7 @@ import { cn } from '~/lib-allowlist';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { useCapabilities, useSession } from '~/data/session';
-import { useWrite, useWriteTicket } from '~/data/writes';
+import { checkWrite, runWrite, useWrite, useWriteTicket } from '~/data/writes';
 import { postWebUrl } from '~/features/post/post-navigation';
 import { targetOf } from '~/features/post/post-writes';
 import { Button } from '~/ui/Button';
@@ -39,9 +39,12 @@ import {
 import {
   emailReport,
   rememberReportTicket,
+  rememberWithdrawTicket,
   reportWrite,
   useReportTicketId,
+  useWithdrawTicketId,
   watchReportSheet,
+  withdrawalUnsettled,
   withdrawReportWrite,
 } from './report-actions';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
@@ -164,12 +167,24 @@ function ReportFlow({
   const [sending, setSending] = useState(false);
   const outcome = current?.state ?? 'idle';
   const code = current?.error?.code;
-  const withdraw = useWrite(withdrawReportWrite);
-  // The report the viewer chose to withdraw: still shown while the sheet closes (the cache drops it).
-  const [withdrawing, setWithdrawing] = useState<OwnReportDTO | null>(null);
+  // The withdrawal this sheet follows: the one it sent, or one an earlier sheet sent that may yet land
+  // (on its way, or not confirmed yet), so Withdraw is never offered while a delete may still land.
+  // `report` is what was withdrawn: still shown while the sheet closes (the cache drops it).
+  const latestWithdrawal = useWriteTicket(useWithdrawTicketId(post.id));
+  const [withdrawal, setWithdrawal] = useState<{ ticketId: string; report: OwnReportDTO | null } | null>(null);
+  if (latestWithdrawal && withdrawal?.ticketId !== latestWithdrawal.id && withdrawalUnsettled(latestWithdrawal)) {
+    setWithdrawal({ ticketId: latestWithdrawal.id, report: own.data ?? null });
+  }
+  const withdrawTicket = latestWithdrawal?.id === withdrawal?.ticketId ? latestWithdrawal : null;
   // From the confirmation until the engine answers: a second tap would send a second delete.
   const [sendingWithdraw, setSendingWithdraw] = useState(false);
-  const withdrawn = withdraw.status === 'confirmed' && withdrawing !== null;
+  const [checkingWithdraw, setCheckingWithdraw] = useState(false);
+  const withdrawn = withdrawTicket?.state === 'confirmed';
+  const withdrawBusy = sendingWithdraw || withdrawTicket?.state === 'pending';
+  // Sent, but the network has not confirmed it (a DAPI wait timeout, often): it may have landed.
+  const withdrawUnconfirmed = withdrawTicket?.state === 'unconfirmed' && !withdrawTicket.retryable;
+  // Already gone (dismissed, or withdrawn elsewhere): the toast says so, and the sheet goes, as on web.
+  const withdrawGone = withdrawTicket?.state === 'failed' && withdrawTicket.error?.code === 'REPORT_GONE';
 
   // The sheet says how it went while it is open; the write toasts only once it is gone.
   useEffect(() => watchReportSheet(post.id), [post.id]);
@@ -182,11 +197,11 @@ function ReportFlow({
 
   // Withdrawn: the write says so ("Report withdrawn"), and the sheet goes, as on web.
   useEffect(() => {
-    if (withdrawn) closeSheet();
-  }, [withdrawn]);
+    if (withdrawn || withdrawGone) closeSheet();
+  }, [withdrawn, withdrawGone]);
 
   const askWithdraw = (report: OwnReportDTO) => {
-    if (sendingWithdraw || withdraw.status === 'pending') return;
+    if (withdrawBusy || withdrawUnconfirmed) return;
     confirmAlert({
       title: copy.report.withdrawTitle,
       message: copy.report.withdrawBody,
@@ -195,15 +210,36 @@ function ReportFlow({
     })
       .then(async (confirmed) => {
         if (!confirmed) return;
-        setWithdrawing(report);
         setSendingWithdraw(true);
-        await withdraw.send({ target, reportId: report.id }).finally(() => setSendingWithdraw(false));
+        try {
+          const result = await runWrite(withdrawReportWrite, { target, reportId: report.id });
+          if (result.status === 'submitted') {
+            rememberWithdrawTicket(post.id, result.ticket.id);
+            setWithdrawal({ ticketId: result.ticket.id, report });
+          }
+        } finally {
+          // Only once the ticket is followed: Withdraw is never enabled in between.
+          setSendingWithdraw(false);
+        }
       })
       .catch(() => undefined);
   };
 
-  if (withdrawn) {
-    return <ExistingReport report={withdrawing} noun={noun} resolves={resolves} withdrawing onWithdraw={askWithdraw} />;
+  const checkWithdrawal = () => {
+    if (!withdrawTicket || checkingWithdraw) return;
+    setCheckingWithdraw(true);
+    checkWrite(withdrawTicket.id)
+      .catch(() => undefined)
+      .finally(() => setCheckingWithdraw(false));
+  };
+
+  if (withdrawn || withdrawGone) {
+    const report = withdrawal?.report ?? own.data;
+    if (!report) return <SheetLoading testID="report-checking" />;
+    return <ExistingReport report={report} noun={noun} resolves={resolves} withdrawing onWithdraw={askWithdraw} />;
+  }
+  if (withdrawUnconfirmed) {
+    return <WithdrawUnconfirmed checking={checkingWithdraw} onCheck={checkWithdrawal} />;
   }
   if (outcome === 'confirmed' || outcome === 'unconfirmed') {
     return <ReportSent author={post.author} unconfirmed={outcome === 'unconfirmed'} />;
@@ -231,7 +267,7 @@ function ReportFlow({
         report={own.data}
         noun={noun}
         resolves={resolves}
-        withdrawing={sendingWithdraw || withdraw.status === 'pending'}
+        withdrawing={withdrawBusy}
         onWithdraw={askWithdraw}
       />
     );
@@ -348,6 +384,33 @@ function ExistingReport({
         testID="report-withdraw"
       />
       <Button label={copy.report.done} size="block" onPress={closeSheet} disabled={withdrawing} testID="report-done" />
+    </SheetBody>
+  );
+}
+
+/**
+ * A withdrawal the network has not confirmed (a wait that timed out): it may
+ * have landed, so Withdraw is not offered again; Check again settles it.
+ */
+function WithdrawUnconfirmed({ checking, onCheck }: { checking: boolean; onCheck: () => void }) {
+  const c = useColors();
+  return (
+    <SheetBody testID="report-withdraw-unconfirmed">
+      <SheetHeading
+        icon={ExclamationTriangleIcon}
+        iconColor={c.warning}
+        title={copy.report.withdrawUnconfirmedTitle}
+        body={copy.report.withdrawUnconfirmedBody}
+      />
+      <Button
+        label={checking ? copy.report.checkingAgain : copy.report.checkAgain}
+        variant="outline"
+        size="block"
+        loading={checking}
+        onPress={onCheck}
+        testID="report-withdraw-check"
+      />
+      <Button label={copy.report.done} size="block" onPress={closeSheet} testID="report-done" />
     </SheetBody>
   );
 }

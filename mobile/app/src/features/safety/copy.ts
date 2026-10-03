@@ -80,6 +80,11 @@ export const copy = {
     withdrawTitle: 'Withdraw your report?',
     withdrawBody: 'The moderators will no longer see it.',
     withdrawConfirm: 'Withdraw',
+    withdrawUnconfirmedTitle: 'Withdrawal not confirmed yet',
+    withdrawUnconfirmedBody:
+      'The network has not confirmed that your report is withdrawn. Check again in a moment; until it confirms, the moderators may still see it.',
+    checkAgain: 'Check again',
+    checkingAgain: 'Checking…',
     done: 'Done',
     own: (noun: ReportNoun) => `You cannot report your own ${noun}`,
     gone: (noun: ReportNoun) => `This ${noun} is gone, so there is nothing to report.`,
