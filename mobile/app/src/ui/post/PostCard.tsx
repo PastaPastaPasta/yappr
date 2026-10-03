@@ -15,7 +15,7 @@ import {
 import { showActionSheet } from '../action-sheet';
 import { Avatar } from '../Avatar';
 import { ContextMenu, type MenuItem } from '../ContextMenu';
-import { handleOf } from '../handle';
+import { handleOf, keepHandlesWhole } from '../handle';
 import { IconButton } from '../IconButton';
 import { LinkText } from '../LinkText';
 import { RichText, type RichTextHandlers } from '../rich-text/RichText';
@@ -131,7 +131,7 @@ function openPostMenu(menu: PostCardMenu) {
 function showMenuSheet({ items, onSelect }: PostCardMenu) {
   showActionSheet({
     actions: items.map((item) => ({
-      label: item.title,
+      label: keepHandlesWhole(item.title),
       destructive: item.destructive,
       onPress: () => onSelect(item.id),
     })),

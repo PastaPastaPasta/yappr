@@ -13,6 +13,7 @@ import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { keepHandlesWhole } from '~/ui/handle';
 import { AUTHORS, POSTS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
@@ -212,7 +213,9 @@ describe('PostItem menu', () => {
   it("offers web's ⋯ items for someone else's post, in order", async () => {
     renderPost(POSTS.basic);
     expect(menuIds('post-basic')).toEqual(['follow', 'engagements', 'copy-link', 'share', 'block', 'report']);
-    expect((byId('more-menu-post-basic').props.actions as { title: string }[])[0].title).toBe('Unfollow @bob');
+    const follow = (byId('more-menu-post-basic').props.actions as { title: string }[])[0].title;
+    expect(follow).toBe(keepHandlesWhole('Unfollow @bob'));
+    expect(follow.replace(/\u2060/g, '')).toBe('Unfollow @bob');
 
     await act(async () => selectMenu('post-basic', 'copy-link'));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith('https://yap.pr/devnet/post?id=post-basic');
@@ -237,7 +240,7 @@ describe('PostItem menu', () => {
     renderPost(POSTS.basic);
     await act(async () => selectMenu('post-basic', 'follow'));
     expect(fakeEngine.method('graph.unfollow')).toHaveBeenCalledWith(AUTHORS.bob.id);
-    expect((byId('more-menu-post-basic').props.actions as { title: string }[])[0].title).toBe('Follow @bob');
+    expect((byId('more-menu-post-basic').props.actions as { title: string }[])[0].title).toBe(keepHandlesWhole('Follow @bob'));
   });
 
   it('deletes the own post after the confirmation, removing it at once and restoring it on failure', async () => {

@@ -2,6 +2,7 @@ import { MenuView, type MenuAction } from '@react-native-menu/menu';
 import { useMemo, type ReactNode } from 'react';
 import { Platform } from 'react-native';
 
+import { keepHandlesWhole } from './handle';
 import { useIsDark } from './tokens';
 
 export interface MenuItem {
@@ -34,7 +35,8 @@ export function ContextMenu({ items, onSelect, children, testID }: ContextMenuPr
     () =>
       items.map((item) => ({
         id: item.id,
-        title: item.title,
+        // The native menu wraps and hyphenates long titles: never inside a handle.
+        title: keepHandlesWhole(item.title),
         image: Platform.OS === 'ios' ? item.systemImage : undefined,
         attributes: item.destructive ? { destructive: true } : undefined,
       })),
