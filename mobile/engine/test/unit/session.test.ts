@@ -153,6 +153,15 @@ describe('private keys', () => {
     }
   })
 
+  it('refuses 32 bytes that are not a secp256k1 scalar as an invalid key, not a library error (D-L1a-007)', () => {
+    // 0 and the curve order n: "invalid secret key: outside of range" once a public key is derived.
+    const order = 'fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141'
+    const zeroWif = privateKeyToWif(new Uint8Array(32), 'testnet')
+    for (const input of ['0'.repeat(64), order, 'f'.repeat(64), zeroWif]) {
+      expect(() => toNetworkWif(input)).toThrow(expect.objectContaining({ code: 'KEY_INVALID', message: 'Invalid private key' }))
+    }
+  })
+
   it('finds the identity by public key hash and requires a HIGH or CRITICAL auth key', async () => {
     const master = secp256k1.utils.randomSecretKey()
     const high = secp256k1.utils.randomSecretKey()
@@ -164,7 +173,11 @@ describe('private keys', () => {
     ])
     expect(await verifySignInKey(bytesToHex(high))).toMatchObject({ identityId: id, keyId: 2, securityLevel: HIGH })
     await expect(verifySignInKey(bytesToHex(master))).rejects.toMatchObject({ code: 'KEY_NOT_ON_IDENTITY', message: expect.stringMatching(/MASTER/) })
-    await expect(verifySignInKey(bytesToHex(encryption))).rejects.toMatchObject({ code: 'KEY_NOT_ON_IDENTITY' })
+    await expect(verifySignInKey(bytesToHex(encryption))).rejects.toMatchObject({
+      code: 'KEY_NOT_ON_IDENTITY',
+      // Not "(it's a ENCRYPTION key)" (D-L1i-007).
+      message: 'This is an encryption key. Sign in with an authentication key instead.',
+    })
     await expect(verifySignInKey(bytesToHex(secp256k1.utils.randomSecretKey()))).rejects.toMatchObject({ code: 'IDENTITY_NOT_FOUND', message: 'No identity uses this key' })
   })
 

@@ -1,7 +1,8 @@
+import { utils as secp256k1Utils } from '@noble/secp256k1'
 import { clearSensitiveBytes, decodeYapprIdentityId, deriveYapprAuthKeyFromLogin } from 'platform-auth'
 import { keyNetwork } from '@/lib/constants'
 import { matchIdentityKey, publicKeyHashFromWif, type IdentityKeyLike, type KeyMatchResult } from '@/lib/crypto/keys'
-import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys'
+import { KeyPurpose, SecurityLevel, getSecurityLevelName, wrongPurposeLoginMessage } from '@/lib/crypto/identity-keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { identityService } from '@/lib/services/identity-service'
 import { RpcError } from '../protocol/envelope'
@@ -26,6 +27,9 @@ export function toNetworkWif(input: string): string {
   } catch {
     throw new RpcError('Invalid private key', 'KEY_INVALID')
   }
+  // 32 bytes is not yet a key: 0 and anything from the curve order up are not secp256k1 scalars,
+  // and deriving their public key throws "invalid secret key: outside of range" (D-L1a-007).
+  if (!secp256k1Utils.isValidSecretKey(parsed.privateKey)) throw new RpcError('Invalid private key', 'KEY_INVALID')
   if (parsed.format === 'wif' && parsed.network !== network) {
     throw new RpcError('This key is for a different network', 'KEY_WRONG_NETWORK')
   }
@@ -43,9 +47,7 @@ export interface VerifiedKey {
 
 /** lib's wording for a key that matches the identity but may not sign in (key-validation-service). */
 function rejectionMessage(match: KeyMatchResult): string {
-  if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-    return `This key cannot be used for authentication (it's a ${getPurposeName(match.purpose)} key)`
-  }
+  if (match.purpose !== KeyPurpose.AUTHENTICATION) return wrongPurposeLoginMessage(match.purpose)
   return match.securityLevel === SecurityLevel.MASTER
     ? 'This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.'
     : `This key's security level is too low (${getSecurityLevelName(match.securityLevel)}) - need HIGH or CRITICAL`

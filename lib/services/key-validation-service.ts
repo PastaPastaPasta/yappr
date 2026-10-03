@@ -7,6 +7,7 @@ import {
   isSecurityLevelAllowedForLogin,
   isPurposeAllowedForLogin,
   SecurityLevel,
+  wrongPurposeLoginMessage,
 } from '@/lib/crypto/identity-keys'
 import { wifToPrivateKey, validateWifNetwork } from '@/lib/crypto/wif'
 import bs58 from 'bs58'
@@ -160,7 +161,7 @@ class KeyValidationService {
         securityLevelName: getSecurityLevelName(match.securityLevel),
         purpose: match.purpose,
         purposeName: getPurposeName(match.purpose),
-        error: `This key cannot be used for authentication (it's a ${getPurposeName(match.purpose)} key)`,
+        error: wrongPurposeLoginMessage(match.purpose),
         errorType: 'WRONG_PURPOSE'
       }
     }
