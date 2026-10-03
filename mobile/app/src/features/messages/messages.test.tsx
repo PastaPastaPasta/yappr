@@ -401,6 +401,47 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('Sending…')).toBeTruthy();
   });
 
+  it('a send whose call hangs reads "Not confirmed · Tap to check", never Retry, then "Sent" once it answers (QA D-L4a-002)', async () => {
+    await openConversation();
+    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'through a stall');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    expect(screen.getByText('Sending…')).toBeTruthy();
+
+    // Dash Platform stalls: a minute without an answer, and the engine's deadline says so.
+    const stalled = advance(sent, {
+      state: 'unconfirmed',
+      stage: null,
+      error: { code: 'STILL_SENDING', outcome: 'unknown', retryable: false } as never,
+    });
+    await act(async () => {
+      fakeEngine.emit('write.status', stalled);
+    });
+    expect(screen.queryByText('Sending…')).toBeNull();
+    expect(screen.queryByText('Failed · Tap to retry')).toBeNull();
+    fakeEngine.method('writes.check').mockResolvedValue(advance(stalled, { lastCheckedAt: new Date() }));
+    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
+    await act(async () => {});
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(sent.id);
+    expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
+    expect(screen.getByText('Not confirmed · Tap to check')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toBe('Still sending. Tap again in a moment.');
+
+    // The stall clears: the call answers, and the engine's own message stands for the send.
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValue(page([dmMessage('m2', { text: 'through a stall', own: true, sender: VIEWER, at: new Date() }), theirs]));
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(stalled, { state: 'confirmed', error: null, updatedAt: new Date(Date.now() + 5000) }));
+    });
+    await act(async () => {});
+    expect(screen.getAllByText('through a stall')).toHaveLength(1);
+    expect(screen.getByText('Sent')).toBeTruthy();
+    expect(fakeEngine.method('dm.send')).toHaveBeenCalledTimes(1);
+  });
+
   it('puts the text back in the composer when the engine refuses the send', async () => {
     await openConversation();
     fakeEngine

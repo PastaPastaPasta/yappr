@@ -16,8 +16,10 @@ import type {
  * have landed: check again) or `failed`. Tickets persist in engine kv, so they
  * survive engine restarts; a ticket still `pending` at load was interrupted,
  * and becomes `unconfirmed`, or `failed` and retryable when its handler
- * proves that attempt sent nothing (`stagedSends`). Nothing is ever re-sent
- * on its own.
+ * proves that attempt sent nothing (`stagedSends`). A write whose lib call
+ * goes a minute without a word (a DAPI stall: the fetch never settles) reads
+ * `unconfirmed` (`STILL_SENDING`) while the call runs on; its answer still
+ * settles the ticket. Nothing is ever re-sent on its own.
  */
 
 /** Engine kv key (write-through to the host's MMKV). */
@@ -26,6 +28,12 @@ const MAX_TICKETS = 100
 const CONFIRMED_TTL_MS = 24 * 60 * 60 * 1000
 /** `list()` keeps showing a confirmed ticket this long. */
 const CONFIRMED_LISTED_MS = 10 * 60 * 1000
+/**
+ * How long a running write may go without a word (a stage, progress or a
+ * document) before its ticket reads `unconfirmed` (PRD G-3: "Not confirmed
+ * yet" after 60 s). Default for every handler (`WriteHandler.deadlineMs`).
+ */
+export const PENDING_DEADLINE_MS = 60_000
 
 /** What a write's lib call came to. Thrown errors are classified instead. */
 export type WriteResult =
@@ -87,6 +95,13 @@ export interface WriteHandler<A = unknown> {
    * "may have landed". Off by default: most handlers call lib's write first.
    */
   stagedSends?: boolean
+  /**
+   * How long `run()` may go without reporting anything (`ctx.stage`,
+   * `progress`, `documents`) before the ticket reads `unconfirmed` /
+   * `STILL_SENDING`; the run carries on, and its answer still settles the
+   * ticket. Default `PENDING_DEADLINE_MS`; null for none.
+   */
+  deadlineMs?: number | null
 }
 
 /**
@@ -118,6 +133,12 @@ interface TicketRecord {
   unsent?: boolean
   /** When the last attempt stopped running (epoch ms): `ProbeKit.sinceSettled`. */
   settledAt?: number
+  /** The attempt whose `run()` has not returned yet (its token), past its deadline or not. */
+  running?: number
+  /** That attempt's deadline (`WriteHandler.deadlineMs`). */
+  deadline?: ReturnType<typeof setTimeout>
+  /** The last stage the latest attempt reported, kept past its deadline (which clears the ticket's). */
+  stage?: WriteStage | null
 }
 
 /** The persisted form: dates as epoch ms. */
@@ -132,6 +153,8 @@ interface StoredRecord {
   args?: unknown
   unsent?: boolean
   settledAt?: number
+  /** An attempt was still running: a ticket its deadline made `unconfirmed` was interrupted all the same. */
+  running?: boolean
 }
 
 export interface TicketStoreOptions {
@@ -147,6 +170,8 @@ export interface TicketStoreOptions {
   newId?(): string
   /** Gap before a second read confirms a document's absence (default 2 s, as `waitForDocument`). */
   absenceRecheckMs?: number
+  /** `PENDING_DEADLINE_MS` unless a test says otherwise. */
+  pendingDeadlineMs?: number
 }
 
 export const RESTARTED_ERROR: EngineErrorData = {
@@ -166,6 +191,19 @@ export const RESTARTED_UNSENT_ERROR: EngineErrorData = {
   userMessage: 'The app closed before this was sent. Nothing was posted. Try again.',
 }
 
+/**
+ * The write's lib call has not answered for its deadline (a DAPI stall: the
+ * fetch never settles), or a check ran while it still had not: it may still
+ * land, and its answer will say. Never retryable while the call runs.
+ */
+export const STILL_SENDING_ERROR: EngineErrorData = {
+  code: 'STILL_SENDING',
+  consensusCode: null,
+  outcome: 'unknown',
+  retryable: false,
+  userMessage: 'This is taking longer than usual. It may still go through: check again in a moment.',
+}
+
 const NOT_FOUND_ERROR: EngineErrorData = {
   code: 'NOT_RECORDED',
   consensusCode: null,
@@ -183,6 +221,8 @@ export function createTicketStore(options: TicketStoreOptions) {
   const records = new Map<string, TicketRecord>()
   const observers = new Set<(ticket: WriteTicket) => void>()
   const absenceRecheckMs = options.absenceRecheckMs ?? 2_000
+  const pendingDeadlineMs = options.pendingDeadlineMs ?? PENDING_DEADLINE_MS
+  let attempts = 0
 
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
   const allConfirmed = (documents: TicketDocument[]) => documents.map(doc => ({ ...doc, confirmed: true }))
@@ -205,7 +245,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       if (records.size <= MAX_TICKETS) break
       records.delete(ticket.id)
     }
-    const stored: StoredRecord[] = [...records.values()].map(({ ticket, args, unsent, settledAt }) => ({
+    const stored: StoredRecord[] = [...records.values()].map(({ ticket, args, unsent, settledAt, running }) => ({
       ticket: {
         ...ticket,
         createdAt: ticket.createdAt.getTime(),
@@ -215,6 +255,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       ...(args !== undefined && keepsArgs(ticket.op) ? { args } : {}),
       ...(unsent ? { unsent } : {}),
       ...(settledAt !== undefined ? { settledAt } : {}),
+      ...(running !== undefined ? { running: true } : {}),
     }))
     options.storage.setItem(WRITES_STORAGE_KEY, JSON.stringify(stored))
   }
@@ -225,7 +266,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   function load() {
     const stored = readJson<unknown>(options.storage, WRITES_STORAGE_KEY, [])
     const valid = (Array.isArray(stored) ? stored : []).filter((r): r is StoredRecord => typeof r?.ticket?.id === 'string')
-    for (const { ticket, args, unsent, settledAt } of valid) {
+    for (const { ticket, args, unsent, settledAt, running } of valid) {
       const restored: WriteTicket = {
         ...ticket,
         createdAt: new Date(ticket.createdAt),
@@ -234,13 +275,17 @@ export function createTicketStore(options: TicketStoreOptions) {
       }
       // Older records carry no settle time: count from this boot, which only delays an absence proof.
       let settled = typeof settledAt === 'number' ? settledAt : now()
-      if (restored.state === 'pending') {
+      // Past its deadline a running attempt's ticket reads `unconfirmed`, but the restart cut it short all the same.
+      const timedOut = running === true && restored.state === 'unconfirmed'
+      if (restored.state === 'pending' || timedOut) {
         settled = now()
         // Interrupted by a crash or restart, and never re-sent. Still `queued` under a handler that
         // reports a stage before it sends anything, the attempt sent nothing: failed, and it may be
         // sent again (the parts an earlier attempt posted are confirmed documents, kept for the
-        // resume). Otherwise whether it went out is unknown.
-        const notSent = unsent === true && restored.stage === 'queued' && restored.documents.every(doc => doc.confirmed)
+        // resume). Otherwise whether it went out is unknown. (`unsent` holds until the first stage:
+        // a ticket its deadline settled no longer shows that stage.)
+        const queued = timedOut || restored.stage === 'queued'
+        const notSent = unsent === true && queued && restored.documents.every(doc => doc.confirmed)
         const interrupted: Partial<WriteTicket> = notSent
           ? { state: 'failed', stage: null, error: RESTARTED_UNSENT_ERROR, retryable: true, updatedAt: new Date(settled) }
           : { state: 'unconfirmed', stage: null, error: RESTARTED_ERROR, retryable: false, updatedAt: new Date(settled) }
@@ -270,13 +315,7 @@ export function createTicketStore(options: TicketStoreOptions) {
 
   function update(id: string, patch: Partial<WriteTicket>): WriteTicket {
     const record = recordOf(id)
-    const at = now()
-    // Leaving `pending`: the attempt stopped running, and nothing of it is still on its way out.
-    if (record.ticket.state === 'pending' && patch.state !== undefined && patch.state !== 'pending') {
-      record.settledAt = at
-      record.unsent = false
-    }
-    record.ticket = { ...record.ticket, ...patch, updatedAt: new Date(at) }
+    record.ticket = { ...record.ticket, ...patch, updatedAt: new Date(now()) }
     return commit(record)
   }
 
@@ -311,8 +350,9 @@ export function createTicketStore(options: TicketStoreOptions) {
     // Any failure during run() may come after the broadcast: lib signs, broadcasts and waits in
     // one call. Only a handler's NotSentError, or a failure while it still reported
     // 'waiting-parent' (before any lib write call), proves nothing went out, and only while the
-    // ticket names no unconfirmed document: an earlier part (a thread's) may already be out.
-    const claimedNotSent = notSent || recordOf(id).ticket.stage === 'waiting-parent'
+    // ticket names no unconfirmed document: an earlier part (a thread's) may already be out. The
+    // attempt's own stage counts, since its deadline clears the ticket's.
+    const claimedNotSent = notSent || recordOf(id).stage === 'waiting-parent'
     const partlySent = merged.some(doc => !doc.confirmed)
     const transient = ['NETWORK', 'RATE_LIMITED', 'TIMEOUT'].includes(classified.code)
     let data: EngineErrorData = classified
@@ -348,22 +388,84 @@ export function createTicketStore(options: TicketStoreOptions) {
     if (data.code === 'NO_KEY') options.onKeyRequired?.(ticket.identityId)
   }
 
+  /**
+   * The deadline passed with the attempt silent: it may still land, so the
+   * ticket reads `unconfirmed` (PRD G-3), while the call runs on and its
+   * answer settles the ticket. Nothing is re-sent, and nothing is retryable
+   * while it runs (`check`, `retry`).
+   */
+  function expire(id: string, attempt: number): void {
+    const record = records.get(id)
+    if (record?.running !== attempt || record.ticket.state !== 'pending') return
+    record.deadline = undefined
+    update(id, { state: 'unconfirmed', stage: null, error: STILL_SENDING_ERROR, retryable: false })
+  }
+
   /** Run (or re-run) a ticket's write in the background. Never throws. */
   function start(id: string, handler: WriteHandler, args: unknown): void {
+    const attempt = ++attempts
+    const started = recordOf(id)
+    started.running = attempt
+    started.settledAt = undefined
+    started.stage = started.ticket.stage
+    const deadlineMs = handler.deadlineMs === undefined ? pendingDeadlineMs : handler.deadlineMs
+    /** This attempt's record, while it is the one running. */
+    const own = () => {
+      const record = records.get(id)
+      return record?.running === attempt ? record : undefined
+    }
+    /** The attempt said something: its deadline starts again (only while the ticket is pending). */
+    const arm = () => {
+      const record = own()
+      if (!record || deadlineMs === null) return
+      clearTimeout(record.deadline)
+      record.deadline = record.ticket.state === 'pending' ? setTimeout(() => expire(id, attempt), deadlineMs) : undefined
+    }
+    /**
+     * `run()` returned: the attempt stopped, and nothing of it is still on its way out. Returns its
+     * record when its answer still settles the ticket: pending, or `unconfirmed` by its deadline.
+     * A check that proved it landed meanwhile (`confirmed`) stands.
+     */
+    const finish = (): TicketRecord | undefined => {
+      const record = own()
+      if (!record) return undefined
+      clearTimeout(record.deadline)
+      record.deadline = undefined
+      record.running = undefined
+      record.settledAt = now()
+      record.unsent = false
+      if (record.ticket.state === 'pending' || record.ticket.state === 'unconfirmed') return record
+      persist()
+      return undefined
+    }
     const ctx: WriteRunContext = {
       get ticket() { return clone(recordOf(id).ticket) },
       stage: stage => {
         // From here the attempt may send: a restart no longer proves it sent nothing.
-        recordOf(id).unsent = false
-        update(id, { stage })
+        const record = recordOf(id)
+        record.unsent = false
+        record.stage = stage
+        // Past its deadline the ticket is no longer pending: it shows no stage.
+        if (record.ticket.state === 'pending') update(id, { stage })
+        else persist()
+        arm()
       },
-      progress: (done, total) => { update(id, { progress: { done, total } }) },
-      documents: documents => { update(id, { documents: withDocuments(id, documents) }) },
+      // A check that proved the write landed while this attempt ran has the last word.
+      progress: (done, total) => {
+        if (recordOf(id).ticket.state !== 'confirmed') update(id, { progress: { done, total } })
+        arm()
+      },
+      documents: documents => {
+        if (recordOf(id).ticket.state !== 'confirmed') update(id, { documents: withDocuments(id, documents) })
+        arm()
+      },
       probe: () => probe(clone(recordOf(id).ticket), args),
     }
+    arm()
     Promise.resolve()
       .then(() => handler.run(args, ctx))
       .then(result => {
+        if (!finish()) return
         if (result.state === 'failed') {
           fail(id, result.error, result.documents)
           return
@@ -376,10 +478,21 @@ export function createTicketStore(options: TicketStoreOptions) {
           retryable: false,
           documents: result.state === 'confirmed' ? allConfirmed(documents) : documents,
         })
+      }, error => {
+        if (finish()) fail(id, error)
       })
-      .catch(error => fail(id, error))
-      .catch(() => {
-        // The ticket vanished (dismissed while settling): nothing left to report.
+      .catch(error => {
+        // Settling threw: the ticket vanished (dismissed meanwhile), or reporting it did (the store
+        // could not write, say). Report it as it stands, or as failed by that error while still
+        // pending, so it never sits pending with no attempt running. Best effort.
+        const record = records.get(id)
+        if (!record || record.running !== undefined) return
+        try {
+          if (record.ticket.state === 'pending') fail(id, error)
+          else commit(record)
+        } catch {
+          // Nothing more can be reported.
+        }
       })
   }
 
@@ -412,7 +525,9 @@ export function createTicketStore(options: TicketStoreOptions) {
       recheckDelay,
       sinceSettled: () => {
         const record = records.get(ticket.id)
-        return !record || record.ticket.state === 'pending' || record.settledAt === undefined ? null : now() - record.settledAt
+        // Still running (past its deadline or not): some of it may still be on its way out.
+        if (!record || record.running !== undefined || record.ticket.state === 'pending' || record.settledAt === undefined) return null
+        return now() - record.settledAt
       },
     }
     try {
@@ -526,6 +641,11 @@ export function createTicketStore(options: TicketStoreOptions) {
       if (current !== ticket) return current ? clone(current) : { ...clone(ticket), lastCheckedAt }
       // What the probe found beyond the ticket's documents (a post found by its content) is kept either way.
       const documents = withDocuments(id, result.documents)
+      // Its call still runs (past its deadline): only a landing is proved. Not found may mean still
+      // on its way, and a retry beside the running call could post it twice.
+      if (result.state !== 'applied' && records.get(id)?.running !== undefined) {
+        return update(id, { error: STILL_SENDING_ERROR, retryable: false, lastCheckedAt, documents })
+      }
       switch (result.state) {
         case 'applied':
           return update(id, { state: 'confirmed', error: null, retryable: false, lastCheckedAt, documents: allConfirmed(documents) })
@@ -543,9 +663,9 @@ export function createTicketStore(options: TicketStoreOptions) {
      */
     async retry(id: string): Promise<WriteTicket> {
       assertUsable()
-      const { ticket, args } = ownRecord(id)
+      const { ticket, args, running } = ownRecord(id)
       const handler = handlers.get(ticket.op)
-      if (ticket.state === 'pending' || !ticket.retryable) {
+      if (ticket.state === 'pending' || !ticket.retryable || running !== undefined) {
         throw new RpcError('This write cannot be retried now', 'NOT_RETRYABLE')
       }
       if (!handler || args === undefined) {

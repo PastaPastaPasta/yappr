@@ -117,7 +117,10 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
-  have landed, and dropped when the pending one fails, since that failure's
+  have landed (not while its call still runs: a ticket unconfirmed by the
+  engine's one-minute deadline, `STILL_SENDING`, keeps its key busy until the
+  call answers; a queued write lives in memory, so quitting the app first
+  drops it), and dropped when the pending one fails, since that failure's
   undo restored the very state a toggle back asked for. It is also dropped,
   undone and announced when the pending one's call is cut short (below). With `intent` on the
   spec, a queued write that asks for what the pending one asked is dropped

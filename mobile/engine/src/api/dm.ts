@@ -22,7 +22,7 @@ import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
 import type { SessionEvents } from './session'
-import { NotSentError, type TicketStore, type WriteResult } from '../writes/tickets'
+import { NotSentError, type ProbeKit, type ProbeResult, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import { avatarFromField, type AuthorDTO, type Page } from './dto'
 
@@ -264,6 +264,16 @@ export function createDmModule(options: DmModuleOptions) {
     }
   }
 
+  /**
+   * A v5 write's call still runs (past its deadline: a stall). lib's DM v5
+   * engine runs its writes and its reads (`pollOwn`, the roster) on one
+   * queue, so a read now would wait behind the hung call: "check again"
+   * answers at once instead, and the call's own answer settles the ticket.
+   * (Legacy reads do not queue behind its sends.)
+   */
+  const stillSending = (kit: ProbeKit) => backend.kind === 'v5' && kit.sinceSettled() === null
+  const STILL_SENDING_PROBE: ProbeResult = { state: 'unknown', error: new Error('Still sending. Check again in a moment.') }
+
   options.tickets.register<SendArgs>('dm.send', {
     run: async (args, ctx) => {
       const id = ctx.ticket.id
@@ -298,11 +308,13 @@ export function createDmModule(options: DmModuleOptions) {
      * then look for every part of the text among those that were not there
      * at submit and that no other send accounts for (an earlier identical "ok"
      * never counts). Absence proves nothing, and after a restart the text is
-     * gone (never persisted), so only `applied` is ever proved.
+     * gone (never persisted), so only `applied` is ever proved. Not while
+     * the send still runs (`stillSending`).
      */
-    async probe(ticket, args) {
+    async probe(ticket, args, kit) {
       if (!args) return { state: 'unknown', error: new Error('The app restarted before this was confirmed. Open the conversation to see whether it was sent.') }
       if (halted) return { state: 'unknown', error: new Error('Messages are stopped while the account changes') }
+      if (stillSending(kit)) return STILL_SENDING_PROBE
       await backend.readBack(args.identityId, args.key)
       const fresh = await freshOwn(args, ticket.id, ticket.createdAt.getTime() - SENT_MATCH_SLACK_MS)
       return claimParts(args, ticket.id, fresh)
@@ -312,6 +324,8 @@ export function createDmModule(options: DmModuleOptions) {
     persistArgs: false,
   })
 
+  /** How long a group write may run without a word before it reads unconfirmed (`WriteHandler.deadlineMs`). */
+  const GROUP_DEADLINE_MS = 5 * 60_000
   /** Group creations: their result for `createdGroup`, and the one running (a second waits for it). */
   const createdGroups = new Map<string, DmCreatedGroup>()
   let creating: string | null = null
@@ -330,8 +344,9 @@ export function createDmModule(options: DmModuleOptions) {
         if (creating === ctx.ticket.id) creating = null
       }
     },
-    async probe(ticket, args) {
+    async probe(ticket, args, kit) {
       if (!args || halted) return { state: 'unknown', error: new Error('This change can no longer be checked here') }
+      if (stillSending(kit)) return STILL_SENDING_PROBE
       const groups = v5('Groups')
       const { request } = args
       if (request.action !== 'create') return groups.probeGroup(args.identityId, request)
@@ -341,6 +356,9 @@ export function createDmModule(options: DmModuleOptions) {
       return { state: 'applied' }
     },
     persistArgs: false,
+    // A creation writes the roster and a key for each of up to 100 members, and reports nothing
+    // until it is done: a minute without a word is no sign of a stall here.
+    deadlineMs: GROUP_DEADLINE_MS,
   })
 
   function groupNameOf(value: unknown): string {

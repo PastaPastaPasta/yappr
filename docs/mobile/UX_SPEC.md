@@ -399,7 +399,7 @@ Replaces the action bar on optimistic cards.
 | --- | --- |
 | Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`) |
 | Thread progress | spinner + "Posting 2 of 5…" |
-| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`). Once checking cannot settle it (Check again 10 minutes or more after posting still cannot tell, or a failure that may have landed), also " · Edit": compose opens on its text, parts known to have posted kept posted; never Retry |
+| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`). Also shown once the post has gone 60 s without an answer from the network (a stall): it becomes normal by itself if the post then lands. Once checking cannot settle it (Check again 10 minutes or more after posting still cannot tell, or a failure that may have landed), also " · Edit": compose opens on its text, parts known to have posted kept posted; never Retry, and never Edit while the post is still being sent (it may still land) |
 | Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`) |
 | Partly posted | "Posted 2 of 5 · Retry the rest" |
 
@@ -565,6 +565,7 @@ Banners sit directly under the navigation bar of the current screen, push conten
 - Max width 78% of the screen. Padding 10 × 14. `radius.2xl` with the corner nearest the sender reduced to `radius.sm` on the last bubble of a run. `body` text.
 - Own: `bubble.own`, right-aligned. Other: `bubble.other`, left-aligned; in groups a 24 avatar on the last bubble of a run and the sender name (`caption.strong`, `text.secondary`) above the first.
 - Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Failed · Tap to retry" (`error`).
+- A send that may have gone out but is not proved (no answer from the network for 60 s, or an engine restart cut it short) reads "Not confirmed · Tap to check" (`error`): the tap asks the engine to look for it, and it turns "Sent" by itself once it lands. While the send's call is still waiting on the network, the tap can't look yet and toasts "Still sending. Tap again in a moment." Only a proved absence offers "Failed · Tap to retry". A failure the engine won't retry reads "Failed · Tap to edit": the tap puts the unsent text back in the composer.
 - Time shown on long-press only (iOS swipe-left reveals times, as Messages; Android: tap a bubble toggles its time).
 - Day separator: centered `caption` `text.secondary` with 16 vertical margin.
 
@@ -1735,7 +1736,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | dm.thread.empty | No messages yet. Start the conversation! **(web)** |
 | dm.composer | Type a message... **(web)** |
 | dm.send | Send message **(web)** |
-| dm.status | Sending… / Sent / Read / Failed · Tap to retry |
+| dm.status | Sending… / Sent / Read / Failed · Tap to retry / Not confirmed · Tap to check / Failed · Tap to edit |
 | dm.copy | Copy |
 | dm.newMessage.desc | Choose a person to start an encrypted conversation. **(web)** |
 | dm.picker.search | Search by username... **(web)** |

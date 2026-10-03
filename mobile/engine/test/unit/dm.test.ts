@@ -456,6 +456,41 @@ describe('dm on DM v5: 1:1', () => {
     expect(ledger.messages).toHaveLength(written)
   })
 
+  it('reads a send unconfirmed once its call has hung a minute, never resent, and confirmed once it answers (QA D-L4a-002)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.dm.open(key)
+    // DAPI stalls: the broadcast never answers until the stall clears. It hangs inside lib's send,
+    // on the DM engine's queue, where every read of the engine's (pollOwn) waits behind it.
+    const engine = a.engine()
+    const chain = engine.ctx.chain as MemoryChain
+    const createMessage = chain.createMessage.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const broadcast = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+      await stalled
+      return createMessage(...args)
+    })
+    const pollOwn = vi.spyOn(engine, 'pollOwn')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'through a stall')
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
+    // Check again answers at once (a read queued behind the hung send would not), and cannot
+    // prove it absent while the call runs: still sending, no Retry beside it.
+    expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
+    expect(pollOwn).not.toHaveBeenCalled()
+    vi.useRealTimers()
+
+    clear()
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
+    expect(broadcast).toHaveBeenCalledTimes(1)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['through a stall'])
+  })
+
   it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))

@@ -7,6 +7,7 @@ import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
@@ -40,6 +41,8 @@ const viewer: SessionDTO = {
 };
 const POST: ComposeContext = { mode: 'post', targetId: null };
 const HOME = queryKeys.feed.home({ tab: 'forYou' });
+/** Where pending posts persist (pending-posts.ts `STORAGE_KEY`). */
+const PENDING_KEY = 'yappr.compose.pending';
 const PROFILE = queryKeys.profile.posts(VIEWER_ID, 'posts');
 
 const existing = fixturePost({ id: 'existing-1' });
@@ -825,6 +828,157 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
     expect(usePendingPosts.getState().entries[localId]).toBeUndefined();
     expect(fakeEngine.method('writes.dismiss')).toHaveBeenCalledWith(t.id);
     expect(homeIds()).toEqual(['landed-1', 'existing-1']);
+  });
+
+  it('after an app kill a second after Post, the relaunched card reads "Not confirmed yet" and the landed post replaces it (QA D-L2a-001)', async () => {
+    // Killed before the engine answered: the post went out, but the card never learned its ticket.
+    fakeEngine.method('posts.publish').mockReturnValue(new Promise(() => undefined));
+    const localId = publish(['Killed mid-post']);
+    const stored = syncStorage.getItem(PENDING_KEY);
+    expect(stored).toContain(localId);
+    const sentAt = only()!.createdAt;
+    // This launch is gone (its store forgets the card, which clears the key: put it back as the kill left it).
+    usePendingPosts.setState({ entries: {} });
+    syncStorage.setItem(PENDING_KEY, stored!);
+
+    // The next engine restores the ticket the call made as unconfirmed (ENGINE_RESTARTED).
+    const restored = advance(publishTicket(), {
+      state: 'unconfirmed',
+      stage: null,
+      error: restartedUnknown,
+      documents: [],
+      createdAt: new Date(sentAt + 300),
+    });
+    fakeEngine.method('writes.list').mockResolvedValue([restored]);
+    fakeEngine.method('writes.get').mockResolvedValue(restored);
+    const found = advance(restored, { state: 'confirmed', error: null, documents: [doc(0, 'landed-1')] });
+    fakeEngine.method('writes.check').mockImplementation(async () => {
+      fakeEngine.emit('write.status', found);
+      return found;
+    });
+
+    await jest.isolateModulesAsync(async () => {
+      // A fresh launch of the app over the same storage.
+      const relaunched = jest.requireActual<typeof import('./pending-posts')>('./pending-posts');
+      const { queryClient: client } = jest.requireActual<typeof import('~/state/query-client')>('~/state/query-client');
+      const session = jest.requireActual<typeof import('~/data/session')>('~/data/session');
+      session.useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+      const ids = () => client.getQueryData<InfiniteData<Page<PostDTO>>>(HOME)?.pages[0]?.items.map((p) => p.id);
+      const stopRelaunched = relaunched.startPendingPosts();
+      try {
+        const card = () => relaunched.usePendingPosts.getState().entries[localId];
+        expect(card()?.orphaned).toBe(true);
+        expect(relaunched.pendingStatus(card()!)).toEqual({ state: 'unconfirmed' });
+        await settle();
+        // It follows the restored ticket: "Not confirmed yet · Check again", never "Couldn't confirm · Edit".
+        expect(card()?.ticketId).toBe(restored.id);
+        expect(relaunched.pendingStatus(card()!)).toEqual({ state: 'unconfirmed' });
+
+        // The saved Home shows the card on top.
+        act(() => client.setQueryData(HOME, page([existing])));
+        expect(ids()).toEqual([localId, 'existing-1']);
+
+        // The refresh has the post that landed: it replaces the card, and the engine confirms it.
+        const author = { ...AUTHORS.alice, id: VIEWER_ID };
+        const landed = fixturePost({ id: 'landed-1', content: 'Killed mid-post', author, createdAt: new Date(sentAt + 2000) });
+        act(() => client.setQueryData(HOME, page([landed, existing])));
+        expect(ids()).toEqual(['landed-1', 'existing-1']);
+        await settle();
+        expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(restored.id);
+        expect(card()?.confirmedAt).toBeTruthy();
+        expect(relaunched.pendingStatus(card()!)).toBeNull();
+        expect(ids()).toEqual(['landed-1', 'existing-1']);
+        // Nothing was sent again.
+        expect(fakeEngine.method('posts.publish')).toHaveBeenCalledTimes(1);
+        expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
+      } finally {
+        stopRelaunched();
+        client.clear();
+      }
+    });
+  });
+});
+
+describe('a post whose call never answers (a DAPI stall: QA D-L2a-007)', () => {
+  const stillSending: EngineErrorData = {
+    code: 'STILL_SENDING',
+    consensusCode: null,
+    outcome: 'unknown',
+    retryable: false,
+    userMessage: 'This is taking longer than usual. It may still go through: check again in a moment.',
+  };
+
+  it('reads "Not confirmed yet · Check again" once the engine says the call still runs, and is normal when it answers', async () => {
+    const t = publishTicket();
+    fakeEngine.method('posts.publish').mockResolvedValue(t);
+    const localId = publish(['Through a stall']);
+    await settle();
+    expect(pendingStatus(only()!)).toEqual({ state: 'posting' });
+
+    // A minute without an answer (the engine's deadline).
+    const unconfirmed = advance(t, { state: 'unconfirmed', stage: null, error: stillSending });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
+    expect(toastMessage()).toBe('Not confirmed yet');
+    // Its text stays with the card: it may still land.
+    expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+
+    // Check again long after Post, the call still running: no Edit (posted again, it would land twice), no Retry.
+    usePendingPosts.setState(({ entries }) => ({
+      entries: { [localId]: { ...entries[localId]!, submittedAt: Date.now() - 20 * 60_000 } },
+    }));
+    const checked = advance(unconfirmed, { lastCheckedAt: new Date() });
+    fakeEngine.method('writes.check').mockImplementation(async () => {
+      fakeEngine.emit('write.status', checked);
+      return checked;
+    });
+    checkPending(localId);
+    await settle();
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(t.id);
+    expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
+
+    // The stall clears and the call answers: the card is the real post.
+    act(() =>
+      fakeEngine.emit('write.status', advance(checked, { state: 'confirmed', error: null, documents: [doc(0, 'real-1')] })),
+    );
+    expect(homeIds()).toEqual(['real-1', 'existing-1']);
+    expect(toastMessage()).toBe('Post created successfully!');
+    expect(fakeEngine.method('posts.publish')).toHaveBeenCalledTimes(1);
+    expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
+  });
+
+  it('a resumed thread (no card) keeps its text off the draft while its call runs, and gets it back once that answers unproved', async () => {
+    const t = publishTicket();
+    fakeEngine.method('posts.publish').mockResolvedValue(t);
+    const localId = publishPost(
+      {
+        identityId: VIEWER_ID,
+        context: POST,
+        parts: [{ text: 'one', postedId: 'root-1' }, ...parts('two', 'three')],
+        sensitive: false,
+        mediaUrl: null,
+        target: null,
+        author: viewerAuthor(VIEWER_ID, 'alice'),
+      },
+      hasVisibleContent,
+    );
+    await settle();
+    expect(only()?.placement).toBe('none');
+
+    // Still running: its parts may still land, so the draft does not offer them to post again.
+    const stalled = advance(t, { state: 'unconfirmed', stage: null, error: stillSending });
+    act(() => fakeEngine.emit('write.status', stalled));
+    expect(loadDraft(VIEWER_ID, POST)).toBeNull();
+    expect(usePendingPosts.getState().entries[localId]).toBeTruthy();
+    expect(fakeEngine.method('writes.dismiss')).not.toHaveBeenCalled();
+
+    // The call answers with a part it cannot prove: now the text comes back, the posted root kept posted.
+    act(() => fakeEngine.emit('write.status', advance(stalled, { error: null, documents: [doc(1, 'two-1')] })));
+    expect(loadDraft(VIEWER_ID, POST)?.parts).toEqual([
+      { text: 'one', postedId: 'root-1' },
+      { text: 'two', postedId: 'two-1' },
+      { text: 'three', postedId: null },
+    ]);
   });
 });
 

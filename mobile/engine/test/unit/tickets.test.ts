@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { NotSentError, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { NotSentError, PENDING_DEADLINE_MS, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, STILL_SENDING_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
 import type { TicketDocument, WriteTicket } from '../../src/writes/types'
 import { fromBoolean, fromTransitionResult } from '../../src/writes/lib-results'
 
@@ -622,5 +622,188 @@ describe('persistence and restart reconciliation', () => {
     expect(setup({ storage }).store.list()).toEqual([])
     storage.setItem(WRITES_STORAGE_KEY, '[null, {"args": 1}, 7]')
     expect(setup({ storage }).store.list()).toEqual([])
+  })
+})
+
+describe('a write whose call never answers (PRD G-3; QA D-L2a-007, D-L4a-002)', () => {
+  afterEach(() => { vi.useRealTimers() })
+  /** Lets promise chains settle, and fake time pass. */
+  const pass = (ms = 0) => vi.advanceTimersByTimeAsync(ms)
+
+  it('reads unconfirmed (STILL_SENDING) a minute after its last word, and its late answer still settles it', async () => {
+    vi.useFakeTimers()
+    const { store, events } = setup()
+    const { handler, runs } = controlled()
+    store.register('post.publish', handler)
+    store.submit({ op: 'post.publish', args: {} })
+    await pass(PENDING_DEADLINE_MS - 1)
+    expect(store.get('t1')?.state).toBe('pending')
+    await pass(1)
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', stage: null, retryable: false, error: STILL_SENDING_ERROR })
+    // Never re-sent, never retryable while the call runs.
+    expect(runs).toHaveLength(1)
+    await expect(store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+
+    // The stall clears: the call's answer settles the ticket.
+    runs[0].resolve({ state: 'confirmed', documents: [POST] })
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'confirmed', error: null, documents: [{ ...POST, confirmed: true }] })
+    expect(events.map(e => e.state)).toEqual(['pending', 'unconfirmed', 'confirmed'])
+  })
+
+  it('counts the minute from the attempt\'s last stage, progress or document, so a long thread is not cut short', async () => {
+    vi.useFakeTimers()
+    const { store } = setup()
+    let ctx: Parameters<WriteHandler['run']>[1] | undefined
+    store.register('post.publish', { run: (_args, c) => { ctx = c; return new Promise(() => undefined) } })
+    store.submit({ op: 'post.publish', args: {} })
+    await pass(50_000)
+    ctx?.progress(1, 3)
+    await pass(50_000)
+    ctx?.documents([POST])
+    await pass(50_000)
+    expect(store.get('t1')?.state).toBe('pending')
+    await pass(10_000)
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', error: STILL_SENDING_ERROR, documents: [POST] })
+    // A later report is kept, and the ticket stays unconfirmed: no flip back to "Posting…".
+    ctx?.progress(2, 3)
+    await pass(PENDING_DEADLINE_MS)
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', stage: null, progress: { done: 2, total: 3 } })
+  })
+
+  it('a check while the call still runs proves only a landing: never absent, never retryable', async () => {
+    vi.useFakeTimers()
+    const documentExists = vi.fn(async () => false)
+    const { store, advance } = setup({ documentExists })
+    const seen: (number | null)[] = []
+    const { handler, runs } = controlled()
+    store.register('post.publish', {
+      ...handler,
+      probe: async (ticket, _args, kit) => {
+        seen.push(kit.sinceSettled())
+        return kit.proveDocuments(ticket.documents)
+      },
+    })
+    store.submit({ op: 'post.publish', args: {}, documents: [POST] })
+    await pass(PENDING_DEADLINE_MS)
+    advance(5 * 60_000)
+    const checked = store.check('t1')
+    await pass()
+    expect(await checked).toMatchObject({ state: 'unconfirmed', retryable: false, error: STILL_SENDING_ERROR })
+    expect(documentExists).toHaveBeenCalledTimes(2)
+    // Still running, however long since it was sent: nothing of it has stopped.
+    expect(seen).toEqual([null])
+    await expect(store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+
+    // The call ends in a transport failure: from then on, an absence proves it never landed.
+    runs[0].reject(new Error('Failed to fetch'))
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false })
+    advance(1000)
+    const again = store.check('t1')
+    await pass()
+    expect(await again).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
+    expect(seen).toEqual([null, 1000])
+  })
+
+  it('a check that finds it landed has the last word over the call\'s late answer', async () => {
+    vi.useFakeTimers()
+    const { store, events } = setup({ documentExists: vi.fn(async () => true) })
+    const { handler, runs } = controlled()
+    store.register('post.publish', handler)
+    store.submit({ op: 'post.publish', args: {}, documents: [POST] })
+    await pass(PENDING_DEADLINE_MS)
+    expect(await store.check('t1')).toMatchObject({ state: 'confirmed' })
+    runs[0].reject(new Error('Failed to fetch'))
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'confirmed', error: null })
+    expect(events.map(e => e.state)).toEqual(['pending', 'unconfirmed', 'confirmed'])
+  })
+
+  it('a restart cuts the running call short like any pending one: unconfirmed, or failed when it sent nothing', async () => {
+    vi.useFakeTimers()
+    const storage = memoryStorage()
+    const first = setup({ storage })
+    first.store.register('like', { run: () => new Promise(() => undefined), persistArgs: true })
+    first.store.register('post.publish', { run: () => new Promise(() => undefined), persistArgs: true, stagedSends: true })
+    first.store.submit({ op: 'like', args: null })
+    first.store.submit({ op: 'post.publish', args: {} })
+    await pass(PENDING_DEADLINE_MS)
+    expect(first.store.get('t1')?.error).toEqual(STILL_SENDING_ERROR)
+    expect(first.store.get('t2')?.error).toEqual(STILL_SENDING_ERROR)
+
+    const restarted = setup({ storage })
+    restarted.store.register('like', { run: vi.fn(), persistArgs: true })
+    restarted.store.register('post.publish', { run: vi.fn(), persistArgs: true, stagedSends: true })
+    expect(restarted.store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: RESTARTED_ERROR })
+    // Its handler never reached a stage: nothing went out.
+    expect(restarted.store.get('t2')).toMatchObject({ state: 'failed', retryable: true, error: RESTARTED_UNSENT_ERROR })
+    await pass()
+    expect(restarted.events.map(e => [e.id, e.state])).toEqual([['t1', 'unconfirmed'], ['t2', 'failed']])
+  })
+
+  it('a wait for the parent that fails after the minute still proves nothing was sent: failed, and retryable', async () => {
+    vi.useFakeTimers()
+    const { store } = setup()
+    let ctx: Parameters<WriteHandler['run']>[1] | undefined
+    let reject: (error: unknown) => void = () => undefined
+    store.register('like', {
+      run: (_args, c) => {
+        ctx = c
+        return new Promise((_resolve, no) => { reject = no })
+      },
+      persistArgs: true,
+    })
+    store.submit({ op: 'like', args: null })
+    await pass()
+    ctx?.stage('waiting-parent')
+    await pass(PENDING_DEADLINE_MS)
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', stage: null, error: STILL_SENDING_ERROR })
+    reject(new Error('transport error: grpc error: Failed to fetch'))
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+  })
+
+  it('reports a settled answer even when recording it threw, never leaving it pending', async () => {
+    vi.useFakeTimers()
+    const storage = memoryStorage()
+    let broken = false
+    const { store, events } = setup({
+      storage: {
+        ...storage,
+        setItem: (key: string, value: string) => {
+          if (broken) {
+            broken = false
+            throw new Error('MMKV write failed')
+          }
+          storage.setItem(key, value)
+        },
+      },
+    })
+    const { handler, runs } = controlled()
+    store.register('post.publish', handler)
+    store.submit({ op: 'post.publish', args: {}, documents: [POST] })
+    await pass()
+    broken = true
+    runs[0].resolve({ state: 'confirmed' })
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'confirmed' })
+    expect(events.map(e => e.state)).toEqual(['pending', 'confirmed'])
+    expect(JSON.parse(storage.getItem(WRITES_STORAGE_KEY) ?? '[]')[0].ticket.state).toBe('confirmed')
+  })
+
+  it('a handler may wait longer, or not at all', async () => {
+    vi.useFakeTimers()
+    const { store } = setup()
+    store.register('dm.group', { run: () => new Promise(() => undefined), deadlineMs: 5 * 60_000 })
+    store.register('profile.update', { run: () => new Promise(() => undefined), deadlineMs: null })
+    store.submit({ op: 'dm.group', args: null })
+    store.submit({ op: 'profile.update', args: null })
+    await pass(5 * 60_000 - 1)
+    expect(store.get('t1')?.state).toBe('pending')
+    await pass(1)
+    expect(store.get('t1')?.state).toBe('unconfirmed')
+    await pass(60 * 60_000)
+    expect(store.get('t2')?.state).toBe('pending')
   })
 })
