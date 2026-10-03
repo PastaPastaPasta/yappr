@@ -164,7 +164,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     if (!pending) return;
     insertNew(pending)
       .then((error) => {
-        if (error) toast.error(readErrorMessage(error) ?? REFRESH_FAILED_MESSAGE);
+        if (error) toast.error(readErrorMessage(error, { offline }) ?? REFRESH_FAILED_MESSAGE);
         // After the inserted cells have laid out.
         requestAnimationFrame(scrollToTop);
       })
@@ -184,7 +184,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     setRefreshing(true);
     refresh()
       .then((error) => {
-        if (error && items.length > 0) toast.error(readErrorMessage(error) ?? REFRESH_FAILED_MESSAGE);
+        if (error && items.length > 0) toast.error(readErrorMessage(error, { offline }) ?? REFRESH_FAILED_MESSAGE);
       })
       .catch(() => undefined)
       .finally(() => setRefreshing(false));
@@ -250,7 +250,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
   } else if (feed.isError && !(isFetchNextPageError && hasNextPage)) {
     empty = (
       <ErrorState
-        message={readErrorMessage(feed.error)}
+        message={readErrorMessage(feed.error, { offline })}
         onRetry={() => {
           feed.refetch().catch(() => undefined);
         }}

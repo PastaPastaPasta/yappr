@@ -1,9 +1,11 @@
 import type { AccountDTO, SessionDTO } from '@engine/api';
+import { QueryObserver } from '@tanstack/react-query';
 import { router } from 'expo-router';
 
 import { useSessionStore } from '~/data/session';
 import { isSessionExpired, markSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
+import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
 import {
@@ -86,6 +88,24 @@ it('switches accounts as a controlled engine restart, showing progress (AUTH-10)
   expect(restart).toHaveBeenCalledTimes(1);
   expect(useAccounts.getState().transition).toBeNull();
   expect(useToastStore.getState().current?.message).toBe('Switched to @bob');
+});
+
+it('reads a list that failed during the switch again once the switch settles (AUTH-10)', async () => {
+  const read = jest.fn().mockRejectedValueOnce(new Error('cut short by the restart')).mockResolvedValue('feed for bob');
+  const observer = new QueryObserver(queryClient, { queryKey: ['engine', 'devnet-test', 'feed'], queryFn: read, retry: false });
+  const unsubscribe = observer.subscribe(() => undefined);
+  await flush();
+  expect(observer.getCurrentResult().status).toBe('error');
+
+  fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+  bootsAs(session('bob'));
+  await expect(switchAccount({ identityId: 'bob', username: 'bob' })).resolves.toBe(true);
+  await flush();
+
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(observer.getCurrentResult().data).toBe('feed for bob');
+  unsubscribe();
+  queryClient.clear();
 });
 
 it('reports a switch whose account did not come back', async () => {

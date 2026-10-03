@@ -74,6 +74,8 @@ export const engineModule = {
   engineSupervisor: {
     /** An engine restart; tests drive the next session by hand (`fakeEngine.emit('session.changed', …)`). */
     restart: jest.fn(),
+    /** "Try again" on a degraded engine. */
+    retryBootNow: jest.fn(),
     getStatus: () => status,
     subscribeStatus(listener: () => void) {
       statusListeners.add(listener);

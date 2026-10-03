@@ -1,3 +1,4 @@
+import { useNetInfo } from '@react-native-community/netinfo';
 import { router } from 'expo-router';
 import { Pressable, View } from 'react-native';
 
@@ -16,21 +17,32 @@ export const ENGINE_BANNER_COPY = {
 
 /**
  * UX_SPEC §2.18, §4.33, §4.34 (PRD NET-01, NET-04, NET-06): under the
- * navigation bar while the engine is down for good, so the saved content
- * stays browsable with a way back.
+ * navigation bar while the engine cannot reach Dash Platform, so the saved
+ * content stays browsable with a way back.
  *
- * - `failed` (the supervisor gave up): "Couldn't connect" with "Try again".
+ * - `failed` (the supervisor gave up): "Couldn't connect" with "Try again"
+ *   (a fresh engine).
+ * - `degraded` (its boot failed, NET-01) while the phone is online:
+ *   "Couldn't connect" with "Try again" (boot again now; the supervisor also
+ *   retries by itself). Offline, the offline banner says it instead.
  * - Lockdown Mode: the browsing-saved-posts banner, "Fix" back to its screen.
  * - An outdated Android WebView: "Couldn't connect", "Fix" back to its screen.
  */
 export function EngineBanner() {
   const { state, unsupported } = useEngineStatus();
+  const offline = useNetInfo().isConnected === false;
   let banner: { text: string; action: string; onPress: () => void } | null = null;
   if (state === 'failed') {
     banner = {
       text: ENGINE_BANNER_COPY.couldntConnect,
       action: 'Try again',
       onPress: () => engineSupervisor.restart('Try again (banner)'),
+    };
+  } else if (state === 'degraded' && !offline) {
+    banner = {
+      text: ENGINE_BANNER_COPY.couldntConnect,
+      action: 'Try again',
+      onPress: () => engineSupervisor.retryBootNow(),
     };
   } else if (state === 'unsupported') {
     const lockdown = unsupported === 'lockdown';

@@ -80,6 +80,9 @@ export function useCapabilities(): CapabilitiesDTO | null {
 /** The cache another account (or nobody) left would show the wrong viewer state. */
 const LAST_IDENTITY_KEY = 'yappr.session.identity';
 
+/** The last account change's cache reset, settled once the screens' reads for the new account have answered. */
+let cacheReset: Promise<void> = Promise.resolve();
+
 function accountChanged(previous: string | null, next: string | null): void {
   if (previous === next) return;
   if (next) syncStorage.setItem(LAST_IDENTITY_KEY, next);
@@ -88,7 +91,16 @@ function accountChanged(previous: string | null, next: string | null): void {
   const done = previous
     ? clearAccountCache()
     : queryClient.invalidateQueries({ queryKey: queryKeys.all });
-  done.catch((error: unknown) => appendLog('warn', 'host', `Cache reset failed: ${errorMessage(error)}`));
+  cacheReset = done.catch((error: unknown) => appendLog('warn', 'host', `Cache reset failed: ${errorMessage(error)}`));
+}
+
+/**
+ * Resolves once the cache reset of the last account change has settled: the
+ * reads the screens showed have been made again for the new account, whether
+ * they answered or failed. Never rejects.
+ */
+export function accountCacheSettled(): Promise<void> {
+  return cacheReset;
 }
 
 /** The provisional answer before the engine restores: who was signed in last time. */

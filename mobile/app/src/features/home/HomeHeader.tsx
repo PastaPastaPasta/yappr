@@ -3,9 +3,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { config } from '~/config';
 import { useEngineStatus } from '~/engine/hooks';
-import type { EngineState as SupervisorState } from '~/engine/supervisor';
 import { cn } from '~/lib-allowlist';
-import { NetworkChip, type EngineState } from '~/ui/NetworkChip';
+import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
@@ -15,20 +14,13 @@ const NETWORK_COPY: Record<string, { title: string; body: string }> = {
   testnet: { title: 'Testnet', body: 'Running on Dash Platform Testnet. Data may be reset.' },
 };
 
-/** The chip's three looks for the supervisor's states. */
-export function chipState(state: SupervisorState): EngineState {
-  if (state === 'ready' || state === 'degraded') return 'ready';
-  if (state === 'failed' || state === 'unsupported' || state === 'crashed') return 'unavailable';
-  return 'booting';
-}
-
 function HomeNetworkChip() {
   const { state } = useEngineStatus();
   const copy = NETWORK_COPY[config.network];
   return (
     <NetworkChip
       network={config.network}
-      state={chipState(state)}
+      state={chipStateOf(state)}
       onPress={copy ? () => Alert.alert(copy.title, copy.body) : undefined}
     />
   );

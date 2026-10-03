@@ -30,6 +30,12 @@ describe('feed timestamps', () => {
     expect(newestTimestamp([post('a', 5), post('b', 1), post('c', 9)])).toBe(post('b', 1).createdAt.getTime());
     expect(newestTimestamp([])).toBeNull();
   });
+
+  it('skips a post whose time did not parse, so the new-posts check stays on (FEED-05)', () => {
+    const unparsed = post('x', 0, { createdAt: new Date('not a date') });
+    expect(newestTimestamp([unparsed, post('a', 5)])).toBe(post('a', 5).createdAt.getTime());
+    expect(newestTimestamp([unparsed])).toBeNull();
+  });
 });
 
 describe('prependToFirstPage', () => {
@@ -77,5 +83,17 @@ describe('readErrorMessage', () => {
     expect(readErrorMessage(coded('BAD_CURSOR'))).toBeUndefined();
     expect(readErrorMessage(new Error('boom'))).toBeUndefined();
     expect(readErrorMessage(null)).toBeUndefined();
+  });
+
+  it('reads an uncoded failure on the way to Dash Platform as unavailable (G-11)', () => {
+    expect(readErrorMessage(new Error('Failed to prefetch quorums: HTTP request error: error sending request'))).toBe(
+      UNAVAILABLE_MESSAGE,
+    );
+  });
+
+  it('says network error while offline, unless the session is gone (G-1, G-11)', () => {
+    expect(readErrorMessage(new Error('boom'), { offline: true })).toMatch(/^Network error/);
+    expect(readErrorMessage(coded('ENGINE_UNAVAILABLE'), { offline: true })).toMatch(/^Network error/);
+    expect(readErrorMessage(coded('NOT_SIGNED_IN'), { offline: true })).toMatch(/sign in again/);
   });
 });

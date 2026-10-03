@@ -15,12 +15,11 @@ import {
 import { config } from '~/config';
 import { useCapabilities, useSession } from '~/data/session';
 import { useEngineStatus } from '~/engine/hooks';
-import type { EngineStatus } from '~/engine/supervisor';
 import { accountName } from '~/features/auth/accounts';
 import { cn } from '~/lib-allowlist';
 import { useAppearance } from '~/state/appearance';
 import { Avatar } from '~/ui/Avatar';
-import { NetworkChip, type EngineState } from '~/ui/NetworkChip';
+import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { colors, tw, useColors } from '~/ui/tokens';
 
@@ -31,12 +30,6 @@ import { SettingsGroup, SettingsHeader, SettingsRow, SettingsScroll } from './Se
 import { useViewerProfile } from './use-viewer-profile';
 
 const ios = Platform.OS === 'ios';
-
-function chipState(state: EngineStatus['state']): EngineState {
-  if (state === 'ready' || state === 'degraded') return 'ready';
-  if (state === 'unsupported' || state === 'failed') return 'unavailable';
-  return 'booting';
-}
 
 /** The account summary row: avatar, name, handle and balance (UX_SPEC §4.25). */
 function AccountSummary() {
@@ -169,7 +162,7 @@ export function SettingsScreen() {
       <View className="items-center gap-2 px-4 pt-8" testID="settings-version">
         {/* The chip aligns itself to the start; this row centers it. */}
         <View className="flex-row justify-center">
-          <NetworkChip network={config.network} state={chipState(engineStatus.state)} />
+          <NetworkChip network={config.network} state={chipStateOf(engineStatus.state)} />
         </View>
         <Text variant="caption" tone="secondary" selectable>
           {versionLine}

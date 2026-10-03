@@ -1,3 +1,4 @@
+import NetInfo from '@react-native-community/netinfo';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
@@ -16,7 +17,7 @@ beforeEach(() => {
 
 describe('EngineBanner', () => {
   it('shows nothing while the engine boots, runs or restarts', () => {
-    for (const state of ['handshaking', 'booting', 'ready', 'degraded', 'restarting']) {
+    for (const state of ['handshaking', 'booting', 'ready', 'restarting']) {
       fakeEngine.setStatus({ state });
       const { unmount } = render(<EngineBanner />);
       expect(screen.queryByTestId('engine-banner')).toBeNull();
@@ -32,6 +33,25 @@ describe('EngineBanner', () => {
     expect(engineSupervisor.restart).toHaveBeenCalledTimes(1);
 
     act(() => fakeEngine.setStatus({ state: 'starting' }));
+    expect(screen.queryByTestId('engine-banner')).toBeNull();
+  });
+
+  it('says "Couldn\'t connect" with Try again when the boot failed while online (NET-01)', () => {
+    fakeEngine.setStatus({ state: 'degraded' });
+    render(<EngineBanner />);
+    expect(screen.getByText(ENGINE_BANNER_COPY.couldntConnect)).toBeTruthy();
+    fireEvent.press(screen.getByText('Try again'));
+    expect(engineSupervisor.retryBootNow).toHaveBeenCalledTimes(1);
+    expect(engineSupervisor.restart).not.toHaveBeenCalled();
+
+    act(() => fakeEngine.setStatus({ state: 'ready' }));
+    expect(screen.queryByTestId('engine-banner')).toBeNull();
+  });
+
+  it('leaves a boot that failed offline to the offline banner (G-1)', () => {
+    jest.mocked(NetInfo.useNetInfo).mockReturnValueOnce({ isConnected: false } as ReturnType<typeof NetInfo.useNetInfo>);
+    fakeEngine.setStatus({ state: 'degraded' });
+    render(<EngineBanner />);
     expect(screen.queryByTestId('engine-banner')).toBeNull();
   });
 

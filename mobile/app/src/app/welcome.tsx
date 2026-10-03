@@ -14,7 +14,7 @@ import { links, openInApp, setWelcomed } from '~/features/auth/onboarding';
 import { Wordmark } from '~/features/auth/Wordmark';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
-import { NetworkChip, type EngineState } from '~/ui/NetworkChip';
+import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { tw, useIsDark } from '~/ui/tokens';
 
@@ -24,13 +24,6 @@ const ENTER = new Keyframe({
   100: { opacity: 1, transform: [{ translateY: 0 }] },
 }).duration(500);
 
-function useChipState(): EngineState {
-  const { state } = useEngineStatus();
-  if (state === 'ready' || state === 'degraded') return 'ready';
-  if (state === 'failed' || state === 'unsupported') return 'unavailable';
-  return 'booting';
-}
-
 /**
  * UX_SPEC §4.1, PRD AUTH-01: what Yappr is, then sign in or look around.
  * Static and offline; either choice is remembered.
@@ -38,7 +31,7 @@ function useChipState(): EngineState {
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
   const dark = useIsDark();
-  const chipState = useChipState();
+  const chipState = chipStateOf(useEngineStatus().state);
   const navigation = useNavigation();
 
   // Leaving by any route (Android back included) counts as "Browse": Welcome is shown once.

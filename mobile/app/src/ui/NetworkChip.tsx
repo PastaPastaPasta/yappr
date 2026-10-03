@@ -9,6 +9,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import type { EngineState as SupervisorState } from '~/engine/supervisor';
 import { cn } from '~/lib-allowlist';
 
 import { Text } from './Text';
@@ -16,6 +17,17 @@ import { colors, hitSlopFor, motion } from './tokens';
 
 export type ChipNetwork = 'devnet' | 'testnet' | 'mainnet';
 export type EngineState = 'ready' | 'booting' | 'unavailable';
+
+/**
+ * The chip's look for the supervisor's state (PRD NET-01, UX_SPEC §2.17):
+ * steady once booted, hollow when the engine could not connect (a degraded
+ * boot, or it gave up), pulsing while it starts.
+ */
+export function chipStateOf(state: SupervisorState): EngineState {
+  if (state === 'ready') return 'ready';
+  if (state === 'degraded' || state === 'failed' || state === 'unsupported' || state === 'crashed') return 'unavailable';
+  return 'booting';
+}
 
 const STATE_WORD: Record<EngineState, string> = {
   ready: 'ready',
