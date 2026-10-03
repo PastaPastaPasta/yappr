@@ -90,8 +90,10 @@ function sources(dir: string): string[] {
   });
 }
 
-it('no UI-thread loop runs forever behind useAnimatedStyle; loops are CSS animations (see pulse.ts)', () => {
+it('no UI-thread loop runs behind useAnimatedStyle; loops are CSS animations (see pulse.ts)', () => {
   const src = join(__dirname, '..');
-  const offenders = sources(src).filter((path) => /withRepeat\([\s\S]*?,\s*-1\b/.test(readFileSync(path, 'utf8')));
+  // Any count: -1, Infinity, a named constant or a long finite loop all leave
+  // the same stale props behind on Android.
+  const offenders = sources(src).filter((path) => /\bwithRepeat\s*\(/.test(readFileSync(path, 'utf8')));
   expect(offenders.map((path) => relative(src, path))).toEqual([]);
 });

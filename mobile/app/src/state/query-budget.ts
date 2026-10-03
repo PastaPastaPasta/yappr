@@ -13,15 +13,16 @@ export const isPagedData = (data: unknown): data is { pages: unknown[]; pagePara
 const isInactivePersisted = (query: Query): boolean =>
   query.meta?.persist === true && query.state.data !== undefined && query.getObserversCount() === 0;
 
-/** An infinite query goes back to its first page, as the disk copy already is. */
-function trimToFirstPage(client: QueryClient, query: Query) {
-  const { data, dataUpdatedAt } = query.state;
+/**
+ * An infinite query goes back to its first page, as the disk copy already is.
+ * Only the data changes: written through `setState`, not `setQueryData`, so
+ * its age, an invalidation still due (lists invalidated with `refetchType:
+ * 'none'` refetch on their next mount) and a failed fetch's status all stay.
+ */
+function trimToFirstPage(query: Query) {
+  const { data } = query.state;
   if (!isPagedData(data) || data.pages.length <= 1) return;
-  client.setQueryData(
-    query.queryKey,
-    { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) },
-    { updatedAt: dataUpdatedAt },
-  );
+  query.setState({ data: { pages: data.pages.slice(0, 1), pageParams: data.pageParams.slice(0, 1) } });
 }
 
 /** Drops the least recently updated inactive persisted queries past `max`. */
@@ -53,9 +54,10 @@ export function installQueryBudget(client: QueryClient, max = INACTIVE_PERSISTED
   const cache = client.getQueryCache();
   return cache.subscribe((event) => {
     const settled =
-      event.type === 'observerRemoved' || (event.type === 'updated' && event.action.type === 'success');
+      event.type === 'observerRemoved' ||
+      (event.type === 'updated' && (event.action.type === 'success' || event.action.type === 'error'));
     if (!settled || !isInactivePersisted(event.query)) return;
-    trimToFirstPage(client, event.query);
+    trimToFirstPage(event.query);
     evictBeyond(cache, max);
   });
 }

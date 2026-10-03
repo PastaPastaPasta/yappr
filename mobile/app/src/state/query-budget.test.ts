@@ -46,6 +46,45 @@ describe('query budget (D-L3a-011)', () => {
     expect(client.getQueryState(['feed'])?.dataUpdatedAt).toBe(updatedAt);
   });
 
+  it('keeps an invalidation still due, so the list refetches when its screen returns', async () => {
+    const leave = await threePageFeed(client, 'top');
+    // A post landed while the list was on screen: refresh it on its next mount.
+    await client.invalidateQueries({ queryKey: ['top'], refetchType: 'none' });
+    leave();
+
+    const query = client.getQueryCache().find({ queryKey: ['top'] });
+    expect(pagesOf(client, 'top')).toBe(1);
+    expect(query?.state.isInvalidated).toBe(true);
+    expect(query?.isStale()).toBe(true);
+    expect(query?.state.status).toBe('success');
+  });
+
+  it('keeps a failed next page an error, with the pages it had trimmed', async () => {
+    let fail = false;
+    const observer = new InfiniteQueryObserver(client, {
+      queryKey: ['flaky'],
+      queryFn: async ({ pageParam }: { pageParam: number }) => {
+        if (fail) throw new Error('DAPI timeout');
+        return { items: [pageParam] };
+      },
+      initialPageParam: 0,
+      getNextPageParam: (last: { items: number[] }) => last.items[0] + 1,
+      retry: false,
+      ...persistedQuery,
+    });
+    const leave = observer.subscribe(() => undefined);
+    await observer.refetch();
+    await observer.fetchNextPage();
+    fail = true;
+    await observer.fetchNextPage();
+    leave();
+
+    const state = client.getQueryState(['flaky']);
+    expect(pagesOf(client, 'flaky')).toBe(1);
+    expect(state?.status).toBe('error');
+    expect(state?.isInvalidated).toBe(true);
+  });
+
   it('leaves queries that are not persisted to their gcTime', async () => {
     const leave = await threePageFeed(client, 'dm', false);
     leave();

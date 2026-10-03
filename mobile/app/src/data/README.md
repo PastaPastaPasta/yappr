@@ -43,7 +43,9 @@ const feed = useEngineInfiniteQuery(
   serializes it). Once no screen shows a persisted query, it keeps its
   first page only, and only the 50 most recently updated such queries stay
   (`src/state/query-budget.ts`); a screen opened again past that reads
-  afresh.
+  afresh. Trimming keeps the query's age, status and any invalidation
+  still due, so a list invalidated with `refetchType: 'none'` still
+  refetches when its screen comes back.
 - **No cache reset needed.** Sign-in, sign-out and account switches already
   reset the cache (`session.ts`).
 

@@ -76,4 +76,26 @@ describe('the DiceBear markup cache (D-L3a-011)', () => {
     show('fill-0').unmount();
     expect(resolve).toHaveBeenCalledTimes(AVATAR_SVG_CACHE_MAX + 2);
   });
+
+  it('keeps showing a mounted avatar whose recipe the cache has since evicted', () => {
+    const resolve = jest.fn((_id: string, _style: string, seed: string) => `<svg>${seed}</svg>`);
+    const tree = (seed: string, other?: string) => (
+      <AvatarSvgProvider resolve={resolve}>
+        <Probe seed={seed} />
+        {other ? <Probe seed={other} /> : null}
+      </AvatarSvgProvider>
+    );
+    // Cached by an earlier mount, so this one mounts on a cache hit.
+    render(tree('kept')).unmount();
+    const header = render(tree('kept'));
+    const calls = resolve.mock.calls.length;
+    expect(header.getByTestId('svg-kept')).toHaveTextContent('<svg>kept</svg>');
+
+    // Long browsing pushes `kept` out of the shared cache...
+    for (let i = 0; i <= AVATAR_SVG_CACHE_MAX; i += 1) render(tree(`evict-${i}`)).unmount();
+    // ...then the still-mounted avatar re-renders.
+    header.rerender(tree('kept', 'sibling'));
+    expect(header.getByTestId('svg-kept')).toHaveTextContent('<svg>kept</svg>');
+    expect(resolve).toHaveBeenCalledTimes(calls + AVATAR_SVG_CACHE_MAX + 2);
+  });
 });
