@@ -93,6 +93,17 @@ export async function queryPostsSince(
   });
 }
 
+/**
+ * A created document as the service transforms it. Platform stamps
+ * `$createdAt` with the block time, so the document a write returns without
+ * reading it back (the one it built) has none, and `new Date(undefined)` is
+ * an Invalid Date that renders as no time at all. Until a read returns the
+ * real one, the moment the write went through stands in for it.
+ */
+export function withCreationTime(doc: Record<string, unknown>, now = Date.now()): Record<string, unknown> {
+  return doc.$createdAt == null && doc.createdAt == null ? { ...doc, $createdAt: now } : doc;
+}
+
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
@@ -280,7 +291,7 @@ export abstract class BaseDocumentService<T> {
       // Clear relevant caches
       this.clearCache();
 
-      const transformed = this.transformDocument(result.document);
+      const transformed = this.transformDocument(withCreationTime(result.document));
 
       // Preserve creation confirmation status for callers that need UX handling.
       if (typeof result.confirmed === 'boolean' && transformed && typeof transformed === 'object') {
