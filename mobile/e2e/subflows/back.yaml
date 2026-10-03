@@ -1,0 +1,15 @@
+# Go back one screen: the header's back button on iOS, the system back on Android.
+appId: ${APP_ID}
+---
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          id: "BackButton|profile-back|search-back"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - back
+- waitForAnimationToEnd

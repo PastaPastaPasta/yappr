@@ -1,0 +1,39 @@
+# Signed-out browse, a thread (PRD POST-01 – POST-03, POST-10; ADR E8): open
+# the first post of the feed, its replies load, the reply bar asks to sign in,
+# and the counts row opens the engagements. Read only.
+appId: ${APP_ID}
+tags:
+  - smoke
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: home
+- extendedWaitUntil:
+    visible:
+      id: "post-card-.*"
+    timeout: 90000
+- tapOn:
+    id: "post-card-.*"
+    index: 0
+- extendedWaitUntil:
+    visible:
+      id: thread-focus
+    timeout: 60000
+- assertVisible:
+    id: thread-list
+# The replies, or the empty state, replace "Loading replies…".
+- extendedWaitUntil:
+    notVisible:
+      id: replies-loading
+    timeout: 60000
+- assertNotVisible:
+    id: replies-error
+- assertVisible: "Sign in to reply"
+- takeScreenshot: thread
+- runFlow: ../../subflows/back.yaml
+- extendedWaitUntil:
+    visible:
+      id: home-header
+    timeout: 15000

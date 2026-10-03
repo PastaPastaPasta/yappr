@@ -1,0 +1,60 @@
+# Report a post (PRD SAFE-04, SAFE-05; ADR E8): a fresh post by the peer
+# persona, so every run files a new report rather than finding an old one.
+# The sheet asks for a reason and submits; a community whose moderation team
+# is not seated yet refuses it with the email fallback, which also passes.
+# The peer deletes its post afterwards.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow: ../../subflows/peer-unblocked.yaml
+- runFlow:
+    file: ../../subflows/peer-post.yaml
+    env:
+      PEER_TEXT: "Maestro report target ${RUN}"
+- tapOn:
+    id: more-btn-${output.peerPostId}
+- tapOn: "Report post"
+- extendedWaitUntil:
+    visible:
+      id: "report-sheet|report-existing|report-refused"
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        id: report-sheet
+      notVisible:
+        id: "report-existing|report-refused"
+    commands:
+      - assertVisible: "What is wrong with it\\?"
+      - tapOn:
+          id: report-reason-0
+      - takeScreenshot: report-sheet
+      - scrollUntilVisible:
+          element:
+            id: report-submit
+          direction: DOWN
+      - tapOn:
+          id: report-submit
+      - extendedWaitUntil:
+          visible:
+            id: "report-sent|report-refused|report-existing"
+          timeout: 120000
+- takeScreenshot: report-result
+- runFlow:
+    when:
+      visible:
+        id: report-sent
+    commands:
+      - tapOn:
+          id: report-done
+- runFlow:
+    when:
+      visible:
+        id: "report-refused|report-existing"
+    commands:
+      - tapOn:
+          id: "report-done|report-cancel|sheet-close"
+- runFlow: ../../subflows/peer-delete.yaml

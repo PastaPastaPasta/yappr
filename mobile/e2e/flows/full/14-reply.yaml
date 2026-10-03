@@ -1,0 +1,51 @@
+# Reply (PRD COMP-04, POST-02, ENG-06; ADR E8) to a fresh post by the peer
+# persona: compose shows the post being answered, the reply lands in the
+# thread, and deleting it cleans up. The peer deletes its post afterwards.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow: ../../subflows/peer-unblocked.yaml
+- runFlow:
+    file: ../../subflows/peer-post.yaml
+    env:
+      PEER_TEXT: "Maestro reply target ${RUN}"
+- tapOn:
+    id: reply-btn-${output.peerPostId}
+- extendedWaitUntil:
+    visible:
+      id: compose-reply-context
+    timeout: 15000
+- assertNotVisible:
+    id: compose-add-part
+- tapOn:
+    id: compose-input-0
+- inputText: "Maestro reply ${RUN}"
+- takeScreenshot: compose-reply
+- tapOn:
+    id: compose-post
+- extendedWaitUntil:
+    visible: "Reply posted"
+    timeout: 120000
+# In the thread, under the post.
+- extendedWaitUntil:
+    visible: ".*Maestro reply ${RUN}.*"
+    timeout: 60000
+- takeScreenshot: replied
+
+# Delete the reply from its menu.
+# The only reply under the fresh post: its menu button reads "Reply options".
+- tapOn: "Reply options"
+- tapOn: "Delete reply"
+- extendedWaitUntil:
+    visible: "Delete reply\\?"
+    timeout: 10000
+- tapOn:
+    text: "Delete|DELETE"
+    rightOf: "Cancel|CANCEL"
+- extendedWaitUntil:
+    visible: "Reply deleted"
+    timeout: 120000
+- runFlow: ../../subflows/peer-delete.yaml

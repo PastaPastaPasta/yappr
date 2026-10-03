@@ -52,8 +52,12 @@ export function poolUnavailableReason(): string | null {
   return process.env[POOL_ENV_VAR] ? null : POOL_UNSET
 }
 
-/** Load the reserved personas. Throws without echoing file content or key material. */
-export function loadPoolPersonas(file: string | undefined = process.env[POOL_ENV_VAR]): PoolPersona[] {
+/**
+ * Load the reserved personas (`only`: just these, for a pool file that holds a
+ * subset, such as the Maestro suite's CI secret). Throws without echoing file
+ * content or key material.
+ */
+export function loadPoolPersonas(file: string | undefined = process.env[POOL_ENV_VAR], only?: number[]): PoolPersona[] {
   if (!file) throw new Error(POOL_UNSET)
   let root: { identities?: unknown }
   try {
@@ -64,7 +68,9 @@ export function loadPoolPersonas(file: string | undefined = process.env[POOL_ENV
   }
   if (!Array.isArray(root.identities)) throw new Error('The pool file has no identities[] array')
   const entries = root.identities as PoolIdentityEntry[]
-  return slots.personaIdx.map(personaIdx => {
+  const wanted = only ?? slots.personaIdx
+  if (wanted.some(personaIdx => !slots.personaIdx.includes(personaIdx))) throw new Error('Only the reserved personas (slots.json) can be loaded')
+  return wanted.map(personaIdx => {
     const entry = entries.find(candidate => candidate.personaIdx === personaIdx)
     if (!entry || typeof entry.identityId !== 'string' || !Array.isArray(entry.identityKeys)) {
       throw new Error(`Persona ${personaIdx} is missing from the pool or has no identityId/identityKeys`)

@@ -1,18 +1,18 @@
-# Settings (PRD SET-01, SET-04, SET-05, SAFE-06; EXECUTION S10).
-#
-# Run against the devnet dev client with the bundle already loaded:
-#   maestro --device <udid|serial> test mobile/e2e/flows/settings.yaml
-# Signed in or out: theme and NSFW mode are device-wide content settings
-# (PRD SET-09). It switches the theme to Dark and Light and back to System,
-# then sets the NSFW mode to Hide, checks it survives leaving and reopening
-# Privacy & Safety, and puts it back to Warn first. Nothing here writes to
-# chain, and no key is needed.
-# Platform differences: "back" is the header button on iOS and the system back
-# on Android; a selected radio row reads "radio button, checked" on iOS and is
-# `checked` on Android.
-appId: pr.yap.app.dev
+# Settings toggles (PRD SET-01, SET-04, SET-05, SAFE-06; ADR E8). Theme and
+# NSFW mode are device-wide content settings (PRD SET-09), so this runs signed
+# in or out: the theme goes Dark, Light, then back to System; the NSFW mode
+# goes to Hide, survives leaving and reopening Privacy & Safety, and is put
+# back to Warn. Nothing here writes to chain.
+# A selected radio row reads "radio button, checked" on iOS and is `checked` on Android.
+appId: ${APP_ID}
+tags:
+  - smoke
 ---
-- openLink: yappr-dev:///settings
+- runFlow: ../../subflows/launch.yaml
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://settings
 - extendedWaitUntil:
     visible:
       id: settings-root
@@ -41,6 +41,7 @@ appId: pr.yap.app.dev
       - assertVisible:
           id: appearance-theme-dark
           checked: true
+- takeScreenshot: appearance-dark
 - tapOn:
     id: appearance-theme-light
 - runFlow:
@@ -57,18 +58,7 @@ appId: pr.yap.app.dev
       - assertVisible:
           id: appearance-theme-light
           checked: true
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - tapOn:
-          id: BackButton
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - back
-- waitForAnimationToEnd
+- runFlow: ../../subflows/back.yaml
 - assertVisible: "Appearance, Light"
 - tapOn:
     id: settings-appearance
@@ -88,18 +78,7 @@ appId: pr.yap.app.dev
       - assertVisible:
           id: appearance-theme-system
           checked: true
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - tapOn:
-          id: BackButton
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - back
-- waitForAnimationToEnd
+- runFlow: ../../subflows/back.yaml
 - assertVisible: "Appearance, System"
 
 # NSFW mode: Hide, kept after leaving the screen, then back to Warn first.
@@ -125,18 +104,7 @@ appId: pr.yap.app.dev
       - assertVisible:
           id: privacy-nsfw-hide
           checked: true
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - tapOn:
-          id: BackButton
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - back
-- waitForAnimationToEnd
+- runFlow: ../../subflows/back.yaml
 - tapOn:
     id: settings-privacy
 - runFlow:
@@ -157,6 +125,7 @@ appId: pr.yap.app.dev
             id: privacy-nsfw-hide
             checked: true
           timeout: 30000
+- takeScreenshot: privacy-nsfw-hide
 - tapOn:
     id: privacy-nsfw-blur
 - runFlow:
@@ -173,15 +142,4 @@ appId: pr.yap.app.dev
       - assertVisible:
           id: privacy-nsfw-blur
           checked: true
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      - tapOn:
-          id: BackButton
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - back
-- waitForAnimationToEnd
+- runFlow: ../../subflows/back.yaml

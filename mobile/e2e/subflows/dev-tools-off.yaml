@@ -1,0 +1,31 @@
+# In the open dev menu: flip the "Tools button" switch (off, from its default), then close the menu.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible: "Runtime version.*"
+    timeout: 10000
+# Centred and settled first: a tap during the scroll lands on the row above (Fast refresh).
+- scrollUntilVisible:
+    element: "Tools button"
+    direction: DOWN
+    centerElement: true
+    timeout: 10000
+- waitForAnimationToEnd
+# iOS: the switch itself (its value, "1", is its text); a tap on the label does nothing.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn:
+          text: "1"
+          rightOf: "Tools button"
+          below: "Fast refresh"
+# Android: the row is the switch.
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn: "Tools button"
+- waitForAnimationToEnd
+- tapOn: "Close"
+- waitForAnimationToEnd

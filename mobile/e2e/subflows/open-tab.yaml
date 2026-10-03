@@ -1,0 +1,47 @@
+# Open a tab by tapping it, and wait for its root screen.
+#   TAB  home | explore | notifications | messages | profile
+# Tapping the current tab pops its stack to the root, as on every tab bar.
+appId: ${APP_ID}
+---
+- tapOn:
+    id: tab-${TAB}
+- runFlow:
+    when:
+      true: ${TAB == 'home'}
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: home-header
+          timeout: 30000
+- runFlow:
+    when:
+      true: ${TAB == 'explore'}
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: explore-search
+          timeout: 30000
+- runFlow:
+    when:
+      true: ${TAB == 'notifications'}
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: "notifications-filters|signed-out-notifications"
+          timeout: 30000
+- runFlow:
+    when:
+      true: ${TAB == 'messages'}
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: "messages-list|messages-locked|messages-signed-out|messages-loading|messages-restoring|messages-empty"
+          timeout: 30000
+- runFlow:
+    when:
+      true: ${TAB == 'profile'}
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: "profile-screen|signed-out-profile|account-signed-out"
+          timeout: 30000

@@ -1,0 +1,88 @@
+# Sign in with a private key (PRD AUTH-08), from the open sign-in sheet
+# (sign-in-screen), through the terms gate when it shows (AUTH-09).
+#   MAESTRO_SIGN_IN_KEY_1..4  a devnet pool persona's AUTHENTICATION/HIGH key (WIF
+#                or hex) in four parts. Only ever from the environment (run.sh reads it
+#                from a key file and exports the parts); never commit or print one.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: sign-in-other-ways
+    timeout: 30000
+- tapOn:
+    id: sign-in-other-ways
+- tapOn:
+    id: sign-in-private-key
+- extendedWaitUntil:
+    visible:
+      id: key-input
+    timeout: 15000
+- tapOn:
+    id: key-input
+# In four parts (iOS can drop characters from one long input into a secure field).
+- inputText: ${MAESTRO_SIGN_IN_KEY_1}
+- inputText: ${MAESTRO_SIGN_IN_KEY_2}
+- inputText: ${MAESTRO_SIGN_IN_KEY_3}
+- inputText: ${MAESTRO_SIGN_IN_KEY_4}
+# Sakura's quorum list lags now and then ("Dash Platform is temporarily unavailable"),
+# and while it does, the SDK fails every lookup at once. So, as a user would: read
+# the error, wait a moment, then "Try again" (key-retry looks the key up again).
+# Wait for the new lookup to start before reading its result, or a stale error on
+# screen is read as its answer and the next tap cancels it.
+- repeat:
+    times: 6
+    while:
+      notVisible:
+        id: key-found
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: "key-found|key-retry"
+          timeout: 60000
+      - runFlow:
+          when:
+            visible:
+              id: key-retry
+          file: key-retry.yaml
+- assertVisible:
+    id: key-found
+- tapOn:
+    id: key-sign-in
+- extendedWaitUntil:
+    visible:
+      id: "terms-agree|home-header|settings-root|key-retry"
+    timeout: 120000
+# Signing in can meet the same lag: look the key up again, then sign in again.
+- repeat:
+    times: 4
+    while:
+      visible:
+        id: key-retry
+    commands:
+      - runFlow: key-retry.yaml
+      - extendedWaitUntil:
+          visible:
+            id: "key-found|key-retry"
+          timeout: 60000
+      - runFlow:
+          when:
+            visible:
+              id: key-found
+          commands:
+            - tapOn:
+                id: key-sign-in
+            - extendedWaitUntil:
+                visible:
+                  id: "terms-agree|home-header|settings-root|key-retry"
+                timeout: 120000
+- runFlow:
+    when:
+      visible:
+        id: terms-agree
+    commands:
+      - tapOn:
+          id: terms-agree
+- extendedWaitUntil:
+    notVisible:
+      id: "sign-in-screen|terms-gate|key-input"
+    timeout: 30000

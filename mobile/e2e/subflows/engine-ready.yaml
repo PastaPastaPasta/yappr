@@ -1,0 +1,19 @@
+# Wait until the engine is up. Devnet and testnet builds show a network chip
+# whose label names the engine state; mainnet has no chip, so there it waits
+# for Home's first page instead.
+appId: ${APP_ID}
+---
+- extendedWaitUntil:
+    visible:
+      id: "network-chip|more-btn-.*"
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        id: network-chip
+    commands:
+      - extendedWaitUntil:
+          visible:
+            id: network-chip
+            text: ".*Engine ready.*"
+          timeout: 120000

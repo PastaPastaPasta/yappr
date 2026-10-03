@@ -1,0 +1,18 @@
+# On the private-key sheet showing a transient error (key-retry): pause, as a user
+# reading it would (the SDK fails fast while sakura's DAPI nodes are out of reach, so
+# back-to-back retries would all fail within seconds), tap "Try again", and return once
+# the new lookup has started: the error and its button go away (optional, since a
+# lookup that fails at once can bring them back between two looks).
+appId: ${APP_ID}
+---
+- runScript:
+    file: ../scripts/pause.js
+    env:
+      PAUSE_MS: '10000'
+- tapOn:
+    id: key-retry
+- extendedWaitUntil:
+    notVisible:
+      id: key-retry
+    timeout: 15000
+    optional: true

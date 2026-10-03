@@ -1,0 +1,20 @@
+# Open a link (LINK) in the app under test, as openLink does. iOS 27 asks
+# "Open in “<app>”?" before it hands the simulator a link (simctl openurl, which
+# Maestro uses): tap Open when it does. The wait counts from the openLink, so it
+# costs iOS at most five seconds when no question comes.
+appId: ${APP_ID}
+---
+- openLink: ${LINK}
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - extendedWaitUntil:
+          visible: "Open in .*\\?"
+          timeout: 5000
+          optional: true
+      - runFlow:
+          when:
+            visible: "Open in .*\\?"
+          commands:
+            - tapOn: "Open"

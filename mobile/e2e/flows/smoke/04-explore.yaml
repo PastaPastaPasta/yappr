@@ -1,21 +1,21 @@
-# Explore, search and hashtags (PRD EXPL-01 – EXPL-08; EXECUTION S7).
-#
-# Run against the devnet dev client with the bundle already loaded:
-#   maestro --device <udid|serial> test mobile/e2e/flows/explore.yaml
-#   maestro --device <udid|serial> test -e QUERY=<name prefix> -e TAG=<hashtag> mobile/e2e/flows/explore.yaml
-# QUERY must find at least one person (default "sigrid") and TAG must have
-# posts (default "mobile"); both are live sakura data. Nothing here writes.
-appId: pr.yap.app.dev
+# Signed-out browse, Explore (PRD EXPL-01 – EXPL-08; ADR E8): trending, the
+# ranked segments where the contract ranks likes, a people search that opens
+# a profile, the recent search, and a hashtag page. Read only.
+#   QUERY  a name prefix that finds at least one person (run.sh sets one per variant)
+#   TAG    a hashtag; its page may be empty
+appId: ${APP_ID}
+tags:
+  - smoke
 env:
   QUERY: ${QUERY || 'sigrid'}
   TAG: ${TAG || 'mobile'}
 ---
-- openLink: yappr-dev:///explore
-- extendedWaitUntil:
-    visible:
-      id: explore-search
-    timeout: 60000
-# Trending tags (every build). The segment is remembered for the session.
+- runFlow: ../../subflows/launch.yaml
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: explore
+# Trending tags. The segment is remembered for the session.
 - runFlow:
     when:
       visible:
@@ -31,12 +31,12 @@ env:
           when:
             platform: iOS
           commands:
-            - tapOn:
-                text: "Trending"
+            - tapOn: "Trending"
 - extendedWaitUntil:
     visible:
       id: "trending-.*|explore-trending-empty"
     timeout: 90000
+- takeScreenshot: explore-trending
 
 # Top posts and Creators where the contract ranks likes (devnet).
 - runFlow:
@@ -53,8 +53,7 @@ env:
           when:
             platform: iOS
           commands:
-            - tapOn:
-                text: "Top"
+            - tapOn: "Top"
       - extendedWaitUntil:
           visible:
             id: "more-btn-.*|explore-top-empty"
@@ -69,50 +68,56 @@ env:
           when:
             platform: iOS
           commands:
-            - tapOn:
-                text: "Creators"
+            - tapOn: "Creators"
       - extendedWaitUntil:
           visible: "Top creators by likes received|No ranked creators yet"
           timeout: 90000
 
-# Search a user and open the profile.
+# Search a person and open the profile.
 - tapOn:
     id: explore-search
 - extendedWaitUntil:
     visible:
       id: search-input
     timeout: 10000
-- inputText: ${QUERY}
-- pressKey: Enter
-- extendedWaitUntil:
-    visible:
-      id: search-section-people
-    timeout: 60000
-- extendedWaitUntil:
-    notVisible:
-      id: search-searching
-    timeout: 60000
+# A failed name search reads as "nobody found" (lib's DPNS search returns [] on
+# any error, so the People section just doesn't appear), and sakura drops a
+# read now and then: search again, as a user would, up to three times. Each try
+# drops a letter, since the empty answer is cached under the query it answered.
+- evalScript: ${output.query = QUERY}
+- repeat:
+    times: 3
+    while:
+      notVisible:
+        id: search-section-people
+    commands:
+      - tapOn:
+          id: search-input
+      - eraseText: 40
+      - inputText: ${output.query}
+      - pressKey: Enter
+      - evalScript: ${output.query = output.query.slice(0, -1)}
+      - extendedWaitUntil:
+          visible:
+            id: "search-section-.*|search-no-results|search-error"
+          timeout: 60000
+      - extendedWaitUntil:
+          notVisible:
+            id: search-searching
+          timeout: 60000
+- assertVisible:
+    id: search-section-people
+- takeScreenshot: explore-search
 - tapOn:
     id: "search-user-.*"
     index: 0
 - extendedWaitUntil:
-    notVisible:
-      id: search-input
-    timeout: 10000
-- runFlow:
-    when:
-      platform: Android
-    commands:
-      - back
-- runFlow:
-    when:
-      platform: iOS
-    commands:
-      # The header's back button is named after the previous screen.
-      - tapOn: "Search"
+    visible:
+      id: profile-header
+    timeout: 60000
+- runFlow: ../../subflows/back.yaml
 
-# The query is a recent search now. (Erase rather than the clear button: the
-# dev client's floating menu button sits over it on Android.)
+# The query is a recent search now.
 - tapOn:
     id: search-input
 - eraseText: 40
@@ -126,11 +131,14 @@ env:
     id: search-back
     optional: true
 
-# Open a hashtag page; Latest, then Top where supported.
-- openLink: yappr-dev:///hashtag/${TAG}
+# A hashtag page (a web-form link, which every build accepts); Latest, then Top where supported.
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://hashtag?tag=${TAG}
 - extendedWaitUntil:
     visible:
-      id: "more-btn-.*"
+      id: "more-btn-.*|hashtag-posts-empty"
     timeout: 90000
 - runFlow:
     when:
@@ -147,9 +155,9 @@ env:
           when:
             platform: iOS
           commands:
-            - tapOn:
-                text: "Top"
+            - tapOn: "Top"
       - extendedWaitUntil:
           visible:
             id: "more-btn-.*|hashtag-posts-empty"
           timeout: 90000
+- takeScreenshot: hashtag

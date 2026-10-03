@@ -108,16 +108,17 @@ export default function TabLayout() {
     >
       <Tabs.Screen
         name="(home)"
-        options={{ title: 'Home', tabBarIcon: tabIcon(HomeOutline, HomeSolid) }}
+        options={{ title: 'Home', tabBarButtonTestID: 'tab-home', tabBarIcon: tabIcon(HomeOutline, HomeSolid) }}
       />
       <Tabs.Screen
         name="(explore)"
-        options={{ title: 'Explore', tabBarIcon: tabIcon(SearchOutline, SearchSolid) }}
+        options={{ title: 'Explore', tabBarButtonTestID: 'tab-explore', tabBarIcon: tabIcon(SearchOutline, SearchSolid) }}
       />
       <Tabs.Screen
         name="(notifications)"
         options={{
           title: 'Notifications',
+          tabBarButtonTestID: 'tab-notifications',
           tabBarIcon: tabIcon(BellOutline, BellSolid),
           tabBarBadge: badge(badges.notifications),
         }}
@@ -126,13 +127,14 @@ export default function TabLayout() {
         name="(messages)"
         options={{
           title: 'Messages',
+          tabBarButtonTestID: 'tab-messages',
           tabBarIcon: tabIcon(EnvelopeOutline, EnvelopeSolid),
           tabBarBadge: badge(badges.messages),
         }}
       />
       <Tabs.Screen
         name="(profile)"
-        options={{ title: 'Profile', tabBarIcon: tabIcon(UserOutline, UserSolid) }}
+        options={{ title: 'Profile', tabBarButtonTestID: 'tab-profile', tabBarIcon: tabIcon(UserOutline, UserSolid) }}
         // Long-press opens the account switcher (PRD AUTH-10).
         listeners={{ tabLongPress: openAccountSwitcher }}
       />

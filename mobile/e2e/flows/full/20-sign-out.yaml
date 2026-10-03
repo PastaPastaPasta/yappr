@@ -1,0 +1,17 @@
+# Sign out (PRD AUTH-11): the account goes, and the account tabs ask to sign in again.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+# Signed in first, so the sign-out below always has an account to act on.
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow: ../../subflows/sign-out.yaml
+- assertVisible:
+    id: settings-sign-in
+- runFlow:
+    file: ../../subflows/open-tab.yaml
+    env:
+      TAB: profile
+- assertVisible:
+    id: signed-out-profile

@@ -1,0 +1,79 @@
+# Follow and unfollow (PRD PROF-03, PROF-04, PD-6; ADR E8) the peer persona
+# (PEER_ID): optimistic, kept when the profile is opened again, and unfollow
+# asks first (an alert on iOS, a sheet on Android). Ends not following, whatever it started from.
+appId: ${APP_ID}
+tags:
+  - full
+---
+- runFlow: ../../subflows/launch.yaml
+- runFlow: ../../subflows/ensure-signed-in.yaml
+- runFlow: ../../subflows/peer-unblocked.yaml
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+    timeout: 60000
+- assertVisible:
+    id: profile-message
+# An earlier run that stopped half way left the follow in place: undo it first.
+- runFlow:
+    when:
+      visible:
+        id: profile-follow
+        text: "Following.*"
+    commands:
+      - tapOn:
+          id: profile-follow
+      - tapOn:
+          text: "Unfollow|UNFOLLOW"
+          below: "Unfollow .*\\?"
+      - extendedWaitUntil:
+          visible:
+            id: profile-follow
+            text: "Follow( .*)?"
+          timeout: 10000
+# Follow: the button flips at once.
+- tapOn:
+    id: profile-follow
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Following.*"
+    timeout: 10000
+- takeScreenshot: following
+# Kept: the profile opened again still shows it
+# (likely served from the app's cache, so this checks the optimistic state holds).
+- runFlow: ../../subflows/back.yaml
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Following.*"
+    timeout: 60000
+# Unfollow asks first.
+- tapOn:
+    id: profile-follow
+- tapOn:
+    text: "Unfollow|UNFOLLOW"
+    below: "Unfollow .*\\?"
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Follow( .*)?"
+    timeout: 10000
+- runFlow: ../../subflows/back.yaml
+- runFlow:
+    file: ../../subflows/open-link.yaml
+    env:
+      LINK: ${SCHEME}://user?id=${PEER_ID}
+- extendedWaitUntil:
+    visible:
+      id: profile-follow
+      text: "Follow( .*)?"
+    timeout: 60000
