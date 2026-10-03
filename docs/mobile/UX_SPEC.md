@@ -281,6 +281,7 @@ Each component lives in `mobile/app/src/ui/` and has a gallery entry showing eve
 - Always round, `object-cover` (`contentFit="cover"` in `expo-image`).
 - Source: the profile avatar URL; a DiceBear recipe is rendered by the engine into an SVG data URI (`lib/services/avatar-generator`), cached per recipe, and drawn locally with no network fetch; with no avatar, DiceBear `thumbs` seeded by the identity ID. IPFS URLs go through the gateway fallback (2.4.6).
 - Loading: a `bg.skeleton` circle. Error: the default `thumbs` avatar.
+- DiceBear art is transparent. It sits on `bg` (white) in light mode, as on web, and on a gray-200 (`#e5e7eb`) disc in dark mode, where the line-art styles' black strokes (Lorelei, Notionists, Micah, Croodles) would vanish into the page. Web draws it on the page color in both modes.
 - Media gate does **not** apply to avatars (as web).
 - a11y: decorative inside a card (the card is the element); standalone tappable avatars are labelled "{name}'s profile".
 
@@ -1047,7 +1048,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - v2 shows one ungrouped list: Name (required, 50), Bio (160), Pronouns, Location, Website (200), Banner image link, NSFW.
-- **Save:** disabled until changed and valid; shows a spinner and "Saving… (1 of 2)" (dev) in the navigation bar title position.
+- **Save:** disabled until changed and valid; shows a spinner and "Saving…" in the navigation bar title position; on dev, a save that writes both documents counts them: "Saving… (1 of 2)", then "Saving… (2 of 2)".
 - **Avatar sheet** (bottom sheet, large detent): segmented "Generated / Image link". Generated: a 4-column grid of 28 style tiles (64 avatars with labels), selected tile has a 2 pt `accent` ring; under it "Seed" field + "Randomize" (`secondary sm`). Image link: URL field + 88 preview + error line. "Use this avatar" (primary block) at the bottom.
 
 ### 4.14 Followers and following
@@ -1456,6 +1457,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | key.otherNetwork | This key is for a different network **(web)** |
 | key.noIdentity | No identity uses this key **(web)** |
 | key.mismatch | Private key does not match this identity **(web)** |
+| key.wrongPurpose | This is {an encryption \| a transfer \| …} key. Sign in with an authentication key instead. **(web)** (a key of the identity with another purpose; lib `wrongPurposeLoginMessage`) |
 | key.show / hide | Show key / Hide key |
 | terms.title | Before you start |
 | terms.intro | Yappr is a public network. By continuing you agree to: |
@@ -1644,7 +1646,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | edit.yapprHeader | Yappr profile |
 | edit.fields | Name / Bio / Pronouns / Location / Website / Banner image link **(web: Name, Pronouns, Location, Website)** |
 | edit.nsfw | NSFW Content / Mark your profile as containing adult content **(web)** |
-| edit.saving | Saving… / Saving… (1 of 2) |
+| edit.saving | Saving… / Saving… ({n} of 2) (dev, while a save writes both the DashPay and the Yappr profile) |
 | toast.profileUpdated | Profile updated! **(web)** |
 | toast.profileFailed | Failed to update profile **(web)** |
 | toast.profilePartial | Your DashPay profile was saved, but your Yappr profile wasn't. Try again. |
