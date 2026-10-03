@@ -58,10 +58,22 @@ tags:
     file: ../../subflows/open-tab.yaml
     env:
       TAB: notifications
-# Mark all as read: no unread row is left.
-- tapOn:
-    id: notifications-mark-all
+# Mark all as read (NOTIF-05): no unread row is left. The button shows only while something
+# is unread, and nothing in this suite makes a notification for the app's persona on demand,
+# so it is tapped (not optionally) whenever it shows once the list has loaded. The pool
+# personas' inboxes keep unread rows, and every green run so far tapped it.
+- extendedWaitUntil:
+    visible:
+      id: notifications-mark-all
+    timeout: 15000
     optional: true
+- runFlow:
+    when:
+      visible:
+        id: notifications-mark-all
+    commands:
+      - tapOn:
+          id: notifications-mark-all
 - extendedWaitUntil:
     notVisible:
       id: unread-dot
