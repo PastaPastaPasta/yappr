@@ -244,6 +244,38 @@ describe('dm on DM v5: session lifecycle', () => {
   })
 })
 
+describe('dm on DM v5: before the saved state has loaded (G-2, G-11)', () => {
+  it('answers ENGINE_BUSY for the inbox while the first load runs, never an empty list that reads as a first visit', async () => {
+    let release = () => undefined as void
+    const load = vi.spyOn(Chain.prototype, 'selfState').mockImplementationOnce(() => new Promise(resolve => { release = () => resolve(null) }))
+    try {
+      const user = userOn(ledgerNow(), alice)
+      await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'ENGINE_BUSY' })
+      expect(await user.dm.status()).toMatchObject({ ready: false, error: null })
+      release()
+      await ready(user)
+      expect(await user.dm.conversations()).toEqual([])
+    } finally {
+      load.mockRestore()
+    }
+  })
+
+  it('answers a failed first load with its error, and loads on refresh', async () => {
+    const load = vi.spyOn(Chain.prototype, 'selfState').mockRejectedValueOnce(new Error('Request timeout after 8000ms'))
+    try {
+      const user = userOn(ledgerNow(), alice)
+      await vi.waitFor(async () => expect((await user.dm.status()).error).toBe('Request timeout after 8000ms'))
+      expect((await user.dm.status()).ready).toBe(false)
+      await expect(user.dm.conversations()).rejects.toMatchObject({ code: 'TIMEOUT', message: 'Request timeout after 8000ms' })
+      await user.dm.refresh()
+      expect(await user.dm.status()).toMatchObject({ ready: true, error: null })
+      expect(await user.dm.conversations()).toEqual([])
+    } finally {
+      load.mockRestore()
+    }
+  })
+})
+
 describe('dm on DM v5: 1:1', () => {
   it('round trip: start, send with a ticket, receive with events, read', async () => {
     const ledger = ledgerNow()
@@ -688,8 +720,27 @@ describe('dm on DM v5: groups', () => {
     expect((await c.dm.conversations()).some(conv => conv.key === key)).toBe(true)
 
     expect(await b.settled(await b.dm.leaveGroup(key))).toMatchObject({ state: 'confirmed' })
-    // Left: hidden here until the owner removes the member (docs/DM_V5.md §6.4).
-    expect((await b.dm.conversations()).find(conv => conv.key === key)?.flags.hidden).toBe(true)
+    // Left: hidden here until the owner removes the member (docs/DM_V5.md §6.4), and no longer
+    // a member meanwhile: the conversation shows it and nothing more is sent (PRD DM-08).
+    expect((await b.dm.conversations()).find(conv => conv.key === key)?.flags).toMatchObject({ hidden: true, removed: true })
+    await expect(b.dm.send(key, 'still here?')).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'You are no longer a member of this group.' })
+    await expect(b.dm.leaveGroup(key)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('places a group with no messages by when this device joined it, not without a time (PRD DM-01)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const { key } = await a.engine().createGroup('Quiet', [bob])
+    const before = ledger.time
+    await b.engine().tick()
+    const group = (await b.dm.conversations()).find(conv => conv.key === key)
+    expect(group?.lastMessage).toBeNull()
+    // Joined during that poll (block time; the join's own save moves the ledger on after it).
+    expect(group?.lastActivity?.getTime()).toBeGreaterThanOrEqual(before)
+    expect(group?.lastActivity?.getTime()).toBeLessThanOrEqual(ledger.time)
+    // The owner's is dated by its creation, as before.
+    expect((await a.dm.conversations()).find(conv => conv.key === key)?.lastActivity).toBeInstanceOf(Date)
   })
 
   it('reports a failed group write on its ticket', async () => {

@@ -13,6 +13,7 @@ describe('engine method kinds', () => {
     'dm.search',
     'dm.messages',
     'dm.createdGroup',
+    'dm.refresh',
     'feed.home',
     'posts.get',
   ])('%s is a read: replayed once after a restart, with the 30 s read deadline (SR-15)', (path) => {

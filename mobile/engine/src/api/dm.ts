@@ -398,9 +398,21 @@ export function createDmModule(options: DmModuleOptions) {
       return backend.status(session())
     },
 
-    /** The inbox, by last activity (PRD DM-01). Hidden (v5 "deleted") conversations are included, flagged. */
+    /**
+     * The inbox, by last activity (PRD DM-01). Hidden (v5 "deleted") conversations are included, flagged.
+     * Before the first list has loaded it rejects (`ENGINE_BUSY` while loading, else the load's failure).
+     */
     async conversations(): Promise<ConversationDTO[]> {
       return withPeers(await backend.rows(session()))
+    },
+
+    /**
+     * Check for new messages now (pull to refresh, "Try again"), including a
+     * first load that failed. Resolves when the check is done; a failed check
+     * shows in `status().error`, and its changes arrive as `dm.changed`.
+     */
+    async refresh(): Promise<void> {
+      await backend.refresh(session())
     },
 
     /** Conversations whose name, peer name, username or id, or loaded preview, contains `query` (PRD DM-01). */

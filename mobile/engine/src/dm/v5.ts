@@ -1,6 +1,8 @@
 import type { RetentionSetting } from '@/lib/dm/types'
-import { NoEncryptionKeyError, type ConversationView, type DmEngine, type EngineSnapshot, type MessageView } from '@/lib/services/dm-v5'
+import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
+import type { Conv } from '@/lib/services/dm-v5/conversation'
 import { GroupError } from '@/lib/services/dm-v5/groups'
+import { isTimeoutError } from '@/lib/error-utils'
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
@@ -84,7 +86,19 @@ function toMessageDTO(view: MessageView): MessageDTO {
   return { id: view.id, sender: view.senderId, text: view.text, at: new Date(view.createdAt), own: view.own, pending: view.pending }
 }
 
-function toRow(view: ConversationView): ConversationRow {
+/**
+ * When a conversation last changed, for the inbox order (PRD DM-01). lib
+ * counts a group with no message from its read position, which is 0 for one
+ * joined but never opened; such a group is placed by when this device joined
+ * it, instead of with no time at all.
+ */
+function lastActivityOf(view: ConversationView, conv: Conv | undefined): Date | null {
+  if (view.lastActivity > 0) return new Date(view.lastActivity)
+  const joinedAt = conv?.kind === 'group' ? conv.entry.anchorChangedAt : 0
+  return joinedAt > 0 ? new Date(joinedAt) : null
+}
+
+function toRow(view: ConversationView, conv: Conv | undefined): ConversationRow {
   const group = view.kind === 'group'
   const last = view.lastMessage
   return {
@@ -97,7 +111,7 @@ function toRow(view: ConversationView): ConversationRow {
     members: group ? view.memberIds : [],
     isOwner: view.isOwner,
     lastMessage: last ? { text: last.text, at: new Date(last.createdAt), own: last.own } : null,
-    lastActivity: view.lastActivity > 0 ? new Date(view.lastActivity) : null,
+    lastActivity: lastActivityOf(view, conv),
     unread: view.unread,
     flags: {
       hidden: view.hidden,
@@ -112,7 +126,8 @@ function toRow(view: ConversationView): ConversationRow {
   }
 }
 
-const rowsOf = (snapshot: EngineSnapshot): ConversationRow[] => snapshot.conversations.map(toRow)
+const rowsOf = (engine: DmEngine): ConversationRow[] =>
+  engine.getSnapshot().conversations.map(view => toRow(view, engine.ctx.convs.get(view.key)))
 
 const conversationOf = (engine: DmEngine, key: string): ConversationView | undefined =>
   engine.getSnapshot().conversations.find(view => view.key === key)
@@ -120,11 +135,12 @@ const conversationOf = (engine: DmEngine, key: string): ConversationView | undef
 function view(engine: DmEngine): DmView {
   const snapshot = engine.getSnapshot()
   return {
-    rows: rowsOf(snapshot),
+    rows: rowsOf(engine),
     ready: snapshot.ready,
     error: snapshot.error,
     messages: key => engine.messages(key).map(toMessageDTO),
     pendingIn: key => pendingIn(engine, key),
+    heldIn: key => engine.ctx.convs.get(key)?.held.size ?? 0,
   }
 }
 
@@ -317,7 +333,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
         backend: 'v5',
         locked: !running,
         ready: snapshot?.ready ?? false,
-        ...unreadCounts(snapshot ? rowsOf(snapshot) : []),
+        ...unreadCounts(running ? rowsOf(running) : []),
         capReached: snapshot?.capReached ?? false,
         // Like web's settings dialog, never show the default in place of a setting not loaded yet.
         retention: snapshot?.ready ? snapshot.retention : null,
@@ -327,8 +343,23 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       }
     },
 
+    /**
+     * The inbox. Until the saved state has loaded there is no list to show:
+     * `ENGINE_BUSY` while the first load runs, and its failure once it has
+     * failed (retried by the next poll, or `refresh`), never an empty inbox
+     * that reads as a first visit (G-2, G-11; legacy does the same).
+     */
     async rows(identityId: string): Promise<ConversationRow[]> {
-      return rowsOf(engine(identityId).getSnapshot())
+      const running = engine(identityId)
+      const { ready, error } = running.getSnapshot()
+      if (!ready && error) throw new RpcError(error, isTimeoutError(error) ? 'TIMEOUT' : 'NETWORK')
+      if (!ready) throw new RpcError('Messages are still loading', 'ENGINE_BUSY')
+      return rowsOf(running)
+    },
+
+    /** Poll now (pull to refresh, "Try again"): the first load too, if it failed. Its failure shows in `status`. */
+    async refresh(identityId: string): Promise<void> {
+      await engine(identityId).tick()
     },
 
     async messages(identityId: string, key: string): Promise<MessageDTO[]> {

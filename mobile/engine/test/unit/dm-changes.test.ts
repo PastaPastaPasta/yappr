@@ -36,4 +36,22 @@ describe('dm change tracker', () => {
     expect(changed.map(e => e.changedKeys)).toEqual([[row.key], [row.key]])
     vi.useRealTimers()
   })
+
+  it('reports a conversation whose older history loaded, though its row is unchanged (QA D-L4i-002)', async () => {
+    vi.useFakeTimers()
+    const changed: DmEvents['dm.changed'][] = []
+    const tracker = createChangeTracker({ emit: (event, payload) => { if (event === 'dm.changed') changed.push(payload as DmEvents['dm.changed']) }, coalesceMs: 0 })
+    const viewWith = (held: number): DmView => ({ rows: [row], ready: true, error: null, messages: () => [], pendingIn: () => 0, heldIn: () => held })
+
+    tracker.changed(() => viewWith(2))
+    await vi.runAllTimersAsync()
+    tracker.changed(() => viewWith(2))
+    await vi.runAllTimersAsync()
+    // Opening the thread backfilled 11 older messages: the newest, the unread count and the row stay.
+    tracker.changed(() => viewWith(13))
+    await vi.runAllTimersAsync()
+
+    expect(changed.map(e => e.changedKeys)).toEqual([[row.key], [row.key]])
+    vi.useRealTimers()
+  })
 })
