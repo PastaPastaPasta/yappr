@@ -92,14 +92,35 @@ export function HomeScreen() {
   // content laid out so far (none on a cold launch): a launch restoring Following stayed on the empty first
   // page (D-L2a-004). Each time the pages get a new width, the pager settles on the tab again.
   const alignedWidth = useRef(0);
+  const settleFrame = useRef<number | null>(null);
+  const cancelSettle = () => {
+    if (settleFrame.current !== null) cancelAnimationFrame(settleFrame.current);
+    settleFrame.current = null;
+  };
+  useEffect(
+    () => () => {
+      if (settleFrame.current !== null) cancelAnimationFrame(settleFrame.current);
+    },
+    [],
+  );
   const onContentSizeChange = (width: number) => {
     // Rounding can leave the content a fraction of a point short of the pages' sum.
     if (pageWidth <= 0 || width + 1 < PAGES.length * pageWidth || alignedWidth.current === width) return;
     alignedWidth.current = width;
-    pager.current?.scrollTo({ x: tabIndex * pageWidth, animated: false });
+    const x = tabIndex * pageWidth;
+    pager.current?.scrollTo({ x, animated: false });
+    // The size comes from the commit's layout, not from its mounting: on Android the scroll can reach the UI
+    // thread ahead of the content it needs and be clamped again. Once more on the next frame, which comes after
+    // that commit mounted (a no-op if the first one landed), unless the reader has taken over.
+    cancelSettle();
+    settleFrame.current = requestAnimationFrame(() => {
+      settleFrame.current = null;
+      pager.current?.scrollTo({ x, animated: false });
+    });
   };
 
   const selectTab = (next: FeedTab) => {
+    cancelSettle();
     visit([next]);
     if (next !== tab) setPrefs({ tab: next });
   };
@@ -165,7 +186,10 @@ export function HomeScreen() {
         keyboardShouldPersistTaps="handled"
         onLayout={(e: LayoutChangeEvent) => setPageWidth(e.nativeEvent.layout.width)}
         onContentSizeChange={onContentSizeChange}
-        onScrollBeginDrag={() => visit(PAGES)}
+        onScrollBeginDrag={() => {
+          cancelSettle();
+          visit(PAGES);
+        }}
         onMomentumScrollEnd={onPagerSettled}
         contentOffset={{ x: tabIndex * pageWidth, y: 0 }}
         className="flex-1"

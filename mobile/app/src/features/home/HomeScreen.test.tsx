@@ -71,6 +71,32 @@ function Layout() {
   );
 }
 
+/** Holds `requestAnimationFrame` callbacks until {@link frames}`.run()`: the next frame, on demand. */
+function holdFrames() {
+  const pending = new Map<number, FrameRequestCallback>();
+  let next = 0;
+  const request = jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation((callback) => {
+    next += 1;
+    pending.set(next, callback);
+    return next;
+  });
+  const cancel = jest.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation((id) => {
+    if (typeof id === 'number') pending.delete(id);
+  });
+  return {
+    run: () =>
+      act(() => {
+        const due = [...pending.values()];
+        pending.clear();
+        due.forEach((callback) => callback(0));
+      }),
+    restore: () => {
+      request.mockRestore();
+      cancel.mockRestore();
+    },
+  };
+}
+
 async function renderHome() {
   const app = renderRouter({ _layout: Layout, index: HomeScreen, compose: () => null }, { initialUrl: '/' });
   // The pager lays out, then its pages mount.
@@ -395,6 +421,7 @@ describe('Home', () => {
       if (this.props.testID !== 'home-pager' || typeof options !== 'object') return;
       offset = Math.min(options.x ?? 0, Math.max(laidOut - 400, 0));
     });
+    const frames = holdFrames();
     try {
       await renderHome();
       // The pages got their width with the scroll to Following, before the content had it.
@@ -404,6 +431,7 @@ describe('Home', () => {
       act(() => {
         fireEvent(screen.getByTestId('home-pager'), 'contentSizeChange', 800, 800);
       });
+      frames.run();
       expect(offset).toBe(400);
       expect(screen.getByText('a followed post')).toBeTruthy();
       // A height change alone (a banner) leaves the reader's page alone.
@@ -411,9 +439,64 @@ describe('Home', () => {
       act(() => {
         fireEvent(screen.getByTestId('home-pager'), 'contentSizeChange', 800, 760);
       });
+      frames.run();
       expect(offset).toBe(123);
     } finally {
       scrollTo.mockRestore();
+      frames.restore();
+    }
+  });
+
+  it('settles on the restored tab on the next frame when the first scroll reached the pager before its content mounted (D-L2a-004)', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    useHomePrefsStore.setState({ accounts: { [viewer.identityId]: { tab: 'following', sort: 'recent', window: 'all' } } });
+    home().mockResolvedValue(page([post('p1', 'a followed post', 1)]));
+    let laidOut = 0;
+    let offset = 0;
+    const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo').mockImplementation(function (
+      this: ScrollView,
+      options?: { x?: number } | number,
+    ) {
+      if (this.props.testID !== 'home-pager' || typeof options !== 'object') return;
+      offset = Math.min(options.x ?? 0, Math.max(laidOut - 400, 0));
+    });
+    const frames = holdFrames();
+    try {
+      await renderHome();
+      // Android (Fabric): the commit's layout event reaches JS, whose scroll runs before that commit is mounted.
+      act(() => {
+        fireEvent(screen.getByTestId('home-pager'), 'contentSizeChange', 800, 800);
+      });
+      expect(offset).toBe(0);
+
+      // The next frame comes after the mount.
+      laidOut = 800;
+      frames.run();
+      expect(offset).toBe(400);
+    } finally {
+      scrollTo.mockRestore();
+      frames.restore();
+    }
+  });
+
+  it('leaves the pager to the reader who starts swiping before the next frame', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
+    useHomePrefsStore.setState({ accounts: { [viewer.identityId]: { tab: 'following', sort: 'recent', window: 'all' } } });
+    home().mockResolvedValue(page([post('p1', 'a followed post', 1)]));
+    const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo');
+    const frames = holdFrames();
+    try {
+      await renderHome();
+      act(() => {
+        fireEvent(screen.getByTestId('home-pager'), 'contentSizeChange', 800, 800);
+      });
+      const calls = scrollTo.mock.calls.length;
+      fireEvent(screen.getByTestId('home-pager'), 'scrollBeginDrag');
+      frames.run();
+      expect(scrollTo).toHaveBeenCalledTimes(calls);
+    } finally {
+      scrollTo.mockRestore();
+      frames.restore();
     }
   });
 
