@@ -41,4 +41,20 @@ describe('open-source licenses (PRD SET-06)', () => {
     expect(names).not.toContain('jest');
     expect(names).not.toContain('eslint');
   });
+
+  it('takes from the web tree only what the engine bundles, each with its license text', () => {
+    const bundled = JSON.parse(fs.readFileSync(path.join(APP_DIR, '../engine/bundled-packages.json'), 'utf8')) as {
+      packages: string[];
+    };
+    for (const key of bundled.packages) {
+      const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+      const listed = generated.packages.filter((pkg) => pkg.name === name);
+      expect(listed.length).toBeGreaterThan(0);
+      // MIT, BSD and Apache need the notice itself, not only the license's name.
+      for (const pkg of listed) expect(pkg.texts.length).toBeGreaterThan(0);
+    }
+    // The web app's own packages, which only the root lockfile has, never ship.
+    const names = new Set(generated.packages.map((pkg) => pkg.name));
+    for (const webOnly of ['next', '@next/env', 'framer-motion']) expect(names).not.toContain(webOnly);
+  });
 });

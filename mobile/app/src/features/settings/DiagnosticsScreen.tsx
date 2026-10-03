@@ -1,7 +1,7 @@
 import type { EngineDiagnostics } from '@engine/api';
 import { RpcErrorCode, type LogLevel } from '@engine/protocol/envelope';
 import * as Clipboard from 'expo-clipboard';
-import { Stack } from 'expo-router';
+import { Stack, useIsFocused } from 'expo-router';
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { Alert, AppState, Platform, Pressable, Text as RNText, Share, TextInput, View } from 'react-native';
 import { ChevronDownIcon, ClipboardDocumentIcon } from 'react-native-heroicons/outline';
@@ -76,16 +76,19 @@ const readStats = () => ({ storage: engineStorage.stats(), cacheBytes: persisted
 /**
  * What is not observable (storage counts, the cache size, the engine's WASM
  * and DAPI figures, the clock for "last ok"): re-read every 2 s while the
- * screen is up and the app is in the foreground (UX_SPEC §4.32).
+ * screen is visible (focused, the app in the foreground; UX_SPEC §4.32). It
+ * stays mounted in the Profile stack while another tab shows, so focus counts.
  */
 function useLiveStats(state: EngineStatus['state']) {
   const [stats, setStats] = useState(readStats);
   const [diagnostics, setDiagnostics] = useState<EngineDiagnostics | null>(null);
+  const focused = useIsFocused();
   const live = accepting(state);
   // An engine built before `engine.diagnostics` (a dev URL, an older dev client) answers UNKNOWN_METHOD:
   // stop asking, rather than fill recent errors with one failure every 2 s.
   const unsupported = useRef(false);
   useEffect(() => {
+    if (!focused) return undefined;
     let mounted = true;
     const tick = () => {
       if (AppState.currentState === 'background') return;
@@ -107,7 +110,7 @@ function useLiveStats(state: EngineStatus['state']) {
       mounted = false;
       clearInterval(timer);
     };
-  }, [live]);
+  }, [live, focused]);
   return { ...stats, diagnostics };
 }
 
@@ -362,14 +365,19 @@ export function DiagnosticsScreen() {
         <Row label={diagCopy.cache} value={formatBytes(cacheBytes)} />
       </Section>
 
-      <Section title={diagCopy.recentErrors(errors.length)}>
-        <View testID="diagnostics-errors" className="py-1">
-          {errors.length === 0 ? (
-            <Row label={diagCopy.noErrors} value="" />
-          ) : (
-            [...errors].reverse().map((error) => <ErrorRow key={error.id} {...error} />)
-          )}
-        </View>
+      {/* A collapsed row (UX_SPEC §4.32), so up to 50 errors never push the actions below off screen. */}
+      <Section title={diagCopy.errors}>
+        {errors.length === 0 ? (
+          <Row label={diagCopy.noErrors} value="" />
+        ) : (
+          <Disclosure title={diagCopy.recentErrors(errors.length)} testID="diagnostics-errors-toggle">
+            <View testID="diagnostics-errors">
+              {[...errors].reverse().map((error) => (
+                <ErrorRow key={error.id} {...error} />
+              ))}
+            </View>
+          </Disclosure>
+        )}
       </Section>
 
       <View className="gap-3 px-4 pt-6">

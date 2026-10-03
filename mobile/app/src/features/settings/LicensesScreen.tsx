@@ -23,7 +23,7 @@ export interface LicensesFile {
   texts: string[];
 }
 
-/** Generated from the lockfiles at build time (`npm run licenses`, and every prebuild). */
+/** Generated at build time from the app's lockfile and the engine's bundled packages (`npm run licenses`, and every prebuild). */
 export const licenses: LicensesFile = licensesFile;
 
 function PackageRow({ pkg, texts }: { pkg: LicensedPackage; texts: readonly string[] }) {

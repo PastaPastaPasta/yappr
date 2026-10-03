@@ -16,8 +16,10 @@ import { engineSupervisor } from '~/engine';
 import { useExpiredSessions } from '~/data/session-expiry';
 import { useAccounts } from '~/features/auth/accounts';
 import { AccountList } from '~/features/auth/AccountSwitcher';
+import { engineStateWord } from '~/features/network/NetworkChipButton';
 import { useAppearance } from '~/state/appearance';
 import { queryClient } from '~/state/query-client';
+import { chipStateOf } from '~/ui/NetworkChip';
 import { useToastStore } from '~/ui/toast';
 
 import { AboutScreen } from './AboutScreen';
@@ -160,6 +162,18 @@ describe('Settings root (SET-01)', () => {
 
     fireEvent.press(byId('network-sheet-diagnostics'));
     expect(router.push).toHaveBeenCalledWith('/settings/diagnostics');
+  });
+
+  it('every chip maps a crash as transient: booting while the supervisor restarts, unavailable when it cannot connect', () => {
+    expect(chipStateOf('ready')).toBe('ready');
+    expect(chipStateOf('degraded')).toBe('unavailable');
+    expect(chipStateOf('crashed')).toBe('booting');
+    expect(chipStateOf('restarting')).toBe('booting');
+    expect(chipStateOf('failed')).toBe('unavailable');
+    expect(chipStateOf('unsupported')).toBe('unavailable');
+    // The sheet's engine line agrees with its chip (PRD NET-01: a degraded boot could not connect).
+    expect(engineStateWord('degraded')).toBe('Unavailable');
+    expect(engineStateWord('crashed')).toBe('Restarting');
   });
 
   it('signed out: sign-in instead of the account, content settings only', () => {

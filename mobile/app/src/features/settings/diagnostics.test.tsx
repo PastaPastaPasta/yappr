@@ -25,8 +25,10 @@ jest.mock('~/engine', () => {
   };
 });
 const mockHeader: { right?: () => ReactNode } = {};
+const mockFocus = { focused: true };
 jest.mock('expo-router', () => ({
   router: { push: jest.fn() },
+  useIsFocused: () => mockFocus.focused,
   Stack: {
     Screen: ({ options }: { options?: { headerRight?: () => ReactNode } }) => {
       mockHeader.right = options?.headerRight;
@@ -67,19 +69,19 @@ const diagnostics = (lastOkAgoMs: number): EngineDiagnostics => ({
   },
 });
 
-function renderScreen(element: ReactElement) {
-  const metrics = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
-  return render(
-    <SafeAreaProvider initialMetrics={metrics}>
-      <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>
-    </SafeAreaProvider>,
-  );
-}
+const metrics = { frame: { x: 0, y: 0, width: 390, height: 844 }, insets: { top: 0, left: 0, right: 0, bottom: 0 } };
+const withProviders = (element: ReactElement) => (
+  <SafeAreaProvider initialMetrics={metrics}>
+    <QueryClientProvider client={queryClient}>{element}</QueryClientProvider>
+  </SafeAreaProvider>
+);
+const renderScreen = (element: ReactElement) => render(withProviders(element));
 
 const settle = () => act(async () => {});
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockFocus.focused = true;
   fakeEngine.reset();
   fakeEngine.setStatus({ state: 'ready', epoch: 1, info: INFO });
   fakeEngine.method('engine.diagnostics').mockResolvedValue(diagnostics(4000));
@@ -147,7 +149,10 @@ describe('Engine diagnostics (SET-08)', () => {
     fireEvent.press(screen.getByTestId('diagnostics-copy-pollr'));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(CONTRACTS.pollr);
 
+    // Collapsed (UX_SPEC §4.32): the count, then the list once opened.
     expect(screen.getByText(/^Recent errors \(\d+\)$/)).toBeTruthy();
+    expect(screen.queryByText('Dash Platform is temporarily unavailable')).toBeNull();
+    fireEvent.press(screen.getByTestId('diagnostics-errors-toggle'));
     expect(screen.getByText('Dash Platform is temporarily unavailable')).toBeTruthy();
     // A read that fails while the screen is open lands in the list.
     act(() => recordEngineError('posts.thread', 'Engine call posts.thread timed out after 30000 ms'));
@@ -167,6 +172,27 @@ describe('Engine diagnostics (SET-08)', () => {
       });
       expect(fakeEngine.method('engine.diagnostics')).toHaveBeenCalledTimes(1);
       expect(screen.getByText('WASM compile')).toBeTruthy();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('refreshes every 2 s only while focused: mounted under another tab, it stops asking', async () => {
+    jest.useFakeTimers();
+    try {
+      const view = renderScreen(<DiagnosticsScreen />);
+      await settle();
+      await act(async () => {
+        jest.advanceTimersByTime(4_000);
+      });
+      expect(fakeEngine.method('engine.diagnostics')).toHaveBeenCalledTimes(3);
+
+      mockFocus.focused = false;
+      view.rerender(withProviders(<DiagnosticsScreen />));
+      await act(async () => {
+        jest.advanceTimersByTime(10_000);
+      });
+      expect(fakeEngine.method('engine.diagnostics')).toHaveBeenCalledTimes(3);
     } finally {
       jest.useRealTimers();
     }

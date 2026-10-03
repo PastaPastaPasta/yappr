@@ -780,6 +780,9 @@ describe('EngineSupervisor', () => {
           throw new RpcError('Dash Platform is temporarily unavailable', 'UNAVAILABLE');
         };
         engine.handlers['feed.home'] = () => ({ items: [], cursor: null });
+        engine.handlers['engine.diagnostics'] = () => {
+          throw new RpcError('poll failed', 'UNAVAILABLE');
+        };
         engine.hold.add('posts.thread');
       },
     });
@@ -797,8 +800,11 @@ describe('EngineSupervisor', () => {
     expect(s.deps.error).toHaveBeenCalledWith('posts.thread', 'Engine call posts.thread timed out after 30000 ms');
 
     await expect(s.supervisor.call('feed.home', [])).resolves.toEqual({ items: [], cursor: null });
+    // The host's control calls are its own machinery (a diagnostics poll cut by a restart): not listed.
+    await expect(s.supervisor.call('engine.diagnostics', [])).rejects.toMatchObject({ code: 'UNAVAILABLE' });
     const operations = (s.deps.error as jest.Mock).mock.calls.map(([operation]: string[]) => operation);
     expect(operations).not.toContain('feed.home');
+    expect(operations).not.toContain('engine.diagnostics');
     expect(JSON.stringify((s.deps.error as jest.Mock).mock.calls)).not.toContain('secret-arg');
     s.supervisor.stop();
   });

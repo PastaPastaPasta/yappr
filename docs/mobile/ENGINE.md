@@ -393,7 +393,7 @@ TanStack Query's `signal` is wired to `cancel`, so a screen that unmounts cancel
 - **Release builds** forward only `warn` and `error`, and replace every non-string argument with its type tag (`<Error: message>`, `<Uint8Array 32>`, `<object>`).
 - **Dev builds** forward everything, still redacted.
 - **On the host,** logs go to a 2 000-line ring buffer shown on the diagnostics screen, and in dev to the Metro console. Nothing is sent off the device; there is no logging SDK.
-- **Recent errors.** The host also keeps the last 50 engine errors (`src/engine/errors.ts`) for diagnostics: every call that failed (method path and redacted message, never the arguments) and every `error`-level log line.
+- **Recent errors.** The host also keeps the last 50 engine errors (`src/engine/errors.ts`) for diagnostics: every call that failed (method path and redacted message, never the arguments; not the host's own `engine.*` control calls) and every `error`-level log line.
 
 ---
 

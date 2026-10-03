@@ -19,13 +19,16 @@ export type ChipNetwork = 'devnet' | 'testnet' | 'mainnet';
 export type EngineState = 'ready' | 'booting' | 'unavailable';
 
 /**
- * The chip's look for the supervisor's state (PRD NET-01, UX_SPEC §2.17):
- * steady once booted, hollow when the engine could not connect (a degraded
- * boot, or it gave up), pulsing while it starts.
+ * The chip's look for the supervisor's state (PRD NET-01, UX_SPEC §2.17),
+ * everywhere a chip shows (Home, the Settings footer, the network sheet,
+ * Welcome): steady once booted, hollow when the engine could not connect (a
+ * degraded boot, or it gave up), pulsing while it starts. A crash is
+ * transient: the supervisor restarts the engine on its own (UX_SPEC §4.34),
+ * so it pulses as booting, like the sheet's "Restarting".
  */
 export function chipStateOf(state: SupervisorState): EngineState {
   if (state === 'ready') return 'ready';
-  if (state === 'degraded' || state === 'failed' || state === 'unsupported' || state === 'crashed') return 'unavailable';
+  if (state === 'degraded' || state === 'failed' || state === 'unsupported') return 'unavailable';
   return 'booting';
 }
 

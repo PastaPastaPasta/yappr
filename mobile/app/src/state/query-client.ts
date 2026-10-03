@@ -142,9 +142,23 @@ export function forDisk(client: PersistedClient): PersistedClient {
 
 const PERSIST_KEY = 'yappr-query-cache';
 
+/** Bumped by every write or removal of the on-disk cache, so its size is measured once per change. */
+let cacheGeneration = 0;
+let measured: { generation: number; bytes: number } | null = null;
+
 const persister = createAsyncStoragePersister({
   key: PERSIST_KEY,
-  storage: syncStorage,
+  storage: {
+    getItem: syncStorage.getItem,
+    setItem: (key: string, value: string) => {
+      syncStorage.setItem(key, value);
+      cacheGeneration += 1;
+    },
+    removeItem: (key: string) => {
+      syncStorage.removeItem(key);
+      cacheGeneration += 1;
+    },
+  },
   // The engine's codec, so a restored post keeps its Dates (and bigints, Maps...).
   serialize: (client) => stringify(forDisk(client)),
   deserialize: (cache) => parse(cache) as PersistedClient,
@@ -217,8 +231,13 @@ function utf8Bytes(text: string): number {
 
 /**
  * The on-disk cache's size in bytes: what "Clear cache" deletes (Engine
- * diagnostics, PRD SET-08). MMKV stores the string as UTF-8.
+ * diagnostics, PRD SET-08). MMKV stores the string as UTF-8. Reading it back
+ * decodes megabytes, so it is measured only after the persister wrote or
+ * removed it, not on every 2 s refresh.
  */
 export function persistedCacheBytes(): number {
-  return utf8Bytes(syncStorage.getItem(PERSIST_KEY) ?? '');
+  if (measured?.generation !== cacheGeneration) {
+    measured = { generation: cacheGeneration, bytes: utf8Bytes(syncStorage.getItem(PERSIST_KEY) ?? '') };
+  }
+  return measured.bytes;
 }

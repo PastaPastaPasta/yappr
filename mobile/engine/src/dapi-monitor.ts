@@ -10,6 +10,14 @@
  * UNAVAILABLE (14): an application error (not found, invalid argument) still
  * means the node is up. A rejected fetch (no route, TLS, CORS, abort) is a
  * failure.
+ *
+ * A liveness signal, not a health check: it reads only the response headers
+ * and never the body. A gRPC-web response that is not trailers-only carries
+ * its status in a trailer frame inside the body, and a gateway that does not
+ * expose `grpc-status` to cross-origin pages hides even the header. So a
+ * gateway that answers 200 while the platform service behind it is down still
+ * counts as an answer. Reading the trailer would mean teeing every response
+ * body the SDK streams; "last ok" is "the gateway answered".
  */
 
 const DAPI_SERVICE = '/org.dash.platform.'

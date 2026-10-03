@@ -18,6 +18,7 @@ export const diagCopy = {
   never: 'never',
   capabilities: 'Capabilities',
   cache: 'Cache',
+  errors: 'Errors',
   recentErrors: (count: number) => `Recent errors (${count})`,
   noErrors: 'No errors',
   contractCopied: (label: string) => `${label} copied`,

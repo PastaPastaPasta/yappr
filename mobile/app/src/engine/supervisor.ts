@@ -91,7 +91,8 @@ export interface SupervisorDeps<Load> {
   log(level: LogLevel, source: 'engine' | 'host', message: string): void;
   /**
    * An engine call failed (`operation` is its path, or `engine.boot`): Engine
-   * diagnostics' recent errors (PRD SET-08). Never given the call's arguments.
+   * diagnostics' recent errors (PRD SET-08). Never given the call's arguments,
+   * nor the host's own `engine.*` control calls.
    */
   error?(operation: string, message: string): void;
   /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */
@@ -764,9 +765,14 @@ export class EngineSupervisor<Load = unknown> {
     );
   }
 
-  /** A call that failed on its own (not refused up front): rejected, and listed in diagnostics. */
+  /**
+   * A call that failed on its own (not refused up front): rejected, and listed
+   * in diagnostics. Not the `engine.*` control calls (lifecycle, info,
+   * diagnostics): they are the host's own machinery, and their failures (a
+   * restart mid-poll, a suspended WebView) already show as the engine's state.
+   */
   private failCall(job: Job, error: unknown) {
-    this.reportError(job.path, error);
+    if (!job.path.startsWith('engine.')) this.reportError(job.path, error);
     job.reject(error);
   }
 

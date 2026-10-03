@@ -163,7 +163,12 @@ describe('persistedCacheBytes (Engine diagnostics, SET-08)', () => {
   it('is the on-disk cache\'s UTF-8 size, and zero once "Clear cache" deleted it', async () => {
     syncStorage.setItem('yappr-query-cache', 'aé€😀');
     expect(persistedCacheBytes()).toBe(1 + 2 + 3 + 4);
+    // Measured once per change of the cache, not re-read on every diagnostics refresh.
+    const read = jest.spyOn(syncStorage, 'getItem');
+    expect(persistedCacheBytes()).toBe(10);
+    expect(read).not.toHaveBeenCalled();
     await clearAccountCache();
     expect(persistedCacheBytes()).toBe(0);
+    read.mockRestore();
   });
 });

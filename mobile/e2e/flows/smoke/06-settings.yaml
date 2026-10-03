@@ -174,9 +174,10 @@ tags:
       # Its link opens Engine diagnostics (SET-08).
       - tapOn:
           id: network-sheet-diagnostics
+      # The header's Share is always on screen; the Share diagnostics button sits below the fold.
       - extendedWaitUntil:
           visible:
-            id: diagnostics-share
+            id: diagnostics-share-header
           timeout: 30000
       - takeScreenshot: engine-diagnostics
       - runFlow: ../../subflows/back.yaml
