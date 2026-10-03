@@ -147,7 +147,11 @@ describe('launch', () => {
     mount('/profile');
     expect(useOnboarding.getState()).toMatchObject({ welcomed: false, welcomeDue: true });
 
-    act(() => useSessionStore.setState({ status: 'signed-in', session: alice }));
+    // A restore (here, a stale one right after the sign-out's engine restart) is not a sign-in.
+    act(() => fakeEngine.emit('session.changed', { session: alice, reason: 'restored' }));
+    expect(useOnboarding.getState()).toMatchObject({ welcomed: false, welcomeDue: true });
+
+    act(() => fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in' }));
     expect(useOnboarding.getState()).toMatchObject({ welcomed: true, welcomeDue: false });
   });
 

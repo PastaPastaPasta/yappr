@@ -2,6 +2,7 @@ import { router, usePathname, useRootNavigationState } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
+import { useEngineEvent } from '~/data/events';
 import { lastIdentity, useSession, useSessionStore } from '~/data/session';
 import { setReauthHandler } from '~/data/session-expiry';
 import { engine, engineNetworkKey } from '~/engine';
@@ -42,12 +43,15 @@ function useWelcomeOnFirstLaunch(ready: boolean): void {
   }, [ready]);
 }
 
-/** A sign-in is past Welcome, however it was reached (the Profile tab, a link, Add account). */
+/**
+ * A sign-in is past Welcome, however it was reached (the Profile tab, a link, Add account). Only
+ * a sign-in made here counts, not a session the engine restores: a restore that still finds the
+ * signed-out account for a moment must not cancel the Welcome its sign-out asked for.
+ */
 function useSignInPassesWelcome(): void {
-  const signedIn = useSessionStore((s) => s.status === 'signed-in');
-  useEffect(() => {
-    if (signedIn && !useOnboarding.getState().welcomed) setWelcomed(true);
-  }, [signedIn]);
+  useEngineEvent('session.changed', ({ session, reason }) => {
+    if (reason === 'signed-in' && session && !useOnboarding.getState().welcomed) setWelcomed(true);
+  });
 }
 
 /**
