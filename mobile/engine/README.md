@@ -25,7 +25,7 @@ Run `npm ci` at the repo root first: the bundle resolves `lib/`'s dependencies f
 
 | Command | What it does |
 | --- | --- |
-| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.wasm.js, engine.avatars.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}` |
+| `npm run build:testnet` / `build:devnet` / `build` | Bundle → `dist/<variant>/{engine.js, engine.wasm.js, engine.avatars.js, engine.html, engine.inline.html, selftest.html, manifest.json, meta.json}`. Fails when the committed `bundled-packages.json` (the packages the shipped scripts bundle, read by the app's open-source licenses list) no longer matches; `node build.mjs --variant testnet --update-packages` rewrites it. |
 | `npm run typecheck` | `tsc` over src, tests and the lib files they reach |
 | `npm run lint` | ESLint with the engine's own config (`.eslintrc.cjs`; the root config ignores `mobile/**`) |
 | `npm test` | Unit tests (offline) |

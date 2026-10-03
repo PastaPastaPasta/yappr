@@ -1295,6 +1295,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line.
 - Rows: "Terms of Use", "Privacy Policy", "Community rules", "Community rules summary" (bundled, opens the 4.7 text read-only), "Support", "Open-source licenses", "Yappr on the web". Footer: the Powered-by-Dash mark.
+- Info rows above the links: "Version" (version and build), "Network", "Engine" (evo-sdk and bundle), "Commit" (the first 8 characters of the git commit, baked in at build time; never fetched).
+- "Community rules" opens the full rules in a sheet (the text the 4.7 gate expands under "Community rules") until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
+- "Open-source licenses" pushes a native list (`/settings/licenses`) generated at build time from the app's production lockfile and the packages the engine bundles (`mobile/engine/bundled-packages.json`, from esbuild's metafiles): one row per package with its version and license; a row opens to the package's license text.
 
 ### 4.32 Engine diagnostics
 
@@ -1330,6 +1333,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - Values refresh every 2 s while visible. The errors list shows time, operation and message, newest first; a row expands to the full message.
+- Recent errors keeps the last 50: every engine call that failed (reads included; the operation is its method path) except the host's own `engine.*` control calls, and every error the engine or the host logged (operation `engine` / `host`). The list is a collapsed row ("Recent errors (3) ›"), so the actions below stay in reach.
+- "Share" (header) and "Share diagnostics" (button) open the native share sheet with the same text "Copy diagnostics" copies. The DAPI row expands to each endpoint's last success and failures; "Capabilities" expands to the flag list; each contract id (social, profile, DM, Pollr) has a copy button.
 - The shared text never includes keys, WIFs, encryption keys or message content.
 
 ### 4.33 Lockdown Mode
@@ -1838,9 +1843,14 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | appearance.language | Feed language (web: "Feed Language", sentence-cased here) |
 | about.tagline | Decentralized social media on Dash Platform **(web)** |
 | about.rows | Terms of Use / Privacy Policy / Community rules / Community rules summary / Support / Open-source licenses / Yappr on the web |
+| about.info | Version / Network / Engine / Commit |
 | diag.title | Engine diagnostics |
 | diag.states | Booting / Ready / Restarting / Unavailable |
 | diag.copy / share | Copy diagnostics / Share diagnostics |
+| diag.shareAction | Share |
+| diag.rows | Boot time / WASM compile / DAPI endpoints / Capabilities / Cache / Errors / Recent errors ({count}) / No errors |
+| diag.dapi | {count} · last ok {4s / 3m / 2h} ago / never |
+| diag.contract | Social contract / Profile contract / DM contract / Pollr contract / Copy {contract} / {contract} copied |
 | diag.restart | Restart engine / Restart the engine? Lists reload; nothing you posted is lost. / Restart |
 | diag.clear | Clear cache / Clear saved posts and lists? Your accounts, keys and drafts stay. / Clear |
 
@@ -1851,6 +1861,8 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | chip.devnet / testnet | DEVNET / TESTNET |
 | network.devnet | Running on a Dash Platform devnet. Data may be reset. **(web)** |
 | network.testnet | Running on Dash Platform Testnet. Data may be reset. **(web)** |
+| network.engine | Engine: Booting / Ready / Restarting / Unavailable |
+| network.diagnostics | Engine diagnostics |
 | offline.banner | You're offline. Showing saved posts. |
 | offline.toast | You're offline. Nothing was sent. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |

@@ -21,8 +21,6 @@ export const links = {
   privacy: 'https://yap.pr/privacy',
   web: site,
   registerUsername: `${site}/dpns/register`,
-  /** The source and its license; the native third-party list is generated later (PRD SET-06). */
-  licenses: 'https://github.com/pastapastapasta/yappr',
 };
 
 /** "1.0.0 (123)": the version and the native build number. */

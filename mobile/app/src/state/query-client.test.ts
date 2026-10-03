@@ -3,7 +3,18 @@ import type { PersistedClient } from '@tanstack/react-query-persist-client';
 
 import { getLogs } from '~/engine/logs';
 
-import { cacheBuster, describeQueryKey, forDisk, persistedQuery, persistOptions, queryClient, refetchFailedReads } from './query-client';
+import {
+  cacheBuster,
+  clearAccountCache,
+  describeQueryKey,
+  forDisk,
+  persistedCacheBytes,
+  persistedQuery,
+  persistOptions,
+  queryClient,
+  refetchFailedReads,
+} from './query-client';
+import { syncStorage } from './storage';
 
 type Feed = InfiniteData<{ items: number[] }, number>;
 
@@ -145,5 +156,19 @@ describe('failed reads', () => {
     expect(queryClient.getQueryData(['engine', 'devnet', 'shown'])).toBe('back');
     expect(getLogs().some((line) => line.message === 'Test: retrying 1 failed read')).toBe(true);
     stops.forEach((stop) => stop());
+  });
+});
+
+describe('persistedCacheBytes (Engine diagnostics, SET-08)', () => {
+  it('is the on-disk cache\'s UTF-8 size, and zero once "Clear cache" deleted it', async () => {
+    syncStorage.setItem('yappr-query-cache', 'aé€😀');
+    expect(persistedCacheBytes()).toBe(1 + 2 + 3 + 4);
+    // Measured once per change of the cache, not re-read on every diagnostics refresh.
+    const read = jest.spyOn(syncStorage, 'getItem');
+    expect(persistedCacheBytes()).toBe(10);
+    expect(read).not.toHaveBeenCalled();
+    await clearAccountCache();
+    expect(persistedCacheBytes()).toBe(0);
+    read.mockRestore();
   });
 });

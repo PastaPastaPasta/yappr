@@ -1,3 +1,4 @@
+import { execFileSync } from 'child_process';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 import pkg from './package.json';
@@ -40,6 +41,24 @@ export function resolveBuildNumber(raw: string | undefined): number {
     throw new Error(`YAPPR_BUILD_NUMBER must be an integer from 1 to 2100000000, got "${raw}".`);
   }
   return value;
+}
+
+/**
+ * The commit the app is built from, for About (PRD SET-06). Baked into
+ * `extra` when the config is read (prebuild, start, export), never fetched:
+ * YAPPR_COMMIT when CI sets it, EAS's EAS_BUILD_GIT_COMMIT_HASH on EAS, else
+ * this checkout's HEAD. Null outside a git checkout.
+ */
+export function resolveCommit(env: Record<string, string | undefined> = process.env): string | null {
+  const isSha = (value: string | undefined): value is string => !!value && /^[0-9a-f]{7,40}$/i.test(value);
+  const fromEnv = [env.YAPPR_COMMIT, env.EAS_BUILD_GIT_COMMIT_HASH].find(isSha);
+  if (fromEnv) return fromEnv.toLowerCase();
+  try {
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return isSha(head) ? head : null;
+  } catch {
+    return null;
+  }
 }
 
 // The fox icon's own background (#0f87cf), so the splash and adaptive icon blend with it.
@@ -159,6 +178,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       ['./plugins/engine-assets', { variant }],
       './plugins/release-hardening',
       './plugins/wallet-schemes',
+      // The Open-source licenses list (PRD SET-06), regenerated from the lockfiles.
+      './plugins/licenses',
       // Apps built with the iOS 27 SDK (Xcode 27) must adopt the UIScene life cycle or iOS 27
       // stops them at launch. SDK 57 opts in here (expo/expo#46664); SDK 58 templates do it by
       // default, so remove this on the SDK 58 upgrade.
@@ -181,6 +202,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       variant,
       network: v.network,
       engine: engineExtra(variant),
+      commit: resolveCommit(),
     },
   };
 };

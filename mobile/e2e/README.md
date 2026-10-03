@@ -6,7 +6,7 @@ nightly (`.github/workflows/mobile-e2e.yml`).
 
 | Suite | Flows | Needs |
 | --- | --- | --- |
-| `smoke` | `flows/smoke/`: signed-out browse (Home, a thread, a profile), Explore and search, the signed-out tabs, settings toggles (theme, NSFW mode), deep links (cold and warm). Read only. | Nothing secret; any variant |
+| `smoke` | `flows/smoke/`: signed-out browse (Home, a thread, a profile), Explore and search, the signed-out tabs, settings toggles (theme, NSFW mode), the network sheet, About and its licenses list, deep links (cold and warm). Read only. | Nothing secret; any variant |
 | `full` | `smoke`, then `flows/full/`: key exchange through the test-wallet responder, key sign-in, post (deleted again), like and unlike, reply, follow and unfollow, a DM round trip, block and unblock, report, notifications, sign out. | The devnet variant (sakura) and two pool personas |
 
 The full suite writes to sakura as pool personas (90–98; never 99, never

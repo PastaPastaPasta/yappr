@@ -12,6 +12,7 @@
  * which every engine start would otherwise scan, base64 included.
  */
 import rawInit, { type InitInput, type InitOutput } from '@dashevo/wasm-sdk/raw/wasm_sdk.no_url.js'
+import { recordWasmInit } from '../wasm-timing'
 
 export * from '@dashevo/wasm-sdk/raw/wasm_sdk.no_url.js'
 
@@ -33,7 +34,10 @@ export function setWasmSource(next: WasmSource): void {
 export default function init(): Promise<InitOutput> {
   initializing ??= (async () => {
     if (!source) throw new Error('No WASM source: call setWasmSource() before the SDK initializes')
-    return rawInit({ module_or_path: await source() })
+    const started = performance.now()
+    const output = await rawInit({ module_or_path: await source() })
+    recordWasmInit(Math.round(performance.now() - started))
+    return output
   })()
   return initializing
 }

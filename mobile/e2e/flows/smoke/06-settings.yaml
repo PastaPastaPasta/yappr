@@ -143,3 +143,66 @@ tags:
           id: privacy-nsfw-blur
           checked: true
 - runFlow: ../../subflows/back.yaml
+
+# The footer network chip opens the network sheet (NET-07); Android Back closes it.
+# Mainnet builds (pr.yap.app) have no chip.
+- runFlow:
+    when:
+      true: ${APP_ID != 'pr.yap.app'}
+    commands:
+      - scrollUntilVisible:
+          element:
+            id: network-chip
+          direction: DOWN
+      - runFlow:
+          when:
+            platform: Android
+          commands:
+            - tapOn:
+                id: network-chip
+            - assertVisible:
+                id: network-sheet-engine
+            - back
+            - waitForAnimationToEnd
+            - assertNotVisible:
+                id: network-sheet-engine
+      - tapOn:
+          id: network-chip
+      - assertVisible:
+          id: network-sheet-engine
+      - takeScreenshot: network-sheet
+      # Its link opens Engine diagnostics (SET-08).
+      - tapOn:
+          id: network-sheet-diagnostics
+      # The header's Share is always on screen; the Share diagnostics button sits below the fold.
+      - extendedWaitUntil:
+          visible:
+            id: diagnostics-share-header
+          timeout: 30000
+      - takeScreenshot: engine-diagnostics
+      - runFlow: ../../subflows/back.yaml
+
+# About (SET-06): the commit, Community rules apart from the summary, the native licenses list.
+- scrollUntilVisible:
+    element:
+      id: settings-about
+    direction: UP
+- tapOn:
+    id: settings-about
+- assertVisible:
+    id: about-commit
+- assertVisible:
+    id: about-community-rules
+- scrollUntilVisible:
+    element:
+      id: about-licenses
+    direction: DOWN
+- tapOn:
+    id: about-licenses
+- extendedWaitUntil:
+    visible:
+      id: licenses-list
+    timeout: 10000
+- takeScreenshot: licenses
+- runFlow: ../../subflows/back.yaml
+- runFlow: ../../subflows/back.yaml

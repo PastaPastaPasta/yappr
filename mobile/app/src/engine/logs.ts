@@ -1,5 +1,6 @@
 import type { LogLevel } from '@engine/protocol/envelope';
 
+import { recordEngineError } from './errors';
 import { redact } from './redact';
 
 export interface LogLine {
@@ -30,6 +31,8 @@ export function appendLog(level: LogLevel, source: LogLine['source'], message: s
   const text = redacted.length > MAX_LINE ? `${redacted.slice(0, MAX_LINE)}…` : redacted;
   const line: LogLine = { id: nextId++, at: Date.now(), level, source, message: text };
   lines = [...lines, line].slice(-CAPACITY);
+  // Diagnostics' recent errors too: lib logs the reads it recovers from (returning empty) as errors.
+  if (level === 'error') recordEngineError(source, text, line.at);
   if (MIRROR && level !== 'debug') {
     const log = level === 'error' ? console.warn : console.log;
     log(`[engine:${source}] ${level} ${text}`);

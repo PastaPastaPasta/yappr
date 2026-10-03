@@ -393,6 +393,7 @@ TanStack Query's `signal` is wired to `cancel`, so a screen that unmounts cancel
 - **Release builds** forward only `warn` and `error`, and replace every non-string argument with its type tag (`<Error: message>`, `<Uint8Array 32>`, `<object>`).
 - **Dev builds** forward everything, still redacted.
 - **On the host,** logs go to a 2 000-line ring buffer shown on the diagnostics screen, and in dev to the Metro console. Nothing is sent off the device; there is no logging SDK.
+- **Recent errors.** The host also keeps the last 50 engine errors (`src/engine/errors.ts`) for diagnostics: every call that failed (method path and redacted message, never the arguments; not the host's own `engine.*` control calls) and every `error`-level log line.
 
 ---
 
@@ -515,6 +516,7 @@ The "Wraps" column names the `lib/` (or vendor) functions each method composes, 
 | --- | --- | --- |
 | `info` | `() => Promise<EngineInfo>` | `manifest.json`; `getContractTopology()` (`lib/constants.ts:348`); the capability predicates below |
 | `ping` | `() => Promise<{ t: number }>` | — |
+| `diagnostics` | `() => Promise<{ wasmMs: number \| null; dapi: { configured: number; endpoints: { origin; requests; failures; lastOkAt; lastErrorAt }[]; lastOkAt: number \| null } }>` | Engine diagnostics' live figures (PRD SET-08), polled every 2 s while the screen is open: the WASM init time (`src/wasm-timing.ts`) and each DAPI endpoint's last answer, counted by a `fetch` wrapper over the SDK's gRPC-web requests (`src/dapi-monitor.ts`; origins and outcomes only). Engine-local, no network. `engine.info().contracts` also carries `pollr`. |
 
 ```ts
 interface EngineInfo {

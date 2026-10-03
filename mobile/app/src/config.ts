@@ -27,6 +27,8 @@ export interface AppConfig {
   appVersion: string;
   /** null when the JS bundle was built without a built engine (tests, a fresh clone). */
   engine: EngineBuildConfig | null;
+  /** The git commit the bundle was built from (app.config.ts `resolveCommit`), or null. */
+  commit: string | null;
 }
 
 /**
@@ -38,7 +40,7 @@ export interface AppConfig {
  */
 export function resolveAppConfig(
   applicationId: string | null,
-  extra: { variant?: unknown; engine?: unknown } | undefined,
+  extra: { variant?: unknown; engine?: unknown; commit?: unknown } | undefined,
   appVersion: string | null,
 ): AppConfig {
   const variant = applicationId ? variantForApplicationId(applicationId) : undefined;
@@ -60,6 +62,7 @@ export function resolveAppConfig(
     applicationId,
     appVersion: appVersion ?? '0.0.0',
     engine: (extra?.engine as EngineBuildConfig | null | undefined) ?? null,
+    commit: typeof extra?.commit === 'string' ? extra.commit : null,
   };
 }
 
