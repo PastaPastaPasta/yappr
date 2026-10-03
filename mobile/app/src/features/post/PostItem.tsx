@@ -9,6 +9,7 @@ import { requireAuth } from '~/data/require-auth';
 import { useCapabilities, useProvisionalViewerId, useViewerId } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { usePendingWriteStatus } from '~/features/compose/pending-posts';
+import { tagMaxLength } from '~/features/compose/text';
 import { usePostSafety } from '~/features/safety/use-post-safety';
 import { showActionSheet, type SheetAction } from '~/ui/action-sheet';
 import type { MenuItem } from '~/ui/ContextMenu';
@@ -388,6 +389,8 @@ export const PostItem = memo(function PostItem({
       viewerId={viewerId ?? undefined}
       canRepost={capabilities?.repostable[post.kind] ?? true}
       canBookmark={capabilities?.bookmarkable[post.kind] ?? true}
+      // A tag opens the page it was indexed under: its first 61 characters on dev, 63 elsewhere.
+      tagMaxLength={tagMaxLength(capabilities?.hashtagsInline === true)}
       poll={poll}
       actions={actions}
       menu={menu}

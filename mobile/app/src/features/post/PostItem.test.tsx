@@ -264,6 +264,20 @@ describe('PostItem actions', () => {
     fireEvent.press(screen.getByText(/^https:\/\/dash\.org/));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://dash.org');
   });
+
+  it('links an over-long tag whole to the page it was indexed under: 61 characters where tags are inline', () => {
+    const tag = `#longtag${'x'.repeat(58)}`; // 65 characters
+    fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, hashtagsInline: true } } });
+    const { unmount } = renderPost(fixturePost({ id: 'long-tag', content: `see ${tag}` }));
+    fireEvent.press(screen.getByText(tag));
+    expect(router.push).toHaveBeenLastCalledWith({ pathname: '/hashtag/[tag]', params: { tag: tag.slice(1, 62) } });
+    unmount();
+
+    fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, hashtagsInline: false } } });
+    renderPost(fixturePost({ id: 'long-tag', content: `see ${tag}` }));
+    fireEvent.press(screen.getByText(tag));
+    expect(router.push).toHaveBeenLastCalledWith({ pathname: '/hashtag/[tag]', params: { tag: tag.slice(1, 64) } });
+  });
 });
 
 describe('PostItem menu', () => {

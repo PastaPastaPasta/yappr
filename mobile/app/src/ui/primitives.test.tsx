@@ -542,6 +542,16 @@ describe('UserRow', () => {
     render(<UserRow user={{ ...user, username: null }} />);
     expect(screen.getByText('B2vAkPq8...K1mJzE')).toBeTruthy();
   });
+
+  it('aligns a bio by its first strong character', () => {
+    const { rerender } = render(<UserRow user={{ ...user, bio: 'שלום, I cook' }} />);
+    expect(StyleSheet.flatten(screen.getByText('שלום, I cook').props.style)).toMatchObject({
+      textAlign: 'right',
+      writingDirection: 'rtl',
+    });
+    rerender(<UserRow user={{ ...user, bio: 'I cook שלום' }} />);
+    expect(StyleSheet.flatten(screen.getByText('I cook שלום').props.style)).toMatchObject({ textAlign: 'left' });
+  });
 });
 
 describe('nextLabelChangeAt', () => {
