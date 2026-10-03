@@ -369,7 +369,8 @@ As a reader, I want each part of a post to do the obvious thing, so that I can m
 #### FEED-10 · Feed language · P2 · v2 (`feedLanguage`)
 As a testnet user who posts in Portuguese, I want For You in my language, so that I see posts I can read.
 - Settings → Appearance → "Feed language" lists the languages web offers. The default is English.
-- Changing it reloads For You. New posts are written with that language, as web does.
+- Changing it reloads For You.
+- New posts are written as `en` whatever the setting, as web writes them today (`post-service.ts` defaults `language` to `en`, and web passes no language). Writing posts in the feed language is a follow-up shared with web.
 - Absent on dev.
 
 #### FEED-11 · Cache-first launch · P0 · all
