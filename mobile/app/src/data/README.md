@@ -40,7 +40,10 @@ const feed = useEngineInfiniteQuery(
   the next launch paints it before the engine boots. Use it for feeds,
   profiles and posts. Never use it for DMs, notifications or balances:
   MMKV isn't encrypted. Persisted data keeps its `Date`s (the engine codec
-  serializes it).
+  serializes it). Once no screen shows a persisted query, it keeps its
+  first page only, and only the 50 most recently updated such queries stay
+  (`src/state/query-budget.ts`); a screen opened again past that reads
+  afresh.
 - **No cache reset needed.** Sign-in, sign-out and account switches already
   reset the cache (`session.ts`).
 

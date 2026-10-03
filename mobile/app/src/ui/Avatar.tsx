@@ -5,7 +5,7 @@ import { SvgXml } from 'react-native-svg';
 
 import { cn } from '~/lib-allowlist';
 
-import { useDicebearSvg } from './avatar-svg';
+import { slimDicebearSvg, useDicebearSvg } from './avatar-svg';
 import { useMediaUrls } from './media-url';
 import type { CardAvatar } from './post/types';
 import { hitSlopFor, motion, tw } from './tokens';
@@ -58,7 +58,8 @@ export interface AvatarProps {
 
 function svgMarkup(source: string | undefined): string | null {
   if (!source) return null;
-  return source.trimStart().startsWith('<') ? source : svgFromDataUri(source);
+  const markup = source.trimStart().startsWith('<') ? source : svgFromDataUri(source);
+  return markup === null ? null : slimDicebearSvg(markup);
 }
 
 /**
