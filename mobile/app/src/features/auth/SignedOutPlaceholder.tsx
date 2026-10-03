@@ -47,23 +47,29 @@ const PLACEHOLDERS = {
 export type SignedOutKind = keyof typeof PLACEHOLDERS;
 
 /** The Settings sections that need no account (AUTH-02). */
-const SETTINGS_LINKS: { label: string; href: Href; icon: IconComponent }[] = [
-  { label: 'Appearance', href: '/settings/appearance', icon: PaintBrushIcon },
-  { label: 'Privacy & Safety', href: '/settings/privacy', icon: ShieldCheckIcon },
-  { label: 'About', href: '/settings/about', icon: InformationCircleIcon },
-  { label: 'Engine diagnostics', href: '/settings/diagnostics', icon: WrenchScrewdriverIcon },
+const SETTINGS_LINKS: { label: string; href: Href; icon: IconComponent; testID: string }[] = [
+  { label: 'Appearance', href: '/settings/appearance', icon: PaintBrushIcon, testID: 'signed-out-settings-appearance' },
+  { label: 'Privacy & Safety', href: '/settings/privacy', icon: ShieldCheckIcon, testID: 'signed-out-settings-privacy' },
+  { label: 'About', href: '/settings/about', icon: InformationCircleIcon, testID: 'signed-out-settings-about' },
+  {
+    label: 'Engine diagnostics',
+    href: '/settings/diagnostics',
+    icon: WrenchScrewdriverIcon,
+    testID: 'signed-out-settings-diagnostics',
+  },
 ];
 
 function SettingsLinks() {
   const c = useColors();
   return (
     <View className={cn('mx-4 overflow-hidden rounded-xl border', tw.border)}>
-      {SETTINGS_LINKS.map(({ label, href, icon: Icon }, index) => (
+      {SETTINGS_LINKS.map(({ label, href, icon: Icon, testID }, index) => (
         <Pressable
           key={label}
           accessibilityRole="button"
           accessibilityLabel={label}
           onPress={() => router.push(href)}
+          testID={testID}
           className={cn('min-h-12 flex-row items-center gap-3 px-4 py-3', tw.pressed, index > 0 && cn('border-t', tw.border))}
         >
           <Icon size={20} color={c.textSecondary} />
@@ -78,21 +84,32 @@ function SettingsLinks() {
 }
 
 /**
+ * The signed-out empty state alone (icon, title, description and "Sign in",
+ * whose test ID is `signed-out-<kind>-action`), for a screen that keeps its
+ * own list mounted while signed out, as an iOS large-title screen must.
+ */
+export function SignedOutEmptyState({ kind }: { kind: SignedOutKind }) {
+  const { icon, title, description } = PLACEHOLDERS[kind];
+  return (
+    <EmptyState
+      icon={icon}
+      title={title}
+      description={description}
+      action={{ label: copy.signedOut.signIn, onPress: () => router.push('/sign-in') }}
+      testID={`signed-out-${kind}`}
+    />
+  );
+}
+
+/**
  * A signed-out tab: icon, title, description and "Sign in". The Profile tab
  * also links the Settings sections that need no account.
  */
 export function SignedOutPlaceholder({ kind, screenTitle }: { kind: SignedOutKind; screenTitle?: string }) {
-  const { icon, title, description } = PLACEHOLDERS[kind];
   return (
     <Screen scroll>
       {screenTitle ? <Stack.Screen options={{ title: screenTitle }} /> : null}
-      <EmptyState
-        icon={icon}
-        title={title}
-        description={description}
-        action={{ label: copy.signedOut.signIn, onPress: () => router.push('/sign-in') }}
-        testID={`signed-out-${kind}`}
-      />
+      <SignedOutEmptyState kind={kind} />
       {kind === 'profile' ? <SettingsLinks /> : null}
     </Screen>
   );

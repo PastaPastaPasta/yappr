@@ -91,6 +91,31 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/messages');
   });
 
+  // D-L4a-004: the Notifications gear used to switch to the Profile tab, so Back landed on Profile.
+  it('opens notification settings on the Notifications tab and goes back to Notifications (NOTIF-05)', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Notifications'));
+    act(() => router.push('/settings/notifications'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(notifications)', 'settings', 'notifications']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/notifications');
+    expect(app.getSegments()).toEqual(['(tabs)', '(notifications)', 'notifications']);
+  });
+
+  it('keeps notification settings under Settings on the Profile tab', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Profile'));
+    act(() => router.push('/settings'));
+    act(() => router.push('/settings/notifications'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'settings', 'notifications']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/settings');
+  });
+
   it('opens cold links to shared screens in Home, with Home underneath', async () => {
     const app = await renderApp(`/user/${ID}/followers`);
 

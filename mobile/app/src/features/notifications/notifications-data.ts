@@ -30,6 +30,9 @@ export const useNotificationBadge = create<{ unread: number }>()(() => ({ unread
 
 const setUnread = (unread: number) => useNotificationBadge.setState({ unread: Math.max(0, unread) });
 
+/** The account the badge count belongs to (the last one signed in). */
+let badgeViewer: string | null = null;
+
 type ListData = InfiniteData<Page<NotificationDTO>>;
 
 /** Every loaded list, every filter. */
@@ -84,8 +87,15 @@ export function useNotificationsBadge(): number {
   const viewerId = useViewerId();
   const active = useAppActive();
 
-  // Each account has its own read state: the old count means nothing to the next one.
-  useEffect(() => setUnread(0), [viewerId]);
+  // Each account has its own read state: the old count means nothing to the next one. Only a
+  // different account resets it: the tab bar remounting (an Android font-scale or other
+  // configuration change recreates the activity) keeps the count until the next poll lands,
+  // instead of hiding the badge until then (D-L4a-008).
+  useEffect(() => {
+    if (viewerId === null) return;
+    if (badgeViewer !== null && badgeViewer !== viewerId) setUnread(0);
+    badgeViewer = viewerId;
+  }, [viewerId]);
 
   useEngineEvent('notifications.count', ({ unread }) => {
     if (viewerId) setUnread(unread);

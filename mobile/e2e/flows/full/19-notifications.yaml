@@ -53,7 +53,11 @@ tags:
     timeout: 20000
 - assertVisible:
     id: notification-toggle-likes
-# The switches live under Settings (the Profile tab): go back by the Notifications tab.
+# The switches open on the Notifications tab's own stack (D-L4a-004), not on Profile.
+- assertVisible:
+    id: tab-notifications
+    selected: true
+# Re-tapping the active tab pops back to the list (UX_SPEC §3.1).
 - runFlow:
     file: ../../subflows/open-tab.yaml
     env:

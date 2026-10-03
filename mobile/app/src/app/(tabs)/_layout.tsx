@@ -20,7 +20,7 @@ import {
 
 import { openAccountSwitcher } from '~/features/auth/AccountSwitcher';
 import { useTabBadges } from '~/state/tab-badges';
-import { badgeLabel } from '~/ui/Badge';
+import { badgeLabel, tabBadgeStyle } from '~/ui/Badge';
 import { colors, useIsDark } from '~/ui/tokens';
 
 type HeroIcon = ComponentType<{ size?: number; color?: ColorValue }>;
@@ -86,6 +86,18 @@ const tabBarLabel =
 const badge = (count: number | undefined) => (count ? badgeLabel(count) : undefined);
 
 /**
+ * On Android the navigator's badge text follows the font scale uncapped
+ * inside a fixed 18 pt box, so at 200 % the number was cut off (D-L4a-008).
+ * Its text stops following the system scale (iOS already does, for the Large
+ * Content Viewer) and `tabBadgeStyle` sizes box and text together instead.
+ */
+function useBadgeOptions() {
+  const { fontScale } = useWindowDimensions();
+  if (Platform.OS !== 'android') return {};
+  return { tabBarAllowFontScaling: false, tabBarBadgeStyle: tabBadgeStyle(fontScale) };
+}
+
+/**
  * ADR-001 E4 / UX_SPEC §3.1: five tabs with labels, Notifications promoted
  * from the web's Menu sheet. A JS tab bar with Heroicons and web-matching
  * styling (lead decision, overriding UX_SPEC §3.1's native tabs). Each tab is
@@ -95,6 +107,7 @@ export default function TabLayout() {
   const dark = useIsDark();
   const badges = useTabBadges();
   const tabBarStyle = useAndroidTabBarStyle();
+  const badgeOptions = useBadgeOptions();
 
   return (
     <Tabs
@@ -102,6 +115,7 @@ export default function TabLayout() {
         headerShown: false,
         tabBarLabel,
         tabBarStyle,
+        ...badgeOptions,
         tabBarActiveTintColor: dark ? colors.white : colors.black,
         tabBarInactiveTintColor: colors.gray500,
       }}

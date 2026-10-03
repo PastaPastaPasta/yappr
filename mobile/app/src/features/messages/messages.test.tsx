@@ -11,6 +11,7 @@ import { useSessionStore } from '~/data/session';
 import { resetWriteTracking } from '~/data/writes';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { largeTitleScrollView } from '~/ui/testing/large-title';
 import { useToastStore } from '~/ui/toast';
 
 import { ConversationScreen } from './ConversationScreen';
@@ -220,6 +221,27 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     await renderAt('/messages');
     expect(screen.getByText('Welcome to Messages')).toBeTruthy();
     expect(screen.getByText('New message')).toBeTruthy();
+  });
+
+  // D-L4i-004: a placeholder swapped for the list later left the iOS large title fixed over the rows.
+  it('keeps one list, first in the screen, from signed out through locked to the inbox (UX_SPEC §3.4)', async () => {
+    await renderAt('/messages');
+    const list = largeTitleScrollView(screen.UNSAFE_root);
+    expect(list?.props.testID).toBe('messages-placeholder');
+    expect(screen.getByTestId('messages-signed-out')).toBeTruthy();
+
+    fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true }));
+    await act(async () => signIn());
+    expect(screen.getByTestId('messages-locked')).toBeTruthy();
+    expect(largeTitleScrollView(screen.UNSAFE_root)).toBe(list);
+
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation()]);
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.dm.status, status());
+    });
+    expect(screen.getByText('Bob Builder')).toBeTruthy();
+    expect(largeTitleScrollView(screen.UNSAFE_root)).toBe(list);
+    expect(list?.props.testID).toBe('messages-list');
   });
 
   it('when every conversation is deleted, says so instead of welcoming a first visit (SR-41)', async () => {

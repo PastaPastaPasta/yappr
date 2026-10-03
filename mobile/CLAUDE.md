@@ -89,9 +89,11 @@ before you change anything here.
   colors, and labels shown on both platforms.
 - `src/app/(tabs)/(home,explore,notifications,messages,profile)/` holds the
   detail screens every tab can push: `post/[id]`, `post/[id]/engagements`,
-  `user/[id]` and its `followers` / `following`, and `hashtag/[tag]`. They open
-  on the current tab's stack, so Back returns to where the user came from (a
-  profile opened from a conversation goes back to it).
+  `user/[id]` and its `followers` / `following`, `hashtag/[tag]`, and
+  `settings/notifications` (Settings opens it on Profile, the Notifications
+  gear on Notifications). They open on the current tab's stack, so Back
+  returns to where the user came from (a profile opened from a conversation
+  goes back to it).
 - `+native-intent` pins only the launch link to `(home)`. Links that arrive
   while the app is open push onto the current tab.
 - Each tab's own screens live in its group:
@@ -100,12 +102,22 @@ before you change anything here.
   - `(notifications)/notifications`;
   - `(messages)/messages/` (the inbox, `settings`, `[conversationId]` and
     `[conversationId]/info`);
-  - `(profile)/profile`, `bookmarks` and `settings/*`.
+  - `(profile)/profile`, `bookmarks` and `settings/*` (except the shared
+    `settings/notifications`).
 - Root modals: `compose`, `sign-in/*`, `welcome`, `terms-gate`, `lockdown`,
   `media`, `profile/edit`, `messages/new`, `messages/new-group`, and
   `block/[userId]` and `report/[postId]` (from a post's menu).
 - Stubs set their header title with `<Stack.Screen options={{ title }} />`
   (inside `Placeholder`), so layouts never list screens.
+- **iOS large titles** (`headerLargeTitle`) collapse only for a scroll view
+  that UIKit finds down the first-subview chain when the screen appears. Make
+  the list the screen's first view from the first render and keep it mounted
+  in every state: signed out, locked, loading, empty and error go in
+  `ListEmptyComponent`, banners in `ListHeaderComponent`, overlays after the
+  list (see `NotificationsScreen`, `InboxScreen`). A view in front of it, or a
+  placeholder swapped for it later, leaves the title drawn over the rows.
+  `largeTitleScrollView()` (`src/ui/testing/large-title.ts`) checks it in
+  tests.
 
 **Data.** See `src/data/README.md`.
 

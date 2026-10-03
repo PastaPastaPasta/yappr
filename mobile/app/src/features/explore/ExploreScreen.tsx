@@ -188,7 +188,8 @@ export function ExploreScreen() {
   return (
     <Screen>
       <Stack.Screen options={{ title: 'Explore', headerLargeTitle: Platform.OS === 'ios', headerShadowVisible: false }} />
-      {offline ? <OfflineBanner /> : null}
+      {/* The list stays the first view, so the iOS large title collapses on scroll (UX_SPEC §3.4):
+          the offline banner sits in its header. */}
       <FlashList
         data={rows}
         keyExtractor={(row) => row.key}
@@ -220,7 +221,12 @@ export function ExploreScreen() {
               );
           }
         }}
-        ListHeaderComponent={header}
+        ListHeaderComponent={
+          <>
+            {offline ? <OfflineBanner /> : null}
+            {header}
+          </>
+        }
         ListEmptyComponent={empty}
         contentInsetAdjustmentBehavior="automatic"
         contentContainerStyle={{ paddingBottom: FAB_CLEARANCE }}

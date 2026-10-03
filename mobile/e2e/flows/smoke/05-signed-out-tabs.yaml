@@ -12,6 +12,8 @@ tags:
       TAB: notifications
 - assertVisible:
     id: signed-out-notifications
+- assertVisible:
+    id: signed-out-notifications-action
 - assertNotVisible:
     id: notifications-list
 - takeScreenshot: notifications-signed-out
@@ -21,6 +23,8 @@ tags:
       TAB: messages
 - assertVisible:
     id: messages-signed-out
+- assertVisible:
+    id: messages-signed-out-action
 - assertNotVisible:
     id: messages-list
 - runFlow:

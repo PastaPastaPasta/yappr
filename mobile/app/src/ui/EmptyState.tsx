@@ -12,7 +12,7 @@ export interface EmptyStateProps {
   icon?: IconComponent;
   /** Defaults to `text.decorative`. */
   iconColor?: string;
-  /** Optional button under the text. */
+  /** Optional button under the text. Its test ID is `<testID>-action` (PRD A11Y-08). */
   action?: { label: string; onPress: () => void };
   /** Anything else under the text (e.g. a link to the old app). */
   children?: ReactNode;
@@ -43,7 +43,14 @@ export function EmptyState({
           {description}
         </Text>
       ) : null}
-      {action ? <Button label={action.label} onPress={action.onPress} className="mt-4" /> : null}
+      {action ? (
+        <Button
+          label={action.label}
+          onPress={action.onPress}
+          className="mt-4"
+          testID={testID ? `${testID}-action` : undefined}
+        />
+      ) : null}
       {children}
     </View>
   );
