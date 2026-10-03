@@ -175,8 +175,8 @@ describe('private keys', () => {
     await expect(verifySignInKey(bytesToHex(master))).rejects.toMatchObject({ code: 'KEY_NOT_ON_IDENTITY', message: expect.stringMatching(/MASTER/) })
     await expect(verifySignInKey(bytesToHex(encryption))).rejects.toMatchObject({
       code: 'KEY_NOT_ON_IDENTITY',
-      // Not "(it's a ENCRYPTION key)" (D-L1i-007).
-      message: 'This is an encryption key. Sign in with an authentication key instead.',
+      // PRD AUTH-08, not lib's "(it's a ENCRYPTION key)" (D-L1i-007).
+      message: 'Private key does not match this identity',
     })
     await expect(verifySignInKey(bytesToHex(secp256k1.utils.randomSecretKey()))).rejects.toMatchObject({ code: 'IDENTITY_NOT_FOUND', message: 'No identity uses this key' })
   })

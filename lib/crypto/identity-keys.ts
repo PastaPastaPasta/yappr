@@ -100,14 +100,3 @@ export function isSecurityLevelAllowedForLogin(level: number): boolean {
 export function isPurposeAllowedForLogin(purpose: number): boolean {
   return purpose === KeyPurpose.AUTHENTICATION
 }
-
-/**
- * Why a key of another purpose cannot sign in, in plain words: "This is an
- * encryption key. Sign in with an authentication key instead." (The key
- * login forms; the purpose enum name lower-cased, with its article.)
- */
-export function wrongPurposeLoginMessage(purpose: number): string {
-  const name = PURPOSE_NAMES[purpose]?.toLowerCase()
-  const what = name ? `This is ${/^[aeiou]/.test(name) ? 'an' : 'a'} ${name} key.` : 'This key cannot sign in.'
-  return `${what} Sign in with an authentication key instead.`
-}

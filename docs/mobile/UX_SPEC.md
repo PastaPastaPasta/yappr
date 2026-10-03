@@ -1456,8 +1456,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | key.invalid | Invalid private key **(web)** |
 | key.otherNetwork | This key is for a different network **(web)** |
 | key.noIdentity | No identity uses this key **(web)** |
-| key.mismatch | Private key does not match this identity **(web)** |
-| key.wrongPurpose | This is {an encryption \| a transfer \| …} key. Sign in with an authentication key instead. **(web)** (a key of the identity with another purpose; lib `wrongPurposeLoginMessage`) |
+| key.mismatch | Private key does not match this identity **(web)** (also a key of the identity with another purpose, e.g. an encryption key) |
 | key.show / hide | Show key / Hide key |
 | terms.title | Before you start |
 | terms.intro | Yappr is a public network. By continuing you agree to: |
