@@ -17,6 +17,20 @@ tags:
 - tapOn:
     id: "avatar-.*"
     index: 0
+# A read that fails while sakura's quorum cache lags shows the error state with
+# "Try again" (PRD G-11): try once more, as a reader would, and keep the evidence.
+- extendedWaitUntil:
+    visible:
+      id: "profile-header|profile-error"
+    timeout: 60000
+- runFlow:
+    when:
+      visible:
+        id: profile-error
+    commands:
+      - takeScreenshot: profile-error
+      - tapOn:
+          id: profile-error-action
 - extendedWaitUntil:
     visible:
       id: profile-header
