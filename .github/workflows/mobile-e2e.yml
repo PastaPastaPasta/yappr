@@ -85,6 +85,12 @@ jobs:
             echo "::error::The full suite needs the YAPPR_E2E_PERSONAS_JSON secret (see the header of this workflow)."
             exit 1
           fi
+          # The personas' keys reach run.sh only on master and staging (the Personas step checks
+          # it too), whatever the environment's own rules say.
+          if [ "$suite" = full ] && [ "$GITHUB_REF" != refs/heads/master ] && [ "$GITHUB_REF" != refs/heads/staging ]; then
+            echo "::error::The full suite runs from master or staging only, not $GITHUB_REF."
+            exit 1
+          fi
           echo "E2E_SUITE=$suite" >> "$GITHUB_ENV"
 
       # The engine bundle (built at prebuild) needs the root and engine dependencies;
@@ -128,13 +134,18 @@ jobs:
           echo "E2E_UDID=$udid" >> "$GITHUB_ENV"
 
       - name: Personas (full suite)
-        if: env.E2E_SUITE == 'full'
+        if: env.E2E_SUITE == 'full' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/staging')
         env:
           PERSONAS_JSON: ${{ secrets.YAPPR_E2E_PERSONAS_JSON }}
         run: |
+          set -o pipefail
           file="$RUNNER_TEMP/personas/identities.json"
           mkdir -p "$(dirname "$file")" && chmod 700 "$(dirname "$file")"
           (umask 077 && printf '%s' "$PERSONAS_JSON" > "$file")
+          # GitHub masks the JSON secret as a whole, not the keys inside it: mask every key, in
+          # each form a log could show (hex, WIF, the parts run.sh types), before anything runs.
+          node mobile/e2e/host/persona-secrets.mjs "$file" "$E2E_PERSONA" "$E2E_PEER_PERSONA" \
+            | while IFS= read -r value; do echo "::add-mask::$value"; done
           echo "YAPPR_SAKURA_IDENTITIES=$file" >> "$GITHUB_ENV"
 
       - name: Run the suite
@@ -147,9 +158,13 @@ jobs:
         run: |
           if [ -f "$RUNNER_TEMP/e2e/summary.md" ]; then cat "$RUNNER_TEMP/e2e/summary.md" >> "$GITHUB_STEP_SUMMARY"; fi
           rm -rf "$RUNNER_TEMP/personas"
+          # run.sh writes e2e/scrubbed last, once everything it wrote is scrubbed.
+          if [ -f "$RUNNER_TEMP/e2e/scrubbed" ]; then echo "E2E_SCRUBBED=true" >> "$GITHUB_ENV"; fi
 
+      # Only a run run.sh finished scrubbing (E2E_SCRUBBED, from the Summary step): one cut short
+      # before then uploads nothing, and the peer's unfiltered log never goes.
       - name: Upload the report
-        if: always()
+        if: always() && env.E2E_SCRUBBED == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: maestro-ios-${{ env.E2E_SUITE }}-${{ github.run_number }}
@@ -159,4 +174,5 @@ jobs:
             ${{ runner.temp }}/e2e/junit/
             ${{ runner.temp }}/e2e/screenshots/
             ${{ runner.temp }}/e2e/logs/
+            !${{ runner.temp }}/e2e/logs/*.raw.log
           if-no-files-found: warn
