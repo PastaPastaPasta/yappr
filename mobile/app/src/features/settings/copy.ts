@@ -79,6 +79,26 @@ export const copy = {
       { value: 'light', title: 'Light' },
       { value: 'dark', title: 'Dark' },
     ] as const satisfies readonly { value: ThemePreference; title: string; description?: string }[],
+    language: 'Feed language',
+    languageNote: 'Choose the language for the "For You" feed. Posts in other languages will not appear.',
+    /** The languages web's settings offer (`app/settings/page.tsx`), in its order. */
+    languages: [
+      { value: 'en', title: 'English' },
+      { value: 'es', title: 'Spanish' },
+      { value: 'fr', title: 'French' },
+      { value: 'de', title: 'German' },
+      { value: 'pt', title: 'Portuguese' },
+      { value: 'ru', title: 'Russian' },
+      { value: 'zh', title: 'Chinese' },
+      { value: 'ja', title: 'Japanese' },
+      { value: 'ko', title: 'Korean' },
+      { value: 'ar', title: 'Arabic' },
+      { value: 'hi', title: 'Hindi' },
+      { value: 'it', title: 'Italian' },
+      { value: 'nl', title: 'Dutch' },
+      { value: 'pl', title: 'Polish' },
+      { value: 'tr', title: 'Turkish' },
+    ] as const satisfies readonly { value: string; title: string }[],
   },
 
   about: {

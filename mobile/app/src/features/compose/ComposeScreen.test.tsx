@@ -3,7 +3,7 @@ import { useNetInfo } from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { ActionSheetIOS, StyleSheet } from 'react-native';
+import { ActionSheetIOS, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -125,6 +125,54 @@ it('disables Post over the limit, with the counter and the byte line', async () 
   type('😀'.repeat(11));
   expect(postButton()).toBeDisabled();
   expect(screen.getByText('4 bytes over the size limit. Emoji and non-Latin text count extra.')).toBeTruthy();
+  expect(byId('compose-counter')).toHaveAccessibleName('11 of 20 characters, 4 bytes over the size limit');
+});
+
+it('scrolls the end of a long paste, and the line saying why it is over, into view (D-L2i-001)', async () => {
+  const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+  await renderCompose();
+  const layout = (id: string, y: number, height: number) =>
+    fireEvent(byId(id), 'layout', { nativeEvent: { layout: { x: 0, y, width: 390, height } } });
+  // The space above the keyboard, and the editor before the paste.
+  layout('compose-scroll', 0, 300);
+  layout('compose-part-0', 8, 60);
+  scrollTo.mockClear();
+
+  type('😀'.repeat(11));
+  // The editor grows with the pasted text and the bytes line under it.
+  layout('compose-part-0', 8, 520);
+  expect(scrollTo).toHaveBeenLastCalledWith({ y: 228, animated: true });
+
+  // Scrolled there, a layout that changes nothing scrolls no further, nor does an edit in the middle.
+  fireEvent.scroll(byId('compose-scroll'), { nativeEvent: { contentOffset: { x: 0, y: 228 } } });
+  scrollTo.mockClear();
+  layout('compose-part-0', 8, 520);
+  type(`x${'😀'.repeat(11)}`);
+  layout('compose-part-0', 8, 560);
+  expect(scrollTo).not.toHaveBeenCalled();
+});
+
+it('leaves a later layout of the part, not an edit, where it is', async () => {
+  const scrollTo = jest.mocked(ScrollView.prototype.scrollTo);
+  await renderCompose();
+  const layout = (id: string, y: number, height: number) =>
+    fireEvent(byId(id), 'layout', { nativeEvent: { layout: { x: 0, y, width: 390, height } } });
+  layout('compose-scroll', 0, 300);
+  layout('compose-part-0', 8, 60);
+  // Typed at the end without growing the editor: no layout follows the edit.
+  type('Hi');
+  // The frame after the edit has revealed what it had to (nothing: it fits).
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  scrollTo.mockClear();
+  const now = Date.now();
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(now + 2_000);
+  try {
+    // Seconds later the part lays out taller for another reason (its media row, a part removed above).
+    layout('compose-part-0', 8, 520);
+    expect(scrollTo).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 it('is offline: Post disabled and the bar says so', async () => {

@@ -4,6 +4,7 @@ import {
   Text as RNText,
   TextInput,
   View,
+  type LayoutChangeEvent,
   type NativeSyntheticEvent,
   type TextInputSelectionChangeEventData,
 } from 'react-native';
@@ -35,6 +36,8 @@ export interface ComposePartProps {
   onFocus: (index: number) => void;
   onSelection: (index: number, caret: number) => void;
   onRemove: (index: number) => void;
+  /** Where the part sits in compose's scroll content, hints included, whenever it moves or grows. */
+  onLayout?: (index: number, frame: { y: number; height: number }) => void;
 }
 
 /**
@@ -59,6 +62,7 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
     onFocus,
     onSelection,
     onRemove,
+    onLayout,
   },
   ref,
 ) {
@@ -78,8 +82,12 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
   const onSelectionChange = (e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) =>
     onSelection(index, e.nativeEvent.selection.end);
 
+  const onPartLayout = onLayout
+    ? (e: LayoutChangeEvent) => onLayout(index, { y: e.nativeEvent.layout.y, height: e.nativeEvent.layout.height })
+    : undefined;
+
   return (
-    <View className="flex-row gap-3 px-4" testID={`compose-part-${index}`}>
+    <View className="flex-row gap-3 px-4" onLayout={onPartLayout} testID={`compose-part-${index}`}>
       <View className="items-center pt-1">
         {author ? (
           <Avatar avatar={author.avatar} identityId={author.id} size="sm" />

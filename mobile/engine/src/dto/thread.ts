@@ -59,6 +59,26 @@ function buildReplyTree(authorThreadChain: Reply[], otherDirectReplies: Reply[],
 }
 
 /**
+ * The author's continuation in reading order: each reply followed by the
+ * whole line that continues it, oldest branch first (D-L2a-002). Level by
+ * level, the author's later direct reply to the post landed between parts
+ * 2 and 3 of their thread. Web's `use-post-detail.ts` still reads it level
+ * by level.
+ */
+function inReadingOrder(starts: Reply[], continuationsOf: (replyId: string) => Reply[]): Reply[] {
+  const chain: Reply[] = []
+  const seen = new Set<string>()
+  const stack = [...starts].reverse()
+  for (let reply = stack.pop(); reply !== undefined; reply = stack.pop()) {
+    if (seen.has(reply.id)) continue
+    seen.add(reply.id)
+    chain.push(reply)
+    stack.push(...[...continuationsOf(reply.id)].reverse())
+  }
+  return chain
+}
+
+/**
  * A flat thread (v9 `rootAndTime`, v10 `repliesOf`): every reply names the
  * root, so one query holds them all and the shape is rebuilt here. Viewing a
  * reply renders its subtree; viewing the root post, the thread's top level.
@@ -80,19 +100,9 @@ export function assembleFlatThread(focus: { id: string; authorId: string; isRepl
   const directReplies = focus.isReply ? childrenOf.get(focus.id) ?? [] : topOfThread
 
   // The author's own continuation: their direct replies, their replies to those, and so on.
-  const authorThreadChain: Reply[] = []
-  const authorThreadIds = new Set<string>()
-  let frontier = directReplies.filter(reply => reply.author.id === focus.authorId)
-  while (frontier.length > 0) {
-    const next: Reply[] = []
-    for (const reply of frontier) {
-      if (authorThreadIds.has(reply.id)) continue
-      authorThreadChain.push(reply)
-      authorThreadIds.add(reply.id)
-      next.push(...(childrenOf.get(reply.id) ?? []).filter(child => child.author.id === focus.authorId))
-    }
-    frontier = next
-  }
+  const byAuthor = (replies: Reply[]) => replies.filter(reply => reply.author.id === focus.authorId)
+  const authorThreadChain = inReadingOrder(byAuthor(directReplies), id => byAuthor(childrenOf.get(id) ?? []))
+  const authorThreadIds = new Set(authorThreadChain.map(reply => reply.id))
 
   return buildReplyTree(authorThreadChain, directReplies.filter(reply => !authorThreadIds.has(reply.id)), childrenOf)
 }
@@ -107,23 +117,24 @@ export async function assembleV2Thread(
   directReplies: Reply[],
   nestedOf: (parentIds: string[]) => Promise<Map<string, Reply[]>>,
 ): Promise<ReplyThread[]> {
-  const authorThreadChain = [...directReplies].sort(byCreatedAtAsc).filter(reply => reply.author.id === focus.authorId)
-  const authorThreadIds = new Set<string>([focus.id, ...authorThreadChain.map(reply => reply.id)])
+  const starts = [...directReplies].sort(byCreatedAtAsc).filter(reply => reply.author.id === focus.authorId)
+  const authorThreadIds = new Set<string>([focus.id, ...starts.map(reply => reply.id)])
+  const continuationsOf = new Map<string, Reply[]>()
 
-  for (let parents = authorThreadChain.map(reply => reply.id); parents.length > 0;) {
+  for (let parents = starts.map(reply => reply.id); parents.length > 0;) {
     const continuations: Reply[] = []
     for (const [parentId, nested] of await nestedOf(parents)) {
       for (const reply of nested) {
-        if (reply.author.id === focus.authorId && authorThreadIds.has(parentId)) {
+        if (reply.author.id === focus.authorId && authorThreadIds.has(parentId) && !authorThreadIds.has(reply.id)) {
           continuations.push(reply)
           authorThreadIds.add(reply.id)
+          continuationsOf.set(parentId, [...continuationsOf.get(parentId) ?? [], reply])
         }
       }
     }
-    continuations.sort(byCreatedAtAsc)
-    authorThreadChain.push(...continuations)
     parents = continuations.map(reply => reply.id)
   }
+  const authorThreadChain = inReadingOrder(starts, id => [...continuationsOf.get(id) ?? []].sort(byCreatedAtAsc))
 
   const nestedIds = Array.from(new Set([...directReplies, ...authorThreadChain].map(reply => reply.id)))
   const childrenOf = nestedIds.length > 0 ? await nestedOf(nestedIds) : new Map<string, Reply[]>()

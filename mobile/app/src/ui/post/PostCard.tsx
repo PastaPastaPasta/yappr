@@ -71,6 +71,17 @@ export interface PostCardActions extends RichTextHandlers {
 /** The counts row's entries, by the engagements tab each one opens. */
 export type EngagementCountTab = 'reposts' | 'quotes' | 'likes';
 
+/**
+ * Detail only: the counts row's reposts and quotes told apart where
+ * `post.stats` lumps them together (v10 keeps a bare repost as a quote
+ * post). `truncated`: read off a list that filled up, so floors ("100+").
+ */
+export interface RepostQuoteCounts {
+  reposts: number;
+  quotes: number;
+  truncated: boolean;
+}
+
 export interface PostCardProps {
   post: CardPost;
   variant?: PostCardVariant;
@@ -98,6 +109,12 @@ export interface PostCardProps {
   canBookmark?: boolean;
   /** The optimistic variant's write status. */
   writeStatus?: WriteStatusProps;
+  /**
+   * Detail only: the counts row's reposts and quotes, when `post.stats`
+   * cannot tell them apart; `null` while they are unknown, which leaves
+   * them out of the row. Omitted, the row reads `post.stats`.
+   */
+  repostQuoteCounts?: RepostQuoteCounts | null;
   /**
    * The post's menu (PRD ENG-08): the "⋯" dropdown, also shown as an
    * action sheet on a long press and for screen readers. Not a card-wide
@@ -369,6 +386,7 @@ export const PostCard = memo(function PostCard({
   canRepost = true,
   canBookmark = true,
   writeStatus,
+  repostQuoteCounts,
   tagMaxLength,
   menu,
   actions = {},
@@ -486,7 +504,9 @@ export const PostCard = memo(function PostCard({
             onPress={actions.onLinkPreviewPress}
           />
         ) : null}
-        {detail ? <DetailMeta post={post} onCountPress={actions.onCountPress} /> : null}
+        {detail ? (
+          <DetailMeta post={post} repostQuoteCounts={repostQuoteCounts} onCountPress={actions.onCountPress} />
+        ) : null}
       </>
     );
   }
@@ -658,14 +678,24 @@ export const PostCard = memo(function PostCard({
 });
 
 /** Detail only: the absolute time and the counts row, non-zero counts only (UX_SPEC §2.4.4, §4.9). */
-function DetailMeta({ post, onCountPress }: { post: CardPost; onCountPress?: (tab: EngagementCountTab) => void }) {
+function DetailMeta({
+  post,
+  repostQuoteCounts,
+  onCountPress,
+}: {
+  post: CardPost;
+  repostQuoteCounts?: RepostQuoteCounts | null;
+  onCountPress?: (tab: EngagementCountTab) => void;
+}) {
   const date = post.createdAt;
   const when = `${date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} · ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const split = repostQuoteCounts === undefined ? { ...post.stats, truncated: false } : repostQuoteCounts;
+  const floor = split?.truncated ? '+' : '';
   const counts = (
     [
-      [post.stats.reposts, 'Repost', 'Reposts', 'reposts'],
-      [post.stats.quotes, 'Quote', 'Quotes', 'quotes'],
-      [post.stats.likes, 'Like', 'Likes', 'likes'],
+      [split?.reposts ?? 0, floor, 'Repost', 'Reposts', 'reposts'],
+      [split?.quotes ?? 0, floor, 'Quote', 'Quotes', 'quotes'],
+      [post.stats.likes, '', 'Like', 'Likes', 'likes'],
     ] as const
   ).filter(([n]) => n > 0);
   return (
@@ -675,20 +705,21 @@ function DetailMeta({ post, onCountPress }: { post: CardPost; onCountPress?: (ta
       </Text>
       {counts.length > 0 ? (
         <View className={cn('flex-row flex-wrap gap-x-4 gap-y-1 border-y py-3', tw.border)}>
-          {counts.map(([n, one, many, tab]) => {
+          {counts.map(([n, plus, one, many, tab]) => {
             const label = (
               <Text variant="subhead" tone="secondary">
                 <Text variant="subheadStrong" tabular>
                   {formatNumber(n)}
+                  {plus}
                 </Text>{' '}
-                {n === 1 ? one : many}
+                {n === 1 && !plus ? one : many}
               </Text>
             );
             return onCountPress ? (
               <Pressable
                 key={tab}
                 accessibilityRole="link"
-                accessibilityLabel={`${formatNumber(n)} ${n === 1 ? one : many}`}
+                accessibilityLabel={`${formatNumber(n)}${plus} ${n === 1 && !plus ? one : many}`}
                 hitSlop={hitSlopFor(20)}
                 onPress={() => onCountPress(tab)}
                 testID={`count-${tab}`}

@@ -46,6 +46,7 @@ import {
   type ComposeContext,
   type DraftPart,
 } from './drafts';
+import { useEditorReveal } from './editor-reveal';
 import { FALLBACK_LIMITS, hasVisibleContent, isOverContentLimit } from './limits';
 import { MentionSuggestions, useDebounced } from './MentionSuggestions';
 import { discardPending, pendingDraft, publishPost, viewerAuthor } from './pending-posts';
@@ -215,6 +216,8 @@ function Composer({ identityId, username, context }: ComposerProps) {
   /** The part to focus once the parts have re-rendered (after add or remove). */
   const focusNext = useRef<number | null>(null);
   const inputs = useRef<(TextInput | null)[]>([]);
+  const scroll = useRef<ScrollView>(null);
+  const reveal = useEditorReveal(scroll);
 
   const targetId = context.targetId ?? '';
   const target = useEngineQuery(queryKeys.post.detail(targetId), (api) => api.posts.get(targetId), {
@@ -367,8 +370,10 @@ function Composer({ identityId, username, context }: ComposerProps) {
   };
 
   // Editing.
-  const setPartText = (index: number, text: string) =>
+  const setPartText = (index: number, text: string) => {
+    reveal.onEdit(index, parts[index]?.text ?? '', text, limits);
     setParts((current) => current.map((p, i) => (i === index ? { ...p, text } : p)));
+  };
   const onSelection = (index: number, at: number) => {
     if (index === active) setCaret(at);
   };
@@ -432,7 +437,16 @@ function Composer({ identityId, username, context }: ComposerProps) {
         />
       </View>
       <KeyboardAvoidingView className="flex-1" behavior="padding">
-        <ScrollView className="flex-1" keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: 8 }}>
+        <ScrollView
+          ref={scroll}
+          className="flex-1"
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={{ paddingTop: 8 }}
+          onLayout={reveal.onViewportLayout}
+          onScroll={reveal.onScroll}
+          scrollEventThrottle={16}
+          testID="compose-scroll"
+        >
           {context.mode === 'reply' ? (
             <View className="mb-2" testID="compose-reply-context">
               {targetPost && !targetGone ? (
@@ -488,6 +502,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               onFocus={onFocus}
               onSelection={onSelection}
               onRemove={removePart}
+              onLayout={reveal.onPartLayout}
             />
           ))}
           {mediaOpen ? (

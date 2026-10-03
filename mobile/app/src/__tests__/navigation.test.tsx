@@ -179,6 +179,7 @@ describe('app shell', () => {
     ['/settings/about', null],
     ['/settings/diagnostics', null],
     ['/settings/licenses', null],
+    ['/settings/feed-language', null],
     ['/compose', null],
     ['/media?postId=abc123&index=0', null],
     ['/terms-gate', null],

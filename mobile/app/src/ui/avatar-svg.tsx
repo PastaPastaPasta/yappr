@@ -31,24 +31,38 @@ export function AvatarSvgProvider({
  * the other two more native views per avatar, drawn through offscreen layers
  * on Android. `<metadata>` goes from any SVG; the mask only when it is
  * exactly DiceBear's identity mask. Anything else passes through untouched.
+ *
+ * Dropping that mask is also what draws Open Peeps whole on Android
+ * (D-L2a-006). It has no `maskUnits`, so its region is the masked group's
+ * bounding box, and react-native-svg 15 on Android takes that box from the
+ * group's first child only: Open Peeps draws the body first, so all but the
+ * neck and collar was clipped away. A `viewboxMask` that does draw something
+ * (a radius) stays, with the viewBox it covers as an explicit user-space
+ * region instead of the box Android gets wrong.
  */
 const METADATA = /<metadata[\s>][\s\S]*?<\/metadata>/g;
 const VIEWBOX = /^\s*<svg\b[^>]*\sviewBox="([^"]+)"/;
 const IDENTITY_MASK =
   /<mask id="viewboxMask"><rect width="([\d.]+)" height="([\d.]+)" rx="0" ry="0" x="([-\d.]+)" y="([-\d.]+)" fill="#fff" ?\/><\/mask>/;
+const VIEWBOX_MASK = '<mask id="viewboxMask">';
 
 /** `svg` without what never changes a pixel (see above): less to keep, parse and draw. */
 export function slimDicebearSvg(svg: string): string {
-  let out = svg.replace(METADATA, '');
-  const mask = IDENTITY_MASK.exec(out);
+  const out = svg.replace(METADATA, '');
   const viewBox = VIEWBOX.exec(out)?.[1]?.trim().split(/[\s,]+/).map(Number);
-  if (mask && viewBox?.length === 4) {
-    const [, width, height, x, y] = mask.map(Number);
-    if (x === viewBox[0] && y === viewBox[1] && width === viewBox[2] && height === viewBox[3]) {
-      out = out.replace(mask[0], '').replaceAll(' mask="url(#viewboxMask)"', '');
+  if (viewBox?.length !== 4 || !viewBox.every(Number.isFinite)) return out;
+  const [left, top, width, height] = viewBox;
+  const mask = IDENTITY_MASK.exec(out);
+  if (mask) {
+    const [, w, h, x, y] = mask.map(Number);
+    if (x === left && y === top && w === width && h === height) {
+      return out.replace(mask[0], '').replaceAll(' mask="url(#viewboxMask)"', '');
     }
   }
-  return out;
+  return out.replace(
+    VIEWBOX_MASK,
+    `<mask id="viewboxMask" maskUnits="userSpaceOnUse" x="${left}" y="${top}" width="${width}" height="${height}">`,
+  );
 }
 
 /** Recipes kept rendered; the web keeps 500 (lib/services/avatar-generator). */

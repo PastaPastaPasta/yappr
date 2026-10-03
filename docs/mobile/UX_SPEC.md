@@ -470,8 +470,9 @@ All fire `selectionAsync()` on change. a11y: tabs role `tab` with selected state
 - Editor: borderless multi-line input, `body.large`, placeholder per mode, grows with content. Leading avatar `sm` per item; thread items are joined by a 2 pt `border` line between avatars (web thread line).
 - Inline highlighting: mentions, hashtags and links in `link` color; over-limit text gets `error.bg` background from the first over-limit grapheme.
 - Footer row per item (above the keyboard for the active item): counter right-aligned; on dev the byte-overflow line under the editor in `error` `caption`.
+- Editors grow rather than scroll themselves, so compose scrolls for them: when text is added at an item's end (typing, a paste) or the item goes over a limit, its end, with the byte-overflow line, is scrolled above the keyboard.
 - **Limits and counting:** the limits come from `engine.info()` capabilities (`contentLimits`); the UI counts locally on each keystroke with the rules of `lib/compose/limits.ts` (code points, UTF-8 bytes, default-ignorable characters), without importing it at runtime (PRD COMP-02).
-- **Counter:** "{current} / {limit}" with tabular figures, `caption`; `text.secondary`, `warning` at ≤ 50 left, `error` when over. The "/" is `text.decorative`. a11y label "{current} of {limit} characters" (+ ", {N} over limit"), not live.
+- **Counter:** "{current} / {limit}" with tabular figures, `caption`; `text.secondary`, `warning` at ≤ 50 left, `error` when over. The "/" is `text.decorative`. a11y label "{current} of {limit} characters" (+ ", {N} over limit", or ", {N} bytes over the size limit" when only the bytes are over), not live.
 - **Keyboard accessory bar** (sticks above the keyboard): "Add to thread" (`PlusCircleIcon` + label, `link`; hidden in reply and quote modes and at 10 items), then the counter of the active item.
 - **Mention suggestions:** a list docked above the accessory bar, max 4 visible rows (`md` avatars, name, handle), `bg.elevated`, `shadow-lg`, `radius.lg` top corners.
 
@@ -622,7 +623,7 @@ Lead decision (2026-10-01): the app uses **idiomatic expo-router routes with dyn
 | `/messages/settings` | — | push | 4.23 |
 | `/bookmarks` | — | push | 4.24 |
 | `/settings` | — | push (from Profile) | 4.25 |
-| `/settings/account`, `/settings/accounts`, `/settings/app-lock`, `/settings/privacy`, `/settings/blocked`, `/settings/appearance`, `/settings/about`, `/settings/diagnostics` | — | push | 4.26 – 4.32 |
+| `/settings/account`, `/settings/accounts`, `/settings/app-lock`, `/settings/privacy`, `/settings/blocked`, `/settings/appearance`, `/settings/feed-language`, `/settings/about`, `/settings/diagnostics` | — | push | 4.26 – 4.32 |
 | `/settings/notifications` | — | push in the current tab (shared route): from Settings on Profile, and from the Notifications gear (4.18) on Notifications, so Back returns to the Notifications list. A launch link (`/settings?section=notifications`) opens it on Profile. *Proposed in QA wave B (D-L4a-004 / D-L4i-005), pending lead sign-off; before, it was Profile-only and the gear switched tabs.* | 4.27 |
 | `/lockdown` | — | root modal, replaces the content | 4.33 |
 | `/media` | `postId`, `index` | root transparent modal | 4.35 |
@@ -940,7 +941,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - **Header title:** "Post" or "Reply". "⋯" opens the focused item's context menu.
-- **Counts row** shows only non-zero counts; each opens Engagements on that tab.
+- **Counts row** shows only non-zero counts; each opens Engagements on that tab. On dev (`repostsAreQuotes`) a bare repost is a quote post, so reposts and quotes are told apart by `posts.engagementCounts` (the Engagements screen's split) and stay out of the row until it answers; counts read off a quote list that filled up show that list's split as floors ("60+ Reposts · 40+ Quotes"). When a refresh moves the quote count the list is split again; when the split cannot be read, the row shows the post's own counts.
 - **Missing focused item:** stub (2.5) as the focused item; replies still listed (POST-05); reply bar replaced by the disabled note.
 - **Not found:** empty state "Post not found" with "Go back".
 - **Loading:** focused post skeleton; "Loading replies…" row under it.
@@ -1295,7 +1296,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.30 Settings: Appearance
 
 - "Theme": radio rows "System", "Light", "Dark" (iOS check marks; Android radio buttons). Applies instantly with a 200 ms crossfade of the root (none with Reduce Motion).
-- "Feed language" › (v2, P2): a picker list.
+- "Feed language" › (v2, P2, only with `capabilities.postLanguage`): the row shows the current language and pushes `/settings/feed-language`, a picker list: radio rows for the languages web offers (English, Spanish, French, German, Portuguese, Russian, Chinese, Japanese, Korean, Arabic, Hindi, Italian, Dutch, Polish, Turkish), with the note under them. Choosing one saves it (`settings.set({ feedLanguage })`) and starts For You over in that language.
 
 ### 4.31 Settings: About
 
@@ -1568,7 +1569,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | compose.remove | Remove this post **(web)** |
 | compose.nsfw | NSFW |
 | compose.nsfwLabel | Mark this post as NSFW **(web)** |
-| compose.counterLabel | {current} of {limit} characters / , {N} over limit **(web)** |
+| compose.counterLabel | {current} of {limit} characters / , {N} over limit **(web)** / , {N} bytes over the size limit (only the bytes over) |
 | compose.bytesOver | {N} bytes over the size limit. Emoji and non-Latin text count extra. **(web)** |
 | compose.tagTooLong | Tags can be up to {N} characters |
 | compose.firstMention | Only the first @mention notifies the person. |
@@ -1848,6 +1849,8 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | privacy.readReceipts | Read receipts / Let others see when you've read their messages (web, title sentence-cased) |
 | appearance.theme | Theme / System / Light / Dark **(web)** |
 | appearance.language | Feed language (web: "Feed Language", sentence-cased here) |
+| appearance.languageNote | Choose the language for the "For You" feed. Posts in other languages will not appear. **(web)** |
+| appearance.languages | English / Spanish / French / German / Portuguese / Russian / Chinese / Japanese / Korean / Arabic / Hindi / Italian / Dutch / Polish / Turkish **(web)** |
 | about.tagline | Decentralized social media on Dash Platform **(web)** |
 | about.rows | Terms of Use / Privacy Policy / Community rules / Community rules summary / Support / Open-source licenses / Yappr on the web |
 | about.info | Version / Network / Engine / Commit |
@@ -1978,4 +1981,5 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 - **Bold Text (iOS):** weights step up one level (400 → 600, 600 → 700).
 - **Increase Contrast / high-contrast text:** `text.secondary` becomes `text.primary`, `border` becomes `border.strong`.
 - **Keyboard (iPad keyboards on iPhone, Android hardware keyboards):** focus ring per 1.11; ⌘↩ / Ctrl+Enter posts in compose; Escape closes sheets.
+  - **Known limit (D-L2a-008): ⌘↩ / Ctrl+Enter is not wired yet.** React Native 0.86 gives JS no hardware-key modifiers in a text field: `TextInput.onKeyPress` reports soft-keyboard keys only on Android and carries no ⌘/Ctrl on iOS, where UIKit inserts nothing for ⌘↩ anyway. It needs native key handling, so a lead-approved dev-client rebuild: on Android RN's experimental `enableKeyEvents` flag (W3C `onKeyDown` with `ctrlKey`/`metaKey`, set at startup by a config plugin), on iOS a `UIKeyCommand` for ⌘↩ from a local module in `modules/`. Until then Post is the button.
 - **Test IDs:** every interactive element has a `testID` (PRD A11Y-08); test IDs never double as accessibility labels. *Proposed in QA wave B (D-L4a-011), pending lead sign-off:* an empty state's button is `<empty state testID>-action` (for example `signed-out-notifications-action`). The one exception is the items of native menus (UIMenu, Android's popup menu, such as the Messages ✎ menu's "New message" / "New group"): the OS draws them and takes no test ID, so tests pick them by their title.

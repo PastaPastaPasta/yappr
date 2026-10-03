@@ -97,9 +97,15 @@ export function counterTone(text: string, limits: ContentLimits): CounterTone {
   return limits.chars - characterCount(text) <= 50 ? 'warning' : 'secondary';
 }
 
-/** "{current} of {limit} characters", plus ", {N} over limit" (UX_SPEC §5.4). */
+/**
+ * "{current} of {limit} characters", plus ", {N} over limit", or with the
+ * characters in but the bytes over, ", {N} bytes over the size limit" (UX_SPEC
+ * §5.4): the red counter is never the only sign of why Post is off.
+ */
 export function counterLabel(text: string, limits: ContentLimits): string {
   const current = characterCount(text);
-  const over = current - limits.chars;
-  return `${current} of ${limits.chars} characters${over > 0 ? `, ${over} over limit` : ''}`;
+  const { charactersOver, bytesOver } = contentOverage(text, limits);
+  const over =
+    charactersOver > 0 ? `, ${charactersOver} over limit` : bytesOver > 0 ? `, ${bytesOver} bytes over the size limit` : '';
+  return `${current} of ${limits.chars} characters${over}`;
 }

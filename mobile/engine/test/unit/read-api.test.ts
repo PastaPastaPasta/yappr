@@ -271,6 +271,17 @@ describe('v10 quote split', () => {
     expect(full).toMatchObject({ truncated: true, hasMore: true })
     expect(await posts.engagementCounts(target)).toMatchObject({ reposts: 100, truncated: true })
   })
+
+  it('serves the counts from the cached split, and re-reads it when asked to', async () => {
+    m.topology = { repostsAreQuotes: true }
+    m.loadEngagementCounts.mockResolvedValue({ likes: 0, reposts: 0, quotes: 2 })
+    m.postService.getQuotePosts.mockResolvedValue([bare('Fresh1'), post('Fresh2', 1, { quotedPostId: id('Cached') })])
+    const target = { id: id('Cached'), kind: 'post' as const }
+    expect(await posts.engagementCounts(target)).toMatchObject({ reposts: 1, quotes: 1 })
+    m.postService.getQuotePosts.mockResolvedValue([bare('Fresh1'), post('Fresh2', 1, { quotedPostId: id('Cached') }), post('Fresh3', 2, { quotedPostId: id('Cached') })])
+    expect(await posts.engagementCounts(target)).toMatchObject({ reposts: 1, quotes: 1 })
+    expect(await posts.engagementCounts(target, true)).toMatchObject({ reposts: 1, quotes: 2 })
+  })
 })
 
 describe('posts.poll', () => {

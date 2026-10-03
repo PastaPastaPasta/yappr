@@ -376,12 +376,13 @@ export const posts = {
    * Like, repost and quote counts (`loadEngagementCounts`). On v10 the count
    * trees cannot tell a bare repost from a quote, so, as web's engagements
    * page does, the quote list is read and split; `truncated` marks counts
-   * that are floors ("100+").
+   * that are floors ("100+"). `fresh` re-reads the list past the split
+   * cached for a minute (the caller saw the quote count move).
    */
-  async engagementCounts(target: TargetQuery): Promise<EngagementCountsDTO> {
+  async engagementCounts(target: TargetQuery, fresh = false): Promise<EngagementCountsDTO> {
     const counts = await loadEngagementCounts(target.id, target.kind)
     if (!repostsAreQuotes() || counts.quotes === 0) return { ...counts, truncated: false }
-    const split = await quoteSplit(target, false)
+    const split = await quoteSplit(target, fresh)
     return { likes: counts.likes, reposts: split.reposts.length, quotes: split.quotes.length, truncated: split.truncated }
   },
 

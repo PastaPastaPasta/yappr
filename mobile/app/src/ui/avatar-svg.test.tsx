@@ -38,6 +38,33 @@ describe('slimDicebearSvg (D-L3a-011)', () => {
     expect(slimDicebearSvg(smaller)).toContain('mask="url(#viewboxMask)"');
   });
 
+  // DiceBear 9 `open-peeps` as the engine renders it (paths cut short, metadata elided).
+  const openPeeps =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 704 704" fill="none" shape-rendering="auto"><metadata>…</metadata>' +
+    '<mask id="viewboxMask"><rect width="704" height="704" rx="0" ry="0" x="0" y="0" fill="#fff" /></mask>' +
+    '<g mask="url(#viewboxMask)"><g fill-rule="evenodd" clip-rule="evenodd"><path d="M0 0" fill="#d08b5b"/></g>' +
+    '<g transform="matrix(.99789 0 0 1 156 62)"><g fill-rule="evenodd" clip-rule="evenodd"><path d="M0 0" fill="#724133"/></g></g>' +
+    '<g transform="translate(315 248)"><g fill-rule="evenodd" clip-rule="evenodd"><path d="M0 0" fill="#231F20"/></g></g></g></svg>';
+
+  it('draws an Open Peeps avatar with no bounding-box mask, which Android sizes to the body alone (D-L2a-006)', () => {
+    const slim = slimDicebearSvg(openPeeps);
+    expect(slim).not.toMatch(/<mask|mask=/);
+    // The body, the head and the face are all still drawn.
+    expect(slim).toContain('fill="#d08b5b"');
+    expect(slim).toContain('<g transform="matrix(.99789 0 0 1 156 62)">');
+    expect(slim).toContain('<g transform="translate(315 248)">');
+  });
+
+  it('gives a viewbox mask it keeps the viewBox as a user-space region (D-L2a-006)', () => {
+    const rounded = openPeeps.replace('rx="0" ry="0"', 'rx="40" ry="40"');
+    const slim = slimDicebearSvg(rounded);
+    expect(slim).toContain(
+      '<mask id="viewboxMask" maskUnits="userSpaceOnUse" x="0" y="0" width="704" height="704"><rect width="704" height="704" rx="40"',
+    );
+    expect(slim).toContain('<g mask="url(#viewboxMask)">');
+    expect(slimDicebearSvg(slim)).toBe(slim);
+  });
+
   it('leaves any other SVG alone', () => {
     const other =
       '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><mask id="m"><rect width="10" height="10" fill="#fff"/></mask><g mask="url(#m)"><path d="M0 0h10v10z"/></g></svg>';

@@ -25,7 +25,13 @@ import { useToastStore } from '~/ui/toast';
 import { AboutScreen } from './AboutScreen';
 import { AccountSettingsScreen } from './AccountSettingsScreen';
 import { licenses, LicensesScreen } from './LicensesScreen';
-import { AppearanceSettingsScreen, NotificationSettingsScreen, PrivacySettingsScreen } from './ContentSettingsScreens';
+import {
+  AppearanceSettingsScreen,
+  FeedLanguageSettingsScreen,
+  NotificationSettingsScreen,
+  PrivacySettingsScreen,
+} from './ContentSettingsScreens';
+import { copy } from './copy';
 import { SettingsScreen } from './SettingsScreen';
 
 jest.mock('~/engine', () => {
@@ -404,6 +410,39 @@ describe('Appearance (SET-05)', () => {
     fireEvent.press(byId('appearance-theme-dark'));
     expect(useAppearance.getState().theme).toBe('dark');
     expect(byId('appearance-theme-dark')).toBeChecked();
+  });
+
+  it('offers the feed language only where posts carry one (FEED-10, D-L4a-006)', async () => {
+    renderScreen(<AppearanceSettingsScreen />);
+    await settle();
+    expect(screen.queryByTestId('appearance-feed-language')).toBeNull();
+
+    act(() => fakeEngine.setStatus({ info: { capabilities: { dm: 'v5', postLanguage: true } as CapabilitiesDTO } }));
+    expect(byId('appearance-feed-language')).toHaveTextContent(/Feed language.*English/);
+    fireEvent.press(byId('appearance-feed-language'));
+    expect(router.push).toHaveBeenCalledWith('/settings/feed-language');
+  });
+
+  it('saves a feed language and starts For You over in it (FEED-10, D-L4a-006)', async () => {
+    fakeEngine.method('settings.set').mockResolvedValue({ ...SETTINGS, feedLanguage: 'pt' });
+    const forYou = queryKeys.feed.home({ tab: 'forYou' });
+    const following = queryKeys.feed.home({ tab: 'following' });
+    const page = { pages: [{ items: [], cursor: null, hasMore: false }], pageParams: [null] };
+    queryClient.setQueryData(forYou, page);
+    queryClient.setQueryData(following, page);
+    renderScreen(<FeedLanguageSettingsScreen />);
+    await settle();
+
+    expect(screen.getByText(copy.appearance.languageNote)).toBeTruthy();
+    expect(byId('feed-language-en')).toBeChecked();
+    await act(async () => fireEvent.press(byId('feed-language-pt')));
+
+    expect(fakeEngine.method('settings.set')).toHaveBeenCalledWith({ feedLanguage: 'pt' });
+    expect(byId('feed-language-pt')).toBeChecked();
+    expect(cachedSettings()?.feedLanguage).toBe('pt');
+    // For You's pages in the old language are gone; Following does not read the language.
+    expect(queryClient.getQueryData(forYou)).toBeUndefined();
+    expect(queryClient.getQueryData(following)).toEqual(page);
   });
 });
 
