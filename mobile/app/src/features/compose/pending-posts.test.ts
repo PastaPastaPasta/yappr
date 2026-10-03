@@ -439,7 +439,7 @@ it("a failure never overwrites the user's other draft: Edit opens the post on a 
   expect(loadDraft(VIEWER_ID, POST)?.parts[0]?.text).toBe('Draft B');
 });
 
-it('a failure that may have landed reads "Not confirmed yet", and Retry never re-sends it', async () => {
+it('a failure that may have landed reads "Not confirmed yet" with Edit (no check can settle it), and Retry never re-sends it', async () => {
   const t = publishTicket();
   fakeEngine.method('posts.publish').mockResolvedValue(t);
   publish(['one', 'two']);
@@ -447,7 +447,7 @@ it('a failure that may have landed reads "Not confirmed yet", and Retry never re
   act(() =>
     fakeEngine.emit('write.status', advance(t, { state: 'failed', error: failedWith('unknown'), documents: [doc(0, 'root-1')] })),
   );
-  expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
+  expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed', canEdit: true });
 
   fakeEngine.method('posts.publish').mockClear();
   retryPending(only()!.localId);
@@ -633,15 +633,16 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
     // A restored ticket of another post (another target) is not this one's.
     const other = ticket({ op: 'post.publish', identityId: VIEWER_ID, target: { id: 'someone-else', kind: 'post', ownerId: 'x', rootPostId: null } });
     fakeEngine.method('writes.list').mockResolvedValue([advance(other, { state: 'unconfirmed' })]);
-    // Too long ago, a ticket that confirmed would no longer be listed: that proves nothing.
+    // Too long ago, a ticket that confirmed would no longer be listed: that proves nothing, and
+    // waiting will not tell, so the card offers Edit (never Retry).
     usePendingPosts.setState(({ entries }) => ({
       entries: { [localId]: { ...entries[localId]!, submittedAt: Date.now() - 20 * 60_000 } },
     }));
     checkPending(localId);
     await settle();
-    expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
+    expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed', canEdit: true });
     usePendingPosts.setState(({ entries }) => ({
-      entries: { [localId]: { ...entries[localId]!, submittedAt: Date.now() - 2 * 60_000 } },
+      entries: { [localId]: { ...entries[localId]!, submittedAt: Date.now() - 2 * 60_000, unprovable: false } },
     }));
     checkPending(localId);
     await settle();
@@ -677,6 +678,89 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
       { state: 'unconfirmed' },
       { state: 'unconfirmed' },
     ]);
+
+    // Nor while a busy engine's ticket for it came minutes later; once waiting cannot tell, Edit.
+    const stale = Date.now() - 12 * 60_000;
+    usePendingPosts.setState(({ entries }) => ({
+      entries: Object.fromEntries(Object.entries(entries).map(([id, e]) => [id, { ...e, submittedAt: stale, createdAt: stale }])),
+    }));
+    const late = { ...publishTicket(), createdAt: new Date(stale + 3 * 60_000) };
+    fakeEngine.method('writes.list').mockResolvedValue([advance(late, { state: 'unconfirmed' })]);
+    checkPending(first);
+    await settle();
+    expect(pendingStatus(usePendingPosts.getState().entries[first]!)).toEqual({ state: 'unconfirmed', canEdit: true });
+    expect(fakeEngine.method('posts.publish')).toHaveBeenCalledTimes(2);
+  });
+
+  it('a cut-short post a refresh shows on chain is normal, though its ticket is long gone (D-L1a-001)', async () => {
+    fakeEngine.method('posts.publish').mockRejectedValue(Object.assign(new Error('restarted'), { code: 'ENGINE_RESTARTED' }));
+    fakeEngine.method('writes.list').mockResolvedValue([]);
+    const localId = publish(['Landed while away']);
+    await settle();
+    const away = Date.now() - 15 * 60_000;
+    usePendingPosts.setState(({ entries }) => ({
+      entries: { [localId]: { ...entries[localId]!, submittedAt: away, createdAt: away } },
+    }));
+    const author = { ...AUTHORS.alice, id: VIEWER_ID };
+    // The same words from well before it are not it.
+    const older = fixturePost({ id: 'older-1', content: 'Landed while away', author, createdAt: new Date(away - 3 * 60_000) });
+    act(() => queryClient.setQueryData(HOME, page([older, existing])));
+    expect(homeIds()).toEqual([localId, 'older-1', 'existing-1']);
+
+    const landed = fixturePost({ id: 'landed-1', content: 'Landed while away', author, createdAt: new Date(away + 2000) });
+    act(() => queryClient.setQueryData(HOME, page([landed, older, existing])));
+    expect(homeIds()).toEqual(['landed-1', 'older-1', 'existing-1']);
+    expect(usePendingPosts.getState().entries[localId]?.confirmedAt).toBeTruthy();
+    expect(renderHook(() => usePendingWriteStatus('landed-1')).result.current).toBeNull();
+    // Nothing was sent, and no toast: the user asked for nothing.
+    expect(fakeEngine.method('posts.publish')).toHaveBeenCalledTimes(1);
+    expect(toastMessage()).toBeUndefined();
+    // The next refresh keeps one copy.
+    act(() => queryClient.setQueryData(PROFILE, page([landed, existing])));
+    expect(queryClient.getQueryData<InfiniteData<Page<PostDTO>>>(PROFILE)?.pages[0]?.items.map((p) => p.id)).toEqual([
+      'landed-1',
+      'existing-1',
+    ]);
+  });
+
+  it('a post the engine cannot tell apart offers Edit once waiting will not settle it, and stops asking quietly', async () => {
+    const t = publishTicket();
+    fakeEngine.method('posts.publish').mockResolvedValue(t);
+    const localId = publish(['gm']);
+    await settle();
+    const unconfirmed = advance(t, { state: 'unconfirmed', error: restartedUnknown, documents: [] });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    fakeEngine.method('writes.check').mockResolvedValue(unconfirmed);
+
+    // Soon after, Check again only checks.
+    checkPending(localId);
+    await settle();
+    expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
+
+    // Ten minutes on, still unclear: Edit too, never Retry.
+    const old = Date.now() - 10 * 60_000;
+    usePendingPosts.setState(({ entries }) => ({ entries: { [localId]: { ...entries[localId]!, submittedAt: old } } }));
+    checkPending(localId);
+    await settle();
+    expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed', canEdit: true });
+    const { result } = renderHook(() => usePendingWriteStatus(localId));
+    expect(result.current?.status).toEqual({ state: 'unconfirmed', canEdit: true });
+
+    // A refresh that shows it adopts it, but no longer asks the engine every time.
+    fakeEngine.method('writes.check').mockClear();
+    const author = { ...AUTHORS.alice, id: VIEWER_ID };
+    const landed = fixturePost({ id: 'landed-1', content: 'gm', author, createdAt: new Date(old + 1000) });
+    act(() => queryClient.setQueryData(HOME, page([landed, existing])));
+    expect(homeIds()).toEqual(['landed-1', 'existing-1']);
+    expect(fakeEngine.method('writes.check')).not.toHaveBeenCalled();
+
+    // Edit takes it back: the text to compose (the landed part kept posted), the ticket dismissed.
+    act(() => editPending(localId));
+    expect(router.push).toHaveBeenCalled();
+    expect(loadDraft(VIEWER_ID, POST)?.parts).toEqual([{ text: 'gm', postedId: 'landed-1' }]);
+    expect(usePendingPosts.getState().entries[localId]).toBeUndefined();
+    expect(fakeEngine.method('writes.dismiss')).toHaveBeenCalledWith(t.id);
+    expect(homeIds()).toEqual(['landed-1', 'existing-1']);
   });
 });
 

@@ -97,12 +97,18 @@ export interface OwnDocument {
 export type FindOwnDocuments = (authorId: string) => Promise<{ documents: OwnDocument[]; completeSince: number }>
 
 /**
- * How far before the ticket a found part may be dated: a device clock
- * behind the chain's. A part with the same text dated further back may be
- * an older post of the same words, so it proves nothing either way.
+ * How far before the ticket a found part may be dated: the chain dates a
+ * document by its block, after the ticket, unless the device clock runs
+ * ahead of the chain's. Kept short, so another post of the same words made
+ * just before (from web, or another device) is not taken for this one.
  */
-const FOUND_SKEW_MS = 5 * 60_000
-/** How far back the reads must reach to prove a part absent (`FOUND_SKEW_MS` is ambiguous beyond). */
+const FOUND_SKEW_MS = 60_000
+/**
+ * How far back the reads must reach to prove a part absent. Also the margin
+ * by which every other post of the same words must predate the ticket for
+ * the one candidate in the window to count as found: one older than this
+ * is an earlier post of the same words, not this part.
+ */
 const SEARCH_BACK_MS = 60 * 60_000
 /**
  * How long after the attempt stopped running a part not found counts as
@@ -117,13 +123,15 @@ type PartSearch = { found: TicketDocument[]; absent: number; unclear: string | n
  * Look for the parts no ticket document names (an engine restart, or a
  * timeout, cut the write short before lib said their ids) among the
  * author's own documents, by their text and where they hang. A part found
- * once is named; a part whose text is nowhere is absent; anything else
- * (older posts of the same words, two candidates, a capped read) is unclear.
+ * once, with no other post of the same words from the hour before, is
+ * named; a part whose text is nowhere is absent; anything else (a recent
+ * post of the same words, two candidates, a capped read) is unclear.
  */
 function searchParts(plan: PostToCreate[], draft: DraftDTO, ticket: WriteTicket, own: Awaited<ReturnType<FindOwnDocuments>>): PartSearch {
   const result: PartSearch = { found: [], absent: 0, unclear: null }
   const earliest = ticket.createdAt.getTime() - FOUND_SKEW_MS
-  const complete = own.completeSince <= ticket.createdAt.getTime() - SEARCH_BACK_MS
+  const horizon = ticket.createdAt.getTime() - SEARCH_BACK_MS
+  const complete = own.completeSince <= horizon
   const used = new Set<string>()
   let previous: string | null | undefined
   plan.forEach((part, index) => {
@@ -137,8 +145,12 @@ function searchParts(plan: PostToCreate[], draft: DraftDTO, ticket: WriteTicket,
       doc.createdAt >= earliest &&
       (parent === undefined || (parent === null ? doc.type === 'post' && doc.parentId === null : doc.parentId === parent)) &&
       (quoted === null || doc.quotedId === quoted))
+    // The same words posted well before the attempt (last week's "gm") cannot be this part; ones
+    // from the hour before could be, with a device clock ahead of the chain's. Absence stays strict:
+    // any post of the same words keeps a part from being proved absent.
+    const recent = sameText.filter(doc => !used.has(doc.id) && doc.createdAt >= horizon)
     previous = undefined
-    if (matches.length === 1 && sameText.length === 1) {
+    if (matches.length === 1 && recent.length === 1) {
       const [doc] = matches
       used.add(doc.id)
       previous = doc.id

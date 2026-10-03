@@ -9,7 +9,11 @@ import { hitSlopFor, MIN_TARGET, useColors } from './tokens';
 export type WriteState =
   | { state: 'posting' }
   | { state: 'threadProgress'; index: number; total: number }
-  | { state: 'unconfirmed' }
+  /**
+   * It may have landed. `canEdit` once checking cannot settle it: Edit is
+   * its way out, never a resend (PRD COMP-10).
+   */
+  | { state: 'unconfirmed'; canEdit?: boolean }
   | { state: 'failed' }
   | { state: 'partial'; posted: number; total: number };
 
@@ -41,7 +45,10 @@ export function writeStatusLinks({
 }: WriteStatusProps): WriteStatusLink[] {
   switch (status.state) {
     case 'unconfirmed':
-      return [{ label: 'Check again', onPress: onCheckAgain, id: 'check-again' }];
+      return [
+        { label: 'Check again', onPress: onCheckAgain, id: 'check-again' },
+        ...(status.canEdit ? [{ label: 'Edit', onPress: onEdit, id: 'edit' as const }] : []),
+      ];
     case 'failed':
       return [
         { label: 'Retry', onPress: onRetry, id: 'retry' },
@@ -80,8 +87,9 @@ const LINK_FRAME = { minWidth: MIN_TARGET, alignItems: 'center' } as const;
 
 /**
  * The write-status line that replaces an optimistic card's action bar
- * (UX_SPEC §2.4.11): posting, not confirmed · check again, failed · retry ·
- * edit, and partly posted · retry the rest. Each change is announced once.
+ * (UX_SPEC §2.4.11): posting, not confirmed · check again (· edit, once
+ * checking cannot settle it), failed · retry · edit, and partly posted ·
+ * retry the rest. Each change is announced once.
  */
 export function WriteStatus(props: WriteStatusProps) {
   const { status } = props;

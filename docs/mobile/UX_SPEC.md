@@ -398,7 +398,7 @@ Replaces the action bar on optimistic cards.
 | --- | --- |
 | Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`) |
 | Thread progress | spinner + "Posting 2 of 5…" |
-| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`) |
+| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`). Once checking cannot settle it (Check again 10 minutes or more after posting still cannot tell, or a failure that may have landed), also " · Edit": compose opens on its text, parts known to have posted kept posted; never Retry |
 | Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`) |
 | Partly posted | "Posted 2 of 5 · Retry the rest" |
 

@@ -642,6 +642,26 @@ describe('posts.publish and posts.delete', () => {
       expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
     })
 
+    it('finds it beside the same words posted long before, never beside ones from the hour before', async () => {
+      const { ticket, tickets, advance } = await cutShort({ parts: [{ text: 'gm' }] })
+      advance(5 * 60_000)
+      const at = ticket.createdAt.getTime()
+      const landed = id('Landed')
+      // Another "gm" from 30 minutes before could be this one with a clock ahead of the chain's.
+      m.postService.getUserPosts.mockResolvedValue({ documents: [own(landed, 'gm', at + 1000), own(id('Recent'), 'gm', at - 30 * 60_000)] })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, documents: [] })
+      // Last week's "gm" cannot be.
+      m.postService.getUserPosts.mockResolvedValue({ documents: [own(landed, 'gm', at + 1000), own(id('LastWeek'), 'gm', at - 7 * 24 * 60 * 60_000)] })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed', documents: [{ id: landed, part: 0, confirmed: true }] })
+    })
+
+    it('never takes the same words posted elsewhere a few minutes before for it', async () => {
+      const { ticket, tickets, advance } = await cutShort({ parts: [{ text: 'test' }] })
+      advance(5 * 60_000)
+      m.postService.getUserPosts.mockResolvedValue({ documents: [own(id('FromWeb'), 'test', ticket.createdAt.getTime() - 3 * 60_000)] })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, documents: [] })
+    })
+
     it('names the parts of a thread it finds, and lets only the rest be retried', async () => {
       const { ticket, tickets, advance } = await cutShort({ parts: [{ text: 'one' }, { text: 'two' }] })
       const at = ticket.createdAt.getTime()

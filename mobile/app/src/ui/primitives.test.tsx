@@ -212,6 +212,7 @@ describe('WriteStatus', () => {
     [{ state: 'posting' } as const, 'Posting…', []],
     [{ state: 'threadProgress', index: 2, total: 5 } as const, 'Posting 2 of 5…', []],
     [{ state: 'unconfirmed' } as const, 'Not confirmed yet', ['Check again']],
+    [{ state: 'unconfirmed', canEdit: true } as const, 'Not confirmed yet', ['Check again', 'Edit']],
     [{ state: 'failed' } as const, "Couldn't post", ['Retry', 'Edit']],
     [{ state: 'partial', posted: 2, total: 5 } as const, 'Posted 2 of 5', ['Retry the rest']],
   ])('%o reads "%s" with %o', (status, text, links) => {
