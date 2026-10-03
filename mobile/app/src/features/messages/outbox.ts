@@ -270,7 +270,11 @@ function unsentText(entry: OutboxEntry): string {
   return entry.text.trim().slice(cursor);
 }
 
-/** Forgets every local send and draft (sign-out): their plaintext must not outlive the session. */
+/**
+ * Forgets every local send, and drops the drafts from memory (the account
+ * changed): sends' plaintext must not outlive the session. Drafts stay saved
+ * for their account, encrypted, until it signs out (`forgetDmDrafts`).
+ */
 export function clearLocalMessages(): void {
   generation += 1;
   useOutbox.setState({ entries: [] });

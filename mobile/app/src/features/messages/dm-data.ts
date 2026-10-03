@@ -109,6 +109,21 @@ export function refreshDm(changedKeys: readonly string[] = []): void {
 }
 
 /**
+ * Check for new messages now (pull to refresh, "Try again"), the first load
+ * too if it failed, then re-read the status and the inbox. Never rejects: a
+ * failed check shows in the status.
+ */
+export async function pollDm(): Promise<void> {
+  await engine.api.dm.refresh().catch((error: unknown) => {
+    appendLog('info', 'host', `dm.refresh failed: ${errorMessage(error)}`);
+  });
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: queryKeys.dm.status }),
+    queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations }),
+  ]).catch(() => undefined);
+}
+
+/**
  * The Messages tab badge (`useTabBadges`, DM-13): conversations with unread
  * messages, from `dm.status` (polled every 30 s in the foreground) and every
  * `dm.changed`. Also the one app-wide subscriber that keeps the inbox and

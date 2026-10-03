@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { engine, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { onEngineEvent } from '~/data/events';
+import { forgetDmDrafts } from '~/features/messages/drafts';
 import { queryKeys } from '~/data/keys';
 import { EMPTY_VIEWER, holdOwnQuote, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
 import { getCapabilities, useSessionStore } from '~/data/session';
@@ -960,9 +961,10 @@ function reconcile(identityId: string): void {
     .catch((error: unknown) => appendLog('warn', 'host', `Reading restored posts failed: ${errorMessage(error)}`));
 }
 
-/** Signing out deletes the account's drafts and the posts it had on their way (PRD AUTH-11). */
+/** Signing out deletes the account's drafts, its unsent messages and the posts it had on their way (PRD AUTH-11). */
 function forgetAccount(identityId: string): void {
   forgetDrafts(identityId);
+  forgetDmDrafts(identityId);
   for (const entry of Object.values(usePendingPosts.getState().entries)) {
     if (entry.identityId === identityId) dropEntry(entry.localId);
   }

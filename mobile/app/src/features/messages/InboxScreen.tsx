@@ -8,6 +8,7 @@ import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture
 import { ChatBubbleLeftRightIcon, Cog6ToothIcon, PencilSquareIcon } from 'react-native-heroicons/outline';
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
+import { useEngineStatus } from '~/engine/hooks';
 import { cn } from '~/lib-allowlist';
 import { showActionSheet } from '~/ui/action-sheet';
 import { ContextMenu } from '~/ui/ContextMenu';
@@ -20,7 +21,7 @@ import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 import { ConversationRow } from './ConversationRow';
 import { deleteConversation, openConversationScreen } from './dm-actions';
-import { readErrorMessage, refreshDm, useConversations, useDmBackend, useDmStatus, useDmViewer } from './dm-data';
+import { pollDm, readErrorMessage, useConversations, useDmBackend, useDmStatus, useDmViewer } from './dm-data';
 import { matchesSearch, sortConversations } from './dm-model';
 import { DmLocked, DmSignedOut, InboxNotice, InboxSkeleton, RestoringBanner } from './DmStates';
 import { Text } from '~/ui/Text';
@@ -29,6 +30,9 @@ import { UnlockSheet } from './UnlockSheet';
 const openNew = () => router.push('/messages/new');
 const openNewGroup = () => router.push('/messages/new-group');
 const openSettings = () => router.push('/messages/settings');
+const retry = () => {
+  pollDm().catch(() => undefined);
+};
 
 function HeaderActions({ v5 }: { v5: boolean }) {
   const compose = (
@@ -163,6 +167,7 @@ export function InboxScreen() {
   // Conversation previews stay out of Android's Recents and screenshots.
   useBlockScreenCapture('private', focused);
 
+  const { state: engineState } = useEngineStatus();
   const status = useDmStatus(signedIn);
   const locked = status.data?.locked === true;
   const canList = signedIn && status.data !== undefined && !locked;
@@ -186,9 +191,7 @@ export function InboxScreen() {
       return;
     }
     setRefreshing(true);
-    Promise.all([status.refetch(), canList ? list.refetch() : undefined])
-      .catch(() => undefined)
-      .finally(() => setRefreshing(false));
+    pollDm().finally(() => setRefreshing(false));
   };
 
   const onPress = useCallback((conversation: ConversationDTO) => openConversationScreen(conversation.key), []);
@@ -215,21 +218,18 @@ export function InboxScreen() {
   );
 
   const error = status.error ?? list.error;
+  // The engine answers the inbox only once its first load is done (ENGINE_BUSY until then, then its
+  // failure): until it is ready nothing here may read as a first visit (G-2, G-11).
+  const loaded = list.data !== undefined && status.data?.ready === true;
   let empty;
   if (!signedIn) {
     empty = <DmSignedOut groups={v5} />;
   } else if (locked) {
     empty = <DmLocked onUnlock={() => setUnlockOpen(true)} />;
   } else if ((status.isError && !status.data) || (list.isError && !list.data)) {
-    empty = (
-      <ErrorState
-        message={readErrorMessage(error)}
-        onRetry={() => refreshDm()}
-        testID="messages-error"
-      />
-    );
-  } else if (!list.data) {
-    empty = <InboxSkeleton />;
+    empty = <ErrorState message={readErrorMessage(error)} onRetry={retry} testID="messages-error" />;
+  } else if (!loaded) {
+    empty = <InboxSkeleton connecting={engineState !== 'ready' && engineState !== 'degraded'} />;
   } else if (query.trim() && all.length > 0) {
     empty = <EmptyState title="No conversations match your search" icon={MagnifyingGlassIcon} testID="messages-no-match" />;
   } else if (hiddenCount > 0) {
@@ -265,7 +265,8 @@ export function InboxScreen() {
     <View>
       {all.length > 0 ? <SearchBox value={query} onChange={setQuery} /> : null}
       {offline ? <InboxNotice text="You're offline. New messages show up when you reconnect." testID="messages-offline" /> : null}
-      {!offline && status.data?.error ? (
+      {/* With no list yet, the error state says it, with "Try again". */}
+      {!offline && status.data?.error && (loaded || all.length > 0) ? (
         <InboxNotice text="Couldn't check for new messages. Pull to try again." testID="messages-poll-error" />
       ) : null}
       {recovery ? <RestoringBanner recovery={recovery} /> : null}

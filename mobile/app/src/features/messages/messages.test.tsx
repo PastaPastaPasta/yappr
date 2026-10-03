@@ -19,8 +19,8 @@ import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
 import { NewGroupScreen } from './NewGroupScreen';
 import { NewMessageScreen } from './NewMessageScreen';
-import { useMessagesBadge } from './dm-data';
-import { useDraft, useDrafts } from './drafts';
+import { UNAVAILABLE_MESSAGE, useMessagesBadge } from './dm-data';
+import { forgetDmDrafts, useDraft, useDrafts } from './drafts';
 import { InboxScreen } from './InboxScreen';
 import { clearLocalMessages, forgetLanded, mergeOutbox, sendMessage, useOutbox, type OutboxEntry } from './outbox';
 import { BOB_ID, conversation, dmMessage, FLAGS } from './test-fixtures';
@@ -119,6 +119,8 @@ beforeEach(() => {
   resetWriteTracking();
   useOutbox.setState({ entries: [] });
   useDrafts.getState().clearAll();
+  // Drafts are saved on the device too (drafts.ts): one test's must not show up in the next.
+  forgetDmDrafts(VIEWER);
   useToastStore.setState({ current: null });
   useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
   fakeEngine.method('dm.open').mockResolvedValue(undefined);
@@ -242,6 +244,58 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     expect(screen.getByText('Bob Builder')).toBeTruthy();
     expect(largeTitleScrollView(screen.UNSAFE_root)).toBe(list);
     expect(list?.props.testID).toBe('messages-list');
+  });
+
+  it('while the engine has not loaded the messages yet, shows the skeleton, never the welcome or a failed check (QA D-L4a-001)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ ready: false }));
+    fakeEngine.method('dm.conversations').mockRejectedValue(busy());
+    await renderAt('/messages');
+    expect(screen.getByTestId('messages-loading')).toBeTruthy();
+    expect(screen.queryByText('Welcome to Messages')).toBeNull();
+    expect(screen.queryByTestId('messages-poll-error')).toBeNull();
+  });
+
+  it('never welcomes a first visit to an empty list from a status that is not ready', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ ready: false }));
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
+    await renderAt('/messages');
+    expect(screen.getByTestId('messages-loading')).toBeTruthy();
+    expect(screen.queryByText('Welcome to Messages')).toBeNull();
+  });
+
+  it('shows "Connecting to Dash Platform…" under the skeleton while the engine boots (G-2)', async () => {
+    fakeEngine.setStatus({ state: 'handshaking' });
+    signIn();
+    fakeEngine.method('dm.status').mockReturnValue(new Promise(() => undefined));
+    await renderAt('/messages');
+    expect(screen.getByTestId('messages-loading')).toBeTruthy();
+    expect(screen.getByText('Connecting to Dash Platform…')).toBeTruthy();
+  });
+
+  it('when the first check failed, says so with Try again, which checks again (QA D-L4i-002)', async () => {
+    signIn();
+    const failed = 'Request timeout after 8000ms';
+    fakeEngine.method('dm.status').mockResolvedValue(status({ ready: false, error: failed }));
+    fakeEngine.method('dm.conversations').mockRejectedValue(Object.assign(new Error(failed), { code: 'TIMEOUT' }));
+    fakeEngine.method('dm.refresh').mockResolvedValue(undefined);
+    await renderAt('/messages');
+    // One retry a second later (renderRouter runs Jest's fake timers).
+    await act(async () => {
+      jest.advanceTimersByTime(1100);
+    });
+    expect(screen.getByTestId('messages-error')).toBeTruthy();
+    expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
+    expect(screen.queryByText('Welcome to Messages')).toBeNull();
+    expect(screen.queryByTestId('messages-poll-error')).toBeNull();
+
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation()]);
+    fireEvent.press(screen.getByText('Try again'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.refresh')).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Bob Builder')).toBeTruthy();
   });
 
   it('when every conversation is deleted, says so instead of welcoming a first visit (SR-41)', async () => {
@@ -808,6 +862,17 @@ describe('New message (DM-05)', () => {
     fakeEngine.method('dm.startDirect').mockRejectedValue(Object.assign(new Error(reason), { code: 'BAD_REQUEST' }));
     await renderAt(`/messages/new?with=${BOB_ID}`);
     expect(useToastStore.getState().current?.message).toBe(reason);
+  });
+
+  it('says a pasted id that is not one is invalid, without looking it up or blaming the connection (QA D-L4a-007)', async () => {
+    await renderAt('/messages/new');
+    fireEvent.changeText(screen.getByTestId('picker-search'), '1'.repeat(44));
+    await act(async () => {
+      jest.advanceTimersByTime(400);
+    });
+    expect(screen.getByTestId('picker-invalid')).toHaveTextContent('Invalid identity ID');
+    expect(screen.queryByText(/Check your connection/)).toBeNull();
+    expect(fakeEngine.method('profiles.get')).not.toHaveBeenCalled();
   });
 
   it("refuses to message yourself without asking the engine", async () => {

@@ -130,7 +130,8 @@ before you change anything here.
 - **Persisting a query is opt-in.** Pass `{ persist: true }` to
   `useEngineQuery` (it spreads `persistedQuery`).
   Never persist decrypted DMs, notifications or balances, because MMKV is not
-  encrypted.
+  encrypted. (Unsent DM text is kept on the device in an encrypted MMKV
+  instance of its own, `features/messages/drafts.ts`, PRD DM-04.)
 - The persisted cache is busted by app version + `ENGINE_BUNDLE_HASH` + network.
 - The session sync (`src/data/session.ts`) calls `clearAccountCache()` on
   sign-out and account switch.

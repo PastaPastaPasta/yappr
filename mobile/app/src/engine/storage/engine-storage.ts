@@ -70,7 +70,7 @@ const MMKV_KEY_OPTIONS: SecureStore.SecureStoreOptions = {
  * of 64, so the mapping is unbiased): 32 bytes of key material for AES-256
  * and 192 bits of entropy, as an ASCII string MMKV takes byte for byte.
  */
-function newEncryptionKey(): string {
+export function newEncryptionKey(): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
   return Array.from(getRandomBytes(32), (byte) => alphabet[byte % 64]).join('');
 }
