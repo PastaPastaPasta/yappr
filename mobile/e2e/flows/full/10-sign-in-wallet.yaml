@@ -33,8 +33,23 @@ tags:
       KX: dash-key
 - extendedWaitUntil:
     visible:
-      id: "terms-agree|kx-register-qr|home-header|kx-signed-in"
+      id: "terms-agree|kx-register-qr|home-header|kx-signed-in|kx-check-again"
     timeout: 180000
+# One poll run lasts two minutes, then the screen offers "Check again" (AUTH-07).
+# While sakura's quorum cache lags, the responder can take longer than that to
+# publish its answer: "Check again" polls the same request, which finds it.
+- runFlow:
+    when:
+      visible:
+        id: kx-check-again
+    commands:
+      - takeScreenshot: sign-in-check-again
+      - tapOn:
+          id: kx-check-again
+      - extendedWaitUntil:
+          visible:
+            id: "terms-agree|kx-register-qr|home-header|kx-signed-in"
+          timeout: 180000
 # A first login on this app contract registers the derived keys (dash-st:).
 - runFlow:
     when:
