@@ -397,7 +397,18 @@ export const PostCard = memo(function PostCard({
   const ripple = useRipple();
   // Live like the visible time, so the screen reader does not keep the first one.
   const spokenTime = useRelativeTime(post.createdAt, 'spoken');
-  if (post.viewer?.authorBlocked) return <PostStub state="blocked" kind={post.kind} />;
+  if (post.viewer?.authorBlocked) {
+    // The stub keeps a menu only where one is given for it (Bookmarks' "Remove bookmark", PRD ENG-04).
+    const stubMenu = variant === 'compact' ? undefined : menu;
+    return (
+      <PostStub
+        state="blocked"
+        kind={post.kind}
+        more={stubMenu ? <MoreButton post={post} menu={stubMenu} /> : undefined}
+        onMore={stubMenu ? () => openPostMenu(stubMenu) : undefined}
+      />
+    );
+  }
 
   const gated = (nsfwGated ?? post.sensitive) && !post.deleted;
   const covered = gated && !revealed;

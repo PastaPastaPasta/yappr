@@ -185,6 +185,44 @@ describe('setViewerState', () => {
     expect(feed().pages[0].items[0]).toMatchObject({ stats: { reposts: 0, quotes: 1 }, viewer: { reposted: false } });
     expect(queryClient.getQueryData(queryKeys.post.detail('t'))).toMatchObject({ stats: { quotes: 1 }, viewer: slot });
   });
+
+  it('puts back the slot a changed copy had, not a stale copy visited first', () => {
+    const slot = { reposted: true, ownQuoteId: 'q1', ownQuoteBare: false };
+    const stats = { likes: 0, reposts: 0, replies: 0, quotes: 1 };
+    // The feed's copy, cached first, predates the quote (made on another device).
+    const stale = fixturePost({ id: 't', stats });
+    queryClient.setQueryData<InfiniteData<Page<PostDTO>>>(queryKeys.feed.home({ tab: 'forYou' }), {
+      pages: [page([stale])],
+      pageParams: [null],
+    });
+    queryClient.setQueryData(queryKeys.post.detail('t'), fixturePost({ id: 't', stats, viewer: { ...target.viewer!, ...slot } }));
+    // "Delete your quote", and the delete fails.
+    const undo = setViewerState('t', { reposted: false, ownQuoteId: null, ownQuoteBare: false });
+    expect(queryClient.getQueryData(queryKeys.post.detail('t'))).toMatchObject({ stats: { reposts: 0, quotes: 0 } });
+    undo();
+    expect(queryClient.getQueryData(queryKeys.post.detail('t'))).toMatchObject({
+      stats: { reposts: 0, quotes: 1 },
+      viewer: slot,
+    });
+    expect(feed().pages[0].items[0]).toBe(stale);
+  });
+
+  it('leaves a stale copy alone on undo even in a query it changed', () => {
+    const slot = { reposted: true, ownQuoteId: 'q1', ownQuoteBare: false };
+    const stats = { likes: 0, reposts: 0, replies: 0, quotes: 1 };
+    // The quoted post's own card is stale; the viewer's quote embeds a fresh copy.
+    const stale = fixturePost({ id: 't', stats });
+    const fresh = fixturePost({ id: 't', stats, viewer: { ...target.viewer!, ...slot } });
+    queryClient.setQueryData<InfiniteData<Page<PostDTO>>>(queryKeys.feed.home({ tab: 'forYou' }), {
+      pages: [page([stale, fixturePost({ id: 'q1', quoted: fresh, quotedPostId: 't' })])],
+      pageParams: [null],
+    });
+    const undo = setViewerState('t', { reposted: false, ownQuoteId: null, ownQuoteBare: false });
+    expect(feed().pages[0].items[1].quoted).toMatchObject({ stats: { quotes: 0 }, viewer: { reposted: false } });
+    undo();
+    expect(feed().pages[0].items[0]).toBe(stale);
+    expect(feed().pages[0].items[1].quoted).toMatchObject({ stats: { quotes: 1 }, viewer: slot });
+  });
 });
 
 describe('holdOwnQuote', () => {

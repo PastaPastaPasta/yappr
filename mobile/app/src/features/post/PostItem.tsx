@@ -48,8 +48,12 @@ export interface PostItemProps
    * A blocked author's post goes the same way: hidden, or its blocked stub.
    */
   removal?: 'hide' | 'stub';
-  /** The Bookmarks screen's "Remove bookmark" in the card's menu (PRD ENG-04, UX_SPEC §4.24). */
-  onRemoveBookmark?: () => void;
+  /**
+   * The Bookmarks screen's "Remove bookmark" in the card's menu (PRD ENG-04,
+   * UX_SPEC §4.24), called with the listed post; a blocked author's stub
+   * keeps it as its only item.
+   */
+  onRemoveBookmark?: (post: PostDTO) => void;
 }
 
 /**
@@ -151,12 +155,16 @@ function repostSheet(
   return [{ label: 'Repost', onPress: run.repost }, ...quote];
 }
 
+const REMOVE_BOOKMARK: MenuItem = { id: 'remove-bookmark', title: 'Remove bookmark', systemImage: 'bookmark.slash' };
+
 /** The ⋯ and long-press menu (PRD ENG-08), in its order; a screen's own item (Bookmarks) after "Share…". */
 function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBookmark: boolean): MenuItem[] {
   const handle = post.author.username ? `@${post.author.username}` : post.author.displayName;
   const follows = post.viewer?.followsAuthor === true;
   const noun = post.kind === 'reply' ? 'reply' : 'post';
   const items: MenuItem[] = [];
+  // A blocked author's post is its stub: nothing to follow, block or report.
+  if (post.viewer?.authorBlocked) return removeBookmark ? [REMOVE_BOOKMARK] : items;
   if (!own && followKnown) {
     items.push({
       id: 'follow',
@@ -169,7 +177,7 @@ function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBook
     { id: 'copy-link', title: 'Copy link', systemImage: 'link' },
     { id: 'share', title: 'Share…', systemImage: 'square.and.arrow.up' },
   );
-  if (removeBookmark) items.push({ id: 'remove-bookmark', title: 'Remove bookmark', systemImage: 'bookmark.slash' });
+  if (removeBookmark) items.push(REMOVE_BOOKMARK);
   if (own && !post.deleted) {
     items.push({ id: 'delete', title: `Delete ${noun}`, systemImage: 'trash', destructive: true });
   }
@@ -311,7 +319,7 @@ export const PostItem = memo(function PostItem({
         if (capabilities?.reports === false) openReport();
         else requireAuth(openReport);
       },
-      ...(onRemoveBookmark ? { 'remove-bookmark': onRemoveBookmark } : {}),
+      ...(onRemoveBookmark ? { 'remove-bookmark': () => onRemoveBookmark(listed) } : {}),
     };
     const onSelect = (id: string) => menuActions[id]?.();
 
@@ -348,9 +356,10 @@ export const PostItem = memo(function PostItem({
       onVotePress: openOnWeb,
       onOpenPrivate: openOnWeb,
     };
-    const menu: PostCardMenu = { items: menuItems(post, own, followKnown, onRemoveBookmark !== undefined), onSelect };
+    const items = menuItems(post, own, followKnown, onRemoveBookmark !== undefined);
+    const menu: PostCardMenu | undefined = items.length > 0 ? { items, onSelect } : undefined;
     return { actions, menu };
-  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark]);
+  }, [post, own, followKnown, marksPending, reloadMarks, viewerId, capabilities, external, detail, onRemoveBookmark, listed]);
 
   if ((removed && !asStub) || safety.hidden) return null;
 

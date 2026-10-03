@@ -163,7 +163,8 @@ covered without registering it.
 - **Each helper returns its undo.** The undo applies to every copy the
   change touched and to copies cached after it (a detail screen seeded from
   a patched card); `setViewerState`'s leaves a copy that already read that
-  way alone. It also refetches the post's (or the author's profile's)
+  way alone (by object, so even one in a query it changed) and puts back the
+  slot a changed copy had. It also refetches the post's (or the author's profile's)
   detail family, so a copy that was already right comes back right.
 - **Patches don't disturb queries.** Untouched objects keep their identity,
   so memoized cells don't re-render. A patched query keeps its age, so stale

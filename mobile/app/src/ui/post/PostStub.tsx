@@ -1,4 +1,5 @@
-import { View } from 'react-native';
+import type { ReactNode } from 'react';
+import { Pressable, View } from 'react-native';
 import {
   ExclamationTriangleIcon,
   NoSymbolIcon,
@@ -50,41 +51,60 @@ export interface PostStubProps {
   /** v11 kept fields of a removed post: its first tag and date, e.g. "#dash · posted Sep 30". */
   kept?: string;
   testID?: string;
+  /** A card stub's menu, if it has one (Bookmarks' "Remove bookmark"): its "⋯" trigger, at the line's end. */
+  more?: ReactNode;
+  /** Opens that menu as an action sheet: on a long press, and as the screen-reader "More" action. */
+  onMore?: () => void;
 }
+
+const MORE_ACTION = [{ name: 'more', label: 'More' }];
 
 /**
  * The hole a removed, deleted, unloadable or blocked post leaves (UX_SPEC
  * §2.5): one italic line with its icon, plus the reason or kept fields. Not
- * tappable, and one static element for screen readers.
+ * tappable, and one element for screen readers. A stub with a menu opens it
+ * from its "⋯", a long press, or the "More" action.
  */
-export function PostStub({ state, kind = 'post', variant = 'card', reason, kept, testID }: PostStubProps) {
+export function PostStub({ state, kind = 'post', variant = 'card', reason, kept, testID, more, onMore }: PostStubProps) {
   const c = useColors();
   const Icon = ICONS[state];
   const text = stubText(state, kind);
   const detail = state === 'removed' && reason ? `Reason: ${reason}` : kept;
 
-  return (
-    <View
-      accessible
-      accessibilityLabel={detail ? `${text} ${detail}` : text}
-      testID={testID ?? `stub-${state}`}
-      className={cn(
-        'gap-1',
-        variant === 'embed' ? cn(EMBED_FRAME, 'p-3') : cn('border-b px-4 py-3', tw.border),
-      )}
-    >
+  const frame = {
+    accessible: true,
+    accessibilityLabel: detail ? `${text} ${detail}` : text,
+    testID: testID ?? `stub-${state}`,
+    className: cn('gap-1', variant === 'embed' ? cn(EMBED_FRAME, 'p-3') : cn('border-b px-4 py-3', tw.border)),
+  };
+  const body = (
+    <>
       <View className="flex-row items-center gap-2">
         <Icon size={16} color={c.textSecondary} />
         <Text variant="subhead" tone="secondary" className="shrink italic">
           {text}
         </Text>
+        {more ? <View className="ml-auto">{more}</View> : null}
       </View>
       {detail ? (
         <Text variant="subhead" tone="secondary">
           {detail}
         </Text>
       ) : null}
-    </View>
+    </>
+  );
+  if (!onMore) return <View {...frame}>{body}</View>;
+  return (
+    <Pressable
+      {...frame}
+      accessibilityActions={MORE_ACTION}
+      onAccessibilityAction={(e) => {
+        if (e.nativeEvent.actionName === 'more') onMore();
+      }}
+      onLongPress={onMore}
+    >
+      {body}
+    </Pressable>
   );
 }
 

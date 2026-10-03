@@ -374,8 +374,14 @@ describe('BookmarksScreen', () => {
 
     expect(screen.getByText('Post from an account you blocked')).toBeTruthy();
     expect(screen.queryByText('Film grain')).toBeNull();
-    // Still removable, by its swipe action.
+    // Still removable, by its swipe action or its menu, which has nothing else.
     expect(screen.getByTestId('bookmark-remove-b1')).toBeTruthy();
+    const menu = screen.getByTestId('more-menu-b1');
+    expect((menu.props.actions as { title: string }[]).map((item) => item.title)).toEqual(['Remove bookmark']);
+    expect(screen.getByTestId('stub-blocked').props.accessibilityActions).toEqual([{ name: 'more', label: 'More' }]);
+    fakeEngine.method('engage.unbookmark').mockResolvedValue(unbookmarkTicket('b1'));
+    await act(async () => fireEvent(menu, 'pressAction', { nativeEvent: { event: 'remove-bookmark' } }));
+    expect(fakeEngine.method('engage.unbookmark')).toHaveBeenCalledWith(expect.objectContaining({ id: 'b1' }));
   });
 
   it('shows the empty state', async () => {

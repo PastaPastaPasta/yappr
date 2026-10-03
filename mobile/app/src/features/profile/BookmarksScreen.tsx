@@ -62,7 +62,7 @@ const removedBy = (ticket: WriteTicket | null) =>
  * §4.24); the card's own bookmark button works too. A saved post that is
  * gone, or whose author the viewer blocked, stays as its stub (PRD ENG-04,
  * G-6, G-7): a row that rendered nothing would leave a blank list with no
- * empty state. A stub has no menu, so swiping removes it.
+ * empty state. The blocked stub's menu has just "Remove bookmark".
  */
 function BookmarkRow({ post }: { post: PostDTO }) {
   return (
@@ -92,7 +92,7 @@ function BookmarkRow({ post }: { post: PostDTO }) {
       )}
     >
       <View className="bg-white dark:bg-neutral-900">
-        <PostItem post={post} removal="stub" onRemoveBookmark={() => remove(post)} />
+        <PostItem post={post} removal="stub" onRemoveBookmark={remove} />
       </View>
     </ReanimatedSwipeable>
   );

@@ -123,10 +123,14 @@ function repostCount(before: Partial<ViewerStateDTO> | undefined, after: Partial
 /**
  * Changes only the patched marks; fields the copy doesn't know stay unknown.
  * Counts move only where the copy knew the mark before, since otherwise the
- * previous state, and so the right count, is unknown.
+ * previous state, and so the right count, is unknown. A copy whose patched
+ * flags already read that way is left alone, its slot too: it is in that
+ * state already, or stale, and either way not this change's to move.
  */
 function applyViewerPatch(post: CachedPost, patch: ViewerPatch): CachedPost {
   const known = post.viewer;
+  const flags = FLAGS.filter((flag) => patch[flag] !== undefined);
+  if (flags.length > 0 && flags.every((flag) => known?.[flag] === patch[flag])) return post;
   const viewer: Partial<ViewerStateDTO> = { ...known };
   const stats = { ...post.stats };
   let changed = false;
@@ -159,16 +163,23 @@ const cachedQueries = () =>
  * repost counts with the flags (a copy already in that state is left alone).
  * The undo sets the opposite marks on the copies it changed and on copies
  * cached since (a detail screen seeded from a patched card), never on a copy
- * that already read that way (a stale feed card would gain a repost), and
+ * that already read that way (a stale card would gain a repost), even one in
+ * a query it changed. It puts back the slot (`ownQuoteId`, `ownQuoteBare`)
+ * a changed copy had, preferring one that knew the slot was held, and
  * refetches the post's detail family so a copy that was already right comes
  * back right.
  */
 export function setViewerState(postId: string, patch: ViewerPatch): () => void {
-  let previous: Partial<ViewerStateDTO> | undefined;
   const before = cachedQueries();
+  // By identity: a copy left alone keeps its object through the patch (and the query's
+  // structural sharing), while a patched copy's object is replaced.
+  const leftAlone = new WeakSet<CachedPost>();
+  let previous: Partial<ViewerStateDTO> | undefined;
   const changed = updateCachedPosts(postId, (post) => {
-    previous ??= post.viewer;
-    return applyViewerPatch(post, patch);
+    const next = applyViewerPatch(post, patch);
+    if (next === post) leftAlone.add(post);
+    else if (previous === undefined || (!previous.ownQuoteId && post.viewer?.ownQuoteId)) previous = post.viewer;
+    return next;
   });
   const undo: ViewerPatch = {};
   for (const flag of FLAGS) {
@@ -178,7 +189,7 @@ export function setViewerState(postId: string, patch: ViewerPatch): () => void {
   if (patch.ownQuoteBare !== undefined) undo.ownQuoteBare = previous?.ownQuoteBare ?? false;
   return () => {
     const touched = new Set([...cachedQueries()].filter((hash) => changed.has(hash) || !before.has(hash)));
-    updateCachedPosts(postId, (post) => applyViewerPatch(post, undo), touched);
+    updateCachedPosts(postId, (post) => (leftAlone.has(post) ? post : applyViewerPatch(post, undo)), touched);
     queryClient.invalidateQueries({ queryKey: queryKeys.post.detail(postId) }).catch(() => undefined);
   };
 }
