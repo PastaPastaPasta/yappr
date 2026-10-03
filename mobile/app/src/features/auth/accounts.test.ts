@@ -247,6 +247,7 @@ it('signs out the active account and moves to the next one (AUTH-11)', async () 
 it('brings Welcome back after the last account signs out (AUTH-01)', async () => {
   fakeEngine.method('session.signOut').mockResolvedValue(undefined);
   fakeEngine.method('session.accounts').mockResolvedValue([]);
+  bootsAs(null);
 
   await signOutAccount('alice');
 
@@ -258,11 +259,34 @@ it('brings Welcome back after the last account signs out (AUTH-01)', async () =>
 it("restarts the engine after the last account signs out, dropping the page that carried its keys (SR-11)", async () => {
   fakeEngine.method('session.signOut').mockResolvedValue(undefined);
   fakeEngine.method('session.accounts').mockResolvedValue([]);
+  bootsAs(null);
 
   await signOutAccount('alice');
   await flush();
 
   expect(restart).toHaveBeenCalledTimes(1);
+  expect(restart).toHaveBeenCalledWith('Signed out');
+});
+
+it('reads a list that failed during the sign-out of the last account again once the new engine is up (D-L2i-004)', async () => {
+  // Home's For You, read for the signed-out reader as the restart cut it short.
+  const read = jest.fn().mockRejectedValueOnce(new Error('cut short by the restart')).mockResolvedValue('feed signed out');
+  const observer = new QueryObserver(queryClient, { queryKey: ['engine', 'devnet-test', 'feed'], queryFn: read, retry: false });
+  const unsubscribe = observer.subscribe(() => undefined);
+  await flush();
+  expect(observer.getCurrentResult().status).toBe('error');
+
+  fakeEngine.method('session.signOut').mockResolvedValue(undefined);
+  fakeEngine.method('session.accounts').mockResolvedValue([]);
+  bootsAs(null);
+  await signOutAccount('alice');
+  await flush();
+  await flush();
+
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(observer.getCurrentResult().data).toBe('feed signed out');
+  unsubscribe();
+  queryClient.clear();
 });
 
 it('does not restart the engine for signing out an account that is not active', async () => {
