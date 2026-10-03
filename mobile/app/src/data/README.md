@@ -43,6 +43,17 @@ const feed = useEngineInfiniteQuery(
   serializes it).
 - **No cache reset needed.** Sign-in, sign-out and account switches already
   reset the cache (`session.ts`).
+- **Failed reads come back by themselves.** A read a screen shows that failed
+  is read again once when connectivity returns (NetInfo drives TanStack's
+  `onlineManager`, `connectivity.ts`, so `refetchOnReconnect` works too),
+  when the engine comes up (`sync.ts`), and when an account change settles
+  (`features/auth/accounts.ts`): `refetchFailedReads()` in
+  `state/query-client.ts`. Every failed read is logged to Engine diagnostics
+  with its code. Reads use `networkMode: 'always'`: offline they still reach
+  the engine, which answers or fails with a categorized error.
+- **Infinite lists:** `fetchNextPage` joins a refetch in flight rather than
+  cancelling it, so reaching the end during a pull to refresh can't throw the
+  fresh first page away.
 
 ## Writes
 

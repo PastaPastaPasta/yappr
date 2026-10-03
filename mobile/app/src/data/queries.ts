@@ -4,13 +4,14 @@ import type { Remote } from '@engine/rpc/client';
 import {
   queryOptions,
   useInfiniteQuery,
+  type FetchNextPageOptions,
   useQuery,
   type InfiniteData,
   type QueryKey,
   type UseInfiniteQueryOptions,
   type UseQueryOptions,
 } from '@tanstack/react-query';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import { engine } from '~/engine';
 import { persistedQuery } from '~/state/query-client';
@@ -105,6 +106,13 @@ export function flattenPages<T>(
  *     (api, cursor) => api.feed.home({ tab: 'forYou', cursor }),
  *     { persist: true },
  *   );
+ *
+ * `fetchNextPage` joins a refetch in flight instead of cancelling it
+ * (TanStack's default `cancelRefetch: true`): a list that reaches its end
+ * while a pull to refresh runs (the refresh trims it to one page, which
+ * brings the end near) would otherwise throw the fresh first page away and
+ * append a next page to the old one, and the refresh would show nothing
+ * new without an error.
  */
 export function useEngineInfiniteQuery<T>(
   key: QueryKey,
@@ -120,5 +128,10 @@ export function useEngineInfiniteQuery<T>(
     getNextPageParam: (last) => (last.hasMore && last.cursor ? last.cursor : undefined),
   });
   const items = useMemo(() => flattenPages(query.data, itemId), [query.data, itemId]);
-  return { ...query, items };
+  const { fetchNextPage: fetchNext } = query;
+  const fetchNextPage = useCallback(
+    (options?: FetchNextPageOptions) => fetchNext({ cancelRefetch: false, ...options }),
+    [fetchNext],
+  );
+  return { ...query, items, fetchNextPage };
 }

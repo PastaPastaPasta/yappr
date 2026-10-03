@@ -386,6 +386,53 @@ describe('Home', () => {
     expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
   });
 
+  it('shows the fresh first page when the list reaches its end during a refresh (FEED-06, D-L1a-003)', async () => {
+    home().mockResolvedValueOnce(page([post('p1', 'old first post', 5)], true));
+    home().mockResolvedValueOnce(page([post('p2', 'second page post', 6)], true));
+    await renderHome();
+    await act(async () => {
+      fireEvent(screen.getByTestId('feed-list-forYou'), 'endReached');
+    });
+    expect(screen.getByText('second page post')).toBeTruthy();
+
+    // The refresh trims the list to its first page, which brings the end near: the list asks for more mid-refresh.
+    let answer!: (value: Page<PostDTO>) => void;
+    home().mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    home().mockResolvedValue(page([post('p3', 'later page post', 7)]));
+    let refreshed!: Promise<void>;
+    act(() => {
+      refreshed = screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    await act(async () => {
+      fireEvent(screen.getByTestId('feed-list-forYou'), 'endReached');
+    });
+    await act(async () => {
+      answer(page([post('p0', 'brand new post', 0), post('p1', 'old first post', 5)], true));
+      await refreshed;
+    });
+
+    expect(screen.getByText('brand new post')).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
+  });
+
+  it('says a read that failed without a code on the way to Dash Platform is unavailable (G-11)', async () => {
+    home().mockRejectedValue(new Error('Failed to prefetch quorums: HTTP request error: error sending request'));
+    await renderHome();
+
+    expect(screen.getByTestId('feed-error')).toBeTruthy();
+    expect(screen.getByText(/temporarily unavailable/)).toBeTruthy();
+  });
+
+  it('says a read that failed offline is a network error (G-1, G-11)', async () => {
+    jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: false } as ReturnType<typeof NetInfo.useNetInfo>);
+    home().mockRejectedValue(new Error('boom'));
+    await renderHome();
+
+    expect(screen.getByTestId('feed-error')).toBeTruthy();
+    expect(screen.getByText(/^Network error/)).toBeTruthy();
+  });
+
   it('keeps polling for new posts after a failed next page (FEED-05, FEED-07)', async () => {
     const first = post('p1', 'first post', 5);
     home().mockResolvedValueOnce(page([first], true));

@@ -1,6 +1,8 @@
 import type { Page, PostDTO } from '@engine/api';
 import type { InfiniteData } from '@tanstack/react-query';
 
+import { isTransportFailure } from '~/data/read-error';
+
 /**
  * Pure helpers over the home feed's cached pages (TanStack `InfiniteData`)
  * and the engine's errors.
@@ -19,12 +21,16 @@ export function feedTimestamp(post: PostDTO): number {
   return (post.repostTimestamp ?? post.createdAt).getTime();
 }
 
-/** The newest feed time among `posts`, or null for none. */
+/**
+ * The newest feed time among `posts`, or null for none. A post whose time
+ * did not parse (an Invalid Date from a just-broadcast document) is skipped:
+ * its NaN would turn the new-posts check off (FEED-05).
+ */
 export function newestTimestamp(posts: readonly PostDTO[]): number | null {
   let newest: number | null = null;
   for (const post of posts) {
     const at = feedTimestamp(post);
-    if (newest === null || at > newest) newest = at;
+    if (Number.isFinite(at) && (newest === null || at > newest)) newest = at;
   }
   return newest;
 }
@@ -70,14 +76,17 @@ const UNAVAILABLE_CODES = new Set([
 
 /**
  * The categorized copy for a failed read (PRD G-11), from the engine's error
- * code. Undefined when there is nothing specific to say: the error state
- * then shows only "Something went wrong".
+ * code; for an error without one (lib's own text, such as a quorum or DAPI
+ * request failure during boot), from what it says. While the phone is
+ * `offline`, the network copy. Undefined when there is nothing specific to
+ * say: the error state then shows only "Something went wrong".
  */
-export function readErrorMessage(error: unknown): string | undefined {
+export function readErrorMessage(error: unknown, { offline = false }: { offline?: boolean } = {}): string | undefined {
   const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
-  if (typeof code !== 'string') return undefined;
-  if (UNAVAILABLE_CODES.has(code)) return UNAVAILABLE_MESSAGE;
-  if (code === 'NETWORK') return NETWORK_MESSAGE;
   if (code === 'NOT_SIGNED_IN') return SESSION_MESSAGE;
+  if (offline) return NETWORK_MESSAGE;
+  if (typeof code === 'string' && UNAVAILABLE_CODES.has(code)) return UNAVAILABLE_MESSAGE;
+  if (code === 'NETWORK') return NETWORK_MESSAGE;
+  if (isTransportFailure(error)) return UNAVAILABLE_MESSAGE;
   return undefined;
 }
