@@ -158,6 +158,21 @@ describe('retry: never blindly', () => {
     expect(store.get('t1')?.state).toBe('confirmed')
     expect(events.map(e => e.state)).toEqual(['pending', 'failed', 'pending', 'confirmed'])
   })
+
+  it('starts a retry with no progress: the earlier attempt\'s "2 of 2" is not this one\'s', async () => {
+    const { store } = setup()
+    const runs: { ctx: Parameters<WriteHandler['run']>[1]; reject(error: unknown): void }[] = []
+    store.register('profile.update', {
+      run: (_args, ctx) => new Promise((_resolve, reject) => { runs.push({ ctx, reject }) }),
+    })
+    store.submit({ op: 'profile.update', args: {} })
+    await settle()
+    runs[0].ctx.progress(1, 2)
+    runs[0].reject(new Error('An earlier change from this account has not been confirmed yet, so this was not sent. Check that it went through, then try again.'))
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, progress: { done: 1, total: 2 } })
+    expect((await store.retry('t1')).progress).toBeNull()
+  })
 })
 
 describe('safety', () => {

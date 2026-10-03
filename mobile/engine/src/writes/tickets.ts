@@ -556,7 +556,8 @@ export function createTicketStore(options: TicketStoreOptions) {
       // A delete names the same document again, so its id stays for the next check.
       const documents = ticket.documents.filter(doc => doc.confirmed || doc.action === 'delete')
       recordOf(id).unsent = handler.stagedSends === true
-      const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents })
+      // The earlier attempt's progress ("2 of 2") says nothing about this one, which may write less.
+      const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents, progress: null })
       start(id, handler, args)
       return restarted
     },
