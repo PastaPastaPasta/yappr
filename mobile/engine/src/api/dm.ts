@@ -312,6 +312,8 @@ export function createDmModule(options: DmModuleOptions) {
     persistArgs: false,
   })
 
+  /** How long a group write may run without a word before it reads unconfirmed (`WriteHandler.deadlineMs`). */
+  const GROUP_DEADLINE_MS = 5 * 60_000
   /** Group creations: their result for `createdGroup`, and the one running (a second waits for it). */
   const createdGroups = new Map<string, DmCreatedGroup>()
   let creating: string | null = null
@@ -341,6 +343,9 @@ export function createDmModule(options: DmModuleOptions) {
       return { state: 'applied' }
     },
     persistArgs: false,
+    // A creation writes the roster and a key for each of up to 100 members, and reports nothing
+    // until it is done: a minute without a word is no sign of a stall here.
+    deadlineMs: GROUP_DEADLINE_MS,
   })
 
   function groupNameOf(value: unknown): string {

@@ -456,6 +456,35 @@ describe('dm on DM v5: 1:1', () => {
     expect(ledger.messages).toHaveLength(written)
   })
 
+  it('reads a send unconfirmed once its call has hung a minute, never resent, and confirmed once it answers (QA D-L4a-002)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.dm.open(key)
+    // DAPI stalls: the send's broadcast never answers until the stall clears.
+    const engine = a.engine()
+    const send = engine.send.bind(engine)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const spy = vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text) => {
+      await stalled
+      return send(conversation, text)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'through a stall')
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
+    // Check again cannot prove it absent while the call runs: no Retry beside it.
+    expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+    vi.useRealTimers()
+
+    clear()
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['through a stall'])
+  })
+
   it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))

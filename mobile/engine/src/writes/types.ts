@@ -6,6 +6,8 @@
 export type EngineErrorCode =
   // engine and bridge
   | 'ENGINE_TIMEOUT' | 'ENGINE_RESTARTED' | 'ENGINE_UNAVAILABLE' | 'ENGINE_BUSY' | 'ENGINE_VARIANT_MISMATCH' | 'RESTART_REQUIRED'
+  // a ticket whose lib call has not answered for its deadline (PRD G-3): it may still land
+  | 'STILL_SENDING'
   | 'ABORTED' | 'BAD_REQUEST' | 'BAD_CURSOR' | 'NOT_SUPPORTED' | 'NOT_SIGNED_IN' | 'NOT_RETRYABLE' | 'CODEC'
   // session
   | 'KEY_INVALID' | 'KEY_WRONG_NETWORK' | 'KEY_NOT_ON_IDENTITY' | 'IDENTITY_NOT_FOUND' | 'NO_KEY'

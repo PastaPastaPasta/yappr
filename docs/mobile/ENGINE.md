@@ -818,6 +818,8 @@ interface WriteTicket {
 
 **The call path.** An API write method validates its input and creates the ticket with `pending/queued`. It persists the ticket (§7.4), returns it, then runs the `lib/` call in the background. Every transition emits `write.status` with the whole ticket.
 
+**The deadline (PRD G-3).** A call that goes 60 s without a word (no stage, progress or document from its handler) makes the ticket `unconfirmed`, stage `null`, error `STILL_SENDING`/outcome `unknown`, not retryable: under a DAPI stall wasm's fetch never settles, so `lib/` would never answer and the UI would say "Posting…" or "Sending…" for good. The call is not cancelled (it cannot be), and its answer, whenever it comes, still settles the ticket (`confirmed`, `unconfirmed` or `failed`, as below), unless a check proved it landed first. A handler's `deadlineMs` changes the 60 s: `dm.group` waits 5 minutes (a creation writes the roster and a key per member, up to 100, and reports nothing until done); `null` turns it off.
+
 **Mapping `lib/` results to states:**
 
 | `lib/` result | Ticket |
@@ -843,6 +845,7 @@ interface WriteTicket {
 | An index-only like (v9/v10, `confirmation: 'affectedState'`) | Read it back with `likeService.isLiked` (`like-service.ts:676`). |
 | A `post.publish` part with no known id (an engine restart, or a timeout, cut it short before `lib/` said it) | Looked for by its text among the author's newest posts and replies (`getUserPosts` / `getUserReplies`, `ownerAndTime`, 100 each, no lower date bound, so a device clock ahead of the chain's hides nothing). Found exactly once, dated no more than a minute before the ticket (a device clock ahead of the chain's; kept short so the same words posted elsewhere just before are not taken for it) and hanging where the part would (its reply target, the part before it, its quote), with no other post of the same words from the hour before the ticket (older ones are earlier posts of the same words): the part is named on the ticket and counts as landed. Its text nowhere, on two reads that reach at least an hour before the ticket, at least 2 minutes after the attempt stopped running (a transition that went out executes within a block or two): absent, and `writes.retry` posts it (the rest of a thread). Anything else (another post with the same words from the hour before, or any at all when proving absence; two candidates; a read that failed or did not reach back far enough; too soon) stays unconfirmed, and the app offers Edit once a check 10 minutes after posting still cannot tell. |
 | Not found, or the probe errors | Stays `unconfirmed`. `lastCheckedAt` updates, and `error` records the probe failure for display. |
+| The call still runs (past its deadline) | Only a landing is proved (`confirmed`). Anything else stays `unconfirmed` with `STILL_SENDING`, never `retryable`: not found may mean still on its way, and a retry beside the running call could land twice. The probe's `sinceSettled()` is `null` until the call answers. |
 
 **`writes.retry(ticketId)`** re-runs the same operation through `lib/`, with a fresh nonce, only when:
 - the ticket is `failed` and `error.data.outcome` is `refused` with `retryable: true` (for example `NONCE_CONFLICT`, `FEE_CHANGED`, `FEE_SHARE_MISMATCH` or `PARENT_TOO_YOUNG`);
@@ -853,7 +856,7 @@ A thread resumes from `documents` (`DraftDTO.resume`), as on web.
 
 **Never blindly.**
 - No ticket is retried automatically, ever. The engine does not loop.
-- A `pending` ticket cannot be retried.
+- A `pending` ticket cannot be retried, nor one whose earlier call still runs past its deadline.
 - `lib/`'s own cached-bytes rebroadcast (`yappr:pending-st:<docId>`, `state-transition-service.ts:44,624-672`) and nonce reservations (`identity-nonce.ts`) keep a retry from double-spending a nonce.
 - Tips, the one never-retry case, are out of 1.0.
 
@@ -863,6 +866,7 @@ A thread resumes from `documents` (`DraftDTO.resume`), as on web.
 type EngineErrorCode =
   // engine and bridge
   | 'ENGINE_TIMEOUT' | 'ENGINE_RESTARTED' | 'ENGINE_UNAVAILABLE' | 'ENGINE_BUSY' | 'ENGINE_VARIANT_MISMATCH'
+  | 'STILL_SENDING'      // a ticket's call has not answered for its deadline (§7.1): outcome `unknown`, it may still land
   | 'ABORTED' | 'BAD_REQUEST' | 'BAD_CURSOR' | 'NOT_SUPPORTED' | 'NOT_SIGNED_IN' | 'NOT_RETRYABLE' | 'CODEC'
   // session
   | 'KEY_INVALID' | 'KEY_WRONG_NETWORK' | 'KEY_NOT_ON_IDENTITY' | 'IDENTITY_NOT_FOUND' | 'NO_KEY' | 'KEY_REVOKED'
@@ -943,7 +947,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 ### 7.4 Persistence and engine restarts
 
 - **Where tickets live.** Tickets persist in engine kv under `yappr_engine_writes`, which is MMKV through write-through: a JSON array, at most 100 tickets, with confirmed tickets pruned after 24 h.
-- **On boot,** a ticket left in `pending` was interrupted by a crash, so whether it went out is unknown. The engine moves it to `unconfirmed`, with stage `null` and error `ENGINE_RESTARTED`/outcome `unknown`. It emits `write.status`, and the UI shows "Not confirmed yet · Check again". It is never re-sent.
+- **On boot,** a ticket left in `pending`, or `unconfirmed` by its deadline while its call still ran (the record persists that the call runs), was interrupted by a crash, so whether it went out is unknown. The engine moves it to `unconfirmed`, with stage `null` and error `ENGINE_RESTARTED`/outcome `unknown`. It emits `write.status`, and the UI shows "Not confirmed yet · Check again". It is never re-sent.
 - **Unless it provably sent nothing.** A handler with `stagedSends` (`posts.publish`: `publishThread` reports its progress before each part's write) reports a stage before any write call. A ticket of such a handler that a restart finds still `queued`, naming no unconfirmed document, sent nothing in that attempt: it becomes `failed`, error `ENGINE_RESTARTED`/outcome `not-sent`, retryable when its arguments were kept, and the UI shows "Couldn't post · Retry · Edit". The record persists that flag beside the ticket, and the time the attempt stopped running, which "check again" uses (§7.2).
 - **What makes "check again" survive a restart.** `lib/`'s pending-transition cache (`yappr:pending-st:*`) and its nonce reservations (`yappr:nonce-reservation:*`, 15-minute lifetime, `identity-nonce.ts:60,72`) also live in the kv store. That is why a `check` or `retry` after a restart is still safe.
 
