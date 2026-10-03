@@ -9,9 +9,11 @@ import { hitSlopFor, MIN_TARGET, useColors } from './tokens';
 export type WriteState =
   | { state: 'posting' }
   | { state: 'threadProgress'; index: number; total: number }
-  | { state: 'unconfirmed' }
-  /** It may have landed and cannot be proved either way: no resend, only Edit (PRD COMP-10). */
-  | { state: 'uncertain' }
+  /**
+   * It may have landed. `canEdit` once checking cannot settle it: Edit is
+   * its way out, never a resend (PRD COMP-10).
+   */
+  | { state: 'unconfirmed'; canEdit?: boolean }
   | { state: 'failed' }
   | { state: 'partial'; posted: number; total: number };
 
@@ -43,14 +45,15 @@ export function writeStatusLinks({
 }: WriteStatusProps): WriteStatusLink[] {
   switch (status.state) {
     case 'unconfirmed':
-      return [{ label: 'Check again', onPress: onCheckAgain, id: 'check-again' }];
+      return [
+        { label: 'Check again', onPress: onCheckAgain, id: 'check-again' },
+        ...(status.canEdit ? [{ label: 'Edit', onPress: onEdit, id: 'edit' as const }] : []),
+      ];
     case 'failed':
       return [
         { label: 'Retry', onPress: onRetry, id: 'retry' },
         { label: 'Edit', onPress: onEdit, id: 'edit' },
       ];
-    case 'uncertain':
-      return [{ label: 'Edit', onPress: onEdit, id: 'edit' }];
     case 'partial':
       return [{ label: 'Retry the rest', onPress: onRetryRest, id: 'retry-rest' }];
     default:
@@ -67,8 +70,6 @@ function writeStatusText(status: WriteState): string {
       return `Posting ${status.index} of ${status.total}…`;
     case 'unconfirmed':
       return 'Not confirmed yet';
-    case 'uncertain':
-      return "Couldn't confirm. Check your profile";
     case 'failed':
       return "Couldn't post";
     case 'partial':
@@ -86,9 +87,9 @@ const LINK_FRAME = { minWidth: MIN_TARGET, alignItems: 'center' } as const;
 
 /**
  * The write-status line that replaces an optimistic card's action bar
- * (UX_SPEC §2.4.11): posting, not confirmed · check again, failed · retry ·
- * edit, partly posted · retry the rest, and a write that may have landed
- * but cannot be proved · edit. Each change is announced once.
+ * (UX_SPEC §2.4.11): posting, not confirmed · check again (· edit, once
+ * checking cannot settle it), failed · retry · edit, and partly posted ·
+ * retry the rest. Each change is announced once.
  */
 export function WriteStatus(props: WriteStatusProps) {
   const { status } = props;
@@ -114,7 +115,7 @@ export function WriteStatus(props: WriteStatusProps) {
           <ActivityIndicator size="small" color={c.textSecondary} />
         </View>
       ) : null}
-      {status.state === 'unconfirmed' || status.state === 'uncertain' ? <ClockIcon size={14} color={c.textSecondary} /> : null}
+      {status.state === 'unconfirmed' ? <ClockIcon size={14} color={c.textSecondary} /> : null}
       {status.state === 'failed' ? <ExclamationCircleIcon size={14} color={c.error} /> : null}
       <Text variant="caption" tone={status.state === 'failed' ? 'error' : 'secondary'}>
         {text}

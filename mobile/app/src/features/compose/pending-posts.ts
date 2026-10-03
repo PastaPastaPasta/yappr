@@ -62,8 +62,19 @@ export interface PendingPost {
    * once the engine shows a ticket that matches it, never re-sent.
    */
   orphaned?: boolean;
-  /** An orphan "Check again" found no ticket for: it cannot be proved either way. */
+  /**
+   * An orphan "Check again" found no ticket for, once any ticket its call
+   * made would show: the engine persists a ticket before it sends anything,
+   * so the call never ran and nothing went out ("Couldn't post · Retry").
+   */
   lost?: boolean;
+  /**
+   * "Check again" left it unconfirmed long enough after it was sent that
+   * waiting will not settle it (`UNPROVABLE_AFTER_MS`): the card also offers
+   * Edit, its text back in compose with the parts known to have posted kept
+   * posted. Never Retry: it may have landed.
+   */
+  unprovable?: boolean;
   /** When the last call went out (a retry's republish is later than `createdAt`). */
   submittedAt?: number;
   createdAt: number;
@@ -147,31 +158,41 @@ export function postedIds(entry: PendingPost): (string | null)[] {
   return posted;
 }
 
-/** A failure that may have landed anyway (a transport error after the broadcast): never re-sent. */
+/**
+ * A failure that may have landed anyway (a transport error after the
+ * broadcast): never re-sent. The engine's check only looks at unconfirmed
+ * tickets, so it can never settle this one: Edit is offered at once.
+ */
 const mayHaveLanded = (ticket: WriteTicket) =>
   ticket.state === 'failed' && !ticket.retryable && ticket.error?.outcome === 'unknown';
 
-/** The write-status row for an entry (UX_SPEC §2.4.11); null once confirmed. */
+/**
+ * The write-status row for an entry (UX_SPEC §2.4.11); null once confirmed.
+ * A write that may have landed is "Not confirmed yet · Check again" (PRD
+ * COMP-10, NET-04), however it got there (an engine restart, a timeout, a
+ * part whose id lib never said): the engine's check looks for it by id or by
+ * its text, and only a proved absence offers Retry. One that checking cannot
+ * settle also offers Edit, so no card is stuck for good.
+ */
 export function pendingStatus(entry: PendingPost): CardWriteState | null {
   const total = entry.draft.parts.length;
   const posted = postedIds(entry).filter(Boolean).length;
   const failed: CardWriteState =
     total > 1 && posted > 0 ? { state: 'partial', posted, total } : { state: 'failed' };
+  const unconfirmed: CardWriteState = entry.unprovable ? { state: 'unconfirmed', canEdit: true } : { state: 'unconfirmed' };
   const ticket = entry.ticket;
   if (entry.confirmedAt) return null;
   if (entry.refused) return failed;
-  if (!entry.ticketId && entry.orphaned) return entry.lost ? { state: 'uncertain' } : { state: 'unconfirmed' };
+  if (!entry.ticketId && entry.orphaned) return entry.lost ? failed : unconfirmed;
   if (!ticket || ticket.state === 'pending') {
     const progress = ticket?.progress;
     return total > 1 && progress
       ? { state: 'threadProgress', index: Math.min(progress.done + 1, total), total }
       : { state: 'posting' };
   }
-  if (mayHaveLanded(ticket)) return { state: 'uncertain' };
+  if (mayHaveLanded(ticket)) return { state: 'unconfirmed', canEdit: true };
   if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) return failed;
-  // A part that timed out before its id was known can never be checked (the engine's probe
-  // says unknown every time): Edit, to resume past what the profile shows, never a resend.
-  if (ticket.state === 'unconfirmed') return posted < total ? { state: 'uncertain' } : { state: 'unconfirmed' };
+  if (ticket.state === 'unconfirmed') return unconfirmed;
   return null;
 }
 
@@ -367,15 +388,16 @@ function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): st
 
 /**
  * A cut-short call's ticket was made by it: a publish for the same target,
- * created as the call reached the engine (just after it was sent).
+ * created as the call reached the engine (just after it was sent, unless
+ * the engine was busy: `window` bounds how much later).
  */
 const ORPHAN_SKEW_MS = 5_000;
 const ORPHAN_WINDOW_MS = 60_000;
-function ticketMatches(entry: PendingPost, ticket: WriteTicket): boolean {
+function ticketMatches(entry: PendingPost, ticket: WriteTicket, window = ORPHAN_WINDOW_MS): boolean {
   if (ticket.op !== 'post.publish' || (ticket.identityId ?? entry.identityId) !== entry.identityId) return false;
   const sent = entry.submittedAt ?? entry.createdAt;
   const at = new Date(ticket.createdAt).getTime();
-  if (at < sent - ORPHAN_SKEW_MS || at > sent + ORPHAN_WINDOW_MS) return false;
+  if (at < sent - ORPHAN_SKEW_MS || at > sent + window) return false;
   const want = (entry.draft.replyTo ?? entry.draft.quote)?.id ?? null;
   const got = ticket.target && 'id' in ticket.target ? ticket.target.id : null;
   return want === got;
@@ -569,18 +591,65 @@ export function publishPost(input: PublishInput, hasContent: (text: string) => b
 }
 
 /**
+ * Whether the engine lists no ticket this orphan's call could have made.
+ * The engine persists a ticket before its write sends anything, so then the
+ * call never ran: nothing went out. Any later publish for its target counts
+ * (a busy engine may take a timed-out call minutes later), as does one that
+ * could not be told apart from another orphan's.
+ */
+function neverTaken(entry: PendingPost, tickets: WriteTicket[]): boolean {
+  const followed = new Set(Object.values(usePendingPosts.getState().entries).map((e) => e.ticketId));
+  return !tickets.some((ticket) => !followed.has(ticket.id) && ticketMatches(entry, ticket, Infinity));
+}
+
+/**
+ * `writes.list` shows a confirmed ticket for 10 minutes only: past this, a
+ * call's ticket that confirmed may no longer show, so its absence proves
+ * nothing.
+ */
+const LISTED_CONFIRMED_MS = 9 * 60_000;
+
+/**
+ * Marks an orphan the engine never took as not sent: its text goes back to
+ * the draft, and the card offers Retry and Edit. Only once any ticket its
+ * call made would show (a timed-out call may still reach a busy engine), and
+ * while the engine would still list it.
+ */
+function settleNeverTaken(entry: PendingPost, tickets: WriteTicket[], now = Date.now()): void {
+  const age = now - (entry.submittedAt ?? entry.createdAt);
+  if (age <= ORPHAN_WINDOW_MS || age >= LISTED_CONFIRMED_MS || !neverTaken(entry, tickets)) return;
+  patchEntry(entry.localId, { lost: true });
+  settleFailure({ ...entry, lost: true });
+}
+
+/**
+ * Past this, a post Check again leaves unconfirmed will not settle by
+ * waiting: the engine's probe has had its two minutes, and a cut-short
+ * call's ticket that confirmed is no longer listed (`LISTED_CONFIRMED_MS`).
+ */
+const UNPROVABLE_AFTER_MS = 10 * 60_000;
+
+/** A check left the post unconfirmed: once waiting cannot settle it, the card offers Edit too. */
+function noteUnsettled(localId: string, now = Date.now()): void {
+  const entry = getEntry(localId);
+  if (!entry || entry.unprovable || pendingStatus(entry)?.state !== 'unconfirmed') return;
+  if (now - (entry.submittedAt ?? entry.createdAt) >= UNPROVABLE_AFTER_MS) patchEntry(localId, { unprovable: true });
+}
+
+/**
  * "Check again" on an unconfirmed post. An orphan first looks for its
- * ticket; with none, it cannot be proved either way (Edit only).
+ * ticket; when the engine never took the call, nothing went out. One that
+ * still cannot be told either way, long after it was sent, offers Edit.
  */
 export function checkPending(localId: string): void {
   const run = async () => {
     const entry = getEntry(localId);
     if (entry?.orphaned && !entry.ticketId) {
-      await adoptOrphans();
+      const tickets = await adoptOrphans();
       const after = getEntry(localId);
       if (after && !after.ticketId) {
-        patchEntry(localId, { lost: true });
-        if (after.placement === 'none') settleFailure(after);
+        settleNeverTaken(after, tickets);
+        noteUnsettled(localId);
         return;
       }
     }
@@ -588,18 +657,20 @@ export function checkPending(localId: string): void {
     if (!ticketId) return;
     const ticket = await checkWrite(ticketId);
     if (ticket) receiveTicket(ticket);
+    noteUnsettled(localId);
   };
   run().catch((error: unknown) => appendLog('warn', 'host', `Checking a post failed: ${errorMessage(error)}`));
 }
 
-/** Follows each orphan whose ticket the engine now lists (`writes.list`). */
-async function adoptOrphans(): Promise<void> {
+/** Follows each orphan whose ticket the engine now lists (`writes.list`); returns the list. */
+async function adoptOrphans(): Promise<WriteTicket[]> {
   const orphans = () => Object.values(usePendingPosts.getState().entries).filter((e) => e.orphaned && !e.ticketId);
-  if (orphans().length === 0) return;
+  if (orphans().length === 0) return [];
   const tickets = await engine.api.writes.list();
   for (const ticket of [...tickets].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())) {
     receiveTicket(ticket);
   }
+  return tickets;
 }
 
 /**
@@ -630,6 +701,9 @@ export function retryPending(localId: string): void {
     ticketId: null,
     ticket: null,
     refused: false,
+    orphaned: false,
+    lost: false,
+    unprovable: false,
   });
   if (ticket) engine.api.writes.dismiss(ticket.id).catch(() => undefined);
   submit(localId, false).catch(() => undefined);
@@ -670,18 +744,21 @@ const SUCCESS = {
 } as const;
 
 /**
- * The ticket confirmed: the card becomes the real post (seeded by
- * `content.created` when it arrived) and stays pinned for a while.
+ * The post landed: the card becomes the real post (seeded by
+ * `content.created` when it arrived) and stays pinned for a while. `ticket`
+ * is the ticket that confirmed it; null for a cut-short call whose post a
+ * list showed, which settles quietly (the user asked for nothing).
  */
-function confirmed(entry: PendingPost, ticket: WriteTicket): void {
-  const realId = firstPostedId({ ...entry, ticket });
+function confirmed(entry: PendingPost, ticket: WriteTicket | null): void {
+  const realId = firstPostedId(ticket ? { ...entry, ticket } : entry);
   const real = realId ? (queryClient.getQueryData<PostDTO>(queryKeys.post.detail(realId)) ?? null) : null;
   const post = realId ? { ...entry.post, id: realId, ...(real ?? {}) } : null;
-  if (post) patchEntry(entry.localId, { ticket, post, confirmedAt: Date.now() });
+  if (post) patchEntry(entry.localId, { ...(ticket ? { ticket } : {}), post, confirmedAt: Date.now(), orphaned: false });
   else dropEntry(entry.localId);
   replaceInCaches(entry.localId, post);
   deleteDraft(entry.identityId, entry.context, entry.localId);
   deleteDraft(entry.identityId, { ...entry.context, pendingId: entry.localId });
+  if (!ticket) return;
   const total = entry.draft.parts.length;
   toast.success(total > 1 ? `Thread with ${total} posts created!` : SUCCESS[entry.context.mode]);
 }
@@ -689,8 +766,9 @@ function confirmed(entry: PendingPost, ticket: WriteTicket): void {
 /**
  * The orphan a ticket the app has not followed belongs to: only when exactly
  * one could have made it (two posts cut short together cannot be told apart,
- * so neither is guessed; Check again then leaves each to Edit). None while a
- * submit still waits for its own.
+ * so neither is guessed: each settles when a list shows it, or Check again
+ * offers Edit once waiting cannot tell). None while a submit still waits
+ * for its own.
  */
 function orphanFor(ticket: WriteTicket, entries: PendingPost[]): PendingPost | undefined {
   if (submitting > 0) return undefined;
@@ -705,7 +783,7 @@ function receiveTicket(ticket: WriteTicket): void {
     // Not ours yet: a cut-short call's ticket, restored by the engine.
     const orphan = orphanFor(ticket, entries);
     if (!orphan) return;
-    patchEntry(orphan.localId, { ticketId: ticket.id, orphaned: false, lost: false });
+    patchEntry(orphan.localId, { ticketId: ticket.id, orphaned: false, lost: false, unprovable: false });
   }
   const entry = Object.values(usePendingPosts.getState().entries).find((e) => e.ticketId === ticket.id);
   if (!entry || entry.confirmedAt) return;
@@ -719,8 +797,23 @@ function receiveTicket(ticket: WriteTicket): void {
   const after = pendingStatus(next)?.state;
   if (before === after) return;
   if (after === 'failed' || after === 'partial') settleFailure(next);
-  // Unprovable: the text stays with the card for Edit, unless there is no card.
-  else if (after === 'uncertain' && next.placement === 'none') settleFailure(next);
+  // A resumed thread has no card to check again from: with a part whose id is not known, its text
+  // returns to the draft (the parts known to have posted marked as posted).
+  else if (after === 'unconfirmed' && next.placement === 'none' && postedIds(next).some((id) => !id)) settleFailure(next);
+}
+
+/** Whether `post` is what an entry's card shows: same author, kind, parent, quote and text. */
+const isCardOf = (e: PendingPost, post: PostDTO) =>
+  e.identityId === post.author.id &&
+  e.post.kind === post.kind &&
+  (e.post.parentId ?? null) === (post.parentId ?? null) &&
+  (e.post.quotedPostId ?? null) === (post.quotedPostId ?? null) &&
+  e.post.content === post.content.trim();
+
+/** The card becomes the real post it was found to be: a list never shows both. */
+function adopt(entry: PendingPost, post: PostDTO): void {
+  patchEntry(entry.localId, { adoptedId: post.id });
+  replaceInCaches(entry.localId, { ...entry.post, ...post });
 }
 
 /**
@@ -730,19 +823,82 @@ function receiveTicket(ticket: WriteTicket): void {
  */
 function adoptCreated({ post }: ContentCreatedEvent): void {
   const entry = Object.values(usePendingPosts.getState().entries).find(
-    (e) =>
-      !e.confirmedAt &&
-      !e.adoptedId &&
-      e.placement !== 'none' &&
-      e.identityId === post.author.id &&
-      e.post.kind === post.kind &&
-      (e.post.parentId ?? null) === (post.parentId ?? null) &&
-      (e.post.quotedPostId ?? null) === (post.quotedPostId ?? null) &&
-      e.post.content === post.content.trim(),
+    (e) => !e.confirmedAt && !e.adoptedId && e.placement !== 'none' && isCardOf(e, post),
   );
-  if (!entry) return;
-  patchEntry(entry.localId, { adoptedId: post.id });
-  replaceInCaches(entry.localId, { ...entry.post, ...post });
+  if (entry) adopt(entry, post);
+}
+
+/**
+ * How far before its submit a listed post may be dated and still be the
+ * card's (a device clock ahead of the chain's). Short, so the same words
+ * posted from elsewhere just before are not taken for it.
+ */
+const SEEN_SKEW_MS = 60_000;
+/** A refresh asks the engine about one post at most this often. */
+const SEEN_CHECK_MS = 30_000;
+const seenChecks = new Map<string, number>();
+
+/** Every post in a cached list's data (pages, a thread's focus and replies, quoted posts). */
+function postsIn(value: unknown, into: PostDTO[] = []): PostDTO[] {
+  if (Array.isArray(value)) {
+    for (const item of value) postsIn(item, into);
+  } else if (isObject(value) && !(value instanceof Date)) {
+    if (typeof value.id === 'string' && typeof value.content === 'string' && isObject(value.author)) {
+      into.push(value as unknown as PostDTO);
+    }
+    for (const child of Object.values(value)) if (typeof child === 'object') postsIn(child, into);
+  }
+  return into;
+}
+
+/**
+ * A refreshed list that shows a "Not confirmed yet" post on chain (PRD
+ * COMP-10: it "becomes normal without user action on the next refresh").
+ * A card whose post is there by its text becomes that post, so the list
+ * never shows both. With a ticket, the engine is asked to confirm it, which
+ * it proves by id or by text; a cut-short call with none (its ticket never
+ * made, or no longer listed) is settled by the sighting itself, when it is a
+ * single post. Nothing is ever sent.
+ */
+function settleSeen(data: unknown, now = Date.now()): void {
+  const viewerId = useSessionStore.getState().session?.identityId;
+  const entries = Object.values(usePendingPosts.getState().entries);
+  const waiting = entries.filter(
+    (e) => e.identityId === viewerId && e.placement !== 'none' && pendingStatus(e)?.state === 'unconfirmed',
+  );
+  if (waiting.length === 0) return;
+  const posts = postsIn(data);
+  // Neither a card itself nor a post another entry already is.
+  const claimed = new Set(entries.flatMap((e) => [e.localId, firstPostedId(e)]));
+  for (const entry of waiting) {
+    const realId = firstPostedId(entry);
+    const since = (entry.submittedAt ?? entry.createdAt) - SEEN_SKEW_MS;
+    const seen = realId
+      ? posts.find((post) => post.id === realId)
+      : posts.find((post) => !claimed.has(post.id) && isCardOf(entry, post) && new Date(post.createdAt).getTime() >= since);
+    if (!seen) continue;
+    if (!realId) {
+      claimed.add(seen.id);
+      adopt(entry, seen);
+    }
+    if (!entry.ticketId) {
+      // A thread's later parts are not in the sighting: it waits, and Edit resumes past its first.
+      const adopted = getEntry(entry.localId);
+      if (adopted && entry.draft.parts.length === 1) confirmed(adopted, null);
+      continue;
+    }
+    // Only an unconfirmed ticket can be checked, and one waiting cannot settle has been checked
+    // enough: Check again stays for the user.
+    if (entry.ticket?.state !== 'unconfirmed' || entry.unprovable) continue;
+    if (now - (seenChecks.get(entry.localId) ?? 0) < SEEN_CHECK_MS) continue;
+    seenChecks.set(entry.localId, now);
+    const { localId } = entry;
+    // Quietly: the user asked for nothing. The outcome arrives as `write.status`, ahead of the reply.
+    engine.api.writes
+      .check(entry.ticketId)
+      .then(() => noteUnsettled(localId))
+      .catch((error: unknown) => appendLog('warn', 'host', `Checking a listed post failed: ${errorMessage(error)}`));
+  }
 }
 
 /** Asks the engine for every pending ticket of the account (after a restart); a ticket it no longer has goes. */
@@ -754,7 +910,7 @@ function reconcile(identityId: string): void {
       .then((ticket) => {
         const state = pendingStatus(entry)?.state;
         if (ticket) receiveTicket(ticket);
-        else if (state !== 'failed' && state !== 'partial' && state !== 'uncertain') {
+        else if (state !== 'failed' && state !== 'partial') {
           // Pruned by the engine: it confirmed long ago. The next refresh shows the real post.
           dropEntry(entry.localId);
           replaceInCaches(entry.localId, null);
@@ -764,12 +920,13 @@ function reconcile(identityId: string): void {
   }
   // Calls a restart cut short: their tickets, if the engine made them.
   adoptOrphans()
-    .then(() => {
+    .then((tickets) => {
       // A resumed thread has no card to check again from: with no ticket, its text returns to the draft.
       for (const entry of Object.values(usePendingPosts.getState().entries)) {
         if (entry.identityId !== identityId || !entry.orphaned || entry.ticketId || entry.placement !== 'none') continue;
+        if (!neverTaken(entry, tickets)) continue;
         patchEntry(entry.localId, { lost: true });
-        settleFailure(entry);
+        settleFailure({ ...entry, lost: true });
       }
     })
     .catch((error: unknown) => appendLog('warn', 'host', `Reading restored posts failed: ${errorMessage(error)}`));
@@ -811,7 +968,9 @@ export function startPendingPosts(): () => void {
     const loaded =
       (event.type === 'updated' && event.action.type === 'success') ||
       (event.type === 'added' && event.query.state.data !== undefined);
-    if (loaded && listKind(event.query.queryKey)) placeCards([event.query]);
+    if (!loaded || !listKind(event.query.queryKey)) return;
+    settleSeen(event.query.state.data);
+    placeCards([event.query]);
   });
   // Once per engine boot and account.
   let reconciled = '';

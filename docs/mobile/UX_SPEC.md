@@ -398,7 +398,7 @@ Replaces the action bar on optimistic cards.
 | --- | --- |
 | Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`) |
 | Thread progress | spinner + "Posting 2 of 5…" |
-| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`) |
+| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`). Once checking cannot settle it (Check again 10 minutes or more after posting still cannot tell, or a failure that may have landed), also " · Edit": compose opens on its text, parts known to have posted kept posted; never Retry |
 | Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`) |
 | Partly posted | "Posted 2 of 5 · Retry the rest" |
 
@@ -1848,6 +1848,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | offline.banner | You're offline. Showing saved posts. |
 | offline.toast | You're offline. Nothing was sent. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
+| engine.closedBeforeSent | The app closed before this was sent. Nothing was posted. Try again. (a write an engine restart cut short before it sent anything, with "Retry") |
 | engine.tryAgain | Try again |
 | lockdown.title | Lockdown Mode is blocking Yappr |
 | lockdown.body | Yappr needs WebAssembly to verify Dash Platform data, and Lockdown Mode turns it off for apps. You can exclude Yappr: |
