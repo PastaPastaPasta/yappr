@@ -19,15 +19,21 @@
 #   E2E_KEY_FILE             optional: a file holding E2E_PERSONA's AUTHENTICATION/HIGH key
 #   E2E_DM_KEY_FILE          optional: a file holding its ENCRYPTION key
 #                            Without them, the keys are written from the pool into a private
-#                            temp dir (bin/persona-key from the QA kit when installed, else a
-#                            local equivalent) and deleted on exit.
-#   E2E_RESPONDER_ADDR       the test-wallet responder (default 127.0.0.1:8789)
+#                            temp dir ($QA_ROOT/bin/persona-key from the QA kit when QA_ROOT is
+#                            set, else a local equivalent) and deleted on exit.
+#   E2E_RESPONDER_ADDR       the test-wallet responder (default 127.0.0.1:8789; refused if taken)
 #   E2E_PEER_ADDR            the peer harness (default 127.0.0.1:8790)
 #   E2E_BRIDGE_ADDR          the QR bridge, which reads the wallet QR off this device (default 127.0.0.1:8791)
+#   E2E_STOP_TIMEOUT         seconds the services get to stop, the peer to delete its posts (default 300)
 #   Use a different persona pair and ports per device when running devices in parallel.
 #   The keys reach Maestro as MAESTRO_SIGN_IN_KEY_1..4 / MAESTRO_DM_KEY_1..4 environment
 #   variables, never on a command line, and are scrubbed from everything written (also
-#   from what Maestro keeps under ~/.maestro/tests).
+#   from what Maestro keeps under ~/.maestro/tests), as are every key the pool holds for both
+#   personas (the peer and the responder hold those).
+#
+# Interrupts (Ctrl-C, CI cancels: SIGINT/SIGTERM) stop Maestro and the services at once and
+# scrub everything. Only a run whose scrub finished leaves <out>/scrubbed: upload nothing
+# from a run without it, and never *.raw.log.
 #
 # Output: junit.xml (all flows), junit/<flow>.xml, summary.md, screenshots/<platform>-<flow>-<name>.png,
 # logs/<flow>.log, artifacts/<flow>/ (Maestro's commands, device logs, failure screenshots).
@@ -46,7 +52,7 @@ while [ $# -gt 0 ]; do
     --metro-port) metro_port="$2"; shift ;;
     --out) out="$2"; shift ;;
     --only) only="$2"; shift ;;
-    -h|--help) sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "run.sh: unknown argument $1" >&2; exit 2 ;;
   esac
   shift
@@ -94,26 +100,63 @@ fi
 env_args=(-e "APP_ID=$app_id" -e "SCHEME=$scheme" -e "DEV_CLIENT_URL=$dev_client_url" -e "METRO_URL=$metro_url" -e "RUN=$run_id"
   -e "QUERY=$query" -e "TAG=$tag" -e "PROFILE_ID=$profile_id")
 
-# --- Full suite: personas, keys, responder and peer ---------------------------------------------
-tmp="" pids=() secrets=() art="" marker=""
+# --- Cleanup: Maestro, services, redaction ------------------------------------------------------
+# A private dir for this run: key files, the Maestro output pipe, the scrub marker (0700).
+tmp="$(mktemp -d)"; chmod 700 "$tmp"
+marker="$tmp/started"; touch "$marker"
+rm -f "$out/scrubbed"
+pids=() secrets=() art="" maestro_pid="" redact_pid=""
+
+# Wait up to <seconds> for <pid>s to exit, then SIGKILL what is left. bash 3.2 has no wait -t.
+await_exit() { # <seconds> <pid>...
+  local limit=$(( $1 * 2 )) i pid alive; shift
+  for ((i = 0; i < limit; i++)); do
+    alive=0
+    for pid in "$@"; do kill -0 "$pid" 2>/dev/null && alive=1; done
+    [ $alive = 0 ] && break
+    sleep 0.5
+  done
+  for pid in "$@"; do
+    if kill -0 "$pid" 2>/dev/null; then echo "run.sh: process $pid did not stop in time; killing it" >&2; kill -KILL "$pid" 2>/dev/null; fi
+    wait "$pid" 2>/dev/null
+  done
+  return 0
+}
+# Maestro (and what it started: the iOS driver's xcodebuild, adb) first, then its log writer.
+stop_maestro() {
+  if [ -n "$maestro_pid" ]; then
+    pkill -TERM -P "$maestro_pid" 2>/dev/null; kill -TERM "$maestro_pid" 2>/dev/null
+    await_exit 5 "$maestro_pid"
+  fi
+  [ -n "$redact_pid" ] && await_exit 5 "$redact_pid"
+  maestro_pid="" redact_pid=""
+}
+# The responder, the peer (which deletes what it posted) and the bridge, in E2E_STOP_TIMEOUT.
 stop_services() {
+  [ ${#pids[@]} -gt 0 ] || return 0
   local pid
-  for pid in "${pids[@]+"${pids[@]}"}"; do kill "$pid" 2>/dev/null; done
-  for pid in "${pids[@]+"${pids[@]}"}"; do wait "$pid" 2>/dev/null; done
+  for pid in "${pids[@]}"; do kill -TERM "$pid" 2>/dev/null; done
+  await_exit "${E2E_STOP_TIMEOUT:-300}" "${pids[@]}"
   pids=()
 }
 
-# Replace every key, and every part a flow types, with [REDACTED] in a stream.
-redact() { SECRETS="$(printf '%s\n' "${secrets[@]+"${secrets[@]}"}")" perl -pe '
+# Replace every key, and every part a flow types, with [REDACTED] in a stream. The keys reach
+# perl through its environment, never its argv.
+secrets_env() { printf '%s\n' "${secrets[@]+"${secrets[@]}"}"; }
+redact() { SECRETS="$(secrets_env)" perl -pe '
   BEGIN { @s = sort { length($b) <=> length($a) } grep { length } split /\n/, $ENV{SECRETS}; }
   for my $k (@s) { s/\Q$k\E/[REDACTED]/g }'; }
 redact_tree() { # scrub text files in place; delete anything that still holds a key (binary files)
   [ ${#secrets[@]} -gt 0 ] && [ -e "$1" ] || return 0
-  local f k
+  local f
   while IFS= read -r -d '' f; do
     if LC_ALL=C grep -Iq . "$f" 2>/dev/null; then redact <"$f" >"$f.tmp" && mv "$f.tmp" "$f"; fi
   done < <(find "$1" -type f -print0)
-  for k in "${secrets[@]}"; do grep -rlF -- "$k" "$1" 2>/dev/null | while IFS= read -r f; do rm -f "$f"; done; done
+  # File names on stdin, keys in the environment: neither on a command line.
+  find "$1" -type f -print0 | SECRETS="$(secrets_env)" perl -0ne '
+    BEGIN { @s = grep { length } split /\n/, $ENV{SECRETS}; $/ = "\0"; }
+    chomp; my $f = $_; open(my $h, "<:raw", $f) or next; local $/; my $c = <$h>; close $h;
+    for my $k (@s) { if (index($c, $k) >= 0) { unlink $f; last } }'
 }
 # Maestro also logs every typed value under ~/.maestro/tests: scrub what this run wrote there.
 scrub_maestro_home() {
@@ -122,20 +165,34 @@ scrub_maestro_home() {
   while IFS= read -r -d '' d; do redact_tree "$d"; done \
     < <(find "$HOME/.maestro/tests" -mindepth 1 -maxdepth 1 -type d -newer "$marker" -print0)
 }
-# On every exit (Ctrl-C and CI cancels included): stop the services, then scrub before anything is read.
+# On every exit (Ctrl-C and CI cancels included). Signals are held off meanwhile, so a second
+# one can't cut the scrub short. What Maestro wrote is scrubbed first (a CI cancel kills the
+# job about 10 s after its SIGINT); the services may take longer (the peer deletes its posts).
+# <out>/scrubbed marks a run whose output is safe to read.
 finish() {
+  trap '' INT TERM
+  stop_maestro
+  [ -n "$art" ] && redact_tree "$art"
+  scrub_maestro_home; redact_tree "$out/junit"
+  # The flows' logs now; the services' only once they stopped (a scrub replaces the file,
+  # and a service still writing would keep writing to the old one).
+  local f
+  for f in "$out"/logs/*.log; do
+    case "${f##*/}" in responder.log | qr-bridge.log | peer.raw.log) ;; *) redact_tree "$f" ;; esac
+  done
   stop_services
   if [ -f "$out/logs/peer.raw.log" ]; then
     grep '^\[e2e-peer\]' "$out/logs/peer.raw.log" >"$out/logs/peer.log"
     rm -f "$out/logs/peer.raw.log"
   fi
-  [ -n "$art" ] && redact_tree "$art"
-  redact_tree "$out/logs"; redact_tree "$out/junit"; scrub_maestro_home
+  redact_tree "$out/logs"
   if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
   tmp="" marker=""
+  : >"$out/scrubbed"
+  trap 'exit 130' INT; trap 'exit 143' TERM
 }
 trap finish EXIT
-trap 'exit 130' INT TERM
+trap 'exit 130' INT; trap 'exit 143' TERM
 
 if [ "$suite" = full ]; then
   pool="${YAPPR_SAKURA_IDENTITIES:-}"
@@ -146,8 +203,11 @@ if [ "$suite" = full ]; then
     case "$p" in 9[0-8]) ;; *) die "personas must be 90-98 (99 holds proof posts and is never written with)" ;; esac
   done
   [ "$persona" != "$peer_persona" ] || die "E2E_PERSONA and E2E_PEER_PERSONA must differ"
-  tmp="$(mktemp -d)"; chmod 700 "$tmp"
-  marker="$tmp/started"; touch "$marker"
+  # Every key the pool holds for both personas, in each form a log could show: redacted too
+  # (the peer and the responder hold them). Through a pipe, never argv.
+  while IFS= read -r value; do [ -n "$value" ] && secrets+=("$value"); done \
+    < <(node "$here/host/persona-secrets.mjs" "$pool" "$persona" "$peer_persona")
+  [ ${#secrets[@]} -gt 0 ] || die "no keys for personas $persona and $peer_persona in the pool"
 
   # Public metadata only: identity ids and handles.
   meta() { node -e '
@@ -161,8 +221,8 @@ if [ "$suite" = full ]; then
 
   # The keys: from the given files, else written from the pool (never printed).
   write_key() { # <persona> <auth|encryption> <file>
-    local kit="${QA_ROOT:-/Users/pasta/workspace/yappr-mobile-qa}/bin/persona-key"
-    if [ -x "$kit" ]; then
+    local kit="${QA_ROOT:+$QA_ROOT/bin/persona-key}"
+    if [ -n "$kit" ] && [ -x "$kit" ]; then
       "$kit" "$1" "$3" --purpose "$2" >/dev/null
     else
       (umask 077; node -e '
@@ -188,13 +248,13 @@ if [ "$suite" = full ]; then
     done
     echo "run.sh: $3 did not come up; see $4" >&2; return 1
   }
-  # The responder is stateless: one that already serves this address is reused.
-  if ! curl -sf --max-time 2 "http://$responder_addr/health" >/dev/null; then
-    YAPPR_SAKURA_IDENTITIES="$pool" node "$repo/mobile/tools/test-wallet-responder.mjs" --serve "$responder_addr" \
-      >"$out/logs/responder.log" 2>&1 &
-    pids+=($!)
-    wait_up "http://$responder_addr/health" 120 responder "$out/logs/responder.log" "$!" || exit 1
-  fi
+  # Each run starts (and stops) its own responder: one already on the port is refused, never
+  # reused, so a run never stops a responder it didn't start (another run's, a QA one).
+  curl -s --max-time 2 "http://$responder_addr/health" >/dev/null && die "something already listens on $responder_addr (E2E_RESPONDER_ADDR)"
+  YAPPR_SAKURA_IDENTITIES="$pool" node "$repo/mobile/tools/test-wallet-responder.mjs" --serve "$responder_addr" \
+    >"$out/logs/responder.log" 2>&1 &
+  pids+=($!)
+  wait_up "http://$responder_addr/health" 120 responder "$out/logs/responder.log" "$!" || exit 1
   # The peer is signed in as a persona: never reuse one (it could be another persona's).
   curl -s --max-time 2 "http://$peer_addr/health" >/dev/null && die "something already listens on $peer_addr (E2E_PEER_ADDR)"
   (cd "$repo" && YAPPR_SAKURA_IDENTITIES="$pool" E2E_PEER_PERSONA="$peer_persona" E2E_PEER_ADDR="$peer_addr" \
@@ -245,6 +305,9 @@ if [ -n "$only" ]; then
   flows=("${picked[@]}")
 fi
 
+# Maestro runs in the background and its output reaches the log through a pipe and redact, so
+# an INT or TERM is handled at once (bash holds a trap until a foreground command ends).
+fifo="$tmp/maestro.out"; mkfifo "$fifo"
 pass=0 fail=0 first=1 failed_names=()
 : >"$out/status.txt"
 echo "Maestro $suite suite: $platform $device, $variant, run $run_id -> $out"
@@ -253,9 +316,14 @@ for flow in "${flows[@]}"; do
   art="$out/artifacts/$name"
   reinstall=(--no-reinstall-driver); [ $first = 1 ] && reinstall=(); first=0
   start=$(date +%s)
+  redact <"$fifo" >"$out/logs/$name.log" &
+  redact_pid=$!
   "$maestro" --device "$device" test "${reinstall[@]+"${reinstall[@]}"}" --format junit --output "$out/junit/$name.xml" \
-    --test-output-dir "$art" --debug-output "$art/debug" "${env_args[@]}" "$flow" 2>&1 | redact >"$out/logs/$name.log"
-  status=${PIPESTATUS[0]}
+    --test-output-dir "$art" --debug-output "$art/debug" "${env_args[@]}" "$flow" >"$fifo" 2>&1 &
+  maestro_pid=$!
+  wait "$maestro_pid"; status=$?
+  wait "$redact_pid"
+  maestro_pid="" redact_pid=""
   secs=$(( $(date +%s) - start ))
   redact_tree "$art"; redact_tree "$out/junit"; scrub_maestro_home
   # Screenshots the flow took, plus Maestro's failure screenshot.

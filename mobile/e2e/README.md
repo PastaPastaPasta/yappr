@@ -45,12 +45,16 @@ repo root, `mobile/engine` and `mobile/tools`. It starts:
   the device (`adb screencap`, `simctl io`), decodes the QR code (Core Image,
   so macOS only) and returns the link for the responder.
 
-Run devices in parallel with a different persona pair and different
-responder, peer and bridge ports for each, so no two writers share a persona.
+Each run starts its own three and stops them at the end: a port that is already
+taken is refused, never reused. Run devices in parallel with a different persona
+pair and different responder, peer and bridge ports for each, so no two writers
+share a persona.
 
 Output (`--out`, default `mobile/e2e/out/`, gitignored): `summary.md`,
 `junit.xml`, per-flow JUnit and logs, `screenshots/`, and `artifacts/` with
-Maestro's command logs and failure screenshots.
+Maestro's command logs and failure screenshots. `scrubbed` is written last, once
+every key is scrubbed from all of it: read or upload nothing from a run without
+it (one killed outright), and never a `*.raw.log`.
 
 ## Keys
 
@@ -63,8 +67,14 @@ which Maestro reads by itself, so no key is ever on a command line. The flows
 type the parts one by one (iOS can drop characters from one long input into a
 secure field). Maestro echoes typed text into its output and debug files,
 including `~/.maestro/tests`, so `run.sh` scrubs every key and every part from
-all of it, also when the run is interrupted. Never commit a key, and don't run
-a flow that types one outside `run.sh`.
+all of it, and with them every key the pool holds for both personas (the peer
+and the responder hold those; `host/persona-secrets.mjs` lists them, which CI
+also masks). On Ctrl-C or a CI cancel (SIGINT, SIGTERM) it stops Maestro at once,
+scrubs what Maestro wrote first, then stops the services (`E2E_STOP_TIMEOUT`,
+default 300 s, for the peer to delete its posts). Keys reach Maestro and the
+scrubbing `perl` only through their environment, and the rest through pipes:
+never argv. Never commit a key, and don't run a flow that types one outside
+`run.sh`.
 
 ## Writing flows
 
