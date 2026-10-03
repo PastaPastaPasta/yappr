@@ -742,6 +742,56 @@ describe('a write whose call never answers (PRD G-3; QA D-L2a-007, D-L4a-002)', 
     expect(restarted.events.map(e => [e.id, e.state])).toEqual([['t1', 'unconfirmed'], ['t2', 'failed']])
   })
 
+  it('a wait for the parent that fails after the minute still proves nothing was sent: failed, and retryable', async () => {
+    vi.useFakeTimers()
+    const { store } = setup()
+    let ctx: Parameters<WriteHandler['run']>[1] | undefined
+    let reject: (error: unknown) => void = () => undefined
+    store.register('like', {
+      run: (_args, c) => {
+        ctx = c
+        return new Promise((_resolve, no) => { reject = no })
+      },
+      persistArgs: true,
+    })
+    store.submit({ op: 'like', args: null })
+    await pass()
+    ctx?.stage('waiting-parent')
+    await pass(PENDING_DEADLINE_MS)
+    expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', stage: null, error: STILL_SENDING_ERROR })
+    reject(new Error('transport error: grpc error: Failed to fetch'))
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent' } })
+  })
+
+  it('reports a settled answer even when recording it threw, never leaving it pending', async () => {
+    vi.useFakeTimers()
+    const storage = memoryStorage()
+    let broken = false
+    const { store, events } = setup({
+      storage: {
+        ...storage,
+        setItem: (key: string, value: string) => {
+          if (broken) {
+            broken = false
+            throw new Error('MMKV write failed')
+          }
+          storage.setItem(key, value)
+        },
+      },
+    })
+    const { handler, runs } = controlled()
+    store.register('post.publish', handler)
+    store.submit({ op: 'post.publish', args: {}, documents: [POST] })
+    await pass()
+    broken = true
+    runs[0].resolve({ state: 'confirmed' })
+    await pass()
+    expect(store.get('t1')).toMatchObject({ state: 'confirmed' })
+    expect(events.map(e => e.state)).toEqual(['pending', 'confirmed'])
+    expect(JSON.parse(storage.getItem(WRITES_STORAGE_KEY) ?? '[]')[0].ticket.state).toBe('confirmed')
+  })
+
   it('a handler may wait longer, or not at all', async () => {
     vi.useFakeTimers()
     const { store } = setup()

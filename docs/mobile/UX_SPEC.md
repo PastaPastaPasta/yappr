@@ -565,7 +565,7 @@ Banners sit directly under the navigation bar of the current screen, push conten
 - Max width 78% of the screen. Padding 10 × 14. `radius.2xl` with the corner nearest the sender reduced to `radius.sm` on the last bubble of a run. `body` text.
 - Own: `bubble.own`, right-aligned. Other: `bubble.other`, left-aligned; in groups a 24 avatar on the last bubble of a run and the sender name (`caption.strong`, `text.secondary`) above the first.
 - Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Failed · Tap to retry" (`error`).
-- A send that may have gone out but is not proved (no answer from the network for 60 s, or an engine restart cut it short) reads "Not confirmed · Tap to check" (`error`): the tap asks the engine to look for it, and it turns "Sent" by itself once it lands. Only a proved absence offers "Failed · Tap to retry". A failure the engine won't retry reads "Failed · Tap to edit": the tap puts the unsent text back in the composer.
+- A send that may have gone out but is not proved (no answer from the network for 60 s, or an engine restart cut it short) reads "Not confirmed · Tap to check" (`error`): the tap asks the engine to look for it, and it turns "Sent" by itself once it lands. While the send's call is still waiting on the network, the tap can't look yet and toasts "Still sending. Tap again in a moment." Only a proved absence offers "Failed · Tap to retry". A failure the engine won't retry reads "Failed · Tap to edit": the tap puts the unsent text back in the composer.
 - Time shown on long-press only (iOS swipe-left reveals times, as Messages; Android: tap a bubble toggles its time).
 - Day separator: centered `caption` `text.secondary` with 16 vertical margin.
 

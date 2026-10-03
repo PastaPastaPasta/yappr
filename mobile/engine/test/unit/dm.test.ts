@@ -462,26 +462,32 @@ describe('dm on DM v5: 1:1', () => {
     await ready(userOn(ledger, bob))
     const key = await a.dm.startDirect(bob)
     await a.dm.open(key)
-    // DAPI stalls: the send's broadcast never answers until the stall clears.
+    // DAPI stalls: the broadcast never answers until the stall clears. It hangs inside lib's send,
+    // on the DM engine's queue, where every read of the engine's (pollOwn) waits behind it.
     const engine = a.engine()
-    const send = engine.send.bind(engine)
+    const chain = engine.ctx.chain as MemoryChain
+    const createMessage = chain.createMessage.bind(chain)
     let clear: () => void = () => undefined
     const stalled = new Promise<void>(resolve => { clear = resolve })
-    const spy = vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text) => {
+    const broadcast = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
       await stalled
-      return send(conversation, text)
+      return createMessage(...args)
     })
+    const pollOwn = vi.spyOn(engine, 'pollOwn')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const ticket = await a.dm.send(key, 'through a stall')
+    await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(1))
     await vi.advanceTimersByTimeAsync(60_000)
     expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
-    // Check again cannot prove it absent while the call runs: no Retry beside it.
-    expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+    // Check again answers at once (a read queued behind the hung send would not), and cannot
+    // prove it absent while the call runs: still sending, no Retry beside it.
+    expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
+    expect(pollOwn).not.toHaveBeenCalled()
     vi.useRealTimers()
 
     clear()
     await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
-    expect(spy).toHaveBeenCalledTimes(1)
+    expect(broadcast).toHaveBeenCalledTimes(1)
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['through a stall'])
   })
 

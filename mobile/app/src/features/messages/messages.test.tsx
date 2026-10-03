@@ -427,6 +427,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(sent.id);
     expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
     expect(screen.getByText('Not confirmed · Tap to check')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toBe('Still sending. Tap again in a moment.');
 
     // The stall clears: the call answers, and the engine's own message stands for the send.
     fakeEngine

@@ -137,6 +137,8 @@ interface TicketRecord {
   running?: number
   /** That attempt's deadline (`WriteHandler.deadlineMs`). */
   deadline?: ReturnType<typeof setTimeout>
+  /** The last stage the latest attempt reported, kept past its deadline (which clears the ticket's). */
+  stage?: WriteStage | null
 }
 
 /** The persisted form: dates as epoch ms. */
@@ -348,8 +350,9 @@ export function createTicketStore(options: TicketStoreOptions) {
     // Any failure during run() may come after the broadcast: lib signs, broadcasts and waits in
     // one call. Only a handler's NotSentError, or a failure while it still reported
     // 'waiting-parent' (before any lib write call), proves nothing went out, and only while the
-    // ticket names no unconfirmed document: an earlier part (a thread's) may already be out.
-    const claimedNotSent = notSent || recordOf(id).ticket.stage === 'waiting-parent'
+    // ticket names no unconfirmed document: an earlier part (a thread's) may already be out. The
+    // attempt's own stage counts, since its deadline clears the ticket's.
+    const claimedNotSent = notSent || recordOf(id).stage === 'waiting-parent'
     const partlySent = merged.some(doc => !doc.confirmed)
     const transient = ['NETWORK', 'RATE_LIMITED', 'TIMEOUT'].includes(classified.code)
     let data: EngineErrorData = classified
@@ -404,6 +407,7 @@ export function createTicketStore(options: TicketStoreOptions) {
     const started = recordOf(id)
     started.running = attempt
     started.settledAt = undefined
+    started.stage = started.ticket.stage
     const deadlineMs = handler.deadlineMs === undefined ? pendingDeadlineMs : handler.deadlineMs
     /** This attempt's record, while it is the one running. */
     const own = () => {
@@ -440,6 +444,7 @@ export function createTicketStore(options: TicketStoreOptions) {
         // From here the attempt may send: a restart no longer proves it sent nothing.
         const record = recordOf(id)
         record.unsent = false
+        record.stage = stage
         // Past its deadline the ticket is no longer pending: it shows no stage.
         if (record.ticket.state === 'pending') update(id, { stage })
         else persist()
@@ -476,8 +481,18 @@ export function createTicketStore(options: TicketStoreOptions) {
       }, error => {
         if (finish()) fail(id, error)
       })
-      .catch(() => {
-        // The ticket vanished (dismissed while settling): nothing left to report.
+      .catch(error => {
+        // Settling threw: the ticket vanished (dismissed meanwhile), or reporting it did (the store
+        // could not write, say). Report it as it stands, or as failed by that error while still
+        // pending, so it never sits pending with no attempt running. Best effort.
+        const record = records.get(id)
+        if (!record || record.running !== undefined) return
+        try {
+          if (record.ticket.state === 'pending') fail(id, error)
+          else commit(record)
+        } catch {
+          // Nothing more can be reported.
+        }
       })
   }
 

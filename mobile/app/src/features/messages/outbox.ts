@@ -191,6 +191,10 @@ export async function resolveFailed(entryId: string): Promise<void> {
   if (entry.state === 'unconfirmed' && entry.ticketId) {
     const ticket = await checkWrite(entry.ticketId);
     if (ticket) applyTicket(entry.id, ticket);
+    // Its call still runs (a stall): the engine answers at once, and the bubble alone would not change.
+    if (ticket?.state === 'unconfirmed' && ticket.error?.code === 'STILL_SENDING') {
+      toast('Still sending. Tap again in a moment.');
+    }
     return;
   }
   if (entry.state === 'unconfirmed') {
