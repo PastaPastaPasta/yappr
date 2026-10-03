@@ -121,7 +121,7 @@ beforeEach(() => jest.useFakeTimers({ doNotFake: ['queueMicrotask'] }));
 afterEach(() => jest.useRealTimers());
 
 describe('EngineSupervisor', () => {
-  it('boots to ready, holding calls made before boot until boot has been sent', async () => {
+  it('boots to ready, holding calls made before boot until boot has finished', async () => {
     const s = setup({
       configure: (engine) => {
         engine.answerPings = false; // say hello only when the test says so
@@ -569,6 +569,101 @@ describe('EngineSupervisor', () => {
     await s.supervisor.connectivity(true);
     expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', reason: null });
     expect(s.engines[1].calls).toContain('engine.connectivity');
+    s.supervisor.stop();
+  });
+
+  it('holds app calls while the engine boots, so none reaches an SDK that is not configured yet', async () => {
+    const s = setup({
+      configure: (engine) => {
+        engine.hold.add('engine.boot');
+        engine.handlers['feed.home'] = () => ({ items: ['fresh'] });
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    const engine = s.engines[1];
+    expect(s.supervisor.getStatus().state).toBe('booting');
+
+    // A read made while engine.boot() runs waits; a lifecycle (control) call goes through.
+    const read = s.supervisor.call('feed.home', [{}]);
+    await s.supervisor.background();
+    await settle();
+    expect(engine.calls).toEqual(['engine.info', 'engine.boot', 'engine.lifecycle']);
+    expect(s.supervisor.getStatus().queued).toBe(1);
+
+    const booting = engine.held.shift()!;
+    engine.respond(booting.id, booting.path, booting.args);
+    await expect(read).resolves.toEqual({ items: ['fresh'] });
+    expect(engine.calls.at(-1)).toBe('feed.home');
+    s.supervisor.stop();
+  });
+
+  it('lets held app calls through once a failed boot leaves the engine degraded', async () => {
+    const s = setup({
+      configure: (engine) => {
+        engine.hold.add('engine.boot');
+        engine.handlers['engine.boot'] = () => {
+          throw new RpcError('Failed to prefetch quorums', 'NETWORK');
+        };
+        engine.handlers['feed.home'] = () => ({ items: [] });
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    const read = s.supervisor.call('feed.home', [{}]);
+    await settle();
+    const engine = s.engines[1];
+    expect(engine.calls).not.toContain('feed.home');
+
+    const booting = engine.held.shift()!;
+    engine.respond(booting.id, booting.path, booting.args);
+    await expect(read).resolves.toEqual({ items: [] });
+    expect(s.supervisor.getStatus().state).toBe('degraded');
+    s.supervisor.stop();
+  });
+
+  it('logs and times a degraded boot that finishes, for diagnostics (SET-08, NET-01)', async () => {
+    let online = false;
+    const s = setup({
+      configure: (engine) => {
+        engine.handlers['engine.boot'] = () => {
+          if (!online) throw new RpcError('Failed to prefetch quorums', 'NETWORK');
+          return { webAssembly: true, ready: true };
+        };
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    expect(s.supervisor.getStatus().timings?.readyMs).toBeUndefined();
+
+    online = true;
+    await s.supervisor.connectivity(true);
+    const status = s.supervisor.getStatus();
+    expect(status.state).toBe('ready');
+    expect(status.timings).toMatchObject({ bootMs: expect.any(Number), readyMs: expect.any(Number) });
+    expect(s.deps.log).toHaveBeenCalledWith('info', 'host', expect.stringMatching(/^Engine ready after a failed boot in \d+ ms/));
+    s.supervisor.stop();
+  });
+
+  it('boots a degraded engine again at once on "Try again" (NET-01)', async () => {
+    let fail = true;
+    const s = setup({
+      supervisor: { pingIntervalMs: 600_000 },
+      configure: (engine) => {
+        engine.handlers['engine.boot'] = () => {
+          if (fail) throw new RpcError('DAPI 504', 'NETWORK');
+          return { webAssembly: true, ready: true };
+        };
+      },
+    });
+    s.supervisor.start();
+    await boot(s);
+    expect(s.supervisor.getStatus().state).toBe('degraded');
+
+    fail = false;
+    s.supervisor.retryBootNow();
+    await settle();
+    expect(s.supervisor.getStatus()).toMatchObject({ state: 'ready', epoch: 1 });
     s.supervisor.stop();
   });
 

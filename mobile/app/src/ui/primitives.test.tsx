@@ -12,7 +12,7 @@ import { ConfirmDialog, confirmAlert } from './Dialog';
 import { EmptyState, ErrorState } from './EmptyState';
 import { IconButton } from './IconButton';
 import { LoadingState } from './LoadingState';
-import { NetworkChip } from './NetworkChip';
+import { chipStateOf, NetworkChip } from './NetworkChip';
 import { FIXTURE_AVATARS } from './post/fixture-avatars';
 import { RadioGroup } from './RadioGroup';
 import { SwitchRow } from './Switch';
@@ -156,6 +156,15 @@ describe('badges and chips', () => {
     expect(screen.getByTestId('network-dot-booting')).toBeTruthy();
     rerender(<NetworkChip network="mainnet" state="ready" />);
     expect(screen.queryByTestId('network-chip')).toBeNull();
+  });
+
+  it('shows a boot that failed as unavailable, not ready (NET-01, NET-07)', () => {
+    expect(chipStateOf('ready')).toBe('ready');
+    expect(chipStateOf('degraded')).toBe('unavailable');
+    expect(chipStateOf('failed')).toBe('unavailable');
+    expect(chipStateOf('unsupported')).toBe('unavailable');
+    expect(chipStateOf('booting')).toBe('booting');
+    expect(chipStateOf('restarting')).toBe('booting');
   });
 });
 

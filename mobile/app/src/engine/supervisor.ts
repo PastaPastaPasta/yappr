@@ -181,8 +181,15 @@ export class EngineSupervisor<Load = unknown> {
   private status: EngineStatus = { state: 'idle', epoch: 0, restarts: 0, queued: 0, ...FRESH_EPOCH };
   private mount: EngineMount<Load> | null = null;
   private client: EngineClient<EngineApi> | null = null;
-  /** Calls go straight to the client once boot has been sent; until then they wait here. */
+  /** Control calls (lifecycle, connectivity) go straight to the client once boot has been sent. */
   private accepting = false;
+  /**
+   * App calls (reads, writes, session) also wait for boot to settle (ready or
+   * degraded): until the engine's `boot()` has configured the SDK, lib's
+   * `getSdk()` throws "SDK not configured", and a read that fails that way
+   * is not retried by anyone.
+   */
+  private booted = false;
   private queue: Job[] = [];
   /** When each recent failure happened (see `maxRestarts`); "Try again" resets it. */
   private crashes: number[] = [];
@@ -462,19 +469,13 @@ export class EngineSupervisor<Load = unknown> {
       if (!this.foreground) await client.api.engine.lifecycle('background');
       const bootStarted = this.now();
       const booted = client.api.engine.boot();
-      // Queued calls go out after boot, so the SDK is initializing before any of them runs.
-      this.acceptCalls();
+      // Control calls (a move to the background) reach the engine while it boots; app calls wait for the boot.
+      this.acceptCalls({ app: false });
       const bootInfo = await booted;
       if (!current()) return;
-      const readyAt = this.now();
       this.failedBoots = 0;
-      this.update({
-        state: 'ready',
-        reason: null,
-        info: bootInfo,
-        timings: { ...this.status.timings!, bootMs: readyAt - bootStarted, readyMs: readyAt - timings.mountedAt },
-      });
-      this.log('info', `Engine ready in ${readyAt - timings.mountedAt} ms (boot ${readyAt - bootStarted} ms)`);
+      this.becameReady(bootInfo, bootStarted, 'Engine ready');
+      this.acceptCalls({ app: true });
       this.startPings();
     } catch (error) {
       if (!current()) return;
@@ -490,9 +491,9 @@ export class EngineSupervisor<Load = unknown> {
       }
       // Offline or DAPI trouble: calls still go through; connectivity retries the boot.
       this.failedBoots = 0;
-      this.acceptCalls();
       this.update({ state: 'degraded', reason: errorMessage(error) });
       this.log('warn', `Engine boot failed: ${errorMessage(error)}`);
+      this.acceptCalls({ app: true });
       this.retryBoot(0);
       this.startPings();
     }
@@ -526,10 +527,13 @@ export class EngineSupervisor<Load = unknown> {
 
   /** One `engine.boot()` at a time: concurrent callers share the call in flight. */
   private bootAgain(client: EngineClient<EngineApi>): Promise<void> {
+    const started = this.now();
     this.bootInFlight ??= client.api.engine
       .boot()
       .then((info) => {
-        if (this.client === client) this.update({ state: 'ready', reason: null, info });
+        if (this.client === client && this.status.state === 'degraded') {
+          this.becameReady(info, started, 'Engine ready after a failed boot');
+        }
       })
       .finally(() => {
         this.bootInFlight = null;
@@ -537,13 +541,47 @@ export class EngineSupervisor<Load = unknown> {
     return this.bootInFlight;
   }
 
+  /**
+   * "Try again" on a degraded engine (the "Couldn't connect" banner, PRD
+   * NET-01): boot again now rather than at the next scheduled retry. A
+   * failed engine gets a fresh one instead.
+   */
+  retryBootNow(): void {
+    if (this.status.state === 'failed') {
+      this.restart('Try again');
+      return;
+    }
+    const client = this.client;
+    if (!client || this.status.state !== 'degraded') return;
+    this.log('info', 'Try again: booting the engine again');
+    this.bootAgain(client).catch((error: unknown) => {
+      this.log('warn', `Engine boot failed again: ${errorMessage(error)}`);
+      this.retryBoot(0);
+    });
+  }
+
+  /** Boot finished (first try or a retry): the state, its timings for diagnostics (SET-08), and a log line. */
+  private becameReady(info: EngineInfo, bootStarted: number, what: string) {
+    const readyAt = this.now();
+    const timings = this.status.timings;
+    const readyMs = timings ? readyAt - timings.mountedAt : undefined;
+    this.update({
+      state: 'ready',
+      reason: null,
+      info,
+      ...(timings ? { timings: { ...timings, bootMs: readyAt - bootStarted, readyMs } } : {}),
+    });
+    this.log('info', `${what} in ${readyMs ?? '?'} ms (boot ${readyAt - bootStarted} ms)`);
+  }
+
   /** iOS without WebAssembly is Lockdown Mode; elsewhere it means an unusable WebView. */
   private noWebAssembly(detail: string) {
     this.unsupported(this.deps.platform === 'ios' ? 'lockdown' : 'webview-outdated', detail);
   }
 
-  private acceptCalls() {
+  private acceptCalls({ app }: { app: boolean }) {
     this.accepting = true;
+    this.booted = app;
     this.drain();
   }
 
@@ -562,6 +600,7 @@ export class EngineSupervisor<Load = unknown> {
     this.bootRetryScheduled = false;
     this.bootInFlight = null;
     this.accepting = false;
+    this.booted = false;
     this.stopPings();
     this.timers.forEach(clearTimeout);
     this.timers.clear();
@@ -648,7 +687,7 @@ export class EngineSupervisor<Load = unknown> {
       job.reject(new RpcError(this.status.reason ?? 'The engine is unavailable', EngineErrorCode.Unavailable));
       return;
     }
-    if (this.accepting && this.client) {
+    if (this.accepting && this.client && (this.booted || job.kind === 'control')) {
       this.send(this.client, job);
       return;
     }

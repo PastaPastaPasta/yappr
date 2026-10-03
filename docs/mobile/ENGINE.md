@@ -236,6 +236,7 @@ T5  UI marks data live; background refetch of visible queries
 ### 3.3 Queueing calls made during boot
 
 - **The queue.** The host holds every call made before `ready.rpc` in a FIFO queue, capped at 256 calls. At the cap, the oldest *read* is rejected with `ENGINE_BUSY`; writes are never dropped.
+- **Held until boot settles.** Control calls (`engine.*` plumbing: lifecycle, connectivity) go out as soon as `engine.boot()` has been sent. App calls (reads, writes, session) stay queued until that boot answers, ready or failed (degraded): the engine loads its WASM before `boot()` calls `evoSdkService.initialize()`, so until then lib's `getSdk()` throws "SDK not configured" rather than waiting, and a read that failed that way (a replayed read after a restart, an account switch's refetch) was never retried.
 - **Timeouts.** A queued call's timeout (§4.5) starts when the call is sent, not when it is queued. A separate boot deadline covers the queue: 90 s from mount.
 - **Failure.** If boot fails terminally (§3.4), every queued call rejects with `ENGINE_UNAVAILABLE`, carrying the supervisor's `reason`.
 - **No pre-boot cache in the engine.** The host's TanStack cache, persisted to MMKV, is what makes cold start feel instant. The engine has no cache of its own that is valid before boot.
