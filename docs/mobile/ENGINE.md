@@ -868,6 +868,9 @@ type EngineErrorCode =
   | 'FEE_CHANGED' | 'NONCE_CONFLICT' | 'NOT_RECORDED' | 'PENDING_WRITE' | 'STORAGE' | 'APP_OUTDATED'
   | 'BUILD_DEFECT' | 'IMMUTABLE' | 'TARGET_GONE' | 'NOT_OWNER' | 'STALE' | 'FROZEN' | 'INSUFFICIENT_YAPP' | 'INSUFFICIENT_CREDITS'
   | 'DUPLICATE' | 'QUOTE_HAS_TEXT' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PRIVATE_FEED_SYNC_REQUIRED' | 'UNKNOWN'
+  // domain writes, raised by the engine itself (outcome `local`, never retryable)
+  | 'STILL_BLOCKED'      // an unblock a followed block list overrides
+  | 'MEDIA_UNREADABLE'   // posts.publish: the image link could not be read to fingerprint it (v10), nothing sent
 interface EngineErrorData {
   code: EngineErrorCode
   consensusCode: number | null            // consensusCodeOf() (error-utils.ts:52)

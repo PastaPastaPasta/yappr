@@ -17,6 +17,7 @@ import { hasVisibleContent } from './limits';
 import {
   checkPending,
   editPending,
+  MEDIA_UNREADABLE_TEXT,
   pendingStatus,
   publishPost,
   retryPending,
@@ -190,6 +191,31 @@ it('fails: the card offers Retry and Edit, and the text returns to the draft', a
   expect(homeIds()).toEqual(['existing-1']);
   expect(usePendingPosts.getState().entries[localId]).toBeUndefined();
   expect(router.push).toHaveBeenCalledWith({ pathname: '/compose', params: {} });
+});
+
+it('an image link the engine cannot read says so, and its toast offers Edit, not Retry (D-L3a-012)', async () => {
+  const t = ticket({ op: 'post.publish' });
+  fakeEngine.method('posts.publish').mockResolvedValue(t);
+  const localId = publish(['Look at this'], POST, null, 'https://img.example/refused.png');
+  await settle();
+
+  const error = {
+    code: 'MEDIA_UNREADABLE',
+    consensusCode: null,
+    outcome: 'local',
+    retryable: false,
+    userMessage: 'Could not read the image to fingerprint it (HTTP 403)',
+  } as const;
+  act(() => fakeEngine.emit('write.status', advance(t, { state: 'failed', error })));
+
+  expect(pendingStatus(only()!)).toEqual({ state: 'failed' });
+  expect(toastMessage()).toBe(MEDIA_UNREADABLE_TEXT);
+  const action = useToastStore.getState().current?.action;
+  expect(action?.label).toBe('Edit');
+  act(() => action?.onPress());
+  expect(usePendingPosts.getState().entries[localId]).toBeUndefined();
+  expect(router.push).toHaveBeenCalledWith({ pathname: '/compose', params: {} });
+  expect(loadDraft(VIEWER_ID, POST)?.mediaUrl).toBe('https://img.example/refused.png');
 });
 
 it('a partly posted thread reads "Posted 1 of 3" and retries the rest with resume', async () => {

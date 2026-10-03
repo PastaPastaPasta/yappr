@@ -1,6 +1,7 @@
 import { planPosts, publishThread, type PostToCreate, type PublishOutcome } from '@/lib/compose/publish-thread'
 import { hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaCarriesHashes, threadRootIdOf } from '@/lib/contract-topology'
+import { extractErrorMessage } from '@/lib/error-utils'
 import { imageDigestForUrl } from '@/lib/media/image-digest'
 import type { MediaHashes } from '@/lib/media/media-fingerprint'
 import type { Post } from '@/lib/types'
@@ -83,12 +84,27 @@ async function loadTarget(ref: TargetRef | null | undefined, load: (id: string) 
   return post
 }
 
+/**
+ * The image at `url`, fingerprinted. When it cannot be read here (its host
+ * refuses it, say a 403 or a 404, it is not an image this WebView decodes,
+ * or its host sends no CORS headers), the post fails `MEDIA_UNREADABLE`
+ * before anything is sent: posting the same link again fails the same way,
+ * so the user fixes the link instead (QA D-L3a-012).
+ */
+async function digestOf(url: string): ReturnType<typeof imageDigestForUrl> {
+  try {
+    return await imageDigestForUrl(url)
+  } catch (error) {
+    throw new RpcError(extractErrorMessage(error), 'MEDIA_UNREADABLE')
+  }
+}
+
 /** v10 posts carry the image's sha256 and dHash beside its URL; they are computed here, once, from the URL. */
 async function mediaFields(url: string | null | undefined): Promise<{ mediaUrlField?: string; mediaHashes?: MediaHashes }> {
   if (!url) return {}
   const mediaUrlField = mediaUrlForContract(url)
   if (!mediaCarriesHashes()) return { mediaUrlField }
-  const digest = await imageDigestForUrl(url)
+  const digest = await digestOf(url)
   return { mediaUrlField, mediaHashes: { mediaHash: digest.hash, mediaFingerprint: digest.fingerprint } }
 }
 

@@ -1575,6 +1575,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | toast.replyPosted | Reply posted |
 | toast.threadPartial | Thread partly posted. Post {n} failed: {reason} (mobile; web's "Press Post to retry" doesn't apply once compose closes) |
 | toast.alreadyQuoted | You have already quoted this. **(web)** |
+| toast.mediaUnreadable | Couldn't read the image at that link, so nothing was posted. Edit the post to fix the link or remove the image. (action: Edit; the engine's `MEDIA_UNREADABLE`) |
 
 ### 5.5 Engagement
 

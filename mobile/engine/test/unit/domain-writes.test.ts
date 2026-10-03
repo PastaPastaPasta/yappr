@@ -599,6 +599,20 @@ describe('posts.publish and posts.delete', () => {
     }))
   })
 
+  it('fails an image link that cannot be read as MEDIA_UNREADABLE, before anything is sent', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.topology.mediaCarriesHashes = true
+    m.imageDigest.mockRejectedValue(new Error('Could not read the image to fingerprint it (HTTP 403)'))
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/refused.png' }))
+    expect(ticket).toMatchObject({
+      state: 'failed',
+      retryable: false,
+      error: { code: 'MEDIA_UNREADABLE', outcome: 'local', userMessage: 'Could not read the image to fingerprint it (HTTP 403)' },
+    })
+    expect(m.postService.createPost).not.toHaveBeenCalled()
+  })
+
   it('emits content.created with the created post as a DTO', async () => {
     const { outcome, posts } = engine()
     creating()

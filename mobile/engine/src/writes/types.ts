@@ -22,6 +22,8 @@ export type EngineErrorCode =
   | 'DUPLICATE' | 'QUOTE_HAS_TEXT' | 'RATE_LIMITED' | 'TIMEOUT' | 'NETWORK' | 'PRIVATE_FEED_SYNC_REQUIRED' | 'UNKNOWN'
   // domain writes (M7b): the own block is gone, a followed block list still blocks
   | 'STILL_BLOCKED'
+  // the image a post names could not be read (an HTTP error, not an image, or no CORS) to fingerprint it
+  | 'MEDIA_UNREADABLE'
 
 /**
  * What is known about a write that did not confirm:

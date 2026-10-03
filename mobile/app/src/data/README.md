@@ -81,7 +81,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   - `failed`: the change is undone, an error haptic fires, and a toast shows
     the engine's `categorizeError` text (or `failureMessage` when the engine
     has nothing specific, or the spec's `failureText` for the ticket). The
-    toast offers **Retry** when the engine allows one. `onFailed` runs after
+    toast offers **Retry** when the engine allows one, unless the spec's
+    `failureAction` has a better action for it. `onFailed` runs after
     the undo, for a failure that changed state anyway.
   - `unconfirmed`: the write may have landed, so the change stays (PRD G-3).
     A "Not confirmed yet" toast offers **Check again**. If the check proves

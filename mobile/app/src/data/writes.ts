@@ -47,6 +47,12 @@ export interface WriteSpec<V> {
    */
   failureText?: (ticket: WriteTicket, vars: V) => string | null;
   /**
+   * The failure toast's action, when the write has a better one than Retry
+   * (a post whose image link can't be read: Edit, to fix the link); null
+   * keeps the default.
+   */
+  failureAction?: (ticket: WriteTicket, vars: V) => ToastAction | null;
+  /**
    * The latest write for its key failed, after its optimistic change was
    * undone: for a failure that changed state anyway (an unblock that deleted
    * the own block, but a followed block list still blocks).
@@ -274,7 +280,10 @@ function settle(ticket: WriteTicket): void {
       if (sessionFailed) {
         failSessionExpired(signerOf(ticket));
       } else {
-        fail(spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage), action);
+        fail(
+          spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage),
+          spec.failureAction?.(ticket, entry.vars) ?? action,
+        );
       }
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
