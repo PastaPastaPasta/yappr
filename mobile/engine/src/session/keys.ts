@@ -1,7 +1,8 @@
+import { utils as secp256k1Utils } from '@noble/secp256k1'
 import { clearSensitiveBytes, decodeYapprIdentityId, deriveYapprAuthKeyFromLogin } from 'platform-auth'
 import { keyNetwork } from '@/lib/constants'
 import { matchIdentityKey, publicKeyHashFromWif, type IdentityKeyLike, type KeyMatchResult } from '@/lib/crypto/keys'
-import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys'
+import { KeyPurpose, SecurityLevel, getSecurityLevelName } from '@/lib/crypto/identity-keys'
 import { parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { identityService } from '@/lib/services/identity-service'
 import { RpcError } from '../protocol/envelope'
@@ -26,6 +27,9 @@ export function toNetworkWif(input: string): string {
   } catch {
     throw new RpcError('Invalid private key', 'KEY_INVALID')
   }
+  // 32 bytes is not yet a key: 0 and anything from the curve order up are not secp256k1 scalars,
+  // and deriving their public key throws "invalid secret key: outside of range" (D-L1a-007).
+  if (!secp256k1Utils.isValidSecretKey(parsed.privateKey)) throw new RpcError('Invalid private key', 'KEY_INVALID')
   if (parsed.format === 'wif' && parsed.network !== network) {
     throw new RpcError('This key is for a different network', 'KEY_WRONG_NETWORK')
   }
@@ -41,11 +45,17 @@ export interface VerifiedKey {
   securityLevel: number
 }
 
-/** lib's wording for a key that matches the identity but may not sign in (key-validation-service). */
+/** UX_SPEC §5.1 key.mismatch: a key that is on the identity but not an AUTHENTICATION key (PRD AUTH-08). */
+const KEY_MISMATCH = 'Private key does not match this identity'
+
+/**
+ * Why a key that matches the identity may not sign in. A key of another
+ * purpose gets PRD AUTH-08's "Private key does not match this identity", not
+ * lib's "(it's a ENCRYPTION key)" (D-L1i-007); a MASTER or low-level
+ * authentication key keeps lib's wording (key-validation-service).
+ */
 function rejectionMessage(match: KeyMatchResult): string {
-  if (match.purpose !== KeyPurpose.AUTHENTICATION) {
-    return `This key cannot be used for authentication (it's a ${getPurposeName(match.purpose)} key)`
-  }
+  if (match.purpose !== KeyPurpose.AUTHENTICATION) return KEY_MISMATCH
   return match.securityLevel === SecurityLevel.MASTER
     ? 'This is your MASTER key - keep it safe! Use a HIGH or CRITICAL authentication key instead.'
     : `This key's security level is too low (${getSecurityLevelName(match.securityLevel)}) - need HIGH or CRITICAL`
@@ -76,7 +86,7 @@ export async function verifySignInKey(input: string): Promise<VerifiedKey> {
   if (result.reason === 'rejected') throw new RpcError(rejectionMessage(result.match), 'KEY_NOT_ON_IDENTITY')
   // Found by its hash, yet no enabled key matches: the key was disabled.
   const disabled = matchIdentityKey(wif, keys.map(key => ({ ...key, disabledAt: undefined })), { network, purpose: KeyPurpose.AUTHENTICATION })
-  throw new RpcError(disabled.ok ? 'This key has been disabled on this identity' : 'Private key does not match this identity', 'KEY_NOT_ON_IDENTITY')
+  throw new RpcError(disabled.ok ? 'This key has been disabled on this identity' : KEY_MISMATCH, 'KEY_NOT_ON_IDENTITY')
 }
 
 /** UX_SPEC §5.1 `signin.walletKeyDisabled`; the host shows its own copy for the code. */

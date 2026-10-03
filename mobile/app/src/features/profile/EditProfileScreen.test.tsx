@@ -28,14 +28,19 @@ function tryLeave(): boolean {
   return preventDefault.mock.calls.length > 0;
 }
 
-// Stack.Screen renders its header buttons here, so the tests can press them.
+// Stack.Screen renders its title and header buttons here, so the tests can read and press them.
 jest.mock('expo-router', () => {
-  const { View } = jest.requireActual('react-native');
+  const { Text, View } = jest.requireActual('react-native');
   return {
     router: { push: jest.fn(), back: jest.fn(), canGoBack: () => true },
     Stack: {
-      Screen: ({ options }: { options?: { headerLeft?: () => ReactElement; headerRight?: () => ReactElement } }) => (
+      Screen: ({
+        options,
+      }: {
+        options?: { title?: string; headerLeft?: () => ReactElement; headerRight?: () => ReactElement };
+      }) => (
         <View>
+          <Text testID="screen-title">{options?.title}</Text>
           {options?.headerLeft?.()}
           {options?.headerRight?.()}
         </View>
@@ -161,6 +166,38 @@ describe('EditProfileScreen', () => {
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(useToastStore.getState().current?.message).toBe('Profile updated!');
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('counts the two documents a dev save writes in the title: "Saving… (1 of 2)" (D-L3a-006)', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Edit profile');
+
+    fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    // Before the engine has said how many documents the save writes.
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving…', { exact: true });
+
+    act(() => fakeEngine.emit('write.status', advance(pending, { progress: { done: 0, total: 2 } })));
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving… (1 of 2)');
+    act(() => fakeEngine.emit('write.status', advance(pending, { progress: { done: 1, total: 2 } })));
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving… (2 of 2)');
+  });
+
+  it('says just "Saving…" for a save that writes one document', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    act(() => fakeEngine.emit('write.status', advance(pending, { progress: { done: 0, total: 1 } })));
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving…', { exact: true });
   });
 
   it('sends one update for a double-tapped Save, even after the first confirms (SR-14)', async () => {

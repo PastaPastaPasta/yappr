@@ -121,6 +121,11 @@ export const tw = {
   pressedMuted: 'active:bg-gray-100 dark:active:bg-gray-900',
   bgMuted: 'bg-gray-100 dark:bg-gray-900',
   bgSkeleton: 'bg-gray-200 dark:bg-gray-800',
+  /**
+   * Behind transparent DiceBear art (UX_SPEC §2.3): the page in light mode, as on web, and a
+   * light disc in dark mode, where the line-art styles' black strokes would vanish into the page.
+   */
+  avatarBackdrop: 'bg-white dark:bg-gray-200',
   bgSelected: 'bg-yappr-50 dark:bg-yappr-950/30',
   bgUnread: 'bg-yappr-50/60 dark:bg-yappr-950/30',
   border: 'border-gray-200 dark:border-gray-800',

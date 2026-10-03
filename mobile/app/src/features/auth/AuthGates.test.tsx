@@ -4,12 +4,13 @@ import { router } from 'expo-router';
 
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
+import { syncStorage } from '~/state/storage';
 
 import { useAccounts } from './accounts';
 import { useAppLockSettings, useLockState } from './app-lock';
 import { AuthGates } from './AuthGates';
 import { useKeyExchange } from './key-exchange';
-import { useOnboarding } from './onboarding';
+import { setWelcomed, useOnboarding } from './onboarding';
 import { acceptTerms, useTermsStore } from './terms';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -30,6 +31,8 @@ const alice: SessionDTO = {
   hasEncryptionKey: false,
   method: 'key',
 };
+/** `src/data/session.ts`'s record of who was signed in at the last launch. */
+const LAST_IDENTITY_KEY = 'yappr.session.identity';
 const flush = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)));
 
 /** Renders the gates at `path`; `go(next)` moves the app to another route. */
@@ -45,7 +48,8 @@ function mount(path: string) {
 beforeEach(() => {
   jest.clearAllMocks();
   fakeEngine.reset();
-  useOnboarding.setState({ welcomed: true });
+  useOnboarding.setState({ welcomed: true, welcomeDue: false });
+  syncStorage.removeItem(LAST_IDENTITY_KEY);
   useTermsStore.setState({ accepted: {} });
   useAccounts.setState({ transition: null, returnTo: null });
   useSessionStore.setState({ status: 'signed-in', session: alice, accounts: [] });
@@ -118,6 +122,37 @@ describe('launch', () => {
     useSessionStore.setState({ status: 'unknown', session: null });
     mount('/');
     expect(router.push).toHaveBeenCalledWith('/welcome');
+  });
+
+  it('keeps Welcome away from someone signed in at the last launch, before the engine says so', () => {
+    useOnboarding.setState({ welcomed: false, welcomeDue: false });
+    useSessionStore.setState({ status: 'unknown', session: null });
+    syncStorage.setItem(LAST_IDENTITY_KEY, 'alice');
+    mount('/');
+    expect(router.push).not.toHaveBeenCalledWith('/welcome');
+  });
+
+  it('shows Welcome on the first launch after the last account signed out (D-L1i-006)', () => {
+    setWelcomed(false);
+    useSessionStore.setState({ status: 'unknown', session: null });
+    // What the launch still believes until the engine's restore answers.
+    syncStorage.setItem(LAST_IDENTITY_KEY, 'alice');
+    mount('/');
+    expect(router.push).toHaveBeenCalledWith('/welcome');
+  });
+
+  it('counts a sign-in as past Welcome, so a later launch does not show it', () => {
+    setWelcomed(false);
+    useSessionStore.setState({ status: 'signed-out', session: null });
+    mount('/profile');
+    expect(useOnboarding.getState()).toMatchObject({ welcomed: false, welcomeDue: true });
+
+    // A restore (here, a stale one right after the sign-out's engine restart) is not a sign-in.
+    act(() => fakeEngine.emit('session.changed', { session: alice, reason: 'restored' }));
+    expect(useOnboarding.getState()).toMatchObject({ welcomed: false, welcomeDue: true });
+
+    act(() => fakeEngine.emit('session.changed', { session: alice, reason: 'signed-in' }));
+    expect(useOnboarding.getState()).toMatchObject({ welcomed: true, welcomeDue: false });
   });
 
   it('reopens a wallet request the engine still holds on the screen it was made on', async () => {

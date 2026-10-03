@@ -13,23 +13,34 @@ import { syncStorage } from '~/state/storage';
  */
 export const FEATURE_APP_CONNECT = false;
 
-/**
- * Whether this install has been past the Welcome screen (PRD AUTH-01): either
- * choice counts, and only signing the last account out shows it again.
- */
-export const useOnboarding = create<{ welcomed: boolean }>()(
-  persist((): { welcomed: boolean } => ({ welcomed: false }), {
+interface Onboarding {
+  /** This install has been past the Welcome screen (PRD AUTH-01): either choice counts. */
+  welcomed: boolean;
+  /**
+   * The last account signed out since: Welcome at the next launch, whatever
+   * the launch's provisional "who was signed in" still says (D-L1i-006).
+   */
+  welcomeDue: boolean;
+}
+
+/** Whether to show Welcome (PRD AUTH-01): once, and again only after the last account signs out. */
+export const useOnboarding = create<Onboarding>()(
+  persist((): Onboarding => ({ welcomed: false, welcomeDue: false }), {
     name: 'onboarding',
     version: 1,
     storage: createJSONStorage(() => syncStorage),
-    merge: (persisted, current) => ({
-      ...current,
-      welcomed: (persisted as { welcomed?: unknown } | undefined)?.welcomed === true,
-    }),
+    merge: (persisted, current) => {
+      const stored = persisted as Partial<Record<keyof Onboarding, unknown>> | undefined;
+      return { ...current, welcomed: stored?.welcomed === true, welcomeDue: stored?.welcomeDue === true };
+    },
   }),
 );
 
-export const setWelcomed = (welcomed: boolean) => useOnboarding.setState({ welcomed });
+/**
+ * `true`: past Welcome (a choice on it, or a sign-in). `false`: the last
+ * account signed out, so Welcome comes back at the next launch.
+ */
+export const setWelcomed = (welcomed: boolean) => useOnboarding.setState({ welcomed, welcomeDue: !welcomed });
 
 export const links = {
   /** The terms and privacy policy cover every network, so they come from the root site. */

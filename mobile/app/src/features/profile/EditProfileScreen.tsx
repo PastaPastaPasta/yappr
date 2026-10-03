@@ -29,6 +29,7 @@ import {
   formFromProfile,
   isEmptyPatch,
   patchOf,
+  savingTitle,
   validateForm,
   type ProfileForm,
 } from './edit-profile-form';
@@ -204,7 +205,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     <Screen>
       <Stack.Screen
         options={{
-          title: saving ? 'Saving…' : 'Edit profile',
+          title: saving ? savingTitle(save.ticket?.progress) : 'Edit profile',
           // Swipe-down would drop unsaved changes without asking.
           gestureEnabled: !dirty && !saving,
           headerLeft: () => (

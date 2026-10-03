@@ -445,10 +445,26 @@ describe('profiles.update', () => {
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed', target: { identityId: VIEWER } })
     expect(m.profileService.updateProfile).toHaveBeenCalledWith(VIEWER, {
       displayName: 'Ann', avatar: JSON.stringify({ seed: 'abc', style: 'bottts' }), bannerUri: '', nsfw: true,
-    })
+    }, expect.anything())
     await expect(profiles.update({ avatar: { dicebear: { style: 'nope', seed: 'a' } } })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(profiles.update({ displayName: 'x'.repeat(51) })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(profiles.update({ handle: 'x' } as never)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+  })
+
+  it('puts lib\'s "document 1 of 2" on the ticket, for "Saving… (1 of 2)" (D-L3a-006)', async () => {
+    const { tickets, profiles } = engine()
+    const seen: unknown[] = []
+    const progress = () => tickets.list().find(t => t.op === 'profile.update')?.progress
+    m.profileService.updateProfile.mockImplementation(async (_owner: string, _update: unknown, options: { onProgress: (p: { step: number, total: number }) => void }) => {
+      options.onProgress({ step: 1, total: 2 })
+      seen.push(progress())
+      options.onProgress({ step: 2, total: 2 })
+      seen.push(progress())
+      return {}
+    })
+    const ticket = await profiles.update({ bio: 'b', pronouns: 'she/her' })
+    expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed', progress: { done: 1, total: 2 } })
+    expect(seen).toEqual([{ done: 0, total: 2 }, { done: 1, total: 2 }])
   })
 
   it('reports lib\'s own plan refusals as not sent, and checks an edit by reading the profile back', async () => {

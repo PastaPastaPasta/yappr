@@ -2,6 +2,7 @@ import { router, usePathname, useRootNavigationState } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
+import { useEngineEvent } from '~/data/events';
 import { lastIdentity, useSession, useSessionStore } from '~/data/session';
 import { setReauthHandler } from '~/data/session-expiry';
 import { engine, engineNetworkKey } from '~/engine';
@@ -18,22 +19,39 @@ import { reauthenticate, returnFromAddAccount, startReauthTracking, useAccounts 
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
-import { useOnboarding } from './onboarding';
+import { setWelcomed, useOnboarding } from './onboarding';
 import { useHasAcceptedTerms } from './terms';
 import { TopOverlay } from './TopOverlay';
 
 const inSignIn = (pathname: string) => pathname === '/sign-in' || pathname.startsWith('/sign-in/');
 
-/** First launch: Welcome (AUTH-01), once the navigator can take it. */
+/**
+ * First launch, and the first launch after the last account signed out:
+ * Welcome (AUTH-01), once the navigator can take it.
+ */
 function useWelcomeOnFirstLaunch(ready: boolean): void {
   const checked = useRef(false);
   useEffect(() => {
     if (!ready || checked.current) return;
     checked.current = true;
-    // Someone signed in at the last launch (or before this build) is past Welcome.
-    const someone = lastIdentity() !== null || useSessionStore.getState().status === 'signed-in';
-    if (!useOnboarding.getState().welcomed && !someone) router.push('/welcome');
+    const { welcomed, welcomeDue } = useOnboarding.getState();
+    // Someone signed in at the last launch (or before this build) is past Welcome. Not after the
+    // last sign-out, though: that is said outright, and the provisional last identity, which the
+    // engine's restore only settles later in this launch, must not hide Welcome (D-L1i-006).
+    const someone = !welcomeDue && (lastIdentity() !== null || useSessionStore.getState().status === 'signed-in');
+    if (!welcomed && !someone) router.push('/welcome');
   }, [ready]);
+}
+
+/**
+ * A sign-in is past Welcome, however it was reached (the Profile tab, a link, Add account). Only
+ * a sign-in made here counts, not a session the engine restores: a restore that still finds the
+ * signed-out account for a moment must not cancel the Welcome its sign-out asked for.
+ */
+function useSignInPassesWelcome(): void {
+  useEngineEvent('session.changed', ({ session, reason }) => {
+    if (reason === 'signed-in' && session && !useOnboarding.getState().welcomed) setWelcomed(true);
+  });
 }
 
 /**
@@ -154,6 +172,7 @@ export function AuthGates() {
   const ready = !!useRootNavigationState()?.key && !lockUp;
   const pathname = usePathname();
   useWelcomeOnFirstLaunch(ready);
+  useSignInPassesWelcome();
   useTermsGate(ready, pathname);
   useSignInExit(pathname);
   useResumeWalletSignIn(ready, pathname);

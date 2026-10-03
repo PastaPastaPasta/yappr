@@ -150,6 +150,22 @@ export interface UpdateUnifiedProfileData {
   socialLinks?: SocialLink[];
 }
 
+/** `updateProfile`'s progress: the save is about to write document `step` of `total`. */
+export interface ProfileSaveProgress {
+  step: number;
+  total: number;
+}
+
+export interface UpdateProfileOptions {
+  /**
+   * Called before each profile document is written. v10 writes the DashPay
+   * profile and then the Yappr profile (each only when it changes), so a
+   * save that changes both reports 1 of 2, then 2 of 2; v2 writes one
+   * document and reports nothing.
+   */
+  onProgress?: (progress: ProfileSaveProgress) => void;
+}
+
 // Avatar configuration
 export interface AvatarConfig {
   style: DiceBearStyle;
@@ -813,10 +829,10 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Note: We must include ALL fields in the update to preserve existing values,
    * as Dash Platform document updates replace the entire document.
    */
-  async updateProfile(ownerId: string, updates: UpdateUnifiedProfileData): Promise<User | null> {
+  async updateProfile(ownerId: string, updates: UpdateUnifiedProfileData, options: UpdateProfileOptions = {}): Promise<User | null> {
     if (profileExtensionSource()) {
       try {
-        return await this.saveV10Profile(ownerId, updates);
+        return await this.saveV10Profile(ownerId, updates, options.onProgress);
       } catch (error) {
         logger.error('UnifiedProfileService: Error updating profile:', error);
         throw error;
@@ -989,7 +1005,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * when it is missing or changes. An image avatar DashPay does not already
    * store is fetched once to hash and fingerprint it.
    */
-  private async saveV10Profile(ownerId: string, data: UpdateUnifiedProfileData): Promise<User> {
+  private async saveV10Profile(
+    ownerId: string,
+    data: UpdateUnifiedProfileData,
+    onProgress?: UpdateProfileOptions['onProgress']
+  ): Promise<User> {
     cacheManager.invalidateByTag(`user:${ownerId}`);
 
     const paymentUris = data.paymentUris && uniqueStrings(data.paymentUris);
@@ -1009,8 +1029,13 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       fallbackAvatar: this.encodeAvatarData(ownerId, DEFAULT_AVATAR_STYLE),
     });
 
+    const total = (plan.base ? 1 : 0) + (plan.extension ? 1 : 0);
+    let step = 0;
+    const nextStep = () => onProgress?.({ step: ++step, total });
+
     let base = stored.base;
     if (plan.base) {
+      nextStep();
       const written = await this.writeProfileDocument('base', ownerId, stored.base, plan.base)
         .catch((error: unknown) => { throw dashpayKeyBoundsRefusal(error) ?? error; });
       base = written.document;
@@ -1018,9 +1043,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       // a create whose wait timed out must be visible before the extension goes.
       if (!stored.base && !written.confirmed) await this.waitForDashpayProfile(ownerId);
     }
-    const extension = plan.extension
-      ? (await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension)).document
-      : stored.extension;
+    let extension = stored.extension;
+    if (plan.extension) {
+      nextStep();
+      extension = (await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension)).document;
+    }
 
     cacheManager.invalidateByTag(`user:${ownerId}`);
     const merged = mergeV10ProfileRecords(base, extension);

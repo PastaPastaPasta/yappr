@@ -250,7 +250,8 @@ it('brings Welcome back after the last account signs out (AUTH-01)', async () =>
 
   await signOutAccount('alice');
 
-  expect(useOnboarding.getState().welcomed).toBe(false);
+  // Said outright, so the next launch shows Welcome whatever it still believes (D-L1i-006).
+  expect(useOnboarding.getState()).toEqual({ welcomed: false, welcomeDue: true });
   expect(useSessionStore.getState().accounts).toEqual([]);
 });
 
