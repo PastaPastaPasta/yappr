@@ -3,10 +3,13 @@
  * (PRD COMP-07, UX_SPEC §2.12), the @-fragment under the caret
  * (COMP-06) and the first-mention / first-tag / tag-length hints.
  *
- * The patterns follow the web's post parser (`ui/rich-text/parse.ts`), with
- * one difference: tags here are unbounded, so a tag over the contract's
- * length shows whole, underlined in red, instead of being cut.
+ * The patterns are the post parser's (`ui/rich-text/parse.ts`), so the
+ * editor highlights exactly what the published post links. Tags are
+ * unbounded there too: a tag over the contract's length shows whole,
+ * underlined in red here and linked whole in the post.
  */
+
+import { INLINE_PATTERNS } from '~/ui/rich-text/parse';
 
 export type TokenKind = 'url' | 'hashtag' | 'cashtag' | 'mention';
 
@@ -17,12 +20,7 @@ export interface Token {
   value: string;
 }
 
-const PATTERNS: { kind: TokenKind; regex: RegExp }[] = [
-  { kind: 'url', regex: /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g },
-  { kind: 'hashtag', regex: /#[a-zA-Z0-9_]+/g },
-  { kind: 'cashtag', regex: /\$[a-zA-Z][a-zA-Z0-9_]*/g },
-  { kind: 'mention', regex: /@[a-zA-Z0-9_-]{1,100}(?:\.dash)?/gi },
-];
+const PATTERNS: { kind: TokenKind; regex: RegExp }[] = INLINE_PATTERNS.map(({ type, regex }) => ({ kind: type, regex }));
 
 /** Every token in order; where two overlap, the earlier one wins (as web). */
 export function tokenize(text: string): Token[] {

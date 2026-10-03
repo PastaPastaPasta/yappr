@@ -483,6 +483,7 @@ function PeopleSection() {
           onLinkPress={(u) => toast(u)}
         />
         <RichText text="שלום עולם! #עברית is not a tag, #hebrew is." />
+        <RichText text={'مرحبا بالعالم، هذا اختبار\nשלום עולם, זו בדיקה\n\nEach paragraph takes its own direction. 🎉'} />
       </Section>
       <Section title="Relative time and compact numbers">
         <Row>

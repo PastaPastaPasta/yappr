@@ -1,5 +1,5 @@
-import { memo, useMemo, useState, type ReactNode } from 'react';
-import { Text as RNText, type TextLayoutEvent } from 'react-native';
+import { memo, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Text as RNText, View, type TextLayoutEvent } from 'react-native';
 
 import {
   cashtagDisplayToStorage,
@@ -12,7 +12,8 @@ import {
 import { useMediaUrls } from '../media-url';
 import { Text } from '../Text';
 import { monoFont, tones } from '../tokens';
-import { displayText, parseContent, splitUrl, type InlinePart } from './parse';
+import { blockLineCaps, directionRuns, directionStyle, type Direction } from './direction';
+import { displayText, lineText, parseContent, splitLines, splitUrl, type ContentPart, type InlinePart } from './parse';
 
 export interface RichTextHandlers {
   /** The DPNS label, normalized (lowercase, no `.dash`). */
@@ -35,8 +36,53 @@ export interface RichTextProps extends RichTextHandlers {
   hideFirstUrl?: boolean;
   /** The contract's tag ceiling (engine capabilities), so a long tag opens the page it was indexed under. */
   tagMaxLength?: number;
-  onTextLayout?: (e: TextLayoutEvent) => void;
+  /** The rendered line count, every paragraph included, once laid out. */
+  onLineCount?: (lines: number) => void;
   testID?: string;
+}
+
+/** Same-direction paragraphs, rendered as one <Text>. */
+interface Block {
+  direction: Direction | null;
+  parts: ContentPart[];
+}
+
+const LINE_BREAK: ContentPart = { type: 'text', value: '\n' };
+
+/** The text's paragraphs grouped into runs of one direction (PRD G-9). */
+function paragraphBlocks(parts: ContentPart[]): Block[] {
+  const lines = splitLines(parts);
+  return directionRuns(lines.map(lineText)).map(({ direction, start, end }) => ({
+    direction,
+    parts: lines.slice(start, end).flatMap((line, i) => (i === 0 ? line : [LINE_BREAK, ...line])),
+  }));
+}
+
+/** The lines the shown blocks take, once every one is laid out. */
+function laidOutLines(measured: readonly (number | undefined)[], caps: readonly (number | undefined)[]) {
+  let total = 0;
+  for (const [i, cap] of caps.entries()) {
+    if (cap === 0) continue;
+    const lines = measured[i];
+    if (lines === undefined) return undefined;
+    total += Math.min(lines, cap ?? lines);
+  }
+  return total;
+}
+
+/** Each block's laid-out line count, for this text only (a recycled cell starts over). */
+function useBlockLines(text: string) {
+  const [state, setState] = useState<{ text: string; lines: (number | undefined)[] }>({ text, lines: [] });
+  const lines = state.text === text ? state.lines : [];
+  const record = (index: number, count: number) =>
+    setState((prev) => {
+      const current = prev.text === text ? prev.lines : [];
+      if (current[index] === count) return prev;
+      const next = [...current];
+      next[index] = count;
+      return { text, lines: next };
+    });
+  return [lines, record] as const;
 }
 
 /** A tappable span in `link` color, underlined while pressed (UX_SPEC G-9). */
@@ -61,7 +107,9 @@ function LinkSpan({ children, onPress }: { children: ReactNode; onPress?: () => 
  * Post text with web's highlighting (components/post/post-content.tsx):
  * mentions, hashtags, cashtags and links in `link` color and tappable,
  * `**bold**`, `*italic*` and `` `code` ``. Emoji-only posts render large.
- * The paragraph keeps the system's natural direction, so RTL posts align right.
+ * Each paragraph takes the direction of its first strong character (PRD
+ * G-9), so Arabic and Hebrew paragraphs align right: one <Text> per run of
+ * same-direction paragraphs, because a <Text> has one alignment.
  */
 export const RichText = memo(function RichText({
   text,
@@ -73,14 +121,24 @@ export const RichText = memo(function RichText({
   onHashtagPress,
   onCashtagPress,
   onLinkPress,
-  onTextLayout,
+  onLineCount,
   testID,
 }: RichTextProps) {
   const urls = useMediaUrls();
   // As web: strip the previewed URL from the raw text, then parse and size what is left.
   const shown = useMemo(() => displayText(text, hideFirstUrl), [text, hideFirstUrl]);
-  const parts = useMemo(() => parseContent(shown), [shown]);
+  const blocks = useMemo(() => paragraphBlocks(parseContent(shown)), [shown]);
   const emojiOnly = useMemo(() => isEmojiOnly(shown), [shown]);
+  const [blockLines, recordLines] = useBlockLines(shown);
+  // RN's numberOfLines 0 means no limit.
+  const caps = blockLineCaps(blockLines, blocks.length, numberOfLines || undefined);
+  // Laid-out line counts matter only to fit several blocks in `numberOfLines`, or to report them.
+  const measure = onLineCount !== undefined || (caps[0] !== undefined && blocks.length > 1);
+
+  const lineCount = laidOutLines(blockLines, caps);
+  useEffect(() => {
+    if (lineCount !== undefined) onLineCount?.(lineCount);
+  }, [lineCount, onLineCount]);
 
   const inline = (part: InlinePart, key: string | number): ReactNode => {
     switch (part.type) {
@@ -131,37 +189,46 @@ export const RichText = memo(function RichText({
     }
   };
 
-  return (
-    <Text
-      variant={variant}
-      className={emojiOnly ? 'text-4xl leading-snug' : undefined}
-      numberOfLines={numberOfLines}
-      onTextLayout={onTextLayout}
-      style={{ writingDirection: 'auto' }}
-      testID={testID}
-    >
-      {parts.map((part, i) => {
-        if ('children' in part) {
-          return (
-            <Text key={i} variant={variant} className={part.type === 'bold' ? 'font-bold' : 'italic'}>
-              {part.children.map((child, j) => inline(child, `${i}.${j}`))}
-            </Text>
-          );
-        }
-        if (part.type === 'code') {
-          return (
-            // The `code` token (UX_SPEC §1.2): pink darkened to 700 for AA in light mode.
-            <RNText
-              key={i}
-              className="bg-gray-100 text-pink-700 dark:bg-gray-800 dark:text-pink-400"
-              style={[monoFont, { fontSize: 14 }]}
-            >
-              {part.value}
-            </RNText>
-          );
-        }
-        return inline(part, i);
-      })}
-    </Text>
-  );
+  const content = (parts: ContentPart[]) =>
+    parts.map((part, i) => {
+      if ('children' in part) {
+        return (
+          <Text key={i} variant={variant} className={part.type === 'bold' ? 'font-bold' : 'italic'}>
+            {part.children.map((child, j) => inline(child, `${i}.${j}`))}
+          </Text>
+        );
+      }
+      if (part.type === 'code') {
+        return (
+          // The `code` token (UX_SPEC §1.2): pink darkened to 700 for AA in light mode.
+          <RNText
+            key={i}
+            className="bg-gray-100 text-pink-700 dark:bg-gray-800 dark:text-pink-400"
+            style={[monoFont, { fontSize: 14 }]}
+          >
+            {part.value}
+          </RNText>
+        );
+      }
+      return inline(part, i);
+    });
+
+  const rendered = blocks.flatMap((block, i) => {
+    const cap = caps[i];
+    if (cap === 0) return [];
+    return [
+      <Text
+        key={i}
+        variant={variant}
+        className={emojiOnly ? 'text-4xl leading-snug' : undefined}
+        numberOfLines={cap}
+        onTextLayout={measure ? (e: TextLayoutEvent) => recordLines(i, e.nativeEvent.lines.length) : undefined}
+        style={directionStyle(block.direction)}
+        testID={blocks.length === 1 ? testID : undefined}
+      >
+        {content(block.parts)}
+      </Text>,
+    ];
+  });
+  return blocks.length === 1 ? (rendered[0] ?? null) : <View testID={testID}>{rendered}</View>;
 });

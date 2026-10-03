@@ -10,6 +10,7 @@ import { Avatar } from '~/ui/Avatar';
 import { selectionTick } from '~/ui/haptics';
 import { useMediaUrls } from '~/ui/media-url';
 import type { CardAvatar } from '~/ui/post/types';
+import { directionBlocks, directionStyle } from '~/ui/rich-text/direction';
 import { splitUrl } from '~/ui/rich-text/parse';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
@@ -158,9 +159,12 @@ export const MessageBubble = memo(function MessageBubble({
             <Text className={cn('text-4xl leading-snug', message.outbox === 'sending' && 'opacity-70')}>{message.text}</Text>
           ) : (
             <View className={bubbleShape} style={lastOfRun ? (own ? TAIL_OWN : TAIL_OTHER) : ROUND}>
-              <Text variant="body" tone={own ? 'inverse' : 'primary'} style={{ writingDirection: 'auto' }}>
-                <Linkified text={message.text} own={own} />
-              </Text>
+              {/* Each paragraph aligned by its own direction (PRD G-9): one Text per same-direction run. */}
+              {directionBlocks(message.text).map((block, i) => (
+                <Text key={i} variant="body" tone={own ? 'inverse' : 'primary'} style={directionStyle(block.direction)}>
+                  <Linkified text={block.text} own={own} />
+                </Text>
+              ))}
             </View>
           )}
         </Pressable>

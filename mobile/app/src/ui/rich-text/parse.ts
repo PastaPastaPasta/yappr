@@ -5,6 +5,12 @@
  * @mentions. Bold and italic parse their inside for the inline kinds; code
  * is literal. Overlaps keep the earliest match. The patterns are ASCII-only,
  * so emoji and RTL text pass through as plain text, never split.
+ *
+ * One difference from web: a tag is its whole `[a-zA-Z0-9_]` run, as the
+ * compose editor reads it (features/compose/text.ts uses these patterns), so
+ * a tag longer than the contract indexes is linked whole, never cut
+ * mid-word. Its link opens the page the tag was indexed under: the first
+ * `tagMaxLength` characters (lib `firstHashtag` / `extractHashtags`).
  */
 
 export type InlineKind = 'text' | 'url' | 'hashtag' | 'cashtag' | 'mention';
@@ -25,11 +31,13 @@ interface Pattern {
   type: PartKind;
 }
 
-const INLINE_PATTERNS: Pattern[] = [
+/** The tappable kinds, shared with the compose editor's highlighting. */
+export const INLINE_PATTERNS: { regex: RegExp; type: Exclude<InlineKind, 'text'> }[] = [
   // http(s)://, ipfs:// or www.
   { regex: /(https?:\/\/[^\s<>"']+|ipfs:\/\/[^\s<>"']+|www\.[^\s<>"']+)/g, type: 'url' },
-  { regex: /#([a-zA-Z0-9_]{1,63})/g, type: 'hashtag' },
-  { regex: /\$([a-zA-Z][a-zA-Z0-9_]{0,62})/g, type: 'cashtag' },
+  // Unbounded, as compose reads them: an over-long tag is linked whole.
+  { regex: /#([a-zA-Z0-9_]+)/g, type: 'hashtag' },
+  { regex: /\$([a-zA-Z][a-zA-Z0-9_]*)/g, type: 'cashtag' },
   // Hyphens included, as DPNS labels (and mention indexing) allow them.
   { regex: /@([a-zA-Z0-9_-]{1,100}(?:\.dash)?)/gi, type: 'mention' },
 ];
@@ -99,6 +107,55 @@ export function parseContent(text: string): ContentPart[] {
   }
   if (index < text.length) parts.push({ type: 'text', value: text.slice(index) });
   return parts;
+}
+
+/**
+ * The parts split at every line break, one array per line (an empty array
+ * for a blank line). A bold, italic or code run that spans a break
+ * continues on the next line, so joining the lines with '\n' renders the
+ * same text.
+ */
+export function splitLines(parts: ContentPart[]): ContentPart[][] {
+  const lines: ContentPart[][] = [[]];
+  const push = (part: ContentPart) => lines[lines.length - 1]?.push(part);
+  const eachLine = (value: string, onPiece: (piece: string) => void, onBreak: () => void) =>
+    value.split('\n').forEach((piece, i) => {
+      if (i > 0) onBreak();
+      if (piece) onPiece(piece);
+    });
+
+  for (const part of parts) {
+    if ('children' in part) {
+      let children: InlinePart[] = [];
+      const flush = () => {
+        if (children.length > 0) push({ type: part.type, value: children.map((c) => c.value).join(''), children });
+        children = [];
+      };
+      for (const child of part.children) {
+        eachLine(
+          child.value,
+          (value) => children.push({ type: child.type, value }),
+          () => {
+            flush();
+            lines.push([]);
+          },
+        );
+      }
+      flush();
+    } else {
+      eachLine(
+        part.value,
+        (value) => push({ ...part, value }),
+        () => lines.push([]),
+      );
+    }
+  }
+  return lines;
+}
+
+/** A line's characters as written (bold and italic without their markers), for its direction. */
+export function lineText(line: ContentPart[]): string {
+  return line.map((part) => part.value).join('');
 }
 
 /** Web `stripTrailingPunctuation` (lib/link-preview/urls): drops unbalanced closing parens too. */

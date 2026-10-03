@@ -2,7 +2,9 @@ import {
   displayText,
   extractFirstUrl,
   inlineTargets,
+  lineText,
   parseContent,
+  splitLines,
   splitUrl,
   stripFirstUrlAndTrim,
   stripLink,
@@ -51,6 +53,17 @@ describe('parseContent (web PostContent parity)', () => {
     expect(parts.find((p) => p.type === 'hashtag')?.value).toBe('#hebrew');
   });
 
+  it('takes a tag longer than the contract indexes whole, as compose does', () => {
+    const tag = `#longtag${'x'.repeat(58)}`; // 65 characters after the #
+    expect(parseContent(`a ${tag} b`)).toEqual([
+      { type: 'text', value: 'a ' },
+      { type: 'hashtag', value: tag },
+      { type: 'text', value: ' b' },
+    ]);
+    const cashtag = `$${'A'.repeat(70)}`;
+    expect(parseContent(cashtag)).toEqual([{ type: 'cashtag', value: cashtag }]);
+  });
+
   it('allows hyphens in mentions, as DPNS labels do', () => {
     expect(parseContent('@my-name')).toEqual([{ type: 'mention', value: '@my-name' }]);
   });
@@ -95,5 +108,46 @@ describe('web text stripping parity', () => {
       '#tag',
       'https://x.org',
     ]);
+  });
+});
+
+describe('splitLines', () => {
+  it('splits the parts at every line break, blank lines included', () => {
+    const lines = splitLines(parseContent('שלום #tag\n\nhi @bob'));
+    expect(lines).toEqual([
+      [
+        { type: 'text', value: 'שלום ' },
+        { type: 'hashtag', value: '#tag' },
+      ],
+      [],
+      [
+        { type: 'text', value: 'hi ' },
+        { type: 'mention', value: '@bob' },
+      ],
+    ]);
+    expect(lines.map(lineText)).toEqual(['שלום #tag', '', 'hi @bob']);
+  });
+
+  it('continues a bold or code run that spans a line break on the next line', () => {
+    expect(splitLines(parseContent('**שלום\nhi #x** `a\nb`'))).toEqual([
+      [{ type: 'bold', value: 'שלום', children: [{ type: 'text', value: 'שלום' }] }],
+      [
+        {
+          type: 'bold',
+          value: 'hi #x',
+          children: [
+            { type: 'text', value: 'hi ' },
+            { type: 'hashtag', value: '#x' },
+          ],
+        },
+        { type: 'text', value: ' ' },
+        { type: 'code', value: 'a' },
+      ],
+      [{ type: 'code', value: 'b' }],
+    ]);
+  });
+
+  it('gives empty text one empty line', () => {
+    expect(splitLines(parseContent(''))).toEqual([[]]);
   });
 });

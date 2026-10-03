@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Platform, Pressable, View, type AccessibilityActionEvent, type TextLayoutEvent } from 'react-native';
+import { Platform, Pressable, View, type AccessibilityActionEvent } from 'react-native';
 import { ArrowPathIcon, EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { LockClosedIcon } from 'react-native-heroicons/solid';
 
@@ -381,8 +381,8 @@ export const PostCard = memo(function PostCard({
   const postId = post.id;
   // Stable, so RichText's memo holds across renders.
   const measureClamp = useCallback(
-    (e: TextLayoutEvent) => {
-      if (e.nativeEvent.lines.length > FEED_MAX_LINES) setClampedId(postId);
+    (lines: number) => {
+      if (lines > FEED_MAX_LINES) setClampedId(postId);
     },
     [postId],
   );
@@ -459,7 +459,7 @@ export const PostCard = memo(function PostCard({
               numberOfLines={clamped ? FEED_MAX_LINES : undefined}
               hideFirstUrl={previewShown}
               tagMaxLength={tagMaxLength}
-              onTextLayout={variant === 'feed' && !clamped ? measureClamp : undefined}
+              onLineCount={variant === 'feed' && !clamped ? measureClamp : undefined}
               onMentionPress={actions.onMentionPress}
               onHashtagPress={actions.onHashtagPress}
               onCashtagPress={actions.onCashtagPress}
