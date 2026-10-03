@@ -227,11 +227,20 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
 }
 
 /**
- * Detail screens every tab can push (src/app/(tabs)/(home,explore,...)). A
- * cold link has no current tab, and expo-router would pick the first group
- * alphabetically (Explore), so the launch link opens them in Home.
+ * Screens every tab can push (src/app/(tabs)/(home,explore,...)). A cold link
+ * has no current tab, and expo-router would pick the first group
+ * alphabetically (Explore), so the launch link opens detail screens in Home
+ * and notification settings in Profile, its home under Settings.
  */
 const SHARED_ROUTE = /^\/(post|user|hashtag)\//;
+const PROFILE_SHARED_ROUTE = /^\/settings\/notifications(?:$|\?)/;
+
+/** The launch link's route, pinned to a tab when it is a shared screen. */
+function pinColdRoute(route: string): string {
+  if (SHARED_ROUTE.test(route)) return `/(home)${route}`;
+  if (PROFILE_SHARED_ROUTE.test(route)) return `/(profile)${route}`;
+  return route;
+}
 
 /** The dev client's own launch link (`exp+yappr://expo-development-client/?url=...`). */
 const DEV_CLIENT = '/expo-development-client';
@@ -273,7 +282,7 @@ export function resolveLink(url: string, options: LinkOptions): LinkTarget {
   }
   if (route === IGNORE) return { kind: 'ignore' };
   if (route === null) return { kind: 'unsupported', url: page };
-  return { kind: 'route', route: options.initial && SHARED_ROUTE.test(route) ? `/(home)${route}` : route };
+  return { kind: 'route', route: options.initial ? pinColdRoute(route) : route };
 }
 
 /** The app route for an inbound URL, or FALLBACK_ROUTE for anything that is not one. */

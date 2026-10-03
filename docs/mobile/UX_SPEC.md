@@ -536,6 +536,8 @@ Map of react-hot-toast in `app/layout.tsx`:
 
 Banners sit directly under the navigation bar of the current screen, push content down (never overlay it), and slide in with `duration.slow`.
 
+*Proposed in QA wave B (D-L4i-004), pending lead sign-off:* on the large-title tab roots (Notifications, Explore), the banner is the list's first header row and scrolls away with it. iOS only collapses a large title for a scroll view first in the screen, so a fixed banner in front of the list kept the title drawn over the rows. Home and the other screens keep the fixed banner. Write controls still explain why they're unavailable once it has scrolled away.
+
 ### 2.19 Badges and dots
 
 - **Count badge** (tab bar, filter chips): min width 20, height 20, horizontal padding 6, `accent` fill, `caption.strong` `text.inverse`, "99+" cap. On native tab bars use the platform badge API (`tabBarBadge`) with `accent` background.
@@ -620,7 +622,7 @@ Lead decision (2026-10-01): the app uses **idiomatic expo-router routes with dyn
 | `/bookmarks` | — | push | 4.24 |
 | `/settings` | — | push (from Profile) | 4.25 |
 | `/settings/account`, `/settings/accounts`, `/settings/app-lock`, `/settings/privacy`, `/settings/blocked`, `/settings/appearance`, `/settings/about`, `/settings/diagnostics` | — | push | 4.26 – 4.32 |
-| `/settings/notifications` | — | push in the current tab (shared route): from Settings on Profile, and from the Notifications gear (4.18) on Notifications, so Back returns to the Notifications list | 4.27 |
+| `/settings/notifications` | — | push in the current tab (shared route): from Settings on Profile, and from the Notifications gear (4.18) on Notifications, so Back returns to the Notifications list. A launch link (`/settings?section=notifications`) opens it on Profile. *Proposed in QA wave B (D-L4a-004 / D-L4i-005), pending lead sign-off; before, it was Profile-only and the gear switched tabs.* | 4.27 |
 | `/lockdown` | — | root modal, replaces the content | 4.33 |
 | `/media` | `postId`, `index` | root transparent modal | 4.35 |
 | `/__gallery` | — | dev builds only | component gallery |
@@ -1930,8 +1932,8 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 ### 6.1 Text size
 
 - All text uses the tokens in 1.6 and scales with the OS: iOS Dynamic Type up to AX5 (`allowFontScaling`, sizes multiplied by the content-size category ratio), Android font scale up to 200% (nonlinear scaling on Android 14+ is accepted).
-- `maxFontSizeMultiplier`: none for content text (posts, messages, names, settings labels); 1.5 for the tab bar labels, the network chip, badges and the segmented controls, which also expose the iOS Large Content Viewer on long-press. The tab bar's count badge grows as one piece on Android (its 20 pt box and its number together, up to 1.5×), so the number never outgrows its circle.
-- Navigation bar titles: the Android top app bar title (`title`, 20 sp) scales with the font scale, uncapped, on one line (ellipsized when it doesn't fit). iOS keeps UIKit's navigation bar and large-title fonts.
+- `maxFontSizeMultiplier`: none for content text (posts, messages, names, settings labels); 1.5 for the tab bar labels, the network chip, badges and the segmented controls, which also expose the iOS Large Content Viewer on long-press. *Proposed in QA wave B (D-L4a-008), pending lead sign-off:* the tab bar's count badge grows as one piece on Android (its 20 pt box and its number together, up to 1.5×), so the number never outgrows its circle.
+- *Proposed in QA wave B (D-L4a-005), pending lead sign-off:* navigation bar titles: the Android top app bar title (`title`, 20 sp) scales with the font scale, uncapped, on one line (ellipsized when it doesn't fit). iOS keeps UIKit's navigation bar and large-title fonts.
 - At accessibility sizes (iOS AX1+, Android ≥ 160%):
   - post card header wraps to two lines (name on one, handle and time on the next);
   - the action bar hides the counts next to icons (they stay in the labels) and keeps all five icons;
@@ -1972,4 +1974,4 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 - **Bold Text (iOS):** weights step up one level (400 → 600, 600 → 700).
 - **Increase Contrast / high-contrast text:** `text.secondary` becomes `text.primary`, `border` becomes `border.strong`.
 - **Keyboard (iPad keyboards on iPhone, Android hardware keyboards):** focus ring per 1.11; ⌘↩ / Ctrl+Enter posts in compose; Escape closes sheets.
-- **Test IDs:** every interactive element has a `testID` (PRD A11Y-08); test IDs never double as accessibility labels. An empty state's button is `<empty state testID>-action` (for example `signed-out-notifications-action`). The one exception is the items of native menus (UIMenu, Android's popup menu, such as the Messages ✎ menu's "New message" / "New group"): the OS draws them and takes no test ID, so tests pick them by their title.
+- **Test IDs:** every interactive element has a `testID` (PRD A11Y-08); test IDs never double as accessibility labels. *Proposed in QA wave B (D-L4a-011), pending lead sign-off:* an empty state's button is `<empty state testID>-action` (for example `signed-out-notifications-action`). The one exception is the items of native menus (UIMenu, Android's popup menu, such as the Messages ✎ menu's "New message" / "New group"): the OS draws them and takes no test ID, so tests pick them by their title.

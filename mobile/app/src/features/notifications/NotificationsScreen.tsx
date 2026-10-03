@@ -40,8 +40,8 @@ import {
   markAllNotificationsRead,
   markNotificationsRead,
   pollNotifications,
-  useNotificationBadge,
   useNotificationList,
+  useUnreadCount,
 } from './notifications-data';
 import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
 
@@ -137,7 +137,7 @@ export function NotificationsScreen() {
 
   const list = useNotificationList(filter, signedIn);
   const rows = useMemo(() => groupNotifications(list.items), [list.items]);
-  const badge = useNotificationBadge((s) => s.unread);
+  const badge = useUnreadCount(viewerId);
   const canMarkAll = signedIn && (badge > 0 || rows.some((row) => row.unreadIds.length > 0));
 
   const onRowPress = useCallback((row: NotificationRowModel) => {
@@ -248,7 +248,9 @@ export function NotificationsScreen() {
   // out, loading, empty, error): iOS only collapses a large title into the bar for a scroll view
   // it finds down the first-subview chain when the screen appears, so a banner in front of the
   // list, or a list swapped in after a placeholder, leaves the title fixed over the rows
-  // (D-L4i-004, UX_SPEC §3.4). Banners sit in the list header instead.
+  // (UX_SPEC §3.4). Banners sit in the list header instead, and scroll with it (UX_SPEC §2.18).
+  // Part of D-L4i-004: QA also saw it in a steady state this doesn't explain, still to be checked
+  // on a device.
   return (
     <>
       {header}

@@ -10,7 +10,8 @@ import { stackScreenOptions } from '~/ui/stack-options';
  * profile opened from a conversation goes back to the conversation). Each tab's
  * own screens live in its single-name group folder, e.g. `(explore)/explore/`.
  *
- * The launch link has no current tab; +native-intent pins it to (home).
+ * The launch link has no current tab; +native-intent pins it to (home), or
+ * to (profile) for settings/notifications (pinColdRoute in deep-links.ts).
  */
 export const unstable_settings = {
   anchor: 'index',

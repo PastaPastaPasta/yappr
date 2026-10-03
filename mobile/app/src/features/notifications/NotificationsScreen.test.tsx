@@ -131,7 +131,7 @@ beforeEach(() => {
   queryClient.clear();
   fakeEngine.setStatus({ state: 'ready', info: {} });
   useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
-  useNotificationBadge.setState({ unread: 0 });
+  useNotificationBadge.setState({ viewer: null, unread: 0 });
   useToastStore.setState({ current: null });
   fakeEngine.method('settings.get').mockResolvedValue(settings());
   fakeEngine.method('notifications.markRead').mockResolvedValue(undefined);
@@ -197,7 +197,7 @@ describe('Notifications', () => {
 
   it('marks a row read and opens its target (NOTIF-01)', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     await renderScreen();
 
@@ -219,7 +219,7 @@ describe('Notifications', () => {
 
   it('puts the row and the badge back when a read mark is refused', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     fakeEngine.method('notifications.markRead').mockRejectedValue(new Error('nope'));
     fakeEngine.method('notifications.unreadCount').mockResolvedValue(3);
@@ -266,7 +266,7 @@ describe('Notifications', () => {
 
   it('marks all as read (NOTIF-04)', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     await renderScreen();
 
@@ -279,7 +279,7 @@ describe('Notifications', () => {
 
   it('keeps mark all as read when the first list fetch lands after it', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     let landStale: (value: Page<NotificationDTO>) => void = () => undefined;
     const allRead = NOTIFICATIONS.map((n) => ({ ...n, read: true }));
     list()
@@ -296,7 +296,7 @@ describe('Notifications', () => {
 
   it('says so and restores the badge when mark all as read is refused', async () => {
     signIn();
-    useNotificationBadge.setState({ unread: 3 });
+    useNotificationBadge.setState({ viewer: viewer.identityId, unread: 3 });
     list().mockResolvedValue(page(NOTIFICATIONS));
     fakeEngine.method('notifications.markVisibleRead').mockRejectedValue(new Error('nope'));
     fakeEngine.method('notifications.unreadCount').mockResolvedValue(3);
@@ -542,6 +542,31 @@ describe('the tab badge (NOTIF-03)', () => {
     expect(result.current).toBe(0);
     await act(async () => finish({ added: 0, unread: 2 }));
     expect(result.current).toBe(2);
+  });
+
+  it("never shows the last account's count to the next one, signed out in between", async () => {
+    signIn();
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 7 });
+    const rendered: number[] = [];
+    renderHook(
+      () => {
+        const unread = useNotificationsBadge();
+        rendered.push(unread);
+        return unread;
+      },
+      { wrapper },
+    );
+    await act(async () => {});
+    expect(rendered.at(-1)).toBe(7);
+
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    fakeEngine.method('notifications.poll').mockReturnValue(new Promise(() => undefined));
+    rendered.length = 0;
+    act(() => useSessionStore.setState({ status: 'signed-in', session: { ...viewer, identityId: AUTHORS.bob.id } }));
+    await act(async () => {});
+    // Every render, the first included, shows 0 until the new account's own count lands.
+    expect(rendered.length).toBeGreaterThan(0);
+    expect(rendered.every((unread) => unread === 0)).toBe(true);
   });
 
   it('refetches the lists when a poll brings something new', async () => {

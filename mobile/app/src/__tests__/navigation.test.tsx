@@ -124,6 +124,14 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/');
   });
 
+  it('opens a cold link to notification settings on Profile, with Profile underneath', async () => {
+    const app = await renderApp('https://yap.pr/settings?section=notifications');
+
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'settings', 'notifications']);
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/profile');
+  });
+
   it('keeps links from opening sensitive screens', async () => {
     for (const url of ['/compose?text=hi', '/sign-in/key', '/settings/app-lock', '/lockdown']) {
       const app = await renderApp(url);

@@ -173,9 +173,9 @@ export function InboxScreen() {
   const [query, setQuery] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const all = useMemo(() => sortConversations(list.data ?? []), [list.data]);
-  const hiddenCount = all.filter((c) => c.flags.hidden).length;
+  const hiddenCount = all.filter((convo) => convo.flags.hidden).length;
   const rows = useMemo(
-    () => all.filter((c) => (showHidden || !c.flags.hidden) && matchesSearch(c, query)),
+    () => all.filter((convo) => (showHidden || !convo.flags.hidden) && matchesSearch(convo, query)),
     [all, showHidden, query],
   );
 
@@ -287,7 +287,8 @@ export function InboxScreen() {
   // The list is the screen's first native view from the first render, in every state (signed
   // out, locked, loading, empty): iOS only collapses a large title into the bar for a scroll view
   // it finds down the first-subview chain when the screen appears, so a placeholder swapped for
-  // the list later leaves the title fixed over the rows (D-L4i-004, UX_SPEC §3.4).
+  // the list later leaves the title fixed over the rows (UX_SPEC §3.4). Part of D-L4i-004: QA
+  // also saw it in a steady state this doesn't explain, still to be checked on a device.
   return (
     <>
       {header}
