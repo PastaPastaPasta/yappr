@@ -91,10 +91,12 @@ export function NetworkChip({ network, state, onPress }: NetworkChipProps) {
         out with the high-quality line breaker, which can want a hair more room for bold,
         letter-spaced text at some densities (280 dpi): the last letter wraps onto a second
         line that the one-line chip clips ("DEVNE"). The simple breaker fits the width it was
-        measured at. The label is uppercased here, so no text transform sits between the two.
+        measured at. The label is uppercased here and `normal-case` drops the chip token's
+        `uppercase`, so no text transform sits between the two.
       */}
       <Text
         variant="chip"
+        className="normal-case"
         style={{ color: colors.black }}
         maxFontSizeMultiplier={1.5}
         textBreakStrategy="simple"

@@ -174,6 +174,10 @@ describe('badges and chips', () => {
     expect(label.props.textBreakStrategy).toBe('simple');
     expect(label.props.children).toBe('DEVNET');
     expect(label.props.numberOfLines).toBeUndefined();
+    // Uppercased in JS, so no textTransform between Android's measure and layout passes.
+    const classes = (label.props.className as string).split(/\s+/);
+    expect(classes).toContain('normal-case');
+    expect(classes).not.toContain('uppercase');
   });
 });
 
