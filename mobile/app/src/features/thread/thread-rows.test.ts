@@ -118,6 +118,17 @@ describe('buildThreadRows', () => {
     expect(replyRow(rows, 'o1')).toMatchObject({ authorThreadStart: false, lineAbove: false, lineBelow: false });
   });
 
+  it("draws no line from the author's thread to their separate reply to the post (D-L2a-002)", () => {
+    const replies = [
+      reply('a1', { author: AUTHORS.bob, isAuthorThread: true }),
+      reply('a2', { author: AUTHORS.bob, isAuthorThread: true, parentId: 'a1' }),
+      reply('late', { author: AUTHORS.bob, isAuthorThread: true }),
+    ];
+    const rows = buildThreadRows({ thread: thread({}, replies) });
+    expect(replyRow(rows, 'a2')).toMatchObject({ lineAbove: true, lineBelow: false });
+    expect(replyRow(rows, 'late')).toMatchObject({ authorThreadStart: false, lineAbove: false, lineBelow: false });
+  });
+
   it('names the parent of an indented reply only when it is not the row above', () => {
     const replies = [
       reply('r1', { author: AUTHORS.carol }),

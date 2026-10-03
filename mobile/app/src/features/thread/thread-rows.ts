@@ -27,7 +27,7 @@ export type ThreadRow =
       reply: ThreadReplyDTO;
       /** "Replying to @x" when the parent is not the row right above. */
       replyingTo?: string;
-      /** The focus author's own continuation: the line to the author's reply above / below. */
+      /** The focus author's own continuation: the line to the part it continues above / that continues it below. */
       lineAbove: boolean;
       lineBelow: boolean;
       /** The first reply of the author's thread carries the "Author thread" label. */
@@ -65,6 +65,9 @@ function replyRows(replies: ThreadReplyDTO[], highlightId: string | undefined): 
   const byId = new Map(replies.map((reply) => [reply.id, reply]));
   const rows: ThreadRow[] = [];
   const authorThread = (reply: ThreadReplyDTO | undefined) => reply?.depth === 0 && reply.isAuthorThread;
+  // The line joins a part to the one it continues: the author's later reply to the post itself starts afresh.
+  const continues = (reply: ThreadReplyDTO | undefined, above: ThreadReplyDTO | undefined) =>
+    authorThread(reply) && authorThread(above) && reply?.parentId === above?.id;
   let seenAuthorThread = false;
   replies.forEach((reply, index) => {
     const previous = replies[index - 1];
@@ -79,8 +82,8 @@ function replyRows(replies: ThreadReplyDTO[], highlightId: string | undefined): 
       key: `reply:${reply.id}`,
       reply,
       replyingTo,
-      lineAbove: inAuthorThread && authorThread(previous),
-      lineBelow: inAuthorThread && authorThread(next),
+      lineAbove: continues(reply, previous),
+      lineBelow: continues(next, reply),
       authorThreadStart: inAuthorThread && !seenAuthorThread,
       highlighted: reply.id === highlightId,
     });
