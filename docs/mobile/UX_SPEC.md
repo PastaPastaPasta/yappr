@@ -623,7 +623,7 @@ Lead decision (2026-10-01): the app uses **idiomatic expo-router routes with dyn
 | `/messages/settings` | — | push | 4.23 |
 | `/bookmarks` | — | push | 4.24 |
 | `/settings` | — | push (from Profile) | 4.25 |
-| `/settings/account`, `/settings/accounts`, `/settings/app-lock`, `/settings/privacy`, `/settings/blocked`, `/settings/appearance`, `/settings/about`, `/settings/diagnostics` | — | push | 4.26 – 4.32 |
+| `/settings/account`, `/settings/accounts`, `/settings/app-lock`, `/settings/privacy`, `/settings/blocked`, `/settings/appearance`, `/settings/feed-language`, `/settings/about`, `/settings/diagnostics` | — | push | 4.26 – 4.32 |
 | `/settings/notifications` | — | push in the current tab (shared route): from Settings on Profile, and from the Notifications gear (4.18) on Notifications, so Back returns to the Notifications list. A launch link (`/settings?section=notifications`) opens it on Profile. *Proposed in QA wave B (D-L4a-004 / D-L4i-005), pending lead sign-off; before, it was Profile-only and the gear switched tabs.* | 4.27 |
 | `/lockdown` | — | root modal, replaces the content | 4.33 |
 | `/media` | `postId`, `index` | root transparent modal | 4.35 |
@@ -1294,7 +1294,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.30 Settings: Appearance
 
 - "Theme": radio rows "System", "Light", "Dark" (iOS check marks; Android radio buttons). Applies instantly with a 200 ms crossfade of the root (none with Reduce Motion).
-- "Feed language" › (v2, P2): a picker list.
+- "Feed language" › (v2, P2, only with `capabilities.postLanguage`): the row shows the current language and pushes `/settings/feed-language`, a picker list: radio rows for the languages web offers (English, Spanish, French, German, Portuguese, Russian, Chinese, Japanese, Korean, Arabic, Hindi, Italian, Dutch, Polish, Turkish), with the note under them. Choosing one saves it (`settings.set({ feedLanguage })`) and starts For You over in that language.
 
 ### 4.31 Settings: About
 
@@ -1846,6 +1846,8 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | privacy.readReceipts | Read receipts / Let others see when you've read their messages (web, title sentence-cased) |
 | appearance.theme | Theme / System / Light / Dark **(web)** |
 | appearance.language | Feed language (web: "Feed Language", sentence-cased here) |
+| appearance.languageNote | Choose the language for the "For You" feed. Posts in other languages will not appear. **(web)** |
+| appearance.languages | English / Spanish / French / German / Portuguese / Russian / Chinese / Japanese / Korean / Arabic / Hindi / Italian / Dutch / Polish / Turkish **(web)** |
 | about.tagline | Decentralized social media on Dash Platform **(web)** |
 | about.rows | Terms of Use / Privacy Policy / Community rules / Community rules summary / Support / Open-source licenses / Yappr on the web |
 | about.info | Version / Network / Engine / Commit |

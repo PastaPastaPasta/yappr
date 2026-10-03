@@ -12,9 +12,10 @@ import { copy } from './copy';
 
 /**
  * The content settings (`settings.get` / `settings.set`): link previews, the
- * media gate, the NSFW mode, read receipts and the notification types. They
- * are device-wide, so account switches and sign-out keep them (PRD SET-09).
- * Persisted so the screens (and the gates that read them) paint at launch.
+ * media gate, the NSFW mode, read receipts, the notification types and the
+ * feed language. They are device-wide, so account switches and sign-out keep
+ * them (PRD SET-09). Persisted so the screens (and the gates that read them)
+ * paint at launch.
  */
 export function useSettings() {
   return useEngineQuery(queryKeys.settings, (api) => api.settings.get(), { persist: true });
@@ -55,6 +56,12 @@ function undoOf(from: SettingsDTO, patch: SettingsPatch, owns: (field: string) =
 /** The lists the engine filters by the NSFW mode as it builds them (`hide` drops posts). */
 const NSFW_FILTERED = [queryKeys.feed.all, queryKeys.explore.all, queryKeys.profile.all, queryKeys.post.all, queryKeys.bookmarks];
 
+/** For You reads the feed language: its pages and its new-posts checks (PRD FEED-10). */
+const FOR_YOU = [
+  [...queryKeys.feed.all, 'home', { tab: 'forYou' }],
+  [...queryKeys.feed.all, 'newPosts', { tab: 'forYou' }],
+] as const;
+
 const refetch = (queryKey: readonly unknown[]) => {
   queryClient.invalidateQueries({ queryKey }).catch(() => undefined);
 };
@@ -92,6 +99,10 @@ export async function updateSettings(patch: SettingsPatch): Promise<boolean> {
     if (patch.notificationSettings) refetch(queryKeys.notificationsAll);
     // Loaded lists were built under the old mode: Hide must drop NSFW posts, and leaving it bring them back.
     if (patch.sensitiveContentMode !== undefined) NSFW_FILTERED.forEach(refetch);
+    // A new feed language starts For You over in it, rather than keep the old language's posts on top.
+    if (patch.feedLanguage !== undefined) {
+      FOR_YOU.forEach((queryKey) => queryClient.resetQueries({ queryKey }).catch(() => undefined));
+    }
     return true;
   } catch (error) {
     appendLog('warn', 'host', `Saving settings failed: ${errorMessage(error)}`);

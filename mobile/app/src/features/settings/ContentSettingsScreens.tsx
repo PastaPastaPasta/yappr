@@ -144,10 +144,19 @@ export function PrivacySettingsScreen() {
   );
 }
 
-/** Settings → Appearance (UX_SPEC §4.30; PRD SET-05): applies at once, device-wide. */
+/** A feed language's name, or its tag when web offers no such language. */
+const languageName = (tag: string) => copy.appearance.languages.find((l) => l.value === tag)?.title ?? tag;
+
+/**
+ * Settings → Appearance (UX_SPEC §4.30; PRD SET-05): applies at once,
+ * device-wide. "Feed language" only where posts carry a language (v2,
+ * `capabilities.postLanguage`; PRD FEED-10).
+ */
 export function AppearanceSettingsScreen() {
   const theme = useAppearance((s) => s.theme);
   const setTheme = useAppearance((s) => s.setTheme);
+  const capabilities = useCapabilities();
+  const feedLanguage = useSettings().data?.feedLanguage;
   return (
     <SettingsScroll testID="appearance-settings">
       <SettingsHeader title={copy.sections.appearance} />
@@ -162,6 +171,42 @@ export function AppearanceSettingsScreen() {
           }}
           accessibilityLabel={copy.appearance.theme}
           testID="appearance-theme"
+        />
+      </SettingsGroup>
+      {capabilities?.postLanguage ? (
+        <SettingsGroup>
+          <SettingsRow
+            label={copy.appearance.language}
+            value={feedLanguage === undefined ? undefined : languageName(feedLanguage)}
+            onPress={() => router.push('/settings/feed-language')}
+            testID="appearance-feed-language"
+          />
+        </SettingsGroup>
+      ) : null}
+    </SettingsScroll>
+  );
+}
+
+/**
+ * Settings → Appearance → Feed language (UX_SPEC §4.30; PRD FEED-10): the
+ * language For You reads, from the languages web offers. Saving it starts
+ * For You over in that language.
+ */
+export function FeedLanguageSettingsScreen() {
+  const { data, gate } = useSettingsGate(copy.appearance.language);
+  if (!data) return gate;
+  return (
+    <SettingsScroll testID="feed-language-settings">
+      <SettingsHeader title={copy.appearance.language} />
+      <SettingsGroup footer={copy.appearance.languageNote}>
+        <RadioGroup<string>
+          options={copy.appearance.languages}
+          value={data.feedLanguage}
+          onChange={(language) => {
+            if (language !== data.feedLanguage) save({ feedLanguage: language });
+          }}
+          accessibilityLabel={copy.appearance.language}
+          testID="feed-language"
         />
       </SettingsGroup>
     </SettingsScroll>
