@@ -7,7 +7,6 @@ import {
   cashtagDisplayToStorage,
   cn,
   formatNumber,
-  formatTime,
   hashtagDisplayToStorage,
   normalizeDpnsUsername,
   truncateId,
@@ -29,6 +28,7 @@ import { RelativeTime } from '../RelativeTime';
 import { displayText, inlineTargets, splitUrl, stripLink, type InlinePart } from '../rich-text/parse';
 import { WriteStatus, writeStatusLinks, type WriteStatusProps } from '../WriteStatus';
 import { useRipple } from '../ripple';
+import { useRelativeTime } from '../use-relative-time';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
@@ -317,10 +317,9 @@ function pressInline(
 /** The screen-reader summary of a card (UX_SPEC §6.2). */
 function postAccessibilityLabel(
   post: CardPost,
-  extras: { content: string; repostedBy?: string; replyingTo?: string; quoteCovered: boolean },
+  extras: { time: string; content: string; repostedBy?: string; replyingTo?: string; quoteCovered: boolean },
 ): string {
-  // The spoken form ("5 minutes ago"): "5m" reads as "5 meters".
-  const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${formatTime(post.createdAt)}.`];
+  const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${extras.time}.`];
   if (extras.repostedBy) parts.push(`Reposted by ${extras.repostedBy}.`);
   if (extras.replyingTo) parts.push(`Replying to @${extras.replyingTo}.`);
   if (post.deleted) parts.push(stubText('deleted', post.kind));
@@ -396,6 +395,8 @@ export const PostCard = memo(function PostCard({
   const previewShown = linkPreview !== undefined && linkPreview !== 'error';
 
   const ripple = useRipple();
+  // Live like the visible time, so the screen reader does not keep the first one.
+  const spokenTime = useRelativeTime(post.createdAt, 'spoken');
   if (post.viewer?.authorBlocked) return <PostStub state="blocked" kind={post.kind} />;
 
   const gated = (nsfwGated ?? post.sensitive) && !post.deleted;
@@ -571,6 +572,7 @@ export const PostCard = memo(function PostCard({
         covered
           ? 'NSFW post, hidden'
           : postAccessibilityLabel(post, {
+              time: spokenTime,
               content,
               repostedBy: reposter,
               replyingTo,

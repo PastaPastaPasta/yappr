@@ -1,47 +1,30 @@
-import { useEffect, useReducer } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 
-import { formatTimeCompact } from '~/lib-allowlist';
+import { formatTime, formatTimeCompact } from '~/lib-allowlist';
 
-const MINUTE = 60;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
-const WEEK = 7 * DAY;
+import { subscribeToClock } from './clock';
 
 /**
- * Milliseconds until the compact label next changes, or null once it is a
- * fixed date (older than a week). Ported from web hooks/use-relative-time.
+ * `compact` is the visible time ("30s", "5m", "3h", "2d", then "Mar 4");
+ * `spoken` is the screen-reader form ("5 minutes ago"), since "5m" reads as
+ * "5 meters".
  */
-export function nextUpdateDelayMs(dateMs: number, nowMs: number): number | null {
-  const elapsed = Math.floor((nowMs - dateMs) / 1000);
-  if (elapsed < MINUTE) return 1000;
-  if (elapsed < HOUR) return (MINUTE - (elapsed % MINUTE)) * 1000;
-  if (elapsed < DAY) return (HOUR - (elapsed % HOUR)) * 1000;
-  if (elapsed < WEEK) return (DAY - (elapsed % DAY)) * 1000;
-  return null;
-}
+export type RelativeTimeStyle = 'compact' | 'spoken';
 
 /**
- * The live compact time of a post ("30s", "5m", "3h", "2d", then "Mar 4"),
- * re-rendering only when the label changes.
+ * The live relative time of a post (empty without one), kept current by the
+ * shared clock (`./clock`), not a timer per post.
+ *
+ * The label is the store's snapshot: it reads the time, so it is never
+ * computed in the render body, where the React Compiler would memoize it on
+ * `date` alone and freeze it (QA D-L3i-007). React re-renders only when a
+ * tick actually changes the label.
  */
-export function useRelativeTime(date: Date): string {
-  const [, tick] = useReducer((n: number) => n + 1, 0);
-  const dateMs = date.getTime();
-
-  useEffect(() => {
-    if (!Number.isFinite(dateMs)) return undefined;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const schedule = () => {
-      const delay = nextUpdateDelayMs(dateMs, Date.now());
-      if (delay === null) return;
-      timer = setTimeout(() => {
-        tick();
-        schedule();
-      }, delay);
-    };
-    schedule();
-    return () => clearTimeout(timer);
-  }, [dateMs]);
-
-  return Number.isFinite(dateMs) ? formatTimeCompact(date) : '';
+export function useRelativeTime(date: Date | null, style: RelativeTimeStyle = 'compact'): string {
+  const dateMs = date ? date.getTime() : Number.NaN;
+  const subscribe = useCallback((listener: () => void) => subscribeToClock(dateMs, listener), [dateMs]);
+  return useSyncExternalStore(subscribe, () => {
+    if (!Number.isFinite(dateMs)) return '';
+    return style === 'spoken' ? formatTime(new Date(dateMs)) : formatTimeCompact(new Date(dateMs));
+  });
 }

@@ -2,12 +2,13 @@ import type { ConversationDTO } from '@engine/api';
 import { memo } from 'react';
 import { Pressable, View } from 'react-native';
 
-import { cn, formatTime } from '~/lib-allowlist';
+import { cn } from '~/lib-allowlist';
 import { UnreadDot } from '~/ui/Badge';
 import { RelativeTime } from '~/ui/RelativeTime';
 import { Text } from '~/ui/Text';
 import { useRipple } from '~/ui/ripple';
 import { tw } from '~/ui/tokens';
+import { useRelativeTime } from '~/ui/use-relative-time';
 
 import { ConversationAvatar } from './ConversationAvatar';
 import { conversationTitle, memberCount, previewText } from './dm-model';
@@ -29,11 +30,12 @@ export const ConversationRow = memo(function ConversationRow({ conversation, onP
   const unread = conversation.unread > 0;
   const at = conversation.lastActivity ? new Date(conversation.lastActivity) : null;
   const group = conversation.kind === 'group';
+  const spokenTime = useRelativeTime(at, 'spoken');
   const label = [
     group ? `${title}, group, ${memberCount(conversation.members.length)}` : title,
     unread ? `${conversation.unread} unread` : null,
     preview,
-    at ? formatTime(at) : null,
+    spokenTime,
   ]
     .filter(Boolean)
     .join(', ');

@@ -609,6 +609,17 @@ describe('posts.publish and posts.delete', () => {
     expect(validate(postDTO, created.post)).toEqual([])
   })
 
+  it('never emits a created post with an Invalid Date', async () => {
+    const { outcome, posts } = engine()
+    m.postService.createPost.mockImplementation(async () => post(id('undated'), { createdAt: new Date(Number.NaN) }))
+    const before = Date.now()
+    await outcome(posts.publish({ parts: [{ text: 'hello' }] }))
+    await vi.waitFor(() => expect(emitted.find(e => e.event === 'content.created')).toBeTruthy())
+    const created = emitted.find(e => e.event === 'content.created')?.payload as { post: { createdAt: Date } }
+    expect(validate(postDTO, created.post)).toEqual([])
+    expect(created.post.createdAt.getTime()).toBeGreaterThanOrEqual(before)
+  })
+
   it('deletes only the viewer\'s own posts: a real delete, or a tombstone', async () => {
     const { tickets, outcome, posts } = engine()
     const own = { ...TARGET, ownerId: VIEWER }

@@ -8,6 +8,7 @@ import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
 import { badgeLabel, CountBadge } from './Badge';
 import { Button } from './Button';
+import { nextLabelChangeAt } from './clock';
 import { ConfirmDialog, confirmAlert } from './Dialog';
 import { EmptyState, ErrorState } from './EmptyState';
 import { IconButton } from './IconButton';
@@ -21,7 +22,6 @@ import { Text } from './Text';
 import { TextField } from './TextField';
 import { toast, toastDuration, useToastStore } from './toast';
 import { ToastHost } from './ToastHost';
-import { nextUpdateDelayMs } from './use-relative-time';
 import { followLabel, UserRow } from './UserRow';
 import { WriteStatus } from './WriteStatus';
 
@@ -472,12 +472,20 @@ describe('UserRow', () => {
   });
 });
 
-describe('nextUpdateDelayMs', () => {
-  it('ticks every second, then on the minute, hour and day boundary, then stops', () => {
+describe('nextLabelChangeAt', () => {
+  it('turns each label on its own second, minute, hour and day boundary, then stops', () => {
     const now = 1_000_000_000_000;
-    expect(nextUpdateDelayMs(now - 10_000, now)).toBe(1000);
-    expect(nextUpdateDelayMs(now - 90_000, now)).toBe(30_000);
-    expect(nextUpdateDelayMs(now - 3_600_000 * 2.5, now)).toBe(1_800_000);
-    expect(nextUpdateDelayMs(now - 8 * 86_400_000, now)).toBeNull();
+    expect(nextLabelChangeAt(now - 10_400, now)).toBe(now + 600);
+    expect(nextLabelChangeAt(now - 90_000, now)).toBe(now + 30_000);
+    expect(nextLabelChangeAt(now - 3_600_000 * 2.5, now)).toBe(now + 1_800_000);
+    expect(nextLabelChangeAt(now - 86_400_000 * 1.25, now)).toBe(now + 86_400_000 * 0.75);
+    expect(nextLabelChangeAt(now - 8 * 86_400_000, now)).toBeNull();
+    expect(nextLabelChangeAt(Number.NaN, now)).toBeNull();
+  });
+
+  it('ticks a time just ahead of this device each second, and waits for one far ahead', () => {
+    const now = 1_000_000_000_000;
+    expect(nextLabelChangeAt(now + 5_000, now)).toBe(now + 1_000);
+    expect(nextLabelChangeAt(now + 3_600_000, now)).toBe(now + 3_540_000);
   });
 });
