@@ -6,6 +6,11 @@ jest.mock('react-native-reanimated', () => require('react-native-reanimated/mock
 // on the mock module itself, because expo-router/testing-library re-mocks
 // Reanimated with that same module.
 require('react-native-reanimated/mock').useReducedMotion = () => false;
+// Nor the CSS-animation easing builders; animations never run under Jest, so a description will do.
+require('react-native-reanimated/mock').cubicBezier = (x1, y1, x2, y2) => ({
+  toString: () => `cubic-bezier(${x1}, ${y1}, ${x2}, ${y2})`,
+  normalize: () => ({ x1, y1, x2, y2 }),
+});
 jest.mock('@gorhom/bottom-sheet', () => require('@gorhom/bottom-sheet/mock'));
 // react-native-mmkv swaps in an in-memory store under Jest, but still imports
 // Nitro, which looks up its native TurboModule at import time.

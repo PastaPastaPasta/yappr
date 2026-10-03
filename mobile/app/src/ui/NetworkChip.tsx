@@ -1,16 +1,9 @@
-import { useEffect } from 'react';
 import { Pressable, View } from 'react-native';
-import Animated, {
-  cancelAnimation,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
+import Animated, { type CSSAnimationProperties } from 'react-native-reanimated';
 
 import { cn } from '~/lib-allowlist';
 
+import { usePulse } from './pulse';
 import { Text } from './Text';
 import { colors, hitSlopFor, motion } from './tokens';
 
@@ -29,20 +22,18 @@ function networkChipLabel(network: Exclude<ChipNetwork, 'mainnet'>, state: Engin
   return `${name}. Data may be reset. Engine ${STATE_WORD[state]}.`;
 }
 
+/** The dot's pulse: opacity 1 ↔ 0.3, a second each way. */
+const DOT_PULSE = {
+  animationName: { from: { opacity: 1 }, to: { opacity: 0.3 } },
+  animationDuration: motion.pulse / 2,
+  animationDirection: 'alternate',
+  animationIterationCount: 'infinite',
+  animationTimingFunction: 'ease-in-out',
+} satisfies CSSAnimationProperties;
+
 /** The 6 pt dot: steady when ready, pulsing while booting, hollow when unavailable. */
 function StateDot({ state }: { state: EngineState }) {
-  const reduceMotion = useReducedMotion();
-  const opacity = useSharedValue(1);
-  const pulsing = state === 'booting' && !reduceMotion;
-  useEffect(() => {
-    if (!pulsing) {
-      opacity.set(1);
-      return undefined;
-    }
-    opacity.set(withRepeat(withTiming(0.3, { duration: motion.pulse / 2 }), -1, true));
-    return () => cancelAnimation(opacity);
-  }, [opacity, pulsing]);
-  const style = useAnimatedStyle(() => ({ opacity: opacity.value }));
+  const style = usePulse(DOT_PULSE, state === 'booting');
   return (
     <Animated.View style={style}>
       <View
