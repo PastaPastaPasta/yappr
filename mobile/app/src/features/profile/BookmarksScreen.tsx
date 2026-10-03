@@ -57,7 +57,13 @@ function settled(ticket: WriteTicket, identityId: string | null): Promise<WriteT
 const removedBy = (ticket: WriteTicket | null) =>
   ticket !== null && (ticket.state === 'confirmed' || (ticket.state === 'unconfirmed' && !ticket.retryable));
 
-/** Swipe left for "Remove" (UX_SPEC §4.24); the card's own bookmark button works too. */
+/**
+ * Swipe left for "Remove", or the card menu's "Remove bookmark" (UX_SPEC
+ * §4.24); the card's own bookmark button works too. A saved post that is
+ * gone, or whose author the viewer blocked, stays as its stub (PRD ENG-04,
+ * G-6, G-7): a row that rendered nothing would leave a blank list with no
+ * empty state. A stub has no menu, so swiping removes it.
+ */
 function BookmarkRow({ post }: { post: PostDTO }) {
   return (
     <ReanimatedSwipeable
@@ -86,7 +92,7 @@ function BookmarkRow({ post }: { post: PostDTO }) {
       )}
     >
       <View className="bg-white dark:bg-neutral-900">
-        <PostItem post={post} />
+        <PostItem post={post} removal="stub" onRemoveBookmark={() => remove(post)} />
       </View>
     </ReanimatedSwipeable>
   );
