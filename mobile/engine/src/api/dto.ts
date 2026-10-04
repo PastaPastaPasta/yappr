@@ -354,17 +354,22 @@ function authorAvatar(user: User, avatars: ReadonlyMap<string, AvatarDTO>): Avat
 }
 
 /**
- * lib's `createDefaultUser` stand-in (sdk-helpers.ts), which an author keeps
- * when a batch author lookup fails (resolvePostAuthorsBatch swallows errors;
- * quoted posts get their authors that way).
+ * lib's `createDefaultUser` name (sdk-helpers.ts). An author keeps it when a
+ * batch author lookup fails (resolvePostAuthorsBatch swallows errors; quoted
+ * posts get their authors that way), and also when the lookup finds a DPNS
+ * name but no profile (a reposted post on a Posts tab). It is never a name to
+ * show: as on web (`hasRealProfile`), the username stands in.
  */
-const isPlaceholderAuthor = (user: User) => !user.username && user.hasDpns === false && user.displayName === 'Unknown User'
+const PLACEHOLDER_NAME = 'Unknown User'
+
+/** The placeholder with no name found at all: a failed lookup. */
+const isPlaceholderAuthor = (user: User) => !user.username && user.hasDpns === false && user.displayName === PLACEHOLDER_NAME
 
 function toAuthorDTO(user: User, avatars: ReadonlyMap<string, AvatarDTO>): AuthorDTO {
   const placeholder = isPlaceholderAuthor(user)
   return {
     id: user.id,
-    ...nameOf(user.id, placeholder ? '' : user.displayName, user.username),
+    ...nameOf(user.id, user.displayName === PLACEHOLDER_NAME ? '' : user.displayName, user.username),
     avatar: authorAvatar(user, avatars),
     // A successful lookup sets hasDpns; a failed one leaves it undefined (feeds) or the placeholder (batch resolvers).
     resolved: user.hasDpns !== undefined && !placeholder,
