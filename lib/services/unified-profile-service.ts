@@ -25,6 +25,11 @@ import {
 
 type PlainDocument = Record<string, unknown>;
 
+/** A document's revision, as a read (`$revision`) or an older plain object (`revision`) carries it. */
+function documentRevision(record: PlainDocument): number {
+  return Number(record.$revision ?? record.revision ?? 0);
+}
+
 /** How long a save waits for a just-created DashPay profile before the extension (DAPI waits often time out). */
 const DASHPAY_PROFILE_POLLS = 10;
 const DASHPAY_PROFILE_POLL_MS = 2000;
@@ -181,6 +186,16 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   };
   private readonly USERNAME_CACHE = 'usernames';
   private readonly AVATAR_CACHE = 'avatars';
+  /**
+   * Profile documents this client wrote, by `role:ownerId`, for as long as a
+   * cached read lives. DAPI answers a read from any node, and one a block
+   * behind (or a read sent before the write landed) still returns the
+   * previous revision: cached, that would show the old profile, and prefill
+   * the next edit with it, until the cache expired. Until a read returns
+   * this revision or a newer one, reads of an older one give way to it.
+   */
+  private readonly ownWrites = new Map<string, { record: PlainDocument; until: number }>();
+  private readonly OWN_WRITE_TTL = 300000;
 
   // DataLoader-style batching for raw profile documents: every profile
   // lookup (getProfile, getProfilesByIdentityIds, avatar URLs) funnels
@@ -292,7 +307,42 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     return record ? this.extractDocumentData(record) : null;
   }
 
-  private cacheRecord(role: ProfileRole, ownerId: string, record: PlainDocument): void {
+  /**
+   * What a read of `role` for `ownerId` stands for: the document read, or
+   * this client's own write of it while the read is older (`ownWrites`).
+   */
+  private newestRecord(role: ProfileRole, ownerId: string, read: PlainDocument | null): PlainDocument | null {
+    const key = `${role}:${ownerId}`;
+    const own = this.ownWrites.get(key);
+    if (!own) return read;
+    if (own.until <= Date.now() || (read && documentRevision(read) >= documentRevision(own.record))) {
+      // Expired, or the read has caught up with the write (or passed it: another device's edit).
+      this.ownWrites.delete(key);
+      return read;
+    }
+    return own.record;
+  }
+
+  /** Drops one cached document, or with no id everything cached, this client's own writes included. */
+  override clearCache(documentId?: string): void {
+    super.clearCache(documentId);
+    if (!documentId) this.ownWrites.clear();
+  }
+
+  /** A profile document this client just wrote: cached, and preferred over older reads for a while. */
+  private rememberWrite(role: ProfileRole, ownerId: string, record: PlainDocument): void {
+    this.ownWrites.set(`${role}:${ownerId}`, { record, until: Date.now() + this.OWN_WRITE_TTL });
+    this.storeRecord(role, ownerId, record);
+  }
+
+  /** Caches a document read (or this client's newer write of it, `newestRecord`); returns what was cached. */
+  private cacheRecord(role: ProfileRole, ownerId: string, read: PlainDocument): PlainDocument {
+    const record = this.newestRecord(role, ownerId, read) ?? read;
+    this.storeRecord(role, ownerId, record);
+    return record;
+  }
+
+  private storeRecord(role: ProfileRole, ownerId: string, record: PlainDocument): void {
     const caches = this.ROLE_CACHES[role];
     cacheManager.delete(caches.missing, ownerId);
     cacheManager.set(caches.raw, ownerId, record, {
@@ -301,13 +351,24 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     });
   }
 
-  private cacheMissing(role: ProfileRole, ownerId: string, ttl: number): void {
+  /**
+   * Caches a read that found no document, unless this client has just
+   * written one (a node behind has not seen it yet): then that is cached,
+   * and returned.
+   */
+  private cacheMissing(role: ProfileRole, ownerId: string, ttl: number): PlainDocument | null {
+    const own = this.newestRecord(role, ownerId, null);
+    if (own) {
+      this.storeRecord(role, ownerId, own);
+      return own;
+    }
     const caches = this.ROLE_CACHES[role];
     cacheManager.delete(caches.raw, ownerId);
     cacheManager.set(caches.missing, ownerId, true, {
       ttl,
       tags: ['profile', `user:${ownerId}`]
     });
+    return null;
   }
 
   // ==================== Seeding from external lookups ====================
@@ -336,7 +397,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       this.cacheRecord(role, ownerId, record);
     }
     for (const ownerId of queriedOwnerIds) {
-      if (!seeded.has(ownerId)) this.cacheMissing(role, ownerId, 60000);
+      if (!seeded.has(ownerId) && this.cacheMissing(role, ownerId, 60000)) seeded.add(ownerId);
     }
     for (const ownerId of new Set([...Array.from(seeded), ...queriedOwnerIds])) {
       const { known, doc } = this.profileFromCache(ownerId);
@@ -474,13 +535,13 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
           for (const doc of this.normalizeDocumentResponse(response)) {
             const ownerId = (doc.$ownerId || doc.ownerId) as string;
-            found.set(ownerId, doc);
-            this.cacheRecord(role, ownerId, doc);
+            found.set(ownerId, this.cacheRecord(role, ownerId, doc));
           }
 
           for (const ownerId of chunk) {
             if (!found.has(ownerId)) {
-              this.cacheMissing(role, ownerId, 60000); // 1 minute — new profiles show up quickly
+              const own = this.cacheMissing(role, ownerId, 60000); // 1 minute — new profiles show up quickly
+              if (own) found.set(ownerId, own);
             }
           }
         } catch (error) {
@@ -928,7 +989,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
 
       this.clearCache(docId);
       cacheManager.invalidateByTag(`user:${ownerId}`);
-      return this.transformDocument({ $createdAt: rawProfile.$createdAt, ...result.document });
+      const written = { $createdAt: rawProfile.$createdAt, ...result.document };
+      this.rememberWrite('base', ownerId, written);
+      return this.transformDocument(written);
     } catch (error) {
       logger.error('UnifiedProfileService: Error updating profile:', error);
       throw error;
@@ -951,8 +1014,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       limit: 1
     });
 
-    const documents = this.normalizeDocumentResponse(response);
-    return documents.length === 0 ? null : this.extractDocumentData(documents[0]);
+    // A node behind must not hand an edit the revision this client already replaced.
+    const document = this.newestRecord('base', ownerId, this.normalizeDocumentResponse(response)[0] ?? null);
+    return document ? this.extractDocumentData(document) : null;
   }
 
   /**
@@ -994,7 +1058,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
         where: [['$ownerId', '==', ownerId]],
         limit: 1
       });
-      return this.normalizeDocumentResponse(response)[0] ?? null;
+      // A node behind must not hand an edit the revision this client already replaced.
+      return this.newestRecord(role, ownerId, this.normalizeDocumentResponse(response)[0] ?? null);
     }));
     return { base, extension };
   }
@@ -1050,6 +1115,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
 
     cacheManager.invalidateByTag(`user:${ownerId}`);
+    if (plan.base && base) this.rememberWrite('base', ownerId, base);
+    if (plan.extension && extension) this.rememberWrite('extension', ownerId, extension);
     const merged = mergeV10ProfileRecords(base, extension);
     if (!merged) throw new Error('Profile not found');
     return this.transformDocument(merged);

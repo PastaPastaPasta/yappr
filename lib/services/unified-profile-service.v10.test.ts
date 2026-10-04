@@ -198,3 +198,60 @@ describe('v10 profile writes', () => {
     expect(createDocument).not.toHaveBeenCalled();
   });
 });
+
+describe('v10 profile reads after a save', () => {
+  /** Drops the cached profile, as a later screen's read would find it expired or invalidated. */
+  async function dropCache() {
+    (await import('../cache-manager')).cacheManager.invalidateByTag(`user:${ownerId}`);
+  }
+
+  // DAPI answers from any node: one a block behind still returns the document the save replaced.
+  it('shows the saved profile while reads still return the previous revision (NEW-profile-stale-after-save)', async () => {
+    const profiles = await service();
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBeUndefined();
+
+    await profiles.updateProfile(ownerId, { pronouns: 'she/they' });
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_CONTRACT_ID, 'yapprProfile', 'ext-doc', ownerId, expect.objectContaining({ pronouns: 'she/they' }), 1
+    );
+    // `stored` still holds revision 1: every read below comes from a node behind.
+    query.mockClear();
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBe('she/they');
+    expect(query).toHaveBeenCalled();
+
+    // A feed page read before the save landed seeds the old document: it does not win either.
+    profiles.seedProfileDocuments([extension], [ownerId], 'extension');
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBe('she/they');
+
+    // The next edit replaces the revision this save wrote, not the one the node behind returns.
+    updateDocument.mockClear();
+    await profiles.updateProfile(ownerId, { location: 'Porto' });
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_CONTRACT_ID, 'yapprProfile', 'ext-doc', ownerId, expect.objectContaining({ location: 'Porto', pronouns: 'she/they' }), 2
+    );
+  });
+
+  it('gives way to a read that has caught up, or to a later edit from another device', async () => {
+    const profiles = await service();
+    await profiles.updateProfile(ownerId, { pronouns: 'she/they' });
+    stored[YAPPR_CONTRACT_ID] = [{ ...extension, $revision: 3, pronouns: 'they/them' }];
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBe('they/them');
+  });
+
+  it('stops preferring its own write once a cached read would have expired', async () => {
+    const profiles = await service();
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    try {
+      await profiles.updateProfile(ownerId, { pronouns: 'she/they' });
+      clock.mockReturnValue(now + 300001);
+      await dropCache();
+      expect((await profiles.getProfile(ownerId))?.pronouns).toBeUndefined();
+    } finally {
+      clock.mockRestore();
+    }
+  });
+});
