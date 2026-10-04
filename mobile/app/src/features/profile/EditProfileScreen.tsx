@@ -111,8 +111,8 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     [navigation, dirty],
   );
 
-  // Unconfirmed may still have landed, and the tracker has said "Not confirmed yet": leave
-  // rather than invite a second save of the same change.
+  // Unconfirmed may still have landed (PRD G-3: it counts as done): leave rather than invite a
+  // second save of the same change. The reconciler checks it, and says so only if it proves absent.
   useEffect(() => {
     if (save.status !== 'confirmed' && save.status !== 'unconfirmed') return;
     if (save.status === 'confirmed') toast.success('Profile updated!');

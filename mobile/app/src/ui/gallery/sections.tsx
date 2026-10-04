@@ -331,7 +331,7 @@ function FeedbackSection() {
             label="Success"
             size="sm"
             variant="secondary"
-            onPress={() => toast.success('Post created successfully!')}
+            onPress={() => toast.success('Posted')}
           />
           <Button
             label="Error"
@@ -375,8 +375,7 @@ function FeedbackSection() {
       <Section title="Write status">
         <WriteStatus status={{ state: 'posting' }} />
         <WriteStatus status={{ state: 'threadProgress', index: 2, total: 5 }} />
-        <WriteStatus status={{ state: 'unconfirmed' }} onCheckAgain={noop} />
-        <WriteStatus status={{ state: 'unconfirmed', canEdit: true }} onCheckAgain={noop} onEdit={noop} />
+        <WriteStatus status={{ state: 'unconfirmed' }} onEdit={noop} />
         <WriteStatus status={{ state: 'failed' }} onRetry={noop} onEdit={noop} />
         <WriteStatus status={{ state: 'partial', posted: 2, total: 5 }} onRetryRest={noop} />
       </Section>
@@ -603,7 +602,7 @@ function PostCardsC() {
         <PostCard
           post={{ ...POSTS.optimistic, id: 'opt-2' }}
           variant="optimistic"
-          writeStatus={{ status: { state: 'unconfirmed' }, onCheckAgain: noop }}
+          writeStatus={{ status: { state: 'unconfirmed' }, onEdit: noop }}
         />
         <PostCard
           post={{ ...POSTS.optimistic, id: 'opt-3' }}

@@ -260,6 +260,12 @@ function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () =
 
 const targetIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?: string } | null)?.identityId;
 
+/** "@alice" for the failure toast: the row being blocked, else the cached profile; null when unknown. */
+function handleOf({ userId, user }: BlockVars): string | null {
+  const username = user?.username ?? queryClient.getQueryData<ProfileDTO | null>(queryKeys.profile.detail(userId))?.username;
+  return username ? `@${username}` : null;
+}
+
 /**
  * Block or unblock (`safety.block` / `safety.unblock`), one at a time per
  * user. Optimistic: the author's content goes (or comes back) at once, and
@@ -285,8 +291,7 @@ export const blockWrite: WriteSpec<BlockVars> = {
     refetch(queryKeys.blocked);
   },
   failureText: (ticket) => (ticket.error?.code === 'STILL_BLOCKED' ? copy.toast.stillBlocked : null),
-  noun: 'block',
-  failureMessage: copy.toast.blockFailed,
+  failureMessage: (vars) => copy.toast.blockFailed(vars.block, handleOf(vars)),
 };
 
 /**

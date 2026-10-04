@@ -119,9 +119,7 @@ export const reportWrite: WriteSpec<ReportVars> = {
   onConfirmed: (_ticket, { target }) => {
     queryClient.invalidateQueries({ queryKey: queryKeys.post.ownReport(target.id) }).catch(() => undefined);
   },
-  announceUnconfirmed: false,
   failureText: reportFailureText,
-  noun: 'report',
   failureMessage: copy.toast.reportFailed,
 };
 
@@ -158,7 +156,6 @@ export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
   onConfirmed: (_ticket, { target }) => {
     queryClient.setQueryData(queryKeys.post.ownReport(target.id), null);
   },
-  announceUnconfirmed: false,
   // Already gone: no report to show (the undo put it back), even with no sheet on screen to read it again.
   onFailed: (ticket, { target }) => {
     if (ticket.error?.code !== 'REPORT_GONE') return;
@@ -168,7 +165,6 @@ export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
   },
   failureText: (ticket) => (ticket.error?.code === 'REPORT_GONE' ? copy.toast.reportGone : null),
   failureNeutral: (ticket) => ticket.error?.code === 'REPORT_GONE',
-  noun: 'report withdrawal',
   failureMessage: copy.toast.withdrawFailed,
 };
 

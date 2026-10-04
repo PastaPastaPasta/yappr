@@ -303,15 +303,14 @@ describe('WriteStatus', () => {
   it.each([
     [{ state: 'posting' } as const, 'Posting…', []],
     [{ state: 'threadProgress', index: 2, total: 5 } as const, 'Posting 2 of 5…', []],
-    [{ state: 'unconfirmed' } as const, 'Not confirmed yet', ['Check again']],
-    [{ state: 'unconfirmed', canEdit: true } as const, 'Not confirmed yet', ['Check again', 'Edit']],
+    // Only once the app's own checks ran out: Edit, never a manual check or a blind Retry.
+    [{ state: 'unconfirmed' } as const, "Couldn't confirm", ['Edit']],
     [{ state: 'failed' } as const, "Couldn't post", ['Retry', 'Edit']],
     [{ state: 'partial', posted: 2, total: 5 } as const, 'Posted 2 of 5', ['Retry the rest']],
   ])('%o reads "%s" with %o', (status, text, links) => {
     render(
       <WriteStatus
         status={status}
-        onCheckAgain={jest.fn()}
         onRetry={jest.fn()}
         onEdit={jest.fn()}
         onRetryRest={jest.fn()}
@@ -344,7 +343,7 @@ describe('WriteStatus', () => {
     const { rerender } = render(<WriteStatus status={{ state: 'posting' }} />);
     expect(announce).not.toHaveBeenCalled();
     rerender(<WriteStatus status={{ state: 'unconfirmed' }} />);
-    expect(announce).toHaveBeenCalledWith('Not confirmed yet');
+    expect(announce).toHaveBeenCalledWith("Couldn't confirm");
     announce.mockRestore();
   });
 
@@ -356,7 +355,7 @@ describe('WriteStatus', () => {
     rerender(<WriteStatus postId="b" status={{ state: 'failed' }} />);
     expect(announce).not.toHaveBeenCalled();
     rerender(<WriteStatus postId="b" status={{ state: 'unconfirmed' }} />);
-    expect(announce).toHaveBeenCalledWith('Not confirmed yet');
+    expect(announce).toHaveBeenCalledWith("Couldn't confirm");
     announce.mockRestore();
   });
 

@@ -8,8 +8,8 @@ import type { Post } from '@/lib/types'
 import { isUnconfirmed } from '@/lib/unconfirmed-writes'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { RpcError } from '../protocol/envelope'
-import { assertId, assertMediaUrl, assertTarget, badRequest, characters, signer, socialDoc } from './handler-kit'
-import { NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
+import { assertId, assertMediaUrl, assertTarget, badRequest, characters, settleTarget, signer, socialDoc } from './handler-kit'
+import { ABSENCE_AFTER_MS, NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types'
 
 /**
@@ -111,12 +111,6 @@ const FOUND_SKEW_MS = 60_000
  * is an earlier post of the same words, not this part.
  */
 const SEARCH_BACK_MS = 60 * 60_000
-/**
- * How long after the attempt stopped running a part not found counts as
- * absent: a transition that went out executes within a block or two (lib's
- * `identity-nonce.ts`), so after this it is not still on its way.
- */
-export const ABSENCE_AFTER_MS = 2 * 60_000
 
 type PartSearch = { found: TicketDocument[]; absent: number; unclear: string | null }
 
@@ -159,7 +153,7 @@ function searchParts(plan: PostToCreate[], draft: DraftDTO, ticket: WriteTicket,
     } else if (sameText.length === 0 && complete) {
       result.absent++
     } else {
-      result.unclear ??= `Part ${Number(part.threadPostId) + 1} could not be told apart from your other posts: see your profile`
+      result.unclear ??= `Check your profile to see whether part ${Number(part.threadPostId) + 1} posted.`
     }
   })
   return result
@@ -259,6 +253,12 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>,
     // that part (a retry, or `resume.postedIds`) must not carry it onto the next one.
     const firstPart = draft.parts.findIndex(part => hasVisibleContent(part.text))
     const mediaUrl = firstPart >= 0 && posted[firstPart] ? null : draft.mediaUrl
+
+    // A reply or quote of a post this session just made waits for it, as engage writes do
+    // (`settleTarget`): queued, rather than refused by lib's shorter wait. A resume past the first
+    // part names it no more.
+    const referenced = draft.replyTo?.id ?? draft.quote?.id
+    if (referenced && !posted[0]) await settleTarget(ctx, referenced)
 
     // Everything before publishThread is reads and local work: a failure there sent nothing.
     const [replyingTo, quotingPost, media] = await Promise.all([

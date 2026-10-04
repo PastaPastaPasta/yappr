@@ -472,7 +472,7 @@ describe('Conversation (DM-03, DM-04)', () => {
         }),
       );
     });
-    expect(screen.getByText('Failed · Tap to retry')).toBeTruthy();
+    expect(screen.getByText('Not delivered · Tap to retry')).toBeTruthy();
 
     // The engine reports every transition as `write.status` before it answers the call.
     fakeEngine.method('writes.retry').mockImplementation(async () => {
@@ -480,15 +480,15 @@ describe('Conversation (DM-03, DM-04)', () => {
       fakeEngine.emit('write.status', retried);
       return retried;
     });
-    fireEvent.press(screen.getByText('Failed · Tap to retry'));
+    fireEvent.press(screen.getByText('Not delivered · Tap to retry'));
     await act(async () => {});
     expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(sent.id);
     expect(screen.getByText('Sending…')).toBeTruthy();
   });
 
-  it('a send whose call hangs reads "Not confirmed · Tap to check", never Retry, then "Sent" once it answers (QA D-L4a-002)', async () => {
+  it('a send whose call hangs stays "Sending…" while the app checks it, never Retry, then "Sent" once it answers (QA D-L4a-002)', async () => {
     await openConversation();
-    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    const sent = ticket({ op: 'dm.send', identityId: VIEWER, target: { conversationKey: KEY } });
     fakeEngine.method('dm.send').mockResolvedValue(sent);
     fireEvent.changeText(screen.getByTestId('dm-composer'), 'through a stall');
     fireEvent.press(screen.getByTestId('dm-send'));
@@ -504,15 +504,17 @@ describe('Conversation (DM-03, DM-04)', () => {
     await act(async () => {
       fakeEngine.emit('write.status', stalled);
     });
-    expect(screen.queryByText('Sending…')).toBeNull();
-    expect(screen.queryByText('Failed · Tap to retry')).toBeNull();
     fakeEngine.method('writes.check').mockResolvedValue(advance(stalled, { lastCheckedAt: new Date() }));
-    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
-    await act(async () => {});
+    // Still "Sending…": the app checks it by itself, and while its call runs the checks never run out.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10 * 60_000);
+    });
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(sent.id);
     expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
-    expect(screen.getByText('Not confirmed · Tap to check')).toBeTruthy();
-    expect(useToastStore.getState().current?.message).toBe('Still sending. Tap again in a moment.');
+    expect(screen.getByText('Sending…')).toBeTruthy();
+    expect(screen.queryByText('Not delivered · Tap to retry')).toBeNull();
+    expect(screen.queryByText("Couldn't confirm · Tap to check")).toBeNull();
+    expect(useToastStore.getState().current).toBeNull();
 
     // The stall clears: the call answers, and the engine's own message stands for the send.
     fakeEngine
@@ -524,6 +526,58 @@ describe('Conversation (DM-03, DM-04)', () => {
     await act(async () => {});
     expect(screen.getAllByText('through a stall')).toHaveLength(1);
     expect(screen.getByText('Sent')).toBeTruthy();
+    expect(fakeEngine.method('dm.send')).toHaveBeenCalledTimes(1);
+  });
+
+  it('says "Couldn\'t confirm · Tap to check" only once the checks of an unknown send ran out, and a tap checks with a spinner', async () => {
+    await openConversation();
+    const sent = ticket({ op: 'dm.send', identityId: VIEWER, target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    fireEvent.changeText(screen.getByTestId('dm-composer'), 'maybe');
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    // The wait timed out after the broadcast (a DAPI 504): it may have landed.
+    const unknown = advance(sent, {
+      state: 'unconfirmed',
+      error: { code: 'TIMEOUT', outcome: 'unknown', retryable: false } as never,
+    });
+    await act(async () => {
+      fakeEngine.emit('write.status', unknown);
+    });
+    fakeEngine.method('writes.check').mockResolvedValue(advance(unknown, { lastCheckedAt: new Date() }));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(130_000 - 1);
+    });
+    expect(screen.getByText('Sending…')).toBeTruthy();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(1);
+    });
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(4);
+    expect(screen.getByText("Couldn't confirm · Tap to check")).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
+
+    // A tap checks again, with a spinner on the bubble meanwhile, and a second tap runs no second check.
+    let answer: (t: typeof unknown) => void = () => undefined;
+    fakeEngine.method('writes.check').mockImplementationOnce(() => new Promise((resolve) => (answer = resolve)));
+    fireEvent.press(screen.getByText("Couldn't confirm · Tap to check"));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-status-checking')).toBeTruthy();
+    fireEvent.press(screen.getByText("Couldn't confirm · Tap to check"));
+    await act(async () => {});
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(5);
+    // Found: "Sent", and no toast.
+    const confirmed = advance(unknown, { state: 'confirmed', error: null, updatedAt: new Date(Date.now() + 5000) });
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValue(page([dmMessage('m3', { text: 'maybe', own: true, sender: VIEWER, at: new Date() }), theirs]));
+    await act(async () => {
+      fakeEngine.emit('write.status', confirmed);
+      answer(confirmed);
+    });
+    await act(async () => {});
+    expect(screen.queryByTestId('dm-status-checking')).toBeNull();
+    expect(screen.getByText('Sent')).toBeTruthy();
+    expect(useToastStore.getState().current).toBeNull();
     expect(fakeEngine.method('dm.send')).toHaveBeenCalledTimes(1);
   });
 
@@ -704,45 +758,53 @@ describe('Conversation (DM-03, DM-04)', () => {
   it('follows the restored ticket of a send an engine restart cut short', async () => {
     await openConversation();
     fakeEngine.method('dm.send').mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    fakeEngine.method('writes.list').mockResolvedValue([]);
     fireEvent.changeText(screen.getByTestId('dm-composer'), 'still there?');
     fireEvent.press(screen.getByTestId('dm-send'));
     await act(async () => {});
-    expect(screen.getByText('Not confirmed · Tap to check')).toBeTruthy();
+    // It may have gone out: "Sending…" while the app looks for it.
+    expect(screen.getByText('Sending…')).toBeTruthy();
     expect(useOutbox.getState().entries[0].ticketId).toBeNull();
 
-    // The next engine restores it; the bubble now checks that ticket.
-    const restored = ticket({ op: 'dm.send', state: 'unconfirmed', target: { conversationKey: KEY } });
+    // The next engine restores it; the app checks that ticket from here, by itself.
+    const restored = ticket({ op: 'dm.send', identityId: VIEWER, state: 'unconfirmed', target: { conversationKey: KEY } });
     await act(async () => {
       fakeEngine.emit('write.status', restored);
     });
     expect(useOutbox.getState().entries[0].ticketId).toBe(restored.id);
     fakeEngine.method('writes.check').mockResolvedValue(restored);
-    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
-    await act(async () => {});
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
     expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(restored.id);
+    expect(screen.getByText('Sending…')).toBeTruthy();
   });
 
   it('puts the text of a send the engine never took back in the composer, once it has no ticket for it (SR-16)', async () => {
     await openConversation();
     fakeEngine.method('dm.send').mockRejectedValue(Object.assign(new Error('gone'), { code: 'ENGINE_RESTARTED' }));
+    fakeEngine.method('writes.list').mockResolvedValue([]);
     fireEvent.changeText(screen.getByTestId('dm-composer'), 'did it go?');
     fireEvent.press(screen.getByTestId('dm-send'));
     await act(async () => {});
-    fakeEngine.method('writes.list').mockResolvedValue([]);
 
-    // Just cut short: the engine may still make its ticket.
-    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
-    await act(async () => {});
-    expect(useToastStore.getState().current?.message).toBe('Still checking. Tap again in a moment.');
+    // Just cut short: the engine may still make its ticket. The 5 s and 20 s checks find none, and wait.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(20_000);
+    });
+    // Each check reads the engine's tickets (to adopt the send's, then to look for it).
+    expect(fakeEngine.method('writes.list')).toHaveBeenCalledTimes(4);
+    expect(screen.getByText('Sending…')).toBeTruthy();
     expect(screen.getByTestId('dm-composer').props.value).toBe('');
+    expect(useToastStore.getState().current).toBeNull();
 
-    // Later, still no ticket: it never went out.
-    jest.setSystemTime(Date.now() + 61_000);
-    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
-    await act(async () => {});
+    // The 80 s check, still no ticket: it never went out.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(60_000);
+    });
     expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
-    expect(screen.queryByText('Not confirmed · Tap to check')).toBeNull();
-    expect(useToastStore.getState().current?.message).toBe("This message wasn't sent. It's back in the message box.");
+    expect(screen.queryByText('Sending…')).toBeNull();
+    expect(useToastStore.getState().current?.message).toBe("Message not sent. It's back in the message box.");
   });
 
   it('never takes a later send that landed for the ticket of one the engine never took', async () => {
@@ -769,9 +831,9 @@ describe('Conversation (DM-03, DM-04)', () => {
 
     // The engine still lists the landed send's ticket; the first send has none.
     fakeEngine.method('writes.list').mockResolvedValue([advance(later, { state: 'confirmed' })]);
-    jest.setSystemTime(Date.now() + 61_000);
-    fireEvent.press(screen.getByText('Not confirmed · Tap to check'));
-    await act(async () => {});
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(130_000);
+    });
     expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
   });
 
@@ -795,7 +857,7 @@ describe('Conversation (DM-03, DM-04)', () => {
       );
     });
     await act(async () => {});
-    fireEvent.press(screen.getByText('Failed · Tap to edit'));
+    fireEvent.press(screen.getByText('Not delivered · Tap to edit'));
     await act(async () => {});
     expect(screen.getByTestId('dm-composer').props.value).toBe(rest);
   });
@@ -1030,7 +1092,7 @@ describe('New group (DM-06)', () => {
       });
     }
     expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
-    expect(useToastStore.getState().current?.message).toBe('Could not create the group');
+    expect(useToastStore.getState().current?.message).toBe("Couldn't create the group. Try again.");
   });
 
   it('says a name over the byte limit is too long instead of letting the engine refuse it (SR-38)', async () => {

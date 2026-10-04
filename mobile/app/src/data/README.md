@@ -91,8 +91,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   key: ({ post }) => `like:${post.id}`,                 // one at a time per post
   submit: (api, { post, like }) => (like ? api.engage.like(targetOf(post)) : api.engage.unlike(targetOf(post))),
   optimistic: ({ post, like }) => setViewerState(post.id, { liked: like }), // returns its undo
-  noun: 'like',                                          // "Your like didn't go through."
-  failureMessage: 'Failed to update like. Please try again.',
+  // The write's own sentence, for a refusal and a write a check proved absent alike (UX_SPEC §5.4.1).
+  failureMessage: ({ like }) => (like ? "Couldn't like this post. Try again." : "Couldn't unlike this post. Try again."),
 };
 ```
 
@@ -110,26 +110,45 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     anything but `submitted`.
 - **On a screen that shows the status:** `const w = useWrite(spec)`, then
   `w.run(vars)` (ticket or null) or `w.send(vars)` (a `WriteResult`). Read `w.status` (`idle` / `pending` / `confirmed` /
-  `unconfirmed` / `failed`) and `w.ticket`; `w.check()` and `w.retry()` act
-  on it.
+  `unconfirmed` / `failed`) and `w.ticket`; `w.check()` (a quiet check now,
+  through the reconciler) and `w.retry()` act on it.
 - **What happens to the ticket.** The tracker handles every outcome; screens
   don't:
   - `confirmed`: the change stays, and `onConfirmed` runs.
   - `failed`: the change is undone, an error haptic fires, and a toast shows
-    the engine's `categorizeError` text (or `failureMessage` when the engine
-    has nothing specific, or the spec's `failureText` for the ticket). The
-    toast offers **Retry** when the engine allows one, unless the spec's
-    `failureAction` has a better action for it. `failureNeutral` makes the
-    toast neutral (no haptic, no action) for a failure that needs no fix.
-    `onFailed` runs after the undo, for a failure that changed state anyway.
-  - `unconfirmed`: the write may have landed, so the change stays (PRD G-3).
-    A "Not confirmed yet" toast offers **Check again**. If the check proves
-    the write absent, the change is undone and the toast offers **Retry**.
-    Engagements set `announceUnconfirmed: false`: G-3 counts them as done,
-    with no toast. A function decides per ticket (a sheet that says it).
-  - Nothing is retried automatically. Retry applies only to the latest write
-    for a key, and never while another is in flight. A failure of an older
-    write for a key says nothing: the newer write decides the state.
+    one sentence (`writeFailureText`): the mobile copy for the engine code
+    when the user can act on it (out of credits or YAPP, not allowed, the
+    post is gone, update the app, a defect, a bad image link), else the
+    spec's `failureMessage` (or its `failureText` for the ticket). Web's
+    `categorizeError` text and the consensus code go to diagnostics only
+    (`appendLog`). The toast offers **Retry** when the engine allows one
+    (**Get YAPP** when YAPP is short), unless the spec's `failureAction`
+    has a better action for it. `failureNeutral` makes the toast neutral
+    (no haptic, no action) for a failure that needs no fix. `onFailed` runs
+    after the undo, for a failure that changed state anyway. A `failed`
+    ticket whose outcome is `unknown` (it may have landed) is treated as
+    unconfirmed: kept, and nothing said.
+  - `unconfirmed`: the write may have landed, so the change stays and
+    nothing is said (PRD G-3). The reconciler (`reconcile.ts`) checks it by
+    itself: 5, 20, 80 and 130 s after, when the app returns to the
+    foreground, when a feed, profile or thread read shows a document it
+    names, and when a message's conversation is read (`writes.check`,
+    never a resend). The engine calls a write absent only 2 minutes after
+    it stopped (`ABSENCE_AFTER_MS`), so the earlier checks can only find
+    it; the 130 s one can also prove it never landed. A check that proves it absent undoes
+    the change and toasts the same `failureMessage`, with **Retry**. Once
+    the automatic checks run out the job is `exhausted`
+    (`useReconcileStore`, `isExhausted`): a screen that shows the write may
+    say so then ("Couldn't confirm · Edit" on a post, "Couldn't confirm ·
+    Tap to check" on a message); checks go on at foreground and on reads.
+    A ticket whose call still runs past its deadline (`STILL_SENDING`)
+    never runs out. Another account's tickets are never checked.
+  - Nothing that may have landed is retried automatically. (The engine
+    itself re-sends a few passing refusals, ENGINE.md §7.2, before it
+    reports them.) Retry applies only to the latest write for a key, and
+    never while another is in flight: a stale Retry does nothing, quietly.
+    A failure of an older write for a key says nothing: the newer write
+    decides the state.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
@@ -143,10 +162,10 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   too, so a like, unlike, like run sends one like.
 - **Offline (PRD G-1).** While the OS reports no connectivity, `runWrite`
   (and Retry) send nothing and make no optimistic change: the toast says
-  "You're offline. Nothing was sent." and the result is `refused`.
+  "You're offline. Try again when you're connected." and the result is `refused`.
 - **Short of credits or YAPP (PRD G-5).** `INSUFFICIENT_CREDITS` and
-  `INSUFFICIENT_YAPP` failures toast the mobile copy (YAPP with "Open
-  yap.pr"), never Retry. `writeFailureText` gives the same text to a spec
+  `INSUFFICIENT_YAPP` failures toast the mobile copy (YAPP with "Get
+  YAPP"), never Retry. `writeFailureText` gives the same text to a spec
   with its own message.
 - **The engine cut the call short.** `ENGINE_RESTARTED`, `ENGINE_DISCONNECTED`,
   `RPC_TIMEOUT` and `ENGINE_TIMEOUT` mean the write may have run (an account
@@ -160,6 +179,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   change is undone. `NOT_SIGNED_IN` opens the sign-in sheet. `onRejected`
   can handle a specific code (`QUOTE_HAS_TEXT`). Anything else toasts
   `failureMessage`.
+- **Success toasts for posts** are compose's own: "Posted", "Reply posted",
+  "Quote posted", "Thread posted".
 - **Toasts on the happy path** ("Reposted!", "Added to bookmarks") are the
   caller's: `sendWrite`'s third argument.
 - **Post engagements already exist.** `src/features/post/post-writes.ts` has

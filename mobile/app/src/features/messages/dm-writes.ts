@@ -17,17 +17,18 @@ const refreshInbox = () => {
   queryClient.invalidateQueries({ queryKey: queryKeys.dm.status }).catch(() => undefined);
 };
 
+/** The failure sentence of every group change but leaving and creating (UX_SPEC §5.4). */
+const GROUP_UPDATE_FAILED = "Couldn't update the group. Try again.";
+
 function groupSpec<V extends { key: string }>(
   submit: WriteSpec<V>['submit'],
   done: string,
-  noun: string,
   failureMessage: string,
   writeKey: (vars: V) => string = ({ key }) => `dm.group:${key}`,
 ): WriteSpec<V> {
   return {
     submit,
     key: writeKey,
-    noun,
     failureMessage,
     onConfirmed: () => {
       refreshInbox();
@@ -39,46 +40,40 @@ function groupSpec<V extends { key: string }>(
 export const renameGroupWrite = groupSpec<{ key: string; name: string }>(
   (api, { key, name }) => api.dm.renameGroup(key, name),
   'Group renamed',
-  'group name',
-  "Couldn't rename the group. Please try again.",
+  GROUP_UPDATE_FAILED,
 );
 
 export const addMemberWrite = groupSpec<{ key: string; memberId: string; name: string }>(
   (api, { key, memberId }) => api.dm.addMember(key, memberId),
   'Member added',
-  'new member',
-  "Couldn't add the member. Please try again.",
+  GROUP_UPDATE_FAILED,
   ({ key, memberId }) => `dm.group:${key}:${memberId}`,
 );
 
 export const removeMemberWrite = groupSpec<{ key: string; memberId: string }>(
   (api, { key, memberId }) => api.dm.removeMember(key, memberId),
   'Member removed',
-  'change',
-  "Couldn't remove the member. Please try again.",
+  GROUP_UPDATE_FAILED,
   ({ key, memberId }) => `dm.group:${key}:${memberId}`,
 );
 
 export const resendKeysWrite = groupSpec<{ key: string; memberId: string }>(
   (api, { key, memberId }) => api.dm.resendKeys(key, memberId),
   'Keys sent',
-  'keys',
-  "Couldn't send the keys. Please try again.",
+  GROUP_UPDATE_FAILED,
   ({ key, memberId }) => `dm.keys:${key}:${memberId}`,
 );
 
 export const leaveGroupWrite = groupSpec<{ key: string }>(
   (api, { key }) => api.dm.leaveGroup(key),
   'You left the group',
-  'change',
-  "Couldn't leave the group. Please try again.",
+  "Couldn't leave the group. Try again.",
 );
 
 export const endGroupWrite = groupSpec<{ key: string }>(
   (api, { key }) => api.dm.endGroup(key),
   'Group ended',
-  'change',
-  "Couldn't end the group. Please try again.",
+  GROUP_UPDATE_FAILED,
 );
 
 export interface CreateGroupVars {
@@ -111,8 +106,7 @@ async function createGroupWhenLoaded(api: EngineRemote, { name, memberIds }: Cre
 export const createGroupWrite: WriteSpec<CreateGroupVars> = {
   submit: createGroupWhenLoaded,
   key: () => 'dm.createGroup',
-  noun: 'group',
-  failureMessage: 'Could not create the group',
+  failureMessage: "Couldn't create the group. Try again.",
   onConfirmed: refreshInbox,
 };
 

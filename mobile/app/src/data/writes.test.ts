@@ -9,9 +9,12 @@ import { deleteWrite } from '~/features/post/post-writes';
 
 import { useSignInPrompt } from './require-auth';
 import { SESSION_EXPIRED_MESSAGE, isSessionExpired, setReauthHandler, useExpiredSessions } from './session-expiry';
+import { getLogs } from '~/engine/logs';
+
+import { isExhausted, ticketJob } from './reconcile';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { useSessionStore } from './session';
-import { adoptRestoredWrites, checkWrite, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { adoptRestoredWrites, OFFLINE_MESSAGE, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 let mockOffline = false;
@@ -29,8 +32,7 @@ const spec: WriteSpec<TargetRef> = {
   key: (t) => `like:${t.id}`,
   submit: (api, t) => api.engage.like(t),
   optimistic: apply,
-  noun: 'like',
-  failureMessage: 'Failed to update like. Please try again.',
+  failureMessage: "Couldn't like this post. Try again.",
   onConfirmed: confirmed,
 };
 
@@ -57,6 +59,8 @@ beforeEach(() => {
   target = { id: `p${postNumber}`, kind: 'post', ownerId: 'author', rootPostId: null };
   jest.clearAllMocks();
   fakeEngine.reset();
+  // No reconciler job (or its timers) of an earlier test runs into this one.
+  resetWriteTracking();
   useToastStore.setState({ current: null });
   useSignInPrompt.setState({ open: false });
   useExpiredSessions.setState({ ids: [] });
@@ -75,17 +79,25 @@ describe('submitWrite', () => {
     expect(currentToast()).toBeNull();
   });
 
-  it('undoes a failed write and toasts the engine message with Retry, which re-applies and re-sends', async () => {
+  it("undoes a failed write and toasts the write's own sentence with Retry, which re-applies and re-sends", async () => {
     const pending = await submitPending();
     const failed = advance(pending, {
       state: 'failed',
       retryable: true,
-      error: { code: 'FEE_UNPAYABLE', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Not enough credits.' },
+      error: {
+        code: 'FEE_UNPAYABLE',
+        consensusCode: 40701,
+        outcome: 'refused',
+        retryable: true,
+        userMessage: 'The gas sponsor is short. Switch to paying in credits.',
+      },
     });
     act(() => fakeEngine.emit('write.status', failed));
 
     expect(undo).toHaveBeenCalledTimes(1);
-    expect(currentToast()).toMatchObject({ kind: 'error', message: 'Not enough credits.', action: { label: 'Retry' } });
+    // Web's text (a payment setting the app does not have) goes to diagnostics only.
+    expect(currentToast()).toMatchObject({ kind: 'error', message: "Couldn't like this post. Try again.", action: { label: 'Retry' } });
+    expect(getLogs().some((line) => line.message.includes('FEE_UNPAYABLE 40701: The gas sponsor is short'))).toBe(true);
 
     answer('writes.retry', advance(failed, { state: 'pending', error: null }));
     await act(async () => currentToast()?.action?.onPress());
@@ -104,47 +116,98 @@ describe('submitWrite', () => {
         }),
       ),
     );
-    expect(currentToast()).toMatchObject({ message: 'Failed to update like. Please try again.', action: undefined });
+    expect(currentToast()).toMatchObject({ message: "Couldn't like this post. Try again.", action: undefined });
   });
 
-  it('keeps an unconfirmed write, offers Check again, and undoes it once a check proves it absent', async () => {
-    const pending = await submitPending();
-    const unconfirmed = advance(pending, { state: 'unconfirmed' });
-    act(() => fakeEngine.emit('write.status', unconfirmed));
-    expect(undo).not.toHaveBeenCalled();
-    expect(currentToast()).toMatchObject({ kind: 'info', message: 'Not confirmed yet', action: { label: 'Check again' } });
+  describe('an unconfirmed write (PRD G-3)', () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
 
-    const show = jest.spyOn(useToastStore.getState(), 'show');
-    answer('writes.check', advance(unconfirmed, { retryable: true, lastCheckedAt: new Date() }));
-    await act(async () => currentToast()?.action?.onPress());
-    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
-    expect(undo).toHaveBeenCalledTimes(1);
-    // The event and the call's answer are one outcome: one toast.
-    expect(show).toHaveBeenCalledTimes(1);
-    expect(currentToast()).toMatchObject({ kind: 'error', message: "Your like didn't go through. Try again.", action: { label: 'Retry' } });
-  });
+    it('keeps it quietly, checks it by itself, and undoes it once a check proves it absent', async () => {
+      const pending = await submitPending();
+      const unconfirmed = advance(pending, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', unconfirmed));
+      expect(undo).not.toHaveBeenCalled();
+      // Nothing for the user to do: no "Not confirmed yet", no Check again.
+      expect(currentToast()).toBeNull();
 
-  it('says so again when a check proves nothing either way', async () => {
-    const pending = await submitPending();
-    const unconfirmed = advance(pending, { state: 'unconfirmed' });
-    act(() => fakeEngine.emit('write.status', unconfirmed));
-    act(() => useToastStore.setState({ current: null }));
-
-    answer('writes.check', { ...unconfirmed, lastCheckedAt: new Date() });
-    await act(async () => {
-      await checkWrite(pending.id);
+      const show = jest.spyOn(useToastStore.getState(), 'show');
+      answer('writes.check', advance(unconfirmed, { retryable: true, lastCheckedAt: new Date() }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(5_000);
+      });
+      expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
+      expect(undo).toHaveBeenCalledTimes(1);
+      // The event and the call's answer are one outcome: one toast, the same sentence as a refusal.
+      expect(show).toHaveBeenCalledTimes(1);
+      expect(currentToast()).toMatchObject({ kind: 'error', message: "Couldn't like this post. Try again.", action: { label: 'Retry' } });
+      expect(isExhausted(ticketJob(pending.id))).toBe(false);
     });
-    expect(currentToast()).toMatchObject({ message: 'Not confirmed yet' });
-    expect(undo).not.toHaveBeenCalled();
-  });
 
-  it('stays quiet about an unconfirmed write the spec counts as done', async () => {
-    const pending = ticket();
-    fakeEngine.method('engage.like').mockResolvedValueOnce(pending);
-    await submitWrite({ ...spec, announceUnconfirmed: false }, target);
-    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
-    expect(currentToast()).toBeNull();
-    expect(undo).not.toHaveBeenCalled();
+    it('checks it again at 5, 20, 80 and 130 s, then says nothing more, and settles when a check finds it', async () => {
+      const pending = await submitPending();
+      const unconfirmed = advance(pending, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', unconfirmed));
+      const check = fakeEngine.method('writes.check');
+      check.mockImplementation(async () => ({ ...unconfirmed, lastCheckedAt: new Date() }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(130_000);
+      });
+      expect(check).toHaveBeenCalledTimes(4);
+      expect(isExhausted(ticketJob(pending.id))).toBe(true);
+      expect(currentToast()).toBeNull();
+      expect(undo).not.toHaveBeenCalled();
+
+      // A later check (the app back in the foreground, a feed read) finds it: done, quietly.
+      act(() => fakeEngine.emit('write.status', advance(unconfirmed, { state: 'confirmed' })));
+      expect(confirmed).toHaveBeenCalledTimes(1);
+      expect(isExhausted(ticketJob(pending.id))).toBe(false);
+      expect(currentToast()).toBeNull();
+    });
+
+    it('never runs out of checks while its call still runs past the deadline (STILL_SENDING)', async () => {
+      const pending = await submitPending();
+      const stalled = advance(pending, {
+        state: 'unconfirmed',
+        error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+      });
+      act(() => fakeEngine.emit('write.status', stalled));
+      fakeEngine.method('writes.check').mockImplementation(async () => ({ ...stalled, lastCheckedAt: new Date() }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(130_000);
+      });
+      expect(isExhausted(ticketJob(pending.id))).toBe(false);
+    });
+
+    it('keeps a failure that may have landed (outcome unknown) quietly: never "Couldn\'t…", never undone', async () => {
+      const pending = await submitPending();
+      act(() =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            error: { code: 'UNKNOWN', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+          }),
+        ),
+      );
+      expect(undo).not.toHaveBeenCalled();
+      expect(currentToast()).toBeNull();
+      // The key is free for the next write.
+      await submitPending();
+    });
+
+    it("never checks another account's ticket", async () => {
+      useSessionStore.setState({ status: 'signed-in', session: { identityId: 'me' } as SessionDTO });
+      try {
+        act(() => fakeEngine.emit('write.status', ticket({ identityId: 'someone-else', state: 'unconfirmed' })));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(130_000);
+        });
+        expect(fakeEngine.method('writes.check')).not.toHaveBeenCalled();
+      } finally {
+        useSessionStore.setState({ status: 'unknown', session: null });
+      }
+    });
   });
 
   it('keeps a failure that arrived before the call’s pending answer (same millisecond)', async () => {
@@ -169,9 +232,11 @@ describe('submitWrite', () => {
     const staleRetry = currentToast()?.action;
     await submitPending();
 
+    act(() => useToastStore.setState({ current: null }));
     await act(async () => staleRetry?.onPress());
     expect(fakeEngine.method('writes.retry')).not.toHaveBeenCalled();
-    expect(currentToast()).toMatchObject({ message: 'Already updated' });
+    // A stale Retry does nothing, and says nothing.
+    expect(currentToast()).toBeNull();
   });
 
   it('acts on a status that overtook the call’s answer', async () => {
@@ -192,8 +257,7 @@ describe('submitWrite', () => {
       submit: (api, { target: t, on }) => (on ? api.engage.like(t) : api.engage.unlike(t)),
       optimistic: apply,
       intent: ({ on }) => on,
-      noun: 'like',
-      failureMessage: 'Failed to update like. Please try again.',
+      failureMessage: "Couldn't like this post. Try again.",
     };
     const like = ticket();
     fakeEngine.method('engage.like').mockResolvedValueOnce(like);
@@ -216,7 +280,6 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       intent: ({ on }) => on,
-      noun: 'like',
       failureMessage: 'x',
     };
     const like = ticket();
@@ -243,9 +306,7 @@ describe('submitWrite', () => {
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
       intent: ({ on }) => on,
-      noun: 'like',
       failureMessage: 'x',
-      announceUnconfirmed: false,
     };
     const like = ticket();
     fakeEngine.method('engage.like').mockResolvedValueOnce(like);
@@ -276,7 +337,6 @@ describe('submitWrite', () => {
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
       intent: ({ on }) => on,
-      noun: 'like',
       failureMessage: 'x',
     };
     const like = ticket();
@@ -311,7 +371,7 @@ describe('submitWrite', () => {
     expect(onAdopted).toHaveBeenCalledWith(restored, target);
     act(() => fakeEngine.emit('write.status', advance(restored, { retryable: true, lastCheckedAt: new Date() })));
     expect(undo).toHaveBeenCalledTimes(1);
-    expect(currentToast()).toMatchObject({ message: "Your like didn't go through. Try again." });
+    expect(currentToast()).toMatchObject({ message: "Couldn't like this post. Try again." });
   });
 
   it('adopts the ticket of a call that timed out long after the engine made it (SR-16)', async () => {
@@ -366,7 +426,7 @@ describe('submitWrite', () => {
     fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('bad'), { code: 'BAD_REQUEST' }));
     await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused' });
     expect(undo).toHaveBeenCalledTimes(1);
-    expect(currentToast()).toMatchObject({ kind: 'error', message: 'Failed to update like. Please try again.' });
+    expect(currentToast()).toMatchObject({ kind: 'error', message: "Couldn't like this post. Try again." });
 
     act(() => useToastStore.setState({ current: null }));
     fakeEngine.method('engage.like').mockRejectedValueOnce(Object.assign(new Error('no'), { code: 'NOT_SIGNED_IN' }));
@@ -375,12 +435,33 @@ describe('submitWrite', () => {
     expect(currentToast()).toBeNull();
   });
 
-  it('sends nothing while offline: no change, and "Nothing was sent" (PRD G-1)', async () => {
+  it('sends nothing while offline: no change, and the offline toast (PRD G-1)', async () => {
     mockOffline = true;
     await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused', error: { code: 'OFFLINE' } });
     expect(apply).not.toHaveBeenCalled();
     expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
-    expect(currentToast()).toMatchObject({ message: "You're offline. Nothing was sent." });
+    expect(currentToast()).toMatchObject({ message: OFFLINE_MESSAGE });
+  });
+
+  it('says what a code the user can act on means, in mobile copy (UX_SPEC §5.4)', async () => {
+    const refusal = (code: 'TARGET_GONE' | 'NOT_OWNER' | 'STALE' | 'BUILD_DEFECT', userMessage: string) => ({
+      code,
+      consensusCode: 40100,
+      outcome: 'refused' as const,
+      retryable: false,
+      userMessage,
+    });
+    for (const [code, web, mobile] of [
+      ['TARGET_GONE', 'The post you are responding to was not found.', 'This post no longer exists.'],
+      ['NOT_OWNER', 'Only the owner can do this.', "You can't do this from this account."],
+      ['STALE', 'Something changed. Please reload the page and try again.', 'Update Yappr and try again.'],
+      ['BUILD_DEFECT', 'Something went wrong building this action, so the network refused it.', 'Something went wrong. Nothing was charged. Please report this.'],
+    ] as const) {
+      target = { ...target, id: `${target.id}-${code}` };
+      const pending = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'failed', error: refusal(code, web) })));
+      expect(currentToast()?.message).toBe(mobile);
+    }
   });
 
   it('says credits or YAPP are short in the mobile copy, with no Retry (PRD G-5)', async () => {
@@ -395,7 +476,7 @@ describe('submitWrite', () => {
     act(() => fakeEngine.emit('write.status', advance(credits, { state: 'failed', error: short('INSUFFICIENT_CREDITS') })));
     expect(currentToast()).toMatchObject({
       kind: 'error',
-      message: "Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted.",
+      message: "You don't have enough credits for this. Top up from your Dash wallet.",
     });
     expect(currentToast()?.action).toBeUndefined();
 
@@ -403,8 +484,8 @@ describe('submitWrite', () => {
     const yapp = await submitPending();
     act(() => fakeEngine.emit('write.status', advance(yapp, { state: 'failed', error: short('INSUFFICIENT_YAPP') })));
     expect(currentToast()).toMatchObject({
-      message: 'You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again.',
-      action: { label: 'Open yap.pr' },
+      message: 'You need YAPP for this.',
+      action: { label: 'Get YAPP' },
     });
     act(() => currentToast()?.action?.onPress());
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/yap\.pr/));
@@ -477,7 +558,6 @@ describe('submitWrite', () => {
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
       intent: ({ on }) => on,
-      noun: 'like',
       failureMessage: 'x',
     };
     let cut: (error: unknown) => void = () => undefined;
@@ -492,7 +572,7 @@ describe('submitWrite', () => {
     expect(fakeEngine.method('engage.unlike')).not.toHaveBeenCalled();
     // The queued unlike's change is undone; the cut-short like's stays (it may have landed).
     expect(undo).toHaveBeenCalledTimes(1);
-    expect(currentToast()).toMatchObject({ kind: 'error', message: "Your like didn't go through. Try again." });
+    expect(currentToast()).toMatchObject({ kind: 'error', message: 'x' });
   });
 
   it('sends one delete for a second delete made while the first is pending', async () => {

@@ -34,7 +34,8 @@ tags:
 - extendedWaitUntil:
     visible: ".*Maestro reply ${RUN}.*"
     timeout: 60000
-# Confirmed: the write-status row gives way to the action bar. Not the
+# Confirmed: the write-status row gives way to the action bar (the app's own checks, at
+# 5, 20 and 80 s, settle a reply whose wait timed out within the timeout). Not the
 # "Reply posted" toast: it shows for 3 s, and on a loaded host the tap on
 # Post alone can take longer than that (it waits for the screen to settle),
 # so the toast can come and go before the next step looks.

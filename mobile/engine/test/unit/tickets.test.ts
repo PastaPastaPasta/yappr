@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { NotSentError, PENDING_DEADLINE_MS, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, STILL_SENDING_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
+import { ABSENCE_AFTER_MS, AUTO_RETRY_CODES, NOT_FOUND_YET_ERROR, NotSentError, PENDING_DEADLINE_MS, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, STILL_SENDING_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
 import type { TicketDocument, WriteTicket } from '../../src/writes/types'
 import { fromBoolean, fromTransitionResult } from '../../src/writes/lib-results'
 
@@ -305,10 +305,11 @@ describe('safety', () => {
   it('drops the previous attempt\'s unproven documents on retry, so a later check proves the new attempt', async () => {
     let attempt = 0
     const exists = new Set<string>()
-    const { store } = setup({ documentExists: async doc => exists.has(doc.id) })
+    const { store, advance } = setup({ documentExists: async doc => exists.has(doc.id) })
     store.register('post.publish', { run: async () => ({ state: 'unconfirmed', documents: [{ ...POST, id: `P${++attempt}` }] }) })
     store.submit({ op: 'post.publish', args: {} })
     await settle()
+    advance(ABSENCE_AFTER_MS)
     await store.check('t1')
     await store.retry('t1')
     await settle()
@@ -320,11 +321,12 @@ describe('safety', () => {
   it('ignores a probe answer that a retry overtook', async () => {
     let answer: (exists: boolean) => void = () => undefined
     let calls = 0
-    const { store } = setup({ documentExists: () => (++calls <= 2 ? Promise.resolve(false) : new Promise(resolve => { answer = resolve })) })
+    const { store, advance } = setup({ documentExists: () => (++calls <= 2 ? Promise.resolve(false) : new Promise(resolve => { answer = resolve })) })
     const { handler } = controlled()
     store.register('post.publish', { ...handler, run: async () => ({ state: 'unconfirmed', documents: [POST] }) })
     store.submit({ op: 'post.publish', args: {} })
     await settle()
+    advance(ABSENCE_AFTER_MS)
     expect((await store.check('t1')).retryable).toBe(true)
     // A second check is still probing when the user retries.
     const checking = store.check('t1')
@@ -356,11 +358,28 @@ describe('check again', () => {
   })
 
   it('keeps a create proved absent unconfirmed, and only then allows a retry', async () => {
-    const { store } = await unconfirmedCreate(async () => false)
+    const { store, advance } = await unconfirmedCreate(async () => false)
+    advance(ABSENCE_AFTER_MS)
     const checked = await store.check('t1')
     expect(checked).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
     expect(checked.lastCheckedAt).toBeInstanceOf(Date)
     expect((await store.retry('t1')).state).toBe('pending')
+  })
+
+  it('calls nothing absent until the attempt stopped long enough ago: a write still on its way is never rolled back', async () => {
+    const { store, advance } = setup()
+    store.register('like', {
+      run: async () => ({ state: 'unconfirmed' }),
+      // A relation read that does not see the like yet (lib's own probe for likes).
+      probe: async () => ({ state: 'not-applied' }),
+    })
+    store.submit({ op: 'like', args: null })
+    await settle()
+    advance(ABSENCE_AFTER_MS - 1)
+    expect(await store.check('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: NOT_FOUND_YET_ERROR })
+    await expect(store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+    advance(1)
+    expect(await store.check('t1')).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
   })
 
   it('keeps it unconfirmed, with the probe error, when the probe cannot tell', async () => {
@@ -396,7 +415,8 @@ describe('check again', () => {
   })
 
   it('keeps a delete\'s document across a retry, so the next check can still prove it', async () => {
-    const { store } = await unconfirmedCreate(async () => true, [{ ...POST, action: 'delete' }])
+    const { store, advance } = await unconfirmedCreate(async () => true, [{ ...POST, action: 'delete' }])
+    advance(ABSENCE_AFTER_MS)
     expect(await store.check('t1')).toMatchObject({ retryable: true })
     expect((await store.retry('t1')).documents).toEqual([{ ...POST, action: 'delete' }])
   })
@@ -432,7 +452,8 @@ describe('persistence and restart reconciliation', () => {
     // The reconciliation is persisted at once, so a second crash finds it settled.
     expect(JSON.parse(storage.items.get(WRITES_STORAGE_KEY) ?? '[]')[0].ticket.state).toBe('unconfirmed')
 
-    // Check, prove absent, then retry with the persisted arguments.
+    // Check, prove absent (once the restart is long enough ago), then retry with the persisted arguments.
+    restarted.advance(ABSENCE_AFTER_MS)
     await restarted.store.check('t1')
     await restarted.store.retry('t1')
     await settle()
@@ -465,6 +486,31 @@ describe('persistence and restart reconciliation', () => {
     const third = setup({ storage })
     third.store.register('post.publish', { run, persistArgs: true, stagedSends: true })
     expect(third.store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: RESTARTED_ERROR })
+  })
+
+  it('finds a write a restart caught waiting for its parent unsent, but not one past a stage that may send', async () => {
+    const storage = memoryStorage()
+    const first = setup({ storage })
+    // settleTarget's wait: minutes, before any write call.
+    first.store.register('post.publish', {
+      run: (_args, ctx) => { ctx.stage('waiting-parent', true); return new Promise(() => undefined) },
+      persistArgs: true,
+      stagedSends: true,
+    })
+    // publishThread's own "Waiting" progress: lib may already be writing under it.
+    first.store.register('post.delete', {
+      run: (_args, ctx) => { ctx.stage('waiting-parent'); return new Promise(() => undefined) },
+      persistArgs: true,
+      stagedSends: true,
+    })
+    first.store.submit({ op: 'post.publish', args: { text: 'hi' } })
+    first.store.submit({ op: 'post.delete', args: { text: 'hi' } })
+    await settle()
+    expect(first.store.get('t1')).toMatchObject({ state: 'pending', stage: 'waiting-parent' })
+
+    const restarted = setup({ storage })
+    expect(restarted.store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: RESTARTED_UNSENT_ERROR })
+    expect(restarted.store.get('t2')).toMatchObject({ state: 'unconfirmed', retryable: false, error: RESTARTED_ERROR })
   })
 
   it('never reads a queued ticket as unsent without the handler\'s word, nor with an unproved document', async () => {
@@ -539,6 +585,7 @@ describe('persistence and restart reconciliation', () => {
 
     const restarted = setup({ storage, documentExists: async () => false })
     restarted.store.register('dm.send', { run: async () => ({ state: 'confirmed' }) })
+    restarted.advance(ABSENCE_AFTER_MS)
     expect((await restarted.store.check('t1')).retryable).toBe(true)
     await expect(restarted.store.retry('t1')).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
   })
@@ -699,11 +746,11 @@ describe('a write whose call never answers (PRD G-3; QA D-L2a-007, D-L4a-002)', 
     runs[0].reject(new Error('Failed to fetch'))
     await pass()
     expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false })
-    advance(1000)
+    advance(ABSENCE_AFTER_MS)
     const again = store.check('t1')
     await pass()
     expect(await again).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
-    expect(seen).toEqual([null, 1000])
+    expect(seen).toEqual([null, ABSENCE_AFTER_MS])
   })
 
   it('a check that finds it landed has the last word over the call\'s late answer', async () => {
@@ -805,5 +852,93 @@ describe('a write whose call never answers (PRD G-3; QA D-L2a-007, D-L4a-002)', 
     expect(store.get('t1')?.state).toBe('unconfirmed')
     await pass(60 * 60_000)
     expect(store.get('t2')?.state).toBe('pending')
+  })
+})
+
+describe('silent re-sends of a passing refusal (UX_SPEC §5.4)', () => {
+  /** Platform's refusal when the fee multiplier moved past the agreed tolerance (`FEE_CHANGED`). */
+  const FEE_MOVED = () => new Error('Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille')
+
+  it('re-sends only passing refusals, never one that may have landed or one lib holds for minutes', () => {
+    expect([...AUTO_RETRY_CODES].sort()).toEqual(['FEE_CHANGED', 'PARENT_TOO_YOUNG'])
+  })
+
+  it('keeps the ticket pending while it sends again, and reports the last refusal once the re-sends ran out', async () => {
+    const { store, events } = setup({ autoRetryDelaysMs: [0, 0] })
+    const { handler, runs } = controlled()
+    store.register('like', handler)
+    store.submit({ op: 'like', args: { postId: 'P' } })
+    await settle()
+    runs[0].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    // Sent again, the host never told.
+    expect(runs).toHaveLength(2)
+    expect(store.get('t1')).toMatchObject({ state: 'pending' })
+    expect(events.some(e => e.state === 'failed')).toBe(false)
+    runs[1].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    runs[2].reject(FEE_MOVED())
+    await settle()
+    expect(runs).toHaveLength(3)
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' } })
+
+    // The host's own Retry starts the silent re-sends again.
+    await store.retry('t1')
+    await settle()
+    runs[3].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    expect(runs).toHaveLength(5)
+    runs[4].resolve({ state: 'confirmed' })
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('finds a write a restart caught in its wait unsent: failed and retryable, never "may have landed"', async () => {
+    const storage = memoryStorage()
+    // A wait the test never lets end.
+    const { store } = setup({ storage, autoRetryDelaysMs: [60 * 60_000] })
+    const { handler, runs } = controlled()
+    store.register('like', handler)
+    store.submit({ op: 'like', args: { postId: 'P' } })
+    await settle()
+    runs[0].reject(FEE_MOVED())
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'pending', stage: 'queued' })
+
+    const next = setup({ storage })
+    next.store.register('like', { ...handler, persistArgs: true })
+    expect(next.store.get('t1')).toMatchObject({ state: 'failed', error: RESTARTED_UNSENT_ERROR })
+  })
+
+  it('sends nothing for an account that is switching away during the wait: reported as refused', async () => {
+    let identity = 'alice'
+    const { store } = setup({ autoRetryDelaysMs: [0], currentIdentity: () => identity })
+    const { handler, runs } = controlled()
+    store.register('like', handler)
+    store.submit({ op: 'like', args: { postId: 'P' } })
+    await settle()
+    identity = 'bob'
+    runs[0].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    expect(runs).toHaveLength(1)
+    identity = 'alice'
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' } })
+  })
+
+  it('never re-sends a thread with a part out but not seen confirmed', async () => {
+    const { store } = setup({ autoRetryDelaysMs: [0] })
+    const { handler, runs } = controlled()
+    store.register('post.publish', handler)
+    store.submit({ op: 'post.publish', args: {} })
+    await settle()
+    runs[0].resolve({ state: 'failed', error: FEE_MOVED(), documents: [{ ...POST, part: 0 }] })
+    await settle()
+    await settle()
+    expect(runs).toHaveLength(1)
+    expect(store.get('t1')).toMatchObject({ state: 'failed', error: { code: 'FEE_CHANGED' } })
   })
 })

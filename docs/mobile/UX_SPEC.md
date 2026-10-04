@@ -397,10 +397,10 @@ Replaces the action bar on optimistic cards.
 
 | State | Row content |
 | --- | --- |
-| Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`) |
+| Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`). Also while the outcome is unknown (the network's answer timed out, an engine restart cut the call short, a minute with no answer): the app checks it by itself 5, 20, 80 and 130 s after, again when the app returns to the foreground, and when a feed, profile or thread read shows it. No manual check exists. A post that never went out is called so only from the 130 s check ("Couldn't post" with Retry): before then it may still be on its way |
 | Thread progress | spinner + "Posting 2 of 5…" |
-| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`). Also shown once the post has gone 60 s without an answer from the network (a stall): it becomes normal by itself if the post then lands. Once checking cannot settle it (Check again 10 minutes or more after posting still cannot tell, or a failure that may have landed), also " · Edit": compose opens on its text, parts known to have posted kept posted; never Retry, and never Edit while the post is still being sent (it may still land) |
-| Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`) |
+| Couldn't confirm | `ExclamationCircleIcon` 14 `text.secondary` + "Couldn't confirm" + " · " + "Edit" (`link`). Only once the automatic checks ran out without proof either way (or a failure that may have landed), with the toast `toast.postUnconfirmed` once. Edit opens compose on its text, parts known to have posted kept posted. Never Retry (it may have landed), and never while the post's call still runs (it may still land). Checks go on (foreground, reads): the card becomes the post by itself if it turns up |
+| Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`). Only when the post was refused, or a check proved it absent |
 | Partly posted | "Posted 2 of 5 · Retry the rest" |
 
 The card body renders at 70% opacity while Posting; full opacity in the other states. Announced once per change (A11Y-06).
@@ -494,7 +494,7 @@ Map of react-hot-toast in `app/layout.tsx`:
 - Position top-center, below the status bar and the navigation bar (safe area + 8).
 - `toast` colors in both themes, `radius.lg`, padding 12 × 16, `subhead` text (web 14 px), max width screen − 32, `shadow-lg`.
 - Leading icon 18: success `CheckCircleIcon` green-500, error `XCircleIcon` red-500, info none.
-- Duration 3000 ms; 6000 ms for messages over 80 characters and for toasts with an action. One optional trailing action ("Retry", "Open yap.pr", "Open in browser", "View") in `#7dd3fc` (yappr-300, 8.6:1 on the toast).
+- Duration 3000 ms; 6000 ms for messages over 80 characters and for toasts with an action. One optional trailing action ("Retry", "Edit", "Get YAPP", "Open in browser", "View") in `#7dd3fc` (yappr-300, 8.6:1 on the toast).
 - In: fade + slide down 10 pt, `duration.base`. Out: fade, `duration.fast`. Swipe up dismisses. A new toast replaces the current one.
 - a11y: announced with `AccessibilityInfo.announceForAccessibility` (iOS) / a polite live region (Android). Android uses this same component, not a Snackbar, so the two platforms match.
 
@@ -567,8 +567,8 @@ Banners sit directly under the navigation bar of the current screen, push conten
 
 - Max width 78% of the screen. Padding 10 × 14. `radius.2xl` with the corner nearest the sender reduced to `radius.sm` on the last bubble of a run. `body` text.
 - Own: `bubble.own`, right-aligned. Other: `bubble.other`, left-aligned; in groups a 24 avatar on the last bubble of a run and the sender name (`caption.strong`, `text.secondary`) above the first.
-- Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Failed · Tap to retry" (`error`).
-- A send that may have gone out but is not proved (no answer from the network for 60 s, or an engine restart cut it short) reads "Not confirmed · Tap to check" (`error`): the tap asks the engine to look for it, and it turns "Sent" by itself once it lands. While the send's call is still waiting on the network, the tap can't look yet and toasts "Still sending. Tap again in a moment." Only a proved absence offers "Failed · Tap to retry". A failure the engine won't retry reads "Failed · Tap to edit": the tap puts the unsent text back in the composer.
+- Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Not delivered · Tap to retry" (`error`).
+- A send that may have gone out but is not proved (the network's answer timed out, no answer for 60 s, or an engine restart cut it short) still reads "Sending…": the app checks it by itself (5, 20, 80 and 130 s after, on foreground, and when the conversation's messages are read), and it turns "Sent" once it lands. Only once those checks ran out without proof does it read "Couldn't confirm · Tap to check" (`error`); a tap checks again, with a small spinner beside the status while it runs (a second tap does nothing, no toast). A send the engine never took goes back to the composer with `toast.dmNotSent`. Only a proved absence offers "Not delivered · Tap to retry". A refusal the engine won't retry reads "Not delivered · Tap to edit": the tap puts the unsent text back in the composer.
 - Time shown on long-press only (iOS swipe-left reveals times, as Messages; Android: tap a bubble toggles its time).
 - Day separator: centered `caption` `text.secondary` with 16 vertical margin.
 
@@ -1386,7 +1386,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 | Offline | Current screen | Offline banner (2.18); write taps → toast |
 | Couldn't connect | Current screen | "Couldn't connect" banner with "Try again" |
 | Unavailable reads | The list | Inline error state (2.16) with the categorized message |
-| Engine restarting | Nowhere visible | Lists keep content; in-flight writes go to "Not confirmed yet" |
+| Engine restarting | Nowhere visible | Lists keep content; in-flight writes keep their "Posting…" / "Sending…" while the app checks them |
 | Network sheet | From the chip | Bottom sheet, medium detent: chip, "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." / testnet copy, and the connection line (`network.state`). No diagnostics link |
 
 ### 4.35 Image viewer
@@ -1584,17 +1584,54 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | compose.close.save / delete / cancel | Save draft / Delete draft / Cancel |
 | status.posting | Posting… |
 | status.threadProgress | Posting {i} of {n}… |
-| status.notConfirmed | Not confirmed yet |
-| status.checkAgain | Check again |
+| status.unconfirmed | Couldn't confirm (only once the automatic checks ran out; with " · Edit", never Retry) |
 | status.failed | Couldn't post |
 | status.retry / edit | Retry / Edit |
 | status.partial | Posted {i} of {n} · Retry the rest |
-| toast.postCreated | Post created successfully! **(web)** |
-| toast.threadCreated | Thread with {N} posts created! **(web)** |
+| toast.postCreated | Posted |
+| toast.quoteCreated | Quote posted |
+| toast.threadCreated | Thread posted |
 | toast.replyPosted | Reply posted |
-| toast.threadPartial | Thread partly posted. Post {n} failed: {reason} (mobile; web's "Press Post to retry" doesn't apply once compose closes) |
+| toast.postFailed | Couldn't post. Try again. (a refusal, and a post a check proved absent; with Retry when the engine allows one) |
+| toast.postUnconfirmed | We couldn't confirm your post. Check your profile before posting it again. (once, when the automatic checks ran out) |
+| toast.threadPartial | Thread partly posted. Post {n} didn't go through. (the engine's reason goes to diagnostics; a code with mobile copy, §5.4.1, says that instead: "Thread partly posted. You don't have enough credits…") |
 | toast.alreadyQuoted | You have already quoted this. **(web)** |
-| toast.mediaUnreadable | Couldn't read the image at that link, so nothing was posted. Edit the post to fix the link or remove the image. (action: Edit; the engine's `MEDIA_UNREADABLE`) |
+| toast.mediaUnreadable | That image link didn't work. Edit the post to fix or remove it. (action: Edit; the engine's `MEDIA_UNREADABLE`) |
+| probe.unclear | Check your profile to see whether part {n} posted. (diagnostics: why a check could not settle a part) |
+
+#### 5.4.1 Write failures (every write)
+
+A failed write toasts one sentence: the mobile copy for its engine code when the user can act on it, else the write's own failure sentence. The same sentence is used for a refusal and for a write a check proved absent. Web's `categorizeError` text and the consensus code go to diagnostics only. A write whose outcome is unknown says nothing while the app checks it (§2.4.11); no toast, card or bubble says "Not confirmed yet", "Check again", "Already updated" or "may still go through".
+
+| Engine code | String |
+| --- | --- |
+| `INSUFFICIENT_CREDITS` | You don't have enough credits for this. Top up from your Dash wallet. |
+| `INSUFFICIENT_YAPP` | You need YAPP for this. (action: Get YAPP, opens yap.pr; never Retry) |
+| `NOT_OWNER`, `MODERATION_BARRED` | You can't do this from this account. |
+| `TARGET_GONE` | This post no longer exists. |
+| `APP_OUTDATED`, `STALE` | Update Yappr and try again. |
+| `BUILD_DEFECT` | Something went wrong. Nothing was charged. Please report this. |
+| `MEDIA_UNREADABLE` | That image link didn't work. Edit the post to fix or remove it. |
+| `NONCE_CONFLICT` | None: it may be this very write executing, so it is checked like any unknown outcome, never re-sent |
+| `PARENT_TOO_YOUNG`, `FEE_CHANGED` | None at first: the engine sends the write again by itself after 2, 5 and 15 s (Platform refused it, so nothing can be duplicated), then the default |
+| `FEE_SHARE_MISMATCH` | The default, at once: the app and the contract disagree about the fee, so a re-send would be refused (and charged) the same way |
+| Anything else (sponsor fees, ownership, private feed sync, the engine's own restarts) | The write's failure sentence (below) |
+
+| Write | Failure sentence |
+| --- | --- |
+| Post, reply, quote, thread | Couldn't post. Try again. |
+| Like / unlike | Couldn't like this post. Try again. / Couldn't unlike this post. Try again. |
+| Repost / undo | Couldn't repost this post. Try again. / Couldn't undo your repost. Try again. |
+| Bookmark / remove | Couldn't bookmark this post. Try again. / Couldn't remove your bookmark. Try again. |
+| Follow / unfollow | Couldn't follow this account. Try again. / Couldn't unfollow this account. Try again. |
+| Delete | Couldn't delete post. Try again. / Couldn't delete reply. Try again. |
+| Block / unblock | Couldn't block @{handle}. Try again. / Couldn't unblock @{handle}. Try again. ("this account" when the handle is unknown) |
+| Profile | Couldn't save your profile. Try again. |
+| Report / withdraw | Couldn't send your report. Try again. / Couldn't withdraw your report. Try again. |
+| Message | Couldn't send your message. Try again. |
+| Group change | Couldn't update the group. Try again. / Couldn't leave the group. Try again. / Couldn't create the group. Try again. |
+
+A like, repost, bookmark or reply on a post this device just made and has not seen confirmed waits for it (up to about two minutes) and then goes, with no toast; the button never refuses with "try again in a moment". A bare repost's like, repost and bookmark buttons show a spinner and take no taps until the viewer's marks have loaded.
 
 ### 5.5 Engagement
 
@@ -1604,9 +1641,8 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | toast.reposted | Reposted! **(web)** |
 | toast.repostRemoved | Removed repost **(web)** |
 | toast.quoteDeleted | Quote deleted **(web)** |
-| toast.likeFailed | Failed to update like. Please try again. **(web)** |
-| toast.repostFailed | Failed to update repost. Please try again. **(web)** |
-| toast.notConfirmed | This post has not confirmed yet. Try again in a moment. **(web)** |
+| toast.likeFailed | Couldn't like this post. Try again. (§5.4.1) |
+| toast.repostFailed | Couldn't repost this post. Try again. (§5.4.1) |
 | toast.bookmarkAdded / removed | Added to bookmarks / Removed from bookmarks **(web)** |
 | toast.linkCopied | Link copied to clipboard **(web)** |
 | menu.follow / unfollow | Follow @{handle} / Unfollow @{handle} **(web)** |
@@ -1639,7 +1675,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | profile.follow / following / followBack | Follow / Following / Follow back **(web)** |
 | profile.unfollowConfirm | Unfollow @{handle}? / Unfollow |
 | toast.following / unfollowed | Following! / Unfollowed **(web)** |
-| toast.followFailed | Failed to update follow status **(web)** |
+| toast.followFailed | Couldn't follow this account. Try again. (§5.4.1) |
 | profile.followSelf | You cannot follow yourself **(web)** |
 | profile.message | Message {name} **(web)** |
 | profile.share | Share profile **(web)** |
@@ -1665,7 +1701,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | edit.nsfw | NSFW Content / Mark your profile as containing adult content **(web)** |
 | edit.saving | Saving… / Saving… ({n} of 2) (dev, while a save writes both the DashPay and the Yappr profile) |
 | toast.profileUpdated | Profile updated! **(web)** |
-| toast.profileFailed | Failed to update profile **(web)** |
+| toast.profileFailed | Couldn't save your profile. Try again. (§5.4.1) |
 | toast.profilePartial | Your DashPay profile was saved, but your Yappr profile wasn't. Try again. |
 | edit.discard | Discard changes? / Discard / Keep editing |
 | avatar.change | Change avatar |
@@ -1747,7 +1783,8 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | dm.thread.empty | No messages yet. Start the conversation! **(web)** |
 | dm.composer | Type a message... **(web)** |
 | dm.send | Send message **(web)** |
-| dm.status | Sending… / Sent / Read / Failed · Tap to retry / Not confirmed · Tap to check / Failed · Tap to edit |
+| dm.status | Sending… / Sent / Read / Not delivered · Tap to retry / Not delivered · Tap to edit / Couldn't confirm · Tap to check (only once the automatic checks ran out) |
+| toast.dmNotSent | Message not sent. It's back in the message box. (a send the engine never took) |
 | dm.copy | Copy |
 | dm.newMessage.desc | Choose a person to start an encrypted conversation. **(web)** |
 | dm.picker.search | Search by username... **(web)** |
@@ -1799,7 +1836,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | toast.unblocked | Unblocked @{handle} |
 | toast.stillBlocked | Unblocked, but a block list you follow still hides them. |
 | block.self | You cannot block yourself **(web)** |
-| toast.blockFailed | Failed to update block status **(web)** |
+| toast.blockFailed | Couldn't block @{handle}. Try again. / Couldn't unblock @{handle}. Try again. (§5.4.1) |
 | toast.unblockFailed | Couldn't unblock @{handle}. Try again. **(a DM v5 conversation's Unblock when the account's block can't be read)** |
 | blocked.title | Blocked accounts |
 | blocked.empty | You haven't blocked anyone |
@@ -1894,9 +1931,8 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | network.testnet | Yappr is running on Dash Platform Testnet. Posts and accounts may be reset. |
 | network.state | Connected / Connecting… / Can't connect right now (booting and restarting both read "Connecting…") |
 | offline.banner | You're offline. Showing saved posts. |
-| offline.toast | You're offline. Nothing was sent. |
+| offline.toast | You're offline. Try again when you're connected. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
-| engine.closedBeforeSent | The app closed before this was sent. Nothing was posted. Try again. (a write an engine restart cut short before it sent anything, with "Retry") |
 | engine.tryAgain | Try again |
 | read.retrying | Retrying… (under a list's G-11 error while NET-03's backoff reads it again, §2.16) |
 | lockdown.title | Lockdown Mode is blocking Yappr |
@@ -1908,9 +1944,10 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | lockdown.writeBlocked | Unavailable in Lockdown Mode |
 | link.unsupported | This link isn't supported in the app / Open in browser |
 | update.required | This version of Yappr is out of date with the network. Update the app to keep posting. |
-| write.reverted | Your {like} didn't go through. Try again. |
 
 ### 5.12 Errors (started from `lib/error-utils.ts`)
+
+Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this text goes to diagnostics.
 
 | Category | String **(web)** |
 | --- | --- |
@@ -1924,8 +1961,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | Too young | What this depends on was only just published. Wait a minute and try again. |
 | Target gone | What this points to no longer exists on Dash Platform, so this action can't be completed. |
 | YAPP short (locked) | You don't have enough YAPP. Switch to paying in credits in Settings. (mobile: replaced by G-5 copy, since 1.0 has no payment setting) |
-| Credits short (new) | Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted. |
-| YAPP short on v2 (new) | You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again. |
+| Credits short, YAPP short | Writes only: §5.4.1 |
 | Generic | Something went wrong / Try again |
 
 ### 5.13 Accessibility labels

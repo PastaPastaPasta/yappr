@@ -136,6 +136,8 @@ export interface TimelineMessage {
   pending: boolean;
   /** Set for a local send (its outbox id is `id`). */
   outbox?: OutboxStatus;
+  /** A local send being checked now (the bubble shows a spinner by its status). */
+  checking?: boolean;
 }
 
 export type TimelineItem =
@@ -150,16 +152,21 @@ export type TimelineItem =
       lastOfRun: boolean;
       /** The status caption under it, if any. */
       status: string | null;
-      /** The status is an error the user can act on (tap to retry / edit / check). */
+      /** The status is one the user can act on (tap to retry / edit / check). */
       statusIsError: boolean;
     };
 
+/**
+ * A local send's status (UX_SPEC §2.23). `unconfirmed` is shown only once
+ * the automatic checks ran out: until then an unknown outcome reads
+ * "Sending…".
+ */
 const OUTBOX_LABEL: Record<OutboxStatus, string> = {
   sending: 'Sending…',
   sent: 'Sent',
-  'failed-retry': 'Failed · Tap to retry',
-  'failed-edit': 'Failed · Tap to edit',
-  unconfirmed: 'Not confirmed · Tap to check',
+  'failed-retry': 'Not delivered · Tap to retry',
+  'failed-edit': 'Not delivered · Tap to edit',
+  unconfirmed: "Couldn't confirm · Tap to check",
 };
 
 /** Two messages more than this far apart start a new run even from the same sender. */
