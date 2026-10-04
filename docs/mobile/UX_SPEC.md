@@ -1042,7 +1042,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ Pronouns  [ he/him          ]   │
 │ Location  [ Lisbon          ]   │
 │ Website   [ https://bob.dev ]   │
-│ Banner image link [ https://… ] │
+│ Banner image link               │
+│ [ Paste an image link       ]   │
 │ NSFW content               [○]  │  switch row
 │ Mark your profile as containing │
 │ adult content                   │

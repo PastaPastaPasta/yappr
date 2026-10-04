@@ -1,5 +1,5 @@
 import type { ProfileDTO, SessionDTO, TargetRef, WriteTicket } from '@engine/api';
-import { notifyManager } from '@tanstack/react-query';
+import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react-native';
 
 import * as WebBrowser from 'expo-web-browser';
@@ -611,7 +611,10 @@ describe('a read that lands while a write is on its way', () => {
 
   beforeAll(() => notifyManager.setScheduler((cb) => cb()));
   beforeEach(() => queryClient.clear());
-  afterAll(() => queryClient.clear());
+  afterAll(() => {
+    queryClient.clear();
+    notifyManager.setScheduler(defaultScheduler);
+  });
 
   it('keeps an unfollow queued behind a pending follow when the reopened profile reads the follow back', async () => {
     queryClient.setQueryData(profileKey, profileReading(false, 10));
@@ -639,6 +642,29 @@ describe('a read that lands while a write is on its way', () => {
 
     // Once it confirms, reads are the chain's again.
     act(() => fakeEngine.emit('write.status', advance(unfollow, { state: 'confirmed' })));
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: true } });
+  });
+
+  it('shows the follow again when a sent unfollow fails, and a later read does not undo that', async () => {
+    queryClient.setQueryData(profileKey, profileReading(true, 11));
+    const unfollow = ticket({ op: 'unfollow', target: { identityId: author } });
+    fakeEngine.method('graph.unfollow').mockResolvedValueOnce(unfollow);
+    await runWrite(followWrite, { authorId: author, follow: false });
+    expect(shown()).toMatchObject({ viewer: { follows: false } });
+
+    act(() => fakeEngine.emit('write.status', advance(unfollow, { state: 'failed', error: null })));
+    expect(shown()).toMatchObject({ viewer: { follows: true } });
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: true }, stats: { followers: 11 } });
+  });
+
+  it('stops standing in for a write once tracking resets (an account switch)', async () => {
+    queryClient.setQueryData(profileKey, profileReading(true, 11));
+    const unfollow = ticket({ op: 'unfollow', target: { identityId: author } });
+    fakeEngine.method('graph.unfollow').mockResolvedValueOnce(unfollow);
+    await runWrite(followWrite, { authorId: author, follow: false });
+    resetWriteTracking();
     await reopen(true, 11);
     expect(shown()).toMatchObject({ viewer: { follows: true } });
   });

@@ -1457,6 +1457,22 @@ describe('Group info (DM-07, DM-08)', () => {
     listen.mockRestore();
   });
 
+  it('grows the add-members picker as the search starts on Android, which reports the keyboard only once it is up', async () => {
+    await onAndroid(async () => {
+      const { listen, keyboard, pickerMinHeight, scrollTo } = await openAddMembers();
+      fireEvent(screen.getByTestId('picker-search'), 'focus');
+      expect(pickerMinHeight()).toBe(700);
+      expect(scrollTo).toHaveBeenLastCalledWith({ y: 540, animated: true });
+      act(() => keyboard('keyboardDidShow'));
+      fireEvent(screen.getByTestId('picker-search'), 'blur');
+      // Still grown while the keyboard goes down under it.
+      expect(pickerMinHeight()).toBe(700);
+      act(() => keyboard('keyboardDidHide'));
+      expect(pickerMinHeight()).toBeUndefined();
+      listen.mockRestore();
+    });
+  });
+
   it('shows an error with Retry when the status read fails', async () => {
     signIn();
     fakeEngine.method('dm.status').mockRejectedValue(Object.assign(new Error('offline'), { code: 'NETWORK' }));

@@ -1,7 +1,7 @@
 import type { AuthorDTO, ProfileDTO, UserSummaryDTO } from '@engine/api';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, ScrollView, TextInput, View, type KeyboardEvent, type LayoutChangeEvent } from 'react-native';
+import { Keyboard, Platform, Pressable, ScrollView, TextInput, View, type KeyboardEvent, type LayoutChangeEvent } from 'react-native';
 import { CheckCircleIcon, MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { queryKeys } from '~/data/keys';
@@ -201,7 +201,8 @@ export function usePickerReveal() {
     ];
     return () => subscriptions.forEach((subscription) => subscription.remove());
   }, []);
-  const grown = searching && keyboardUp;
+  // Android says a keyboard is up only once it is, so the picker grows with the search there.
+  const grown = searching && (keyboardUp || Platform.OS === 'android');
   useEffect(() => {
     // Again once the picker has grown to the view's height.
     if (grown) scrollToSection();
