@@ -1396,23 +1396,29 @@ describe('Group info (DM-07, DM-08)', () => {
     fireEvent(screen.getByTestId('group-info'), 'layout', layout(700));
     fireEvent(screen.getByTestId('group-add-section'), 'layout', layout(120, 540));
     const listen = jest.spyOn(Keyboard, 'addListener');
-    const keyboardShown = () =>
-      listen.mock.calls.filter(([event]) => event === 'keyboardDidShow').forEach(([, listener]) => listener({} as KeyboardEvent));
+    const keyboard = (name: 'keyboardDidShow' | 'keyboardDidHide') =>
+      listen.mock.calls.filter(([event]) => event === name).forEach(([, listener]) => listener({} as KeyboardEvent));
+    const pickerMinHeight = () => StyleSheet.flatten(screen.getByTestId('group-add-picker').props.style).minHeight;
     fireEvent.press(screen.getByTestId('group-add'));
     await act(async () => {});
-    // The picker is at least as tall as the view, so the section can always reach the top.
-    expect(StyleSheet.flatten(screen.getByTestId('group-add-picker').props.style)).toMatchObject({ minHeight: 700 });
+    // No blank space under the picker before searching.
+    expect(pickerMinHeight()).toBeUndefined();
 
     const scrollTo = jest.spyOn(view.instance as ScrollView, 'scrollTo');
     fireEvent(screen.getByTestId('picker-search'), 'focus');
     expect(scrollTo).toHaveBeenLastCalledWith({ y: 540, animated: true });
+    // While searching the picker is at least as tall as the view, so the section can always reach the top.
+    expect(pickerMinHeight()).toBe(700);
     // Again once the keyboard is up (Android lays out for it only then), but not after the field lets go.
     scrollTo.mockClear();
-    act(() => keyboardShown());
+    act(() => keyboard('keyboardDidShow'));
     expect(scrollTo).toHaveBeenCalledTimes(1);
     fireEvent(screen.getByTestId('picker-search'), 'blur');
-    act(() => keyboardShown());
+    act(() => keyboard('keyboardDidShow'));
     expect(scrollTo).toHaveBeenCalledTimes(1);
+    // The keyboard down, the picker takes its own height again.
+    act(() => keyboard('keyboardDidHide'));
+    expect(pickerMinHeight()).toBeUndefined();
     listen.mockRestore();
   });
 

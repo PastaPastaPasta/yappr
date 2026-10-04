@@ -143,30 +143,43 @@ function useRevealOnFocus(reveal: (() => void) | undefined) {
  * For a picker low in a screen's scroll view (Group info › Add members):
  * searching scrolls the picker's section to the top of the view, so its
  * results show between the field and the keyboard instead of under it
- * (NEW-ios-picker-keyboard). The section's picker is at least as tall as the
- * view, so there is always room to scroll that far; on iOS the view also
- * insets its content by the keyboard. Spread `scrollProps` on the scroll
- * view and `sectionProps` on the section that starts with the picker's
- * toggle, give the picker `minHeight`, and pass `reveal` as its
- * `onSearchFocus`.
+ * (NEW-ios-picker-keyboard). While searching (until the keyboard goes down)
+ * the section's picker is at least as tall as the view, so there is always
+ * room to scroll that far, and no blank space under a short picker
+ * otherwise; on iOS the view also insets its content by the keyboard. Spread
+ * `scrollProps` on the scroll view and `sectionProps` on the section that
+ * starts with the picker's toggle, give the picker `minHeight`, and pass
+ * `reveal` as its `onSearchFocus`.
  */
 export function usePickerReveal() {
   const scroll = useRef<ScrollView>(null);
   const sectionY = useRef(0);
-  const [minHeight, setMinHeight] = useState(0);
-  const reveal = useCallback(() => scroll.current?.scrollTo({ y: sectionY.current, animated: true }), []);
+  const [viewHeight, setViewHeight] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const scrollToSection = useCallback(() => scroll.current?.scrollTo({ y: sectionY.current, animated: true }), []);
+  const reveal = useCallback(() => {
+    setSearching(true);
+    scrollToSection();
+  }, [scrollToSection]);
+  useEffect(() => {
+    if (!searching) return undefined;
+    // Again once the picker has grown to the view's height.
+    scrollToSection();
+    const subscription = Keyboard.addListener('keyboardDidHide', () => setSearching(false));
+    return () => subscription.remove();
+  }, [searching, scrollToSection]);
   return {
     scrollProps: {
       ref: scroll,
       automaticallyAdjustKeyboardInsets: true,
-      onLayout: (event: LayoutChangeEvent) => setMinHeight(event.nativeEvent.layout.height),
+      onLayout: (event: LayoutChangeEvent) => setViewHeight(event.nativeEvent.layout.height),
     },
     sectionProps: {
       onLayout: (event: LayoutChangeEvent) => {
         sectionY.current = event.nativeEvent.layout.y;
       },
     },
-    minHeight,
+    minHeight: searching ? viewHeight : undefined,
     reveal,
   };
 }
