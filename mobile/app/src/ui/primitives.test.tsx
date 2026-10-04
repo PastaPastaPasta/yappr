@@ -24,6 +24,7 @@ import { colors } from './tokens';
 import { toast, toastDuration, useToastStore } from './toast';
 import { ToastHost } from './ToastHost';
 import { followLabel, UserRow } from './UserRow';
+import { hostViewAbove } from './testing/native-parent';
 import { WriteStatus } from './WriteStatus';
 
 describe('Button', () => {
@@ -51,17 +52,38 @@ describe('Button', () => {
 describe('Button variants', () => {
   const labelColor = () => StyleSheet.flatten(screen.getByText(/^Follow/).props.style)?.color;
 
-  it('restyles its label when the variant changes on a mounted button (D-L3a-001)', () => {
+  it('restyles its label when the variant changes on a mounted button', () => {
     // Follow → Following → Follow, as the profile header does.
     const { rerender } = render(<Button label="Follow" variant="primary" size="sm" />);
     expect(labelColor()).toBe(colors.white);
-    const first = screen.getByText('Follow');
     rerender(<Button label="Following" variant="outline" size="sm" />);
     expect(labelColor()).toBe(colors.gray900);
     rerender(<Button label="Follow" variant="primary" size="sm" />);
     expect(labelColor()).toBe(colors.white);
-    // A fresh label: nothing of the outline style stays on it.
-    expect(screen.getByText('Follow')).not.toBe(first);
+  });
+
+  it('never drops its border width across variants, which hid the label on Android (D-L3a-001)', () => {
+    // Android resets a dropped border width to NaN, and the pill (overflow: hidden) then clips
+    // everything inside it away: Following → Follow left a blank blue pill.
+    const widths = (className: string) => className.split(/\s+/).filter((c) => /^border(-\d+)?$/.test(c));
+    const variants = ['primary', 'outline', 'secondary', 'ghost', 'destructive', 'link'] as const;
+    const { rerender } = render(<Button label="Follow" variant="primary" size="sm" />);
+    for (const variant of variants) {
+      rerender(<Button label="Follow" variant={variant} size="sm" />);
+      const className = screen.getByRole('button').props.className as string;
+      expect(className).toContain('android:overflow-hidden');
+      expect(widths(className)).toEqual([variant === 'outline' ? 'border' : 'border-0']);
+    }
+  });
+
+  it('keeps the label in one native parent while loading toggles', () => {
+    // A flattenable wrapper whose opacity toggles would move the label between native parents,
+    // which crashes Android when it happens inside a screen being popped.
+    const labelBox = () => hostViewAbove(screen.getByText('Save'));
+    const { rerender } = render(<Button label="Save" loading />);
+    expect(labelBox()?.props.collapsable).toBe(false);
+    rerender(<Button label="Save" />);
+    expect(labelBox()?.props.collapsable).toBe(false);
   });
 
   it('colors the label like its icon and spinner, for every variant', () => {
@@ -149,6 +171,18 @@ describe('TextField', () => {
     );
     expect(screen.getByText('Too long')).toBeTruthy();
     expect(screen.getByText('25 / 30')).toBeTruthy();
+  });
+
+  it('keeps the input in one native parent whether or not it is editable', () => {
+    // The box dims while a form saves. Were it flattenable, the input would move out of it when
+    // the save ends, and on Android that move crashed the app inside a closing modal.
+    const { rerender } = render(<TextField label="Name" value="Jana" editable={false} onChangeText={jest.fn()} />);
+    const box = () => hostViewAbove(screen.getByLabelText('Name'));
+    expect(box()?.props.className).toContain('opacity-50');
+    expect(box()?.props.collapsable).toBe(false);
+    rerender(<TextField label="Name" value="Jana" onChangeText={jest.fn()} />);
+    expect(box()?.props.className).not.toContain('opacity-50');
+    expect(box()?.props.collapsable).toBe(false);
   });
 
   it('hides the counter far from the limit', () => {

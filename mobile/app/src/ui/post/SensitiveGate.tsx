@@ -58,6 +58,9 @@ export function SensitiveGate({
   return (
     <View className={cn('relative', v.frame)}>
       <View
+        // Revealing changes this view's opacity and touch handling; without it the content would
+        // also move to another native parent (mobile/CLAUDE.md, "Native view structure").
+        collapsable={false}
         style={revealed ? undefined : { opacity: 0 }}
         importantForAccessibility={revealed ? 'auto' : 'no-hide-descendants'}
         accessibilityElementsHidden={!revealed}
@@ -70,7 +73,7 @@ export function SensitiveGate({
           testID="sensitive-gate"
           // Swallows taps, so the card under it doesn't open; only Show acts.
           onStartShouldSetResponder={() => true}
-          className="absolute inset-0 flex-row items-center justify-center gap-2 overflow-hidden rounded-xl bg-gray-900 px-3 dark:border dark:border-gray-800 dark:bg-gray-950"
+          className="absolute inset-0 flex-row items-center justify-center gap-2 overflow-hidden rounded-xl border-0 bg-gray-900 px-3 dark:border dark:border-gray-800 dark:bg-gray-950"
         >
           <EyeSlashIcon size={v.icon} color={colors.gray400} />
           <Text

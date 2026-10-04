@@ -331,7 +331,12 @@ export function GroupInfoScreen() {
               testID="group-add"
             />
             {adding && viewerId ? (
-              <View pointerEvents={busy ? 'none' : 'auto'} className={busy ? 'opacity-60' : undefined}>
+              <View
+                // The picker never moves between native parents as busy flips (mobile/CLAUDE.md, "Native view structure").
+                collapsable={false}
+                pointerEvents={busy ? 'none' : 'auto'}
+                className={busy ? 'opacity-60' : undefined}
+              >
                 <UserPicker
                   viewerId={viewerId}
                   excludeIds={new Set(group.members)}

@@ -65,6 +65,10 @@ export function TextField({
     <View className={cn('gap-1.5', className)}>
       {label ? <Text variant="subheadStrong">{label}</Text> : null}
       <View
+        // Always the input's native parent. Otherwise Fabric hoists the input out of this box while
+        // it is opaque and back in while it is dimmed (not editable), and on Android that move
+        // crashes inside a screen that is animating out (mobile/CLAUDE.md, "Native view structure").
+        collapsable={false}
         className={cn(
           'flex-row items-center rounded-lg',
           tw.bg,

@@ -218,7 +218,9 @@ export function NewGroupScreen() {
             </Text>
           ) : null}
         </View>
-        <View pointerEvents={busy ? 'none' : 'auto'} className={busy ? 'opacity-50' : undefined}>
+        {/* Its own native parent while busy and after, so creating the group (which then leaves this
+            screen) never moves the picker (mobile/CLAUDE.md, "Native view structure"). */}
+        <View collapsable={false} pointerEvents={busy ? 'none' : 'auto'} className={busy ? 'opacity-50' : undefined}>
           <UserPicker viewerId={viewerId} multi selectedIds={selected} onPick={toggle} />
         </View>
       </ScrollView>
