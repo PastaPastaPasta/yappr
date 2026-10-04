@@ -462,7 +462,7 @@ export const PostCard = memo(function PostCard({
   if (post.deleted) {
     body = <DeletedLine kind={post.kind} />;
   } else if (post.encrypted) {
-    body = <PrivatePostPlaceholder name={post.author.displayName} onOpenWeb={actions.onOpenPrivate} />;
+    body = <PrivatePostPlaceholder onOpenWeb={actions.onOpenPrivate} />;
   } else {
     let quoteSlot: ReactNode = null;
     if (post.quoted?.viewer?.authorBlocked) {

@@ -8,19 +8,17 @@ import { Text } from '../Text';
 import { useColors } from '../tokens';
 
 export interface PrivatePostPlaceholderProps {
-  /** The author's display name. */
-  name: string;
   onOpenWeb?: () => void;
   /** The tighter version inside a quote embed. */
   compact?: boolean;
 }
 
 /**
- * Stands in for an encrypted private-feed post (UX_SPEC §5.3): private
- * feeds aren't in 1.0, so the post points to yap.pr. Purple is reserved for
- * private content (ADR E3).
+ * Stands in for an encrypted private-feed post (UX_SPEC §5.3): who can read
+ * it, and "Open on yap.pr", where approved followers read it (private feeds
+ * aren't in 1.0). Purple is reserved for private content (ADR E3).
  */
-export function PrivatePostPlaceholder({ name, onOpenWeb, compact = false }: PrivatePostPlaceholderProps) {
+export function PrivatePostPlaceholder({ onOpenWeb, compact = false }: PrivatePostPlaceholderProps) {
   const c = useColors();
   return (
     <View
@@ -38,7 +36,7 @@ export function PrivatePostPlaceholder({ name, onOpenWeb, compact = false }: Pri
       </View>
       {compact ? null : (
         <Text variant="subhead" tone="secondary">
-          Only {name}&apos;s private followers can read this. Private feeds aren&apos;t in the app yet.
+          Only approved followers can see this.
         </Text>
       )}
       {onOpenWeb && !compact ? (

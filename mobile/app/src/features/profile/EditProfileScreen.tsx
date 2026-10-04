@@ -1,6 +1,6 @@
 import type { CapabilitiesDTO, ProfileDTO } from '@engine/api';
 import { router, Stack, useNavigation } from 'expo-router';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -8,7 +8,6 @@ import { useEngineQuery } from '~/data/queries';
 import { useCapabilities, useViewerId } from '~/data/session';
 import { useWrite } from '~/data/writes';
 import { useEngineStatus } from '~/engine/hooks';
-import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { confirmAlert } from '~/ui/Dialog';
@@ -20,7 +19,6 @@ import { SwitchRow } from '~/ui/Switch';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
-import { tw } from '~/ui/tokens';
 
 import { AvatarPicker, type AvatarStyles } from './AvatarPicker';
 import {
@@ -29,7 +27,6 @@ import {
   formFromProfile,
   isEmptyPatch,
   patchOf,
-  savingTitle,
   validateForm,
   type ProfileForm,
 } from './edit-profile-form';
@@ -41,26 +38,6 @@ const FALLBACK_LIMITS: Pick<CapabilitiesDTO, 'profileLimits' | 'dashpayProfile'>
   profileLimits: { displayName: 50, bio: 160 },
   dashpayProfile: false,
 };
-
-function Section({ title, note, children }: { title?: string; note?: string; children: ReactNode }) {
-  return (
-    <View className="gap-4">
-      {title ? (
-        <View className={cn('gap-1 border-b pb-2', tw.border)}>
-          <Text variant="subheadStrong" tone="secondary" accessibilityRole="header" className="uppercase">
-            {title}
-          </Text>
-          {note ? (
-            <Text variant="caption" tone="secondary">
-              {note}
-            </Text>
-          ) : null}
-        </View>
-      ) : null}
-      {children}
-    </View>
-  );
-}
 
 function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId: string }) {
   const navigation = useNavigation();
@@ -127,7 +104,6 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     save.send({ viewerId, patch }).catch(() => undefined);
   };
 
-  const dashpay = limits.dashpayProfile;
   const nameField = (
     <TextField
       label="Name"
@@ -151,7 +127,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
       testID="edit-bio"
     />
   );
-  const yapprFields = (
+  const otherFields = (
     <>
       <TextField
         label="Pronouns"
@@ -211,7 +187,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     <Screen>
       <Stack.Screen
         options={{
-          title: saving ? savingTitle(save.ticket?.progress) : 'Edit profile',
+          title: saving ? 'Saving…' : 'Edit profile',
           // Swipe-down would drop unsaved changes without asking.
           gestureEnabled: !dirty && !saving,
           headerLeft: () => (
@@ -242,22 +218,16 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
               </Text>
             </Pressable>
           </View>
-          <View className="gap-6 px-4 pt-6">
-            {dashpay ? (
-              <>
-                <Section title="DashPay profile" note="This also updates your DashPay profile, which other Dash apps show.">
-                  {nameField}
-                  {bioField}
-                </Section>
-                <Section title="Yappr profile">{yapprFields}</Section>
-              </>
-            ) : (
-              <Section>
-                {nameField}
-                {bioField}
-                {yapprFields}
-              </Section>
-            )}
+          {/* One list, whichever documents the fields live in (#20). */}
+          <View className="gap-4 px-4 pt-6">
+            {nameField}
+            {bioField}
+            {limits.dashpayProfile ? (
+              <Text variant="caption" tone="secondary" className="-mt-2" testID="edit-dashpay-note">
+                Your name and bio also show in other Dash apps, like DashPay.
+              </Text>
+            ) : null}
+            {otherFields}
           </View>
         </ScrollView>
       </KeyboardAvoider>

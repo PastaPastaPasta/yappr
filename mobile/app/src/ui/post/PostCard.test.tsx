@@ -236,9 +236,8 @@ describe('PostCard gates', () => {
     const onOpenPrivate = jest.fn();
     render(<PostCard post={POSTS.private} actions={{ onOpenPrivate }} />);
     expect(screen.getByText('Private post')).toBeTruthy();
-    expect(
-      screen.getByText("Only Carol's private followers can read this. Private feeds aren't in the app yet."),
-    ).toBeTruthy();
+    // Who can see it, with no "not in the app yet" (#23).
+    expect(screen.getByText('Only approved followers can see this.')).toBeTruthy();
     expect(screen.queryByTestId('reply-btn-post-private')).toBeNull();
     fireEvent.press(screen.getByText('Open on yap.pr'));
     expect(onOpenPrivate).toHaveBeenCalled();

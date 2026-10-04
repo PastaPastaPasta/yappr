@@ -45,8 +45,6 @@ import {
 } from './notifications-data';
 import { readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
 
-/** UX_SPEC §5.8 (NOTIF-07): reply and quote sources are 3.5-day windows on the dev contract. */
-export const WINDOWED_FOOTER = 'Older replies and quotes may not appear here.';
 const OFFLINE_MESSAGE = "You're offline";
 const REFRESH_FAILED = "Couldn't refresh notifications. Try again.";
 
@@ -235,12 +233,6 @@ export function NotificationsScreen() {
         <View className="items-center p-6">
           <Button label="Load more" size="sm" onPress={loadMore} testID="notifications-load-more" />
         </View>
-      );
-    } else if (!hasNextPage && config.network === 'devnet') {
-      footer = (
-        <Text variant="subhead" tone="secondary" className="p-6 text-center" testID="notifications-windowed">
-          {WINDOWED_FOOTER}
-        </Text>
       );
     }
   }

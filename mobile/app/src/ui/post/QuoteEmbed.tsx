@@ -68,7 +68,7 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onReve
       {post.deleted ? (
         <DeletedLine kind={post.kind} />
       ) : post.encrypted ? (
-        <PrivatePostPlaceholder name={post.author.displayName} compact />
+        <PrivatePostPlaceholder compact />
       ) : (
         <SensitiveGate active={nsfwGated} revealed={revealed} onReveal={reveal} variant="embedded">
           <View className="mt-1 flex-row gap-3">

@@ -24,12 +24,29 @@ export function isTransient(error: unknown): boolean {
 
 const message = (error: unknown) => (error instanceof Error ? error.message : '');
 
+/** Who is signed in, and who is signing in, as the sign-in errors name them ("@alice"). */
+export interface SignInNames {
+  current?: string | null;
+  adding?: string | null;
+}
+
+/** The engine refused a sign-in because another account is active: "Add account" signs it in beside it. */
+export function isOtherAccountSignedIn(error: unknown): boolean {
+  return errorCode(error) === 'BAD_REQUEST' && /another account is signed in/i.test(message(error));
+}
+
+/** Signing in as an account already signed in, or while another is (the engine's `BAD_REQUEST`s). */
+function signedInText(error: unknown, names: SignInNames): string {
+  if (/already signed in/i.test(message(error))) return copy.key.alreadyActive;
+  return copy.signin.alreadySignedIn(names.current ?? null, names.adding ?? null);
+}
+
 /**
  * The line under the private-key field (PRD AUTH-08, UX_SPEC §5.1 key.*).
  * KEY_NOT_ON_IDENTITY carries lib's own reason (a MASTER key, a disabled
  * key), which is user-facing text already.
  */
-export function keyErrorText(error: unknown): string {
+export function keyErrorText(error: unknown, names: SignInNames = {}): string {
   switch (errorCode(error)) {
     case 'KEY_INVALID':
       return copy.key.invalid;
@@ -40,17 +57,17 @@ export function keyErrorText(error: unknown): string {
     case 'KEY_NOT_ON_IDENTITY':
       return message(error) || copy.key.mismatch;
     case 'BAD_REQUEST':
-      return copy.signin.alreadySignedIn;
+      return signedInText(error, names);
     default:
       return isTransient(error) ? copy.signin.unavailable : message(error) || copy.signin.unavailable;
   }
 }
 
 /** Why a wallet sign-in failed (PRD AUTH-07), for the "Sign-in failed" state. */
-export function walletErrorText(error: unknown, network: string): string {
+export function walletErrorText(error: unknown, network: string, names: SignInNames = {}): string {
   const code = errorCode(error);
   const text = message(error);
-  if (code === 'BAD_REQUEST' && /signed in/i.test(text)) return copy.signin.alreadySignedIn;
+  if (code === 'BAD_REQUEST' && /signed in/i.test(text)) return signedInText(error, names);
   if (code === 'KEY_DISABLED') return copy.signin.walletKeyDisabled;
   if (/different network|wrong network|network mismatch/i.test(text)) return copy.signin.wrongNetwork(network);
   if (code === 'IDENTITY_NOT_FOUND' || /identity.*not found|no identity/i.test(text)) return copy.signin.noIdentity(network);

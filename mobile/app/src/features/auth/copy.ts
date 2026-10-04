@@ -53,7 +53,12 @@ export const copy = {
       `This wallet is on a different network. Switch your wallet to ${network} and try again.`,
     noIdentity: (network: string) => `No identity was found for this wallet on ${network}.`,
     unavailable: 'Dash Platform is temporarily unavailable. Please try again in a few moments.',
-    alreadySignedIn: 'Another account is signed in. Add this account from Settings → Accounts.',
+    /** Another account is active (engine `BAD_REQUEST`): sign this one in beside it, with "Add account" (#23). */
+    alreadySignedIn: (current: string | null, adding: string | null) =>
+      `${current ? `You're signed in as ${current}.` : 'Another account is signed in.'} ${
+        adding ? `Add ${adding} as another account?` : 'Add this account too?'
+      }`,
+    addAccount: 'Add account',
     /** AUTH-14: the auth key the wallet's login key derives is disabled on the identity (engine `KEY_DISABLED`). */
     walletKeyDisabled:
       "This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key.",
