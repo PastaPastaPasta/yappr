@@ -1,5 +1,5 @@
 import { dehydrate, InfiniteQueryObserver, onlineManager, QueryClient, QueryObserver, type InfiniteData } from '@tanstack/react-query';
-import type { PersistedClient } from '@tanstack/react-query-persist-client';
+import { persistQueryClientSubscribe, type PersistedClient, type Persister } from '@tanstack/react-query-persist-client';
 
 import { getLogs } from '~/engine/logs';
 
@@ -10,6 +10,7 @@ import {
   forDisk,
   persistedCacheBytes,
   persistedQuery,
+  persistOnChange,
   persistOptions,
   queryClient,
   refetchFailedReads,
@@ -80,6 +81,60 @@ describe('query persistence', () => {
   it('busts the cache per app version, engine build and network', () => {
     expect(cacheBuster).toBe('1.0.0:no-engine:devnet');
     expect(persistOptions.buster).toBe(cacheBuster);
+  });
+});
+
+describe('persistOnChange (D-L3a-011)', () => {
+  /** The persist client over `client`, saving through `persistOnChange` into a counting persister. */
+  function persisting(client: QueryClient) {
+    const inner = { persistClient: jest.fn(), restoreClient: jest.fn(), removeClient: jest.fn() } satisfies Persister;
+    const gated = persistOnChange(inner);
+    const stop = persistQueryClientSubscribe({
+      queryClient: client,
+      persister: gated,
+      buster: 'b',
+      dehydrateOptions: persistOptions.dehydrateOptions,
+    });
+    return { inner, gated, stop };
+  }
+
+  it("saves when a persisted query changes, not for every other query's events", async () => {
+    const client = new QueryClient();
+    const { inner, gated, stop } = persisting(client);
+    await client.prefetchQuery({ queryKey: ['feed'], queryFn: () => ({ items: [1] }), ...persistedQuery });
+    const saves = inner.persistClient.mock.calls.length;
+    expect(saves).toBeGreaterThan(0);
+
+    // A feed's cards read their polls, previews and marks: dozens of events, nothing on disk changes.
+    for (let i = 0; i < 50; i += 1) {
+      await client.prefetchQuery({ queryKey: ['poll', i], queryFn: () => ({ votes: i }) });
+    }
+    client.setQueryData(['poll', 0], { votes: 100 });
+    expect(inner.persistClient).toHaveBeenCalledTimes(saves);
+
+    // The feed itself: a new value, a refresh with the same value (newer age), an invalidation.
+    client.setQueryData(['feed'], { items: [2, 1] });
+    expect(inner.persistClient).toHaveBeenCalledTimes(saves + 1);
+    await client.refetchQueries({ queryKey: ['feed'] });
+    expect(inner.persistClient).toHaveBeenCalledTimes(saves + 2);
+    await client.invalidateQueries({ queryKey: ['feed'] }, { cancelRefetch: false });
+    expect(inner.persistClient.mock.calls.length).toBeGreaterThan(saves + 2);
+    const before = inner.persistClient.mock.calls.length;
+
+    // Same data, written through setState (the budget's trim keeps its age): a new value all the same.
+    const query = client.getQueryCache().find({ queryKey: ['feed'] })!;
+    query.setState({ data: { items: [2] } });
+    client.setQueryData(['poll', 1], { votes: 7 });
+    expect(inner.persistClient).toHaveBeenCalledTimes(before + 1);
+    // The last save's state is what gets written: the newest feed.
+    expect(inner.persistClient.mock.lastCall?.[0].clientState.queries[0].state.data).toEqual({ items: [2] });
+
+    // After "Clear cache" the next event writes again, even with nothing changed.
+    await gated.removeClient();
+    client.setQueryData(['poll', 2], { votes: 1 });
+    expect(inner.persistClient).toHaveBeenCalledTimes(before + 2);
+    stop();
+    client.clear();
   });
 });
 

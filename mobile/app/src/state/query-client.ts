@@ -1,7 +1,7 @@
 import { parse, stringify } from '@engine/protocol/codec';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import { hashKey, QueryCache, QueryClient, type Query, type QueryKey } from '@tanstack/react-query';
-import type { PersistedClient, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
+import type { PersistedClient, Persister, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
 
 import { config } from '~/config';
 import { ENGINE_BUNDLE_HASH } from '~/engine/bundle-hash';
@@ -124,7 +124,8 @@ function firstPageOnly(data: unknown): unknown {
  * What goes to disk (PRD FEED-11): each list's first page, at most
  * {@link PERSISTED_LIST_MAX} items, and a query whose last refetch failed as
  * the data it still shows. The persister re-serializes the whole cache on
- * every cache event, so keeping it this small is what keeps that cheap.
+ * every change to a persisted query ({@link persistOnChange}), so keeping it
+ * this small is what keeps that cheap.
  */
 export function forDisk(client: PersistedClient): PersistedClient {
   const queries = client.clientState.queries.map((query) => {
@@ -145,7 +146,7 @@ const PERSIST_KEY = 'yappr-query-cache';
 let cacheGeneration = 0;
 let measured: { generation: number; bytes: number } | null = null;
 
-const persister = createAsyncStoragePersister({
+const storagePersister = createAsyncStoragePersister({
   key: PERSIST_KEY,
   storage: {
     getItem: syncStorage.getItem,
@@ -162,6 +163,64 @@ const persister = createAsyncStoragePersister({
   serialize: (client) => stringify(forDisk(client)),
   deserialize: (cache) => parse(cache) as PersistedClient,
 });
+
+/** Ids for data values, so a signature tells a replaced value from the same one without holding on to it. */
+const dataIds = new WeakMap<object, number>();
+let lastDataId = 0;
+
+function dataId(data: unknown): number | string {
+  if (typeof data !== 'object' || data === null) return typeof data;
+  let id = dataIds.get(data);
+  if (id === undefined) {
+    lastDataId += 1;
+    id = lastDataId;
+    dataIds.set(data, id);
+  }
+  return id;
+}
+
+/**
+ * What the disk copy of `client` depends on: each persisted query's hash,
+ * data (by identity: TanStack replaces it on every change), age, status and
+ * invalidation, and the paused mutations. Its timestamp is left out.
+ */
+export function diskSignature(client: PersistedClient): string {
+  const { queries, mutations } = client.clientState;
+  const parts = queries.map(
+    ({ queryHash, state }) =>
+      `${queryHash}\u0000${dataId(state.data)}:${state.dataUpdatedAt}:${state.status}:${state.isInvalidated ? 1 : 0}`,
+  );
+  for (const { mutationKey, state } of mutations) parts.push(`m:${String(mutationKey)}:${state.submittedAt}:${state.status}`);
+  return `${client.buster}\u0001${parts.join('\u0001')}`;
+}
+
+/**
+ * `persister` writing only when the disk copy would change (D-L3a-011). The
+ * persist client dehydrates and saves on every cache event, of any query,
+ * and the save (throttled to once a second) deep-copies every persisted
+ * query through the codec and re-serializes it whole: megabytes of garbage a
+ * second while a feed scrolls, though most events are a card's own reads (a
+ * poll, a link preview, a repost's marks) that are never persisted. Now an
+ * event that leaves every persisted query as it was costs a short signature.
+ */
+export function persistOnChange(persister: Persister): Persister {
+  let last: string | null = null;
+  return {
+    persistClient: (client) => {
+      const signature = diskSignature(client);
+      if (signature === last) return undefined;
+      last = signature;
+      return persister.persistClient(client);
+    },
+    restoreClient: () => persister.restoreClient(),
+    removeClient: () => {
+      last = null;
+      return persister.removeClient();
+    },
+  };
+}
+
+const persister = persistOnChange(storagePersister);
 
 /**
  * Opted-in queries with data. A failed refetch or next page keeps the data
