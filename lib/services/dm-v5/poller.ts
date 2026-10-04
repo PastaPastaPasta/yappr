@@ -268,6 +268,8 @@ function onContent(ctx: DmContext, conv: Conv, held: HeldMessage): void {
     // My own leave, read from the chain (another device, or this one after a reinstall), while the
     // owner has not removed me yet: I left here too, so the group is no longer mine to write to (§6.4).
     ctx.cache.noteLeft(conv.key)
+    // And filed with the deleted conversations, as leaving files it, even if that device's save never landed.
+    ctx.store.touch(conv.entry, { hiddenAt: held.createdAt })
   }
 }
 

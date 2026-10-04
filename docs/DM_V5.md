@@ -677,9 +677,17 @@ against about 33 for one feed load. No credits.
   owner's devices. The member's clients stop sending to the group at once:
   the leaving device marks it left in its local cache, and any other device
   (or the same one after a reinstall) marks it left when it reads the
-  member's own `0x02` on the current base from the chain. A grant on a later
-  base (the owner adding them back) clears the mark; an old-base leave never
-  sets it.
+  member's own `0x02` on the current base from the chain, and files it with
+  the deleted conversations (its hidden position moves up to the leave), as
+  leaving does, in case the leaving device's save never landed. A grant on a
+  later base (the owner adding them back) clears the mark; an old-base leave
+  never sets it. A group the member left and the owner has since removed them
+  from is no longer listed on any of the member's devices (the leaving one
+  already dropped it). Known gap: if the owner makes a new base for another
+  reason (removing someone else) after the leave but before their client has
+  read it, the leave is on an old base for everyone: the owner never removes
+  the member, and the member's other devices treat the group as active (only
+  the leaving device knows). The member can leave again from there.
 - **Owner leaves:** the group ends (tombstone roster, members kept). Nobody
   can send any more, and ended groups are not polled in the background, but
   opening the thread still discovers and backfills its history.

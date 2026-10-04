@@ -191,15 +191,7 @@ export function ConversationScreen() {
   );
 
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
-  const stick = useStickToNewest(listRef, timeline.length, timeline.at(-1)?.id);
-  const { pin } = stick;
-  const scrollToNewest = useCallback(
-    (animated = true) => {
-      pin();
-      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
-    },
-    [pin],
-  );
+  const { scrollToNewest, scrollProps } = useStickToNewest(listRef, timeline.length, timeline.at(-1)?.id);
   // The newest message stays in view when the keyboard opens.
   useEffect(() => {
     const sub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => scrollToNewest());
@@ -363,7 +355,7 @@ export function ConversationScreen() {
             ListFooterComponent={<View className="h-2" />}
             keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
-            {...stick.scrollProps}
+            {...scrollProps}
             testID="dm-messages"
           />
         )}

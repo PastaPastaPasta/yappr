@@ -414,6 +414,7 @@ describe('Conversation (DM-03, DM-04)', () => {
   it("follows the user's own scrolls, to keep the newest in view while they read there (QA dm-thread-stale-after-cold-launch)", async () => {
     await openConversation();
     const list = screen.getByTestId('dm-messages');
+    expect(list.props.onScrollBeginDrag).toEqual(expect.any(Function));
     expect(list.props.onScrollEndDrag).toEqual(expect.any(Function));
     expect(list.props.onMomentumScrollEnd).toEqual(expect.any(Function));
   });
