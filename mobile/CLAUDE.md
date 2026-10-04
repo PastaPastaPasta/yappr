@@ -222,8 +222,8 @@ same `APP_VARIANT`, or the app refuses to start (`src/config.ts`).
 - **Engine changes without a native rebuild (dev):** rebuild the engine, run
   `APP_VARIANT=testnet npm run engine:serve` (serves `dist/<variant>` on
   127.0.0.1:8092; `adb reverse tcp:8092 tcp:8092` on Android), start Metro with
-  `YAPPR_ENGINE_DEV_URL=http://127.0.0.1:8092`, then "Restart engine" in
-  diagnostics.
+  `YAPPR_ENGINE_DEV_URL=http://127.0.0.1:8092`, then "Reconnect" in
+  Troubleshooting (About's last row, `/settings/diagnostics`).
 
 **Native modules in the dev client: adding one requires a lead-approved
 rebuild.** Screen PRs share one dev-client build, so they use only these:

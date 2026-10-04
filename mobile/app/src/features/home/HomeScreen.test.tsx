@@ -5,6 +5,7 @@ import { Stack } from 'expo-router';
 import { act, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
 import { Alert, RefreshControl, ScrollView } from 'react-native';
 
+import { config } from '~/config';
 import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
@@ -144,6 +145,21 @@ describe('Home', () => {
     expect(screen.getByTestId('network-chip')).toBeTruthy();
     expect(screen.getByText("You've reached the end.")).toBeTruthy();
     expect(screen.getByTestId('compose-fab')).toBeTruthy();
+    // Not on devnet: the older posts are testnet's (agent-isms #17).
+    expect(screen.queryByTestId('legacy-link')).toBeNull();
+  });
+
+  it('links the older posts at the end of a testnet feed only (agent-isms #17)', async () => {
+    const testnet = jest.replaceProperty(config, 'network', 'testnet');
+    try {
+      home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+      await renderHome();
+
+      expect(screen.getByTestId('legacy-link')).toHaveTextContent('Looking for older posts? Open Yappr classic');
+      expect(within(screen.getByTestId('feed-end')).getByTestId('legacy-link')).toBeTruthy();
+    } finally {
+      testnet.restore();
+    }
   });
 
   it('opens the network sheet from the header chip, not an alert (NET-07)', async () => {
@@ -153,8 +169,8 @@ describe('Home', () => {
 
     fireEvent.press(screen.getByTestId('network-chip'));
     expect(alert).not.toHaveBeenCalled();
-    expect(screen.getByTestId('network-sheet-engine')).toBeTruthy();
-    expect(screen.getByTestId('network-sheet-diagnostics')).toBeTruthy();
+    expect(screen.getByTestId('network-sheet-status')).toHaveTextContent('Connected');
+    expect(screen.queryByTestId('network-sheet-diagnostics')).toBeNull();
   });
 
   it('asks a signed-out reader to sign in for Following (AUTH-02)', async () => {
@@ -166,6 +182,9 @@ describe('Home', () => {
 
     expect(screen.getByTestId('signed-out-following')).toBeTruthy();
     expect(screen.getByText('See posts from people you follow')).toBeTruthy();
+    // "Sign in", as everywhere else in the app (agent-isms #26).
+    expect(screen.getByText('Sign in to see posts from people you follow.')).toBeTruthy();
+    expect(screen.queryByText(/Log in/)).toBeNull();
     expect(screen.getByText('Sign in')).toBeTruthy();
     expect(useHomePrefsStore.getState().accounts['signed-out']?.tab).toBe('following');
     expect(home()).not.toHaveBeenCalledWith(expect.objectContaining({ tab: 'following' }));
@@ -218,8 +237,20 @@ describe('Home', () => {
 
     expect(screen.getByText('No posts yet')).toBeTruthy();
     expect(screen.getByText('Be the first to share something!')).toBeTruthy();
-    // An empty feed still points to the older posts (web's empty state does too).
-    expect(screen.getByTestId('legacy-link')).toBeTruthy();
+    expect(screen.queryByTestId('legacy-link')).toBeNull();
+  });
+
+  it('never links the older posts from an empty state, testnet included', async () => {
+    const testnet = jest.replaceProperty(config, 'network', 'testnet');
+    try {
+      home().mockResolvedValue(page([]));
+      await renderHome();
+
+      expect(screen.getByText('No posts yet')).toBeTruthy();
+      expect(screen.queryByTestId('legacy-link')).toBeNull();
+    } finally {
+      testnet.restore();
+    }
   });
 
   it('shows the error state with nothing cached, and retries (G-11)', async () => {

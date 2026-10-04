@@ -28,8 +28,19 @@ export const appVersion = Application.nativeBuildVersion
   ? `${config.appVersion} (${Application.nativeBuildVersion})`
   : config.appVersion;
 
-/** "Yappr 1.0.0 (123) · devnet" (PRD SET-01). */
-export const versionLine = `Yappr ${appVersion} · ${config.network}`;
+/** "Yappr 1.0.0 (123)" (PRD SET-01): the Settings footer. The chip above it names the network. */
+export const versionLine = `Yappr ${appVersion}`;
+
+/**
+ * What long-pressing About → Version copies (PRD SET-06):
+ * "Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet". A part the build
+ * doesn't know is left out.
+ */
+export function buildDetails(evoSdkVersion: string | undefined): string {
+  return [versionLine, config.commit?.slice(0, 8), evoSdkVersion ? `evo-sdk ${evoSdkVersion}` : null, config.network]
+    .filter(Boolean)
+    .join(' · ');
+}
 
 /** Opens a page in the in-app browser (PRD SET-07). */
 export function openInApp(url: string): void {

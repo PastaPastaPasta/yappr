@@ -209,11 +209,14 @@ describe('badges and chips', () => {
     expect(screen.toJSON()).toBeNull();
   });
 
-  it('names the network and engine state, and hides on mainnet', () => {
+  it('names the network and the connection state in plain words, and hides on mainnet', () => {
     const { rerender } = render(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);
-    expect(
-      screen.getByRole('button', { name: 'Devnet. Data may be reset. Engine connecting.' }),
-    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Devnet. Data may be reset. Connecting.' })).toBeTruthy();
+    rerender(<NetworkChip network="testnet" state="ready" onPress={jest.fn()} />);
+    expect(screen.getByRole('button', { name: 'Testnet. Data may be reset. Connected.' })).toBeTruthy();
+    rerender(<NetworkChip network="testnet" state="unavailable" onPress={jest.fn()} />);
+    expect(screen.getByRole('button', { name: "Testnet. Data may be reset. Can't connect." })).toBeTruthy();
+    rerender(<NetworkChip network="devnet" state="booting" onPress={jest.fn()} />);
     expect(screen.getByTestId('network-dot-booting')).toBeTruthy();
     rerender(<NetworkChip network="mainnet" state="ready" />);
     expect(screen.queryByTestId('network-chip')).toBeNull();

@@ -296,7 +296,7 @@ export class EngineSupervisor<Load = unknown> {
     this.update({ state: 'idle' });
   }
 
-  /** "Restart engine" / "Try again": a fresh epoch, with the failure counter reset. */
+  /** Troubleshooting's "Reconnect" / "Try again": a fresh epoch, with the failure counter reset. */
   restart(reason = 'Restart requested'): void {
     this.log('info', `${reason}; restarting the engine`);
     this.crashes = [];

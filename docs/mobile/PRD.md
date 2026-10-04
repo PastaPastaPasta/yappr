@@ -113,7 +113,7 @@ In story **Gating** lines: `all` = every build; `v2` = testnet build; `dev` = de
 
 - **Situation.** Runs Maestro flows and agent QA on simulators and emulators against sakura pool identities. Has no human wallet.
 - **Wants.** Deterministic sign-in, visible engine state, a way to export diagnostics, and stable accessibility identifiers.
-- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Engine diagnostics (SET-08); give every interactive element a stable `testID` (A11Y-08).
+- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Troubleshooting (diagnostics, SET-08); give every interactive element a stable `testID` (A11Y-08).
 
 ## 5. Success metrics
 
@@ -126,8 +126,8 @@ There is no analytics or crash SDK. Every metric is measured from the stores, CI
 | M3 | P0 story pass rate | 100% of P0 stories pass on iOS and Android, light and dark, with screenshot evidence | Agentic QA story matrix; Maestro |
 | M4 | ADR E8 flows | Signed-out browse, key sign-in, key exchange, post, like, reply, follow, DM round trip, block and report all green on iOS and Android on every release candidate. Read flows run on both variants; write flows run on the devnet build only, with sakura pool identities (ADR E6). Until sakura has a seated moderation team or an interim owner, the report flow asserts the "elects its moderation team" refusal path. | Maestro on CI (smoke on every PR, write flows nightly) |
 | M5 | Write reliability | ≥ 99% of engine contract-test writes become visible within 2 minutes on sakura; zero duplicate documents from any retry path | Engine contract tests (ADR E8), run serially with retries |
-| M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Engine diagnostics (SET-08) |
-| M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Engine diagnostics "boot time" field |
+| M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Troubleshooting (SET-08) |
+| M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Troubleshooting (SET-08) "boot" field |
 | M8 | Scroll | ≥ 58 fps p95 on Home; no frame over 50 ms | Perf monitor on the mid-tier device, per QA_RELEASE budgets |
 | M9 | Sign-in success | ≥ 90% of beta testers who try wallet sign-in succeed on the first attempt | One question in the beta feedback form; support reports |
 | M10 | Beta satisfaction | Median ≥ 4 of 5 on "How native does Yappr feel?" and "Did you trust that your posts went through?" | Beta feedback form (GitHub Discussions + TestFlight feedback) |
@@ -175,7 +175,7 @@ Every story inherits these rules. A story repeats one only to add something spec
 | **G-8 Signed out** | Every write control | Write controls stay visible. A tap opens the sign-in sheet; after sign-in the user returns to the same screen and position and the action is not performed (PD-7), except compose, which reopens with its text. |
 | **G-9 Text** | Every user-content text | Text renders with `whitespace-pre-wrap` semantics (line breaks kept), long unbroken strings wrap, and each paragraph takes its natural direction (Arabic and Hebrew right-aligned). Emoji, ZWJ sequences and combining marks render intact and are never cut mid-grapheme by truncation. Links, `@mentions`, `#hashtags` and `$cashtags` are tappable. The Markdown subset web renders (`**bold**`, `*italic*`, `` `code` ``) renders the same. |
 | **G-10 Gating** | Every gated feature | A feature whose capability flag is off is absent from the UI. |
-| **G-11 Read errors** | Every list and detail | A failed read shows an inline error state with the categorized message and "Try again". A failed page in an infinite list shows a "Load More" footer instead. "Dash Platform is temporarily unavailable. Please try again in a few moments." is used for DAPI unavailability. |
+| **G-11 Read errors** | Every list and detail | A failed read shows an inline error state with the categorized message and "Try again". A failed page in an infinite list shows a "Load more" footer instead. "Dash Platform is temporarily unavailable. Please try again in a few moments." is used for DAPI unavailability. |
 | **G-12 Theme and type** | Every screen | Correct in light and dark mode, and at every text size from the smallest to AX5 (iOS) / 200% (Android), with no clipped or overlapping text. |
 | **G-13 Formatting** | Every time and count | Times use `formatTimeCompact` (`30s`, `2m`, `3h`, `4d`, then `Mar 4`, with the year when not the current one). Counts use `formatNumber` (`1.2K`, `3.4M`); a zero count is blank. |
 | **G-14 Content gates** | Every post surface | The NSFW gate (SAFE-06) and the media gate (SAFE-07) apply on every surface that shows a post: feeds, threads, profiles, search, hashtags, bookmarks, quotes and notifications. |
@@ -199,10 +199,10 @@ As a first-time user, I want a short welcome that tells me what Yappr is, so tha
 
 #### AUTH-02 · Browse signed out · P0 · all
 As a lurker, I want to read Yappr without an account, so that I can decide whether it is worth joining.
-- Home shows For You. The Following tab shows "See posts from people you follow / Log in to view your personalized following feed and see updates from accounts you care about." with a "Sign in" button.
+- Home shows For You. The Following tab shows "See posts from people you follow / Sign in to see posts from people you follow." with a "Sign in" button.
 - Explore, search, hashtag pages, profiles, followers and following lists, post details and engagements all work signed out.
 - The Notifications and Messages tabs show a signed-out placeholder with a "Sign in" button and no data.
-- The Profile tab shows a signed-out screen with "Sign in" and links to Settings sections that need no account: Appearance, Privacy & Safety (content settings only), About, and Engine diagnostics.
+- The Profile tab shows a signed-out screen with "Sign in" and links to Settings sections that need no account: Appearance, Privacy & Safety (content settings only) and About. Troubleshooting (SET-08) stays reachable signed out, from the bottom of About.
 - All media is gated while signed out unless the media-gate setting is off (SAFE-07), as on web.
 - Every write control follows G-8.
 
@@ -291,7 +291,8 @@ As the team, we want App Connect implemented behind `FEATURE_APP_CONNECT`, so th
 #### AUTH-14 · Session expired or key revoked · P1 · all
 As any user, I want to be told when my stored key no longer works, so that I can sign in again.
 - When a write fails with an expired session or a disabled or unknown key, the toast reads "Your session has expired. Please sign in again." and the account is marked "Sign in again" in the account list.
-- Reads keep working for that account. Write controls open the sign-in flow for the same identity.
+- Reads keep working for that account. Write controls open the "Sign in again" sheet ("Sign in again to keep posting as @x. You can keep browsing in the meantime."), whose button opens the sign-in flow for the same identity ("Sign in again as @x with its wallet or key."). The engine restarts before and after that sign-in under one progress label, "Signing in as @x…".
+- A wallet whose Yappr key was disabled on the identity can't sign in: "This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key." (A disabled key can't be re-enabled.)
 
 #### AUTH-15 · No profile, no username · P1 · all
 As Dana, who has no username and no Yappr profile, I want to use the app anyway, so that I'm not forced through setup.
@@ -308,7 +309,7 @@ As any user, I want a feed of everyone's recent posts, so that I can see what's 
 - For You lists posts newest first: on v2 the global timeline in the feed language (FEED-10), on dev one global timeline. Reposts and quotes appear as on web (FEED-08).
 - First load with no cache shows 4 post skeletons and "Connecting to Dash Platform…" under them while the engine boots.
 - Empty: "No posts yet / Be the first to share something!".
-- End of list: "You've reached the end." followed by "Looking for older posts? Browse the previous version of Yappr ↗" (opens the legacy link web shows, in the in-app browser).
+- End of list: "You've reached the end." On testnet only, it is followed by "Looking for older posts? Open Yappr classic ↗" (opens the legacy link web shows, in the in-app browser). Empty states never show that link, and mainnet and devnet builds never show it.
 - Private, NSFW-hidden and blocked content follows G-6, G-14, G-15.
 
 #### FEED-02 · Following · P0 · all
@@ -347,8 +348,8 @@ As a reader, I want to pull down to refresh, so that I get the latest.
 #### FEED-07 · Infinite scroll · P0 · all
 As a reader, I want the feed to keep loading as I scroll, so that I never hit a wall.
 - The next page is requested when the user is within 1.5 screen heights of the end.
-- While loading, a footer spinner shows. A failed page shows a "Load More" pill (`yappr-500`) that retries.
-- No more than 3 pages load automatically without a new user scroll; after that the "Load More" pill shows, as web.
+- While loading, a footer spinner shows. A failed page shows a "Load more" pill (`yappr-500`) that retries.
+- No more than 3 pages load automatically without a new user scroll; after that the "Load more" pill shows, as web.
 - Scrolling 500 posts keeps memory flat (the QA_RELEASE memory budget: no growth over a 500-post scroll).
 
 #### FEED-08 · Reposts and quotes in feeds · P0 · all
@@ -760,7 +761,7 @@ As a user, I want to see who interacted with me, so that I can respond.
 - The Notifications tab lists items newest first: an icon for the type (follow, mention, like, repost, quote, reply), the actor's avatar and name, the phrase ("started following you", "mentioned you in a post", "liked your post", "reposted your post", "quoted your post", "replied to your post"), the time, and for post types a two-line snippet of the post ("NSFW content" when the post is flagged and NSFW mode is not "Always show").
 - Unread items have a tinted background and a dot. Opening an item marks it read and goes to the post (likes, reposts: the liked post; replies, quotes, mentions: the new post) or the profile (follows).
 - Loading: "Loading notifications…". Empty per filter: "When someone interacts with you, you'll see it here" (All), "When someone likes your post, you'll see it here", and so on for each filter.
-- Actor names without a profile follow the fallback chain; "Unknown User" only when nothing resolves.
+- Actor names without a profile follow the fallback chain; "Unknown user" only when nothing resolves.
 
 #### NOTIF-02 · Filters · P0 · all
 As a user, I want to filter notifications, so that I can find replies quickly.
@@ -955,13 +956,14 @@ As a reader, I want to know if an image was swapped after posting, so that I'm n
 
 #### SET-01 · Settings root · P0 · all
 As a user, I want my settings in one place, so that I can find each option.
-- Sections, in order: "Account", "Notifications", "Privacy & Safety", "Messages" (v5 only, DM-12), "Appearance", "About", "Engine diagnostics".
-- The network chip and the app version ("Yappr 1.0.0 (123) · devnet") are shown at the bottom.
-- Signed out: Appearance, Privacy & Safety (content settings only), About and Engine diagnostics.
+- Sections, in order: "Account", "Notifications", "Privacy & Safety", "Messages" (v5 only, DM-12), "Appearance", "About".
+- The account row shows the avatar, the display name and the @handle; the balance is on Account (SET-02).
+- The network chip and the app version ("Yappr 1.0.0 (123)") are shown at the bottom; the chip names the network.
+- Signed out: Appearance, Privacy & Safety (content settings only) and About.
 
 #### SET-02 · Account · P0 · all
 As a user, I want to see my identity and balance, so that I know what I'm using.
-- "Identity ID" (monospace, copy button, toast "Identity ID copied"), "Usernames" (the DPNS names, "Register a username on yap.pr ↗"), "Balance" (credits shown in DASH with up to 8 decimals, plus the raw credits in smaller text; a refresh button), "YAPP" (read-only balance, only where the contract has a token, PD-11), "Account created" (date).
+- In order: "Usernames" (the DPNS names, then "Register a username on yap.pr ↗", or "Register another username on yap.pr ↗" when there is one), "Balance" (DASH cut to 4 decimals, "< 0.0001 DASH" below that, with the raw credits in a muted caption; read again when the screen opens and on pull to refresh), "YAPP" (read-only balance, only where the contract has a token, PD-11), "Account created" (date), and last "Copy account ID" (the id middle-truncated, toast "Account ID copied").
 - "Accounts" (AUTH-10), "App lock" (AUTH-12), "Sign out" (AUTH-11).
 
 #### SET-03 · Notifications · P0 · all
@@ -983,16 +985,19 @@ As a user, I want light, dark or system appearance, so that the app is comfortab
 
 #### SET-06 · About · P0 · all
 As a user, I want to know which version I run and where to get help, so that I can report problems.
-- "Yappr / Decentralized social media on Dash Platform", version and build, commit, network, links: "Terms of Use", "Privacy Policy", "Community rules", "Support" (mail and web), "Open-source licenses" (a native list generated at build time), "Yappr on the web" (yap.pr).
+- "Yappr / Decentralized social media on Dash Platform", "Version" with the version and build. A long press on Version copies the build details ("Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet", toast "Version info copied"); the commit, engine and network are not rows.
+- Links: "Terms of Use", "Privacy Policy", "Community rules", "Support" (mail), "Send diagnostics" (a mail to the support address with the redacted SET-08 text, sized for a mail link: newest 10 errors, last 40 log lines, at most 5,000 characters; with no mail app, the native share sheet with the same text, led by the support address), "Open-source licenses" (a native list generated at build time), "Yappr on the web" (yap.pr).
+- A muted last row, "Troubleshooting", opens SET-08, signed in or out.
 
 #### SET-07 · Terms and privacy · P0 · all
 As a user, I want to read the terms and privacy policy, so that I know what I agreed to.
-- Terms, Privacy and Community rules open in the in-app browser at yap.pr. The EULA summary (AUTH-09) is bundled in the app and readable offline from About → "Community rules summary".
+- Terms and Privacy open in the in-app browser at yap.pr. "Community rules" opens one bundled sheet, readable offline: the EULA summary (AUTH-09) first, then the full rules.
 
-#### SET-08 · Engine diagnostics · P0 · all
+#### SET-08 · Troubleshooting (diagnostics) · P0 · all
 As Quinn (and any user reporting a bug), I want to see the engine's state, so that problems can be diagnosed.
+- Reached from About's last row, "Troubleshooting", in every build (release and beta included) and signed out. Nothing else links it: not the Settings root, the signed-out Profile tab or the network sheet.
 - Fields: engine state (Booting / Ready / Restarting / Unavailable), boot time (ms) and WASM compile time, restarts this session, evo-sdk version, engine bundle hash, network, DAPI endpoints with last success, topology and capability flags, contract ids (social, DM, profile, Pollr) with copy, WebAssembly available, cache size, last 50 engine errors (time, operation, message).
-- Actions: "Copy diagnostics" and "Share diagnostics" (a text bundle with no keys, no identity secrets, no message contents), "Restart engine" (confirmed), "Clear cache" (confirmed; keeps accounts, keys and drafts).
+- Actions: "Copy diagnostics" first, at the top (toast "Diagnostics copied"), and "Share diagnostics" (a text bundle with no keys, no identity secrets, no message contents), "Reconnect" (confirmed: "Reconnect to Dash Platform? Lists reload; nothing you posted is lost."; restarts the engine), "Clear cache" (confirmed; keeps accounts, keys and drafts).
 - Available signed out.
 
 #### SET-09 · Settings persistence · P0 · all (PD-12)
@@ -1034,7 +1039,8 @@ As an iPhone user with Lockdown Mode on, I want to know why Yappr can't connect,
 
 #### NET-07 · Network chip · P0 · all
 As a user, I want to know I'm on a test network, so that I don't treat it as real.
-- A compact amber chip "DEVNET" or "TESTNET" in the Home header and at the bottom of Settings. Tapping it opens a sheet: "Running on a Dash Platform devnet. Data may be reset." (testnet: "Running on Dash Platform Testnet. Data may be reset.").
+- A compact amber chip "DEVNET" or "TESTNET" in the Home header and at the bottom of Settings. Tapping it opens a sheet: "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." (testnet: "Yappr is running on Dash Platform Testnet. Posts and accounts may be reset."), and the connection state: "Connected", "Connecting…" (booting or restarting) or "Can't connect right now".
+- The chip's accessibility label carries the same state: "Testnet. Data may be reset. Connected." / "… Connecting." / "… Can't connect."
 - No full-width banner anywhere.
 
 #### NET-08 · Foreground only · P0 · all
@@ -1125,7 +1131,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | DM requests inbox, DM report, delete-for-me, reactions | No | Not in E7; DM reports wait for the cut | 1.1+ |
 | Muted words | No | 1.1 per PRODUCT_UX | 1.1 |
 | Share extension, widgets | No | Native extension targets | 1.1 |
-| Query inspector / developer settings | Yes | Engine diagnostics replaces it on mobile | Not planned |
+| Query inspector / developer settings | Yes | Troubleshooting (SET-08) replaces it on mobile | Not planned |
 | Storage provider settings | Yes | No upload in 1.0 | With upload |
 | iPad, foldable layouts | Yes (responsive web) | ADR E7 | 1.x |
 | Localization | No | ADR E7 | 1.1 |

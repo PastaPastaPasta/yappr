@@ -72,7 +72,7 @@ const feed = useEngineInfiniteQuery(
   `meta: NO_READ_RETRY` (a card's embedded read) keep their own schedule. A
   list whose *next page* failed is left out of all of these: it keeps its pages behind the "Load More" footer
   (G-11), since a refetch would re-read every loaded page. Every failed read is logged to
-  Engine diagnostics with its code (the key's path, without search text or
+  Troubleshooting (SET-08) with its code (the key's path, without search text or
   DM members). Reads use `networkMode: 'always'`: offline they still reach
   the engine, which answers or fails with a categorized error.
 - **Infinite lists:** `fetchNextPage` waits for a refetch in flight rather

@@ -4,12 +4,13 @@ import { create } from 'zustand';
 
 import { engineSupervisor } from '~/engine';
 import { Button } from '~/ui/Button';
+import { handleOf } from '~/ui/handle';
 import { Sheet } from '~/ui/Sheet';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 
 import { lastIdentity, useSessionStore } from './session';
-import { SESSION_EXPIRED_MESSAGE, isSessionExpired, signInAgain } from './session-expiry';
+import { isSessionExpired, signInAgain } from './session-expiry';
 
 /**
  * Whether the sign-in sheet is open; `reauth` is the account it asks to sign
@@ -23,6 +24,12 @@ export const useSignInPrompt = create<{ open: boolean; reauth: string | null }>(
  */
 export function promptSignIn(reauth: string | null = null): void {
   useSignInPrompt.setState({ open: true, reauth });
+}
+
+/** UX_SPEC §5.1 `signInPrompt.reauthBody`: "@alice", or the truncated id of an account with no name. */
+function reauthBody(identityId: string, username: string | null | undefined): string {
+  const name = handleOf({ id: identityId, username: username?.replace(/\.dash$/i, '') || null });
+  return `Sign in again to keep posting as ${name}. You can keep browsing in the meantime.`;
 }
 
 /** UX_SPEC §6 `lockdown.writeBlocked`. */
@@ -68,12 +75,13 @@ export function useRequireAuth(): typeof requireAuth {
 export function SignInPromptHost() {
   const open = useSignInPrompt((s) => s.open);
   const reauth = useSignInPrompt((s) => s.reauth);
+  const reauthUsername = useSessionStore((s) => s.accounts.find((a) => a.identityId === reauth)?.username);
   const close = () => useSignInPrompt.setState({ open: false });
   return (
     <Sheet open={open} onClose={close} title={reauth ? 'Sign in again' : 'Sign in to continue'} testID="sign-in-prompt">
       <Text variant="body" tone="secondary">
         {reauth
-          ? `${SESSION_EXPIRED_MESSAGE} You can keep browsing in the meantime.`
+          ? reauthBody(reauth, reauthUsername)
           : 'Sign in to post, like, repost and follow. You can keep browsing without an account.'}
       </Text>
       <View className="gap-2">

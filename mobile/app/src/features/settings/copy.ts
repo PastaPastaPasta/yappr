@@ -15,7 +15,8 @@ export const copy = {
     messages: 'Messages',
     appearance: 'Appearance',
     about: 'About',
-    diagnostics: 'Engine diagnostics',
+    /** About's last row (PRD SET-08): the diagnostics screen, reachable signed out. */
+    diagnostics: 'Troubleshooting',
   },
   signedOut: {
     title: 'Sign in',
@@ -23,15 +24,14 @@ export const copy = {
   },
 
   account: {
-    id: 'Identity ID',
-    copyId: 'Copy identity ID',
-    idCopied: 'Identity ID copied',
+    copyId: 'Copy account ID',
+    idCopied: 'Account ID copied',
     usernames: 'Usernames',
     noUsername: 'No username yet',
     register: 'Register a username on yap.pr',
+    registerAnother: 'Register another username on yap.pr',
     created: 'Account created',
     balance: 'Balance',
-    refresh: 'Refresh balance',
     refreshFailed: "Couldn't refresh the balance. Please try again.",
     credits: (credits: string) => `${credits} credits`,
     accounts: 'Accounts',
@@ -105,17 +105,19 @@ export const copy = {
     name: 'Yappr',
     tagline: 'Decentralized social media on Dash Platform',
     version: 'Version',
-    network: 'Network',
-    engine: 'Engine',
-    commit: 'Commit',
+    /** Long-pressing Version copies the build details (`buildDetails`). */
+    versionCopied: 'Version info copied',
+    /** The Version row's screen-reader hint: a tap does nothing, a long press copies. */
+    versionHint: 'Long press to copy version info',
     terms: 'Terms of Use',
     privacy: 'Privacy Policy',
     communityRules: 'Community rules',
-    rules: 'Community rules summary',
     support: 'Support',
+    sendDiagnostics: 'Send diagnostics',
+    /** The first line of the diagnostics the share sheet offers (no mail app), so any target still says where it goes. */
+    sendDiagnosticsTo: (email: string) => `Send to ${email}`,
     licenses: 'Open-source licenses',
     web: 'Yappr on the web',
-    poweredBy: 'Powered by Dash Platform',
     supportCopied: 'Support address copied. Send it from any email app.',
     rulesIntro: 'Yappr is a public network. By using it you agree to:',
     // UX_SPEC §5.1 terms.rule1–4: the same summary the terms gate shows.

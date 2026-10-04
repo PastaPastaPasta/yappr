@@ -1,11 +1,11 @@
-import type { AccountDTO, CapabilitiesDTO, SessionDTO, SettingsDTO } from '@engine/api';
+import type { AccountDTO, CapabilitiesDTO, EngineInfo, SessionDTO, SettingsDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import type { ReactElement, ReactNode } from 'react';
-import { Alert, BackHandler, type AlertButton } from 'react-native';
+import { Alert, BackHandler, Linking, Share, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { config } from '~/config';
@@ -16,7 +16,7 @@ import { engineSupervisor } from '~/engine';
 import { useExpiredSessions } from '~/data/session-expiry';
 import { useAccounts } from '~/features/auth/accounts';
 import { AccountList } from '~/features/auth/AccountSwitcher';
-import { engineStateWord } from '~/features/network/NetworkChipButton';
+import { SignedOutPlaceholder } from '~/features/auth/SignedOutPlaceholder';
 import { useAppearance } from '~/state/appearance';
 import { queryClient } from '~/state/query-client';
 import { chipStateOf } from '~/ui/NetworkChip';
@@ -134,15 +134,23 @@ beforeEach(() => {
 });
 
 describe('Settings root (SET-01)', () => {
-  it('shows the account with its balance, every section, and the version line', async () => {
+  it('shows the account by name and handle, every section, and the version line', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue({ id: ALICE, username: 'alice', displayName: 'Alice', avatar: {}, hasProfile: true, stats: {} });
     renderScreen(<SettingsScreen />);
     await settle();
 
-    expect(byId('settings-account')).toHaveAccessibleName('Account: @alice, @alice · 1.23456789 DASH');
-    for (const id of ['notifications', 'privacy', 'messages', 'appearance', 'about', 'diagnostics']) {
+    // No wallet-style balance on the root (agent-isms #15): that is on Account.
+    expect(byId('settings-account')).toHaveAccessibleName('Account: Alice, @alice');
+    expect(byId('settings-account')).toHaveTextContent('Alice@alice');
+    expect(screen.queryByText(/DASH/)).toBeNull();
+    for (const id of ['notifications', 'privacy', 'messages', 'appearance', 'about']) {
       expect(byId(`settings-${id}`)).toBeTruthy();
     }
-    expect(screen.getByText('Yappr 1.0.0 · devnet')).toBeTruthy();
+    // Troubleshooting is at the bottom of About, not a Settings section (agent-isms #3).
+    expect(screen.queryByTestId('settings-diagnostics')).toBeNull();
+    expect(screen.queryByText(/diagnostics/i)).toBeNull();
+    // The chip above it names the network.
+    expect(screen.getByText('Yappr 1.0.0')).toBeTruthy();
     expect(byId('network-chip')).toBeTruthy();
 
     fireEvent.press(byId('settings-account'));
@@ -151,7 +159,7 @@ describe('Settings root (SET-01)', () => {
     expect(router.push).toHaveBeenCalledWith('/messages/settings');
   });
 
-  it('the footer chip opens the network sheet: what the network means, the engine state, diagnostics (NET-07)', () => {
+  it('the footer chip opens the network sheet: what the network means and whether it is connected (NET-07)', () => {
     const back = jest.spyOn(BackHandler, 'addEventListener');
     renderScreen(<SettingsScreen />);
 
@@ -160,14 +168,29 @@ describe('Settings root (SET-01)', () => {
     expect(Alert.alert).not.toHaveBeenCalled();
     // A bottom sheet, so Android Back closes it.
     expect(back).toHaveBeenCalledWith('hardwareBackPress', expect.any(Function));
-    expect(screen.getByText('Running on a Dash Platform devnet. Data may be reset.')).toBeTruthy();
-    expect(byId('network-sheet-engine')).toHaveTextContent('Engine: Ready');
+    expect(screen.getByText('Yappr is running on a Dash Platform devnet. Posts and accounts may be reset.')).toBeTruthy();
+    expect(byId('network-sheet-status')).toHaveTextContent('Connected');
 
+    // Booting and restarting are both "Connecting…"; nothing says "Engine" (agent-isms #6).
     act(() => fakeEngine.setStatus({ state: 'restarting' }));
-    expect(byId('network-sheet-engine')).toHaveTextContent('Engine: Restarting');
+    expect(byId('network-sheet-status')).toHaveTextContent('Connecting…');
+    act(() => fakeEngine.setStatus({ state: 'booting' }));
+    expect(byId('network-sheet-status')).toHaveTextContent('Connecting…');
+    act(() => fakeEngine.setStatus({ state: 'degraded' }));
+    expect(byId('network-sheet-status')).toHaveTextContent("Can't connect right now");
+    expect(screen.queryByText(/Engine/)).toBeNull();
 
-    fireEvent.press(byId('network-sheet-diagnostics'));
-    expect(router.push).toHaveBeenCalledWith('/settings/diagnostics');
+    // No way to the diagnostics from here (agent-isms #3).
+    expect(screen.queryByTestId('network-sheet-diagnostics')).toBeNull();
+  });
+
+  it("the chip's label says the connection state in plain words, as its dot shows it", () => {
+    renderScreen(<SettingsScreen />);
+    expect(byId('network-chip')).toHaveAccessibleName('Devnet. Data may be reset. Connected.');
+    act(() => fakeEngine.setStatus({ state: 'booting' }));
+    expect(byId('network-chip')).toHaveAccessibleName('Devnet. Data may be reset. Connecting.');
+    act(() => fakeEngine.setStatus({ state: 'failed' }));
+    expect(byId('network-chip')).toHaveAccessibleName("Devnet. Data may be reset. Can't connect.");
   });
 
   it('every chip maps a crash as transient: booting while the supervisor restarts, unavailable when it cannot connect', () => {
@@ -177,9 +200,6 @@ describe('Settings root (SET-01)', () => {
     expect(chipStateOf('restarting')).toBe('booting');
     expect(chipStateOf('failed')).toBe('unavailable');
     expect(chipStateOf('unsupported')).toBe('unavailable');
-    // The sheet's engine line agrees with its chip (PRD NET-01: a degraded boot could not connect).
-    expect(engineStateWord('degraded')).toBe('Unavailable');
-    expect(engineStateWord('crashed')).toBe('Restarting');
   });
 
   it('signed out: sign-in instead of the account, content settings only', () => {
@@ -189,7 +209,8 @@ describe('Settings root (SET-01)', () => {
     expect(screen.queryByTestId('settings-account')).toBeNull();
     expect(screen.queryByTestId('settings-notifications')).toBeNull();
     expect(screen.queryByTestId('settings-messages')).toBeNull();
-    for (const id of ['privacy', 'appearance', 'about', 'diagnostics']) expect(byId(`settings-${id}`)).toBeTruthy();
+    for (const id of ['privacy', 'appearance', 'about']) expect(byId(`settings-${id}`)).toBeTruthy();
+    expect(screen.queryByTestId('settings-diagnostics')).toBeNull();
 
     fireEvent.press(byId('settings-sign-in'));
     expect(router.push).toHaveBeenCalledWith('/sign-in');
@@ -447,7 +468,7 @@ describe('Appearance (SET-05)', () => {
 });
 
 describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
-  it('shows the identity, names and balance; copies the id', async () => {
+  it('shows the names, the balance, then the account id last; copies the id', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue({
       id: ALICE,
       username: 'alice',
@@ -461,30 +482,64 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     renderScreen(<AccountSettingsScreen />);
     await settle();
 
-    expect(byId('account-identity-id')).toHaveTextContent(ALICE);
     expect(byId('account-username-alice')).toBeTruthy();
     expect(byId('account-username-alice2')).toBeTruthy();
     expect(screen.getByText('March 4, 2026')).toBeTruthy();
-    expect(screen.getByText('1.23456789 DASH')).toBeTruthy();
+    // 4 decimals, the exact credits muted beside it (agent-isms #15).
+    expect(screen.getByText('1.2345 DASH')).toBeTruthy();
     expect(screen.getByText('123,456,789,000 credits')).toBeTruthy();
+    expect(screen.queryByText(ALICE)).toBeNull();
 
+    // Names first, the balance next, the id last.
+    const ids = screen.UNSAFE_root.findAll((node) => typeof node.props.testID === 'string' && typeof node.type === 'string').map(
+      (node) => node.props.testID as string,
+    );
+    const at = (id: string) => ids.indexOf(id);
+    expect(at('account-username-alice')).toBeLessThan(at('account-balance'));
+    expect(at('account-balance')).toBeLessThan(at('account-copy-id'));
+    expect(at('account-copy-id')).toBeLessThan(at('account-sign-out'));
+
+    expect(byId('account-copy-id')).toHaveAccessibleName('Copy account ID');
+    expect(byId('account-copy-id')).toHaveTextContent('4EfA9Jrv...J4iSeF', { exact: false });
     await act(async () => fireEvent.press(byId('account-copy-id')));
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(ALICE);
-    expect(toastMessage()).toBe('Identity ID copied');
+    expect(toastMessage()).toBe('Account ID copied');
 
+    // Already has a name: another one.
+    expect(byId('account-register')).toHaveTextContent('Register another username on yap.pr');
     fireEvent.press(byId('account-register'));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/dpns/register');
   });
 
-  it('refreshes the balance, and says so when it cannot', async () => {
+  it('offers to register a username when there is none', async () => {
+    useSessionStore.setState({ session: { ...alice, username: null } });
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    expect(byId('account-no-username')).toBeTruthy();
+    expect(byId('account-register')).toHaveTextContent('Register a username on yap.pr');
+  });
+
+  it('reads the balance again on open, quietly, with no refresh button', async () => {
     fakeEngine.method('session.refreshBalance').mockRejectedValue(new Error('NETWORK'));
     renderScreen(<AccountSettingsScreen />);
     await settle();
 
-    await act(async () => fireEvent.press(byId('account-refresh')));
-    expect(fakeEngine.method('session.refreshBalance')).toHaveBeenCalled();
+    expect(fakeEngine.method('session.refreshBalance')).toHaveBeenCalledTimes(1);
+    expect(toastMessage()).toBeUndefined();
+    expect(screen.queryByTestId('account-refresh')).toBeNull();
+  });
+
+  it('reads the balance again on pull to refresh, and says so when it cannot', async () => {
+    fakeEngine.method('session.refreshBalance').mockResolvedValueOnce({ credits: 0n }).mockRejectedValue(new Error('NETWORK'));
+    renderScreen(<AccountSettingsScreen />);
+    await settle();
+
+    const scroll = byId('account-settings');
+    await act(async () => scroll.props.refreshControl.props.onRefresh());
+    expect(fakeEngine.method('session.refreshBalance')).toHaveBeenCalledTimes(2);
     expect(toastMessage()).toBe("Couldn't refresh the balance. Please try again.");
-    expect(byId('account-refresh')).toBeTruthy();
+    expect(byId('account-settings').props.refreshControl.props.refreshing).toBe(false);
   });
 
   it('signs out after the confirm, offline', async () => {
@@ -557,6 +612,16 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
     expect(useAccounts.getState().transition).toBeNull();
   });
 
+  it('names each account by name and handle, without the network the section header already says (agent-isms #24)', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue({ id: ALICE, username: 'alice', displayName: 'Alice', avatar: {}, hasProfile: true, stats: {} });
+    renderScreen(<AccountList accounts={[account(ALICE, 'alice.dash', true)]} manage />);
+    await settle();
+
+    expect(byId(`account-${ALICE}`)).toHaveAccessibleName('Alice, @alice, current account');
+    expect(byId(`account-${ALICE}`)).toHaveTextContent('Alice@alice');
+    expect(screen.queryByText(/Devnet/)).toBeNull();
+  });
+
   describe('accounts marked "Sign in again" (AUTH-14)', () => {
     const accounts = [account(ALICE, 'alice.dash', true), account(BOB, 'bob', false)];
     const pending = () => new Promise<never>(() => undefined);
@@ -573,7 +638,8 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
       expect(screen.queryByTestId(`account-${BOB}-sign-in-again`)).toBeNull();
       await act(async () => fireEvent.press(byId(`account-${ALICE}-sign-in-again`)));
       expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
-      expect(useAccounts.getState().transition?.label).toBe('Getting ready to sign in again…');
+      // One label for the whole of signing in again (agent-isms #12), not a "Getting ready…" step first.
+      expect(useAccounts.getState().transition?.label).toBe('Signing in as @alice…');
       expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
     });
 
@@ -621,6 +687,7 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
 
     it('opens the sign-in of a marked account the engine would not switch to', async () => {
       useExpiredSessions.setState({ ids: [BOB] });
+      useSessionStore.setState({ accounts });
       fakeEngine.method('session.switchAccount').mockRejectedValue(Object.assign(new Error('nope'), { code: 'BAD_REQUEST' }));
       fakeEngine.method('session.prepareAddAccount').mockReturnValue(pending());
       renderScreen(<AccountList accounts={accounts} manage />);
@@ -629,7 +696,7 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
       await act(async () => fireEvent.press(byId(`account-${BOB}`)));
       await settle();
       expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
-      expect(useAccounts.getState().transition?.label).toBe('Getting ready to sign in again…');
+      expect(useAccounts.getState().transition?.label).toBe('Signing in as @bob…');
     });
   });
 
@@ -661,35 +728,114 @@ describe('Account (SET-02, AUTH-10, AUTH-11)', () => {
   });
 });
 
+describe('signed-out Profile (AUTH-02)', () => {
+  it('links Appearance, Privacy & Safety and About only: Troubleshooting is inside About (agent-isms #3)', () => {
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    renderScreen(<SignedOutPlaceholder kind="profile" />);
+
+    for (const id of ['appearance', 'privacy', 'about']) expect(byId(`signed-out-settings-${id}`)).toBeTruthy();
+    expect(screen.queryByTestId('signed-out-settings-diagnostics')).toBeNull();
+    expect(screen.queryByText(/diagnostics/i)).toBeNull();
+    fireEvent.press(byId('signed-out-settings-about'));
+    expect(router.push).toHaveBeenCalledWith('/settings/about');
+  });
+});
+
 describe('About (SET-06, SET-07)', () => {
-  it('shows the version and network, opens the legal pages, and the bundled rules', () => {
+  it('shows the version, with the build details a long press copies, and no developer rows', async () => {
+    fakeEngine.setStatus({ info: { evoSdkVersion: '3.0.0', capabilities: { dm: 'v5' } } as EngineInfo });
     renderScreen(<AboutScreen />);
 
     expect(byId('about-version')).toHaveAccessibleName('Version, 1.0.0');
-    expect(byId('about-network')).toHaveAccessibleName('Network, devnet');
+    // A tap does nothing; screen readers hear what the long press does.
+    expect(byId('about-version').props.accessibilityHint).toBe('Long press to copy version info');
+    // Network, engine and commit are build details, not rows (agent-isms #16).
+    for (const id of ['about-network', 'about-engine', 'about-commit', 'about-rules']) expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.queryByText(/evo-sdk|Engine|Commit|Network|Powered by/)).toBeNull();
+    expect(screen.getByText('Decentralized social media on Dash Platform')).toBeTruthy();
+
     // Baked in at build time (app.config.ts), never fetched.
     expect(config.commit).toMatch(/^[0-9a-f]{7,40}$/);
-    expect(byId('about-commit')).toHaveAccessibleName(`Commit, ${config.commit!.slice(0, 8)}`);
+    await act(async () => fireEvent(byId('about-version'), 'longPress'));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(`Yappr 1.0.0 · ${config.commit!.slice(0, 8)} · evo-sdk 3.0.0 · devnet`);
+    expect(toastMessage()).toBe('Version info copied');
 
     fireEvent.press(byId('about-terms'));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/terms');
     fireEvent.press(byId('about-privacy'));
     expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/privacy');
-
-    expect(byId('about-rules')).toHaveAccessibleName('Community rules summary');
-    fireEvent.press(byId('about-rules'));
-    expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
-    // A scrolling sheet, so large text still reaches every rule.
-    expect(mockSheetScroll).toHaveBeenCalledWith(expect.objectContaining({ testID: 'about-rules-sheet' }));
   });
 
-  it('has Community rules apart from the summary: the full rules the terms gate shows', () => {
+  it('has one Community rules row: the summary first, then the full rules the terms gate shows', () => {
     renderScreen(<AboutScreen />);
 
+    expect(screen.queryByText('Community rules summary')).toBeNull();
     expect(byId('about-community-rules')).toHaveAccessibleName('Community rules');
     fireEvent.press(byId('about-community-rules'));
+    // A scrolling sheet, so large text still reaches every rule.
     expect(mockSheetScroll).toHaveBeenCalledWith(expect.objectContaining({ testID: 'about-community-rules-sheet' }));
+    expect(byId('about-rules-summary')).toHaveTextContent(copy.about.rulesIntro, { exact: false });
+    expect(screen.getByText('What you post is public and permanent on Dash Platform.')).toBeTruthy();
     expect(screen.getByText('Zero tolerance for abuse')).toBeTruthy();
+  });
+
+  it('ends with a muted Troubleshooting row to the diagnostics, signed in or out (SET-08)', () => {
+    for (const signedIn of [true, false]) {
+      if (!signedIn) useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+      const view = renderScreen(<AboutScreen />);
+      expect(byId('settings-diagnostics')).toHaveTextContent('Troubleshooting');
+      fireEvent.press(byId('settings-diagnostics'));
+      expect(router.push).toHaveBeenLastCalledWith('/settings/diagnostics');
+      view.unmount();
+    }
+  });
+
+  it('sends the redacted diagnostics to support by email, or through the share sheet with no mail app', async () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    const share = jest.spyOn(Share, 'share').mockResolvedValue({ action: 'sharedAction' });
+    fakeEngine.setStatus({
+      info: { network: 'devnet', contracts: { social: 'social-id' }, capabilities: { dm: 'v5' } } as unknown as EngineInfo,
+    });
+    fakeEngine.method('engine.diagnostics').mockResolvedValue({ wasmMs: 2180, dapi: { configured: 13, lastOkAt: null, endpoints: [] } });
+    renderScreen(<AboutScreen />);
+
+    fireEvent.press(byId('about-send-diagnostics'));
+    await waitFor(() => expect(openURL).toHaveBeenCalledTimes(1));
+    const url = openURL.mock.calls[0][0];
+    expect(url).toMatch(/^mailto:support@yap\.pr\?subject=Yappr%201\.0\.0%20\(devnet\)%20diagnostics&body=/);
+    expect(decodeURIComponent(url.split('&body=')[1])).toContain('wasm compile: 2180 ms');
+    expect(share).not.toHaveBeenCalled();
+
+    openURL.mockRejectedValueOnce(new Error('No mail app'));
+    fireEvent.press(byId('about-send-diagnostics'));
+    await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    // Messages, Notes or Slack get no subject: the text itself says where it goes.
+    expect(share).toHaveBeenCalledWith(
+      { message: expect.stringMatching(/^Send to support@yap\.pr\n\nYappr [\s\S]*wasm compile: 2180 ms/) },
+      { subject: 'Yappr diagnostics for support@yap.pr' },
+    );
+  });
+
+  it('sends diagnostics once per tap, the row disabled until the mail opens', async () => {
+    let opened: (value: boolean) => void = () => undefined;
+    const openURL = jest.spyOn(Linking, 'openURL').mockImplementation(() => new Promise((resolve) => (opened = resolve)));
+    fakeEngine.setStatus({
+      info: { network: 'devnet', contracts: { social: 'social-id' }, capabilities: { dm: 'v5' } } as unknown as EngineInfo,
+    });
+    fakeEngine.method('engine.diagnostics').mockResolvedValue({ wasmMs: 2180, dapi: { configured: 13, lastOkAt: null, endpoints: [] } });
+    renderScreen(<AboutScreen />);
+
+    fireEvent.press(byId('about-send-diagnostics'));
+    fireEvent.press(byId('about-send-diagnostics'));
+    await waitFor(() => expect(openURL).toHaveBeenCalledTimes(1));
+    expect(byId('about-send-diagnostics')).toBeDisabled();
+
+    await act(async () => opened(true));
+    // The second tap queued nothing.
+    expect(openURL).toHaveBeenCalledTimes(1);
+    expect(byId('about-send-diagnostics')).not.toBeDisabled();
+    fireEvent.press(byId('about-send-diagnostics'));
+    await waitFor(() => expect(openURL).toHaveBeenCalledTimes(2));
   });
 
   it('opens the native open-source licenses list, not a web page', () => {

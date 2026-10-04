@@ -215,7 +215,7 @@ describe('sign-in methods (AUTH-03, AUTH-05)', () => {
     render(<SignInScreen />);
     await act(async () => {});
     expect(screen.getByTestId('sign-in-reauth')).toHaveTextContent(
-      'Your session as @alice has expired. Sign in again with its wallet or key.',
+      'Sign in again as @alice with its wallet or key.',
     );
   });
 

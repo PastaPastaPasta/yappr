@@ -233,7 +233,7 @@ export function NotificationsScreen() {
     } else if (hasNextPage && isFetchNextPageError) {
       footer = (
         <View className="items-center p-6">
-          <Button label="Load More" size="sm" onPress={loadMore} testID="notifications-load-more" />
+          <Button label="Load more" size="sm" onPress={loadMore} testID="notifications-load-more" />
         </View>
       );
     } else if (!hasNextPage && config.network === 'devnet') {

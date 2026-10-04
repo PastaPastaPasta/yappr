@@ -49,7 +49,7 @@ function Footer({
   if (failed) {
     return (
       <View className="items-center py-6">
-        <Button label="Load More" size="sm" onPress={onLoadMore} testID="replies-load-more" />
+        <Button label="Load more" size="sm" onPress={onLoadMore} testID="replies-load-more" />
       </View>
     );
   }

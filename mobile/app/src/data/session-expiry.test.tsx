@@ -8,7 +8,6 @@ import { syncStorage } from '~/state/storage';
 import { SignInPromptHost, promptSignIn, requireAuth, useSignInPrompt } from './require-auth';
 import { startSessionSync, useSessionStore } from './session';
 import {
-  SESSION_EXPIRED_MESSAGE,
   clearSessionExpired,
   failedForSession,
   isSessionExpired,
@@ -149,10 +148,14 @@ describe('write controls of an account marked "Sign in again"', () => {
           <SignInPromptHost />
         </SafeAreaProvider>,
       );
+      useSessionStore.setState({
+        accounts: [{ identityId: 'alice', username: 'alice.dash', method: 'key', lastUsedAt: new Date(), active: true }],
+      });
       act(() => promptSignIn('alice'));
       // The title and the button.
       expect(screen.getAllByText('Sign in again')).toHaveLength(2);
-      expect(screen.getByText(`${SESSION_EXPIRED_MESSAGE} You can keep browsing in the meantime.`)).toBeTruthy();
+      // Who to sign in again as, not "Your session has expired" (agent-isms #12).
+      expect(screen.getByText('Sign in again to keep posting as @alice. You can keep browsing in the meantime.')).toBeTruthy();
       fireEvent.press(screen.getByTestId('sign-in-prompt-sign-in'));
       expect(handler).toHaveBeenCalledWith('alice');
       expect(router.push).not.toHaveBeenCalled();
