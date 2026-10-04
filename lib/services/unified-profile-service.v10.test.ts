@@ -263,6 +263,42 @@ describe('v10 profile reads after a save', () => {
     );
   });
 
+  it('edits a just-created extension at its revision while reads from a node behind still miss it', async () => {
+    stored[YAPPR_CONTRACT_ID] = [];
+    const profiles = await service();
+    await profiles.updateProfile(ownerId, { pronouns: 'she/they' });
+    expect(createDocument).toHaveBeenCalledTimes(1);
+
+    await profiles.updateProfile(ownerId, { location: 'Porto' });
+    expect(createDocument).toHaveBeenCalledTimes(1);
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_CONTRACT_ID, 'yapprProfile', 'new-yapprProfile', ownerId, expect.objectContaining({ location: 'Porto', pronouns: 'she/they' }), 1
+    );
+  });
+
+  it('checks a profile read against a save that lands while the other document is still loading', async () => {
+    const profiles = await service();
+    let releaseExtension: (documents: Record<string, unknown>[]) => void = () => {};
+    const batchQuery = query.getMockImplementation();
+    query.mockImplementation(async (request: { dataContractId: string; where: unknown[][] }) => {
+      if (request.dataContractId === YAPPR_CONTRACT_ID && request.where[0][1] === 'in') {
+        return new Promise((resolve) => { releaseExtension = resolve; });
+      }
+      return batchQuery?.(request);
+    });
+
+    // The DashPay profile (revision 2) comes back at once; the extension's read is still out.
+    const read = profiles.getProfile(ownerId);
+    await vi.waitFor(() => expect(query).toHaveBeenCalledWith(expect.objectContaining({ dataContractId: YAPPR_CONTRACT_ID })));
+
+    await profiles.updateProfile(ownerId, { displayName: 'Bea' });
+    expect(updateDocument).toHaveBeenCalledWith(DASHPAY_CONTRACT_ID, 'profile', 'dashpay-doc', ownerId, expect.objectContaining({ displayName: 'Bea' }), 2);
+
+    releaseExtension([extension]);
+    expect((await read)?.displayName).toBe('Bea');
+    expect((await profiles.getProfile(ownerId))?.displayName).toBe('Bea');
+  });
+
   it('does not stand in for reads with a create that was never confirmed (it may not land)', async () => {
     stored[YAPPR_CONTRACT_ID] = [];
     createDocument.mockImplementationOnce(async (_contract, type, owner, data) => ({

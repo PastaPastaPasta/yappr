@@ -30,6 +30,11 @@ function documentRevision(record: PlainDocument): number {
   return Number(record.$revision ?? record.revision ?? 0);
 }
 
+/** A document as its create wrote it: revision 1, which a create's result does not carry (a read-back's does). */
+function asCreated(record: PlainDocument): PlainDocument {
+  return record.$revision === undefined && record.revision === undefined ? { ...record, $revision: 1 } : record;
+}
+
 /** How long a save waits for a just-created DashPay profile before the extension (DAPI waits often time out). */
 const DASHPAY_PROFILE_POLLS = 10;
 const DASHPAY_PROFILE_POLL_MS = 2000;
@@ -440,8 +445,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * merge them into one profile (v10: the DashPay profile and the extension).
    */
   private async loadProfileDoc(ownerId: string): Promise<UnifiedProfileDocument | null> {
-    const records = await Promise.all(profileSources().map(({ role }) => this.loadRoleRecord(role, ownerId)));
-    return this.profileFromRecords(records[0], records[1] ?? null);
+    const roles = profileSources();
+    const records = await Promise.all(roles.map(({ role }) => this.loadRoleRecord(role, ownerId)));
+    // A save can land while the other role's query is still out: check every role against it again.
+    const [base, extension] = roles.map(({ role }, index) => this.newestRecord(role, ownerId, records[index] ?? null));
+    return this.profileFromRecords(base ?? null, extension ?? null);
   }
 
   /**
@@ -892,7 +900,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     }
     this.clearCache();
     cacheManager.invalidateByTag(`user:${ownerId}`);
-    const written = withCreationTime(result.document, startedAt);
+    const written = asCreated(withCreationTime(result.document, startedAt));
     // Only a create known to have landed stands in for reads that miss it (one whose wait timed out may never execute).
     if (result.confirmed !== false) this.rememberWrite('base', ownerId, written);
     const user = this.transformDocument(written);
@@ -1196,8 +1204,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     if (!result.success || !result.document) {
       throw new Error(result.error || `Failed to save the ${source.documentType} document`);
     }
+    const document = { $createdAt: existing?.$createdAt ?? existing?.createdAt ?? Date.now(), ...result.document };
     return {
-      document: { $createdAt: existing?.$createdAt ?? existing?.createdAt ?? Date.now(), ...result.document },
+      document: existingId ? document : asCreated(document),
       confirmed: result.confirmed !== false,
     };
   }

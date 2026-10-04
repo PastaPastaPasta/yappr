@@ -142,6 +142,10 @@ describe('a first edit without a profile', () => {
   });
 
   it('shows a confirmed first save while reads from a node behind still miss it', async () => {
+    // A create's result carries no revision; the document it wrote is at revision 1.
+    createDocument.mockImplementationOnce(async (_contract, _type, owner, data) => ({
+      success: true, confirmed: true, document: { $id: documentId, $ownerId: owner, ...data },
+    }));
     await unifiedProfileService.updateProfile(ownerId, { displayName: 'Ava', bio: 'hi' });
     cacheManager.invalidateByTag(`user:${ownerId}`);
     expect((await unifiedProfileService.getProfile(ownerId))?.bio).toBe('hi');
