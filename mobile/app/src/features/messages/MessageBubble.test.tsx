@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { StyleSheet, type TextStyle } from 'react-native';
 
+import { hostViewAbove } from '~/ui/testing/native-parent';
+
 import type { TimelineItem } from './dm-model';
 import { MessageBubble } from './MessageBubble';
 import { BOB_ID } from './test-fixtures';
@@ -67,5 +69,26 @@ describe('MessageBubble (UX_SPEC §2.23)', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('keeps its paragraphs in one native parent when a send lands', () => {
+    // The bubble fades while a send is on its way. Were it flattenable, its paragraphs would move
+    // into the Pressable once it lands, which crashes Android if the screen is being popped then.
+    const item = (outbox?: 'sending'): MessageItem => ({
+      type: 'message',
+      id: 'local:1',
+      message: { id: 'local:1', sender: 'me', text: 'on my way', at: new Date(), own: true, pending: !!outbox, outbox },
+      firstOfRun: true,
+      lastOfRun: true,
+      status: null,
+      statusIsError: false,
+    });
+    const { rerender } = render(<MessageBubble item={item('sending')} group={false} />);
+    const box = () => hostViewAbove(screen.getByText('on my way'));
+    expect(box()?.props.className).toContain('opacity-70');
+    expect(box()?.props.collapsable).toBe(false);
+    rerender(<MessageBubble item={item()} group={false} />);
+    expect(box()?.props.className).not.toContain('opacity-70');
+    expect(box()?.props.collapsable).toBe(false);
   });
 });

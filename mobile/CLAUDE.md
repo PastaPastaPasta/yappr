@@ -148,12 +148,16 @@ media viewer does. Only the bar's button style can be set: the app is edge to
 edge, so its background is whatever the screen draws behind it.
 
 **Native view structure (Android).** Don't let a state change move children
-to another native parent. Fabric flattens a plain `View` that only does
-layout, and gives it a native view of its own (with its children inside) once
-it gets an opacity below 1, a transform, `pointerEvents` `none`/`box-only`,
-clipping or accessibility props. Toggling one of those (`!editable &&
-'opacity-50'`, `loading ? { opacity: 0 }`, `busy ? 'none' : 'auto'`) moves the
-children between native parents. When a stack screen is popped,
+to another native parent. Fabric keeps a `View`'s children inside its native
+view only while the `View` forms a stacking context: an opacity below 1, a
+transform, `overflow: hidden`, `pointerEvents` `none`/`box-only`,
+accessibility props or `collapsable={false}`. Otherwise it hoists them into
+the nearest ancestor that does. A background, border or `testID` alone gives
+the `View` a native view of its own, but its children are still hoisted
+(the `TextField` box, the DM bubble). Toggling one of those props
+(`!editable && 'opacity-50'`, `sending && 'opacity-70'`,
+`loading ? { opacity: 0 }`, `busy ? 'none' : 'auto'`) moves the children
+between native parents. When a stack screen is popped,
 react-native-screens marks every view in it as transitioning, and Android then
 keeps their old parent: a move committed in the same tick as the pop crashes
 the app (`addViewAt: failed to insert view … The specified child already has a

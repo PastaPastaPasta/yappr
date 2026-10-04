@@ -158,7 +158,14 @@ export const MessageBubble = memo(function MessageBubble({
           {emoji ? (
             <Text className={cn('text-4xl leading-snug', message.outbox === 'sending' && 'opacity-70')}>{message.text}</Text>
           ) : (
-            <View className={bubbleShape} style={lastOfRun ? (own ? TAIL_OWN : TAIL_OTHER) : ROUND}>
+            <View
+              // Always its paragraphs' native parent. Otherwise Fabric hoists them into the Pressable
+              // while the bubble is opaque and back in while it is faded (sending, failed), and on
+              // Android a send landing as the screen is popped crashes the app (mobile/CLAUDE.md).
+              collapsable={false}
+              className={bubbleShape}
+              style={lastOfRun ? (own ? TAIL_OWN : TAIL_OTHER) : ROUND}
+            >
               {/* Each paragraph aligned by its own direction (PRD G-9): one Text per same-direction run. */}
               {directionBlocks(message.text).map((block, i) => (
                 <Text key={i} variant="body" tone={own ? 'inverse' : 'primary'} style={directionStyle(block.direction)}>

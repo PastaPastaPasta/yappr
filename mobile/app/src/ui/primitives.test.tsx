@@ -3,7 +3,6 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { FullWindowOverlay } from 'react-native-screens';
-import type { ReactTestInstance } from 'react-test-renderer';
 
 import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
@@ -25,15 +24,8 @@ import { colors } from './tokens';
 import { toast, toastDuration, useToastStore } from './toast';
 import { ToastHost } from './ToastHost';
 import { followLabel, UserRow } from './UserRow';
+import { hostViewAbove } from './testing/native-parent';
 import { WriteStatus } from './WriteStatus';
-
-/** The nearest host `View` above an element: the native parent it would get if not flattened. */
-function hostViewAbove(element: ReactTestInstance): ReactTestInstance | null {
-  let node = element.parent;
-  // Host elements have a string type; a test renderer's are React Native's names, not JSX's.
-  while (node && (node.type as string) !== 'View') node = node.parent;
-  return node;
-}
 
 describe('Button', () => {
   it('presses, and labels itself with its text', () => {

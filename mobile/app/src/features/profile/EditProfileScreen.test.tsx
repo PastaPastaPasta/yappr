@@ -32,7 +32,7 @@ function tryLeave(): boolean {
 jest.mock('expo-router', () => {
   const { Text, View } = jest.requireActual('react-native');
   return {
-    router: { push: jest.fn(), back: jest.fn(), canGoBack: () => true },
+    router: { push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: jest.fn(() => true) },
     Stack: {
       Screen: ({
         options,
@@ -166,6 +166,25 @@ describe('EditProfileScreen', () => {
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(useToastStore.getState().current?.message).toBe('Profile updated!');
     expect(router.back).toHaveBeenCalled();
+  });
+
+  it('opens the profile it edited when a saved form has nothing under it (a cold link)', async () => {
+    jest.mocked(router.canGoBack).mockReturnValue(false);
+    try {
+      fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+      const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+      fakeEngine.method('profiles.update').mockResolvedValue(pending);
+      renderScreen(<EditProfileScreen />);
+      await flush();
+      fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+      await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(router.back).not.toHaveBeenCalled();
+      expect(router.replace).toHaveBeenCalledWith('/profile');
+    } finally {
+      jest.mocked(router.canGoBack).mockReturnValue(true);
+    }
   });
 
   it('keeps the form as it was while saving in the render that closes it (Android crash, profile-save-crash-dark)', async () => {
