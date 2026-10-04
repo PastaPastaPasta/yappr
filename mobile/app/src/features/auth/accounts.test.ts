@@ -219,6 +219,20 @@ describe('an "Add account" the app was killed in (NEW-R-vi-001)', () => {
     expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
   });
 
+  it('gives up after three launches whose switch back failed, instead of trying at every launch', async () => {
+    await killedWhileAdding();
+    for (let launch = 1; launch <= 3; launch++) {
+      bootsAs(null);
+      await recoverInterruptedAdd({ resume: false });
+      expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledTimes(launch);
+      expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
+    }
+
+    await recoverInterruptedAdd({ resume: false });
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledTimes(3);
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
+
   it('forgets an account that is no longer on the device', async () => {
     await killedWhileAdding();
     fakeEngine.method('session.accounts').mockResolvedValue([account('bob')]);

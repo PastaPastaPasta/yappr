@@ -53,7 +53,16 @@ const ADDING_KEY = `yappr.accounts.adding.${engineNetworkKey}`;
 interface Adding {
   returnTo: string;
   reauth: string | null;
+  /** Launches that have tried to switch back to `returnTo` (`recoverInterruptedAdd`). */
+  attempts?: number;
 }
+
+/**
+ * Launches that try to switch back before giving up: an account whose
+ * session never restores would otherwise put the switch overlay and its
+ * failure toast on every launch.
+ */
+const MAX_RECOVERY_ATTEMPTS = 3;
 
 function rememberAdding(adding: Adding | null): void {
   if (adding) syncStorage.setItem(ADDING_KEY, JSON.stringify(adding));
@@ -64,7 +73,11 @@ function interruptedAdd(): Adding | null {
   try {
     const stored = JSON.parse(syncStorage.getItem(ADDING_KEY) ?? 'null') as Partial<Adding> | null;
     if (typeof stored?.returnTo !== 'string' || !stored.returnTo) return null;
-    return { returnTo: stored.returnTo, reauth: typeof stored.reauth === 'string' ? stored.reauth : null };
+    return {
+      returnTo: stored.returnTo,
+      reauth: typeof stored.reauth === 'string' ? stored.reauth : null,
+      attempts: typeof stored.attempts === 'number' ? stored.attempts : 0,
+    };
   } catch {
     return null;
   }
@@ -337,7 +350,8 @@ export function returnFromAddAccount(): void {
  * with `resume` (the engine still holds that flow's wallet request, and the
  * sign-in flow reopens on it) the flow carries on, so abandoning it goes
  * back as it would have; otherwise switch back to the parked account now.
- * A switch that fails is tried again at the next launch.
+ * A switch that fails is tried again at the next launch, up to
+ * MAX_RECOVERY_ATTEMPTS launches; the account then stays in the switcher.
  */
 export async function recoverInterruptedAdd({ resume }: { resume: boolean }): Promise<void> {
   const adding = interruptedAdd();
@@ -349,7 +363,7 @@ export async function recoverInterruptedAdd({ resume }: { resume: boolean }): Pr
   }
   if (status !== 'signed-out') return;
   if (resume) {
-    if (!useAccounts.getState().returnTo) useAccounts.setState(adding);
+    if (!useAccounts.getState().returnTo) useAccounts.setState({ returnTo: adding.returnTo, reauth: adding.reauth });
     return;
   }
   // Only a flow of this launch (none should run yet) owns what is in memory.
@@ -359,6 +373,14 @@ export async function recoverInterruptedAdd({ resume }: { resume: boolean }): Pr
     rememberAdding(null);
     return;
   }
+  const attempts = adding.attempts ?? 0;
+  if (attempts >= MAX_RECOVERY_ATTEMPTS) {
+    appendLog('warn', 'host', `Gave up going back to the parked account after ${attempts} launches`);
+    rememberAdding(null);
+    return;
+  }
+  // Counted before the switch, so a launch that dies during it counts too.
+  rememberAdding({ ...adding, attempts: attempts + 1 });
   appendLog('info', 'host', 'Going back to the account parked by an interrupted sign-in');
   if (await switchAccount(account)) rememberAdding(null);
 }
