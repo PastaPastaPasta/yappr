@@ -39,6 +39,9 @@ const RATINGS = [1, 2, 3, 4, 5];
 // A writer gate (a `where` entry valued `$ownerId`: the signer on the REFERRING
 // side) fails as the same 40127 a value pair does.
 const WRITER_GATE = PROPERTY_MISMATCH;
+const STALE_REVISION = /\b40106\b|has invalid revision/i;
+/** A replace of a documentsMutable:false type (the advanced-structure refusal), or its revision check (40106) if that runs first. */
+const NOT_MUTABLE = /is not mutable and can not be replaced|\bcode"?\s*[=:]\s*(1040[0-9]|40106)\b|invaliddocumentrevision/i;
 
 // ---- Document shapes --------------------------------------------------------
 
@@ -457,7 +460,11 @@ async function caseS22Digital(ctx) {
   const created = await kit('s22e the seller\'s kit is accepted', null, seller);
   await kit('s22f a second kit for the same item is rejected (unique itemDeliverable)', DUPLICATE_UNIQUE, seller);
   if (created.ok) {
-    await battery.probeReplace('s22g the seller replaces the kit (a sale consumed license keys)', null, seller, 'itemDeliverable', created.id, deliverableData({ itemId: id32(item.id) }), await battery.revisionOf('itemDeliverable', created.id));
+    const read = await battery.revisionOf('itemDeliverable', created.id);
+    await battery.probeReplace('s22g the seller replaces the kit (a sale consumed license keys)', null, seller, 'itemDeliverable', created.id, deliverableData({ itemId: id32(item.id) }), read);
+    // The client's reservation rests on this: a pool written from a stale read
+    // (another tab delivered meanwhile) must never put sent keys back.
+    await battery.probeReplace('s22g2 a second replace from the SAME read revision is refused (40106 stale revision)', STALE_REVISION, seller, 'itemDeliverable', created.id, deliverableData({ itemId: id32(item.id) }), read);
     // The stranger's own item is a real target, so this is about immutability.
     const strangerItem = await battery.probeCreate('s22h fixture: a stranger item', null, stranger, 'storeItem', { ...itemData({ storeId: id32(ctx.strangerStoreId), title: `Other ${run}` }), fulfillment: 'digital' });
     if (strangerItem.ok) {
@@ -473,7 +480,10 @@ async function caseS22Digital(ctx) {
   await deliver('s22m a STRANGER delivering to the buyer is rejected (writer gate, 40127)', WRITER_GATE, stranger);
   await deliver('s22n the BUYER cannot write a delivery to themselves (writer gate, 40127)', WRITER_GATE, buyer);
   await deliver('s22o a second delivery for the same order is accepted (re-send)', null, seller);
-  if (delivery.ok) await battery.probeDelete('s22p a delivery cannot be deleted (it is the buyer\'s receipt)', DELETE_FORBIDDEN, seller, 'orderDelivery', delivery.id);
+  if (delivery.ok) {
+    await battery.probeDelete('s22p a delivery cannot be deleted (it is the buyer\'s receipt)', DELETE_FORBIDDEN, seller, 'orderDelivery', delivery.id);
+    await battery.probeReplace('s22p2 a delivery cannot be rewritten (documentsMutable: false)', NOT_MUTABLE, seller, 'orderDelivery', delivery.id, deliveryData(good), 1n);
+  }
   await settle();
   const rows = await battery.queryDocs('orderDelivery', { where: [['buyerId', '==', buyer.ownerId]], orderBy: [['$createdAt', 'desc']], limit: 20 });
   const mine = rows.filter((row) => battery.b58(row.orderId) === ctx.orderId);
