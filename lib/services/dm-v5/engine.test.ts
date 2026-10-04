@@ -114,6 +114,50 @@ describe('DmEngine views', () => {
     expect(bob.messages(key).map((m) => m.text)).toContain('back again')
   })
 
+  it('knows a group I left on a new device, or after a reinstall, before the owner removes me (QA NEW-R-A-03)', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    await started(engine(ledger, CAROL_ID, CAROL_PRIV))
+    const { key } = await alice.createGroup('Team', [bob58, carol58])
+    await bob.tick()
+    await bob.leaveGroup(key)
+
+    // Bob signs in again with nothing on the device; Alice's client has not removed him yet.
+    const fresh = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    const group = () => fresh.getSnapshot().conversations.find((c) => c.key === key)
+    expect(group()?.memberIds).toContain(bob58)
+    expect(group()?.removed).toBe(true)
+    const written = ledger.messages.length
+    await expect(fresh.send(key, 'still here?')).rejects.toThrow(/no longer a member/)
+    expect(ledger.messages).toHaveLength(written)
+
+    // Once the owner removes him and adds him back, a new device lets him write again: the old leave is on an old base.
+    await alice.tick()
+    await alice.addMember(key, bob58)
+    const later = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    await later.openConversation(key)
+    expect(later.getSnapshot().conversations.find((c) => c.key === key)?.removed).toBe(false)
+    await later.send(key, 'back again')
+    expect(later.messages(key).map((m) => m.text)).toContain('back again')
+  })
+
+  it('files a group I left with the deleted conversations on a new device, even if the leaving device never saved that', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    const chain = new MemoryChain(ledger, BOB_ID)
+    const bob = await started(engine(ledger, BOB_ID, BOB_PRIV, new MapKv(), chain))
+    await started(engine(ledger, CAROL_ID, CAROL_PRIV))
+    const { key } = await alice.createGroup('Team', [bob58, carol58])
+    await bob.tick()
+    // The page closes as Bob leaves: the leave lands, the save of his hidden position does not.
+    chain.hook = (method) => (method.endsWith('SelfState') ? { ok: false, failure: 'transport', error: 'page closed' } : null)
+    await bob.leaveGroup(key)
+
+    const fresh = await started(engine(ledger, BOB_ID, BOB_PRIV))
+    expect(fresh.getSnapshot().conversations.find((c) => c.key === key)).toMatchObject({ removed: true, hidden: true })
+  })
+
   it('"delete conversation" hides it until a newer message arrives', async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))

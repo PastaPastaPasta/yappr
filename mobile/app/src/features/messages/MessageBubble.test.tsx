@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as WebBrowser from 'expo-web-browser';
-import { StyleSheet, type TextStyle } from 'react-native';
+import { Keyboard, Platform, StyleSheet, type TextStyle } from 'react-native';
 
 import { hostViewAbove } from '~/ui/testing/native-parent';
 
@@ -90,5 +90,21 @@ describe('MessageBubble (UX_SPEC §2.23)', () => {
     rerender(<MessageBubble item={item()} group={false} />);
     expect(box()?.props.className).not.toContain('opacity-70');
     expect(box()?.props.collapsable).toBe(false);
+  });
+});
+
+describe('MessageBubble long press (QA keyboard-overlaps)', () => {
+  it('closes the keyboard before Android shows the Copy sheet, which it would cover', () => {
+    const os = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+    const dismiss = jest.spyOn(Keyboard, 'dismiss');
+    try {
+      render(bubble('copy me'));
+      fireEvent(screen.getByLabelText(/copy me/), 'longPress');
+      expect(dismiss).toHaveBeenCalled();
+    } finally {
+      dismiss.mockRestore();
+      Object.defineProperty(Platform, 'OS', { value: os, configurable: true });
+    }
   });
 });

@@ -485,7 +485,7 @@ All fire `selectionAsync()` on change. a11y: tabs role `tab` with selected state
 | **Confirm dialog** | native `Alert` with a destructive button | Material `AlertDialog` | Delete post, sign out, clear bookmarks, end group, remove member, restart engine, clear cache |
 | **Full-screen modal** | `presentation: 'fullScreenModal'` (compose) or `'modal'` page sheet (edit profile, new message, new group) | full-screen dialog with a top app bar and close × | Compose, edit profile, new message, new group, EULA |
 
-Rules: one primary action per sheet; destructive actions in `destructive`; sheets close on scrim tap and swipe down unless a write is in flight; the Android back gesture closes the top sheet first.
+Rules: one primary action per sheet; destructive actions in `destructive`; sheets close on scrim tap and swipe down unless a write is in flight; the Android back gesture closes the top sheet first. On Android an action sheet closes the keyboard as it opens (the keyboard is drawn over it); cancelling the sheet does not reopen it, so the user taps the field again to keep typing.
 
 ### 2.14 Toasts
 
@@ -1192,14 +1192,15 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Header "⋯":** 1:1: "Block" / "Unblock", "Delete conversation" (v5). Group: "Group info".
 - **Composer:** text area growing to 5 lines; send disabled when empty; replaced by the state banners of DM-08 / DM-10 (`bg.muted`, centered `subhead`).
-- **Keyboard:** the list stays pinned to the newest message when the keyboard opens (inverted list).
+- **Keyboard:** the list stays pinned to the newest message when the keyboard opens (inverted list). Long-pressing a bubble closes the keyboard before the Copy sheet opens (Android draws the keyboard over sheets).
+- **Pinned to the newest:** while the user reads at the end, the list stays at the newest message whenever messages arrive or history loads above (a thread opened after a cold launch fills in its history after it opens); nothing moves the list while the user's own scroll is under way (finger down, or a fling still moving), and once it comes to rest away from the end nothing moves it until they are back at the end.
 - **Tab bar** hidden on this screen.
 
 ### 4.21 New message and new group
 
 - **Routes** `/messages/new`, `/messages/new-group` (modals) · **Stories** DM-05, DM-06.
 - **New message:** title "New message", description line "Choose a person to start an encrypted conversation.", search field "Search by username...", hint line, then "Your followers" section of user rows (no follow buttons). Tapping a row opens the conversation and closes the modal.
-- **New group:** title "New group", description "Name the group and pick its members.", "Group name" field (counter at 80+/100), selected members as chips (avatar `xs` + name + ×), the same search and followers list with checkmarks, and "Create group" (primary, in the navigation bar on iOS, a full-width bottom button on Android), disabled until a name and at least one member.
+- **New group:** title "New group", description "Name the group and pick its members.", "Group name" field (counter at 80+/100), selected members as chips (avatar `xs` + name + ×), the same search and followers list with checkmarks, and "Create group" (primary, in the navigation bar on iOS, a full-width bottom button on Android that stays above the keyboard while the search field has focus), disabled until a name and at least one member.
 
 ### 4.22 Group info
 
