@@ -27,7 +27,7 @@ import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals 
 import { itemDeliverableService, KitWriteUncertainError } from '@/lib/services/item-deliverable-service'
 import { DigitalKitEditor } from '@/components/digital'
 import { storefrontSupportsDigital } from '@/lib/constants'
-import { encodeKit } from '@/lib/services/digital-delivery-plan'
+import { encodeKit, kitDeliveryFitError } from '@/lib/services/digital-delivery-plan'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { VariantAxis, VariantCombination, ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
@@ -319,6 +319,12 @@ function AddItemPage() {
         encodeKit(kit)
       } catch (sizeError) {
         setError(sizeError instanceof Error ? sizeError.message : 'Delivery content is too large')
+        return
+      }
+      // A kit that fits storage must also fit one delivery for one unit, or no order could receive it.
+      const fitError = kitDeliveryFitError(kit, hasVariants ? combinations : [])
+      if (fitError) {
+        setError(fitError)
         return
       }
     }

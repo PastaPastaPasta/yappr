@@ -99,10 +99,10 @@ payload.
   lets the seller add links, codes or files for this order only, takes a message,
   and optionally marks the order Delivered (default on for all-digital orders).
   A delivery too large for one receipt goes out in parts: the seller unticks
-  some lines, delivers, then delivers the rest. Lines an earlier delivery
-  covered are marked, unique codes are taken only for the chosen lines (and
-  for re-sent ones only on request), and the order can be marked Delivered
-  only once every line has gone out.
+  some lines, delivers, then delivers the rest. A line a receipt may already
+  hold (pending, or unreadable here) takes no new unique codes unless the
+  seller asks; unsent lines always take theirs. The order can be marked
+  Delivered only once every line has a confirmed receipt.
 - **Deliver all** sends every *ready* order in one pass. An order is ready when:
   - it has digital lines and nothing has been delivered;
   - it is not closed;
@@ -178,7 +178,9 @@ deliver a `javascript:` link.
 
 - Each encrypted payload is at most 16,000 bytes (contract cap). That holds
   roughly 300 unique codes in a kit, and the client refuses a larger kit before
-  writing. Files have no such cap: they live on IPFS, up to 100 MB each, because
+  writing. It also refuses a kit that could not go out for one unit in one
+  delivery (worst-case title, variant and code), so every kit it saves is
+  deliverable. Files have no such cap: they live on IPFS, up to 100 MB each, because
   they are encrypted in memory.
 - Delivery is the seller's act; consensus cannot see payment. The **buyer**
   writes the order payload, including line quantities and prices. With *as

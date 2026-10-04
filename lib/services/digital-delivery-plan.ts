@@ -121,7 +121,9 @@ const validQuantity = (quantity: unknown): quantity is number =>
 export function planDelivery(
   payload: Pick<OrderPayload, 'items'>,
   kits: ReadonlyMap<string, ItemDeliverablePayload>,
-  message?: string
+  message?: string,
+  /** Lines that take no unique codes this time (re-sent lines the seller did not ask new codes for). */
+  withoutNewKeys?: (line: OrderItem) => boolean
 ): DeliveryPlan {
   const consumedKeys = new Map<string, number>()
   const missingKits: string[] = []
@@ -146,7 +148,7 @@ export function planDelivery(
       assets: assetsForVariant(kit.assets, line.variantKey).map(withoutVariant),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
     }
-    if (kit.licenseKeys) {
+    if (kit.licenseKeys && !withoutNewKeys?.(line)) {
       const taken = consumedKeys.get(line.itemId) ?? 0
       const keys = kit.licenseKeys.slice(taken, taken + line.quantity)
       if (keys.length < line.quantity) shortOnKeys.push(line.itemTitle)
@@ -177,6 +179,39 @@ function deliverySizeError(delivery: OrderDeliveryPayload): string | null {
   } catch (error) {
     return error instanceof Error ? error.message : 'This delivery is too large.'
   }
+}
+
+/** Longest title a product can have (the product editor's limit). */
+const MAX_ITEM_TITLE_LENGTH = 200
+/** Longest base58 encoding of a 32-byte id. */
+const MAX_ID_LENGTH = 44
+
+/**
+ * Why this kit could not go out for one unit in one delivery, or null when it
+ * can. Worst case: a full-length title, the longest variant key, every asset
+ * and the longest unique code. A kit that passes is never undeliverable for
+ * size alone (a long message aside, which the seller can shorten), and an
+ * order too big for one receipt can be split line by line.
+ */
+export function kitDeliveryFitError(kit: ItemDeliverablePayload, variantKeys: readonly string[] = []): string | null {
+  const longest = (values: readonly string[]) => values.reduce((a, b) => (b.length > a.length ? b : a), '')
+  const variantKey = longest(variantKeys)
+  const licenseKey = longest(kit.licenseKeys ?? [])
+  const delivery: OrderDeliveryPayload = {
+    v: 1,
+    items: [{
+      itemId: 'x'.repeat(MAX_ID_LENGTH),
+      itemTitle: 'x'.repeat(MAX_ITEM_TITLE_LENGTH),
+      ...(variantKey ? { variantKey } : {}),
+      assets: kit.assets.map(withoutVariant),
+      ...(kit.instructions ? { instructions: kit.instructions } : {}),
+      ...(licenseKey ? { licenseKeys: [licenseKey] } : {}),
+    }],
+  }
+  const bytes = new TextEncoder().encode(JSON.stringify(delivery)).length
+  return bytes > MAX_DELIVERY_PLAINTEXT_BYTES
+    ? `Delivery content is too large to send in one delivery (${bytes} of ${MAX_DELIVERY_PLAINTEXT_BYTES} bytes). Remove some links, codes or instructions.`
+    : null
 }
 
 /** Every reason a plan cannot be delivered as it stands, for the seller. */

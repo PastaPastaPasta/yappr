@@ -16,6 +16,7 @@ import {
   digitalLines,
   isDigitalOnly,
   isReadyForBulkDelivery,
+  kitDeliveryFitError,
   kitsAfterDelivery,
   lineProblems,
   planDelivery,
@@ -64,6 +65,15 @@ describe('planDelivery', () => {
     expect(plan.consumedKeys.get(GAME_ID)).toBe(3)
     expect(plan.shortOnKeys).toEqual([])
     expect(kitsAfterDelivery(kits, plan.consumedKeys).get(GAME_ID)?.licenseKeys).toEqual(['k4'])
+  })
+
+  it('takes no new codes for lines the seller re-sends without asking for them', () => {
+    const kits = new Map([[GAME_ID, kit({ licenseKeys: ['k1', 'k2'] })], [SONG_ID, kit({ licenseKeys: ['s1'] })]])
+    const resent = line(GAME_ID)
+    const plan = planDelivery({ items: [resent, line(SONG_ID)] }, kits, undefined, (l) => l === resent)
+    expect(plan.delivery.items[0].licenseKeys).toBeUndefined()
+    expect(plan.delivery.items[1].licenseKeys).toEqual(['s1'])
+    expect([...plan.consumedKeys]).toEqual([[SONG_ID, 1]])
   })
 
   it('reports lines it cannot fulfil', () => {
@@ -304,6 +314,13 @@ describe('wire format', () => {
       ],
     })))
     expect(decoded.assets).toEqual([{ kind: 'code', label: 'Code', code: 'X' }])
+  })
+
+  it('refuses a kit that could not go out for one unit in one delivery', () => {
+    const near = MAX_DELIVERY_PLAINTEXT_BYTES - 120
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(near - 400) }))).toBeNull()
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(near) }))).toMatch(/too large to send in one delivery/)
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(near - 400) }), ['V'.repeat(500)])).toMatch(/too large/)
   })
 
   it('refuses a delivery past the contract\'s payload cap', () => {
