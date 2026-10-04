@@ -794,6 +794,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - Keeps the screen awake while visible. States as 4.3.
+- Reopened as the flow's first screen (a relaunch resuming a waiting request, AUTH-03), it has the sign-in modal's "Cancel" (iOS) / close × (Android) in place of Back, as 4.3 does; it closes the flow as the swipe-down does, and an abandoned "Add account" goes back to the previous account.
 
 ### 4.5 First-time key registration
 
@@ -1226,6 +1227,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Leave:** after the confirm, the inbox at once, without the group; it comes back only if the leave is proved not to have gone out, or the account changes first.
 - **Legacy (testnet):** no groups; a link here goes to the inbox.
 - Confirmations use the confirm dialog (2.13) with copy 5.8.
+- **Add members:** the person picker opens under the row. Focusing its search scrolls the row to the top of the screen, so the results show between the field and the keyboard on both platforms, never under it.
 
 ### 4.23 Message settings
 
@@ -1274,6 +1276,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
   2. "Balance" (DASH cut to 4 decimals, `body.strong` tabular, "< 0.0001 DASH" below that; the exact credits below in a muted `caption`). No refresh button: it is read again when the screen opens and on pull to refresh, and a failed pull toasts `account.refreshFailed`. "YAPP" (where shown).
   3. "Accounts" › (switcher list screen: rows with `xl` avatars, check on current, "Add account"; each row shows the name and @handle only, since the section header names the network), "App lock" › (switch + timeout radio rows).
      - An account marked "Sign in again" (AUTH-14) has an outline `sm` "Sign in again" button beside its row, which opens its sign-in. Tapping the row of a marked account that is not the current one still switches to it, for reading; its write controls then open the "Sign in again" sheet. Tapping the current marked account's row opens its sign-in, and so does tapping one that cannot be opened (its key is gone from the device), without a "Couldn't switch" toast; abandoning that sign-in returns to the account that was current.
+     - Once another account has taken over (a switch from here or from the switcher, a finished "Add account", or the next account after signing out the current one), and when the last account signs out, every tab goes back to its first screen (AUTH-10: all screens reload for the new account). A switch made here therefore lands on the Profile tab's root, the new account's profile, not on this list. Signing in from signed out, and an "Add account" or "Sign in again" that ends on the same account, keep the user's place.
   4. "Account created", then "Copy account ID" (the id middle-truncated as its value; a tap copies it whole, toast "Account ID copied").
   5. "Sign out" (destructive row).
 - Moderation notice (SAFE-09) at the top when present: `error.bg` card.
@@ -2011,10 +2014,11 @@ Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this 
   - settings rows stack value under label;
   - buttons grow in height; labels never truncate (they wrap to two lines).
 - Line heights scale proportionally; no fixed-height container holds text, except the chip and badges (which cap their multiplier).
+- Changing the text size while the app is open (Android font size, iOS Dynamic Type) keeps the user's screen and typed text; every screen already open re-lays out its text at the new size, never clipped or left at the old box size.
 
 ### 6.2 Screen readers
 
-- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row) and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
+- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row; a count of 1 reads singular, "1 reply", "1 repost", "1 quote", "1 like", and a floor stays plural, "1+ quotes") and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
 - **Focus order:** navigation bar → banners → tabs or segments → list → FAB → tab bar.
 - **Headings:** screen titles, section headers and empty-state titles have the header role.
 - **Live updates:** toasts and write-status changes are announced once (A11Y-06); counters are not live.

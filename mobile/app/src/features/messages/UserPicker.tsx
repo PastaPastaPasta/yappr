@@ -1,7 +1,7 @@
 import type { AuthorDTO, ProfileDTO, UserSummaryDTO } from '@engine/api';
 import { keepPreviousData } from '@tanstack/react-query';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Keyboard, Pressable, ScrollView, TextInput, View, type LayoutChangeEvent } from 'react-native';
 import { CheckCircleIcon, MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { queryKeys } from '~/data/keys';
@@ -106,6 +106,82 @@ export interface UserPickerProps {
   note?: string;
   autoFocus?: boolean;
   initialQuery?: string;
+  /**
+   * The search field took focus, and again once the keyboard is up while it
+   * has it (`usePickerReveal`).
+   */
+  onSearchFocus?: () => void;
+}
+
+/** Calls `reveal` as the field takes focus, and once more when the keyboard has come up while it has it. */
+function useRevealOnFocus(reveal: (() => void) | undefined) {
+  const focused = useRef(false);
+  const latest = useRef(reveal);
+  useEffect(() => {
+    latest.current = reveal;
+  }, [reveal]);
+  const enabled = !!reveal;
+  useEffect(() => {
+    if (!enabled) return undefined;
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      if (focused.current) latest.current?.();
+    });
+    return () => subscription.remove();
+  }, [enabled]);
+  return {
+    onFocus: () => {
+      focused.current = true;
+      latest.current?.();
+    },
+    onBlur: () => {
+      focused.current = false;
+    },
+  };
+}
+
+/**
+ * For a picker low in a screen's scroll view (Group info › Add members):
+ * searching scrolls the picker's section to the top of the view, so its
+ * results show between the field and the keyboard instead of under it
+ * (NEW-ios-picker-keyboard). While searching (until the keyboard goes down)
+ * the section's picker is at least as tall as the view, so there is always
+ * room to scroll that far, and no blank space under a short picker
+ * otherwise; on iOS the view also insets its content by the keyboard. Spread
+ * `scrollProps` on the scroll view and `sectionProps` on the section that
+ * starts with the picker's toggle, give the picker `minHeight`, and pass
+ * `reveal` as its `onSearchFocus`.
+ */
+export function usePickerReveal() {
+  const scroll = useRef<ScrollView>(null);
+  const sectionY = useRef(0);
+  const [viewHeight, setViewHeight] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const scrollToSection = useCallback(() => scroll.current?.scrollTo({ y: sectionY.current, animated: true }), []);
+  const reveal = useCallback(() => {
+    setSearching(true);
+    scrollToSection();
+  }, [scrollToSection]);
+  useEffect(() => {
+    if (!searching) return undefined;
+    // Again once the picker has grown to the view's height.
+    scrollToSection();
+    const subscription = Keyboard.addListener('keyboardDidHide', () => setSearching(false));
+    return () => subscription.remove();
+  }, [searching, scrollToSection]);
+  return {
+    scrollProps: {
+      ref: scroll,
+      automaticallyAdjustKeyboardInsets: true,
+      onLayout: (event: LayoutChangeEvent) => setViewHeight(event.nativeEvent.layout.height),
+    },
+    sectionProps: {
+      onLayout: (event: LayoutChangeEvent) => {
+        sectionY.current = event.nativeEvent.layout.y;
+      },
+    },
+    minHeight: searching ? viewHeight : undefined,
+    reveal,
+  };
 }
 
 /**
@@ -122,8 +198,10 @@ export function UserPicker({
   note,
   autoFocus = false,
   initialQuery = '',
+  onSearchFocus,
 }: UserPickerProps) {
   const c = useColors();
+  const focusHandlers = useRevealOnFocus(onSearchFocus);
   const [query, setQuery] = useState(initialQuery);
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
@@ -212,6 +290,7 @@ export function UserPicker({
             autoCorrect={false}
             autoComplete="off"
             autoFocus={autoFocus}
+            {...focusHandlers}
             returnKeyType="search"
             cursorColor={c.accent}
             selectionColor={c.accent}

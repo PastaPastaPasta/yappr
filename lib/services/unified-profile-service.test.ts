@@ -114,20 +114,22 @@ describe('a first edit without a profile', () => {
     expect(updateDocument).not.toHaveBeenCalled();
     expect(createDocument).toHaveBeenCalledExactlyOnceWith(
       YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId,
-      { displayName: 'ava', bannerUri: 'ipfs://banner' }, undefined
+      { displayName: 'ava', bannerUri: 'ipfs://banner' }
     );
     expect(result).toMatchObject({ displayName: 'ava', bannerUri: 'ipfs://banner' });
   });
 
-  it('keeps a name the edit sets, and falls back to the identity without a username', async () => {
+  it('keeps a name the edit sets', async () => {
     await unifiedProfileService.updateProfile(ownerId, { displayName: '  Ava  ', bio: 'hi' });
     expect(createDocument).toHaveBeenLastCalledWith(
-      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: 'Ava', bio: 'hi' }, undefined
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: 'Ava', bio: 'hi' }
     );
+  });
 
+  it('falls back to the identity without a username', async () => {
     await unifiedProfileService.updateProfile(ownerId, { displayName: ' ' });
     expect(createDocument).toHaveBeenLastCalledWith(
-      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: `User ${ownerId.slice(-6)}` }, undefined
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: `User ${ownerId.slice(-6)}` }
     );
   });
 
@@ -135,7 +137,55 @@ describe('a first edit without a profile', () => {
     resolveUsername.mockResolvedValue(`${'a'.repeat(60)}.dash`);
     await unifiedProfileService.updateProfile(ownerId, { bio: 'hi' });
     expect(createDocument).toHaveBeenLastCalledWith(
-      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: 'a'.repeat(50), bio: 'hi' }, undefined
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', ownerId, { displayName: 'a'.repeat(50), bio: 'hi' }
+    );
+  });
+
+  it('shows a confirmed first save while reads from a node behind still miss it', async () => {
+    // A create's result carries no revision; the document it wrote is at revision 1.
+    createDocument.mockImplementationOnce(async (_contract, _type, owner, data) => ({
+      success: true, confirmed: true, document: { $id: documentId, $ownerId: owner, ...data },
+    }));
+    await unifiedProfileService.updateProfile(ownerId, { displayName: 'Ava', bio: 'hi' });
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+    expect((await unifiedProfileService.getProfile(ownerId))?.bio).toBe('hi');
+
+    // The next edit replaces the landed profile rather than creating a second one.
+    createDocument.mockClear();
+    await unifiedProfileService.updateProfile(ownerId, { location: 'Porto' });
+    expect(createDocument).not.toHaveBeenCalled();
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', documentId, ownerId, expect.objectContaining({ bio: 'hi', location: 'Porto' }), 1
+    );
+  });
+
+  it('does not stand in for reads with a first save that was never confirmed (it may not land)', async () => {
+    createDocument.mockImplementationOnce(async (_contract, _type, owner, data) => ({
+      success: true, confirmed: false, document: { $id: documentId, $ownerId: owner, $revision: 1, ...data },
+    }));
+    await unifiedProfileService.updateProfile(ownerId, { displayName: 'Ava', bio: 'hi' });
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+    expect(await unifiedProfileService.getProfile(ownerId)).toBeNull();
+  });
+
+  it("keeps another account's landed save when this one creates its profile", async () => {
+    const otherOwner = '33333333333333333333333333333333';
+    query.mockResolvedValue([raw]);
+    await unifiedProfileService.updateProfile(ownerId, { bio: 'New bio' });
+
+    // Another account on this device makes its first save.
+    query.mockResolvedValue([]);
+    await unifiedProfileService.updateProfile(otherOwner, { displayName: 'Bea' });
+
+    // A feed page from a node behind seeds the first account's previous revision.
+    query.mockResolvedValue([raw]);
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+    unifiedProfileService.seedProfileDocuments([raw], [ownerId]);
+    expect((await unifiedProfileService.getProfile(ownerId))?.bio).toBe('New bio');
+    updateDocument.mockClear();
+    await unifiedProfileService.updateProfile(ownerId, { location: 'Porto' });
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', documentId, ownerId, expect.objectContaining({ bio: 'New bio', location: 'Porto' }), 8
     );
   });
 

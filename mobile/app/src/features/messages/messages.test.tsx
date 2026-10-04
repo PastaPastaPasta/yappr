@@ -1,7 +1,17 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, renderHook, screen, within } from '@testing-library/react-native';
-import { Alert, AppState, KeyboardAvoidingView, Platform, type AppStateStatus } from 'react-native';
+import {
+  Alert,
+  AppState,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  type AppStateStatus,
+  type KeyboardEvent,
+} from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -1376,6 +1386,40 @@ describe('Group info (DM-07, DM-08)', () => {
     });
     expect(useToastStore.getState().current?.message).toBe('Member added');
     expect(screen.getByTestId(`group-member-${CAROL}`)).toBeTruthy();
+  });
+
+  it('scrolls the add-members picker above the keyboard while searching (NEW-ios-picker-keyboard)', async () => {
+    await openInfo(group({ ownerId: VIEWER, isOwner: true }));
+    const view = screen.UNSAFE_getByType(ScrollView);
+    expect(view.props.automaticallyAdjustKeyboardInsets).toBe(true);
+    const layout = (height: number, y = 0) => ({ nativeEvent: { layout: { x: 0, y, width: 390, height } } });
+    fireEvent(screen.getByTestId('group-info'), 'layout', layout(700));
+    fireEvent(screen.getByTestId('group-add-section'), 'layout', layout(120, 540));
+    const listen = jest.spyOn(Keyboard, 'addListener');
+    const keyboard = (name: 'keyboardDidShow' | 'keyboardDidHide') =>
+      listen.mock.calls.filter(([event]) => event === name).forEach(([, listener]) => listener({} as KeyboardEvent));
+    const pickerMinHeight = () => StyleSheet.flatten(screen.getByTestId('group-add-picker').props.style).minHeight;
+    fireEvent.press(screen.getByTestId('group-add'));
+    await act(async () => {});
+    // No blank space under the picker before searching.
+    expect(pickerMinHeight()).toBeUndefined();
+
+    const scrollTo = jest.spyOn(view.instance as ScrollView, 'scrollTo');
+    fireEvent(screen.getByTestId('picker-search'), 'focus');
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 540, animated: true });
+    // While searching the picker is at least as tall as the view, so the section can always reach the top.
+    expect(pickerMinHeight()).toBe(700);
+    // Again once the keyboard is up (Android lays out for it only then), but not after the field lets go.
+    scrollTo.mockClear();
+    act(() => keyboard('keyboardDidShow'));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    fireEvent(screen.getByTestId('picker-search'), 'blur');
+    act(() => keyboard('keyboardDidShow'));
+    expect(scrollTo).toHaveBeenCalledTimes(1);
+    // The keyboard down, the picker takes its own height again.
+    act(() => keyboard('keyboardDidHide'));
+    expect(pickerMinHeight()).toBeUndefined();
+    listen.mockRestore();
   });
 
   it('shows an error with Retry when the status read fails', async () => {
