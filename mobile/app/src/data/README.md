@@ -59,6 +59,11 @@ const feed = useEngineInfiniteQuery(
   copy uses too) is also read again with backoff while the app is in
   the foreground, since a stalled DAPI changes neither connectivity nor the
   engine's state (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s; `read-retry.ts`).
+  While such a retry runs the read's result stays the error it showed, with
+  `isRetrying` (`withRetriedError` in `queries.ts`, applied by
+  `useEngineQuery` and `useEngineInfiniteQuery`); pass it to `ErrorState`'s
+  `retrying` for the "Retrying…" note. TanStack would otherwise put the read
+  back to `pending`, and the screen on its loading state, for every attempt.
   Polls (`refetchInterval`), reads with their own `retryDelay` and reads given
   `meta: NO_READ_RETRY` (a card's embedded read) keep their own schedule. A
   list whose *next page* failed is left out of all of these: it keeps its pages behind the "Load More" footer

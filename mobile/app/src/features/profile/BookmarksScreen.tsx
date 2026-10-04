@@ -198,6 +198,7 @@ export function BookmarksScreen() {
         onRetry={() => {
           list.refetch().catch(() => undefined);
         }}
+        retrying={list.isRetrying}
         testID="bookmarks-error"
       />
     );

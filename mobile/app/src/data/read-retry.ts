@@ -70,6 +70,10 @@ const unavailableInline = (query: Query) =>
  * - The backoff starts over once nothing is failing, and on every return to
  *   the foreground. Another read answering brings a long wait forward
  *   ({@link EARLY_RETRY_GAP_MS}).
+ * - A retry keeps the error on screen, with "Retrying…" under it, rather
+ *   than the list's loading state: a stalled read takes 30-60 s to fail, so
+ *   the spinner would otherwise hide the error for most of an outage
+ *   (`withRetriedError` in `queries.ts`, NEW-R-A-02).
  *
  * Started once by `startDataLayer`; returns the stop.
  */
@@ -115,7 +119,7 @@ export function startReadRetry(): () => void {
       return;
     }
     lastRetryAt = now();
-    refetchFailedReads('Dash Platform unavailable', unavailableInline)
+    refetchFailedReads('Dash Platform unavailable', unavailableInline, { holdErrors: true })
       .catch((error: unknown) => appendLog('warn', 'host', `Reading again after Dash Platform was unavailable failed: ${errorMessage(error)}`))
       .finally(schedule);
   }

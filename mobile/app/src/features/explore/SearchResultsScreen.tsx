@@ -47,6 +47,7 @@ export function SearchResultsScreen({ kind: kindParam, query }: { kind: string |
         onRetry={() => {
           active.refetch().catch(() => undefined);
         }}
+        retrying={active.isRetrying}
         testID="search-results-error"
       />
     );

@@ -254,6 +254,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
         onRetry={() => {
           feed.refetch().catch(() => undefined);
         }}
+        retrying={feed.isRetrying}
         testID="feed-error"
       />
     );

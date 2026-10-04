@@ -518,7 +518,7 @@ Map of react-hot-toast in `app/layout.tsx`:
 ```
 
 - Vertical padding 48. Copy from section 5.
-- Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A list's read that failed with the "temporarily unavailable" category (the one place it is decided: `isTemporaryReadFailure` in `mobile/app/src/data/read-error.ts`, which also picks this copy) is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while the app is in the foreground, on the 1.0 terms of NET-03's note; sooner once another read answers). Polls, reads with their own backoff and reads embedded in a card are left alone. The error stays on screen while it retries, and gives way to the content as soon as a retry answers.
+- Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A list's read that failed with the "temporarily unavailable" category (the one place it is decided: `isTemporaryReadFailure` in `mobile/app/src/data/read-error.ts`, which also picks this copy) is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while the app is in the foreground, on the 1.0 terms of NET-03's note; sooner once another read answers). Polls, reads with their own backoff and reads embedded in a card are left alone. The error stays on screen while it retries (not the list's loading state, though a stalled read takes 30-60 s to fail), with "Retrying…" (copy 5.11 `read.retrying`: `caption`, `text.secondary`, an `xs` spinner before it) under "Try again", and gives way to the content as soon as a retry answers. "Try again" itself still shows the loading state.
 - List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding) and the legacy link; "Load More" pill (`primary` `sm`) for paused or failed paging.
 
 ### 2.17 Network chip
@@ -1878,6 +1878,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
 | engine.closedBeforeSent | The app closed before this was sent. Nothing was posted. Try again. (a write an engine restart cut short before it sent anything, with "Retry") |
 | engine.tryAgain | Try again |
+| read.retrying | Retrying… (under a list's G-11 error while NET-03's backoff reads it again, §2.16) |
 | lockdown.title | Lockdown Mode is blocking Yappr |
 | lockdown.body | Yappr needs WebAssembly to verify Dash Platform data, and Lockdown Mode turns it off for apps. You can exclude Yappr: |
 | lockdown.steps | Open Settings / Privacy & Security / Lockdown Mode / Configure Web Browsing / Turn Yappr off |

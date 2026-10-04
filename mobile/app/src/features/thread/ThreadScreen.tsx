@@ -202,7 +202,12 @@ export function ThreadScreen({ id, highlightId }: { id: string; highlightId?: st
       <Screen>
         {header}
         <OfflineBanner />
-        <ErrorState message={readErrorMessage(query.error)} onRetry={retry} testID="thread-error" />
+        <ErrorState
+          message={readErrorMessage(query.error)}
+          onRetry={retry}
+          retrying={query.isRetrying}
+          testID="thread-error"
+        />
       </Screen>
     );
   }

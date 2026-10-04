@@ -1,6 +1,6 @@
 import { parse, stringify } from '@engine/protocol/codec';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { QueryCache, QueryClient, type Query, type QueryKey } from '@tanstack/react-query';
+import { hashKey, QueryCache, QueryClient, type Query, type QueryKey } from '@tanstack/react-query';
 import type { PersistedClient, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
 
 import { config } from '~/config';
@@ -198,6 +198,29 @@ export async function clearAccountCache(): Promise<void> {
 /** Which failed reads to read again; every one by default. */
 export type FailedReadFilter = (query: Query) => boolean;
 
+/**
+ * The error each failed read showed when NET-03's backoff started reading it
+ * again (`refetchFailedReads` with `holdErrors`), by query hash, until that
+ * read settles. TanStack puts a read with no data back to `pending` for every
+ * refetch, error cleared, so without this a screen would trade G-11's error
+ * for its loading spinner for each 30-60 s attempt of an outage
+ * (NEW-R-A-02). The data hooks show it instead (`withRetriedError`).
+ */
+const retriedErrors = new Map<string, Error>();
+
+queryClient.getQueryCache().subscribe((event) => {
+  if (retriedErrors.size === 0) return;
+  // Settled (an answer, a failure, a cancel's revert, a reset) or gone: the error is the read's own again.
+  if (event.type === 'removed' || (event.type === 'updated' && event.query.state.fetchStatus === 'idle')) {
+    retriedErrors.delete(event.query.queryHash);
+  }
+});
+
+/** The error a read showed before NET-03's backoff began reading it again, while that retry runs. */
+export function retriedReadError(key: QueryKey): Error | undefined {
+  return retriedErrors.size === 0 ? undefined : retriedErrors.get(hashKey(key));
+}
+
 /** Failed reads a screen is showing, other than a list whose next page failed ({@link nextPageFailed}). */
 const failedReads = (only: FailedReadFilter) => ({
   type: 'active' as const,
@@ -218,11 +241,22 @@ export function failedReadCount(only: FailedReadFilter = anyFailure): number {
  * `data/read-retry.ts`, with `only` the inline errors of that category).
  * The home feeds never refetch by themselves otherwise. A list whose next
  * page failed is left to its "Load More" ({@link nextPageFailed}). `why`
- * goes to the diagnostics log.
+ * goes to the diagnostics log. `holdErrors` (the backoff) keeps each read's
+ * error on screen while it is read again ({@link retriedReadError}).
  */
-export async function refetchFailedReads(why: string, only: FailedReadFilter = anyFailure): Promise<void> {
-  const count = failedReadCount(only);
+export async function refetchFailedReads(
+  why: string,
+  only: FailedReadFilter = anyFailure,
+  { holdErrors = false }: { holdErrors?: boolean } = {},
+): Promise<void> {
+  const failed = queryClient.getQueryCache().findAll(failedReads(only));
+  const count = failed.length;
   if (count === 0) return;
+  if (holdErrors) {
+    for (const query of failed) {
+      if (query.state.error && !query.isDisabled()) retriedErrors.set(query.queryHash, query.state.error);
+    }
+  }
   appendLog('info', 'host', `${why}: retrying ${count} failed ${count === 1 ? 'read' : 'reads'}`);
   // A read already in flight again (TanStack's own reconnect refetch) is joined, not restarted.
   await queryClient.refetchQueries(failedReads(only), { cancelRefetch: false });

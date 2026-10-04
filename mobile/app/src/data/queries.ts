@@ -16,7 +16,7 @@ import {
 import { useCallback, useMemo } from 'react';
 
 import { engine } from '~/engine';
-import { persistedQuery } from '~/state/query-client';
+import { persistedQuery, retriedReadError } from '~/state/query-client';
 
 /** `engine.api`, as reads receive it. */
 export type EngineRemote = Remote<EngineApi>;
@@ -52,13 +52,40 @@ export function engineQueryOptions<T, S = T>(
   });
 }
 
+/**
+ * A query result as its screen should show it while NET-03's backoff reads a
+ * failed read again (PRD NET-03, `read-retry.ts`). TanStack puts a read with
+ * no data back to `pending` for every refetch, so the screen would swap
+ * G-11's inline error for its loading state for each 30-60 s attempt of an
+ * outage (NEW-R-A-02). Instead the result stays the error it was, with
+ * `isRetrying` set for a "Retrying…" under it. A "Try again" tap or any
+ * other refetch shows the loading state as before. Reads `status` only
+ * while such a retry runs, so other results keep their tracked props.
+ */
+export function withRetriedError<R extends { status: string; fetchStatus: string }>(
+  key: QueryKey,
+  result: R,
+): R & { isRetrying?: true } {
+  const error = retriedReadError(key);
+  if (!error || result.status !== 'pending' || result.fetchStatus !== 'fetching') return result;
+  return Object.assign({}, result, {
+    status: 'error' as const,
+    error,
+    isError: true as const,
+    isPending: false as const,
+    isLoading: false as const,
+    isLoadingError: true as const,
+    isRetrying: true as const,
+  });
+}
+
 /** `useQuery` over an engine read; see {@link engineQueryOptions}. */
 export function useEngineQuery<T, S = T>(
   key: QueryKey,
   read: (api: EngineRemote) => Promise<T>,
   options?: EngineQueryOptions<T, S>,
 ) {
-  return useQuery(engineQueryOptions(key, read, options));
+  return withRetriedError(key, useQuery(engineQueryOptions(key, read, options)));
 }
 
 export interface EngineInfiniteQueryOptions<T>
@@ -127,7 +154,7 @@ export function useEngineInfiniteQuery<T>(
   });
   const items = useMemo(() => flattenPages(query.data, itemId), [query.data, itemId]);
   const fetchNextPage = useFetchNextPageAfterRefetch(key, query.fetchNextPage);
-  return { ...query, items, fetchNextPage };
+  return { ...withRetriedError(key, query), items, fetchNextPage };
 }
 
 /**

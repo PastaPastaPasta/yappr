@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { ExclamationTriangleIcon, InboxIcon } from 'react-native-heroicons/outline';
 
 import { Button } from './Button';
+import { Spinner } from './Spinner';
 import { Text } from './Text';
 import { useColors, type IconComponent } from './tokens';
 
@@ -56,15 +57,39 @@ export function EmptyState({
   );
 }
 
+/**
+ * "Retrying…" under a read's error while the app reads it again by itself
+ * (PRD NET-03, UX_SPEC §5.11 `read.retrying`): the error stays up meanwhile.
+ * Its test ID is `<testID>-retrying`. Not a live region: it comes back every
+ * 30 s of an outage.
+ */
+export function RetryingNote({ testID }: { testID?: string }) {
+  return (
+    <View
+      accessible
+      accessibilityLabel="Retrying…"
+      className="mt-3 flex-row items-center justify-center gap-2"
+      testID={testID ? `${testID}-retrying` : undefined}
+    >
+      <Spinner size="xs" />
+      <Text variant="caption" tone="secondary">
+        Retrying…
+      </Text>
+    </View>
+  );
+}
+
 export interface ErrorStateProps {
   /** The categorized message (UX_SPEC §5.12); the title stays "Something went wrong". */
   message?: string;
   onRetry?: () => void;
+  /** The read is being read again by itself (a query's `isRetrying`): shows {@link RetryingNote}. */
+  retrying?: boolean;
   testID?: string;
 }
 
 /** The error variant: a warning triangle and "Try again" (`primary`, not the web's purple). */
-export function ErrorState({ message, onRetry, testID }: ErrorStateProps) {
+export function ErrorState({ message, onRetry, retrying = false, testID }: ErrorStateProps) {
   const c = useColors();
   return (
     <EmptyState
@@ -74,6 +99,8 @@ export function ErrorState({ message, onRetry, testID }: ErrorStateProps) {
       iconColor={c.warning}
       action={onRetry ? { label: 'Try again', onPress: onRetry } : undefined}
       testID={testID}
-    />
+    >
+      {retrying ? <RetryingNote testID={testID} /> : null}
+    </EmptyState>
   );
 }

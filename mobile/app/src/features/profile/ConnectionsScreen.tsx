@@ -11,7 +11,7 @@ import { requireAuth } from '~/data/require-auth';
 import { useSession } from '~/data/session';
 import { openUser } from '~/features/post/post-navigation';
 import { Button } from '~/ui/Button';
-import { EmptyState } from '~/ui/EmptyState';
+import { EmptyState, RetryingNote } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
 import { Screen } from '~/ui/Screen';
 import { RowSkeleton } from '~/ui/Skeleton';
@@ -133,7 +133,9 @@ export function ConnectionsScreen({ id, kind }: { id: string; kind: ConnectionKi
           },
         }}
         testID="connections-error"
-      />
+      >
+        {list.isRetrying ? <RetryingNote testID="connections-error" /> : null}
+      </EmptyState>
     );
   } else if (list.isPending) {
     empty = (
