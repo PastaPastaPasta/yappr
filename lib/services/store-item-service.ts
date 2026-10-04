@@ -97,6 +97,16 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   /**
+   * These items read from Platform, never from the cache: for a check that
+   * authorizes a delivery, where a listing switched to shipped elsewhere a
+   * minute ago must not still pass as digital.
+   */
+  async getManyFresh(itemIds: string[]): Promise<StoreItem[]> {
+    for (const id of itemIds) this.cache.delete(id);
+    return this.getMany(itemIds);
+  }
+
+  /**
    * Whether a listing created without confirmation (`__createConfirmed ===
    * false`) is on chain yet, polled a few times. False is not proof it never
    * will be: the broadcast may still execute.

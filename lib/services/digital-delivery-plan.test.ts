@@ -109,6 +109,16 @@ describe('lineProblems', () => {
     }
   })
 
+  it('blocks malformed buyer-written lines instead of throwing', () => {
+    const odd = { ...line('ebook'), variantKey: 7 } as unknown as OrderItem
+    const withVariants = new Map([['ebook', listing('ebook', { variants })]])
+    expect(() => check([odd], withVariants)).not.toThrow()
+    expect(check([odd], withVariants).map((p) => p.blocking)).toEqual([true])
+    expect(check([{ ...line('ebook'), itemTitle: { x: 1 } } as unknown as OrderItem], listed(['ebook']))[0].blocking).toBe(true)
+    // The well-formed line beside it is still checked, and the order is held.
+    expect(check([odd, line('ebook')], withVariants).some((p) => p.blocking)).toBe(true)
+  })
+
   it('flags a title, variant, price or currency the listing does not have, for review', () => {
     const withVariants = new Map([['ebook', listing('ebook', { variants })]])
     // The premium variant at the cheap variant's price.
@@ -151,6 +161,13 @@ describe('isReadyForBulkDelivery', () => {
     // An expensive product dressed as a cheap one: the id decides what is sent.
     expect(ready([line('now', 1, { itemTitle: 'CHEAP THING' })])).toBe(false)
     expect(ready([line('now', 1, { unitPrice: 1 })])).toBe(false)
+  })
+
+  it('holds an order with a malformed digital line without throwing', () => {
+    const odd = { ...line('now'), variantKey: 7 } as unknown as OrderItem
+    expect(() => ready([odd])).not.toThrow()
+    expect(ready([odd])).toBe(false)
+    expect(ready([odd, line('now')])).toBe(false)
   })
 
   it('leaves a large key order for the seller to review, however its lines are split', () => {

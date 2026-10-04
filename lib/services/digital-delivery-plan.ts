@@ -50,10 +50,22 @@ const PAID_STATUSES: ReadonlySet<OrderStatus> = new Set(['payment_received', 'pr
 const linesOf = <T>(payload: { items: readonly T[] } | undefined): readonly T[] =>
   Array.isArray(payload?.items) ? payload.items : []
 
+/** A line the buyer marked digital, whatever else it holds. */
 export const isDigitalLine = (line: Pick<OrderItem, 'fulfillment'> | null | undefined) =>
   typeof line === 'object' && line !== null && line.fulfillment === 'digital'
+/**
+ * A digital line whose fields the delivery code reads have the types it reads
+ * them as. The payload is buyer-written JSON: a numeric `variantKey` or an
+ * object `itemTitle` would otherwise throw (or fail to render) in a scan that
+ * runs over every order on the seller's page.
+ */
+const isWellFormedLine = (line: Partial<OrderItem>) =>
+  typeof line.itemId === 'string' && typeof line.itemTitle === 'string' &&
+  typeof line.quantity === 'number' && typeof line.unitPrice === 'number' &&
+  (line.variantKey === undefined || typeof line.variantKey === 'string')
+/** The order's digital lines that are well formed; a malformed one is never planned or delivered (see {@link lineProblems}). */
 export const digitalLines = <T extends Pick<OrderItem, 'fulfillment'>>(payload: { items: readonly T[] }) =>
-  linesOf(payload).filter(isDigitalLine)
+  linesOf(payload).filter((line) => isDigitalLine(line) && isWellFormedLine(line as Partial<OrderItem>))
 /** Whether a (possibly not yet decrypted) order has anything to deliver online. */
 export const hasDigitalLines = (payload: { items: ReadonlyArray<Pick<OrderItem, 'fulfillment'>> } | undefined) =>
   linesOf(payload).some(isDigitalLine)
@@ -214,6 +226,8 @@ export function lineProblems(
   listings: ReadonlyMap<string, ItemListing>
 ): LineProblem[] {
   const problems: LineProblem[] = []
+  const malformed = linesOf(payload).filter(isDigitalLine).length - digitalLines(payload).length
+  if (malformed > 0) problems.push({ itemTitle: '', text: `${malformed} digital line${malformed === 1 ? ' of this order is' : 's of this order are'} malformed, so the order cannot be delivered from here. Check it with the buyer.`, blocking: true })
   for (const line of digitalLines(payload)) {
     const listing = listings.get(line.itemId)
     const problem = (text: string, blocking = false) => problems.push({ itemTitle: line.itemTitle, text, blocking })

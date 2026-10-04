@@ -21,7 +21,7 @@ import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, lineProblems, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -54,6 +54,16 @@ interface DigitalState {
   uncertain: Set<string>
   /** Orders whose deliveries WERE read (with or without any): no longer uncertain. */
   checked: Set<string>
+}
+
+/**
+ * The seller's current listing of each item, read from Platform (never the
+ * cache): these decide which kits an order may draw from.
+ */
+async function readListings(itemIds: string[]): Promise<Map<string, ItemListing>> {
+  const items = await storeItemService.getManyFresh(itemIds)
+  return new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants }): [string, ItemListing] =>
+    [id, { storeId, fulfillment, title, basePrice, currency, variants }]))
 }
 
 /** Kit copies merged by revision: whichever is newer wins, wherever it was read. */
@@ -101,9 +111,7 @@ async function loadDigitalState(
         })
       : Promise.resolve(new Map<string, SellerKit>()),
     // An item that cannot be read has no listing, so it is never delivered in bulk.
-    storeItemService.getMany(itemIds)
-      .then((items) => new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants }): [string, ItemListing] =>
-        [id, { storeId, fulfillment, title, basePrice, currency, variants }])))
+    readListings(itemIds)
       .catch((e) => {
         logger.error('Failed to load listings for digital orders:', e)
         return new Map<string, ItemListing>()
@@ -362,11 +370,22 @@ function SellerOrdersPage() {
     let firstFailure: string | null = null
     setBulkProgress({ done: 0, total: batch.length })
     try {
+      // Re-read the listings now: the page's copy may predate the seller
+      // switching a product to shipped elsewhere. A failed read holds the batch.
+      const batchItemIds = batch.flatMap((order) => {
+        const payload = orderPayloads.get(order.id)
+        return payload ? digitalLines(payload).map((line) => line.itemId) : []
+      })
+      const freshListings = await readListings(batchItemIds).catch((error) => {
+        logger.error('Failed to re-read listings before bulk delivery:', error)
+        return new Map<string, ItemListing>()
+      })
+      setListings(prev => new Map([...prev, ...freshListings]))
       for (const [index, order] of batch.entries()) {
         const payload = orderPayloads.get(order.id)
         // Keys can run out part-way through a batch: re-plan against the pool as it now stands.
         const plan = payload ? planDelivery(payload, toKitPayloads(currentKits)) : null
-        if (!payload || !plan || planBlockers(plan).length > 0) {
+        if (!payload || !plan || planBlockers(plan).length > 0 || lineProblems(payload, order.storeId, freshListings).length > 0) {
           skipped.push(formatOrderId(order.id))
         } else {
           try {
