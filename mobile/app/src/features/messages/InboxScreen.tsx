@@ -20,7 +20,7 @@ import { toast } from '~/ui/toast';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 import { ConversationRow } from './ConversationRow';
-import { deleteConversation, openConversationScreen } from './dm-actions';
+import { archiveConversation, openConversationScreen, useLocallyHidden } from './dm-actions';
 import { pollDm, readErrorMessage, useConversations, useDmBackend, useDmStatus, useDmViewer } from './dm-data';
 import { matchesSearch, sortConversations } from './dm-model';
 import { DmLocked, DmSignedOut, InboxNotice, InboxSkeleton, RestoringBanner } from './DmStates';
@@ -112,8 +112,8 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
   );
 }
 
-/** iOS: swipe left for "Delete" (as Mail and Messages). */
-function SwipeToDelete({ conversation, children }: { conversation: ConversationDTO; children: React.ReactNode }) {
+/** iOS: swipe left for "Archive" (as Mail). */
+function SwipeToArchive({ conversation, children }: { conversation: ConversationDTO; children: React.ReactNode }) {
   const swipeable = useRef<SwipeableMethods>(null);
   // FlashList reuses this cell for other conversations: one swiped open must not stay open on another.
   useEffect(() => {
@@ -128,15 +128,15 @@ function SwipeToDelete({ conversation, children }: { conversation: ConversationD
       renderRightActions={(_progress, _translation, methods) => (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Delete conversation"
+          accessibilityLabel="Archive conversation"
           onPress={() => {
             methods.close();
-            deleteConversation(conversation).catch(() => undefined);
+            archiveConversation(conversation);
           }}
-          className="w-24 items-center justify-center bg-red-600"
+          className="w-24 items-center justify-center bg-yappr-500"
         >
           <Text variant="subheadStrong" style={{ color: colors.white }}>
-            Delete
+            Archive
           </Text>
         </Pressable>
       )}
@@ -148,7 +148,7 @@ function SwipeToDelete({ conversation, children }: { conversation: ConversationD
 
 /**
  * The Messages tab (UX_SPEC §4.19, PRD DM-01, DM-02, DM-09, DM-11, DM-13):
- * conversations by last activity with search, restoring progress, deleted
+ * conversations by last activity with search, restoring progress, archived
  * conversations behind a footer link, and the signed-out and locked states.
  */
 export function InboxScreen() {
@@ -178,10 +178,13 @@ export function InboxScreen() {
   const [query, setQuery] = useState('');
   const [showHidden, setShowHidden] = useState(false);
   const all = useMemo(() => sortConversations(list.data ?? []), [list.data]);
-  const hiddenCount = all.filter((convo) => convo.flags.hidden).length;
+  // Archived by the engine, or on this device ahead of it (an archive's Undo, a group just left).
+  const locallyHidden = useLocallyHidden((s) => s.keys);
+  const archived = useCallback((convo: ConversationDTO) => convo.flags.hidden || locallyHidden[convo.key] === true, [locallyHidden]);
+  const hiddenCount = all.filter(archived).length;
   const rows = useMemo(
-    () => all.filter((convo) => (showHidden || !convo.flags.hidden) && matchesSearch(convo, query)),
-    [all, showHidden, query],
+    () => all.filter((convo) => (showHidden || !archived(convo)) && matchesSearch(convo, query)),
+    [all, archived, showHidden, query],
   );
 
   const [refreshing, setRefreshing] = useState(false);
@@ -195,15 +198,20 @@ export function InboxScreen() {
   };
 
   const onPress = useCallback((conversation: ConversationDTO) => openConversationScreen(conversation.key), []);
-  const swipes = (conversation: ConversationDTO) => v5 && Platform.OS === 'ios' && !conversation.flags.hidden;
-  const onLongPress = useCallback((conversation: ConversationDTO) => {
-    showActionSheet({
-      actions: [
-        { label: 'Open', onPress: () => openConversationScreen(conversation.key) },
-        { label: 'Delete conversation', destructive: true, onPress: () => deleteConversation(conversation).catch(() => undefined) },
-      ],
-    });
-  }, []);
+  const swipes = (conversation: ConversationDTO) => v5 && Platform.OS === 'ios' && !archived(conversation);
+  const onLongPress = useCallback(
+    (conversation: ConversationDTO) => {
+      showActionSheet({
+        actions: [
+          { label: 'Open', onPress: () => openConversationScreen(conversation.key) },
+          ...(archived(conversation)
+            ? []
+            : [{ label: 'Archive conversation', onPress: () => archiveConversation(conversation) }]),
+        ],
+      });
+    },
+    [archived],
+  );
 
   const header = (
     <Stack.Screen
@@ -233,15 +241,8 @@ export function InboxScreen() {
   } else if (query.trim() && all.length > 0) {
     empty = <EmptyState title="No conversations match your search" icon={MagnifyingGlassIcon} testID="messages-no-match" />;
   } else if (hiddenCount > 0) {
-    // Every conversation is deleted (DM-09): not a first visit, so no welcome. The footer brings them back.
-    empty = (
-      <EmptyState
-        icon={ChatBubbleLeftRightIcon}
-        title="No conversations to show"
-        description="Deleted conversations come back if a new message arrives."
-        testID="messages-all-deleted"
-      />
-    );
+    // Every conversation is archived (DM-09): not a first visit, so no welcome. The footer shows them.
+    empty = <EmptyState icon={ChatBubbleLeftRightIcon} title="No conversations yet" testID="messages-all-archived" />;
   } else {
     empty = (
       <EmptyState
@@ -277,7 +278,7 @@ export function InboxScreen() {
     inbox && v5 && hiddenCount > 0 && !query.trim() ? (
       <View className="items-center py-4">
         <LinkText
-          label={showHidden ? 'Hide deleted conversations' : `Show ${hiddenCount} deleted conversation${hiddenCount === 1 ? '' : 's'}`}
+          label={showHidden ? 'Hide archived' : `Archived (${hiddenCount})`}
           onPress={() => setShowHidden((shown) => !shown)}
           className="self-center"
           testID="messages-toggle-hidden"
@@ -302,7 +303,7 @@ export function InboxScreen() {
             <ConversationRow conversation={item} onPress={onPress} onLongPress={v5 ? onLongPress : undefined} />
           );
           return swipes(item) ? (
-            <SwipeToDelete conversation={item}>{row}</SwipeToDelete>
+            <SwipeToArchive conversation={item}>{row}</SwipeToArchive>
           ) : (
             row
           );

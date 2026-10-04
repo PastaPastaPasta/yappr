@@ -1,7 +1,6 @@
 import type { DmRetention, DmStatusDTO } from '@engine/api';
-import { Stack } from 'expo-router';
+import { Redirect, Stack } from 'expo-router';
 import { View } from 'react-native';
-import { Cog6ToothIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { engine } from '~/engine';
@@ -10,7 +9,7 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { handleOf } from '~/ui/handle';
-import { EmptyState, ErrorState } from '~/ui/EmptyState';
+import { ErrorState } from '~/ui/EmptyState';
 import { RadioGroup, type RadioOption } from '~/ui/RadioGroup';
 import { Screen } from '~/ui/Screen';
 import { RowSkeleton } from '~/ui/Skeleton';
@@ -25,23 +24,19 @@ import { readErrorMessage, refreshDm, useDmBackend, useDmStatus, useDmViewer, us
 import { DmSignedOut } from './DmStates';
 
 const RETENTION_OPTIONS: readonly RadioOption<DmRetention>[] = [
-  { value: 'never', title: 'Never (keep paying for storage)' },
+  { value: 'never', title: 'Never' },
   { value: '30d', title: 'After 30 days' },
   { value: '90d', title: 'After 90 days' },
   { value: '1y', title: 'After 1 year' },
 ];
 
-const PERIOD: Record<Exclude<DmRetention, 'never'>, string> = { '30d': '30 days', '90d': '90 days', '1y': '1 year' };
-
-/** UX_SPEC §5.8 `dm.retention.body` / `bodyPeriod` (web). */
-export function retentionExplanation(retention: DmRetention): string {
-  const rest =
-    "This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have.";
-  if (retention === 'never') {
-    return `Your sent messages stay on Dash Platform and you keep paying for their storage. Choose a period below to delete them once they are that old and get most of their storage fee back. ${rest}`;
-  }
-  return `Delete your sent messages from Dash Platform after ${PERIOD[retention]} and get most of their storage fee back. ${rest}`;
-}
+/**
+ * UX_SPEC §5.8 `dm.retention.footer` (#14): what deleting gives back, and the
+ * caveat that must stay: it does not make messages private (never called
+ * "disappearing messages", which would promise that).
+ */
+export const RETENTION_FOOTER =
+  "Deleting old sent messages refunds most of their storage fee. It doesn't make them private: people you messaged keep their copies, and Dash Platform keeps a history.";
 
 function SectionHeader({ title }: { title: string }) {
   return (
@@ -67,9 +62,12 @@ function BlockedList({ ids }: { ids: string[] }) {
   const people = usePeople(ids);
   if (ids.length === 0) {
     return (
-      <Text variant="subhead" tone="secondary" className="px-4 py-3" testID="dm-blocked-empty">
-        Nobody. Blocked people&apos;s messages and group invitations are ignored.
-      </Text>
+      <View className="gap-1 px-4 py-3" testID="dm-blocked-empty">
+        <Text variant="body">No blocked accounts</Text>
+        <Text variant="subhead" tone="secondary">
+          Messages and group invites from people you block are ignored.
+        </Text>
+      </View>
     );
   }
   return (
@@ -110,9 +108,9 @@ function BlockedList({ ids }: { ids: string[] }) {
 }
 
 /**
- * Message settings (UX_SPEC §4.23, PRD DM-12): v5 "Reclaim message fees" and
- * the people blocked in Messages. Legacy (testnet) has none (DM-11); its read
- * receipts are in Settings (SET-04).
+ * Message settings (UX_SPEC §4.23, PRD DM-12): v5 "Delete old sent messages"
+ * and the people blocked in Messages. Legacy (testnet) has none (DM-11): a
+ * link here goes to the inbox; its read receipts are in Settings (SET-04).
  */
 export function MessageSettingsScreen() {
   const { signedIn } = useDmViewer();
@@ -129,14 +127,8 @@ export function MessageSettingsScreen() {
     );
   }
 
-  if (backend === 'legacy') {
-    return (
-      <Screen>
-        {header}
-        <EmptyState icon={Cog6ToothIcon} title="Message settings aren't available on this network" testID="dm-settings-unavailable" />
-      </Screen>
-    );
-  }
+  // Nothing to set on legacy messages: a stale link goes to the inbox (#23).
+  if (backend === 'legacy') return <Redirect href="/messages" />;
 
   if (status.isError && !status.data) {
     return (
@@ -161,7 +153,7 @@ export function MessageSettingsScreen() {
   return (
     <Screen scroll>
       {header}
-      <SectionHeader title="Reclaim message fees" />
+      <SectionHeader title="Delete old sent messages" />
       {retention ? (
         <>
           <RadioGroup
@@ -170,11 +162,11 @@ export function MessageSettingsScreen() {
             onChange={(value) => {
               setRetention(value).catch(() => undefined);
             }}
-            accessibilityLabel="Reclaim message fees"
+            accessibilityLabel="Delete old sent messages"
             testID="dm-retention"
           />
           <Text variant="subhead" tone="secondary" className="px-4 pt-3" testID="dm-retention-body">
-            {retentionExplanation(retention)}
+            {RETENTION_FOOTER}
           </Text>
         </>
       ) : status.data?.locked ? (

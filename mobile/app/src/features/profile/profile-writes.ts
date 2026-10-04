@@ -4,6 +4,8 @@ import { queryKeys } from '~/data/keys';
 import type { WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 
+import { partialSaveFailure } from './edit-profile-form';
+
 /**
  * The profile writes (PRD PROF-06 – PROF-08). Follow is `followWrite`
  * (features/post); block and unblock are `blockWrite` (features/safety).
@@ -28,6 +30,8 @@ export interface ProfileUpdateVars {
 export const profileUpdateWrite: WriteSpec<ProfileUpdateVars> = {
   key: ({ viewerId }) => `profile:${viewerId}`,
   submit: (api, { patch }) => api.profiles.update(patch),
+  // A dev save that wrote the DashPay profile and then failed names what did not save (#20).
+  failureText: (ticket, { patch }) => partialSaveFailure(ticket, patch),
   // A second Save of the same change before the first answers is dropped, not sent again
   // (each send of an unchanged profile is another paid replace on v2).
   intent: ({ patch }) => JSON.stringify(patch),

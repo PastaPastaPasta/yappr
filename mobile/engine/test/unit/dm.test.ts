@@ -798,6 +798,9 @@ describe('dm on DM v5: groups', () => {
     expect(await a.settled(await a.dm.renameGroup(key, 'Dream team'))).toMatchObject({ op: 'dm.group', state: 'confirmed' })
     expect(await a.settled(await a.dm.addMember(key, carol))).toMatchObject({ state: 'confirmed' })
     await expect(a.dm.leaveGroup(key)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+    // Keys go only to members: refused at once, never an unknown outcome in lib's run.
+    const stranger = bs58.encode(new Uint8Array(32).fill(7))
+    await expect(a.dm.resendKeys(key, stranger)).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'They are not in this group.' })
 
     await b.engine().tick()
     const group = (await b.dm.conversations()).find(conv => conv.kind === 'group')

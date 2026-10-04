@@ -27,7 +27,7 @@ tags:
       visible:
         id: messages-locked
     commands:
-      - tapOn: "Enter encryption key"
+      - tapOn: "Unlock messages"
       - extendedWaitUntil:
           visible:
             id: dm-unlock-key

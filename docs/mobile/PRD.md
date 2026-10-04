@@ -444,7 +444,7 @@ As anyone, I want a yap.pr post link to open in the app, so that sharing works.
 
 #### POST-08 · Private post placeholder · P0 · all
 As a reader, I want to know a private-feed post exists without seeing broken ciphertext, so that the feed is clean.
-- An encrypted post renders its header and action bar normally and, in place of the body, a muted panel with a lock icon: "Private post / Only {name}'s private followers can read this. Private feeds aren't in the app yet." and "Open on yap.pr" (in-app browser to the post).
+- An encrypted post renders its header and action bar normally and, in place of the body, a muted panel with a lock icon: "Private post / Only approved followers can see this." and "Open on yap.pr" (in-app browser to the post).
 - A private post with a public teaser shows the teaser text above the panel.
 - Replying to or quoting a private post is not offered (the menu and action bar hide Reply and Quote); liking and bookmarking are allowed.
 
@@ -471,11 +471,10 @@ As a user, I want to write and publish a post, so that people can read it.
 #### COMP-02 · Character and byte counter · P0 · all (`contentLimits`)
 As a user, I want to know how much room I have, so that my post isn't rejected.
 - The limits come from `engine.info()` (`contentLimits`). Counting runs in the UI on every keystroke and mirrors `lib/compose/limits.ts` exactly: characters are Unicode code points (`Array.from(text).length`, so one emoji is one character) and bytes are the UTF-8 length. A Jest test pins the RN counter against the `lib` functions on shared fixtures (emoji, ZWJ sequences, CJK, Arabic, combining marks).
-- The counter shows "current / limit" in characters.
-- It is gray, turns amber at 50 or fewer characters left, and red when over.
-- On dev, when the UTF-8 size is over 2000 bytes, a red line under the editor reads "{N} bytes over the size limit. Emoji and non-Latin text count extra." This can happen with fewer than 1000 characters.
-- Over either limit, "Post" is disabled and the overflowing text is highlighted with a red background from the first character past the limit.
-- The counter's screen-reader label is "{current} of {limit} characters" plus ", {N} over limit" when over; it is not announced on every keystroke.
+- The counter shows the characters left: the room left under both limits, counted in the characters a plain letter fills (one code point, one UTF-8 byte), so emoji and non-Latin text use up more of it. It reaches 0 exactly at the longest post the contract takes (lib's `contentOverage` agrees: a Jest test pins it on ASCII, emoji, ZWJ, CJK and Arabic at both limits) and goes negative past it. It never talks about bytes.
+- It is gray, turns amber at 50 or fewer characters left, and red below 0.
+- Over either limit, "Post" is disabled, the overflowing text is highlighted with a red background from the first character past the limit, and a red line under the editor reads "Your post is too long."
+- The counter's screen-reader label is "{n} characters left", or "Too long by {n}"; it is not announced on every keystroke.
 - Each post in a thread has its own counter.
 
 #### COMP-03 · Reply · P0 · all
@@ -504,14 +503,14 @@ As a writer, I want to post several connected posts at once, so that I can say m
 As a writer, I want suggestions when I type @, so that I tag the right person.
 - After `@` and 3 or more characters, a suggestion list appears above the keyboard with up to 8 matches by DPNS prefix: avatar, display name, `@username`.
 - Selecting inserts `@username ` (with a trailing space) in place of the typed fragment. Dismissing (typing a space, Escape, tapping outside) closes it.
-- On dev (`mentionsInline`), when a second `@mention` is typed, a hint under the editor reads "Only the first @mention notifies the person." (P1).
+- On dev (only the first mention notifies), with 2 or more different `@mention`s a muted caption under the editor reads "Only @{first} will be notified." (P1).
 - Mentions of names that do not resolve stay plain text; the post still publishes.
 
 #### COMP-07 · Hashtags and cashtags · P0 · all
 As a writer, I want my #tags to work, so that my post shows up on tag pages.
 - `#tag` and `$tag` are highlighted in the editor in the link color.
-- A tag longer than the limit (63 on v2, 61 on dev) is shown with a red underline and the hint "Tags can be up to {N} characters". Posting is allowed; the over-long tag is not indexed (as web).
-- On dev (`hashtagsInline`), when a second tag is typed, a hint reads "Only the first #tag puts this post on a tag page." (P1).
+- A tag longer than the limit (63 on v2, 61 on dev) is not highlighted as a link in the editor, with no hint. Posting is allowed; the over-long tag is not indexed (as web).
+- No hint about which tags are indexed.
 - There is no hashtag autocomplete in 1.0.
 
 #### COMP-08 · NSFW flag · P0 · all
@@ -668,16 +667,16 @@ As a user, I want my own profile to be my hub, so that I can reach my things.
 
 #### PROF-06 · Edit profile (v2) · P0 · v2 (`profileExtension` off)
 As a testnet user, I want to edit my profile, so that people know who I am.
-- "Edit profile" opens a modal form: Name (required, 1–50), Bio (160), Pronouns (20), Location (50), Website (200), "NSFW Content / Mark your profile as containing adult content" toggle, Avatar (PROF-08), Banner image URL (512).
+- "Edit profile" opens a modal form, one list: Name (required, 1–50), Bio (160), Pronouns (20), Location (50), Website (200), "NSFW Content / Mark your profile as containing adult content" toggle, Avatar (PROF-08), Banner image URL (512). While saving, the title reads "Saving…".
 - Each field shows a counter when within 20 of its limit. "Save" is disabled while invalid or unchanged.
 - Save writes the profile document, then closes with the toast "Profile updated!". The first save creates the profile (#605 behaviour; a failed read never counts as "no profile").
 - "Cancel" with changes asks "Discard changes?".
 
 #### PROF-07 · Edit profile (dev) · P0 · dev (`profileExtension`)
 As a devnet user, I want to edit my profile, knowing that some fields are my DashPay profile, so that nothing surprises me.
-- The form has two groups. "DashPay profile": Name (25), Bio (140), Avatar; with the note "This also updates your DashPay profile, which other Dash apps show." "Yappr profile": Pronouns (20), Location (50), Website (200), Banner image URL (512), NSFW toggle.
-- Save writes the DashPay profile first (only if it changed or is missing), waits until it is readable, then the `yapprProfile` (only if it changed or is missing), as `lib/services/unified-profile-service.ts` does. Progress shows "Saving… (1 of 2)".
-- If the first write lands and the second fails, the toast says "Your DashPay profile was saved, but your Yappr profile wasn't. Try again." and the form stays open with the second group's values.
+- The form is one list, as on v2: Name (25), Bio (140), Pronouns (20), Location (50), Website (200), Banner image URL (512), NSFW toggle, Avatar. Under Bio, a footnote: "Your name and bio also show in other Dash apps, like DashPay."
+- Save writes the DashPay profile first (only if it changed or is missing), waits until it is readable, then the `yapprProfile` (only if it changed or is missing), as `lib/services/unified-profile-service.ts` does. The title reads just "Saving…".
+- If the first write lands and the second fails, the toast names what did not save: "Couldn't save pronouns, location and website. Try again." (the changed fields the `yapprProfile` holds), with Retry, and the form stays open.
 - An image-URL avatar is fetched once to hash and fingerprint it for DashPay; if that fails it is kept in the Yappr profile only (web behaviour), with no error to the user.
 
 #### PROF-08 · Avatar · P0 · all
@@ -790,11 +789,11 @@ As a user, I want to turn off notification types, so that I only see what I care
 #### NOTIF-06 · Grouped like notifications · P1 · v11 (`likeNotificationsTimeless`)
 As a user with a popular post, I want likes grouped, so that the list stays readable.
 - On v11 the engine returns like notifications grouped per post: "Alice and 3 others liked your post", with up to 3 stacked avatars.
-- They carry no like time; the time shown is when this device first noticed them ("Noticed 2h ago").
+- They carry no like time, so their rows show no time (never when this device noticed them).
 
 #### NOTIF-07 · Windowed history · P1 · dev (`notificationsWindowed`)
-As a user who was away for a week, I want to know older activity may be missing, so that I'm not misled.
-- On dev, the end of the list reads "Older replies and quotes may not appear here." Nothing is shown on v2.
+As a user who was away for a week, I want a list that just ends, so that I'm not given caveats about indexing.
+- On dev, reply and quote sources are windowed; the list ends with no footer on every contract.
 
 #### NOTIF-08 · Blocked actors · P0 · all
 As a user, I want no notifications from people I block, so that blocking works.
@@ -817,9 +816,9 @@ As a user, I want my conversations in one list, so that I can pick up where I le
 
 #### DM-02 · Unlock messages · P0 · all
 As a user who signed in with a private key, I want to unlock my messages, so that I can read them.
-- When no encryption key for the identity is on the device, the Messages tab shows "Unlock your messages / Messages are encrypted with your encryption key. Enter it on this device to read and send them." with "Enter encryption key".
-- The sheet first tries automatic recovery ("Attempting to automatically recover your encryption key…"); on success "Your encryption key was automatically recovered." and the inbox opens.
-- Otherwise a secure field "WIF (cXyz...) or hex (64 chars)" validates against the identity's encryption key: "Invalid key" on mismatch; "Encryption key saved" on success.
+- When no encryption key for the identity is on the device, the Messages tab shows "Unlock your messages / Your messages are encrypted. Unlock them to read and send them on this device." with "Unlock messages".
+- The sheet first tries automatic recovery ("Unlocking your messages…"); on success the inbox opens with the toast "Messages unlocked".
+- Otherwise: "Unlock your messages / Your messages are encrypted. Paste your encryption key to read and send them on this device." with one secure field ("Paste your encryption key") and "Unlock", checked against the identity's encryption key. Text that is not a key: "That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr."; a key that is not the one this account's messages use (another account's, another of its own keys, another network's): "That isn't the encryption key for this account's messages."; success: "Messages unlocked".
 - Wallet sign-in derives the key, so wallet users never see this.
 
 #### DM-03 · Read a conversation · P0 · all
@@ -850,24 +849,26 @@ As a user, I want to start a chat with someone, so that we can talk.
 As a user, I want to create a group chat, so that several of us can talk.
 - "New group": "Name the group and pick its members." with "Group name" (1–100 characters) and a member picker (same search as DM-05) showing selected members as removable chips ("Remove {name}").
 - At most 100 members including the creator; adding more shows "A group can have at most 100 members."
-- "Create group" opens the new group conversation; failure: "Could not create the group" plus the categorized reason.
+- "Create group" shows "Creating group…" and opens the new group conversation; failure: "Could not create the group" plus the categorized reason. An unknown outcome (a timeout, an engine restart) goes to the inbox, read again, which shows the group once it is there; the form never offers a second creation.
+- Members the creation could not give the group key get it again from the owner's app by itself: on group open, on app foreground and after a backoff (30 s, then 2 min), at most 3 times per member, only for members the creation proved it missed, and never while a resend for that member still runs (the engine's 5-minute `dm.group` deadline). A member the owner removes, or who is no longer in the group, is dropped. Only once the attempts are used up, and only for members whose every attempt proved it failed: "1 member hasn't been added to {group} yet." / "{n} members haven't been added to {group} yet." with "Retry" (without the name when the inbox has not read it). A member with any resend whose outcome stayed unknown (it may have landed) is let go silently. This queue lives in memory: after the app is killed, or once it lets a member go, the member sees "Waiting for access…" and the owner's "Re-invite" is the fallback.
 
 #### DM-07 · Group info · P0 · dev (v5)
 As a group member or owner, I want to see and manage the group, so that it stays useful.
 - Tapping the group header opens "Group info": name, member list with avatars and an "Owner" badge, and actions by role.
-- Owner: "Rename" (toast "Group renamed"), "Add members" (picker, note "New members can read messages sent after they join."), remove a member via the row menu ("Remove member?" → "Remove", toast "Member removed"), "Resend keys" (toast "Keys sent"), "End group" ("End this group? / Nobody will be able to send messages to it any more. This cannot be undone." → "End group", toast "Group ended").
-- Member: "Leave group" ("Leave this group? / The owner removes you the next time they open the app. Until then you can still read new messages." → "Leave", toast "You left the group").
+- Owner: "Rename" (toast "Group renamed"), "Add members" (picker, note "New members can read messages sent after they join."), remove a member via the row menu ("Remove {name} from the group? / They won't see new messages." → "Remove", toast "Member removed"), "Re-invite" in the same menu, the fallback for a member still without the key (toast "Invite sent"), "End group" ("End this group? / Nobody will be able to send messages to it any more. This cannot be undone." → "End group", toast "Group ended").
+- Member: "Leave group" ("Leave group? / You'll stop getting messages from this group." → "Leave"). The inbox opens at once without the group, which comes back only if the leave is proved not to have gone out (or the account changes first; an outcome that stays unknown keeps it out for the session); the owner's app removes the member and rotates the key by itself; toast "You left the group" once confirmed.
+- On legacy (testnet), a link to group info goes to the inbox.
 
 #### DM-08 · Group states · P0 · dev (v5)
 As a member, I want to know when I can't send to a group, so that I'm not confused.
 - Ended: a banner "This group has ended." and no composer.
 - Removed or left: "You are no longer a member of this group." and no composer.
-- Keys missing: "You cannot read this group yet. Ask the owner to resend your keys: they can do it from the group settings."
+- Keys missing: "Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you." (the inbox preview: "Waiting for access…").
 
-#### DM-09 · Delete a conversation · P1 · dev (v5)
-As a user, I want to remove a conversation from my list, so that the inbox stays tidy.
-- Swipe left (iOS) / the row menu: "Delete conversation", confirmed. Toast "Conversation deleted. It comes back if a new message arrives."
-- The list footer shows "Show {N} deleted conversations" / "Hide deleted conversations".
+#### DM-09 · Archive a conversation · P1 · dev (v5)
+As a user, I want to move a conversation out of my list, so that the inbox stays tidy.
+- Swipe left (iOS) "Archive" / the row menu and the conversation menu "Archive conversation", with no confirmation. The row leaves at once with the toast "Conversation archived" and "Undo"; it is saved once Undo has passed (or the app leaves the foreground). A new message brings it back (the engine's `dm.hide`).
+- The list footer shows "Archived ({N})" / "Hide archived". With everything archived the list reads "No conversations yet", with the footer under it.
 
 #### DM-10 · Block from a conversation · P0 · all
 As a user, I want to block someone from the chat, so that they stop messaging me.
@@ -880,9 +881,10 @@ As a testnet user, I want my existing web DMs on the phone, so that conversation
 - Read receipts follow the "Read receipts" setting (SET-04): when on, the other person's read state shows as "Read" under the last own message.
 
 #### DM-12 · Message settings · P1 · dev (v5)
-As a user, I want to reclaim message fees, so that storage doesn't cost me forever.
-- "Message settings": "Reclaim message fees" with options "Never (keep paying for storage)", "After 30 days", "After 90 days", "After 1 year", and the web explanation ("Your sent messages stay on Dash Platform and you keep paying for their storage. Choose a period below to delete them once they are that old and get most of their storage fee back. This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have.").
-- "Blocked": people blocked in Messages with "Unblock"; empty "Nobody. Blocked people's messages and group invitations are ignored."
+As a user, I want old sent messages deleted, so that I get most of their storage fee back.
+- "Message settings": "Delete old sent messages" with options "Never", "After 30 days", "After 90 days", "After 1 year", and the footer "Deleting old sent messages refunds most of their storage fee. It doesn't make them private: people you messaged keep their copies, and Dash Platform keeps a history." Never called "disappearing messages", which would promise privacy the feature cannot give.
+- "Blocked": people blocked in Messages with "Unblock"; empty "No blocked accounts" with the caption "Messages and group invites from people you block are ignored."
+- On legacy (testnet), a link to Message settings goes to the inbox.
 
 #### DM-13 · Messages badge · P0 · all
 As a user, I want to know I have unread messages, so that I reply in time.

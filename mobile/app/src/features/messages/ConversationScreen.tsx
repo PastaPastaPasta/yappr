@@ -24,7 +24,7 @@ import { useColors } from '~/ui/tokens';
 
 import { Composer, ComposerBanner } from './Composer';
 import { ConversationAvatar } from './ConversationAvatar';
-import { deleteConversation } from './dm-actions';
+import { archiveConversation } from './dm-actions';
 import {
   markConversationRead,
   openConversation,
@@ -41,6 +41,7 @@ import {
 import { buildTimeline, chronological, composerBlockedReason, conversationTitle, memberCount, type TimelineItem } from './dm-model';
 import { DaySeparator, MessageBubble } from './MessageBubble';
 import { DmLocked } from './DmStates';
+import { resendMissingKeys } from './group-keys';
 import { takeDraft, useDraft, useDrafts } from './drafts';
 import { forgetLanded, mergeOutbox, resolveFailed, sendInBackground, useOutboxFor } from './outbox';
 import { useStickToNewest } from './stick-to-newest';
@@ -97,7 +98,7 @@ function menuItems(conversation: ConversationDTO, v5: boolean): MenuItem[] {
   if (conversation.kind === 'group') {
     return [
       { id: 'info', title: 'Group info', systemImage: 'info.circle' },
-      ...(v5 ? [{ id: 'delete', title: 'Delete conversation', systemImage: 'trash', destructive: true }] : []),
+      ...(v5 ? [{ id: 'archive', title: 'Archive conversation', systemImage: 'archivebox' }] : []),
     ];
   }
   const items: MenuItem[] = [
@@ -106,7 +107,7 @@ function menuItems(conversation: ConversationDTO, v5: boolean): MenuItem[] {
       ? { id: 'unblock', title: 'Unblock', systemImage: 'hand.raised.slash' }
       : { id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true },
   ];
-  if (v5) items.push({ id: 'delete', title: 'Delete conversation', systemImage: 'trash', destructive: true });
+  if (v5) items.push({ id: 'archive', title: 'Archive conversation', systemImage: 'archivebox' });
   return items;
 }
 
@@ -165,6 +166,12 @@ export function ConversationScreen() {
     openConversation(key);
     return () => openConversation(null);
   }, [focused, ready, key]);
+
+  // The owner's app resends any key a creation could not send, each time the group opens (#8).
+  const owned = group && conversation?.isOwner === true;
+  useEffect(() => {
+    if (focused && owned) resendMissingKeys(key);
+  }, [focused, owned, key]);
 
   // Read only while the user can see it: Android delivers new messages to a backgrounded app (NET-08).
   const active = useAppActive();
@@ -225,12 +232,9 @@ export function ConversationScreen() {
     if (!conversation) return;
     if (id === 'info') openInfo();
     else if (id === 'profile') openUser(peerId);
-    else if (id === 'delete') {
-      deleteConversation(conversation)
-        .then((deleted) => {
-          if (deleted && router.canGoBack()) router.back();
-        })
-        .catch(() => undefined);
+    else if (id === 'archive') {
+      archiveConversation(conversation);
+      if (router.canGoBack()) router.back();
     } else if (v5 && conversation.peer && viewerId && (id === 'block' || id === 'unblock')) {
       const handle = handleOf(conversation.peer);
       // v5 shows Unblock for a block in Messages: lifted with the account's own block, if any.

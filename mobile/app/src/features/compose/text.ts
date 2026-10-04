@@ -1,12 +1,12 @@
 /**
  * What the compose editor reads from its text: the spans it colors
  * (PRD COMP-07, UX_SPEC §2.12), the @-fragment under the caret
- * (COMP-06) and the first-mention / first-tag / tag-length hints.
+ * (COMP-06) and who a post with several mentions notifies.
  *
  * The patterns are the post parser's (`ui/rich-text/parse.ts`), so the
- * editor highlights exactly what the published post links. Tags are
- * unbounded there too: a tag over the contract's length shows whole,
- * underlined in red here and linked whole in the post.
+ * editor highlights what the published post links, except a tag longer
+ * than the contract indexes: that one stays plain here, with no rule to
+ * read (#11), since no tag page will list the post under it.
  */
 
 import { INLINE_PATTERNS } from '~/ui/rich-text/parse';
@@ -56,7 +56,7 @@ export function isTagTooLong(token: Token, maxLength: number): boolean {
   return (token.kind === 'hashtag' || token.kind === 'cashtag') && tagLength(token) > maxLength;
 }
 
-export type SpanStyle = 'plain' | 'link' | 'tagTooLong';
+export type SpanStyle = 'plain' | 'link';
 
 export interface Span {
   text: string;
@@ -66,15 +66,15 @@ export interface Span {
 }
 
 /**
- * The editor's styled runs: tokens in the link color (a too-long tag
- * underlined in red), and everything from `overflowAt` on marked over.
+ * The editor's styled runs: tokens in the link color (but a tag too long
+ * to index stays plain), and everything from `overflowAt` on marked over.
  */
 export function editorSpans(text: string, tagMax: number, overflowAt: number | null): Span[] {
   const runs: { start: number; end: number; style: SpanStyle }[] = [];
   let index = 0;
   for (const token of tokenize(text)) {
     if (token.start > index) runs.push({ start: index, end: token.start, style: 'plain' });
-    runs.push({ start: token.start, end: token.end, style: isTagTooLong(token, tagMax) ? 'tagTooLong' : 'link' });
+    runs.push({ start: token.start, end: token.end, style: isTagTooLong(token, tagMax) ? 'plain' : 'link' });
     index = token.end;
   }
   if (index < text.length) runs.push({ start: index, end: text.length, style: 'plain' });
@@ -122,23 +122,15 @@ export function insertMention(text: string, at: MentionQuery, username: string):
 }
 
 export interface ComposeHints {
-  /** A tag is longer than the contract indexes. */
-  tagTooLong: boolean;
-  /** A second @mention (only the first notifies, on dev). */
-  secondMention: boolean;
-  /** A second tag (only the first is indexed, on dev). */
-  secondTag: boolean;
+  /**
+   * Two or more different @mentions where only the first notifies (dev):
+   * that first mention, as typed ("@alice"); otherwise null.
+   */
+  notified: string | null;
 }
 
-export function composeHints(text: string, tagMax: number): ComposeHints {
-  const tokens = tokenize(text);
-  const mentions = new Set(tokens.filter((t) => t.kind === 'mention').map((t) => t.value.toLowerCase()));
-  const tags = new Set(
-    tokens.filter((t) => t.kind === 'hashtag' || t.kind === 'cashtag').map((t) => t.value.toLowerCase()),
-  );
-  return {
-    tagTooLong: tokens.some((t) => isTagTooLong(t, tagMax)),
-    secondMention: mentions.size > 1,
-    secondTag: tags.size > 1,
-  };
+export function composeHints(text: string): ComposeHints {
+  const mentions = tokenize(text).filter((t) => t.kind === 'mention');
+  const distinct = new Set(mentions.map((t) => t.value.toLowerCase()));
+  return { notified: distinct.size > 1 ? (mentions[0]?.value ?? null) : null };
 }

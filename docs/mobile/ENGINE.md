@@ -712,7 +712,7 @@ Conversation keys are `d:…` or `g:…:…` for v5 (`ConversationView.key`, `en
 | `send` | `(key: string, text: string) => Promise<WriteTicket>` | `send` (:419), which returns `Promise<void>` and throws on failure; see §7.1 for the mapping | `sendMessage` (:66), which returns `{success, error?}` |
 | `startDirect` | `(peerId: Id) => Promise<string>` | `startDirect` (:412) | `getOrCreateConversation` (:601) |
 | `createGroup` | `(name: string, memberIds: Id[]) => Promise<{ key: string; failed: Id[] }>` | `createGroup` (:457); at most 100 members (`MAX_GROUP_MEMBERS`, `lib/dm/group.ts:22`) | `NOT_SUPPORTED` |
-| `renameGroup` / `addMember` / `removeMember` / `leaveGroup` / `endGroup` / `resendKeys` | `(key, …) => Promise<WriteTicket>` | :476 / :468 / :472 / :488 / :480 / :484 | `NOT_SUPPORTED` |
+| `renameGroup` / `addMember` / `removeMember` / `leaveGroup` / `endGroup` / `resendKeys` | `(key, …) => Promise<WriteTicket>` | :476 / :468 / :472 / :488 / :480 / :484; refused at once with `BAD_REQUEST` for a group that is gone, ended or not the caller's to manage, and `resendKeys` to someone not in the group ("They are not in this group."), so none of these becomes an unknown outcome inside lib's run | `NOT_SUPPORTED` |
 | `hide` | `(key: string) => Promise<void>` | `hide` (:433) | — |
 | `setBlocked` | `(peerId: Id, blocked: boolean) => Promise<void>` | `setBlocked` (:444); stored in the encrypted self-state, separate from `safety.block` | — |
 | `setRetention` | `(r: '30d' \| '90d' \| '1y' \| 'never') => Promise<void>` | `setRetention` (:451) | — |

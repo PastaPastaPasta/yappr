@@ -1,6 +1,8 @@
 /** G-11's copy for DAPI unavailability (UX_SPEC §5.12). */
 export const UNAVAILABLE_MESSAGE = 'Dash Platform is temporarily unavailable. Please try again in a few moments.';
 export const GENERIC_MESSAGE = "This couldn't be loaded. Please try again.";
+/** A view the network's contracts don't offer (`NOT_SUPPORTED`, UX_SPEC §5.12): nothing about contracts. */
+export const NOT_SUPPORTED_MESSAGE = "This isn't available yet.";
 
 const TRANSPORT = /timed? ?out|timeout|unavailable|network|fetch|disconnect|restart|deadline|503|504|ECONN|request error|sending request/i;
 
@@ -52,6 +54,6 @@ export function isTemporaryReadFailure(error: unknown): boolean {
  * never reaches the screen.
  */
 export function readErrorMessage(error: unknown): string {
-  if (codeOf(error) === 'NOT_SUPPORTED') return 'This contract does not support this view.';
+  if (codeOf(error) === 'NOT_SUPPORTED') return NOT_SUPPORTED_MESSAGE;
   return isTemporaryReadFailure(error) ? UNAVAILABLE_MESSAGE : GENERIC_MESSAGE;
 }

@@ -7,7 +7,7 @@ import {
   useAppLockSettings,
   useLockState,
 } from './app-lock';
-import { isTransient, keyErrorText, walletErrorText } from './errors';
+import { isOtherAccountSignedIn, isTransient, keyErrorText, walletErrorText } from './errors';
 import { acceptTerms, hasAcceptedTerms, TERMS_VERSION, useTermsStore } from './terms';
 
 jest.mock('expo-local-authentication', () => ({
@@ -141,6 +141,22 @@ describe('sign-in error copy (AUTH-07, AUTH-08)', () => {
     expect(walletErrorText(new Error('network mismatch'), 'Devnet')).toBe(
       'This wallet is on a different network. Switch your wallet to Devnet and try again.',
     );
+  });
+
+  it('offers to add an account when another one is signed in, naming both, never a Settings path (#23)', () => {
+    const other = coded('BAD_REQUEST', 'Another account is signed in. Add the account (session.prepareAddAccount) and restart the engine first.');
+    expect(keyErrorText(other, { current: '@alice', adding: '@bob' })).toBe(
+      "You're signed in as @alice. Add @bob as another account?",
+    );
+    expect(walletErrorText(other, 'Devnet', { current: '@alice' })).toBe(
+      "You're signed in as @alice. Add this account too?",
+    );
+    expect(walletErrorText(other, 'Devnet')).toBe('Another account is signed in. Add this account too?');
+    expect(isOtherAccountSignedIn(other)).toBe(true);
+    // The same account again is not "another".
+    const same = coded('BAD_REQUEST', 'This account is already signed in');
+    expect(keyErrorText(same, { current: '@alice', adding: '@alice' })).toBe('You are already signed in with this account.');
+    expect(isOtherAccountSignedIn(same)).toBe(false);
   });
 
   it('tells transient failures from bad input', () => {
