@@ -27,12 +27,21 @@ tags:
 - tapOn:
     id: compose-post
 - extendedWaitUntil:
-    visible: "Reply posted"
-    timeout: 120000
-# In the thread, under the post.
+    notVisible:
+      id: compose-screen
+    timeout: 15000
+# In the thread, under the post, at once.
 - extendedWaitUntil:
     visible: ".*Maestro reply ${RUN}.*"
     timeout: 60000
+# Confirmed: the write-status row gives way to the action bar. Not the
+# "Reply posted" toast: it shows for 3 s, and on a loaded host the tap on
+# Post alone can take longer than that (it waits for the screen to settle),
+# so the toast can come and go before the next step looks.
+- extendedWaitUntil:
+    notVisible:
+      id: write-status
+    timeout: 120000
 - takeScreenshot: replied
 
 # Delete the reply from its menu.

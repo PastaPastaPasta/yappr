@@ -193,6 +193,14 @@ tags:
     id: about-commit
 - assertVisible:
     id: about-community-rules
+# On iOS the list scrolls under the translucent tab bar, and Maestro counts a row
+# behind it as visible: scrollUntilVisible then stops with the licenses row at the
+# tab bar's height, and the tap lands on the Notifications tab. Scroll to the end
+# of the list first, which puts its last rows above the tab bar.
+- swipe:
+    start: 50%, 70%
+    end: 50%, 25%
+- waitForAnimationToEnd
 - scrollUntilVisible:
     element:
       id: about-licenses

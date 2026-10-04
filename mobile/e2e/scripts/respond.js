@@ -8,13 +8,13 @@
 // Sakura's quorum server lists only the newest quorums, so the responder can fail with
 // "Quorum not found in cache" (and then "no available addresses") for a minute or two:
 // the bridge then pauses before it answers 503 {retry: true} (Maestro's JavaScript has no
-// timers), and this asks again, for about three minutes. Nothing secret passes through here.
+// timers), and this asks again, for about five minutes. Nothing secret passes through here.
 if (KX !== 'dash-key' && KX !== 'dash-st') throw new Error(`KX must be dash-key or dash-st, not ${KX}`);
 const request = { scheme: KX, persona: Number(PERSONA) };
 if (typeof KEY_INDEX !== 'undefined' && KEY_INDEX !== '') request.keyIndex = Number(KEY_INDEX);
 
 let response;
-for (let attempt = 1; attempt <= 10; attempt++) {
+for (let attempt = 1; attempt <= 20; attempt++) {
   response = http.post(`${BRIDGE_URL}/respond`, {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(request),
