@@ -241,6 +241,18 @@ describe('v10 profile reads after a save', () => {
     expect((await profiles.getProfile(ownerId))?.pronouns).toBe('they/them');
   });
 
+  it('does not stand in for reads with a create that was never confirmed (it may not land)', async () => {
+    stored[YAPPR_CONTRACT_ID] = [];
+    createDocument.mockImplementationOnce(async (_contract, type, owner, data) => ({
+      success: true, confirmed: false, document: { $id: `new-${type}`, $ownerId: owner, ...data },
+    }));
+    const profiles = await service();
+    await profiles.updateProfile(ownerId, { pronouns: 'she/they' });
+    expect(createDocument).toHaveBeenCalledWith(YAPPR_CONTRACT_ID, 'yapprProfile', ownerId, expect.objectContaining({ pronouns: 'she/they' }));
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBeUndefined();
+  });
+
   it('stops preferring its own write once a cached read would have expired', async () => {
     const profiles = await service();
     const now = Date.now();
