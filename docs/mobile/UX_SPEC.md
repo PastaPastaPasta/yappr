@@ -1042,14 +1042,15 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ Pronouns  [ he/him          ]   │
 │ Location  [ Lisbon          ]   │
 │ Website   [ https://bob.dev ]   │
-│ Banner image link [ https://… ] │
+│ Banner image link               │
+│ [ Paste an image link       ]   │
 │ NSFW content               [○]  │  switch row
 │ Mark your profile as containing │
 │ adult content                   │
 └─────────────────────────────────┘
 ```
 
-- One list on every contract, whichever documents hold the fields: Name, Bio, Pronouns, Location, Website, Banner image link, NSFW. v2: Name (required, 50), Bio (160). Dev: Name (25), Bio (140), with the footnote under Bio.
+- One list on every contract, whichever documents hold the fields: Name, Bio, Pronouns, Location, Website, Banner image link, NSFW. The banner and avatar image links take compose's copy: placeholder "Paste an image link", error "That doesn't look like an image link."; they never name URL schemes. v2: Name (required, 50), Bio (160). Dev: Name (25), Bio (140), with the footnote under Bio.
 - **Save:** disabled until changed and valid; shows a spinner and "Saving…" in the navigation bar title position, however many documents the save writes. If a dev save writes the DashPay profile and then fails on the Yappr profile, the toast names what did not save: "Couldn't save pronouns, location and website. Try again." (copy 5.6 `toast.profilePartial`).
 - **Avatar sheet** (bottom sheet, large detent): segmented "Generated / Image link". Generated: a 4-column grid of 28 style tiles (64 avatars with labels), selected tile has a 2 pt `accent` ring; under it "Seed" field + "Randomize" (`secondary sm`). Image link: URL field + 88 preview + error line. "Use this avatar" (primary block) at the bottom.
 
@@ -1704,7 +1705,8 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | edit.title | Edit profile |
 | edit.dashpayNote | Your name and bio also show in other Dash apps, like DashPay. (dev, under Bio) |
 | edit.fields | Name / Bio / Pronouns / Location / Website / Banner image link **(web: Name, Pronouns, Location, Website)** |
-| edit.nsfw | NSFW Content / Mark your profile as containing adult content **(web)** |
+| edit.nsfw | NSFW content / Mark your profile as containing adult content **(web)** |
+| edit.bannerLink | Paste an image link (placeholder) / That doesn't look like an image link. (invalid) |
 | edit.saving | Saving… |
 | toast.profileUpdated | Profile updated! **(web)** |
 | toast.profileFailed | Couldn't save your profile. Try again. (§5.4.1) |
@@ -1715,6 +1717,7 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | avatar.seed / randomize | Seed / Randomize |
 | avatar.use | Use this avatar |
 | avatar.error | Couldn't load this image |
+| avatar.link | Paste an image link (placeholder) |
 | lists.followers / following | Followers / Following **(web)** |
 | lists.searchPlaceholder | Search by username... **(web)** |
 | lists.noMatch | No users found with that name **(web)** |

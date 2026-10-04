@@ -104,7 +104,7 @@ export function ProfileEditForm({ draft, onChange, disabled }: ProfileEditFormPr
             className="w-4 h-4 text-yappr-500 rounded focus:ring-yappr-500"
           />
           <div>
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">NSFW Content</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">NSFW content</span>
             <p className="text-xs text-gray-500">Mark your profile as containing adult content</p>
           </div>
         </label>

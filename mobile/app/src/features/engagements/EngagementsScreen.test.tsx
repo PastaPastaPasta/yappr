@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
 
@@ -62,6 +63,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   fakeEngine.reset();
   queryClient.clear();
+  // An earlier test's follow, still pending, would keep its row followed over the next read.
+  resetWriteTracking();
   fakeEngine.setStatus({ state: 'ready', info: { capabilities: capabilities(true) } });
   useSessionStore.setState({ status: 'signed-in', session: viewer, accounts: [] });
   useSignInPrompt.setState({ open: false });

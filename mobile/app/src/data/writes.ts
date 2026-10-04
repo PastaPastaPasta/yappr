@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { config } from '~/config';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { queryClient } from '~/state/query-client';
 import { errorFeedback } from '~/ui/haptics';
 import { toast, type ToastAction } from '~/ui/toast';
 
@@ -30,6 +31,13 @@ export interface WriteSpec<V> {
   key?: (vars: V) => string;
   /** Apply the optimistic change and return its undo (`setViewerState` and friends). */
   optimistic?: (vars: V) => () => void;
+  /**
+   * Apply the change again, to the queries named only (by hash): a read that
+   * landed while the write was on its way (queued, or its call still running)
+   * may predate it, and would otherwise put the old state back over the
+   * change until the next read.
+   */
+  reapply?: (vars: V, queries: ReadonlySet<string>) => void;
   /**
    * The write's failure sentence ("Couldn't like this post. Try again."),
    * for a refusal and for a write a check proved absent alike, unless the
@@ -133,26 +141,31 @@ export function isFollowedWrite(id: string): boolean {
   return followed.has(id);
 }
 const latestByKey = new Map<string, string>();
+
+/** A write, as the queue and the tracker hold it. */
+interface WriteOf {
+  spec: WriteSpec<unknown>;
+  vars: unknown;
+}
+
 /**
- * Keys whose submit or retry hasn't answered yet, with what they ask for.
+ * Keys whose submit or retry hasn't answered yet, with the write that asks.
  * Each call marks its key with its own token and clears only that mark: a
  * queued write released while the call settles marks the key itself.
  */
-const submitting = new Map<string, { token: symbol; intent: unknown }>();
+const submitting = new Map<string, WriteOf & { token: symbol }>();
 
 /** Marks `key` busy for one call; the result clears the mark if it is still that call's. */
-function markSubmitting(key: string | undefined, intent: unknown): () => void {
+function markSubmitting(key: string | undefined, write: WriteOf): () => void {
   if (key === undefined) return () => undefined;
   const token = Symbol(key);
-  submitting.set(key, { token, intent });
+  submitting.set(key, { ...write, token });
   return () => {
     if (submitting.get(key)?.token === token) submitting.delete(key);
   };
 }
 
-interface Waiting {
-  spec: WriteSpec<unknown>;
-  vars: unknown;
+interface Waiting extends WriteOf {
   key: string | undefined;
   /** Its optimistic change, applied when it was made. */
   undo: (() => void) | null;
@@ -448,11 +461,55 @@ function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
   return current;
 }
 
+/**
+ * The write on its way for `key`, whose change a read must not undo: the one
+ * queued behind the pending write (the latest intent), else the one whose
+ * call still runs.
+ */
+function onItsWay(key: string): WriteOf | undefined {
+  const waiting = queued.get(key) ?? submitting.get(key);
+  if (waiting) return waiting;
+  const id = latestByKey.get(key);
+  const entry = id === undefined ? undefined : tracked.get(id);
+  return entry && stillRunning(useWriteTickets.getState().byId[id ?? '']) ? entry : undefined;
+}
+
+/**
+ * A read just landed in query `hash`. Read from the chain before the writes
+ * on their way landed, it shows what they change as it was: each puts its
+ * change back on that read (`reapply`). A follow, then an unfollow queued
+ * behind it, would otherwise read as followed again when the profile is
+ * reopened, until a read after both.
+ */
+function keepChangesOverRead(hash: string): void {
+  const keys = new Set([...queued.keys(), ...submitting.keys(), ...latestByKey.keys()]);
+  const only = new Set([hash]);
+  for (const key of keys) {
+    const write = onItsWay(key);
+    write?.spec.reapply?.(write.vars, only);
+  }
+}
+
 let stopTracking: (() => void) | null = null;
 
-/** Follows `write.status` for the app's lifetime. Started by `startDataLayer` (and on the first write). */
+/**
+ * Follows `write.status`, and the reads that land while writes are on their
+ * way, for the app's lifetime. Started by `startDataLayer` (and on the first
+ * write).
+ */
 export function startWriteTracking(): () => void {
-  stopTracking ??= onEngineEvent('write.status', (ticket) => receive(ticket, 'event'));
+  if (!stopTracking) {
+    const stopTickets = onEngineEvent('write.status', (ticket) => receive(ticket, 'event'));
+    const stopReads = queryClient.getQueryCache().subscribe((event) => {
+      // A fetch's result; `setQueryData` (an optimistic change itself) is `manual`.
+      if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
+      keepChangesOverRead(event.query.queryHash);
+    });
+    stopTracking = () => {
+      stopTickets();
+      stopReads();
+    };
+  }
   return () => {
     stopTracking?.();
     stopTracking = null;
@@ -468,6 +525,8 @@ export function resetWriteTracking(): void {
   tracked.clear();
   followed.clear();
   latestByKey.clear();
+  // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
+  submitting.clear();
   queued.clear();
   orphans = [];
   useWriteTickets.setState({ byId: {} });
@@ -479,7 +538,7 @@ const NO_INTENT = Symbol('no intent');
 /** What the write pending for `key` asks for, `NO_INTENT` when none is pending. */
 function pendingIntent(key: string): unknown {
   const marked = submitting.get(key);
-  if (marked) return marked.intent;
+  if (marked) return marked.spec.intent?.(marked.vars);
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
   if (!entry || !stillRunning(useWriteTickets.getState().byId[id!])) return NO_INTENT;
@@ -526,7 +585,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
   // A ticket the call made is no older than the call (a timeout answers long after the engine made it).
   const calledAt = Date.now();
-  const done = markSubmitting(key, spec.intent?.(vars));
+  const done = markSubmitting(key, { spec, vars });
   let revert = waiting.undo;
   try {
     revert ??= spec.optimistic?.(vars) ?? null;
@@ -632,7 +691,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     toast(OFFLINE_MESSAGE);
     return null;
   }
-  const done = markSubmitting(key, entry.spec.intent?.(entry.vars));
+  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
   try {
     if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
     return receive(await engine.api.writes.retry(ticketId), 'call');

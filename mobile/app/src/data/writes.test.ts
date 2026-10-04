@@ -1,16 +1,19 @@
-import type { SessionDTO, TargetRef, WriteTicket } from '@engine/api';
+import type { ProfileDTO, SessionDTO, TargetRef, WriteTicket } from '@engine/api';
+import { defaultScheduler, notifyManager } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react-native';
 
 import * as WebBrowser from 'expo-web-browser';
 
+import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
-import { deleteWrite } from '~/features/post/post-writes';
+import { deleteWrite, followWrite } from '~/features/post/post-writes';
 
 import { useSignInPrompt } from './require-auth';
 import { SESSION_EXPIRED_MESSAGE, isSessionExpired, setReauthHandler, useExpiredSessions } from './session-expiry';
 import { getLogs } from '~/engine/logs';
 
+import { queryKeys } from './keys';
 import { isExhausted, ticketJob } from './reconcile';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { useSessionStore } from './session';
@@ -591,6 +594,89 @@ describe('submitWrite', () => {
     await submitWrite({ ...spec, onRejected }, target);
     expect(onRejected).toHaveBeenCalledWith(expect.objectContaining({ code: 'QUOTE_HAS_TEXT' }), target);
     expect(currentToast()).toBeNull();
+  });
+});
+
+describe('a read that lands while a write is on its way', () => {
+  const author = 'author-id';
+  const profileKey = queryKeys.profile.detail(author);
+  const profileReading = (follows: boolean, followers: number) =>
+    ({ id: author, hasProfile: true, stats: { posts: 1, followers, following: 0 }, viewer: { follows, blocks: false, isSelf: false } }) as Partial<ProfileDTO>;
+  /** The profile screen opened again: a fresh read of the chain. */
+  const reopen = (follows: boolean, followers: number) =>
+    act(async () => {
+      await queryClient.fetchQuery({ queryKey: profileKey, queryFn: async () => profileReading(follows, followers), staleTime: 0 });
+    });
+  const shown = () => queryClient.getQueryData<Partial<ProfileDTO>>(profileKey);
+
+  beforeAll(() => notifyManager.setScheduler((cb) => cb()));
+  beforeEach(() => queryClient.clear());
+  afterAll(() => {
+    queryClient.clear();
+    notifyManager.setScheduler(defaultScheduler);
+  });
+
+  it('keeps an unfollow queued behind a pending follow when the reopened profile reads the follow back', async () => {
+    queryClient.setQueryData(profileKey, profileReading(false, 10));
+    const follow = ticket({ op: 'follow', target: { identityId: author } });
+    fakeEngine.method('graph.follow').mockResolvedValueOnce(follow);
+    await expect(runWrite(followWrite, { authorId: author, follow: true })).resolves.toMatchObject({ status: 'submitted' });
+    expect(shown()).toMatchObject({ viewer: { follows: true }, stats: { followers: 11 } });
+
+    // Reopened ~10 s later: the follow has landed. Then Following → Unfollow, while the follow's call still runs.
+    await reopen(true, 11);
+    await expect(runWrite(followWrite, { authorId: author, follow: false })).resolves.toEqual({ status: 'queued' });
+    expect(shown()).toMatchObject({ viewer: { follows: false }, stats: { followers: 10 } });
+
+    // Back and reopened at once: the chain still has the follow, the unfollow hasn't gone out.
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: false }, stats: { followers: 10 } });
+
+    // The follow confirms: the unfollow goes out; a read before it lands still shows it.
+    const unfollow = ticket({ op: 'unfollow', target: { identityId: author } });
+    fakeEngine.method('graph.unfollow').mockResolvedValueOnce(unfollow);
+    await act(async () => fakeEngine.emit('write.status', advance(follow, { state: 'confirmed' })));
+    expect(fakeEngine.method('graph.unfollow')).toHaveBeenCalledWith(author);
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: false }, stats: { followers: 10 } });
+
+    // Once it confirms, reads are the chain's again.
+    act(() => fakeEngine.emit('write.status', advance(unfollow, { state: 'confirmed' })));
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: true } });
+  });
+
+  it('shows the follow again when a sent unfollow fails, and a later read does not undo that', async () => {
+    queryClient.setQueryData(profileKey, profileReading(true, 11));
+    const unfollow = ticket({ op: 'unfollow', target: { identityId: author } });
+    fakeEngine.method('graph.unfollow').mockResolvedValueOnce(unfollow);
+    await runWrite(followWrite, { authorId: author, follow: false });
+    expect(shown()).toMatchObject({ viewer: { follows: false } });
+
+    act(() => fakeEngine.emit('write.status', advance(unfollow, { state: 'failed', error: null })));
+    expect(shown()).toMatchObject({ viewer: { follows: true } });
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: true }, stats: { followers: 11 } });
+  });
+
+  it('stops standing in for a write once tracking resets (an account switch)', async () => {
+    queryClient.setQueryData(profileKey, profileReading(true, 11));
+    const unfollow = ticket({ op: 'unfollow', target: { identityId: author } });
+    fakeEngine.method('graph.unfollow').mockResolvedValueOnce(unfollow);
+    await runWrite(followWrite, { authorId: author, follow: false });
+    resetWriteTracking();
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: true } });
+  });
+
+  it("leaves reads alone once a write's call has answered and it may have landed", async () => {
+    queryClient.setQueryData(profileKey, profileReading(true, 11));
+    const unfollow = ticket({ op: 'unfollow' });
+    fakeEngine.method('graph.unfollow').mockResolvedValueOnce(unfollow);
+    await runWrite(followWrite, { authorId: author, follow: false });
+    act(() => fakeEngine.emit('write.status', advance(unfollow, { state: 'unconfirmed' })));
+    await reopen(true, 11);
+    expect(shown()).toMatchObject({ viewer: { follows: true } });
   });
 });
 

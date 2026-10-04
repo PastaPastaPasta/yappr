@@ -1,7 +1,7 @@
 import type { AuthorDTO, ProfileDTO, UserSummaryDTO } from '@engine/api';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Pressable, ScrollView, TextInput, View, type LayoutChangeEvent } from 'react-native';
+import { Keyboard, Platform, Pressable, ScrollView, TextInput, View, type KeyboardEvent, type LayoutChangeEvent } from 'react-native';
 import { CheckCircleIcon, MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { queryKeys } from '~/data/keys';
@@ -111,15 +111,22 @@ export interface UserPickerProps {
    * has it (`usePickerReveal`).
    */
   onSearchFocus?: () => void;
+  /** The search field let go (`usePickerReveal`). */
+  onSearchBlur?: () => void;
 }
 
-/** Calls `reveal` as the field takes focus, and once more when the keyboard has come up while it has it. */
-function useRevealOnFocus(reveal: (() => void) | undefined) {
+/**
+ * Calls `reveal` as the field takes focus, and once more when the keyboard
+ * has come up while it has it; `conceal` as it lets go.
+ */
+function useRevealOnFocus(reveal: (() => void) | undefined, conceal: (() => void) | undefined) {
   const focused = useRef(false);
   const latest = useRef(reveal);
+  const latestConceal = useRef(conceal);
   useEffect(() => {
     latest.current = reveal;
-  }, [reveal]);
+    latestConceal.current = conceal;
+  }, [reveal, conceal]);
   const enabled = !!reveal;
   useEffect(() => {
     if (!enabled) return undefined;
@@ -135,39 +142,71 @@ function useRevealOnFocus(reveal: (() => void) | undefined) {
     },
     onBlur: () => {
       focused.current = false;
+      latestConceal.current?.();
     },
   };
 }
+
+/** Shorter than any software keyboard: the shortcuts bar iOS keeps up with a hardware keyboard. */
+const MIN_KEYBOARD_HEIGHT = 120;
+
+/** Whether a software keyboard is up now (one already up when the screen opens sends no new event). */
+const softKeyboardUp = () => (Keyboard.metrics()?.height ?? 0) >= MIN_KEYBOARD_HEIGHT;
 
 /**
  * For a picker low in a screen's scroll view (Group info › Add members):
  * searching scrolls the picker's section to the top of the view, so its
  * results show between the field and the keyboard instead of under it
- * (NEW-ios-picker-keyboard). While searching (until the keyboard goes down)
+ * (NEW-ios-picker-keyboard). While searching with a software keyboard up
  * the section's picker is at least as tall as the view, so there is always
  * room to scroll that far, and no blank space under a short picker
- * otherwise; on iOS the view also insets its content by the keyboard. Spread
- * `scrollProps` on the scroll view and `sectionProps` on the section that
- * starts with the picker's toggle, give the picker `minHeight`, and pass
- * `reveal` as its `onSearchFocus`.
+ * otherwise: with a hardware keyboard nothing covers the results, so the
+ * picker keeps its own height. Searching ends when the keyboard goes down,
+ * or, with none up, when the field lets go. On iOS the view also insets its
+ * content by the keyboard. Spread `scrollProps` on the scroll view and
+ * `sectionProps` on the section that starts with the picker's toggle, give
+ * the picker `minHeight`, and pass `reveal` as its `onSearchFocus` and
+ * `conceal` as its `onSearchBlur`.
  */
 export function usePickerReveal() {
   const scroll = useRef<ScrollView>(null);
   const sectionY = useRef(0);
   const [viewHeight, setViewHeight] = useState(0);
   const [searching, setSearching] = useState(false);
+  const [keyboardUp, setKeyboardUp] = useState(softKeyboardUp);
+  const keyboardUpNow = useRef(keyboardUp);
   const scrollToSection = useCallback(() => scroll.current?.scrollTo({ y: sectionY.current, animated: true }), []);
   const reveal = useCallback(() => {
     setSearching(true);
     scrollToSection();
   }, [scrollToSection]);
+  // With a software keyboard up, its going down ends the search, so the picker doesn't shrink under it.
+  const conceal = useCallback(() => {
+    if (!keyboardUpNow.current) setSearching(false);
+  }, []);
   useEffect(() => {
-    if (!searching) return undefined;
+    const shown = (event: KeyboardEvent) => {
+      keyboardUpNow.current = event.endCoordinates.height >= MIN_KEYBOARD_HEIGHT;
+      setKeyboardUp(keyboardUpNow.current);
+    };
+    const subscriptions = [
+      // iOS says so before the keyboard slides up; Android only once it is up.
+      Keyboard.addListener('keyboardWillShow', shown),
+      Keyboard.addListener('keyboardDidShow', shown),
+      Keyboard.addListener('keyboardDidHide', () => {
+        keyboardUpNow.current = false;
+        setKeyboardUp(false);
+        setSearching(false);
+      }),
+    ];
+    return () => subscriptions.forEach((subscription) => subscription.remove());
+  }, []);
+  // Android says a keyboard is up only once it is, so the picker grows with the search there.
+  const grown = searching && (keyboardUp || Platform.OS === 'android');
+  useEffect(() => {
     // Again once the picker has grown to the view's height.
-    scrollToSection();
-    const subscription = Keyboard.addListener('keyboardDidHide', () => setSearching(false));
-    return () => subscription.remove();
-  }, [searching, scrollToSection]);
+    if (grown) scrollToSection();
+  }, [grown, scrollToSection]);
   return {
     scrollProps: {
       ref: scroll,
@@ -179,8 +218,9 @@ export function usePickerReveal() {
         sectionY.current = event.nativeEvent.layout.y;
       },
     },
-    minHeight: searching ? viewHeight : undefined,
+    minHeight: grown ? viewHeight : undefined,
     reveal,
+    conceal,
   };
 }
 
@@ -199,9 +239,10 @@ export function UserPicker({
   autoFocus = false,
   initialQuery = '',
   onSearchFocus,
+  onSearchBlur,
 }: UserPickerProps) {
   const c = useColors();
-  const focusHandlers = useRevealOnFocus(onSearchFocus);
+  const focusHandlers = useRevealOnFocus(onSearchFocus, onSearchBlur);
   const [query, setQuery] = useState(initialQuery);
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;

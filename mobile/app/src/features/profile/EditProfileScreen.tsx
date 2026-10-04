@@ -165,7 +165,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         onChangeText={set('bannerUri')}
         maxLength={FIXED_LIMITS.banner}
         error={errors.bannerUri}
-        placeholder="https://… or ipfs://…"
+        placeholder="Paste an image link"
         keyboardType="url"
         autoCapitalize="none"
         autoCorrect={false}
@@ -173,7 +173,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         testID="edit-banner"
       />
       <SwitchRow
-        label="NSFW Content"
+        label="NSFW content"
         description="Mark your profile as containing adult content"
         value={form.nsfw}
         onValueChange={set('nsfw')}

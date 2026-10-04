@@ -13,7 +13,7 @@ in `src/features/<feature>/**`, next to the routes that use it.
 | `session.ts` | `useSession()`, `useViewerId()`, `useProvisionalViewerId()`, `useCapabilities()` |
 | `require-auth.tsx` | `requireAuth(action)` / `useRequireAuth()`, and the "Sign in to continue" sheet |
 | `writes.ts` | `runWrite`, `submitWrite`, `sendWrite`, `useWrite`, `checkWrite`, `retryWrite`: tickets, toasts and rollback |
-| `optimistic.ts` | `setViewerState`, `setFollowing`, `setAuthorBlocked`, `hidePost`, `markPostDeleted`, `dropFromLists`, `updateCachedPosts` |
+| `optimistic.ts` | `setViewerState`, `setFollowing` / `applyFollowing`, `setAuthorBlocked`, `hidePost`, `markPostDeleted`, `dropFromLists`, `updateCachedPosts` |
 | `sync.ts` | `startDataLayer()`: the root layout starts the app-wide subscriptions once |
 | `read-retry.ts` | `startReadRetry()`: NET-03's backoff for reads that found Dash Platform unavailable (started by `startDataLayer`) |
 | `testing/fake-engine.ts` | A fake `~/engine` for Jest |
@@ -160,6 +160,12 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   undone and announced when the pending one's call is cut short (below). With `intent` on the
   spec, a queued write that asks for what the pending one asked is dropped
   too, so a like, unlike, like run sends one like.
+- **Reads don't undo a write on its way.** A read that lands while a write is
+  queued, or while its call still runs, was read from the chain before the
+  write landed. With `reapply` on the spec, the write's change is put back on
+  that read (only that query). A follow, then an unfollow queued behind it,
+  would otherwise read as followed again when the profile is reopened. Once
+  the call has answered, reads show the chain as it is.
 - **Offline (PRD G-1).** While the OS reports no connectivity, `runWrite`
   (and Retry) send nothing and make no optimistic change: the toast says
   "You're offline. Try again when you're connected." and the result is `refused`.
@@ -199,7 +205,9 @@ covered without registering it.
 - `holdOwnQuote(quotedId, quoteId)` marks the viewer's v10 slot held by a
   quote with text once it is published (the quote count moved with it).
 - `setFollowing(authorId, follows)` updates the author's posts, profile
-  (and its follower count) and user rows.
+  (and its follower count) and user rows. `applyFollowing` is the same
+  change without an undo, optionally to some queries only (`followWrite`'s
+  `reapply`).
 - `setAuthorBlocked(authorId, blocked)` sets `viewer.authorBlocked` on the
   author's cached posts and quotes, so a block survives a relaunch.
 - `hidePost(id)` removes a post from every `PostItem` at once.

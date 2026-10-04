@@ -1388,38 +1388,89 @@ describe('Group info (DM-07, DM-08)', () => {
     expect(screen.getByTestId(`group-member-${CAROL}`)).toBeTruthy();
   });
 
-  it('scrolls the add-members picker above the keyboard while searching (NEW-ios-picker-keyboard)', async () => {
+  /** Group info with the add-members picker open, laid out 700 high with its section at 540. */
+  async function openAddMembers() {
+    // Before the screen mounts: it listens for the keyboard from the start.
+    const listen = jest.spyOn(Keyboard, 'addListener');
     await openInfo(group({ ownerId: VIEWER, isOwner: true }));
     const view = screen.UNSAFE_getByType(ScrollView);
-    expect(view.props.automaticallyAdjustKeyboardInsets).toBe(true);
     const layout = (height: number, y = 0) => ({ nativeEvent: { layout: { x: 0, y, width: 390, height } } });
     fireEvent(screen.getByTestId('group-info'), 'layout', layout(700));
     fireEvent(screen.getByTestId('group-add-section'), 'layout', layout(120, 540));
-    const listen = jest.spyOn(Keyboard, 'addListener');
-    const keyboard = (name: 'keyboardDidShow' | 'keyboardDidHide') =>
-      listen.mock.calls.filter(([event]) => event === name).forEach(([, listener]) => listener({} as KeyboardEvent));
-    const pickerMinHeight = () => StyleSheet.flatten(screen.getByTestId('group-add-picker').props.style).minHeight;
     fireEvent.press(screen.getByTestId('group-add'));
     await act(async () => {});
+    /** A keyboard event, `height` high (the software keyboard by default). */
+    const keyboard = (name: 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardDidHide', height = 336) =>
+      listen.mock.calls
+        .filter(([event]) => event === name)
+        .forEach(([, listener]) => listener({ endCoordinates: { height, screenX: 0, screenY: 0, width: 390 } } as KeyboardEvent));
+    const pickerMinHeight = () => StyleSheet.flatten(screen.getByTestId('group-add-picker').props.style).minHeight;
+    const scrollTo = jest.spyOn(view.instance as ScrollView, 'scrollTo');
+    return { view, listen, keyboard, pickerMinHeight, scrollTo };
+  }
+
+  it('scrolls the add-members picker above the keyboard while searching (NEW-ios-picker-keyboard)', async () => {
+    const { view, listen, keyboard, pickerMinHeight, scrollTo } = await openAddMembers();
+    expect(view.props.automaticallyAdjustKeyboardInsets).toBe(true);
     // No blank space under the picker before searching.
     expect(pickerMinHeight()).toBeUndefined();
 
-    const scrollTo = jest.spyOn(view.instance as ScrollView, 'scrollTo');
     fireEvent(screen.getByTestId('picker-search'), 'focus');
     expect(scrollTo).toHaveBeenLastCalledWith({ y: 540, animated: true });
-    // While searching the picker is at least as tall as the view, so the section can always reach the top.
+    // With the keyboard on its way up the picker is at least as tall as the view, so the section can always reach the top.
+    act(() => keyboard('keyboardWillShow'));
     expect(pickerMinHeight()).toBe(700);
     // Again once the keyboard is up (Android lays out for it only then), but not after the field lets go.
     scrollTo.mockClear();
     act(() => keyboard('keyboardDidShow'));
     expect(scrollTo).toHaveBeenCalledTimes(1);
     fireEvent(screen.getByTestId('picker-search'), 'blur');
+    // Still grown while the keyboard goes down under it.
+    expect(pickerMinHeight()).toBe(700);
     act(() => keyboard('keyboardDidShow'));
     expect(scrollTo).toHaveBeenCalledTimes(1);
     // The keyboard down, the picker takes its own height again.
     act(() => keyboard('keyboardDidHide'));
     expect(pickerMinHeight()).toBeUndefined();
     listen.mockRestore();
+  });
+
+  it('leaves no blank space under the add-members picker with a hardware keyboard (iOS)', async () => {
+    const { listen, keyboard, pickerMinHeight, scrollTo } = await openAddMembers();
+    fireEvent(screen.getByTestId('picker-search'), 'focus');
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 540, animated: true });
+    // No software keyboard comes up, only the shortcuts bar: nothing covers the results.
+    act(() => keyboard('keyboardWillShow', 55));
+    act(() => keyboard('keyboardDidShow', 55));
+    expect(pickerMinHeight()).toBeUndefined();
+
+    // A software keyboard brought up, then put away while the field keeps focus: grown, then not.
+    act(() => keyboard('keyboardDidShow'));
+    expect(pickerMinHeight()).toBe(700);
+    act(() => keyboard('keyboardDidHide'));
+    expect(pickerMinHeight()).toBeUndefined();
+    // Searching again with no keyboard, then the field lets go: nothing to wait for.
+    fireEvent(screen.getByTestId('picker-search'), 'focus');
+    fireEvent(screen.getByTestId('picker-search'), 'blur');
+    act(() => keyboard('keyboardDidShow'));
+    expect(pickerMinHeight()).toBeUndefined();
+    listen.mockRestore();
+  });
+
+  it('grows the add-members picker as the search starts on Android, which reports the keyboard only once it is up', async () => {
+    await onAndroid(async () => {
+      const { listen, keyboard, pickerMinHeight, scrollTo } = await openAddMembers();
+      fireEvent(screen.getByTestId('picker-search'), 'focus');
+      expect(pickerMinHeight()).toBe(700);
+      expect(scrollTo).toHaveBeenLastCalledWith({ y: 540, animated: true });
+      act(() => keyboard('keyboardDidShow'));
+      fireEvent(screen.getByTestId('picker-search'), 'blur');
+      // Still grown while the keyboard goes down under it.
+      expect(pickerMinHeight()).toBe(700);
+      act(() => keyboard('keyboardDidHide'));
+      expect(pickerMinHeight()).toBeUndefined();
+      listen.mockRestore();
+    });
   });
 
   it('shows an error with Retry when the status read fails', async () => {

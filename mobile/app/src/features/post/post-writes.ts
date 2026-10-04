@@ -1,6 +1,6 @@
 import type { PostDTO, TargetRef, WriteTicket } from '@engine/api';
 
-import { dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
+import { applyFollowing, dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
 import { errorCode, type WriteSpec } from '~/data/writes';
 
 /**
@@ -72,6 +72,10 @@ export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
   key: ({ authorId }) => `follow:${authorId}`,
   submit: (api, { authorId, follow }) => (follow ? api.graph.follow(authorId) : api.graph.unfollow(authorId)),
   optimistic: ({ authorId, follow }) => setFollowing(authorId, follow),
+  // A profile reopened while the write is on its way reads the chain before it lands.
+  reapply: ({ authorId, follow }, queries) => {
+    applyFollowing(authorId, follow, queries);
+  },
   intent: ({ follow }) => follow,
   matches: (ticket, { authorId, follow }) =>
     ticket.op === (follow ? 'follow' : 'unfollow') &&

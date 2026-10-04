@@ -377,6 +377,7 @@ export function GroupInfoScreen() {
                   excludeIds={new Set(group.members)}
                   note="New members can read messages sent after they join."
                   onSearchFocus={picker.reveal}
+                  onSearchBlur={picker.conceal}
                   onPick={(user) => add.run({ key, memberId: user.id, name: user.displayName }).catch(() => undefined)}
                 />
               </View>
