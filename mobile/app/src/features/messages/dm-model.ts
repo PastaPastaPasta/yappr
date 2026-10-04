@@ -20,7 +20,7 @@ export function previewText(conversation: Pick<ConversationDTO, 'lastMessage' | 
   const { lastMessage, flags } = conversation;
   if (flags.ended) return 'This group has ended.';
   if (flags.removed) return 'You are no longer a member of this group.';
-  if (flags.unreadable) return 'You cannot read this group yet.';
+  if (flags.unreadable) return 'Waiting for access…';
   if (!lastMessage) return flags.draft ? 'New conversation' : 'No messages yet';
   const text = lastMessage.text.replace(/\s+/g, ' ').trim();
   return lastMessage.own ? `You: ${text}` : text;
@@ -96,9 +96,8 @@ export function composerBlockedReason(
   if (conversation.kind === 'direct' && flags.blocked) return 'You blocked this person. Unblock them to send messages.';
   if (flags.ended) return 'This group has ended.';
   if (flags.removed) return 'You are no longer a member of this group.';
-  if (flags.unreadable) {
-    return 'You cannot read this group yet. Ask the owner to resend your keys: they can do it from the group settings.';
-  }
+  // The owner's app resends a missing key by itself (#8): asking is only the fallback.
+  if (flags.unreadable) return "Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you.";
   return null;
 }
 

@@ -20,6 +20,8 @@ import { MessageSettingsScreen } from './MessageSettingsScreen';
 import { NewGroupScreen } from './NewGroupScreen';
 import { NewMessageScreen } from './NewMessageScreen';
 import { UNAVAILABLE_MESSAGE, useMessagesBadge } from './dm-data';
+import { ARCHIVE_UNDO_MS, archiveConversation } from './dm-actions';
+import { resetKeyResends } from './group-keys';
 import { forgetDmDrafts, useDraft, useDrafts } from './drafts';
 import { InboxScreen } from './InboxScreen';
 import { clearLocalMessages, forgetLanded, mergeOutbox, sendMessage, useOutbox, type OutboxEntry } from './outbox';
@@ -119,6 +121,7 @@ beforeEach(() => {
   queryClient.clear();
   resetWriteTracking();
   useOutbox.setState({ entries: [] });
+  resetKeyResends();
   useDrafts.getState().clearAll();
   // Drafts are saved on the device too (drafts.ts): one test's must not show up in the next.
   forgetDmDrafts(VIEWER);
@@ -149,7 +152,7 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     expect(fakeEngine.method('dm.status')).not.toHaveBeenCalled();
   });
 
-  it('locked, offers the unlock sheet, which falls back to entering the key', async () => {
+  it('locked, offers the unlock sheet, which falls back to pasting the key (#22)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true }));
     fakeEngine.method('dm.unlock').mockResolvedValueOnce({ unlocked: false, reason: 'not-derivable' });
@@ -159,34 +162,62 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     // The inbox itself is Android-only private; on iOS only the key sheet blocks screenshots.
     expect(nativeCapture.isCaptureBlocked()).toBe(false);
 
-    fireEvent.press(screen.getByText('Enter encryption key'));
+    fireEvent.press(screen.getByText('Unlock messages'));
     await act(async () => {});
     expect(fakeEngine.method('dm.unlock')).toHaveBeenCalledWith({});
     expect(nativeCapture.isCaptureBlocked()).toBe(true);
+    // One plain field: no key formats until a paste is not a key.
+    expect(screen.getByTestId('dm-unlock-key').props.placeholder).toBe('Paste your encryption key');
+    expect(screen.queryByText(/WIF|hex/)).toBeNull();
 
     fakeEngine.method('dm.unlock').mockResolvedValueOnce({ unlocked: true, status: status() });
     fireEvent.changeText(screen.getByTestId('dm-unlock-key'), 'cWIFkey');
     fireEvent.press(screen.getByTestId('dm-unlock-save'));
     await act(async () => {});
     expect(fakeEngine.method('dm.unlock')).toHaveBeenLastCalledWith({ key: 'cWIFkey' });
-    expect(useToastStore.getState().current?.message).toBe('Encryption key saved');
+    expect(useToastStore.getState().current?.message).toBe('Messages unlocked');
   });
 
-  it('says "Invalid key" when the key does not match', async () => {
+  it('unlocks by itself when the key can be recovered: no "Key Recovered!" step (#22)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true }));
+    let answer: (result: { unlocked: true; status: DmStatusDTO }) => void = () => undefined;
+    fakeEngine.method('dm.unlock').mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    await renderAt('/messages');
+    fireEvent.press(screen.getByText('Unlock messages'));
+    await act(async () => {});
+    expect(screen.getByText('Unlocking your messages…')).toBeTruthy();
+    expect(screen.queryByText(/Recover/i)).toBeNull();
+
+    await act(async () => answer({ unlocked: true, status: status() }));
+    expect(useToastStore.getState().current?.message).toBe('Messages unlocked');
+    expect(screen.queryByTestId('dm-unlock-key')).toBeNull();
+  });
+
+  it('explains the key formats only for text that is not a key (#22)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true }));
     fakeEngine.method('dm.unlock').mockResolvedValueOnce({ unlocked: false, reason: 'not-derivable' });
     await renderAt('/messages');
-    fireEvent.press(screen.getByText('Enter encryption key'));
+    fireEvent.press(screen.getByText('Unlock messages'));
     await act(async () => {});
     fakeEngine.method('dm.unlock').mockRejectedValueOnce(Object.assign(new Error('Invalid key'), { code: 'KEY_INVALID' }));
     fireEvent.changeText(screen.getByTestId('dm-unlock-key'), 'nope');
     fireEvent.press(screen.getByTestId('dm-unlock-save'));
     await act(async () => {});
-    expect(screen.getByTestId('dm-unlock-error').props.children).toBe('Invalid key');
+    expect(screen.getByTestId('dm-unlock-error')).toHaveTextContent(
+      "That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr.",
+    );
+
+    // A key, but not this account's.
+    fakeEngine.method('dm.unlock').mockRejectedValueOnce(Object.assign(new Error('Invalid key'), { code: 'KEY_INVALID' }));
+    fireEvent.changeText(screen.getByTestId('dm-unlock-key'), 'ab'.repeat(32));
+    fireEvent.press(screen.getByTestId('dm-unlock-save'));
+    await act(async () => {});
+    expect(screen.getByTestId('dm-unlock-error')).toHaveTextContent("That key doesn't match this account.");
   });
 
-  it('lists conversations with previews, filters by search, and keeps deleted ones behind the footer', async () => {
+  it('lists conversations with previews, filters by search, and keeps archived ones behind the footer (#18)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ unreadConversations: 1 }));
     fakeEngine.method('dm.conversations').mockResolvedValue([
@@ -208,8 +239,9 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     expect(screen.getByText('You: shipped it')).toBeTruthy();
     expect(screen.queryByText('Old Chat')).toBeNull();
 
-    fireEvent.press(screen.getByText('Show 1 deleted conversation'));
+    fireEvent.press(screen.getByText('Archived (1)'));
     expect(screen.getByText('Old Chat')).toBeTruthy();
+    expect(screen.getByText('Hide archived')).toBeTruthy();
 
     fireEvent.changeText(screen.getByTestId('messages-search'), 'build');
     expect(screen.getByText('Builders')).toBeTruthy();
@@ -299,14 +331,52 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     expect(screen.getByText('Bob Builder')).toBeTruthy();
   });
 
-  it('when every conversation is deleted, says so instead of welcoming a first visit (SR-41)', async () => {
+  it('when every conversation is archived, says so instead of welcoming a first visit (SR-41)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status());
     fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: 'd:gone', flags: { ...FLAGS, hidden: true } })]);
     await renderAt('/messages');
     expect(screen.queryByText('Welcome to Messages')).toBeNull();
-    expect(screen.getByTestId('messages-all-deleted')).toBeTruthy();
-    expect(screen.getByText('Show 1 deleted conversation')).toBeTruthy();
+    expect(screen.getByTestId('messages-all-archived')).toHaveTextContent('No conversations yet');
+    expect(screen.getByText('Archived (1)')).toBeTruthy();
+    expect(screen.queryByText(/comes? back/)).toBeNull();
+  });
+
+  it('archives at once with Undo, and saves it only once Undo has passed (#18)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status());
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation()]);
+    fakeEngine.method('dm.hide').mockResolvedValue(undefined);
+    await renderAt('/messages');
+    expect(screen.getByText('Bob Builder')).toBeTruthy();
+
+    act(() => archiveConversation(conversation()));
+    expect(screen.queryByText('Bob Builder')).toBeNull();
+    expect(screen.getByText('Archived (1)')).toBeTruthy();
+    const archived = useToastStore.getState().current;
+    expect(archived?.message).toBe('Conversation archived');
+    expect(archived?.action?.label).toBe('Undo');
+    // Undo puts it back, and nothing is saved.
+    act(() => archived?.action?.onPress());
+    expect(screen.getByText('Bob Builder')).toBeTruthy();
+    await act(async () => {
+      jest.advanceTimersByTime(ARCHIVE_UNDO_MS + 100);
+    });
+    expect(fakeEngine.method('dm.hide')).not.toHaveBeenCalled();
+
+    // Without Undo it is saved once the toast has gone.
+    act(() => archiveConversation(conversation()));
+    await act(async () => {
+      jest.advanceTimersByTime(ARCHIVE_UNDO_MS - 100);
+    });
+    expect(fakeEngine.method('dm.hide')).not.toHaveBeenCalled();
+    fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ flags: { ...FLAGS, hidden: true } })]);
+    await act(async () => {
+      jest.advanceTimersByTime(200);
+    });
+    expect(fakeEngine.method('dm.hide')).toHaveBeenCalledWith(conversation().key);
+    expect(screen.queryByText('Bob Builder')).toBeNull();
+    expect(screen.getByText('Archived (1)')).toBeTruthy();
   });
 });
 
@@ -1037,15 +1107,17 @@ describe('New group (DM-06)', () => {
     expect(screen.getByTestId('new-group-chips')).toBeTruthy();
   }
 
-  it('opens the group once confirmed, offering to resend keys to members it missed', async () => {
+  it('opens the group once confirmed, and resends the key to a member it missed by itself (#8)', async () => {
     await fillForm();
     const created = ticket({ op: 'dm.group' });
     fakeEngine.method('dm.createGroup').mockResolvedValue(created);
     fakeEngine.method('dm.createdGroup').mockResolvedValue({ key: 'g:builders', failed: [BOB_ID] });
+    const resent = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.resendKeys').mockResolvedValue(resent);
     fireEvent.press(screen.getByTestId('new-group-create'));
     await act(async () => {});
     expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledWith('Builders', [BOB_ID]);
-    expect(screen.getByTestId('new-group-progress')).toBeTruthy();
+    expect(screen.getByTestId('new-group-progress')).toHaveTextContent('Creating group…');
 
     await act(async () => {
       fakeEngine.emit('write.status', advance(created, { state: 'confirmed' }));
@@ -1053,7 +1125,14 @@ describe('New group (DM-06)', () => {
     await act(async () => {});
     expect(fakeEngine.method('dm.createdGroup')).toHaveBeenCalledWith(created.id);
     expect(pathname()).toBe('/messages/g:builders');
-    expect(useToastStore.getState().current?.message).toBe('1 member(s) did not get the group key yet.');
+    // No chore for the owner: the key goes out again by itself, and a success says nothing.
+    expect(fakeEngine.method('dm.resendKeys')).toHaveBeenCalledWith('g:builders', BOB_ID);
+    expect(useToastStore.getState().current?.message ?? '').not.toMatch(/key|member/i);
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(resent, { state: 'confirmed' }));
+    });
+    expect(useToastStore.getState().current?.message ?? '').not.toMatch(/key|member/i);
+    expect(fakeEngine.method('dm.resendKeys')).toHaveBeenCalledTimes(1);
   });
 
   it('keeps "Create group" above the keyboard on Android while members are searched for (QA keyboard-overlaps)', async () => {
@@ -1131,32 +1210,22 @@ describe('New group (DM-06)', () => {
     expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps Create locked while the creation is unconfirmed, until a check finds the group', async () => {
+  it('goes to the inbox, read again, when the outcome is unknown, never offering a second creation (#8)', async () => {
     await fillForm();
     const created = ticket({ op: 'dm.group' });
     fakeEngine.method('dm.createGroup').mockResolvedValue(created);
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
     fireEvent.press(screen.getByTestId('new-group-create'));
     await act(async () => {});
+    fakeEngine.method('dm.conversations').mockClear();
     await act(async () => {
       fakeEngine.emit('write.status', advance(created, { state: 'unconfirmed', retryable: false }));
     });
-    expect(screen.getByTestId('new-group-unconfirmed')).toBeTruthy();
-    fireEvent.press(screen.getByTestId('new-group-create'));
     await act(async () => {});
+    expect(pathname()).toBe('/messages');
+    expect(fakeEngine.method('dm.conversations')).toHaveBeenCalled();
+    expect(screen.queryByText(/Not confirmed|may (still )?have/)).toBeNull();
     expect(fakeEngine.method('dm.createGroup')).toHaveBeenCalledTimes(1);
-
-    const found = advance(created, { state: 'confirmed', updatedAt: new Date(Date.now() + 5000) });
-    // The engine reports the transition as `write.status` before it answers the call.
-    fakeEngine.method('writes.check').mockImplementation(async () => {
-      fakeEngine.emit('write.status', found);
-      return found;
-    });
-    fakeEngine.method('dm.createdGroup').mockResolvedValue({ key: 'g:builders', failed: [] });
-    fireEvent.press(screen.getByTestId('new-group-check'));
-    await act(async () => {});
-    await act(async () => {});
-    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(created.id);
-    expect(pathname()).toBe('/messages/g:builders');
   });
 
   it('stays locked once confirmed, and goes to the inbox when finding the new group fails', async () => {
@@ -1223,7 +1292,7 @@ describe('Group info (DM-07, DM-08)', () => {
     expect(screen.queryByTestId('group-leave')).toBeNull();
   });
 
-  it('leaves after the confirm, then returns to the inbox', async () => {
+  it('leaves after the confirm: back in the inbox at once, the group out of it unless the leave fails (#8)', async () => {
     await openInfo(group());
     expect(screen.queryByTestId('group-rename')).toBeNull();
     const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => buttons?.[1]?.onPress?.());
@@ -1231,13 +1300,49 @@ describe('Group info (DM-07, DM-08)', () => {
     fakeEngine.method('dm.leaveGroup').mockResolvedValue(left);
     fireEvent.press(screen.getByTestId('group-leave'));
     await act(async () => {});
+    expect(alert).toHaveBeenCalledWith('Leave group?', "You'll stop getting messages from this group.", expect.anything(), expect.anything());
     expect(fakeEngine.method('dm.leaveGroup')).toHaveBeenCalledWith(GROUP);
-    await act(async () => {
-      fakeEngine.emit('write.status', advance(left, { state: 'confirmed' }));
-    });
-    await act(async () => {});
     expect(pathname()).toBe('/messages');
+    expect(screen.queryByText('Builders')).toBeNull();
+
+    // A leave that fails brings it back (the tracker says why).
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(left, { state: 'failed', retryable: true }));
+    });
+    expect(screen.getByText('Builders')).toBeTruthy();
     alert.mockRestore();
+  });
+
+  it('offers the owner Re-invite, not "Resend keys", and asks before removing in plain words (#8)', async () => {
+    await openInfo(group({ ownerId: VIEWER, isOwner: true }));
+    const menu = () => screen.getByTestId(`group-member-menu-${BOB_ID}`);
+    expect((menu().props.actions as { title: string }[]).map((a) => a.title)).toEqual(['Re-invite', 'Remove member']);
+
+    const invited = ticket({ op: 'dm.group', target: { conversationKey: GROUP } });
+    fakeEngine.method('dm.resendKeys').mockResolvedValue(invited);
+    await act(async () => fireEvent(menu(), 'pressAction', { nativeEvent: { event: 'resend' } }));
+    expect(fakeEngine.method('dm.resendKeys')).toHaveBeenCalledWith(GROUP, BOB_ID);
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(invited, { state: 'confirmed' }));
+    });
+    expect(useToastStore.getState().current?.message).toBe('Invite sent');
+
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+    await act(async () => fireEvent(menu(), 'pressAction', { nativeEvent: { event: 'remove' } }));
+    expect(alert).toHaveBeenCalledWith(
+      expect.stringMatching(/^Remove .+ from the group\?$/),
+      "They won't see new messages.",
+      expect.anything(),
+      expect.anything(),
+    );
+    alert.mockRestore();
+  });
+
+  it('sends a link to a legacy account\'s group info to the inbox (#23)', async () => {
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
+    await openInfo(group());
+    expect(pathname()).toBe('/messages');
+    expect(screen.queryByText(/available on this network/)).toBeNull();
   });
 
   it('adds a member, and the row says busy only while the write runs (QA D-RVa-dc-01)', async () => {
@@ -1318,12 +1423,30 @@ describe('Message settings (DM-12)', () => {
     expect(await screen.findByTestId('dm-retention')).toBeTruthy();
   });
 
-  it('has nothing to set on legacy (DM-11)', async () => {
+  it('has nothing to set on legacy: a link here goes to the inbox (DM-11, #23)', async () => {
     signIn();
     fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
     fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy' }));
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
     await renderAt('/messages/settings');
-    expect(screen.getByTestId('dm-settings-unavailable')).toBeTruthy();
+    expect(pathname()).toBe('/messages');
     expect(screen.queryByTestId('dm-retention')).toBeNull();
+    expect(screen.queryByText(/available on this network/)).toBeNull();
+  });
+
+  it('offers plain retention choices with the privacy caveat, never fee accounting (#14)', async () => {
+    signIn();
+    fakeEngine.method('dm.status').mockResolvedValue(status({ retention: '30d' }));
+    await renderAt('/messages/settings');
+    expect(screen.getByText('Delete old sent messages')).toBeTruthy();
+    for (const option of ['Never', 'After 30 days', 'After 90 days', 'After 1 year']) expect(screen.getByText(option)).toBeTruthy();
+    expect(screen.getByTestId('dm-retention-body')).toHaveTextContent(
+      "Deleting old sent messages refunds most of their storage fee. It doesn't make them private: people you messaged keep their copies, and Dash Platform keeps a history.",
+    );
+    expect(screen.queryByText(/Reclaim|keep paying|Disappearing/i)).toBeNull();
+    // Nobody blocked: an empty state, not "Nobody."
+    expect(screen.getByTestId('dm-blocked-empty')).toHaveTextContent(
+      'No blocked accountsMessages and group invites from people you block are ignored.',
+    );
   });
 });

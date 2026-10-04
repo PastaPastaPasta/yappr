@@ -12,20 +12,25 @@ import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { selectionTick } from '~/ui/haptics';
 import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
-import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
-import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 
-import { useDmViewer } from './dm-data';
+import { refreshDm, useDmViewer } from './dm-data';
 import { GROUP_NAME_MAX, groupNameError } from './dm-model';
-import { createGroupWrite, resendKeysTo } from './dm-writes';
+import { createGroupWrite } from './dm-writes';
 import { DmSignedOut } from './DmStates';
+import { followGroupCreation } from './group-keys';
 import { CloseButton, leaveModalFor } from './NewMessageScreen';
 import { UserPicker, type PickerUser } from './UserPicker';
+
+/** Leaves for the inbox, read again: it shows the new group once it is there. */
+function toInbox(): void {
+  refreshDm();
+  router.dismissTo('/messages');
+}
 
 /** At most 100 members including the creator (PRD DM-06). */
 const MAX_MEMBERS = 100;
@@ -55,7 +60,8 @@ function MemberChip({ user, onRemove, disabled }: { user: PickerUser; onRemove: 
 /**
  * New group (UX_SPEC §4.21, PRD DM-06): a name (1–100 characters), members
  * as removable chips, and "Create group", which writes the roster and a key
- * per member (one `dm.group` ticket) and then opens the group.
+ * per member (one `dm.group` ticket) and then opens the group. Members the
+ * creation could not reach get their key resent by the app (`group-keys`).
  */
 export function NewGroupScreen() {
   const { signedIn, viewerId } = useDmViewer();
@@ -63,17 +69,17 @@ export function NewGroupScreen() {
   const [name, setName] = useState('');
   const [members, setMembers] = useState<PickerUser[]>([]);
   const create = useWrite(createGroupWrite);
-  // Not confirmed (a timeout or a 504) may still have landed: a second creation could make a
-  // second group, so the form stays locked until a check settles it. A check that proved it
-  // did not land comes back retryable, and the tracker says "Try again".
-  const unconfirmed = create.status === 'unconfirmed' && create.ticket?.retryable !== true;
-  const [checking, setChecking] = useState(false);
+  // Not confirmed (a timeout, a 504, an engine restart) may still have landed: the form never
+  // offers a second creation (a second group). It goes to the inbox, which shows the group once
+  // it is there; the engine refuses another creation while this one still runs. A check that
+  // proved it did not land comes back retryable, and the tracker says "Try again" here.
+  const unknown = create.status === 'unconfirmed' && create.ticket?.retryable !== true;
   // The status stays idle until the engine answers with a ticket: a second tap meanwhile would
   // queue a second creation behind the first (a second group), so the form locks at the tap.
   const submitting = useRef(false);
   const [awaitingTicket, setAwaitingTicket] = useState(false);
   // Confirmed is final: the form stays locked while the new group is looked up and opened.
-  const busy = awaitingTicket || create.status === 'pending' || create.status === 'confirmed' || unconfirmed;
+  const busy = awaitingTicket || create.status === 'pending' || create.status === 'confirmed' || unknown;
   const nameError = groupNameError(name);
   const canCreate = !busy && name.trim().length > 0 && !nameError && members.length > 0;
   const selected = new Set(members.map((m) => m.id));
@@ -96,11 +102,10 @@ export function NewGroupScreen() {
     create
       .send({ name: name.trim(), memberIds: members.map((m) => m.id) })
       .then((result) => {
-        // The engine restarted under the call: the group may exist, and the inbox will show it.
-        if (result.status === 'unknown') {
-          toast('The group may have been created. Check your messages before trying again.');
-          router.dismissTo('/messages');
-        }
+        // The members it misses get their key resent, whether or not this form is still open (#8).
+        if (result.status === 'submitted' && viewerId) followGroupCreation(viewerId, result.ticket.id);
+        // The engine restarted under the call: the group may exist, and the inbox shows it if so.
+        if (result.status === 'unknown') toInbox();
       })
       .catch(() => undefined)
       .finally(() => {
@@ -109,15 +114,12 @@ export function NewGroupScreen() {
       });
   };
 
-  const check = () => {
-    setChecking(true);
-    create
-      .check()
-      .catch(() => undefined)
-      .finally(() => setChecking(false));
-  };
+  // An unknown outcome: the inbox, read again, says whether the group is there (#8).
+  useEffect(() => {
+    if (unknown) toInbox();
+  }, [unknown]);
 
-  // Confirmed: open the new group, and offer to resend the key to anyone the creation missed.
+  // Confirmed: open the new group (`followGroupCreation` resends the key to anyone it missed).
   const ticketId = create.ticket?.id;
   useEffect(() => {
     if (create.status !== 'confirmed' || !ticketId) return;
@@ -131,11 +133,6 @@ export function NewGroupScreen() {
           return;
         }
         leaveModalFor(created.key);
-        if (created.failed.length > 0) {
-          toast.error(`${created.failed.length} member(s) did not get the group key yet.`, {
-            action: { label: 'Resend keys', onPress: () => resendKeysTo(created.key, created.failed) },
-          });
-        }
       })
       .catch((error: unknown) => {
         // The group exists; only finding it failed. The inbox lists it.
@@ -205,20 +202,9 @@ export function NewGroupScreen() {
                 ))}
               </View>
             ) : null}
-            {unconfirmed ? (
-              <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1" accessibilityLiveRegion="polite">
-                <Text variant="caption" tone="secondary" testID="new-group-unconfirmed">
-                  Not confirmed yet. It may still have gone through.
-                </Text>
-                {checking ? (
-                  <Spinner size="sm" />
-                ) : (
-                  <LinkText label="Check" onPress={check} testID="new-group-check" />
-                )}
-              </View>
-            ) : busy ? (
+            {busy ? (
               <Text variant="caption" tone="secondary" accessibilityLiveRegion="polite" testID="new-group-progress">
-                Creating the group and sending each member its key. This can take a little while.
+                Creating group…
               </Text>
             ) : null}
           </View>

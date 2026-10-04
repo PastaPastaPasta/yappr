@@ -2,7 +2,7 @@ import type { WriteTicket } from '@engine/api';
 
 import { queryKeys } from '~/data/keys';
 import type { EngineRemote } from '~/data/queries';
-import { errorCode, sendWrite, type WriteSpec } from '~/data/writes';
+import { errorCode, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { toast } from '~/ui/toast';
 
@@ -109,8 +109,3 @@ export const createGroupWrite: WriteSpec<CreateGroupVars> = {
   failureMessage: "Couldn't create the group. Try again.",
   onConfirmed: refreshInbox,
 };
-
-/** "Resend keys" to each member a creation could not reach. */
-export function resendKeysTo(key: string, memberIds: readonly string[]): void {
-  for (const memberId of memberIds) sendWrite(resendKeysWrite, { key, memberId });
-}

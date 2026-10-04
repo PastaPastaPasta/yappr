@@ -41,7 +41,7 @@ describe('titles and previews (DM-01)', () => {
 
   it('says why a group cannot be read instead of a preview', () => {
     expect(previewText(conversation({ flags: { ...FLAGS, ended: true } }))).toBe('This group has ended.');
-    expect(previewText(conversation({ flags: { ...FLAGS, unreadable: true } }))).toBe('You cannot read this group yet.');
+    expect(previewText(conversation({ flags: { ...FLAGS, unreadable: true } }))).toBe('Waiting for access…');
     expect(previewText(conversation({ lastMessage: null, flags: { ...FLAGS, draft: true } }))).toBe('New conversation');
   });
 
@@ -110,8 +110,9 @@ describe('composerBlockedReason (DM-08, DM-10)', () => {
     expect(composerBlockedReason(conversation({ ...group, flags: { ...FLAGS, removed: true } }))).toBe(
       'You are no longer a member of this group.',
     );
-    expect(composerBlockedReason(conversation({ ...group, flags: { ...FLAGS, unreadable: true } }))).toMatch(
-      /Ask the owner to resend your keys/,
+    // No key chores (#8): the owner's app resends keys itself; re-inviting is the fallback.
+    expect(composerBlockedReason(conversation({ ...group, flags: { ...FLAGS, unreadable: true } }))).toBe(
+      "Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you.",
     );
   });
 });
