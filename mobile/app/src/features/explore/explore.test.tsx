@@ -492,6 +492,20 @@ describe('Hashtag page', () => {
       expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
       expect(screen.queryByTestId('hashtag-posts-error-retrying')).toBeNull();
 
+      // "Try again" while the next retry stalls: it reads afresh, with the loading state, rather than joining it.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(4_000);
+      });
+      expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(3);
+      expect(screen.getByTestId('hashtag-posts-error-retrying')).toBeTruthy();
+      fireEvent.press(screen.getByTestId('hashtag-posts-error-action'));
+      await act(async () => {});
+      expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(4);
+      expect(screen.getByTestId('hashtag-posts-loading')).toBeTruthy();
+      await act(async () => fail(timedOut()));
+      expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
+      expect(screen.queryByTestId('hashtag-posts-error-retrying')).toBeNull();
+
       // "Try again" is the reader's own read: it shows the loading state as before.
       fireEvent.press(screen.getByTestId('hashtag-posts-error-action'));
       await act(async () => {});

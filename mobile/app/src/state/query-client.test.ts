@@ -136,6 +136,59 @@ describe('persistOnChange (D-L3a-011)', () => {
     stop();
     client.clear();
   });
+
+  it("the app's persister saves the same cache again after MMKV threw, not only after a change", async () => {
+    jest.useFakeTimers();
+    const setItem = jest.spyOn(syncStorage, 'setItem');
+    try {
+      const client = new QueryClient();
+      client.setQueryDefaults(['feed'], persistedQuery);
+      client.setQueryData(['feed'], { items: [1] });
+      const cache = persisted(client);
+      expect(cache.clientState.queries).toHaveLength(1);
+      setItem.mockImplementationOnce(() => {
+        throw new Error('MMKV full');
+      });
+      await persistOptions.persister.persistClient(cache);
+      expect(setItem).toHaveBeenCalledTimes(1);
+
+      const saved = persistOptions.persister.persistClient(cache);
+      await jest.advanceTimersByTimeAsync(1_000);
+      await saved;
+      expect(setItem).toHaveBeenCalledTimes(2);
+      // Saved now: the same cache is not written a third time.
+      const again = persistOptions.persister.persistClient(cache);
+      await jest.advanceTimersByTimeAsync(1_000);
+      await again;
+      expect(setItem).toHaveBeenCalledTimes(2);
+      client.clear();
+    } finally {
+      setItem.mockRestore();
+      await persistOptions.persister.removeClient();
+      jest.useRealTimers();
+    }
+  });
+
+  it('tells primitive data apart by value, and saves again on the next event after a failed save', async () => {
+    const client = new QueryClient();
+    const { inner, gated, stop } = persisting(client);
+    await client.prefetchQuery({ queryKey: ['count'], queryFn: () => 4, ...persistedQuery });
+    const saves = inner.persistClient.mock.calls.length;
+
+    // A number changed through setState keeps its age: still a change on disk.
+    client.getQueryCache().find({ queryKey: ['count'] })!.setState({ data: 5 });
+    expect(inner.persistClient).toHaveBeenCalledTimes(saves + 1);
+    expect(inner.persistClient.mock.lastCall?.[0].clientState.queries[0].state.data).toBe(5);
+
+    // That save threw: the next event of any query saves again.
+    gated.forget();
+    client.setQueryData(['poll'], { votes: 1 });
+    expect(inner.persistClient).toHaveBeenCalledTimes(saves + 2);
+    client.setQueryData(['poll'], { votes: 2 });
+    expect(inner.persistClient).toHaveBeenCalledTimes(saves + 2);
+    stop();
+    client.clear();
+  });
 });
 
 describe('failed reads', () => {

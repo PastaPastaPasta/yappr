@@ -146,12 +146,25 @@ const PERSIST_KEY = 'yappr-query-cache';
 let cacheGeneration = 0;
 let measured: { generation: number; bytes: number } | null = null;
 
+/**
+ * A save that threw (the persister swallows it): forget what is on disk, so
+ * the next cache event saves again rather than the next change.
+ */
+function saveFailed(error: unknown): never {
+  persister.forget();
+  throw error;
+}
+
 const storagePersister = createAsyncStoragePersister({
   key: PERSIST_KEY,
   storage: {
     getItem: syncStorage.getItem,
     setItem: (key: string, value: string) => {
-      syncStorage.setItem(key, value);
+      try {
+        syncStorage.setItem(key, value);
+      } catch (error) {
+        saveFailed(error);
+      }
       cacheGeneration += 1;
     },
     removeItem: (key: string) => {
@@ -160,16 +173,26 @@ const storagePersister = createAsyncStoragePersister({
     },
   },
   // The engine's codec, so a restored post keeps its Dates (and bigints, Maps...).
-  serialize: (client) => stringify(forDisk(client)),
+  serialize: (client) => {
+    try {
+      return stringify(forDisk(client));
+    } catch (error) {
+      return saveFailed(error);
+    }
+  },
   deserialize: (cache) => parse(cache) as PersistedClient,
 });
 
-/** Ids for data values, so a signature tells a replaced value from the same one without holding on to it. */
+/**
+ * Ids for data values, so a signature tells a replaced value from the same one without holding on to it.
+ * A primitive is its own id: `setState` can change one without a new `dataUpdatedAt`.
+ */
 const dataIds = new WeakMap<object, number>();
 let lastDataId = 0;
 
 function dataId(data: unknown): number | string {
-  if (typeof data !== 'object' || data === null) return typeof data;
+  if (typeof data === 'function') return 'function';
+  if (typeof data !== 'object' || data === null) return `${typeof data}:${String(data)}`;
   let id = dataIds.get(data);
   if (id === undefined) {
     lastDataId += 1;
@@ -203,9 +226,15 @@ export function diskSignature(client: PersistedClient): string {
  * poll, a link preview, a repost's marks) that are never persisted. Now an
  * event that leaves every persisted query as it was costs a short signature.
  */
-export function persistOnChange(persister: Persister): Persister {
+export function persistOnChange(persister: Persister): Persister & {
+  /** The last save failed: the next call saves whatever it is given. */
+  forget: () => void;
+} {
   let last: string | null = null;
   return {
+    forget: () => {
+      last = null;
+    },
     persistClient: (client) => {
       const signature = diskSignature(client);
       if (signature === last) return undefined;
@@ -278,6 +307,19 @@ queryClient.getQueryCache().subscribe((event) => {
 /** The error a read showed before NET-03's backoff began reading it again, while that retry runs. */
 export function retriedReadError(key: QueryKey): Error | undefined {
   return retriedErrors.size === 0 ? undefined : retriedErrors.get(hashKey(key));
+}
+
+/**
+ * Ends the backoff's retry of `key`, if one is running, so the reader's own
+ * read ("Try again") starts afresh: TanStack would join the retry instead
+ * (a read with no data is never restarted), and a stalled one takes 30-60 s
+ * to fail, all that time with "Try again" doing nothing. The cancel puts the
+ * read back on the error it showed, which releases the hold; the engine's
+ * call runs on and its answer is dropped.
+ */
+export async function cancelRetriedRead(key: QueryKey): Promise<void> {
+  if (!retriedReadError(key)) return;
+  await queryClient.cancelQueries({ queryKey: key, exact: true });
 }
 
 /** Failed reads a screen is showing, other than a list whose next page failed ({@link nextPageFailed}). */

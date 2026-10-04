@@ -40,6 +40,31 @@ export interface RepostSplit {
   truncated: boolean;
 }
 
+/** One count of a {@link RepostSplit} as the detail counts row shows it: "100+" is a floor. */
+export interface RepostSplitPart {
+  count: number;
+  floor: '' | '+';
+  kind: 'repost' | 'quote';
+}
+
+/**
+ * The counts a screen reader should hear where the detail counts row tells
+ * reposts and quotes apart; `null` where the single total says what the row
+ * says (no split, or an exact one with no quotes). An exact split names
+ * both ("0 reposts, 1 quote"); floors off a list that filled up leave a zero
+ * out, as the row does ("100+ reposts", not "0+ quotes").
+ */
+export function repostSplitParts(split: RepostSplit | null | undefined): RepostSplitPart[] | null {
+  if (!split || (split.quotes === 0 && !split.truncated)) return null;
+  const floor = split.truncated ? '+' : '';
+  const parts: RepostSplitPart[] = [
+    { count: split.reposts, floor, kind: 'repost' },
+    { count: split.quotes, floor, kind: 'quote' },
+  ];
+  const shown = split.truncated ? parts.filter((part) => part.count > 0) : parts;
+  return shown.length > 0 ? shown : null;
+}
+
 /**
  * The repost control's label (UX_SPEC §5.13): "Repost or quote, {N} reposts",
  * and where the detail counts row tells quotes apart, the same split, so a
@@ -52,12 +77,10 @@ export function repostLabel(
   split: RepostSplit | null | undefined,
   state: { reposted: boolean; quoted: boolean },
 ): string {
-  let counts = plural(total, 'repost', 'reposts');
-  if (split && split.quotes > 0) {
-    const floor = split.truncated ? '+' : '';
-    const phrase = (n: number, one: string, many: string) => `${n}${floor} ${n === 1 && !floor ? one : many}`;
-    counts = `${phrase(split.reposts, 'repost', 'reposts')}, ${phrase(split.quotes, 'quote', 'quotes')}`;
-  }
+  const parts = repostSplitParts(split);
+  const counts = parts
+    ? parts.map(({ count, floor, kind }) => `${count}${floor} ${count === 1 && !floor ? kind : `${kind}s`}`).join(', ')
+    : plural(total, 'repost', 'reposts');
   const mark = state.reposted ? (state.quoted ? ', quoted' : ', reposted') : '';
   return `Repost or quote, ${counts}${mark}`;
 }

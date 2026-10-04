@@ -351,6 +351,12 @@ describe('PostCard variants', () => {
     // Floors off a list that filled up, as the row shows them.
     rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 100, quotes: 3, truncated: true }} />);
     expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 100+ reposts, 3+ quotes, quoted');
+    // A filled-up list with no quotes in its first 100: the row reads "100+ Reposts", and so do these.
+    rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 100, quotes: 0, truncated: true }} />);
+    expect(screen.getByText('100+ Reposts')).toBeTruthy();
+    expect(screen.queryByText(/Quotes?$/)).toBeNull();
+    expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 100+ reposts, quoted');
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 100\+ reposts, 0 likes\.$/);
 
     // Feed cards have no split: the one count the control shows.
     rerender(<PostCard post={post} repostQuoteCounts={split} />);

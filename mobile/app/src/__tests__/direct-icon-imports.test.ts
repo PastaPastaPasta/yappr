@@ -65,4 +65,28 @@ describe('direct heroicon imports (D-L3a-011)', () => {
     );
     expect(missing).toEqual([]);
   });
+
+  it('has no barrel import the plugin would leave whole (a namespace, a non-icon name, a require)', () => {
+    // The plugin leaves such an import alone, silently putting all ~590 icons back in the bundle.
+    const barrel = /['"]react-native-heroicons\/(outline|solid|mini|micro)['"]/g;
+    const rewritten = /import\s*\{([^}]*)\}\s*from\s*['"]react-native-heroicons\/(?:outline|solid|mini|micro)['"]/g;
+    const typeOnly = /import\s+type\s*\{[^}]*\}\s*from\s*['"]react-native-heroicons\/(?:outline|solid|mini|micro)['"]/g;
+    const ICON = /^[A-Z][A-Za-z0-9]*Icon$/;
+    const offenders: string[] = [];
+    for (const file of sourceFiles(SRC_DIR)) {
+      const text = fs.readFileSync(file, 'utf8');
+      const all = text.match(barrel)?.length ?? 0;
+      if (all === 0) continue;
+      let allowed = text.match(typeOnly)?.length ?? 0;
+      for (const [, names] of text.matchAll(rewritten)) {
+        const icons = names
+          .split(',')
+          .map((name) => name.trim().split(/\s+as\s+/)[0])
+          .filter(Boolean);
+        if (icons.every((icon) => ICON.test(icon))) allowed += 1;
+      }
+      if (allowed !== all) offenders.push(path.relative(APP_DIR, file));
+    }
+    expect(offenders).toEqual([]);
+  });
 });

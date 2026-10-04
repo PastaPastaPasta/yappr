@@ -66,6 +66,8 @@ const feed = useEngineInfiniteQuery(
   `useEngineQuery` and `useEngineInfiniteQuery`); pass it to `ErrorState`'s
   `retrying` for the "Retrying…" note. TanStack would otherwise put the read
   back to `pending`, and the screen on its loading state, for every attempt.
+  Such a result's `refetch` ("Try again") cancels the retry first and reads
+  afresh (`cancelRetriedRead`): TanStack would join the stalled read instead.
   Polls (`refetchInterval`), reads with their own `retryDelay` and reads given
   `meta: NO_READ_RETRY` (a card's embedded read) keep their own schedule. A
   list whose *next page* failed is left out of all of these: it keeps its pages behind the "Load More" footer

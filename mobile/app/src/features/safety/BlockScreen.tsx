@@ -81,6 +81,7 @@ export function BlockScreen() {
             onRetry={() => {
               profile.refetch().catch(() => undefined);
             }}
+            retrying={profile.isRetrying}
             testID="block-error"
           />
         </View>

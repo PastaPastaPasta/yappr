@@ -518,7 +518,7 @@ Map of react-hot-toast in `app/layout.tsx`:
 ```
 
 - Vertical padding 48. Copy from section 5.
-- Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A list's read that failed with the "temporarily unavailable" category (the one place it is decided: `isTemporaryReadFailure` in `mobile/app/src/data/read-error.ts`, which also picks this copy) is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while the app is in the foreground, on the 1.0 terms of NET-03's note; sooner once another read answers). Polls, reads with their own backoff and reads embedded in a card are left alone. The error stays on screen while it retries (not the list's loading state, though a stalled read takes 30-60 s to fail), with "Retrying…" (copy 5.11 `read.retrying`: `caption`, `text.secondary`, an `xs` spinner before it) under "Try again", and gives way to the content as soon as a retry answers. "Try again" itself still shows the loading state.
+- Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A list's read that failed with the "temporarily unavailable" category (the one place it is decided: `isTemporaryReadFailure` in `mobile/app/src/data/read-error.ts`, which also picks this copy) is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while the app is in the foreground, on the 1.0 terms of NET-03's note; sooner once another read answers). Polls, reads with their own backoff and reads embedded in a card are left alone. The error stays on screen while it retries (not the list's loading state, though a stalled read takes 30-60 s to fail), with "Retrying…" (copy 5.11 `read.retrying`: `caption`, `text.secondary`, an `xs` spinner before it) under "Try again", and gives way to the content as soon as a retry answers. "Try again" (or a pull to refresh) during a retry ends that retry and reads afresh, showing the loading state as it does otherwise; it never waits on the stalled retry.
 - List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding) and the legacy link; "Load More" pill (`primary` `sm`) for paused or failed paging.
 
 ### 2.17 Network chip
@@ -1915,7 +1915,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | FAB | New post |
 | Card "⋯" | Post options / Reply options **(web)** |
 | Reply | Reply, {N} replies **(web)** |
-| Repost | Repost or quote, {N} reposts **(web: "Repost or quote")**; on detail with quotes told apart (§2.4.4): Repost or quote, {N} reposts, {N} quotes (floors read "{N}+"); active: …, reposted / …, quoted (own quote with text) |
+| Repost | Repost or quote, {N} reposts **(web: "Repost or quote")**; on detail with quotes told apart (§2.4.4): Repost or quote, {N} reposts, {N} quotes (floors read "{N}+", and a floor of 0 is left out, as the counts row leaves it out); active: …, reposted / …, quoted (own quote with text) |
 | Like | Like, {N} likes **(web)** / Unlike, {N} likes (mobile) |
 | Bookmark | Bookmark / Remove bookmark |
 | Share | Share **(web)** |
@@ -1952,7 +1952,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 
 ### 6.2 Screen readers
 
-- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.") and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
+- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row) and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
 - **Focus order:** navigation bar → banners → tabs or segments → list → FAB → tab bar.
 - **Headings:** screen titles, section headers and empty-state titles have the header role.
 - **Live updates:** toasts and write-status changes are announced once (A11Y-06); counters are not live.

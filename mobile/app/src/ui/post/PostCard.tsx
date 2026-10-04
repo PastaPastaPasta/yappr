@@ -32,7 +32,7 @@ import { useRelativeTime } from '../use-relative-time';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
-import { PostActionBar } from './PostActionBar';
+import { PostActionBar, repostSplitParts } from './PostActionBar';
 import { DeletedLine, PostStub, stubText } from './PostStub';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { QuoteEmbed, QuoteSkeleton } from './QuoteEmbed';
@@ -362,13 +362,11 @@ function postAccessibilityLabel(
     parts.push(`${kind}: ${media.alt || kind.toLowerCase()}.`);
   }
   const { replies, reposts, quotes, likes } = post.stats;
-  const split = extras.repostSplit;
-  if (split && split.quotes > 0) {
-    const floor = split.truncated ? '+' : '';
-    parts.push(`${replies} replies, ${split.reposts}${floor} reposts, ${split.quotes}${floor} quotes, ${likes} likes.`);
-  } else {
-    parts.push(`${replies} replies, ${reposts + quotes} reposts, ${likes} likes.`);
-  }
+  const split = repostSplitParts(extras.repostSplit);
+  const shared = split
+    ? split.map(({ count, floor, kind }) => `${count}${floor} ${kind}s`).join(', ')
+    : `${reposts + quotes} reposts`;
+  parts.push(`${replies} replies, ${shared}, ${likes} likes.`);
   return parts.join(' ');
 }
 

@@ -36,6 +36,7 @@ function useSettingsGate(title: string) {
             onRetry={() => {
               settings.refetch().catch(() => undefined);
             }}
+            retrying={settings.isRetrying}
             testID="settings-error"
           />
         ) : (
