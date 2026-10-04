@@ -8,6 +8,7 @@ import { logger } from '@/lib/logger';
 
 import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
+import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
 import { scopedKey } from '@/lib/storage-scope';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
@@ -345,9 +346,13 @@ class CartService {
         const synced = withFulfillment(cartItem, item.fulfillment === 'digital' ? 'digital' : undefined);
         if (synced !== cartItem) this.syncFulfillment(synced);
         const stock = storeItemService.getStock(item, cartItem.variantKey);
+        // A digital line is delivered for at most MAX_LINE_QUANTITY units: refuse more before payment.
+        if (synced.fulfillment === 'digital' && cartItem.quantity > MAX_LINE_QUANTITY && stock >= cartItem.quantity) {
+          return { item: synced, maxQuantity: MAX_LINE_QUANTITY, reason: `At most ${MAX_LINE_QUANTITY} per order` };
+        }
         return {
           item: synced,
-          maxQuantity: stock,
+          maxQuantity: synced.fulfillment === 'digital' ? Math.min(stock, MAX_LINE_QUANTITY) : stock,
           reason: stock < cartItem.quantity
             ? stock === 0 ? 'Out of stock' : `Only ${stock} available`
             : undefined

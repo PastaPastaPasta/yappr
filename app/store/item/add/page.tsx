@@ -338,7 +338,10 @@ function AddItemPage() {
     // variants being saved, or no order could receive it. Variant keys go
     // into every receipt, so a listing edit alone can break an untouched kit.
     // Checked only, never rewritten: an untouched pool is not written back.
-    if (isDigital && kitState === 'ready') {
+    // Also for a product saved as Physical that keeps a kit: switching it back
+    // to Digital later must not reactivate content that no longer fits.
+    const hasKit = isDigital || (supportsDigital && existingDeliverable !== null)
+    if (hasKit && kitState === 'ready') {
       const fitError = kitDeliveryFitError(kit, hasVariants ? combinations : [])
       if (fitError) {
         setError(fitError)
@@ -348,7 +351,7 @@ function AddItemPage() {
     // A kit this device cannot read cannot be checked, so a variant key that
     // makes receipts larger than before is refused until it is unlocked (or
     // replaced). Other listing edits go through, and the kit is left as it is.
-    if (isDigital && (kitState === 'locked' || kitState === 'unreadable') &&
+    if (hasKit && (kitState === 'locked' || kitState === 'unreadable') &&
       largestReceiptBytes(hasVariants ? combinations : []) > largestReceiptBytes(loadedVariantKeys)) {
       setError(kitState === 'locked'
         ? 'Add your encryption key to change these variants: their names go into every delivery, and the delivery content must be checked to still fit.'

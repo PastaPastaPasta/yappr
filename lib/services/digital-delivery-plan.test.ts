@@ -161,6 +161,12 @@ describe('lineProblems', () => {
     expect(repeatedLines({ items: [line(EBOOK_ID), line(SONG_ID)] })).toEqual([])
   })
 
+  it('blocks an invalid order quantity whatever is delivered of it', () => {
+    for (const quantity of [1.5, 0, 1001]) {
+      expect(check([line(EBOOK_ID, quantity)], listed([EBOOK_ID])).map((p) => p.blocking)).toEqual([true])
+    }
+  })
+
   it('blocks a malformed currency instead of throwing', () => {
     const payload = { items: [line(EBOOK_ID)], currency: Object.create(null) as unknown as string }
     expect(() => lineProblems(payload, 'store', listed([EBOOK_ID]))).not.toThrow()
@@ -348,7 +354,7 @@ describe('wire format', () => {
   })
 
   it('sizes unique codes by their UTF-8 bytes, not their length', () => {
-    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 800
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1400
     // 150 kana (450 bytes) outweigh 200 ASCII characters.
     const pool = ['a'.repeat(200), '\u3042'.repeat(150)]
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room - 300), licenseKeys: pool }))).toMatch(/too large/)
@@ -356,14 +362,14 @@ describe('wire format', () => {
   })
 
   it('counts a title in multi-byte characters at its UTF-8 size', () => {
-    // Fits with a 200-byte title, not with the 600 bytes 200 kana take.
-    const instructions = 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES - 450)
+    // Fits with a 200-byte title, not with the 1,200 bytes 200 escaped control characters take.
+    const instructions = 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES - 1000)
     expect(kitDeliveryFitError(kit({ instructions }))).toMatch(/too large/)
   })
 
   it('refuses a kit that could not go out for one unit in one delivery', () => {
-    // Room left after the worst-case 600-byte title and the envelope.
-    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 800
+    // Room left after the worst-case 1,200-byte title and the envelope.
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1400
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }))).toBeNull()
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES) }))).toMatch(/too large to send in one delivery/)
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }), ['V'.repeat(500)])).toMatch(/too large/)

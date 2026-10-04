@@ -242,8 +242,9 @@ export function kitDeliveryFitError(kit: ItemDeliverablePayload, variantKeys: re
     v: 1,
     items: [{
       itemId: 'x'.repeat(MAX_ID_LENGTH),
-      // The most bytes a title can take: 3 UTF-8 bytes per UTF-16 code unit.
-      itemTitle: '\u3042'.repeat(MAX_ITEM_TITLE_LENGTH),
+      // The most a title can take once serialized: a control character is
+      // escaped as \uXXXX, 6 bytes per UTF-16 code unit.
+      itemTitle: '\u0001'.repeat(MAX_ITEM_TITLE_LENGTH),
       ...(variantKey ? { variantKey } : {}),
       assets: kit.assets.map(withoutVariant),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
@@ -345,6 +346,8 @@ export function lineProblems(
     const key = lineKey(line)
     if (seen.has(key)) { problem(repeatedLineText(line), true); continue }
     seen.add(key)
+    // Checked here too: a delivery in parts plans with per-receipt counts, not the order's quantity.
+    if (!validQuantity(line.quantity)) { problem(`"${line.itemTitle}" has an invalid quantity in the order. Check it with the buyer.`, true); continue }
     if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
     if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }
     if (listing.fulfillment !== 'digital') { problem(`"${line.itemTitle}" is not listed as a digital product.`, true); continue }
