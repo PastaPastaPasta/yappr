@@ -16,7 +16,7 @@ import { Text } from '~/ui/Text';
 import { useColors, useIsDark } from '~/ui/tokens';
 
 import type { DraftPart } from './drafts';
-import { contentOverage, postedOverflowOffset, type ContentLimits } from './limits';
+import { isOverContentLimit, postedOverflowOffset, type ContentLimits } from './limits';
 import { composeHints, editorSpans } from './text';
 
 export interface ComposePartProps {
@@ -26,7 +26,7 @@ export interface ComposePartProps {
   placeholder: string;
   limits: ContentLimits;
   tagMax: number;
-  /** Dev contracts index one tag and notify one mention: show the hints (PRD COMP-06, COMP-07). */
+  /** Dev contracts notify only the first mention: say who will be (PRD COMP-06). */
   inlineHints: boolean;
   /** The thread line continues below the avatar. */
   joined: boolean;
@@ -75,8 +75,8 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
   // Plain text goes in as plain text: spans rebuilt on every keystroke break IME composition
   // (CJK, iOS marked text) and slow long pastes; only highlighted text needs them.
   const plain = spans.every((span) => span.style === 'plain' && !span.over);
-  const hints = useMemo(() => composeHints(text, tagMax), [text, tagMax]);
-  const { bytesOver } = contentOverage(text.trim(), limits);
+  const hints = useMemo(() => composeHints(text), [text]);
+  const tooLong = isOverContentLimit(text.trim(), limits);
   const overBg = dark ? 'rgba(127,29,29,0.45)' : '#fee2e2';
 
   const onSelectionChange = (e: NativeSyntheticEvent<TextInputSelectionChangeEventData>) =>
@@ -133,8 +133,7 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
                     <RNText
                       key={i}
                       style={{
-                        color: span.style === 'plain' ? c.textPrimary : span.style === 'link' ? c.link : c.error,
-                        textDecorationLine: span.style === 'tagTooLong' ? 'underline' : 'none',
+                        color: span.style === 'link' ? c.link : c.textPrimary,
                         backgroundColor: span.over ? overBg : undefined,
                       }}
                     >
@@ -153,24 +152,14 @@ export const ComposePart = forwardRef<TextInput, ComposePartProps>(function Comp
             ) : null}
           </View>
         )}
-        {bytesOver > 0 ? (
-          <Text variant="caption" tone="error" className="mt-1" testID={`compose-bytes-over-${index}`}>
-            {bytesOver} bytes over the size limit. Emoji and non-Latin text count extra.
+        {tooLong ? (
+          <Text variant="caption" tone="error" className="mt-1" testID={`compose-too-long-${index}`}>
+            Your post is too long.
           </Text>
         ) : null}
-        {hints.tagTooLong ? (
-          <Text variant="caption" tone="error" className="mt-1">
-            Tags can be up to {tagMax} characters
-          </Text>
-        ) : null}
-        {inlineHints && hints.secondMention ? (
-          <Text variant="caption" tone="warning" className="mt-1">
-            Only the first @mention notifies the person.
-          </Text>
-        ) : null}
-        {inlineHints && hints.secondTag ? (
-          <Text variant="caption" tone="warning" className="mt-1">
-            Only the first #tag puts this post on a tag page.
+        {inlineHints && hints.notified ? (
+          <Text variant="caption" tone="secondary" className="mt-1" testID={`compose-mention-note-${index}`}>
+            Only {hints.notified} will be notified.
           </Text>
         ) : null}
       </View>

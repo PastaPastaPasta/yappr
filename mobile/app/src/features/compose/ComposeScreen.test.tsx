@@ -106,7 +106,8 @@ it('enables Post once there is visible text, and posts: the sheet closes', async
 
   type('Hello #dash');
   expect(postButton()).toBeEnabled();
-  expect(byId('compose-counter')).toHaveAccessibleName('11 of 20 characters');
+  expect(byId('compose-counter')).toHaveAccessibleName('9 characters left');
+  expect(byId('compose-counter')).toHaveTextContent('9');
 
   await act(async () => fireEvent.press(postButton()));
   expect(fakeEngine.method('posts.publish')).toHaveBeenCalledWith(
@@ -116,16 +117,39 @@ it('enables Post once there is visible text, and posts: the sheet closes', async
   expect(Object.keys(usePendingPosts.getState().entries)).toHaveLength(1);
 });
 
-it('disables Post over the limit, with the counter and the byte line', async () => {
+it('disables Post over the limit: the counter goes below 0 and the post says it is too long (#19)', async () => {
   await renderCompose();
+  type('x'.repeat(20));
+  expect(postButton()).toBeEnabled();
+  expect(byId('compose-counter')).toHaveTextContent('0');
+  expect(screen.queryByTestId('compose-too-long-0')).toBeNull();
+
   type('x'.repeat(23));
   expect(postButton()).toBeDisabled();
-  expect(byId('compose-counter')).toHaveAccessibleName('23 of 20 characters, 3 over limit');
+  expect(byId('compose-counter')).toHaveTextContent('-3');
+  expect(byId('compose-counter')).toHaveAccessibleName('Too long by 3');
+  expect(byId('compose-too-long-0')).toHaveTextContent('Your post is too long.');
 
+  // 11 emoji are 11 characters but 44 bytes: the counter counts the bytes, and never says "bytes".
   type('😀'.repeat(11));
   expect(postButton()).toBeDisabled();
-  expect(screen.getByText('4 bytes over the size limit. Emoji and non-Latin text count extra.')).toBeTruthy();
-  expect(byId('compose-counter')).toHaveAccessibleName('11 of 20 characters, 4 bytes over the size limit');
+  expect(byId('compose-counter')).toHaveTextContent('-4');
+  expect(byId('compose-counter')).toHaveAccessibleName('Too long by 4');
+  expect(byId('compose-too-long-0')).toHaveTextContent('Your post is too long.');
+  expect(screen.queryByText(/bytes/)).toBeNull();
+
+  type('😀'.repeat(10));
+  expect(postButton()).toBeEnabled();
+  expect(byId('compose-counter')).toHaveTextContent('0');
+});
+
+it('says who a post with several mentions notifies, and nothing about tags (#11)', async () => {
+  await renderCompose();
+  type('gm @bob #a #b');
+  expect(screen.queryByTestId('compose-mention-note-0')).toBeNull();
+  type('@bob @alice #a #b');
+  expect(byId('compose-mention-note-0')).toHaveTextContent('Only @bob will be notified.');
+  expect(screen.queryByText(/tag page|Tags can be/)).toBeNull();
 });
 
 it('scrolls the end of a long paste, and the line saying why it is over, into view (D-L2i-001)', async () => {
@@ -139,7 +163,7 @@ it('scrolls the end of a long paste, and the line saying why it is over, into vi
   scrollTo.mockClear();
 
   type('😀'.repeat(11));
-  // The editor grows with the pasted text and the bytes line under it.
+  // The editor grows with the pasted text and the too-long line under it.
   layout('compose-part-0', 8, 520);
   expect(scrollTo).toHaveBeenLastCalledWith({ y: 228, animated: true });
 
@@ -213,14 +237,23 @@ it('sets the NSFW flag', async () => {
   expect(fakeEngine.method('posts.publish')).toHaveBeenCalledWith(expect.objectContaining({ sensitive: true }));
 });
 
-it('takes a hosted image URL and refuses anything else', async () => {
+it('takes a hosted image link and refuses anything else, never naming URL schemes (#27)', async () => {
   fakeEngine.method('posts.publish').mockResolvedValue(ticket({ op: 'post.publish' }));
   await renderCompose();
   type('look');
+  expect(byId('compose-media-toggle')).toHaveAccessibleName('Add image link');
   fireEvent.press(byId('compose-media-toggle'));
+  expect(byId('compose-media-url').props.placeholder).toBe('Paste an image link');
   fireEvent.changeText(byId('compose-media-url'), 'javascript:alert(1)');
   expect(postButton()).toBeDisabled();
-  expect(screen.getByText('Use an https:// or ipfs:// link to an image.')).toBeTruthy();
+  expect(byId('compose-media-error')).toHaveTextContent("That doesn't look like an image link.");
+  expect(screen.queryByText(/https:\/\/|ipfs:\/\//)).toBeNull();
+
+  // IPFS links are taken, without the field ever saying so.
+  fireEvent.changeText(byId('compose-media-url'), 'ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi');
+  expect(screen.queryByTestId('compose-media-error')).toBeNull();
+  fireEvent.changeText(byId('compose-media-url'), `https://example.com/${'a'.repeat(520)}.png`);
+  expect(byId('compose-media-error')).toHaveTextContent('That link is too long.');
 
   fireEvent.changeText(byId('compose-media-url'), 'https://example.com/cat.png');
   // The preview follows once typing pauses.
@@ -368,10 +401,10 @@ it('removing the focused part moves the counter to the part that takes the focus
   fireEvent.press(byId('compose-add-part'));
   fireEvent(byId('compose-input-1'), 'focus');
   type('a longer second part', 1);
-  expect(byId('compose-counter')).toHaveAccessibleName('20 of 20 characters');
+  expect(byId('compose-counter')).toHaveAccessibleName('0 characters left');
 
   fireEvent.press(byId('compose-remove-1'));
-  expect(byId('compose-counter')).toHaveAccessibleName('3 of 20 characters');
+  expect(byId('compose-counter')).toHaveAccessibleName('17 characters left');
 });
 
 it('a target that could not be read is not "deleted": it offers Retry', async () => {
@@ -439,7 +472,7 @@ it('refuses an image URL over the contract limit of 512 characters', async () =>
   type('pic');
   fireEvent.press(byId('compose-media-toggle'));
   fireEvent.changeText(byId('compose-media-url'), `https://img.example/${'a'.repeat(600)}.png`);
-  expect(byId('compose-media-error')).toHaveTextContent('This link is too long. Use one of up to 512 characters.');
+  expect(byId('compose-media-error')).toHaveTextContent('That link is too long.');
   expect(postButton()).toBeDisabled();
   fireEvent.changeText(byId('compose-media-url'), 'https://img.example/a.png');
   expect(postButton()).toBeEnabled();
@@ -448,7 +481,7 @@ it('refuses an image URL over the contract limit of 512 characters', async () =>
 it('counts the text as posted: whitespace that posting trims is not over the limit', async () => {
   await renderCompose();
   type(`${'a'.repeat(20)}\n\n`);
-  expect(byId('compose-counter')).toHaveAccessibleName('20 of 20 characters');
+  expect(byId('compose-counter')).toHaveAccessibleName('0 characters left');
   expect(postButton()).toBeEnabled();
 });
 
