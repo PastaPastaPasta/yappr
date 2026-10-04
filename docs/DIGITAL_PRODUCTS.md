@@ -188,10 +188,13 @@ deliver a `javascript:` link.
 - A listing and its kit are two documents, written one after the other, and
   their fit is checked by the client, not by consensus. Two saves of the same
   product from different devices at the same moment can still leave variant
-  names and content that no longer fit one delivery. The editor re-checks the
-  pair after each save and tells the seller, delivery refuses an oversized
-  receipt (nothing wrong is sent), and editing either document repairs it.
-  Closing this fully needs both written in one batch transition.
+  names and content that no longer fit one delivery. Whichever save writes
+  last re-checks the pair, and on a mismatch PAUSES the product (checkout
+  refuses a paused product) and tells the seller to repair it. Delivery
+  refuses an oversized receipt, so nothing wrong is ever sent. Closing the
+  window fully needs both written in one batch transition.
+- "Deliver all" holds a line whose product is no longer on sale (paused, sold
+  out or deleted); the seller can still deliver an earlier purchase by hand.
 - Delivery is the seller's act; consensus cannot see payment. The **buyer**
   writes the order payload, including line quantities and prices. With *as
   soon as it is ordered*, delivery happens whether or not anything was paid,

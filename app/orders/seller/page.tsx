@@ -62,8 +62,8 @@ interface DigitalState {
  */
 async function readListings(itemIds: string[]): Promise<Map<string, ItemListing>> {
   const items = await storeItemService.getManyFresh(itemIds)
-  return new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants }): [string, ItemListing] =>
-    [id, { storeId, fulfillment, title, basePrice, currency, variants }]))
+  return new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants, status }): [string, ItemListing] =>
+    [id, { storeId, fulfillment, title, basePrice, currency, variants, status }]))
 }
 
 interface CurrentOrderState {

@@ -284,7 +284,7 @@ export function kitsAfterDelivery(
 }
 
 /** The seller's own listing of an item, read from the chain. */
-export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'>
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status'>>
 
 const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantKey'>) => `${line.itemId}|${line.variantKey ?? ''}`
 const repeatedLineText = (line: Pick<OrderItem, 'itemTitle'>) => `"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`
@@ -356,6 +356,9 @@ export function lineProblems(
     if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
     if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }
     if (listing.fulfillment !== 'digital') { problem(`"${line.itemTitle}" is not listed as a digital product.`, true); continue }
+    // Paused, sold out or deleted since: perhaps a legitimate earlier purchase,
+    // but never released without the seller looking (bulk holds any problem).
+    if (listing.status !== undefined && listing.status !== 'active') problem(`"${listing.title}" is not on sale right now (${listing.status}).`)
     if (listing.title !== line.itemTitle) problem(`The order calls "${listing.title}" "${line.itemTitle}".`)
     const combinations = listing.variants?.combinations ?? []
     const combination = line.variantKey ? combinations.find((c) => c.key === line.variantKey) : undefined

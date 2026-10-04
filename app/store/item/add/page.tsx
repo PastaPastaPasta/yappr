@@ -540,7 +540,17 @@ function AddItemPage() {
           ? await retainedKitFitError(savedItemId, user.identityId, now.variants?.combinations.map((combo) => combo.key) ?? [])
           : null
         if (pairError) {
-          setError(`The product was saved, but it was also changed elsewhere at the same time, and its variants and delivery content no longer fit together: ${pairError} Edit the variants or the delivery content before it sells.`)
+          // Take it off sale until it is repaired: checkout refuses a paused
+          // product, so no buyer pays for content that cannot be delivered.
+          const paused = now && now.status === 'active' && effectiveStoreId
+            ? await storeItemService.updateItem(savedItemId, user.identityId, effectiveStoreId, { status: 'paused' }, { atRevision: now.$revision }).then(() => true, (pauseError) => {
+                logger.error('Could not pause a product whose delivery content no longer fits:', pauseError)
+                return false
+              })
+            : false
+          setError(`The product was saved, but it was also changed elsewhere at the same time, and its variants and delivery content no longer fit together: ${pairError} ${paused
+            ? 'It has been paused so nobody buys it meanwhile. Fix the variants or the delivery content, then set it active again.'
+            : 'Pause it now (Store > Manage), then fix the variants or the delivery content.'}`)
           return
         }
       }

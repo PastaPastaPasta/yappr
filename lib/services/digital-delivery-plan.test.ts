@@ -175,6 +175,15 @@ describe('lineProblems', () => {
     expect(lineProblems(payload, 'store', listed([EBOOK_ID])).map((p) => p.blocking)).toEqual([true])
   })
 
+  it('flags a product no longer on sale for review, and holds it from bulk delivery', () => {
+    for (const status of ['paused', 'sold_out', 'deleted'] as const) {
+      const listings = new Map([[EBOOK_ID, listing(EBOOK_ID, { status })]])
+      expect(check([line(EBOOK_ID)], listings).map((p) => p.blocking)).toEqual([false])
+      expect(isReadyForBulkDelivery({ payload: { items: [line(EBOOK_ID)] }, storeId: 'store', latestStatus: undefined, alreadyDelivered: false, kits: new Map([[EBOOK_ID, kit({ deliverWhen: 'on_order', assets: [file('a.zip')] })]]), listings })).toBe(false)
+    }
+    expect(check([line(EBOOK_ID)], new Map([[EBOOK_ID, listing(EBOOK_ID, { status: 'active' })]]))).toEqual([])
+  })
+
   it('flags a title, variant, price or currency the listing does not have, for review', () => {
     const withVariants = new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]])
     // The premium variant at the cheap variant's price.
