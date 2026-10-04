@@ -15,17 +15,22 @@ import { hitSlopFor, typeScale, useColors, type IconComponent, type SemanticColo
  * at large text sizes, and primary fills darkened in light mode (OQ-2).
  * Android clips to the pill so the ripple (src/ui/ripple.ts) keeps its shape;
  * not iOS, where clipping would also cut off the shadow.
+ *
+ * Every variant sets a border width (`border-0` unless outlined). A variant
+ * change that drops the width (Following → Follow) makes React Native reset it
+ * to NaN, and Android then clips everything inside an `overflow: hidden` view
+ * away: the label vanished from the pill (D-L3a-001).
  */
 const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded-full android:overflow-hidden', {
   variants: {
     variant: {
-      primary: 'bg-yappr-600 active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600',
-      secondary: 'bg-gray-100 active:bg-gray-200 dark:bg-gray-900 dark:active:bg-gray-800',
+      primary: 'border-0 bg-yappr-600 active:bg-yappr-700 dark:bg-yappr-500 dark:active:bg-yappr-600',
+      secondary: 'border-0 bg-gray-100 active:bg-gray-200 dark:bg-gray-900 dark:active:bg-gray-800',
       outline:
         'border border-gray-300 bg-transparent active:bg-gray-100 dark:border-gray-700 dark:active:bg-gray-900',
-      ghost: 'active:bg-gray-100 dark:active:bg-gray-900',
-      destructive: 'bg-red-600 active:bg-red-700',
-      link: '',
+      ghost: 'border-0 active:bg-gray-100 dark:active:bg-gray-900',
+      destructive: 'border-0 bg-red-600 active:bg-red-700',
+      link: 'border-0',
     },
     size: {
       sm: 'min-h-8 px-3 py-1.5',

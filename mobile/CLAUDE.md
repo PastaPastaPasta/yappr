@@ -162,6 +162,11 @@ keep a screen's tree unchanged in the render that leaves it (a form that
 closes after a save stays in its saving state). Animated components are never
 flattened (Reanimated sets `collapsable={false}`).
 
+**Never drop a border width (Android).** A class change that removes a border
+width (`border` → none) resets it to NaN, and an `overflow: hidden` view then
+clips all its children away. Variants that differ in border say `border-0`
+explicitly (`Button`, D-L3a-001).
+
 ## Build variants
 
 `APP_VARIANT` selects the variant at prebuild, start and export time. The

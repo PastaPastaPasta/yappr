@@ -70,6 +70,20 @@ describe('Button variants', () => {
     expect(labelColor()).toBe(colors.white);
   });
 
+  it('never drops its border width across variants, which hid the label on Android (D-L3a-001)', () => {
+    // Android resets a dropped border width to NaN, and the pill (overflow: hidden) then clips
+    // everything inside it away: Following → Follow left a blank blue pill.
+    const widths = (className: string) => className.split(/\s+/).filter((c) => /^border(-\d+)?$/.test(c));
+    const variants = ['primary', 'outline', 'secondary', 'ghost', 'destructive', 'link'] as const;
+    const { rerender } = render(<Button label="Follow" variant="primary" size="sm" />);
+    for (const variant of variants) {
+      rerender(<Button label="Follow" variant={variant} size="sm" />);
+      const className = screen.getByRole('button').props.className as string;
+      expect(className).toContain('android:overflow-hidden');
+      expect(widths(className)).toEqual([variant === 'outline' ? 'border' : 'border-0']);
+    }
+  });
+
   it('keeps the label in one native parent while loading toggles', () => {
     // A flattenable wrapper whose opacity toggles would move the label between native parents,
     // which crashes Android when it happens inside a screen being popped.

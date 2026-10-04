@@ -73,7 +73,7 @@ export function SensitiveGate({
           testID="sensitive-gate"
           // Swallows taps, so the card under it doesn't open; only Show acts.
           onStartShouldSetResponder={() => true}
-          className="absolute inset-0 flex-row items-center justify-center gap-2 overflow-hidden rounded-xl bg-gray-900 px-3 dark:border dark:border-gray-800 dark:bg-gray-950"
+          className="absolute inset-0 flex-row items-center justify-center gap-2 overflow-hidden rounded-xl border-0 bg-gray-900 px-3 dark:border dark:border-gray-800 dark:bg-gray-950"
         >
           <EyeSlashIcon size={v.icon} color={colors.gray400} />
           <Text
