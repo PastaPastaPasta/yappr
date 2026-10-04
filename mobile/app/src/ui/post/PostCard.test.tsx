@@ -253,7 +253,7 @@ describe('PostCard embeds', () => {
     expect(onQuotePress).toHaveBeenCalled();
 
     rerender(<PostCard post={POSTS.quoteRemoved} />);
-    expect(screen.getByText("This post was removed by the contract's moderators.")).toBeTruthy();
+    expect(screen.getByText('This post was removed by community moderators.')).toBeTruthy();
 
     rerender(<PostCard post={{ ...POSTS.quoteRemoved, quotedRemoved: false }} quoteLoading />);
     expect(screen.getByTestId('quote-skeleton')).toBeTruthy();
@@ -474,7 +474,8 @@ describe('review fixes', () => {
 
 describe('stubs', () => {
   it.each([
-    ['removed', 'post', "This post was removed by the contract's moderators."],
+    ['removed', 'post', 'This post was removed by community moderators.'],
+    ['removed', 'reply', 'This reply was removed by community moderators.'],
     ['deleted', 'reply', 'This reply was deleted by its author.'],
     ['failed', 'post', 'This post could not be loaded. Try again later.'],
     ['unavailable', 'reply', 'This reply is unavailable.'],
@@ -485,9 +486,16 @@ describe('stubs', () => {
 
   it('is one static element with the reason', () => {
     render(<PostStub state="removed" reason="Spam" />);
-    expect(
-      screen.getByLabelText("This post was removed by the contract's moderators. Reason: Spam"),
-    ).toBeTruthy();
+    expect(screen.getByLabelText('This post was removed by community moderators. Reason: Spam')).toBeTruthy();
+  });
+
+  it("shows no reason line without one, and never a moderator's reason on another stub", () => {
+    const { rerender } = render(<PostStub state="removed" />);
+    expect(screen.getByLabelText('This post was removed by community moderators.')).toBeTruthy();
+    expect(screen.queryByText(/Reason:/)).toBeNull();
+    rerender(<PostStub state="deleted" reason="Spam" />);
+    expect(screen.getByLabelText('This post was deleted by its author.')).toBeTruthy();
+    expect(screen.queryByText(/Reason:/)).toBeNull();
   });
 });
 

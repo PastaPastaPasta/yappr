@@ -89,6 +89,7 @@ async function renderAt(initialUrl: string) {
       'messages/settings': MessageSettingsScreen,
       'messages/[conversationId]/index': ConversationScreen,
       'messages/[conversationId]/info': GroupInfoScreen,
+      'block/[userId]': () => null,
     },
     { initialUrl },
   );
@@ -561,6 +562,78 @@ describe('Conversation (DM-03, DM-04)', () => {
     await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
     expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
     expect(screen.queryByTestId('dm-composer')).toBeNull();
+  });
+
+  describe('Block and Unblock from a DM v5 conversation (DM-10, SAFE-01)', () => {
+    const select = (event: string) =>
+      act(async () => {
+        fireEvent(screen.getByTestId('dm-conversation-menu'), 'pressAction', { nativeEvent: { event } });
+      });
+
+    it('opens the same Block sheet as everywhere, which blocks in Messages too', async () => {
+      await openConversation();
+      fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: null });
+      await select('block');
+      await act(async () => {});
+      expect(pathname()).toBe(`/block/${BOB_ID}`);
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+    });
+
+    it('blocks only in Messages when the account already blocks them', async () => {
+      await openConversation();
+      fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: 'self' });
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(true);
+      await select('block');
+      await act(async () => {});
+      expect(pathname()).toBe(`/messages/${KEY}`);
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, true);
+      expect(fakeEngine.method('safety.block')).not.toHaveBeenCalled();
+      expect(useToastStore.getState().current?.message).toBe('Blocked @bob');
+    });
+
+    it("lifts the account's own block with the one in Messages", async () => {
+      await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
+      fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: 'self' });
+      fakeEngine.method('safety.unblock').mockResolvedValue(ticket({ op: 'unblock', target: { identityId: BOB_ID } }));
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(undefined);
+      await select('unblock');
+      await act(async () => {});
+      expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(BOB_ID);
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
+      expect(useToastStore.getState().current?.message).toBe('Unblocked @bob');
+    });
+
+    it("changes nothing when the account's block can't be read, and says so", async () => {
+      await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
+      fakeEngine.method('safety.blockedBy').mockRejectedValue(new Error('unavailable'));
+      await select('unblock');
+      await act(async () => {});
+      expect(fakeEngine.method('safety.unblock')).not.toHaveBeenCalled();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(useToastStore.getState().current?.message).toBe("Couldn't unblock @bob. Try again.");
+    });
+
+    it('ignores a second tap while the first still reads the account block', async () => {
+      await openConversation();
+      let answer: (sources: Record<string, null>) => void = () => undefined;
+      fakeEngine.method('safety.blockedBy').mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      await select('block');
+      await select('block');
+      await act(async () => answer({ [BOB_ID]: null }));
+      expect(fakeEngine.method('safety.blockedBy')).toHaveBeenCalledTimes(1);
+      expect(pathname()).toBe(`/block/${BOB_ID}`);
+    });
+
+    it('lifts only the block in Messages when there is no account block (one made on web)', async () => {
+      await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
+      fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: null });
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(undefined);
+      await select('unblock');
+      await act(async () => {});
+      expect(fakeEngine.method('safety.unblock')).not.toHaveBeenCalled();
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
+      expect(useToastStore.getState().current?.message).toBe('Unblocked @bob');
+    });
   });
 
   it('on legacy, follows the account\'s block: the banner, and Unblock in the menu (SR-20)', async () => {

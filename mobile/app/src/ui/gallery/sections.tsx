@@ -588,7 +588,7 @@ function PostCardsC() {
       <Bleed title="Stubs: tombstone, removed, deleted, failed, unavailable, blocked">
         <PostCard post={POSTS.tombstone} />
         <PostStub state="removed" reason="Spam" />
-        <PostStub state="removed" kind="reply" kept="#dash · posted Sep 30" />
+        <PostStub state="removed" kind="reply" />
         <PostStub state="deleted" />
         <PostStub state="failed" kind="reply" />
         <PostStub state="unavailable" />

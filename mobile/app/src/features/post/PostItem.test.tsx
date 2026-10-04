@@ -314,6 +314,19 @@ describe('PostItem menu', () => {
     expect((byId('more-menu-post-basic').props.actions as { title: string }[])[0].title).toBe(keepHandlesWhole('Follow @bob'));
   });
 
+  it.each([
+    ['real deletes', { deletesAreTombstones: false, repostsAreQuotes: false }],
+    ['tombstones', { deletesAreTombstones: true, repostsAreQuotes: true }],
+  ])('asks with the same plain sentence on a contract with %s, never how the network stores it', (_name, flags) => {
+    fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, ...flags } } });
+    renderPost(fixturePost({ id: 'mine-reply', kind: 'reply', author: AUTHORS.alice }));
+    selectMenu('mine-reply', 'delete');
+    expect(alert).toMatchObject({
+      title: 'Delete reply?',
+      message: "This can't be undone. Replies and quotes will show that it was deleted.",
+    });
+  });
+
   it('deletes the own post after the confirmation, removing it at once and restoring it on failure', async () => {
     const own = fixturePost({ id: 'mine', author: AUTHORS.alice });
     const pending = ticket({ op: 'post.delete' });
@@ -324,8 +337,7 @@ describe('PostItem menu', () => {
     selectMenu('mine', 'delete');
     expect(alert).toMatchObject({
       title: 'Delete post?',
-      message:
-        'This action cannot be undone. The post will be permanently removed from the platform. Replies and quotes stay, and show that it was deleted.',
+      message: "This can't be undone. Replies and quotes will show that it was deleted.",
     });
     await act(async () => alert?.press('Delete'));
     expect(fakeEngine.method('posts.delete')).toHaveBeenCalledWith(expect.objectContaining({ id: 'mine', ownerId: VIEWER_ID }));

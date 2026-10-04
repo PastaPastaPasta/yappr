@@ -47,15 +47,34 @@ export async function deleteConversation(conversation: Pick<ConversationDTO, 'ke
 
 /**
  * Block or unblock someone in Messages (v5 DM-10, the encrypted self-state):
- * their messages and group invitations are ignored. Saved at once.
+ * their messages and group invitations are ignored. Saved at once. `done`
+ * is the toast (Message settings' "Unblock" says "User unblocked").
  */
-export async function setBlockedInMessages(peerId: string, blocked: boolean): Promise<void> {
+export async function setBlockedInMessages(peerId: string, blocked: boolean, done?: string): Promise<void> {
   try {
     await engine.api.dm.setBlocked(peerId, blocked);
     lightImpact();
-    toast.success(blocked ? 'User blocked' : 'User unblocked');
+    toast.success(done ?? (blocked ? 'User blocked' : 'User unblocked'));
     refreshDm();
   } catch (error) {
     failed(blocked ? 'Blocking' : 'Unblocking', error);
+  }
+}
+
+/**
+ * The Messages half of a profile Block or Unblock on DM v5 (PRD SAFE-01,
+ * SAFE-02), silent: the block's own toast speaks for both. The engine writes
+ * nothing when it already stands, and keeps it until Messages unlock on a
+ * device without the encryption key. Resolves whether it changed anything
+ * (false when it failed).
+ */
+export async function syncMessagesBlock(peerId: string, blocked: boolean): Promise<boolean> {
+  try {
+    const changed = await engine.api.dm.setBlocked(peerId, blocked);
+    refreshDm();
+    return changed;
+  } catch (error) {
+    appendLog('warn', 'host', `${blocked ? 'Blocking' : 'Unblocking'} in Messages failed: ${errorMessage(error)}`);
+    return false;
   }
 }

@@ -8,7 +8,7 @@ import { NoSymbolIcon } from 'react-native-heroicons/outline';
 import { config } from '~/config';
 import { cn } from '~/lib-allowlist';
 import { queryKeys } from '~/data/keys';
-import { useEngineInfiniteQuery } from '~/data/queries';
+import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { errorMessage } from '~/engine/logs';
@@ -33,7 +33,7 @@ const BLOCK_LISTS_URL = `https://yap.pr${config.webBasePath}/settings?section=pr
 const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedUserDTO; viewerId: string }) {
   const largeText = useLargeText();
   const handle = handleOf(user);
-  const unblock = () => sendWrite(blockWrite, { viewerId, userId: user.id, block: false }, copy.toast.unblocked);
+  const unblock = () => sendWrite(blockWrite, { viewerId, userId: user.id, block: false }, copy.toast.unblocked(handle));
   const button = (
     <Button
       label={copy.block.unblock}
@@ -80,12 +80,18 @@ const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedU
   );
 });
 
-/** "Block lists you follow are managed on yap.pr." with the link (PRD SAFE-03). */
-function ListsNote() {
+/**
+ * "Also hidden by 2 block lists you follow · Manage on yap.pr" (PRD SAFE-03),
+ * only for someone who follows a block list (set up on web): nobody else
+ * needs to hear about them. Nothing while the count is unknown.
+ */
+function ListsNote({ enabled }: { enabled: boolean }) {
+  const lists = useEngineQuery(queryKeys.blockLists, (api) => api.safety.followedBlockLists(), { enabled });
+  if (!enabled || !lists.data) return null;
   return (
-    <View className="gap-1 px-4 py-5">
+    <View className="flex-row flex-wrap items-center gap-x-1 px-4 py-5" testID="blocked-lists-note">
       <Text variant="subhead" tone="secondary">
-        {copy.blocked.listsNote}
+        {`${copy.blocked.listsNote(lists.data)} ·`}
       </Text>
       <LinkText label={copy.blocked.listsLink} onPress={() => openExternal(BLOCK_LISTS_URL)} testID="blocked-lists-link" />
     </View>
@@ -185,7 +191,7 @@ export function BlockedAccountsScreen() {
           />
         </View>
       ) : null}
-      {list.isPending || list.isError ? null : <ListsNote />}
+      <ListsNote enabled={!list.isPending && !list.isError} />
     </>
   );
 

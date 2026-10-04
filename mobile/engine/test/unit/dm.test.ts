@@ -678,6 +678,72 @@ describe('dm on DM v5: 1:1', () => {
   })
 })
 
+describe('dm on DM v5: blocks asked for before they can apply (PRD SAFE-01)', () => {
+  const pendingKey = `yappr_engine_dm_blocks:${alice}`
+
+  it('writes nothing for an unblock of someone never blocked, or a block that already stands', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    const setBlocked = vi.spyOn(user.engine(), 'setBlocked')
+    expect(await user.dm.setBlocked(bob, false)).toBe(false)
+    expect(setBlocked).not.toHaveBeenCalled()
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    expect(await user.dm.setBlocked(bob, true)).toBe(false)
+    expect(setBlocked).toHaveBeenCalledTimes(1)
+    expect((await user.dm.status()).blocked).toEqual([bob])
+  })
+
+  it('keeps a block made without an encryption key on the device, and applies it once Messages unlock', async () => {
+    const user = userOn(ledgerNow(), alice)
+    await user.hooks.stop()
+    user.setLocked(true)
+    user.hooks.sessionChanged(started(alice))
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    await user.dm.setBlocked(carol, true)
+    await user.dm.setBlocked(carol, false)
+    expect(JSON.parse(user.local.getItem(pendingKey) as string)).toEqual({
+      [bob]: { blocked: true, changedAt: expect.any(Number) },
+      [carol]: { blocked: false, changedAt: expect.any(Number) },
+    })
+
+    user.setLocked(false)
+    await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ locked: false, ready: true, blocked: [bob] }))
+    expect(user.local.getItem(pendingKey)).toBeNull()
+  })
+
+  it('never applies a kept choice over a newer one saved from another device', async () => {
+    const ledger = ledgerNow()
+    // On another device: bob blocked and unblocked again, carol never touched.
+    const other = await ready(userOn(ledger, alice))
+    expect(await other.dm.setBlocked(bob, true)).toBe(true)
+    expect(await other.dm.setBlocked(bob, false)).toBe(true)
+    expect(await other.engine().flush()).toBe(true)
+
+    const user = userOn(ledger, alice)
+    await user.hooks.stop()
+    user.setLocked(true)
+    user.hooks.sessionChanged(started(alice))
+    // Both blocked here before that, while Messages were locked on this device.
+    user.local.setItem(pendingKey, JSON.stringify({ [bob]: { blocked: true, changedAt: 1 }, [carol]: { blocked: true, changedAt: 1 } }))
+
+    user.setLocked(false)
+    await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ locked: false, ready: true }))
+    expect((await user.dm.status()).blocked).toEqual([carol])
+    expect(user.local.getItem(pendingKey)).toBeNull()
+  })
+
+  it('forgets blocks kept on the device at sign-out', async () => {
+    const user = userOn(ledgerNow(), alice)
+    await user.hooks.stop()
+    user.setLocked(true)
+    user.hooks.sessionChanged(started(alice))
+    await user.dm.setBlocked(bob, true)
+    expect(user.local.getItem(pendingKey)).not.toBeNull()
+    await user.hooks.stop()
+    user.hooks.forget(alice)
+    expect(user.local.getItem(pendingKey)).toBeNull()
+  })
+})
+
 describe('dm on DM v5: Message settings', () => {
   const pendingKey = `yappr_engine_dm_retention:${alice}`
 

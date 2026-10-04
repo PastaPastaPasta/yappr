@@ -133,8 +133,8 @@ list:
 > ring. YAPP is not hidden: Settings shows the balance read-only where the
 > contract has a token, and writes use web's default payment plan (PRD
 > PD-11). Before a moderation team is seated, Post stays enabled and the
-> refusal arrives as an error ("This opens once the community elects its
-> moderation team. Nothing was posted."). See PRD COMP-01 – COMP-13.
+> refusal arrives as an error ("This isn't available yet. Try again
+> later."). See PRD COMP-01 – COMP-13.
 
 - **Sheet.** Text up to 1,000 characters and 2,000 UTF-8 bytes (v10; bytes
   bind first for CJK and emoji). The counter ring tracks whichever limit is

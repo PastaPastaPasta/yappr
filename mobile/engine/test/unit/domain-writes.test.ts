@@ -45,7 +45,11 @@ const m = vi.hoisted(() => ({
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
+    getBlockFollow: vi.fn(),
   },
+  /** `electedModeration()`: null off an elected contract. */
+  elected: null as { interim: string; moderatedDocumentTypes: Record<string, string[]> } | null,
+  election: { getSeatedTeam: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
@@ -60,6 +64,7 @@ vi.mock('@/lib/contract-topology', async (load) => {
     ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])),
     canRepost: (kind: string) => m.topology[`repost:${kind}`] !== false,
     canBookmark: (kind: string) => m.topology[`bookmark:${kind}`] !== false,
+    electedModeration: () => m.elected,
   }
 })
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
@@ -88,6 +93,7 @@ vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
+vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
 vi.mock('@/lib/services/hashtag-service', () => ({ hashtagService: m.hashtagService }))
 vi.mock('@/lib/services/notification-service', () => ({ notificationService: m.notificationService }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
@@ -170,6 +176,7 @@ beforeEach(() => {
   m.viewer = VIEWER
   m.topology = { hashtagsAreInline: true, mentionsAreInline: true, contractTakesReports: true }
   m.unconfirmed.clear()
+  m.elected = null
   m.settle.mockResolvedValue(true)
   m.documentExists.mockResolvedValue(true)
   m.postService.getUserPosts.mockResolvedValue({ documents: [] })
@@ -388,6 +395,38 @@ describe('graph and safety writes', () => {
     expect(await safety.isBlocked(ids)).toEqual({ [AUTHOR]: true, [id('Listed')]: true, [id('Free')]: false })
     expect(await safety.blockedBy(ids)).toEqual({ [AUTHOR]: 'self', [id('Listed')]: 'list', [id('Free')]: null })
     expect(m.blockService.getBlockSourcesBatch).toHaveBeenCalledWith(VIEWER, ids)
+  })
+
+  it('counts the block lists the viewer follows, and rejects an unreadable follow list', async () => {
+    const { safety } = engine()
+    m.blockService.getBlockFollow.mockResolvedValue(null)
+    expect(await safety.followedBlockLists()).toBe(0)
+    m.blockService.getBlockFollow.mockResolvedValue({ $id: id('Follow'), $ownerId: VIEWER, followedUserIds: [AUTHOR, id('Other')] })
+    expect(await safety.followedBlockLists()).toBe(2)
+    expect(m.blockService.getBlockFollow).toHaveBeenCalledWith(VIEWER)
+    m.blockService.getBlockFollow.mockRejectedValue(new Error('Request timeout'))
+    await expect(safety.followedBlockLists()).rejects.toBeInstanceOf(Error)
+  })
+
+  it('says whether reports open before the form: only an unseated notYetUsable team keeps them shut', async () => {
+    const { safety } = engine()
+    expect(await safety.reportsOpen()).toBe(true)
+    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { report: ['delete'] } }
+    expect(await safety.reportsOpen()).toBe(true)
+    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
+    expect(await safety.reportsOpen()).toBe(true)
+    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
+
+    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { report: ['delete'] } }
+    m.election.getSeatedTeam.mockResolvedValue(null)
+    expect(await safety.reportsOpen()).toBe(false)
+    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
+    expect(await safety.reportsOpen()).toBe(true)
+    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
+    await expect(safety.reportsOpen()).rejects.toBeInstanceOf(Error)
+
+    m.topology.contractTakesReports = false
+    expect(await safety.reportsOpen()).toBe(false)
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {
