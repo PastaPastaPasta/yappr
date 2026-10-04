@@ -36,6 +36,56 @@ describe('notification sources', () => {
   })
 })
 
+describe('failed notification sources', () => {
+  async function serviceWithSources() {
+    const { notificationService } = await import('./notification-service')
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+    for (const reader of ['getLikeNotifications', 'getRepostNotifications', 'getReplyNotifications'] as const) {
+      vi.spyOn(notificationService, reader).mockResolvedValue([])
+    }
+    return notificationService
+  }
+
+  it('say so, and keep the watermark, when a source failed soft to nothing', async () => {
+    const quorum = new Error('invalid quorum: Quorum not found in cache for hash: 00ab')
+    bundle.mockImplementation(async (queries: QueryDocumentsOptions[], _tolerate: boolean, failed?: (error: unknown) => void) => {
+      failed?.(quorum)
+      return queries.map(() => [])
+    })
+    const notificationService = await serviceWithSources()
+
+    const initial = await notificationService.getInitialNotifications('viewer')
+    expect(initial.notifications).toEqual([])
+    expect(initial.failure).toBe(quorum)
+    // Not "now": the next poll reads the whole 7 days again, instead of only what is newer.
+    expect(initial.latestTimestamp).toBeLessThan(Date.now() - 6 * 24 * 60 * 60 * 1000)
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+    expect(polled.failure).toBe(quorum)
+    expect(polled.latestTimestamp).toBe(1_000)
+  })
+
+  it('count a reader that caught its own failure', async () => {
+    const notificationService = await serviceWithSources()
+    vi.mocked(notificationService.getReplyNotifications).mockRestore()
+    const { replyService } = await import('./reply-service')
+    vi.spyOn(replyService, 'getRepliesToMyContent').mockRejectedValue(new Error('DAPI unavailable'))
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+    expect(polled.failure).toEqual(new Error('DAPI unavailable'))
+    expect(polled.latestTimestamp).toBe(1_000)
+  })
+
+  it('answer as before when every source answered', async () => {
+    const notificationService = await serviceWithSources()
+    const now = Date.now()
+    const initial = await notificationService.getInitialNotifications('viewer')
+    expect(initial.failure).toBeUndefined()
+    expect(initial.latestTimestamp).toBeGreaterThanOrEqual(now)
+  })
+})
+
 describe('v10 windowed notification sources', () => {
   it('bundles the permanent sources (post and reply mentions included), reads likes per recent target, and both open windows of replies and quotes as separate queries', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')

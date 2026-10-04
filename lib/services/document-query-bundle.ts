@@ -8,7 +8,12 @@ import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions } fro
  * and distinct index paths. Keeps every query's own limit and ordering; unlike
  * an IN query, a busy branch cannot consume another branch's page budget.
  * Cursors stay on the ordinary surface. No failed proof seeds partial results. */
-export async function queryDocumentBundle(queries: QueryDocumentsOptions[], tolerateFailures = false): Promise<Record<string, unknown>[][]> {
+export async function queryDocumentBundle(
+  queries: QueryDocumentsOptions[],
+  tolerateFailures = false,
+  /** With `tolerateFailures`: told of each member that failed and answered no documents. */
+  onToleratedFailure?: (error: unknown) => void,
+): Promise<Record<string, unknown>[][]> {
   if (queries.length === 0) return [];
   const sdk = await getEvoSdk();
   const groups = await mapLimit(chunk(queries, 11), 2, async batch => {
@@ -42,6 +47,7 @@ export async function queryDocumentBundle(queries: QueryDocumentsOptions[], tole
       } catch (error) {
         if (!tolerateFailures) throw error;
         logger.error('Document bundle member failed', query.documentTypeName, error);
+        onToleratedFailure?.(error);
         return [];
       }
     });

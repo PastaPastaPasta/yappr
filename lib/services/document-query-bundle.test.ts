@@ -46,6 +46,17 @@ describe('explicit document query bundles', () => {
     expect(mocks.query).toHaveBeenCalledTimes(2);
   });
 
+  it('tells the caller which tolerated members failed, so an empty answer is not taken for none', async () => {
+    mocks.composite.mockRejectedValue(new Error('bad proof'));
+    const offline = new Error('one unavailable');
+    mocks.query.mockRejectedValueOnce(offline).mockResolvedValueOnce(new Map());
+    const failed = vi.fn();
+    const { queryDocumentBundle } = await import('./document-query-bundle');
+    expect(await queryDocumentBundle(queries.slice(0, 2), true, failed)).toEqual([[], []]);
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed).toHaveBeenCalledWith(offline);
+  });
+
   it('does not let failed identity reads masquerade as proven absence', async () => {
     mocks.composite.mockRejectedValue(new Error('bad proof'));
     mocks.query.mockRejectedValue(new Error('offline'));

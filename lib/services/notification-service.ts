@@ -118,7 +118,18 @@ interface PermanentSourceResults {
  */
 export interface NotificationResult {
   notifications: Notification[];
+  /**
+   * The poll watermark. It does not move past `sinceTimestamp` when a source
+   * failed (`failure`): the next poll reads that source's window again,
+   * rather than skipping whatever it missed.
+   */
   latestTimestamp: number;
+  /**
+   * Set when a source read failed (each source still fails soft to no
+   * notifications): one of the errors. With nothing in `notifications`,
+   * "no notifications" is then unknown, not an answer.
+   */
+  failure?: unknown;
 }
 
 /**
@@ -135,6 +146,29 @@ class NotificationService {
    * snapshot on its next poll.
    */
   private deliveredLikeBatches = new Map<string, Set<string>>();
+
+  /**
+   * Source reads that failed (and answered no notifications), counted across
+   * fetches: a fetch compares the count before and after. A fetch running at
+   * the same time can only make another look failed too, never hide a
+   * failure, so the watermark errs on reading again.
+   */
+  private sourceFailures = 0;
+  private lastSourceFailure: unknown = undefined;
+
+  /** A source that failed: log it, count it for the fetch, answer no notifications. */
+  private sourceFailed(message: string, error: unknown): RawNotification[] {
+    logger.error(message, error);
+    this.sourceFailures++;
+    this.lastSourceFailure = error;
+    return [];
+  }
+
+  /** A bundle member that failed (tolerated by `queryDocumentBundle`, which logs it). */
+  private readonly bundleMemberFailed = (error: unknown): void => {
+    this.sourceFailures++;
+    this.lastSourceFailure = error;
+  };
 
   /**
    * Get new followers since timestamp
@@ -162,8 +196,7 @@ class NotificationService {
         createdAt: doc.$createdAt as number
       }));
     } catch (error) {
-      logger.error('Error fetching new followers:', error);
-      return [];
+      return this.sourceFailed('Error fetching new followers:', error);
     }
   }
 
@@ -203,8 +236,7 @@ class NotificationService {
         createdAt: doc.$createdAt as number
       }));
     } catch (error) {
-      logger.error('Error fetching private feed request notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching private feed request notifications:', error);
     }
   }
 
@@ -250,8 +282,7 @@ class NotificationService {
           createdAt: like.$createdAt
         }));
     } catch (error) {
-      logger.error('Error fetching like notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching like notifications:', error);
     }
   }
 
@@ -354,8 +385,7 @@ class NotificationService {
           createdAt: repost.$createdAt
         }));
     } catch (error) {
-      logger.error('Error fetching repost notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching repost notifications:', error);
     }
   }
 
@@ -390,8 +420,7 @@ class NotificationService {
         }];
       });
     } catch (error) {
-      logger.error('Error fetching repost and quote notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching repost and quote notifications:', error);
     }
   }
 
@@ -423,8 +452,7 @@ class NotificationService {
           createdAt: reply.createdAt.getTime()
         }));
     } catch (error) {
-      logger.error('Error fetching reply notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching reply notifications:', error);
     }
   }
 
@@ -463,8 +491,7 @@ class NotificationService {
         };
       });
     } catch (error) {
-      logger.error('Error fetching new mentions:', error);
-      return [];
+      return this.sourceFailed('Error fetching new mentions:', error);
     }
   }
 
@@ -501,8 +528,7 @@ class NotificationService {
       });
       return [...fromPosts, ...fromReplies];
     } catch (error) {
-      logger.error('Error fetching new mentions:', error);
-      return [];
+      return this.sourceFailed('Error fetching new mentions:', error);
     }
   }
 
@@ -529,8 +555,7 @@ class NotificationService {
         })));
 
     } catch (error) {
-      logger.error('Error fetching blog post notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching blog post notifications:', error);
     }
   }
 
@@ -568,8 +593,7 @@ class NotificationService {
         }];
       });
     } catch (error) {
-      logger.error('Error fetching blog comment notifications:', error);
-      return [];
+      return this.sourceFailed('Error fetching blog comment notifications:', error);
     }
   }
 
@@ -884,6 +908,7 @@ class NotificationService {
     readIds: Set<string>,
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
+    const failuresBefore = this.sourceFailures;
     const [sourced, blogPosts, blogComments] = await Promise.all([
       notificationsAreWindowed()
         ? this.fetchWindowedSources(userId, sinceTimestamp)
@@ -912,12 +937,17 @@ class NotificationService {
     // aren't re-fetched on every poll. A timeless like's time is the device's
     // clock, not the chain's: it must not push the watermark past events of
     // other sources still being committed.
+    // A failed source (it answered nothing) keeps the watermark where it was:
+    // what that source missed must not end up behind it.
+    const failed = this.sourceFailures !== failuresBefore;
     const timed = allRaw.filter(n => !n.timeless);
-    const latestTimestamp = timed.length > 0
-      ? Math.max(...timed.map(n => n.createdAt))
-      : fallbackTimestamp;
+    let latestTimestamp = fallbackTimestamp;
+    if (failed) latestTimestamp = sinceTimestamp;
+    else if (timed.length > 0) latestTimestamp = Math.max(...timed.map(n => n.createdAt));
 
-    return { notifications, latestTimestamp };
+    return failed
+      ? { notifications, latestTimestamp, failure: this.lastSourceFailure ?? new Error('A notification source failed') }
+      : { notifications, latestTimestamp };
   }
 
   /**
@@ -965,7 +995,7 @@ class NotificationService {
     const { follows, mentions, followRequests, likes, rest: [reposts, replies] } = permanent.slice(await queryDocumentBundle([
       ...permanent.queries,
       recent('repost', 'postOwnerId'), recent('reply', 'parentOwnerId'),
-    ], true));
+    ], true, this.bundleMemberFailed));
     const perSource = await Promise.all([
       this.getNewFollowers(userId, sinceTimestamp, follows),
       this.getNewMentions(userId, sinceTimestamp, mentions),
@@ -991,7 +1021,7 @@ class NotificationService {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
     const bundledLikeKinds = likeNotificationsPinTarget() ? [] : kinds;
     const sources = this.permanentSources(userId, sinceTimestamp, bundledLikeKinds);
-    const permanent = queryDocumentBundle(sources.queries, true).then(sources.slice);
+    const permanent = queryDocumentBundle(sources.queries, true, this.bundleMemberFailed).then(sources.slice);
     const perSource = await Promise.all([
       permanent.then(({ follows }) => this.getNewFollowers(userId, sinceTimestamp, follows)),
       permanent.then(({ mentions }) => this.getNewMentions(userId, sinceTimestamp, mentions)),
