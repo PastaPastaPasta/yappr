@@ -39,27 +39,32 @@ const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
 const kitHasContent = (kit: ItemDeliverablePayload) =>
   kit.assets.length > 0 || kit.licenseKeys !== undefined || Boolean(kit.instructions)
+/** Whether the kit on chain fits one delivery with some variant keys: verified either way, or not known. */
+type KitFit = { kind: 'fits' } | { kind: 'misfit'; message: string } | { kind: 'unknown'; message: string }
+
 /**
- * Why the kit on chain for this item (read now, not from any snapshot) would
- * not fit one delivery with these variant keys, or null when it fits or there
- * is none. A kit this device cannot read or decrypt is refused: unknown is
- * not safe.
+ * Whether the kit on chain for this item (read now, not from any snapshot)
+ * fits one delivery with these variant keys. No kit fits. A kit this device
+ * cannot read or decrypt is `unknown`, which is never taken for a fit.
  */
-async function retainedKitFitError(itemId: string, ownerId: string, variantKeys: readonly string[]): Promise<string | null> {
+async function retainedKitFit(itemId: string, ownerId: string, variantKeys: readonly string[]): Promise<KitFit> {
   let deliverable: ItemDeliverable | null
   try {
     deliverable = await itemDeliverableService.getForItem(itemId)
   } catch {
-    return 'Could not check this product\'s delivery content against the new variants. Try again.'
+    return { kind: 'unknown', message: 'Could not read this product\'s delivery content to check it against its variants. Try again.' }
   }
-  if (!deliverable) return null
+  if (!deliverable) return { kind: 'fits' }
   const privateKey = getEncryptionKeyBytes(ownerId)
-  if (!privateKey) return 'Add your encryption key to change these variants: their names go into every delivery, and the delivery content must be checked to still fit.'
+  if (!privateKey) return { kind: 'unknown', message: 'Add your encryption key to change these variants: their names go into every delivery, and the delivery content must be checked to still fit.' }
+  let content: ItemDeliverablePayload
   try {
-    return kitDeliveryFitError(await itemDeliverableService.decryptKit(deliverable, privateKey), variantKeys)
+    content = await itemDeliverableService.decryptKit(deliverable, privateKey)
   } catch {
-    return 'These variants make deliveries larger, and this product\'s delivery content does not decrypt on this device to check it still fits. Save new delivery content (as a digital product) first, or keep the variant names as they were.'
+    return { kind: 'unknown', message: 'This product\'s delivery content does not decrypt on this device, so it cannot be checked against these variants. Save new delivery content (as a digital product) first, or keep the variant names as they were.' }
   }
+  const fitError = kitDeliveryFitError(content, variantKeys)
+  return fitError ? { kind: 'misfit', message: fitError } : { kind: 'fits' }
 }
 
 /** What the largest of these variant keys adds to a delivery receipt, in UTF-8 bytes once serialized. */
@@ -386,10 +391,10 @@ function AddItemPage() {
       // a physical product keeps its kit). Check THAT kit, read now; one that
       // cannot be read and decrypted here refuses the growth.
       setIsSubmitting(true)
-      const retainedError = await retainedKitFitError(editingItemId, user.identityId, variantKeysNow)
+      const retained = await retainedKitFit(editingItemId, user.identityId, variantKeysNow)
       setIsSubmitting(false)
-      if (retainedError) {
-        setError(retainedError)
+      if (retained.kind !== 'fits') {
+        setError(retained.message)
         return
       }
     }
@@ -460,6 +465,30 @@ function AddItemPage() {
       }
 
       /**
+       * The listing and kit as they stand now, checked together. Null when
+       * they verifiably fit one delivery; otherwise what to tell the seller.
+       * A verified misfit (another device's save in between) pauses the
+       * product at the revision just read, since checkout refuses a paused
+       * product; a pair that cannot be verified is reported, never passed.
+       */
+      const checkPair = async (itemId: string, listingStoreId: string | null): Promise<string | null> => {
+        const now = await storeItemService.getManyFresh([itemId]).then(([item]) => item, () => undefined)
+        if (!now) return 'Could not check that its variants and delivery content still fit together. Reload the product to check it before it sells.'
+        const fit = await retainedKitFit(itemId, user.identityId, now.variants?.combinations.map((combo) => combo.key) ?? [])
+        if (fit.kind === 'fits') return null
+        if (fit.kind === 'unknown') return `Could not check that its variants and delivery content still fit together: ${fit.message}`
+        const paused = now.status === 'active' && listingStoreId
+          ? await storeItemService.updateItem(itemId, user.identityId, listingStoreId, { status: 'paused' }, { atRevision: now.$revision }).then(() => true, (pauseError) => {
+              logger.error('Could not pause a product whose delivery content no longer fits:', pauseError)
+              return false
+            })
+          : false
+        return `It was also changed elsewhere at the same time, and its variants and delivery content no longer fit together: ${fit.message} ${paused
+          ? 'It has been paused so nobody buys it meanwhile. Fix the variants or the delivery content, then set it active again.'
+          : 'Pause it now (Store > Manage), then fix the variants or the delivery content.'}`
+      }
+
+      /**
        * Write the kit; false (with the error shown) when it did not save.
        * `listingSaved` says whether the listing was already written.
        */
@@ -480,13 +509,20 @@ function AddItemPage() {
           // is reloaded whole (content and revision together) for review.
           const outcome = listingSaved ? 'The product was saved, but' : 'Nothing was saved:'
           const onChain = await itemDeliverableService.getForItem(itemId).catch(() => undefined)
-          if (onChain !== undefined && !sameKitRevision(onChain, existingDeliverable)) {
+          const changed = onChain === undefined || !sameKitRevision(onChain, existingDeliverable)
+          // A kit write that may have landed (or a kit that moved) is checked
+          // against the listing like a successful one.
+          const pairProblem = changed || kitError instanceof KitWriteUncertainError ? await checkPair(itemId, effectiveStoreId) : null
+          const pairNote = pairProblem ? ` ${pairProblem}` : ''
+          if (onChain !== undefined && changed) {
             await loadKit(itemId, user.identityId)
-            setError(`${outcome} its delivery content on chain is not the version this page started from (a save may have landed late, or it was changed elsewhere, for example by a delivery that used unique codes), so it was reloaded. Review it and save again.`)
+            setError(`${outcome} its delivery content on chain is not the version this page started from (a save may have landed late, or it was changed elsewhere, for example by a delivery that used unique codes), so it was reloaded. Review it and save again.${pairNote}`)
           } else if (kitError instanceof KitWriteUncertainError) {
             // It may yet land. The next save writes from the same base, which
             // the chain refuses if this one landed meanwhile.
-            setError(`${outcome} its delivery content was sent and is not confirmed yet. Wait a moment, then save again to make sure it is stored.`)
+            setError(`${outcome} its delivery content was sent and is not confirmed yet. Wait a moment, then save again to make sure it is stored.${pairNote}`)
+          } else if (pairProblem) {
+            setError(`${outcome} its delivery content was not saved (${kitError instanceof Error ? kitError.message : 'unknown error'}).${pairNote}`)
           } else {
             setError(`${outcome} its delivery content was not saved (${kitError instanceof Error ? kitError.message : 'unknown error'}). Save again to retry.`)
           }
@@ -530,27 +566,11 @@ function AddItemPage() {
 
       // The listing and the kit are two documents, written one after the
       // other; a save from another device in between can still leave a pair
-      // that no longer fits one delivery. Check the pair as it now stands and
-      // tell the seller, rather than leave silently. (Delivery refuses an
-      // oversized receipt, so nothing wrong is ever sent; editing either one
-      // repairs it.)
+      // that no longer fits one delivery. Check the pair as it now stands.
       if (willSaveKit || keysGrow) {
-        const now = await storeItemService.getManyFresh([savedItemId]).then(([item]) => item, () => undefined)
-        const pairError = now
-          ? await retainedKitFitError(savedItemId, user.identityId, now.variants?.combinations.map((combo) => combo.key) ?? [])
-          : null
-        if (pairError) {
-          // Take it off sale until it is repaired: checkout refuses a paused
-          // product, so no buyer pays for content that cannot be delivered.
-          const paused = now && now.status === 'active' && effectiveStoreId
-            ? await storeItemService.updateItem(savedItemId, user.identityId, effectiveStoreId, { status: 'paused' }, { atRevision: now.$revision }).then(() => true, (pauseError) => {
-                logger.error('Could not pause a product whose delivery content no longer fits:', pauseError)
-                return false
-              })
-            : false
-          setError(`The product was saved, but it was also changed elsewhere at the same time, and its variants and delivery content no longer fit together: ${pairError} ${paused
-            ? 'It has been paused so nobody buys it meanwhile. Fix the variants or the delivery content, then set it active again.'
-            : 'Pause it now (Store > Manage), then fix the variants or the delivery content.'}`)
+        const pairProblem = await checkPair(savedItemId, effectiveStoreId)
+        if (pairProblem) {
+          setError(`The product was saved. ${pairProblem}`)
           return
         }
       }
