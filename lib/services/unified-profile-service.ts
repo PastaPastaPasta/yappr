@@ -1125,34 +1125,32 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     const nextStep = () => onProgress?.({ step: ++step, total });
 
     // Only a write known to have landed stands in for reads that miss it (rememberWrite):
-    // one whose wait timed out may never execute.
+    // one whose wait timed out may never execute. Each document is remembered
+    // as soon as it lands, so a later write failing does not leave it unguarded.
+    const landed = (role: ProfileRole, record: PlainDocument) => {
+      cacheManager.invalidateByTag(`user:${ownerId}`);
+      this.rememberWrite(role, ownerId, record);
+    };
     let base = stored.base;
-    let baseLanded = false;
     if (plan.base) {
       nextStep();
       const written = await this.writeProfileDocument('base', ownerId, stored.base, plan.base)
         .catch((error: unknown) => { throw dashpayKeyBoundsRefusal(error) ?? error; });
       base = written.document;
-      baseLanded = written.confirmed;
       // The extension's ownerRefersTo reads the DashPay profile from state, so
       // a create whose wait timed out must be visible before the extension goes.
-      if (!stored.base && !written.confirmed) {
-        await this.waitForDashpayProfile(ownerId);
-        baseLanded = true;
-      }
+      if (!stored.base && !written.confirmed) await this.waitForDashpayProfile(ownerId);
+      if (written.confirmed || !stored.base) landed('base', base);
     }
     let extension = stored.extension;
-    let extensionLanded = false;
     if (plan.extension) {
       nextStep();
       const written = await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension);
       extension = written.document;
-      extensionLanded = written.confirmed;
+      if (written.confirmed) landed('extension', extension);
     }
 
     cacheManager.invalidateByTag(`user:${ownerId}`);
-    if (baseLanded && base) this.rememberWrite('base', ownerId, base);
-    if (extensionLanded && extension) this.rememberWrite('extension', ownerId, extension);
     const merged = mergeV10ProfileRecords(base, extension);
     if (!merged) throw new Error('Profile not found');
     return this.transformDocument(merged);

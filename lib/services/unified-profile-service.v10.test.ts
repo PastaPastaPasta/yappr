@@ -299,6 +299,51 @@ describe('v10 profile reads after a save', () => {
     expect((await profiles.getProfile(ownerId))?.displayName).toBe('Bea');
   });
 
+  it('keeps a landed DashPay replacement when the extension write then fails', async () => {
+    const profiles = await service();
+    updateDocument.mockImplementation(async (_contract, type, id, owner, data, revision) => (
+      type === 'yapprProfile'
+        ? { success: false, error: 'Extension rejected' }
+        : { success: true, document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data } }
+    ));
+    await expect(profiles.updateProfile(ownerId, { bio: 'new bio', pronouns: 'she/her' })).rejects.toThrow('Extension rejected');
+
+    // Reads still return the DashPay profile at revision 2: the landed revision 3 stands in for them.
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.bio).toBe('new bio');
+
+    // The retry writes only the extension, not another replacement of revision 2.
+    updateDocument.mockReset().mockImplementation(async (_contract, type, id, owner, data, revision) => ({
+      success: true, document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data },
+    }));
+    await profiles.updateProfile(ownerId, { bio: 'new bio', pronouns: 'she/her' });
+    expect(updateDocument).toHaveBeenCalledExactlyOnceWith(
+      YAPPR_CONTRACT_ID, 'yapprProfile', 'ext-doc', ownerId, expect.objectContaining({ pronouns: 'she/her' }), 1
+    );
+  });
+
+  it('keeps a landed DashPay create when the extension create then fails', async () => {
+    stored = {};
+    const profiles = await service();
+    createDocument.mockImplementation(async (_contract, type, owner, data) => (
+      type === 'yapprProfile'
+        ? { success: false, error: 'Extension rejected' }
+        : { success: true, document: { $id: `new-${type}`, $ownerId: owner, ...data } }
+    ));
+    await expect(profiles.updateProfile(ownerId, { displayName: 'Ava', pronouns: 'she/her' })).rejects.toThrow('Extension rejected');
+
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.displayName).toBe('Ava');
+
+    // The retry creates only the extension; the DashPay profile is not created twice.
+    createDocument.mockClear();
+    createDocument.mockImplementation(async (_contract, type, owner, data) => ({
+      success: true, document: { $id: `new-${type}`, $ownerId: owner, ...data },
+    }));
+    await profiles.updateProfile(ownerId, { displayName: 'Ava', pronouns: 'she/her' });
+    expect(createDocument).toHaveBeenCalledExactlyOnceWith(YAPPR_CONTRACT_ID, 'yapprProfile', ownerId, { pronouns: 'she/her' });
+  });
+
   it('does not stand in for reads with a create that was never confirmed (it may not land)', async () => {
     stored[YAPPR_CONTRACT_ID] = [];
     createDocument.mockImplementationOnce(async (_contract, type, owner, data) => ({
