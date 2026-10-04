@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, repeatedLines, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -93,9 +93,10 @@ export function DeliverDigitalModal({
   // Complete only when every line's goods are in confirmed receipts or in this
   // one (which marks the order only if it confirms): a code line needs all its
   // codes, any other line just one receipt.
-  const completesOrder = lines.every((line, index) => sellsCodes[index]
+  // An invalid quantity never counts as covered.
+  const completesOrder = lines.every((line, index) => validQuantity(line.quantity) && (sellsCodes[index]
     ? coverage[index].confirmedCodes + codesFor(index) >= line.quantity
-    : selected.has(index) || coverage[index].confirmed)
+    : selected.has(index) || coverage[index].confirmed))
   const toggleLine = (index: number) => setSelected((prev) => {
     const next = new Set(prev)
     if (next.has(index)) next.delete(index)
@@ -141,8 +142,8 @@ export function DeliverDigitalModal({
   const problems = useMemo(() => lineProblems(selectedPayload, order.storeId, listings), [selectedPayload, order.storeId, listings])
   const blockers = useMemo(() => [
     ...(selectedLines.length === 0 ? ['Choose at least one item to deliver.'] : []),
-    // Over the whole order: unticking a repeat must not hide it.
-    ...repeatedLines(payload),
+    // Over the whole order: unticking a line must not hide its problem.
+    ...wholeOrderProblems(payload),
     ...problems.filter((problem) => problem.blocking).map((problem) => problem.text),
     ...planBlockers(plan),
   ], [selectedLines, payload, problems, plan])

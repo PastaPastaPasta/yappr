@@ -7,7 +7,7 @@ import toast from 'react-hot-toast'
 import { Button } from '@/components/ui/button'
 import { fetchDecryptedFile, formatFileSize, saveBlob, type DigitalFileAsset } from '@/lib/services/digital-file-service'
 import { splitPoolEntry } from '@/lib/services/digital-delivery-plan'
-import { getAllGatewayUrls } from '@/lib/utils/ipfs-gateway'
+import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { formatDate } from '@/lib/utils/format'
 import type { OrderDelivery, OrderDeliveryPayload } from '@/lib/types'
 
@@ -71,7 +71,8 @@ function LinkRow({ label, url, code }: { label: string; url: string; code?: stri
         <a
           // ipfs:// links open through a gateway (other URLs come back as themselves);
           // decodeDelivery already refused any scheme but http(s), magnet and ipfs.
-          href={getAllGatewayUrls(url)[0]}
+          // A public gateway: the buyer's own dedicated one serves only their pins. Other URLs pass through.
+          href={ipfsToGatewayUrl(url)}
           {...(opensPage ? { target: '_blank' } : {})}
           rel="noopener noreferrer nofollow"
           className="inline-flex items-center gap-1.5 text-sm text-yappr-600 hover:underline break-all min-w-0"

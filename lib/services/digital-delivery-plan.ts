@@ -111,7 +111,8 @@ export interface DeliveryPlan {
   emptyLines: string[]
 }
 
-const validQuantity = (quantity: unknown): quantity is number =>
+/** A buyer-written quantity delivery accepts: a whole number from 1 to MAX_LINE_QUANTITY. */
+export const validQuantity = (quantity: unknown): quantity is number =>
   Number.isInteger(quantity) && (quantity as number) >= 1 && (quantity as number) <= MAX_LINE_QUANTITY
 
 /**
@@ -289,18 +290,22 @@ const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantKey'>) => `${line.item
 const repeatedLineText = (line: Pick<OrderItem, 'itemTitle'>) => `"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`
 
 /**
- * Lines that repeat an earlier line's item and variant. The cart keeps one
+ * Problems of the WHOLE order that no part of it may be delivered past: a
+ * line that repeats an earlier line's item and variant (the cart keeps one
  * line per item and variant, so a repeat can only be hand-written, and it
- * would let one receipt count for two lines. Checked over the WHOLE order:
- * a delivery of part of it must not hide one.
+ * would let one receipt count for two lines), or a digital line whose
+ * quantity is not a whole number from 1 to MAX_LINE_QUANTITY. Checked over
+ * every line: unticking one in a delivery in parts must not hide it.
  */
-export function repeatedLines(payload: Pick<OrderPayload, 'items'>): string[] {
+export function wholeOrderProblems(payload: Pick<OrderPayload, 'items'>): string[] {
   const seen = new Set<string>()
   return digitalLines(payload).flatMap((line) => {
     const key = lineKey(line)
-    if (seen.has(key)) return [repeatedLineText(line)]
+    const problems: string[] = []
+    if (seen.has(key)) problems.push(repeatedLineText(line))
     seen.add(key)
-    return []
+    if (!validQuantity(line.quantity)) problems.push(`"${line.itemTitle}" has an invalid quantity in the order. Check it with the buyer.`)
+    return problems
   })
 }
 

@@ -21,7 +21,7 @@ import {
   kitsAfterDelivery,
   lineProblems,
   planDelivery,
-  repeatedLines,
+  wholeOrderProblems,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
 import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
@@ -156,9 +156,11 @@ describe('lineProblems', () => {
     expect(check([line(EBOOK_ID, 1, { variantKey: 'A' }), line(EBOOK_ID, 1, { variantKey: 'B' })], new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]]))).toEqual([])
   })
 
-  it('finds a repeated line over the whole order, whichever part is delivered', () => {
-    expect(repeatedLines({ items: [line(EBOOK_ID), line(SONG_ID), line(EBOOK_ID)] })).toHaveLength(1)
-    expect(repeatedLines({ items: [line(EBOOK_ID), line(SONG_ID)] })).toEqual([])
+  it('finds repeated lines and invalid quantities over the whole order, whichever part is delivered', () => {
+    expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID), line(EBOOK_ID)] })).toHaveLength(1)
+    expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID, 0)] })).toHaveLength(1)
+    expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID, -2)] })).toHaveLength(1)
+    expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID)] })).toEqual([])
   })
 
   it('blocks an invalid order quantity whatever is delivered of it', () => {

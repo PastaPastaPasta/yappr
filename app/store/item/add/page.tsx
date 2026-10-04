@@ -38,6 +38,29 @@ const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
 const kitHasContent = (kit: ItemDeliverablePayload) =>
   kit.assets.length > 0 || kit.licenseKeys !== undefined || Boolean(kit.instructions)
+/**
+ * Why the kit on chain for this item (read now, not from any snapshot) would
+ * not fit one delivery with these variant keys, or null when it fits or there
+ * is none. A kit this device cannot read or decrypt is refused: unknown is
+ * not safe.
+ */
+async function retainedKitFitError(itemId: string, ownerId: string, variantKeys: readonly string[]): Promise<string | null> {
+  let deliverable: ItemDeliverable | null
+  try {
+    deliverable = await itemDeliverableService.getForItem(itemId)
+  } catch {
+    return 'Could not check this product\'s delivery content against the new variants. Try again.'
+  }
+  if (!deliverable) return null
+  const privateKey = getEncryptionKeyBytes(ownerId)
+  if (!privateKey) return 'Add your encryption key to change these variants: their names go into every delivery, and the delivery content must be checked to still fit.'
+  try {
+    return kitDeliveryFitError(await itemDeliverableService.decryptKit(deliverable, privateKey), variantKeys)
+  } catch {
+    return 'These variants make deliveries larger, and this product\'s delivery content does not decrypt on this device to check it still fits. Save new delivery content (as a digital product) first, or keep the variant names as they were.'
+  }
+}
+
 /** What the largest of these variant keys adds to a delivery receipt, in UTF-8 bytes once serialized. */
 const largestReceiptBytes = (variantKeys: readonly string[]) =>
   Math.max(0, ...variantKeys.map((key) => new TextEncoder().encode(JSON.stringify(key)).length))
@@ -334,29 +357,28 @@ function AddItemPage() {
         return
       }
     }
-    // The kit (saved or not) must fit one delivery for one unit with the
-    // variants being saved, or no order could receive it. Variant keys go
-    // into every receipt, so a listing edit alone can break an untouched kit.
-    // Checked only, never rewritten: an untouched pool is not written back.
-    // Also for a product saved as Physical that keeps a kit: switching it back
-    // to Digital later must not reactivate content that no longer fits.
-    const hasKit = isDigital || (supportsDigital && existingDeliverable !== null)
-    if (hasKit && kitState === 'ready') {
-      const fitError = kitDeliveryFitError(kit, hasVariants ? combinations : [])
+    // Every kit must fit one delivery for one unit with the variants being
+    // saved, or no order could receive it (variant keys go into every receipt).
+    const variantKeysNow = hasVariants ? combinations : []
+    if (willSaveKit) {
+      // The draft is what will be on chain.
+      const fitError = kitDeliveryFitError(kit, variantKeysNow)
       if (fitError) {
         setError(fitError)
         return
       }
-    }
-    // A kit this device cannot read cannot be checked, so a variant key that
-    // makes receipts larger than before is refused until it is unlocked (or
-    // replaced). Other listing edits go through, and the kit is left as it is.
-    if (hasKit && (kitState === 'locked' || kitState === 'unreadable') &&
-      largestReceiptBytes(hasVariants ? combinations : []) > largestReceiptBytes(loadedVariantKeys)) {
-      setError(kitState === 'locked'
-        ? 'Add your encryption key to change these variants: their names go into every delivery, and the delivery content must be checked to still fit.'
-        : 'These variants make deliveries larger, and the delivery content does not decrypt on this device to check it still fits. Replace the delivery content, or keep the variant names as they were.')
-      return
+    } else if (supportsDigital && editingItemId && largestReceiptBytes(variantKeysNow) > largestReceiptBytes(loadedVariantKeys)) {
+      // Receipts grow while the kit on chain stays as it is (digital or not,
+      // since a physical product keeps its kit). Check THAT kit, read now: not
+      // this page's snapshot or an unsaved draft. If it cannot be read and
+      // decrypted here, the growth is refused.
+      setIsSubmitting(true)
+      const retainedError = await retainedKitFitError(editingItemId, user.identityId, variantKeysNow)
+      setIsSubmitting(false)
+      if (retainedError) {
+        setError(retainedError)
+        return
+      }
     }
 
     setIsSubmitting(true)
