@@ -249,6 +249,14 @@ class MainActivity : ReactActivity() {
     expect(patched).toContain('override fun onConfigurationChanged(newConfig: Configuration) {');
     expect(patched).toContain('super.onConfigurationChanged(newConfig)');
     expect(patched).toContain('getNativeModule("DeviceInfo") as? LifecycleEventListener)?.onHostResume()');
+    // The metrics text is measured with come from this activity's resources (the application's may
+    // not have the new scale yet), after React Native's own handling, and the React root lays out
+    // again with them (D-rc5a-001).
+    expect(patched).toContain('import com.facebook.react.uimanager.DisplayMetricsHolder\n');
+    expect(patched).toContain('import com.facebook.react.ReactRootView\n');
+    expect(patched).toMatch(/super\.onConfigurationChanged\(newConfig\)\n\s+if \(reactStarted\) refreshFontMetrics\(spBefore\)/);
+    expect(patched).toContain('DisplayMetricsHolder.initDisplayMetrics(this)');
+    expect(patched).toContain('if (view is ReactRootView) {\n      view.requestLayout()');
     // react-native-screens sets the header title's sp size only on an update: every header applies it again.
     expect(patched).toContain('import com.swmansion.rnscreens.ScreenStackHeaderConfig\n');
     expect(patched).toContain('updateStackHeaders(window.decorView)');
