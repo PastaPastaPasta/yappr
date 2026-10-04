@@ -112,29 +112,29 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     }
   }
 
+  /**
+   * Every blog `userId` follows. Rejects when the read fails, rather than
+   * answering "none": blog post notifications must know their read failed
+   * (getFollowStatusBatch, the other reader, catches it itself).
+   */
   async getFollowedBlogs(userId: string): Promise<BlogFollow[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      const { documents } = await paginateFetchAll(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: this.documentType,
-          where: [
-            ['$ownerId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
-        }),
-        (doc) => toBlogFollow(this.transformDocument(doc))
-      );
+    const { documents } = await paginateFetchAll(
+      sdk,
+      () => ({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        where: [
+          ['$ownerId', '==', userId],
+          ['$createdAt', '>', 0]
+        ],
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
+      }),
+      (doc) => toBlogFollow(this.transformDocument(doc))
+    );
 
-      return documents;
-    } catch (error) {
-      logger.error('Error getting followed blogs:', error);
-      return [];
-    }
+    return documents;
   }
 
   async getFollowedBlogIds(userId: string): Promise<string[]> {

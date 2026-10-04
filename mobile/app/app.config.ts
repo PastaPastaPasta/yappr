@@ -178,6 +178,8 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       ['./plugins/engine-assets', { variant }],
       './plugins/release-hardening',
       './plugins/wallet-schemes',
+      // A system font-size change keeps the activity, and with it the user's place (NEW-R-A-01).
+      './plugins/font-scale',
       // The Open-source licenses list (PRD SET-06), regenerated from the lockfiles.
       './plugins/licenses',
       // Apps built with the iOS 27 SDK (Xcode 27) must adopt the UIScene life cycle or iOS 27

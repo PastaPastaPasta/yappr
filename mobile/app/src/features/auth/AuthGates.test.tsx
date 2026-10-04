@@ -3,7 +3,7 @@ import { act, render } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import { useSessionStore } from '~/data/session';
-import { fakeEngine } from '~/data/testing/fake-engine';
+import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
 import { syncStorage } from '~/state/storage';
 
 import { useAccounts } from './accounts';
@@ -231,5 +231,62 @@ describe('launch', () => {
     await flush();
     expect(router.push).toHaveBeenCalledTimes(1);
     expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/(wallet|qr)\?resume=1$/));
+  });
+});
+
+describe('an "Add account" the last launch was killed in (NEW-R-vi-001)', () => {
+  /** Where `accounts.ts` keeps an "Add account" in progress across an app kill. */
+  const ADDING_KEY = 'yappr.accounts.adding.devnet-test';
+  const restart = engineModule.engineSupervisor.restart as jest.Mock;
+
+  beforeEach(() => {
+    // Killed with the sign-in flow open: the engine parked alice and restores nobody.
+    syncStorage.setItem(ADDING_KEY, JSON.stringify({ returnTo: 'alice', reauth: null }));
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    useKeyExchange.setState({ mode: 'wallet', phase: { name: 'idle' }, request: null });
+    fakeEngine.setStatus({ state: 'ready' });
+    fakeEngine
+      .method('session.accounts')
+      .mockResolvedValue([{ identityId: 'alice', username: 'alice.dash', method: 'key', lastUsedAt: new Date(0), active: false }]);
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+    fakeEngine.method('session.current').mockResolvedValue(alice);
+    restart.mockImplementation(() => {
+      fakeEngine.setStatus({ state: 'ready', epoch: engineModule.engineSupervisor.getStatus().epoch + 1 });
+      useSessionStore.setState({ status: 'signed-in', session: alice });
+    });
+  });
+
+  afterEach(() => {
+    syncStorage.removeItem(ADDING_KEY);
+    restart.mockReset();
+  });
+
+  it('goes back to the parked account, rather than leaving everyone signed out', async () => {
+    fakeEngine.method('session.pendingKeyExchange').mockResolvedValue(null);
+    mount('/');
+    await flush();
+    await flush();
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+    expect(useSessionStore.getState().session?.identityId).toBe('alice');
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
+
+  it('reopens a wallet request that was waiting (iOS ended the app while the wallet was open), still able to go back', async () => {
+    fakeEngine
+      .method('session.pendingKeyExchange')
+      .mockResolvedValue({ requestId: 'r4', uri: 'dash-key:r4', expiresAt: new Date(Date.now() + 60_000) });
+    mount('/');
+    await flush();
+    expect(router.push).toHaveBeenCalledWith(expect.stringMatching(/^\/sign-in\/(wallet|qr)\?resume=1$/));
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    expect(useAccounts.getState().returnTo).toBe('alice');
+  });
+
+  it('forgets it when the launch finds an account signed in', async () => {
+    useSessionStore.setState({ status: 'signed-in', session: alice });
+    mount('/');
+    await flush();
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
   });
 });

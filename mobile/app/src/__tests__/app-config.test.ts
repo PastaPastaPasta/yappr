@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 
 import appConfig, { resolveBuildNumber, resolveCommit } from '../../app.config';
+import { withConfigurationHandler, withFontScaleConfigChange } from '../../plugins/font-scale';
 import pkg from '../../package.json';
 import { VARIANTS, type Variant } from '../variants';
 
@@ -196,5 +197,70 @@ describe('screen capture blocking (AUTH-12)', () => {
       fs.readFileSync(path.join(APP_DIR, 'modules/secure-window/expo-module.config.json'), 'utf8'),
     ) as { platforms: string[] };
     expect(secureWindow.platforms).toEqual(['android']);
+  });
+});
+
+describe('Android font-size changes keep the activity (NEW-R-A-01)', () => {
+  /** SDK 57's MainActivity.kt as prebuild writes it (expo-splash-screen's block included), trimmed. */
+  const TEMPLATE = `package pr.yap.app.dev
+import expo.modules.splashscreen.SplashScreenManager
+
+import android.os.Build
+import android.os.Bundle
+
+import com.facebook.react.ReactActivity
+import com.facebook.react.ReactActivityDelegate
+
+class MainActivity : ReactActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    SplashScreenManager.registerOnActivity(this)
+    super.onCreate(null)
+  }
+
+  override fun getMainComponentName(): String = "main"
+
+  override fun invokeDefaultOnBackPressed() {
+      super.invokeDefaultOnBackPressed()
+  }
+}
+`;
+
+  it('is applied to every variant', () => {
+    for (const variant of Object.keys(VARIANTS) as Variant[]) {
+      expect(configFor(variant).plugins).toContain('./plugins/font-scale');
+    }
+  });
+
+  it('adds fontScale, and not density, to the template configChanges', () => {
+    // The RC4 manifest's value (0x80000fb0): neither fontScale nor density, so both recreated MainActivity.
+    const template = 'keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|smallestScreenSize|assetsPaths';
+    const changes = withFontScaleConfigChange(template);
+    expect(changes).toBe(`${template}|fontScale`);
+    expect(changes.split('|')).not.toContain('density');
+    expect(withFontScaleConfigChange(changes)).toBe(changes);
+    expect(withFontScaleConfigChange(undefined)).toBe('fontScale');
+  });
+
+  it('has MainActivity pass the new scale on to JS and the stack headers at once, idempotently', () => {
+    const patched = withConfigurationHandler(TEMPLATE, 'kt');
+    expect(patched).toMatch(/^package pr\.yap\.app\.dev\nimport android\.content\.res\.Configuration\n/);
+    expect(patched).toContain('import com.facebook.react.ReactApplication\n');
+    expect(patched).toContain('import com.facebook.react.bridge.LifecycleEventListener\n');
+    expect(patched).toContain('override fun onConfigurationChanged(newConfig: Configuration) {');
+    expect(patched).toContain('super.onConfigurationChanged(newConfig)');
+    expect(patched).toContain('getNativeModule("DeviceInfo") as? LifecycleEventListener)?.onHostResume()');
+    // react-native-screens sets the header title's sp size only on an update: every header applies it again.
+    expect(patched).toContain('import com.swmansion.rnscreens.ScreenStackHeaderConfig\n');
+    expect(patched).toContain('updateStackHeaders(window.decorView)');
+    expect(patched).toContain('if (view is ScreenStackHeaderConfig) {\n      view.onUpdate()');
+    // Inside the class: the override comes before the class's closing brace.
+    expect(patched.trimEnd().endsWith('// @generated end yappr-font-scale\n}')).toBe(true);
+    expect(withConfigurationHandler(patched, 'kt')).toBe(patched);
+  });
+
+  it('fails the prebuild on a template it does not know', () => {
+    expect(() => withConfigurationHandler(TEMPLATE, 'java')).toThrow(/Kotlin/);
+    const overridden = TEMPLATE.replace('override fun getMainComponentName', 'override fun onConfigurationChanged(c: Configuration) {}\n  override fun getMainComponentName');
+    expect(() => withConfigurationHandler(overridden, 'kt')).toThrow(/already overrides/);
   });
 });

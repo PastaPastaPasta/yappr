@@ -15,7 +15,7 @@ import { Text } from '~/ui/Text';
 import { tw } from '~/ui/tokens';
 
 import { AccountSwitcherSheet } from './AccountSwitcher';
-import { reauthenticate, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
+import { reauthenticate, recoverInterruptedAdd, returnFromAddAccount, startReauthTracking, useAccounts } from './accounts';
 import { useLockState } from './app-lock';
 import { AppLockOverlay } from './AppLockOverlay';
 import { cancelKeyExchange, lastKeyExchangeMode, useKeyExchange } from './key-exchange';
@@ -94,34 +94,66 @@ function useSignInExit(pathname: string): void {
  * waiting (AUTH-03): back to the waiting screen, within its 10 minutes.
  * Not when the user is already in the sign-in flow (a slow boot): the
  * request the engine holds may be the one that flow just made.
+ *
+ * Once per launch, it also settles an "Add account" the last launch was
+ * killed in the middle of (NEW-R-vi-001): a resumed wallet request carries
+ * it on, and otherwise the parked account comes back.
  */
 function useResumeWalletSignIn(ready: boolean, pathname: string): void {
   const { status } = useSession();
   const { state } = useEngineStatus();
   const checked = useRef(false);
+  const launchChecked = useRef(false);
   const path = useRef(pathname);
   useEffect(() => {
     path.current = pathname;
   }, [pathname]);
   const engineUp = state === 'ready' || state === 'degraded';
   useEffect(() => {
-    if (!ready || !engineUp || status !== 'signed-out' || checked.current) return;
+    if (!ready || !engineUp || status === 'unknown') return;
+    const atLaunch = !launchChecked.current;
+    launchChecked.current = true;
+    const recover = (resume: boolean) => {
+      if (!atLaunch) return;
+      recoverInterruptedAdd({ resume }).catch((error: unknown) =>
+        appendLog('warn', 'host', `Going back to the parked account failed: ${errorMessage(error)}`),
+      );
+    };
+    if (status !== 'signed-out' || checked.current) {
+      recover(false);
+      return;
+    }
     checked.current = true;
     const signingIn = () => inSignIn(path.current) || useKeyExchange.getState().phase.name !== 'idle';
-    if (signingIn()) return;
+    if (signingIn()) {
+      recover(true);
+      return;
+    }
     engine.api.session
       .pendingKeyExchange()
       .then((pending) => {
-        if (!pending || signingIn()) return;
+        if (signingIn()) {
+          recover(true);
+          return;
+        }
+        if (!pending) {
+          recover(false);
+          return;
+        }
         // The lock came up while the engine answered: try again once it opens.
         const lock = useLockState.getState();
         if (lock.locked || lock.covered) {
           checked.current = false;
+          if (atLaunch) launchChecked.current = false;
           return;
         }
+        recover(true);
         router.push(lastKeyExchangeMode() === 'qr' ? '/sign-in/qr?resume=1' : '/sign-in/wallet?resume=1');
       })
-      .catch((error: unknown) => appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`));
+      .catch((error: unknown) => {
+        appendLog('warn', 'host', `Reading a pending sign-in failed: ${errorMessage(error)}`);
+        recover(false);
+      });
   }, [ready, engineUp, status]);
 }
 

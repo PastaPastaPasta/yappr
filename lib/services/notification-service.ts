@@ -118,13 +118,71 @@ interface PermanentSourceResults {
  */
 export interface NotificationResult {
   notifications: Notification[];
+  /**
+   * The poll watermark. It does not move past `sinceTimestamp` when a source
+   * failed (`failure`): the next poll reads that source's window again,
+   * rather than skipping whatever it missed.
+   */
   latestTimestamp: number;
+  /**
+   * Set when a source read failed (each source still fails soft to no
+   * notifications): one of the errors. With nothing in `notifications`,
+   * "no notifications" is then unknown, not an answer.
+   */
+  failure?: unknown;
+}
+
+/** What a fetch logs for each failed source. */
+const FOLLOWS_FAILED = 'Error fetching new followers:';
+const MENTIONS_FAILED = 'Error fetching new mentions:';
+const REQUESTS_FAILED = 'Error fetching private feed request notifications:';
+const LIKES_FAILED = 'Error fetching like notifications:';
+const REPOSTS_FAILED = 'Error fetching repost notifications:';
+const REPLIES_FAILED = 'Error fetching reply notifications:';
+
+/**
+ * One fetch's failed source reads. The sources (`get*Notifications`) throw
+ * when a read fails; the fetch takes that source as no notifications,
+ * carries on, and then reports a failure and keeps its watermark. Kept per
+ * fetch, so a fetch running at the same time (another account's poll) never
+ * makes this one look failed, or the other way round.
+ */
+class SourceFailures {
+  private count = 0;
+  private last: unknown = undefined;
+
+  /** A read that failed and answered nothing (a bundle member `queryDocumentBundle` tolerated and logged). */
+  readonly tolerated = (error: unknown): void => {
+    this.count++;
+    this.last = error;
+  };
+
+  /** The source's notifications, or none (logged and counted) when it failed. */
+  async source(message: string, read: Promise<RawNotification[]>): Promise<RawNotification[]> {
+    try {
+      return await read;
+    } catch (error) {
+      logger.error(message, error);
+      this.tolerated(error);
+      return [];
+    }
+  }
+
+  /** One of the errors, or undefined when every read answered. */
+  get failure(): unknown {
+    if (this.count === 0) return undefined;
+    return this.last ?? new Error('A notification source failed');
+  }
 }
 
 /**
  * Service for fetching and transforming notifications.
  * Notifications are derived from existing documents (follows, mentions).
  * No separate notification documents are created.
+ *
+ * Each source (`get*Notifications`) rejects when its read fails, rather than
+ * answering "none": the fetch must know, or its watermark would move past
+ * what the source missed ({@link SourceFailures}).
  */
 class NotificationService {
   /**
@@ -141,30 +199,25 @@ class NotificationService {
    * Uses the followers index: [followingId, $createdAt]
    */
   async getNewFollowers(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      const documents = preloaded ?? await queryDocuments(sdk, {
-        dataContractId: YAPPR_CONTRACT_ID,
-        documentTypeName: 'follow',
-        where: [
-          ['followingId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      });
+    const documents = preloaded ?? await queryDocuments(sdk, {
+      dataContractId: YAPPR_CONTRACT_ID,
+      documentTypeName: 'follow',
+      where: [
+        ['followingId', '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    });
 
-      return documents.map((doc) => ({
-        id: doc.$id as string,
-        type: 'follow' as const,
-        fromUserId: doc.$ownerId as string, // The follower
-        createdAt: doc.$createdAt as number
-      }));
-    } catch (error) {
-      logger.error('Error fetching new followers:', error);
-      return [];
-    }
+    return documents.map((doc) => ({
+      id: doc.$id as string,
+      type: 'follow' as const,
+      fromUserId: doc.$ownerId as string, // The follower
+      createdAt: doc.$createdAt as number
+    }));
   }
 
   /**
@@ -180,32 +233,27 @@ class NotificationService {
    * Uses the followRequest target index: [targetId, $createdAt]
    */
   async getPrivateFeedNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      // Query followRequest documents where this user is the target (feed owner)
-      // This discovers incoming private feed access requests
-      const documents = preloaded ?? await queryDocuments(sdk, {
-        dataContractId: YAPPR_CONTRACT_ID,
-        documentTypeName: 'followRequest',
-        where: [
-          ['targetId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      });
+    // Query followRequest documents where this user is the target (feed owner)
+    // This discovers incoming private feed access requests
+    const documents = preloaded ?? await queryDocuments(sdk, {
+      dataContractId: YAPPR_CONTRACT_ID,
+      documentTypeName: 'followRequest',
+      where: [
+        ['targetId', '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [['targetId', 'asc'], ['$createdAt', 'desc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    });
 
-      return documents.map((doc) => ({
-        id: doc.$id as string,
-        type: 'privateFeedRequest' as const,
-        fromUserId: doc.$ownerId as string, // The requester
-        createdAt: doc.$createdAt as number
-      }));
-    } catch (error) {
-      logger.error('Error fetching private feed request notifications:', error);
-      return [];
-    }
+    return documents.map((doc) => ({
+      id: doc.$id as string,
+      type: 'privateFeedRequest' as const,
+      fromUserId: doc.$ownerId as string, // The requester
+      createdAt: doc.$createdAt as number
+    }));
   }
 
   /**
@@ -220,39 +268,34 @@ class NotificationService {
    */
   async getLikeNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
     if (likeNotificationsAreTimeless()) return this.getTimelessLikeNotifications(userId);
-    try {
-      const { likeService } = await import('./like-service');
-      const since = new Date(sinceTimestamp);
-      const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
+    const { likeService } = await import('./like-service');
+    const since = new Date(sinceTimestamp);
+    const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
 
-      const perKind = await Promise.all(
-        kinds.map((kind, index) => likeService.getLikesOnMyPosts(userId, since, kind, preloaded?.[index]))
-      );
+    const perKind = await Promise.all(
+      kinds.map((kind, index) => likeService.getLikesOnMyPosts(userId, since, kind, preloaded?.[index]))
+    );
 
-      // indexOnly likes have no stable `$id` — the create-time id and the ids
-      // synthesized by queries differ — so read-state keys on (owner, target)
-      // plus the like's consensus timestamp. The timestamp matters: read-state
-      // persists across sessions, and without it an unlike→re-like would reuse
-      // the old id and arrive permanently marked as read.
-      const likeNotificationId = (like: { $id: string; $ownerId: string; $createdAt: number; postId: string; targetKind: TargetKind }) =>
-        likesAreIndexOnly()
-          ? `like-${like.targetKind}-${like.$ownerId}:${like.postId}:${like.$createdAt}`
-          : `like-${like.$id}`;
+    // indexOnly likes have no stable `$id` — the create-time id and the ids
+    // synthesized by queries differ — so read-state keys on (owner, target)
+    // plus the like's consensus timestamp. The timestamp matters: read-state
+    // persists across sessions, and without it an unlike→re-like would reuse
+    // the old id and arrive permanently marked as read.
+    const likeNotificationId = (like: { $id: string; $ownerId: string; $createdAt: number; postId: string; targetKind: TargetKind }) =>
+      likesAreIndexOnly()
+        ? `like-${like.targetKind}-${like.$ownerId}:${like.postId}:${like.$createdAt}`
+        : `like-${like.$id}`;
 
-      return perKind
-        .flat()
-        .map(like => ({
-          id: likeNotificationId(like),
-          type: 'like' as const,
-          fromUserId: like.$ownerId,
-          postId: like.postId,
-          targetKind: like.targetKind,
-          createdAt: like.$createdAt
-        }));
-    } catch (error) {
-      logger.error('Error fetching like notifications:', error);
-      return [];
-    }
+    return perKind
+      .flat()
+      .map(like => ({
+        id: likeNotificationId(like),
+        type: 'like' as const,
+        fromUserId: like.$ownerId,
+        postId: like.postId,
+        targetKind: like.targetKind,
+        createdAt: like.$createdAt
+      }));
   }
 
   /**
@@ -341,22 +384,17 @@ class NotificationService {
    */
   async getRepostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     if (repostsAreQuotes()) return this.getQuoteNotifications(userId, sinceTimestamp, preloaded);
-    try {
-      const { repostService } = await import('./repost-service');
-      const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp), preloaded);
+    const { repostService } = await import('./repost-service');
+    const reposts = await repostService.getRepostsOfMyPosts(userId, new Date(sinceTimestamp), preloaded);
 
-      return reposts
-        .map(repost => ({
-          id: `repost-${repost.$id}`,
-          type: 'repost' as const,
-          fromUserId: repost.$ownerId,
-          postId: repost.postId,
-          createdAt: repost.$createdAt
-        }));
-    } catch (error) {
-      logger.error('Error fetching repost notifications:', error);
-      return [];
-    }
+    return reposts
+      .map(repost => ({
+        id: `repost-${repost.$id}`,
+        type: 'repost' as const,
+        fromUserId: repost.$ownerId,
+        postId: repost.postId,
+        createdAt: repost.$createdAt
+      }));
   }
 
   /**
@@ -369,30 +407,25 @@ class NotificationService {
    * text notifies as `quote` and links to the quote.
    */
   async getQuoteNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
-    try {
-      // Quote notifications exist only where reposts are quotes (v10), which
-      // always reads the quote windows.
-      const window = notificationWindowFor('quote');
-      if (!window && !preloaded) return [];
-      const documents = preloaded ?? (window ? await readNotificationWindow(window, userId, sinceTimestamp) : []);
-      const { transformRawPost } = await import('../feed/transform-raw-post');
-      return documents.map((doc) => transformRawPost(doc)).flatMap((post): RawNotification[] => {
-        const targetId = quotedTargetIdOf(post);
-        if (!targetId) return [];
-        const type = quoteNotificationType(post);
-        return [{
-          id: `${type}-${post.id}`,
-          type,
-          fromUserId: post.author.id,
-          postId: type === 'repost' ? targetId : post.id,
-          targetKind: post.quotedReplyId ? 'reply' : 'post',
-          createdAt: post.createdAt.getTime(),
-        }];
-      });
-    } catch (error) {
-      logger.error('Error fetching repost and quote notifications:', error);
-      return [];
-    }
+    // Quote notifications exist only where reposts are quotes (v10), which
+    // always reads the quote windows.
+    const window = notificationWindowFor('quote');
+    if (!window && !preloaded) return [];
+    const documents = preloaded ?? (window ? await readNotificationWindow(window, userId, sinceTimestamp) : []);
+    const { transformRawPost } = await import('../feed/transform-raw-post');
+    return documents.map((doc) => transformRawPost(doc)).flatMap((post): RawNotification[] => {
+      const targetId = quotedTargetIdOf(post);
+      if (!targetId) return [];
+      const type = quoteNotificationType(post);
+      return [{
+        id: `${type}-${post.id}`,
+        type,
+        fromUserId: post.author.id,
+        postId: type === 'repost' ? targetId : post.id,
+        targetKind: post.quotedReplyId ? 'reply' : 'post',
+        createdAt: post.createdAt.getTime(),
+      }];
+    });
   }
 
   /**
@@ -401,31 +434,26 @@ class NotificationService {
    * replyService.getRepliesToMyContent()
    */
   async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
-    try {
-      const { replyService } = await import('./reply-service');
-      const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp), preloaded);
+    const { replyService } = await import('./reply-service');
+    const replies = await replyService.getRepliesToMyContent(userId, new Date(sinceTimestamp), preloaded);
 
-      // v11: a tombstoned reply keeps its parent linkage, so it stays in the
-      // window; its author deleted it, and there is nothing to announce.
-      return withoutHiddenTombstones(replies)
-        .map(reply => ({
-          id: `reply-${reply.id}`,
-          type: 'reply' as const,
-          fromUserId: reply.author.id,
-          postId: reply.id, // The reply itself
-          targetKind: repliedToKind(reply),
-          parentId: reply.parentId, // The post/reply that was replied to (for navigation)
-          // v9: the reply names its thread root, so the link can go straight to
-          // the thread instead of to whatever intermediate reply it answers.
-          rootPostId: reply.rootPostId,
-          replyContent: reply.content, // Pre-fetched content to avoid re-querying
-          sensitive: reply.sensitive,
-          createdAt: reply.createdAt.getTime()
-        }));
-    } catch (error) {
-      logger.error('Error fetching reply notifications:', error);
-      return [];
-    }
+    // v11: a tombstoned reply keeps its parent linkage, so it stays in the
+    // window; its author deleted it, and there is nothing to announce.
+    return withoutHiddenTombstones(replies)
+      .map(reply => ({
+        id: `reply-${reply.id}`,
+        type: 'reply' as const,
+        fromUserId: reply.author.id,
+        postId: reply.id, // The reply itself
+        targetKind: repliedToKind(reply),
+        parentId: reply.parentId, // The post/reply that was replied to (for navigation)
+        // v9: the reply names its thread root, so the link can go straight to
+        // the thread instead of to whatever intermediate reply it answers.
+        rootPostId: reply.rootPostId,
+        replyContent: reply.content, // Pre-fetched content to avoid re-querying
+        sensitive: reply.sensitive,
+        createdAt: reply.createdAt.getTime()
+      }));
   }
 
   /**
@@ -437,35 +465,30 @@ class NotificationService {
    */
   async getNewMentions(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
     if (mentionsAreInline()) return this.getMentioningPostNotifications(userId, sinceTimestamp, preloaded);
-    try {
-      const sdk = await getEvoSdk();
+    const sdk = await getEvoSdk();
 
-      const documents = preloaded?.[0] ?? await queryDocuments(sdk, {
-        dataContractId: YAPPR_CONTRACT_ID,
-        documentTypeName: 'postMention',
-        where: [
-          ['mentionedUserId', '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']],
-        limit: NOTIFICATION_QUERY_LIMIT
-      });
+    const documents = preloaded?.[0] ?? await queryDocuments(sdk, {
+      dataContractId: YAPPR_CONTRACT_ID,
+      documentTypeName: 'postMention',
+      where: [
+        ['mentionedUserId', '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']],
+      limit: NOTIFICATION_QUERY_LIMIT
+    });
 
-      return documents.map((doc) => {
-        const postId = doc.postId ? identifierToBase58(doc.postId) : undefined;
+    return documents.map((doc) => {
+      const postId = doc.postId ? identifierToBase58(doc.postId) : undefined;
 
-        return {
-          id: doc.$id as string,
-          type: 'mention' as const,
-          fromUserId: doc.$ownerId as string, // The post author who mentioned the user
-          postId: postId || undefined,
-          createdAt: doc.$createdAt as number
-        };
-      });
-    } catch (error) {
-      logger.error('Error fetching new mentions:', error);
-      return [];
-    }
+      return {
+        id: doc.$id as string,
+        type: 'mention' as const,
+        fromUserId: doc.$ownerId as string, // The post author who mentioned the user
+        postId: postId || undefined,
+        createdAt: doc.$createdAt as number
+      };
+    });
   }
 
   /**
@@ -476,62 +499,53 @@ class NotificationService {
    * the reply itself (shown with its thread root) without a re-read.
    */
   private async getMentioningPostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
-    try {
-      const [posts, replies] = preloaded ?? await Promise.all(mentionDocTypes().map(async (docType) =>
-        queryDocuments(await getEvoSdk(), recentQuery(userId, sinceTimestamp, docType, 'mentionedUserId'))));
-      const fromPosts = (posts ?? []).flatMap((doc): RawNotification[] => typeof doc.$id === 'string' && typeof doc.$ownerId === 'string'
-        ? [{ id: `mention-${doc.$id}`, type: 'mention', fromUserId: doc.$ownerId, postId: doc.$id, createdAt: Number(doc.$createdAt) }]
-        : []);
-      if (!replies || replies.length === 0) return fromPosts;
-      const { replyService } = await import('./reply-service');
-      const fromReplies = replies.flatMap((doc): RawNotification[] => {
-        if (typeof doc.$id !== 'string' || typeof doc.$ownerId !== 'string') return [];
-        const reply = replyService.fromDocument(doc);
-        return [{
-          id: `mention-${reply.id}`,
-          type: 'mention',
-          fromUserId: reply.author.id,
-          postId: reply.id,
-          parentId: reply.parentId,
-          rootPostId: reply.rootPostId,
-          replyContent: reply.content,
-          sensitive: reply.sensitive,
-          createdAt: reply.createdAt.getTime(),
-        }];
-      });
-      return [...fromPosts, ...fromReplies];
-    } catch (error) {
-      logger.error('Error fetching new mentions:', error);
-      return [];
-    }
+    const [posts, replies] = preloaded ?? await Promise.all(mentionDocTypes().map(async (docType) =>
+      queryDocuments(await getEvoSdk(), recentQuery(userId, sinceTimestamp, docType, 'mentionedUserId'))));
+    const fromPosts = (posts ?? []).flatMap((doc): RawNotification[] => typeof doc.$id === 'string' && typeof doc.$ownerId === 'string'
+      ? [{ id: `mention-${doc.$id}`, type: 'mention', fromUserId: doc.$ownerId, postId: doc.$id, createdAt: Number(doc.$createdAt) }]
+      : []);
+    if (!replies || replies.length === 0) return fromPosts;
+    const { replyService } = await import('./reply-service');
+    const fromReplies = replies.flatMap((doc): RawNotification[] => {
+      if (typeof doc.$id !== 'string' || typeof doc.$ownerId !== 'string') return [];
+      const reply = replyService.fromDocument(doc);
+      return [{
+        id: `mention-${reply.id}`,
+        type: 'mention',
+        fromUserId: reply.author.id,
+        postId: reply.id,
+        parentId: reply.parentId,
+        rootPostId: reply.rootPostId,
+        replyContent: reply.content,
+        sensitive: reply.sensitive,
+        createdAt: reply.createdAt.getTime(),
+      }];
+    });
+    return [...fromPosts, ...fromReplies];
   }
 
   /**
    * Get blog post notifications for blogs the user follows.
-   * Queries followed blogs, then fetches recent posts from each.
+   * Queries followed blogs, then fetches recent posts from each. A blog whose
+   * posts could not be read contributes none and is reported to
+   * `onBlogReadFailure`; the rest still notify.
    */
-  async getBlogPostNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
-    try {
-      const { blogFollowService } = await import('./blog-follow-service');
-      const { blogPostService } = await import('./blog-post-service');
+  async getBlogPostNotifications(userId: string, sinceTimestamp: number, onBlogReadFailure?: (error: unknown) => void): Promise<RawNotification[]> {
+    const { blogFollowService } = await import('./blog-follow-service');
+    const { blogPostService } = await import('./blog-post-service');
 
-      const followedBlogIds = await blogFollowService.getFollowedBlogIds(userId);
-      if (followedBlogIds.length === 0) return [];
+    const followedBlogIds = await blogFollowService.getFollowedBlogIds(userId);
+    if (followedBlogIds.length === 0) return [];
 
-      const pages = await blogPostService.getPostsByBlogs(followedBlogIds, 10);
-      return Array.from(pages.entries()).flatMap(([blogId, posts]) => posts
-        // A draft is not a new post for the blog's followers.
-        .filter(post => post.createdAt.getTime() > sinceTimestamp && isPublishedBlogPost(post))
-        .map(post => ({
-          id: `blogPost-${post.id}`, type: 'blogPost' as const, fromUserId: post.ownerId,
-          postId: post.id, blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
-          createdAt: post.createdAt.getTime(),
-        })));
-
-    } catch (error) {
-      logger.error('Error fetching blog post notifications:', error);
-      return [];
-    }
+    const pages = await blogPostService.getPostsByBlogs(followedBlogIds, 10, onBlogReadFailure);
+    return Array.from(pages.entries()).flatMap(([blogId, posts]) => posts
+      // A draft is not a new post for the blog's followers.
+      .filter(post => post.createdAt.getTime() > sinceTimestamp && isPublishedBlogPost(post))
+      .map(post => ({
+        id: `blogPost-${post.id}`, type: 'blogPost' as const, fromUserId: post.ownerId,
+        postId: post.id, blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
+        createdAt: post.createdAt.getTime(),
+      })));
   }
 
   /**
@@ -542,35 +556,30 @@ class NotificationService {
    */
   async getBlogCommentNotifications(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
     if (!blogIsV2()) return [];
-    try {
-      const { blogCommentService } = await import('./blog-comment-service');
-      const { blogPostService } = await import('./blog-post-service');
+    const { blogCommentService } = await import('./blog-comment-service');
+    const { blogPostService } = await import('./blog-post-service');
 
-      const comments = await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT);
-      if (comments.length === 0) return [];
+    const comments = await blogCommentService.getCommentsOnMyPosts(userId, sinceTimestamp, NOTIFICATION_QUERY_LIMIT);
+    if (comments.length === 0) return [];
 
-      const posts = new Map(
-        (await blogPostService.getMany(Array.from(new Set(comments.map(c => c.blogPostId)))))
-          .map(post => [post.id, post])
-      );
-      return comments.flatMap(comment => {
-        const post = posts.get(comment.blogPostId);
-        // The index key is the post's own `$ownerId` (consensus-bound
-        // `blogPostOwnerId` up to v5, derived through `blogPostId` from v6),
-        // so a row on this index is by construction a comment on this user's
-        // post — this drops only rows whose post did not come back (a read
-        // failure), since there is no title or link to render without it.
-        if (!post) return [];
-        return [{
-          id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
-          postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
-          blogCommentContent: comment.content, createdAt: comment.createdAt.getTime(),
-        }];
-      });
-    } catch (error) {
-      logger.error('Error fetching blog comment notifications:', error);
-      return [];
-    }
+    const posts = new Map(
+      (await blogPostService.getMany(Array.from(new Set(comments.map(c => c.blogPostId)))))
+        .map(post => [post.id, post])
+    );
+    return comments.flatMap(comment => {
+      const post = posts.get(comment.blogPostId);
+      // The index key is the post's own `$ownerId` (consensus-bound
+      // `blogPostOwnerId` up to v5, derived through `blogPostId` from v6),
+      // so a row on this index is by construction a comment on this user's
+      // post — this drops only rows whose post did not come back (a read
+      // failure), since there is no title or link to render without it.
+      if (!post) return [];
+      return [{
+        id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
+        postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
+        blogCommentContent: comment.content, createdAt: comment.createdAt.getTime(),
+      }];
+    });
   }
 
   /**
@@ -884,12 +893,13 @@ class NotificationService {
     readIds: Set<string>,
     fallbackTimestamp: number
   ): Promise<NotificationResult> {
+    const failures = new SourceFailures();
     const [sourced, blogPosts, blogComments] = await Promise.all([
       notificationsAreWindowed()
-        ? this.fetchWindowedSources(userId, sinceTimestamp)
-        : this.fetchBundledSources(userId, sinceTimestamp),
-      this.getBlogPostNotifications(userId, sinceTimestamp),
-      this.getBlogCommentNotifications(userId, sinceTimestamp),
+        ? this.fetchWindowedSources(userId, sinceTimestamp, failures)
+        : this.fetchBundledSources(userId, sinceTimestamp, failures),
+      failures.source('Error fetching blog post notifications:', this.getBlogPostNotifications(userId, sinceTimestamp, failures.tolerated)),
+      failures.source('Error fetching blog comment notifications:', this.getBlogCommentNotifications(userId, sinceTimestamp)),
     ]);
 
     const allRaw = [...sourced, ...blogPosts, ...blogComments];
@@ -912,12 +922,15 @@ class NotificationService {
     // aren't re-fetched on every poll. A timeless like's time is the device's
     // clock, not the chain's: it must not push the watermark past events of
     // other sources still being committed.
+    // A failed source (it answered nothing) keeps the watermark where it was:
+    // what that source missed must not end up behind it.
+    const { failure } = failures;
     const timed = allRaw.filter(n => !n.timeless);
-    const latestTimestamp = timed.length > 0
-      ? Math.max(...timed.map(n => n.createdAt))
-      : fallbackTimestamp;
+    let latestTimestamp = fallbackTimestamp;
+    if (failure !== undefined) latestTimestamp = sinceTimestamp;
+    else if (timed.length > 0) latestTimestamp = Math.max(...timed.map(n => n.createdAt));
 
-    return { notifications, latestTimestamp };
+    return failure !== undefined ? { notifications, latestTimestamp, failure } : { notifications, latestTimestamp };
   }
 
   /**
@@ -954,7 +967,7 @@ class NotificationService {
    * v2 and v9: every source is a permanent `[recipient, $createdAt]` index,
    * all read in one bundle.
    */
-  private async fetchBundledSources(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  private async fetchBundledSources(userId: string, sinceTimestamp: number, failures: SourceFailures): Promise<RawNotification[]> {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
     const recent = (documentTypeName: string, ownerField: string) => recentQuery(userId, sinceTimestamp, documentTypeName, ownerField);
     // Newest first: a source with more than a page of events since the
@@ -965,14 +978,14 @@ class NotificationService {
     const { follows, mentions, followRequests, likes, rest: [reposts, replies] } = permanent.slice(await queryDocumentBundle([
       ...permanent.queries,
       recent('repost', 'postOwnerId'), recent('reply', 'parentOwnerId'),
-    ], true));
+    ], true, failures.tolerated));
     const perSource = await Promise.all([
-      this.getNewFollowers(userId, sinceTimestamp, follows),
-      this.getNewMentions(userId, sinceTimestamp, mentions),
-      this.getPrivateFeedNotifications(userId, sinceTimestamp, followRequests),
-      this.getLikeNotifications(userId, sinceTimestamp, likes),
-      this.getRepostNotifications(userId, sinceTimestamp, reposts),
-      this.getReplyNotifications(userId, sinceTimestamp, replies),
+      failures.source(FOLLOWS_FAILED, this.getNewFollowers(userId, sinceTimestamp, follows)),
+      failures.source(MENTIONS_FAILED, this.getNewMentions(userId, sinceTimestamp, mentions)),
+      failures.source(REQUESTS_FAILED, this.getPrivateFeedNotifications(userId, sinceTimestamp, followRequests)),
+      failures.source(LIKES_FAILED, this.getLikeNotifications(userId, sinceTimestamp, likes)),
+      failures.source(REPOSTS_FAILED, this.getRepostNotifications(userId, sinceTimestamp, reposts)),
+      failures.source(REPLIES_FAILED, this.getReplyNotifications(userId, sinceTimestamp, replies)),
     ]);
     return perSource.flat();
   }
@@ -987,20 +1000,20 @@ class NotificationService {
    * composite plus one read (v11: plus a liker read only when a count moved,
    * {@link getTimelessLikeNotifications}).
    */
-  private async fetchWindowedSources(userId: string, sinceTimestamp: number): Promise<RawNotification[]> {
+  private async fetchWindowedSources(userId: string, sinceTimestamp: number, failures: SourceFailures): Promise<RawNotification[]> {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];
     const bundledLikeKinds = likeNotificationsPinTarget() ? [] : kinds;
     const sources = this.permanentSources(userId, sinceTimestamp, bundledLikeKinds);
-    const permanent = queryDocumentBundle(sources.queries, true).then(sources.slice);
+    const permanent = queryDocumentBundle(sources.queries, true, failures.tolerated).then(sources.slice);
     const perSource = await Promise.all([
-      permanent.then(({ follows }) => this.getNewFollowers(userId, sinceTimestamp, follows)),
-      permanent.then(({ mentions }) => this.getNewMentions(userId, sinceTimestamp, mentions)),
-      permanent.then(({ followRequests }) => this.getPrivateFeedNotifications(userId, sinceTimestamp, followRequests)),
-      bundledLikeKinds.length > 0
+      failures.source(FOLLOWS_FAILED, permanent.then(({ follows }) => this.getNewFollowers(userId, sinceTimestamp, follows))),
+      failures.source(MENTIONS_FAILED, permanent.then(({ mentions }) => this.getNewMentions(userId, sinceTimestamp, mentions))),
+      failures.source(REQUESTS_FAILED, permanent.then(({ followRequests }) => this.getPrivateFeedNotifications(userId, sinceTimestamp, followRequests))),
+      failures.source(LIKES_FAILED, bundledLikeKinds.length > 0
         ? permanent.then(({ likes }) => this.getLikeNotifications(userId, sinceTimestamp, likes))
-        : this.getLikeNotifications(userId, sinceTimestamp),
-      this.getRepostNotifications(userId, sinceTimestamp),
-      this.getReplyNotifications(userId, sinceTimestamp),
+        : this.getLikeNotifications(userId, sinceTimestamp)),
+      failures.source(REPOSTS_FAILED, this.getRepostNotifications(userId, sinceTimestamp)),
+      failures.source(REPLIES_FAILED, this.getReplyNotifications(userId, sinceTimestamp)),
     ]);
     return perSource.flat();
   }

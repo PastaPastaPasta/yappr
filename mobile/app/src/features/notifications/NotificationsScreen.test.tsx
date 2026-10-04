@@ -587,6 +587,24 @@ describe('the tab badge (NOTIF-03)', () => {
     expect(queryClient.getQueryState(queryKeys.notifications('all'))?.isInvalidated).toBe(true);
   });
 
+  it('refetches a list left on its error once a poll succeeds with nothing new (a first load that failed)', async () => {
+    signIn();
+    queryClient.setQueryData(queryKeys.notifications('like'), { pages: [page([])], pageParams: [null] });
+    await queryClient
+      .prefetchInfiniteQuery({
+        queryKey: queryKeys.notifications('all'),
+        queryFn: () => Promise.reject(new Error('quorum')),
+        initialPageParam: null,
+      })
+      .catch(() => undefined);
+    expect(queryClient.getQueryState(queryKeys.notifications('all'))?.status).toBe('error');
+    fakeEngine.method('notifications.poll').mockResolvedValue({ added: 0, unread: 0, blockedChanged: false });
+    renderHook(useNotificationsBadge, { wrapper });
+    await act(async () => {});
+    expect(queryClient.getQueryState(queryKeys.notifications('all'))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.notifications('like'))?.isInvalidated).toBe(false);
+  });
+
   it('leaves the lists alone when a poll changed nothing', async () => {
     signIn();
     queryClient.setQueryData(queryKeys.notifications('all'), { pages: [page([])], pageParams: [null] });

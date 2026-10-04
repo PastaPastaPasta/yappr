@@ -51,12 +51,20 @@ type ListData = InfiniteData<Page<NotificationDTO>>;
 const refetchLists = () =>
   queryClient.invalidateQueries({ queryKey: queryKeys.notificationsAll }).catch(() => undefined);
 
+/** The lists left on their error, such as a failed first load (G-11). */
+const refetchFailedLists = () =>
+  queryClient
+    .invalidateQueries({ queryKey: queryKeys.notificationsAll, predicate: (query) => query.state.status === 'error' })
+    .catch(() => undefined);
+
 let polling: { viewer: string | null; done: Promise<boolean> } | null = null;
 
 /**
  * One poll (`notifications.poll`) for `viewer`: merges what arrived since
  * the last one, updates the badge, and refetches the lists when something
- * new came or a block or unblock changed what they show. A poll already
+ * new came or a block or unblock changed what they show. Otherwise it still
+ * refetches a list left on its error: the poll may just have made the first
+ * load that list failed, and "none" is then its answer. A poll already
  * running for the same account is joined, not repeated; one left over from
  * another account is not. Resolves with whether it refetched the lists
  * (done by then; false for an account no longer polled), and rejects when
@@ -72,7 +80,10 @@ export function pollNotifications(viewer: string | null): Promise<boolean> {
         async ({ added, unread, blockedChanged }) => {
           if (polling !== current) return false;
           setUnread(unread, viewer);
-          if (added === 0 && !blockedChanged) return false;
+          if (added === 0 && !blockedChanged) {
+            await refetchFailedLists();
+            return false;
+          }
           await refetchLists();
           return true;
         },

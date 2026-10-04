@@ -257,29 +257,26 @@ class RepostService {
 
   /**
    * Reposts of a user's posts (for "X reposted your post" notifications).
-   * Uses the `postOwnerAndTime` index [postOwnerId, $createdAt].
+   * Uses the `postOwnerAndTime` index [postOwnerId, $createdAt]. Rejects
+   * when the read fails, so the notification watermark does not move past
+   * the reposts it missed.
    */
   async getRepostsOfMyPosts(userId: string, since?: Date, preloaded?: Record<string, unknown>[]): Promise<RepostDocument[]> {
     const sinceTimestamp = since?.getTime() || 0;
-    try {
-      const sdk = await this.sdk();
-      const response = preloaded ?? await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [['postOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
-        orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']],
-        limit: 100,
-      });
-      const out: RepostDocument[] = [];
-      for (const doc of normalizeSDKResponse(response)) {
-        const r = this.map(doc);
-        if (r) out.push(r);
-      }
-      return out;
-    } catch (error) {
-      logger.error('Error getting reposts of my posts:', error);
-      return [];
+    const sdk = await this.sdk();
+    const response = preloaded ?? await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: this.documentType,
+      where: [['postOwnerId', '==', userId], ['$createdAt', '>', sinceTimestamp]],
+      orderBy: [['postOwnerId', 'asc'], ['$createdAt', 'desc']],
+      limit: 100,
+    });
+    const out: RepostDocument[] = [];
+    for (const doc of normalizeSDKResponse(response)) {
+      const r = this.map(doc);
+      if (r) out.push(r);
     }
+    return out;
   }
 }
 
