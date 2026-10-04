@@ -233,7 +233,9 @@ const MAX_ID_LENGTH = 44
  * and a line's codes unit by unit.
  */
 export function kitDeliveryFitError(kit: ItemDeliverablePayload, variantKeys: readonly string[] = []): string | null {
-  const longest = (values: readonly string[]) => values.reduce((a, b) => (b.length > a.length ? b : a), '')
+  // Largest by what it adds to the receipt: UTF-8 bytes after JSON escaping, not string length.
+  const size = (value: string) => new TextEncoder().encode(JSON.stringify(value)).length
+  const longest = (values: readonly string[]) => values.reduce((a, b) => (size(b) > size(a) ? b : a), '')
   const variantKey = longest(variantKeys)
   const licenseKey = longest(kit.licenseKeys ?? [])
   const delivery: OrderDeliveryPayload = {
@@ -317,9 +319,15 @@ export function lineProblems(
   }
   const malformed = linesOf(payload).filter(isDigitalLine).length - digitalLines(payload).length
   if (malformed > 0) problems.push({ itemTitle: '', text: `${malformed} digital line${malformed === 1 ? ' of this order is' : 's of this order are'} malformed, so the order cannot be delivered from here. Check it with the buyer.`, blocking: true })
+  // The cart keeps one line per item and variant. A repeat can only be
+  // hand-written, and would let one receipt count for two lines.
+  const seen = new Set<string>()
   for (const line of digitalLines(payload)) {
     const listing = listings.get(line.itemId)
     const problem = (text: string, blocking = false) => problems.push({ itemTitle: line.itemTitle, text, blocking })
+    const key = `${line.itemId}|${line.variantKey ?? ''}`
+    if (seen.has(key)) { problem(`"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`, true); continue }
+    seen.add(key)
     if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
     if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }
     if (listing.fulfillment !== 'digital') { problem(`"${line.itemTitle}" is not listed as a digital product.`, true); continue }

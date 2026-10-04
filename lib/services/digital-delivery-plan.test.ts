@@ -149,6 +149,12 @@ describe('lineProblems', () => {
     expect(check([line(EBOOK_ID)], listed([EBOOK_ID]))).toEqual([])
   })
 
+  it('blocks an order that repeats an item and variant, so one receipt cannot count twice', () => {
+    expect(check([line(EBOOK_ID), line(EBOOK_ID)], listed([EBOOK_ID])).map((p) => p.blocking)).toEqual([true])
+    const variants = { axes: [{ name: 'F', options: ['A', 'B'] }], combinations: [{ key: 'A', price: 100 }, { key: 'B', price: 100 }] }
+    expect(check([line(EBOOK_ID, 1, { variantKey: 'A' }), line(EBOOK_ID, 1, { variantKey: 'B' })], new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]]))).toEqual([])
+  })
+
   it('blocks a malformed currency instead of throwing', () => {
     const payload = { items: [line(EBOOK_ID)], currency: Object.create(null) as unknown as string }
     expect(() => lineProblems(payload, 'store', listed([EBOOK_ID]))).not.toThrow()
@@ -333,6 +339,14 @@ describe('wire format', () => {
       ],
     })))
     expect(decoded.assets).toEqual([{ kind: 'code', label: 'Code', code: 'X' }])
+  })
+
+  it('sizes unique codes by their UTF-8 bytes, not their length', () => {
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 800
+    // 150 kana (450 bytes) outweigh 200 ASCII characters.
+    const pool = ['a'.repeat(200), '\u3042'.repeat(150)]
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room - 300), licenseKeys: pool }))).toMatch(/too large/)
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room - 300), licenseKeys: ['a'.repeat(200)] }))).toBeNull()
   })
 
   it('counts a title in multi-byte characters at its UTF-8 size', () => {
