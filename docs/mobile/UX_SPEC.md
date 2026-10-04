@@ -519,13 +519,13 @@ Map of react-hot-toast in `app/layout.tsx`:
 
 - Vertical padding 48. Copy from section 5.
 - Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A list's read that failed with the "temporarily unavailable" category (the one place it is decided: `isTemporaryReadFailure` in `mobile/app/src/data/read-error.ts`, which also picks this copy) is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while the app is in the foreground, on the 1.0 terms of NET-03's note; sooner once another read answers). Polls, reads with their own backoff and reads embedded in a card are left alone. The error stays on screen while it retries (not the list's loading state, though a stalled read takes 30-60 s to fail), with "Retrying…" (copy 5.11 `read.retrying`: `caption`, `text.secondary`, an `xs` spinner before it) under "Try again", and gives way to the content as soon as a retry answers. "Try again" (or a pull to refresh) during a retry ends that retry and reads afresh, showing the loading state as it does otherwise; it never waits on the stalled retry.
-- List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding) and the legacy link; "Load More" pill (`primary` `sm`) for paused or failed paging.
+- List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding), with the legacy link under it on testnet's feeds only (never in an empty state); "Load more" pill (`primary` `sm`) for paused or failed paging.
 
 ### 2.17 Network chip
 
 - Height 20, horizontal padding 8, `radius.full`, `network.chip` colors, `chip` text "DEVNET" / "TESTNET". A 6 pt dot before the label: steady black when the engine is ready, pulsing while booting, hollow when unavailable.
 - Placement: Home navigation bar (leading on iOS next to the title, trailing on Android before the overflow), and the Settings footer.
-- Tap → network sheet (4.34). a11y: "Devnet. Data may be reset. Engine ready." (state varies).
+- Tap → network sheet (4.34). a11y: "Testnet. Data may be reset. Connected." (state varies: "Connecting." / "Can't connect."; the dot carries the state, so the label must too).
 
 ### 2.18 Banners
 
@@ -1021,7 +1021,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Blocked:** tabs replaced by the blocked notice (copy 5.6).
 - **NSFW profile:** interstitial replaces everything below the header bar (copy 5.6).
 - **Loading:** banner gradient, avatar skeleton, 2 skeleton bars for name and handle, tabs disabled.
-- **Signed-out Profile tab:** empty state "Sign in to post, follow and message" with "Sign in", then grouped rows: Appearance, Privacy & Safety, About, Engine diagnostics.
+- **Signed-out Profile tab:** empty state "Sign in to post, follow and message" with "Sign in", then grouped rows: Appearance, Privacy & Safety, About. (Troubleshooting is the last row of About.)
 
 ### 4.13 Edit profile and avatar picker
 
@@ -1246,7 +1246,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ ‹ Settings                      │
 │ ┌─────────────────────────────┐ │  iOS inset grouped
 │ │ (32) Bob Builder          › │ │  account summary row → Account
-│ │      @bob · 1.23 DASH       │ │
+│ │      @bob                   │ │  no balance here (Account has it)
 │ └─────────────────────────────┘ │
 │ ┌─────────────────────────────┐ │
 │ │ 🔔 Notifications          › │ │
@@ -1256,10 +1256,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ └─────────────────────────────┘ │
 │ ┌─────────────────────────────┐ │
 │ │ ℹ About                   › │ │
-│ │ ⚙ Engine diagnostics      › │ │
 │ └─────────────────────────────┘ │
 │        [DEVNET]                 │
-│  Yappr 1.0.0 (123) · devnet     │  caption secondary
+│      Yappr 1.0.0 (123)          │  caption secondary; the chip names the network
 └─────────────────────────────────┘
 ```
 
@@ -1269,11 +1268,12 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Story** SET-02, AUTH-10, AUTH-11, AUTH-12.
 - Groups:
-  1. "Identity ID" (monospace value, 2 lines, copy `IconButton`), "Usernames" (each name as a row; "Register a username on yap.pr" link row), "Account created".
-  2. "Balance" (DASH value `body.strong` tabular, credits below in `caption`, refresh `IconButton`), "YAPP" (where shown).
-  3. "Accounts" › (switcher list screen: rows with `xl` avatars, check on current, "Add account"), "App lock" › (switch + timeout radio rows).
+  1. "Usernames" (each name as a row; then the link row "Register a username on yap.pr", or "Register another username on yap.pr" when there is at least one).
+  2. "Balance" (DASH cut to 4 decimals, `body.strong` tabular, "< 0.0001 DASH" below that; the exact credits below in a muted `caption`). No refresh button: it is read again when the screen opens and on pull to refresh, and a failed pull toasts `account.refreshFailed`. "YAPP" (where shown).
+  3. "Accounts" › (switcher list screen: rows with `xl` avatars, check on current, "Add account"; each row shows the name and @handle only, since the section header names the network), "App lock" › (switch + timeout radio rows).
      - An account marked "Sign in again" (AUTH-14) has an outline `sm` "Sign in again" button beside its row, which opens its sign-in. Tapping the row of a marked account that is not the current one still switches to it, for reading; its write controls then open the "Sign in again" sheet. Tapping the current marked account's row opens its sign-in, and so does tapping one that cannot be opened (its key is gone from the device), without a "Couldn't switch" toast; abandoning that sign-in returns to the account that was current.
-  4. "Sign out" (destructive row).
+  4. "Account created", then "Copy account ID" (the id middle-truncated as its value; a tap copies it whole, toast "Account ID copied").
+  5. "Sign out" (destructive row).
 - Moderation notice (SAFE-09) at the top when present: `error.bg` card.
 
 ### 4.27 Settings: Notifications
@@ -1301,19 +1301,24 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ### 4.31 Settings: About
 
-- Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line.
-- Rows: "Terms of Use", "Privacy Policy", "Community rules", "Community rules summary" (bundled, opens the 4.7 text read-only), "Support", "Open-source licenses", "Yappr on the web". Footer: the Powered-by-Dash mark.
-- Info rows above the links: "Version" (version and build), "Network", "Engine" (evo-sdk and bundle), "Commit" (the first 8 characters of the git commit, baked in at build time; never fetched).
-- "Community rules" opens the full rules in a sheet (the text the 4.7 gate expands under "Community rules") until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
+- Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line. No "Powered by Dash Platform" footer: the tagline says it.
+- One info row above the links: "Version" (version and build, "1.0.0 (123)"). A long press copies the build details, "Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet" (the commit's first 8 characters, baked in at build time and never fetched; a part the build doesn't know is left out), with the toast "Version info copied". No Network, Engine or Commit rows.
+- Rows: "Terms of Use", "Privacy Policy", "Community rules", then "Support" (mail), "Send diagnostics", "Open-source licenses", "Yappr on the web".
+- "Community rules" opens one sheet: the 4.7 summary first (`about.rulesIntro` and its 4 bullets), then the full rules the 4.7 gate expands under "Community rules", until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
+- "Send diagnostics" opens the mail composer to the support address (PRD §11.1 OQ-1) with the redacted 4.32 text as the body (its last 40 log lines). With no mail app, the native share sheet offers the same text.
+- Last, a muted row "Troubleshooting" (`subhead`, `text.secondary`, centered, 44 tall) opens 4.32. It is there signed out and in every build, and is the only way in.
 - "Open-source licenses" pushes a native list (`/settings/licenses`) generated at build time from the app's production lockfile and the packages the engine bundles (`mobile/engine/bundled-packages.json`, from esbuild's metafiles): one row per package with its version and license; a row opens to the package's license text.
 
-### 4.32 Engine diagnostics
+### 4.32 Troubleshooting
 
-- **Route** `/settings/diagnostics` · **Story** SET-08.
+- **Route** `/settings/diagnostics` · **Story** SET-08. Reached from About's last row only.
 
 ```
 ┌─────────────────────────────────┐
-│ ‹ Engine diagnostics     Share  │
+│ ‹ Troubleshooting        Share  │
+│ ┌───────────────────────────┐   │
+│ │      Copy diagnostics     │   │  primary block, first
+│ └───────────────────────────┘   │
 │ STATUS                          │
 │ Engine            ● Ready       │
 │ Boot time         3,412 ms      │  monospace values
@@ -1332,17 +1337,15 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ CAPABILITIES                  › │  list of flags
 │ CACHE             18.2 MB       │
 │ RECENT ERRORS (3)             › │
-│ ┌───────────────────────────┐   │
-│ │      Copy diagnostics     │   │  secondary block
-│ └───────────────────────────┘   │
-│   Restart engine                │  destructive row (confirm)
+│   Share diagnostics             │  outline
+│   Reconnect                     │  destructive row (confirm)
 │   Clear cache                   │  destructive row (confirm)
 └─────────────────────────────────┘
 ```
 
 - Values refresh every 2 s while visible. The errors list shows time, operation and message, newest first; a row expands to the full message.
 - Recent errors keeps the last 50: every engine call that failed (reads included; the operation is its method path) except the host's own `engine.*` control calls, and every error the engine or the host logged (operation `engine` / `host`). The list is a collapsed row ("Recent errors (3) ›"), so the actions below stay in reach.
-- "Share" (header) and "Share diagnostics" (button) open the native share sheet with the same text "Copy diagnostics" copies. The DAPI row expands to each endpoint's last success and failures; "Capabilities" expands to the flag list; each contract id (social, profile, DM, Pollr) has a copy button.
+- "Copy diagnostics" toasts "Diagnostics copied". "Share" (header) and "Share diagnostics" (button) open the native share sheet with the same text "Copy diagnostics" copies. "Reconnect" asks "Reconnect to Dash Platform? Lists reload; nothing you posted is lost." and restarts the engine. The DAPI row expands to each endpoint's last success and failures; "Capabilities" expands to the flag list; each contract id (social, profile, DM, Pollr) has a copy button.
 - The shared text never includes keys, WIFs, encryption keys or message content.
 
 ### 4.33 Lockdown Mode
@@ -1384,7 +1387,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 | Couldn't connect | Current screen | "Couldn't connect" banner with "Try again" |
 | Unavailable reads | The list | Inline error state (2.16) with the categorized message |
 | Engine restarting | Nowhere visible | Lists keep content; in-flight writes go to "Not confirmed yet" |
-| Network sheet | From the chip | Bottom sheet, medium detent: chip, "Running on a Dash Platform devnet. Data may be reset." / testnet copy, engine state line, "Engine diagnostics" link |
+| Network sheet | From the chip | Bottom sheet, medium detent: chip, "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." / testnet copy, and the connection line (`network.state`). No diagnostics link |
 
 ### 4.35 Image viewer
 
@@ -1400,7 +1403,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 | Tab or screen | Icon | Title | Description | Button |
 | --- | --- | --- | --- | --- |
-| Home → Following | users icon | "See posts from people you follow" | "Log in to view your personalized following feed and see updates from accounts you care about." | "Sign in" |
+| Home → Following | users icon | "See posts from people you follow" | "Sign in to see posts from people you follow." | "Sign in" |
 | Notifications | `BellIcon` | "Sign in to see your notifications" | "Likes, replies, follows and mentions show up here." | "Sign in" |
 | Messages | `EnvelopeIcon` | "Sign in to read your messages" | "Private 1-on-1 and group conversations." | "Sign in" |
 | Profile | `UserIcon` | "Sign in to post, follow and message" | "You can keep browsing without an account." | "Sign in" |
@@ -1418,7 +1421,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ## 5. Copy deck
 
-Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities, never cute. Successes may end with "!" where web does. Sentence case everywhere except the network chip. Strings marked **(web)** are reused verbatim from the web app; change them on both sides or neither.
+Short, friendly, outcome first. Mention Dash Platform only when it changes what is private, permanent or costly, or what the user must do (public posts, blocks and reports; keys; credits). Toasts: one sentence at most. Sheets and dialogs: two sentences at most. Mobile owns its copy; (web) strings are a starting point, not a constraint.
+
+Sentence case everywhere except the network chip, and "Sign in", never "Log in". Strings marked **(web)** started as the web app's text.
 
 ### 5.1 Onboarding and sign-in
 
@@ -1491,12 +1496,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | lock.unlock | Unlock |
 | session.expired | Your session has expired. Please sign in again. (web says "log in") |
 | accounts.signInAgain | Sign in again **(AUTH-14: the account-list button, the write-control sheet's title and button)** |
-| accounts.reauthing | Getting ready to sign in again… |
 | accounts.reauthFailed | Couldn't start signing in again. Please try again. |
-| signin.reauth | Your session as @{name} has expired. Sign in again with its wallet or key. |
-| signInPrompt.reauthBody | Your session has expired. Please sign in again. You can keep browsing in the meantime. |
-| accounts.loadingAgain | Signing in as @{name}… **(AUTH-14: full-screen progress while the app reloads the account just signed in again, to load its other keys)** |
-| signin.walletKeyDisabled | The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead. **(AUTH-14: the "Sign-in failed" message)** |
+| signin.reauth | Sign in again as @{name} with its wallet or key. |
+| signInPrompt.reauthBody | Sign in again to keep posting as @{name}. You can keep browsing in the meantime. |
+| accounts.signingInAs | Signing in as @{name}… **(AUTH-14: the one full-screen progress label of signing in again, both while the app parks the current account before the sign-in flow and while it reloads the account just signed in, to load its other keys)** |
+| signin.walletKeyDisabled | This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key. **(AUTH-14: the "Sign-in failed" message. A disabled key can't be re-enabled, so never "Reconnect wallet")** |
 
 ### 5.2 Home
 
@@ -1511,11 +1515,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | home.empty.following.action | Explore |
 | home.empty.top | No liked posts yet / The most-liked posts will appear here **(web)** |
 | home.empty.topFollowing | No liked posts yet / The most-liked posts from people you follow will appear here **(web)** |
-| home.signedOut.following | See posts from people you follow / Log in to view your personalized following feed and see updates from accounts you care about. **(web)** |
+| home.signedOut.following | See posts from people you follow / Sign in to see posts from people you follow. |
 | home.newPosts | Show {N} new posts / Show 1 new post **(web)** |
 | list.end | You've reached the end. **(web)** |
-| list.legacy | Looking for older posts? Browse the previous version of Yappr ↗ **(web)** |
-| list.loadMore | Load More **(web)** |
+| list.legacy | Looking for older posts? Open Yappr classic ↗ (testnet feed ends only) |
+| list.loadMore | Load more |
 | post.reposted | {name} reposted / You reposted |
 
 ### 5.3 Post detail, stubs and engagements
@@ -1722,7 +1726,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | notif.empty.follows | When someone follows you, you'll see it here **(web)** |
 | notif.empty.mentions | When someone mentions you, you'll see it here **(web)** |
 | notif.windowed | Older replies and quotes may not appear here. |
-| notif.unknown | Unknown User **(web)** |
+| notif.unknown | Unknown user |
 | dm.title | Messages **(web)** |
 | dm.search | Search messages **(web)** |
 | dm.new / newGroup | New message / New group **(web)** |
@@ -1829,11 +1833,14 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 
 | Key | String |
 | --- | --- |
-| settings.sections | Account / Notifications / Privacy & Safety / Messages / Appearance / About / Engine diagnostics |
-| account.id | Identity ID **(web)** |
+| settings.sections | Account / Notifications / Privacy & Safety / Messages / Appearance / About |
+| settings.account | {name} / @{handle} (no balance) |
+| settings.version | Yappr {version} ({build}) |
+| account.copyId | Copy account ID / Account ID copied |
 | account.usernames | Usernames |
-| account.register | Register a username on yap.pr |
-| account.balance | Balance |
+| account.register | Register a username on yap.pr / Register another username on yap.pr (with one already) |
+| account.balance | Balance / {0.2567} DASH (4 decimals; < 0.0001 DASH) / {25,674,582,414} credits |
+| account.refreshFailed | Couldn't refresh the balance. Please try again. |
 | account.yapp | YAPP |
 | account.created | Account created (web: "Account Created", sentence-cased here) |
 | account.appLock | App lock / Require Face ID / Require Touch ID / Require fingerprint or device PIN |
@@ -1853,16 +1860,19 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | appearance.languageNote | Choose the language for the "For You" feed. Posts in other languages will not appear. **(web)** |
 | appearance.languages | English / Spanish / French / German / Portuguese / Russian / Chinese / Japanese / Korean / Arabic / Hindi / Italian / Dutch / Polish / Turkish **(web)** |
 | about.tagline | Decentralized social media on Dash Platform **(web)** |
-| about.rows | Terms of Use / Privacy Policy / Community rules / Community rules summary / Support / Open-source licenses / Yappr on the web |
-| about.info | Version / Network / Engine / Commit |
-| diag.title | Engine diagnostics |
-| diag.states | Booting / Ready / Restarting / Unavailable |
+| about.rows | Terms of Use / Privacy Policy / Community rules / Support / Send diagnostics / Open-source licenses / Yappr on the web |
+| about.info | Version |
+| about.versionCopied | Version info copied |
+| about.troubleshooting | Troubleshooting (About's muted last row) |
+| diag.title | Troubleshooting |
+| diag.states | Booting / Ready / Restarting / Unavailable (the screen's Engine row only) |
 | diag.copy / share | Copy diagnostics / Share diagnostics |
+| diag.copied | Diagnostics copied |
 | diag.shareAction | Share |
 | diag.rows | Boot time / WASM compile / DAPI endpoints / Capabilities / Cache / Errors / Recent errors ({count}) / No errors |
 | diag.dapi | {count} · last ok {4s / 3m / 2h} ago / never |
 | diag.contract | Social contract / Profile contract / DM contract / Pollr contract / Copy {contract} / {contract} copied |
-| diag.restart | Restart engine / Restart the engine? Lists reload; nothing you posted is lost. / Restart |
+| diag.reconnect | Reconnect / Reconnect to Dash Platform? Lists reload; nothing you posted is lost. / Reconnect |
 | diag.clear | Clear cache / Clear saved posts and lists? Your accounts, keys and drafts stay. / Clear |
 
 ### 5.11 Network and engine
@@ -1870,10 +1880,9 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Key | String |
 | --- | --- |
 | chip.devnet / testnet | DEVNET / TESTNET |
-| network.devnet | Running on a Dash Platform devnet. Data may be reset. **(web)** |
-| network.testnet | Running on Dash Platform Testnet. Data may be reset. **(web)** |
-| network.engine | Engine: Booting / Ready / Restarting / Unavailable |
-| network.diagnostics | Engine diagnostics |
+| network.devnet | Yappr is running on a Dash Platform devnet. Posts and accounts may be reset. |
+| network.testnet | Yappr is running on Dash Platform Testnet. Posts and accounts may be reset. |
+| network.state | Connected / Connecting… / Can't connect right now (booting and restarting both read "Connecting…") |
 | offline.banner | You're offline. Showing saved posts. |
 | offline.toast | You're offline. Nothing was sent. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
@@ -1891,7 +1900,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | update.required | This version of Yappr is out of date with the network. Update the app to keep posting. |
 | write.reverted | Your {like} didn't go through. Try again. |
 
-### 5.12 Errors (from `lib/error-utils.ts`, shown verbatim)
+### 5.12 Errors (started from `lib/error-utils.ts`)
 
 | Category | String **(web)** |
 | --- | --- |
@@ -1923,7 +1932,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Compose close | Close composer **(web)** |
 | Avatar (tappable) | {name}'s profile |
 | Media gate | Media hidden. Media from someone you don't follow. |
-| Network chip | {Devnet\|Testnet}. Data may be reset. Engine {ready\|connecting\|unavailable}. |
+| Network chip | {Devnet\|Testnet}. Data may be reset. {Connected\|Connecting\|Can't connect}. |
 | New-posts pill | Show {N} new posts |
 | Tab badge | {Notifications\|Messages}, {N} unread |
 | Mark all read | Mark all as read |
@@ -1931,7 +1940,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | New conversation | New conversation **(web)** |
 | Back in conversation | Back to conversations **(web)** |
 | Conversation menu | Conversation options **(web)** |
-| Copy ID | Copy identity ID |
+| Copy ID | Copy identity ID (a post's or profile's author); Settings → Account: Copy account ID |
 | Image viewer close | Close image |
 
 ---
