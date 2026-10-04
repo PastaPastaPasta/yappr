@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, isDigitalOnly, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -54,31 +54,23 @@ export function DeliverDigitalModal({
 }: DeliverDigitalModalProps) {
   const formId = useId()
   const lines = useMemo(() => digitalLines(payload), [payload])
-  // What earlier deliveries covered, per line (same item and variant), two ways:
-  // - `possiblySent`: any receipt that may hold it, pending ones and ones this
-  //   device cannot read included. Such a line takes no new unique codes
-  //   unless the seller asks, so a code is never sent twice by default.
-  // - `confirmedSent`: a confirmed receipt this device read that holds it.
-  //   Only this counts towards marking the order Delivered.
-  const { possiblySent, confirmedSent } = useMemo(() => {
-    const covers = (delivery: OrderDelivery, line: OrderItem) =>
-      delivery.payload?.items.some((item) => item.itemId === line.itemId && (item.variantKey ?? '') === (line.variantKey ?? '')) ?? false
-    const unreadable = previousDeliveries.some((delivery) => !delivery.payload)
-    return {
-      possiblySent: lines.map((line) => unreadable || previousDeliveries.some((delivery) => covers(delivery, line))),
-      confirmedSent: lines.map((line) => previousDeliveries.some((delivery) => !delivery.unconfirmed && covers(delivery, line))),
-    }
-  }, [lines, previousDeliveries])
+  // What earlier receipts hold for each line (lineCoverage): "possibly" counts
+  // pending receipts and ones this device cannot read, so no code is sent
+  // twice by default; "confirmed" alone counts towards marking the order Delivered.
+  const coverage = useMemo(() => lines.map((line) => lineCoverage(line, previousDeliveries)), [lines, previousDeliveries])
+  const sellsCodes = useMemo(() => lines.map((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined), [lines, kits])
+  // Codes a line may still be owed: never one that may already be out.
+  const owedCodes = lines.map((line, index) => (sellsCodes[index] ? Math.max(0, line.quantity - coverage[index].possiblyCodes) : 0))
   // The lines this delivery covers. A delivery too large for one receipt goes
-  // out in parts: untick some lines, deliver, then deliver the rest.
+  // out in parts: untick some lines (or send fewer codes), deliver, then the rest.
   const [selected, setSelected] = useState<ReadonlySet<number>>(() => {
-    const pending = lines.flatMap((_, index) => (possiblySent[index] ? [] : [index]))
+    const pending = lines.flatMap((line, index) => (!coverage[index].possibly || owedCodes[index] > 0 ? [index] : []))
     return new Set(pending.length > 0 ? pending : lines.map((_, index) => index))
   })
+  // Unique codes each code-selling line takes now: by default what it is still owed.
+  const [codesNow, setCodesNow] = useState<Record<number, number>>(() => Object.fromEntries(owedCodes.map((owed, index) => [index, owed])))
   const [message, setMessage] = useState('')
   const [markDelivered, setMarkDelivered] = useState(isDigitalOnly(payload.items))
-  // Applies only to lines that may have gone out before; an unsent line always takes its codes.
-  const [includeNewKeys, setIncludeNewKeys] = useState(false)
   const [extras, setExtras] = useState<Record<string, DigitalAsset[]>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   // The seller has checked lines that disagree with their listings (title, variant, price).
@@ -97,8 +89,13 @@ export function DeliverDigitalModal({
   const isUploading = uploadingLines.size > 0
 
   const selectedLines = useMemo(() => lines.filter((_, index) => selected.has(index)), [lines, selected])
-  // Every digital line is in this delivery or an earlier one: only then is the order complete.
-  const completesOrder = lines.every((_, index) => selected.has(index) || confirmedSent[index])
+  const codesFor = (index: number) => (selected.has(index) && sellsCodes[index] ? codesNow[index] ?? 0 : 0)
+  // Complete only when every line's goods are in confirmed receipts or in this
+  // one (which marks the order only if it confirms): a code line needs all its
+  // codes, any other line just one receipt.
+  const completesOrder = lines.every((line, index) => sellsCodes[index]
+    ? coverage[index].confirmedCodes + codesFor(index) >= line.quantity
+    : selected.has(index) || coverage[index].confirmed)
   const toggleLine = (index: number) => setSelected((prev) => {
     const next = new Set(prev)
     if (next.has(index)) next.delete(index)
@@ -125,12 +122,21 @@ export function DeliverDigitalModal({
     const unchosen = new Set(lines.filter((_, index) => !selected.has(index)))
     return { ...payload, items: payload.items.filter((item) => !unchosen.has(item)) }
   }, [payload, lines, selected])
-  // Lines that may have gone out before take new codes only if the seller asks.
-  const resentWithoutKeys = useMemo(() => {
-    const resent = new Set(lines.filter((_, index) => possiblySent[index]))
-    return (line: OrderItem) => !includeNewKeys && resent.has(line)
-  }, [lines, possiblySent, includeNewKeys])
-  const plan = useMemo(() => planDelivery(selectedPayload, effectiveKits, message, resentWithoutKeys), [selectedPayload, effectiveKits, message, resentWithoutKeys])
+  // What goes out: each chosen line under its listing's title (the buyer's may
+  // be anything), taking `codesNow` codes. A line taking none plans with its
+  // own quantity but no codes.
+  const { deliveryPayload, takesNoCodes } = useMemo(() => {
+    const noCodes = new Set<OrderItem>()
+    const items = lines.flatMap((line, index) => {
+      if (!selected.has(index)) return []
+      const codes = sellsCodes[index] ? codesNow[index] ?? 0 : line.quantity
+      const planned: OrderItem = { ...line, itemTitle: listings.get(line.itemId)?.title ?? line.itemTitle, ...(codes > 0 ? { quantity: codes } : {}) }
+      if (codes === 0) noCodes.add(planned)
+      return [planned]
+    })
+    return { deliveryPayload: { items }, takesNoCodes: noCodes }
+  }, [lines, selected, sellsCodes, codesNow, listings])
+  const plan = useMemo(() => planDelivery(deliveryPayload, effectiveKits, message, (line) => takesNoCodes.has(line)), [deliveryPayload, effectiveKits, message, takesNoCodes])
   // The buyer wrote these lines: the kit sent is chosen by itemId, whatever title or price they claim.
   const problems = useMemo(() => lineProblems(selectedPayload, order.storeId, listings), [selectedPayload, order.storeId, listings])
   const blockers = useMemo(() => [
@@ -140,9 +146,7 @@ export function DeliverDigitalModal({
   ], [selectedLines, problems, plan])
   const warnings = problems.filter((problem) => !problem.blocking)
   const needsReview = warnings.length > 0 && !reviewed
-  // Re-sending a line whose codes may already have gone out: new codes only if the seller asks.
-  const sendsAgain = lines.some((_, index) => selected.has(index) && possiblySent[index])
-  const resendSellsKeys = lines.some((line, index) => selected.has(index) && possiblySent[index] && kits.get(line.itemId)?.kit.licenseKeys !== undefined)
+  const sendsAgain = lines.some((_, index) => selected.has(index) && coverage[index].possibly)
 
   const handleClose = () => {
     if (isSubmitting) return
@@ -214,9 +218,9 @@ export function DeliverDigitalModal({
                   {line.itemTitle}
                   {line.variantKey && <span className="text-gray-500 font-normal"> ({line.variantKey.replace(/\|/g, ' / ')})</span>}
                   <span className="text-gray-500 font-normal"> ×{line.quantity}</span>
-                  {confirmedSent[index]
+                  {coverage[index].confirmed
                     ? <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-300">Sent before</span>
-                    : possiblySent[index] && <span className="ml-2 text-xs font-normal text-yellow-700 dark:text-yellow-300">May have been sent (not confirmed)</span>}
+                    : coverage[index].possibly && <span className="ml-2 text-xs font-normal text-yellow-700 dark:text-yellow-300">May have been sent (not confirmed)</span>}
                 </span>
               </label>
               {!selected.has(index) ? (
@@ -229,6 +233,30 @@ export function DeliverDigitalModal({
                 </p>
               ) : (
                 <p className="text-xs text-yellow-700 dark:text-yellow-300">No delivery content saved for this product.</p>
+              )}
+              {selected.has(index) && sellsCodes[index] && (
+                <label className="flex flex-wrap items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                  Unique codes to send now
+                  <input
+                    type="number"
+                    min={0}
+                    max={line.quantity}
+                    value={codesNow[index] ?? 0}
+                    onChange={(e) => {
+                      const value = Math.max(0, Math.min(line.quantity, Math.floor(Number(e.target.value) || 0)))
+                      setCodesNow((prev) => ({ ...prev, [index]: value }))
+                    }}
+                    disabled={isSubmitting}
+                    className="w-16 px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-transparent"
+                  />
+                  <span>
+                    of {line.quantity}
+                    {coverage[index].possiblyCodes > 0 && ` (${coverage[index].confirmedCodes} confirmed sent${coverage[index].possiblyCodes > coverage[index].confirmedCodes ? `, up to ${coverage[index].possiblyCodes - coverage[index].confirmedCodes} more pending or unreadable` : ''})`}
+                  </span>
+                  {(codesNow[index] ?? 0) > owedCodes[index] && (
+                    <span className="w-full text-yellow-700 dark:text-yellow-300">More than this line may still be owed: the extra codes are new ones on top of those already sent.</span>
+                  )}
+                </label>
               )}
               <details>
                 <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700 dark:hover:text-gray-300">
@@ -251,24 +279,8 @@ export function DeliverDigitalModal({
 
         {lines.length > 1 && (
           <p className="text-xs text-gray-500">
-            Too much for one delivery? Untick some items, deliver, then deliver the rest. Each delivery is its own receipt.
+            Too much for one delivery? Untick some items (or send fewer codes), deliver, then deliver the rest. Each delivery is its own receipt.
           </p>
-        )}
-
-        {resendSellsKeys && (
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={includeNewKeys}
-              onChange={(e) => setIncludeNewKeys(e.target.checked)}
-              disabled={isSubmitting}
-              className="mt-0.5 w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
-            />
-            <span className="text-sm">
-              Issue new unique codes for items sent before
-              <span className="block text-xs text-gray-500">The codes from the earlier delivery stay in the buyer&apos;s library either way.</span>
-            </span>
-          </label>
         )}
 
         <div>

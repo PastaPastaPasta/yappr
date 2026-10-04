@@ -99,10 +99,13 @@ payload.
   lets the seller add links, codes or files for this order only, takes a message,
   and optionally marks the order Delivered (default on for all-digital orders).
   A delivery too large for one receipt goes out in parts: the seller unticks
-  some lines, delivers, then delivers the rest. A line a receipt may already
-  hold (pending, or unreadable here) takes no new unique codes unless the
-  seller asks; unsent lines always take theirs. The order can be marked
-  Delivered only once every line has a confirmed receipt.
+  some lines, or sends fewer of a line's unique codes, delivers, then
+  delivers the rest. Each code line defaults to the codes it may still be
+  owed: codes a pending receipt (or one unreadable here) may hold are never
+  issued again unless the seller raises the count. The order can be marked
+  Delivered only when confirmed receipts plus this one hold every line, all
+  of a code line's codes included. Goods go out under the listing's title,
+  not the buyer-written one.
 - **Deliver all** sends every *ready* order in one pass. An order is ready when:
   - it has digital lines and nothing has been delivered;
   - it is not closed;
@@ -179,8 +182,8 @@ deliver a `javascript:` link.
 - Each encrypted payload is at most 16,000 bytes (contract cap). That holds
   roughly 300 unique codes in a kit, and the client refuses a larger kit before
   writing. It also refuses a kit that could not go out for one unit in one
-  delivery (worst-case title, variant and code), so every kit it saves is
-  deliverable. Files have no such cap: they live on IPFS, up to 100 MB each, because
+  delivery (a worst-case 600-byte title, the longest variant and code), so
+  every kit it saves is deliverable, one code per receipt if need be. Files have no such cap: they live on IPFS, up to 100 MB each, because
   they are encrypted in memory.
 - Delivery is the seller's act; consensus cannot see payment. The **buyer**
   writes the order payload, including line quantities and prices. With *as

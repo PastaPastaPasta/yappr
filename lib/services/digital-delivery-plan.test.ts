@@ -17,6 +17,7 @@ import {
   isDigitalOnly,
   isReadyForBulkDelivery,
   kitDeliveryFitError,
+  lineCoverage,
   kitsAfterDelivery,
   lineProblems,
   planDelivery,
@@ -163,6 +164,24 @@ describe('lineProblems', () => {
     expect(check([line(EBOOK_ID, 1, { itemTitle: 'Something else' })], listed([EBOOK_ID]))).toHaveLength(1)
     expect(check([line(EBOOK_ID)], listed([EBOOK_ID]), 'EUR')).toHaveLength(1)
     expect(check([line(EBOOK_ID, 1, { itemTitle: 'X', unitPrice: 5 })], listed([EBOOK_ID])).every((p) => !p.blocking)).toBe(true)
+  })
+})
+
+describe('lineCoverage', () => {
+  const sent = (licenseKeys: string[], unconfirmed = false) =>
+    ({ unconfirmed, payload: { v: 1 as const, items: [{ itemId: GAME_ID, itemTitle: 'GAME', assets: [], licenseKeys }] } })
+
+  it('counts confirmed and pending codes apart', () => {
+    const coverage = lineCoverage(line(GAME_ID, 3), [sent(['k1']), sent(['k2'], true)])
+    expect(coverage).toEqual({ possibly: true, confirmed: true, possiblyCodes: 2, confirmedCodes: 1 })
+  })
+
+  it('treats a receipt it cannot read as possibly holding every code, never as confirmed', () => {
+    expect(lineCoverage(line(GAME_ID, 3), [{ unconfirmed: false, payload: undefined }])).toEqual({ possibly: true, confirmed: false, possiblyCodes: 3, confirmedCodes: 0 })
+  })
+
+  it('ignores other items and variants', () => {
+    expect(lineCoverage(line(GAME_ID, 1, { variantKey: 'Deluxe' }), [sent(['k1'])]).possibly).toBe(false)
   })
 })
 
@@ -316,11 +335,18 @@ describe('wire format', () => {
     expect(decoded.assets).toEqual([{ kind: 'code', label: 'Code', code: 'X' }])
   })
 
+  it('counts a title in multi-byte characters at its UTF-8 size', () => {
+    // Fits with a 200-byte title, not with the 600 bytes 200 kana take.
+    const instructions = 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES - 450)
+    expect(kitDeliveryFitError(kit({ instructions }))).toMatch(/too large/)
+  })
+
   it('refuses a kit that could not go out for one unit in one delivery', () => {
-    const near = MAX_DELIVERY_PLAINTEXT_BYTES - 120
-    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(near - 400) }))).toBeNull()
-    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(near) }))).toMatch(/too large to send in one delivery/)
-    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(near - 400) }), ['V'.repeat(500)])).toMatch(/too large/)
+    // Room left after the worst-case 600-byte title and the envelope.
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 800
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }))).toBeNull()
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES) }))).toMatch(/too large to send in one delivery/)
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }), ['V'.repeat(500)])).toMatch(/too large/)
   })
 
   it('refuses a delivery past the contract\'s payload cap', () => {

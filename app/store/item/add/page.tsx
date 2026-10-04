@@ -210,6 +210,11 @@ function AddItemPage() {
       const deliverable = await itemDeliverableService.getForItem(id)
       setExistingDeliverable(deliverable)
       if (!deliverable) {
+        // No kit on chain: a draft read from one that is gone (deleted elsewhere)
+        // must not become a new kit, or codes it held that were since sent
+        // would be offered again. Start from empty.
+        setKit(EMPTY_KIT)
+        setKitDirty(false)
         setKitState('ready')
         return
       }

@@ -9,6 +9,7 @@ import bs58 from 'bs58'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
 import type {
   DeliverWhen,
+  OrderDelivery,
   DeliveredItem,
   DigitalAsset,
   ItemDeliverablePayload,
@@ -181,6 +182,43 @@ function deliverySizeError(delivery: OrderDeliveryPayload): string | null {
   }
 }
 
+/** What an order line's earlier deliveries hold, for delivering an order in parts. */
+export interface LineCoverage {
+  /** Some receipt may hold this line: a confirmed one, a pending one, or one this device cannot read. */
+  possibly: boolean
+  /** A confirmed receipt this device read holds this line. */
+  confirmed: boolean
+  /** Unique codes for this line that may have gone out (a receipt that cannot be read counts as all of them). */
+  possiblyCodes: number
+  /** Unique codes for this line in confirmed receipts this device read. */
+  confirmedCodes: number
+}
+
+type DeliveryRecord = Pick<OrderDelivery, 'unconfirmed' | 'payload'>
+
+/** What the order's earlier deliveries hold for this line (same item and variant). */
+export function lineCoverage(line: Pick<OrderItem, 'itemId' | 'variantKey' | 'quantity'>, deliveries: readonly DeliveryRecord[]): LineCoverage {
+  const coverage: LineCoverage = { possibly: false, confirmed: false, possiblyCodes: 0, confirmedCodes: 0 }
+  for (const delivery of deliveries) {
+    if (!delivery.payload) {
+      coverage.possibly = true
+      coverage.possiblyCodes = Math.max(coverage.possiblyCodes, line.quantity)
+      continue
+    }
+    for (const item of delivery.payload.items) {
+      if (item.itemId !== line.itemId || (item.variantKey ?? '') !== (line.variantKey ?? '')) continue
+      const codes = item.licenseKeys?.length ?? 0
+      coverage.possibly = true
+      coverage.possiblyCodes += codes
+      if (!delivery.unconfirmed) {
+        coverage.confirmed = true
+        coverage.confirmedCodes += codes
+      }
+    }
+  }
+  return coverage
+}
+
 /** Longest title a product can have (the product editor's limit). */
 const MAX_ITEM_TITLE_LENGTH = 200
 /** Longest base58 encoding of a 32-byte id. */
@@ -188,10 +226,11 @@ const MAX_ID_LENGTH = 44
 
 /**
  * Why this kit could not go out for one unit in one delivery, or null when it
- * can. Worst case: a full-length title, the longest variant key, every asset
- * and the longest unique code. A kit that passes is never undeliverable for
- * size alone (a long message aside, which the seller can shorten), and an
- * order too big for one receipt can be split line by line.
+ * can. Worst case: a full-length title (in 3-byte characters), the longest
+ * variant key, every asset and the longest unique code. A kit that passes is
+ * never undeliverable for size alone (a long message aside, which the seller
+ * can shorten): an order too big for one receipt can be split line by line,
+ * and a line's codes unit by unit.
  */
 export function kitDeliveryFitError(kit: ItemDeliverablePayload, variantKeys: readonly string[] = []): string | null {
   const longest = (values: readonly string[]) => values.reduce((a, b) => (b.length > a.length ? b : a), '')
@@ -201,7 +240,8 @@ export function kitDeliveryFitError(kit: ItemDeliverablePayload, variantKeys: re
     v: 1,
     items: [{
       itemId: 'x'.repeat(MAX_ID_LENGTH),
-      itemTitle: 'x'.repeat(MAX_ITEM_TITLE_LENGTH),
+      // The most bytes a title can take: 3 UTF-8 bytes per UTF-16 code unit.
+      itemTitle: '\u3042'.repeat(MAX_ITEM_TITLE_LENGTH),
       ...(variantKey ? { variantKey } : {}),
       assets: kit.assets.map(withoutVariant),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
