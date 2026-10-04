@@ -32,7 +32,7 @@ import { useRelativeTime } from '../use-relative-time';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
-import { PostActionBar } from './PostActionBar';
+import { PostActionBar, repostSplitParts } from './PostActionBar';
 import { DeletedLine, PostStub, stubText } from './PostStub';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { QuoteEmbed, QuoteSkeleton } from './QuoteEmbed';
@@ -334,7 +334,15 @@ function pressInline(
 /** The screen-reader summary of a card (UX_SPEC §6.2). */
 function postAccessibilityLabel(
   post: CardPost,
-  extras: { time: string; content: string; repostedBy?: string; replyingTo?: string; quoteCovered: boolean },
+  extras: {
+    time: string;
+    content: string;
+    repostedBy?: string;
+    replyingTo?: string;
+    quoteCovered: boolean;
+    /** Detail: the counts row's reposts and quotes, which the summary repeats (D-L4a-009). */
+    repostSplit?: RepostQuoteCounts | null;
+  },
 ): string {
   const parts = [`${post.author.displayName}, ${handleOf(post.author)}, ${extras.time}.`];
   if (extras.repostedBy) parts.push(`Reposted by ${extras.repostedBy}.`);
@@ -354,7 +362,11 @@ function postAccessibilityLabel(
     parts.push(`${kind}: ${media.alt || kind.toLowerCase()}.`);
   }
   const { replies, reposts, quotes, likes } = post.stats;
-  parts.push(`${replies} replies, ${reposts + quotes} reposts, ${likes} likes.`);
+  const split = repostSplitParts(extras.repostSplit);
+  const shared = split
+    ? split.map(({ count, floor, kind }) => `${count}${floor} ${kind}s`).join(', ')
+    : `${reposts + quotes} reposts`;
+  parts.push(`${replies} replies, ${shared}, ${likes} likes.`);
   return parts.join(' ');
 }
 
@@ -608,6 +620,7 @@ export const PostCard = memo(function PostCard({
               repostedBy: reposter,
               replyingTo,
               quoteCovered: (quoteNsfwGated ?? post.quoted?.sensitive) === true,
+              repostSplit: detail ? repostQuoteCounts : undefined,
             })
       }
       accessibilityActions={available.map(({ name, label }) => ({ name, label }))}
@@ -657,9 +670,11 @@ export const PostCard = memo(function PostCard({
               postId={post.id}
               replies={post.stats.replies}
               reposts={repostTotal}
+              repostSplit={detail ? repostQuoteCounts : undefined}
               likes={post.stats.likes}
               liked={post.viewer?.liked}
               reposted={post.viewer?.reposted}
+              quoted={Boolean(post.viewer?.ownQuoteId) && !post.viewer?.ownQuoteBare}
               bookmarked={post.viewer?.bookmarked}
               canReply={canReply}
               canRepost={canRepost}

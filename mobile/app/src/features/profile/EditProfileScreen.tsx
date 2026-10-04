@@ -310,6 +310,7 @@ export function EditProfileScreen() {
           onRetry={() => {
             profile.refetch().catch(() => undefined);
           }}
+          retrying={profile.isRetrying}
         />
       ) : (
         <View className="flex-1 items-center justify-center">

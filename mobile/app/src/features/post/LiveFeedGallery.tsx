@@ -60,7 +60,7 @@ export function LiveFeedGallery() {
       ListHeaderComponent={Header}
       ListEmptyComponent={
         feed.isError ? (
-          <ErrorState message={feed.error.message} onRetry={() => feed.refetch()} />
+          <ErrorState message={feed.error.message} onRetry={() => feed.refetch()} retrying={feed.isRetrying} />
         ) : (
           <View>
             <PostSkeleton />

@@ -210,6 +210,7 @@ export function NotificationsScreen() {
         onRetry={() => {
           refetch().catch(() => undefined);
         }}
+        retrying={list.isRetrying}
         testID="notifications-error"
       />
     );

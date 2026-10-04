@@ -32,6 +32,59 @@ const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : Shar
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** Reposts and quotes told apart, as the detail counts row shows them (`RepostQuoteCounts`). */
+export interface RepostSplit {
+  reposts: number;
+  quotes: number;
+  /** Floors read off a list that filled up: "100+ reposts". */
+  truncated: boolean;
+}
+
+/** One count of a {@link RepostSplit} as the detail counts row shows it: "100+" is a floor. */
+export interface RepostSplitPart {
+  count: number;
+  floor: '' | '+';
+  kind: 'repost' | 'quote';
+}
+
+/**
+ * The counts a screen reader should hear where the detail counts row tells
+ * reposts and quotes apart; `null` where the single total says what the row
+ * says (no split, or an exact one with no quotes). An exact split names
+ * both ("0 reposts, 1 quote"); floors off a list that filled up leave a zero
+ * out, as the row does ("100+ reposts", not "0+ quotes").
+ */
+export function repostSplitParts(split: RepostSplit | null | undefined): RepostSplitPart[] | null {
+  if (!split || (split.quotes === 0 && !split.truncated)) return null;
+  const floor = split.truncated ? '+' : '';
+  const parts: RepostSplitPart[] = [
+    { count: split.reposts, floor, kind: 'repost' },
+    { count: split.quotes, floor, kind: 'quote' },
+  ];
+  const shown = split.truncated ? parts.filter((part) => part.count > 0) : parts;
+  return shown.length > 0 ? shown : null;
+}
+
+/**
+ * The repost control's label (UX_SPEC §5.13): "Repost or quote, {N} reposts",
+ * and where the detail counts row tells quotes apart, the same split, so a
+ * screen reader never hears "1 repost" beside a row reading "1 Quote"
+ * (D-L4a-009). The viewer's own quote with text reads "quoted", a bare
+ * repost (or a repost on contracts without quotes) "reposted".
+ */
+export function repostLabel(
+  total: number,
+  split: RepostSplit | null | undefined,
+  state: { reposted: boolean; quoted: boolean },
+): string {
+  const parts = repostSplitParts(split);
+  const counts = parts
+    ? parts.map(({ count, floor, kind }) => `${count}${floor} ${count === 1 && !floor ? kind : `${kind}s`}`).join(', ')
+    : plural(total, 'repost', 'reposts');
+  const mark = state.reposted ? (state.quoted ? ', quoted' : ', reposted') : '';
+  return `Repost or quote, ${counts}${mark}`;
+}
+
 interface ActionProps {
   icon: IconComponent;
   activeIcon?: IconComponent;
@@ -115,9 +168,13 @@ export interface PostActionBarProps {
   replies: number;
   /** Reposts plus quotes: the repost control counts both (web `totalReposts`). */
   reposts: number;
+  /** Detail only: `reposts` split as the counts row shows it; the label follows it. */
+  repostSplit?: RepostSplit | null;
   likes: number;
   liked?: boolean;
   reposted?: boolean;
+  /** The viewer's repost is their own quote with text (`viewer.ownQuoteId`, not bare). */
+  quoted?: boolean;
   bookmarked?: boolean;
   /** Private posts take no replies or quotes (PRD POST-08). */
   canReply?: boolean;
@@ -150,9 +207,11 @@ export function PostActionBar({
   postId,
   replies,
   reposts,
+  repostSplit,
   likes,
   liked = false,
   reposted = false,
+  quoted = false,
   bookmarked = false,
   canReply = true,
   canRepost = true,
@@ -188,7 +247,7 @@ export function PostActionBar({
             tone="repost"
             count={reposts}
             showCount={showCount}
-            label={`Repost or quote, ${plural(reposts, 'repost', 'reposts')}${reposted ? ', reposted' : ''}`}
+            label={repostLabel(reposts, repostSplit, { reposted, quoted })}
             onPress={onRepost}
             testID={`repost-btn-${postId}`}
           />

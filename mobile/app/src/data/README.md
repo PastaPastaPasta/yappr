@@ -44,7 +44,9 @@ const feed = useEngineInfiniteQuery(
   serializes it). Once no screen shows a persisted query, it keeps its
   first page only, and only the 50 most recently updated such queries stay
   (`src/state/query-budget.ts`); a screen opened again past that reads
-  afresh. Trimming keeps the query's age, status and any invalidation
+  afresh. The disk copy is re-serialized only when a persisted query changed
+  (`persistOnChange` in `src/state/query-client.ts`), not on every event of
+  the card reads around it. Trimming keeps the query's age, status and any invalidation
   still due, so a list invalidated with `refetchType: 'none'` still
   refetches when its screen comes back.
 - **No cache reset needed.** Sign-in, sign-out and account switches already
@@ -59,6 +61,13 @@ const feed = useEngineInfiniteQuery(
   copy uses too) is also read again with backoff while the app is in
   the foreground, since a stalled DAPI changes neither connectivity nor the
   engine's state (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s; `read-retry.ts`).
+  While such a retry runs the read's result stays the error it showed, with
+  `isRetrying` (`withRetriedError` in `queries.ts`, applied by
+  `useEngineQuery` and `useEngineInfiniteQuery`); pass it to `ErrorState`'s
+  `retrying` for the "Retrying…" note. TanStack would otherwise put the read
+  back to `pending`, and the screen on its loading state, for every attempt.
+  Such a result's `refetch` ("Try again") cancels the retry first and reads
+  afresh (`cancelRetriedRead`): TanStack would join the stalled read instead.
   Polls (`refetchInterval`), reads with their own `retryDelay` and reads given
   `meta: NO_READ_RETRY` (a card's embedded read) keep their own schedule. A
   list whose *next page* failed is left out of all of these: it keeps its pages behind the "Load More" footer

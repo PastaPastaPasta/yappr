@@ -169,6 +169,7 @@ export function ExploreScreen() {
         onRetry={() => {
           active.refetch().catch(() => undefined);
         }}
+        retrying={active.isRetrying}
         testID={`explore-${segment}-error`}
       />
     );

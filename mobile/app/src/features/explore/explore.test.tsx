@@ -9,6 +9,8 @@ import HashtagRoute from '~/app/(tabs)/(home,explore,notifications,messages,prof
 import SearchResultsRoute from '~/app/(tabs)/(explore)/explore/search/[kind]';
 import SearchRoute from '~/app/(tabs)/(explore)/explore/search/index';
 import { queryKeys } from '~/data/keys';
+import { UNAVAILABLE_MESSAGE } from '~/data/read-error';
+import { startReadRetry } from '~/data/read-retry';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine, ticket } from '~/data/testing/fake-engine';
@@ -458,6 +460,62 @@ describe('Hashtag page', () => {
       cursor: null,
     });
     expect(screen.getByTestId('hashtag-window')).toBeTruthy();
+  });
+
+  it("keeps G-11's error up, with Retrying…, while NET-03's backoff reads the tag again (NEW-R-A-02)", async () => {
+    jest.useFakeTimers();
+    const stopRetry = startReadRetry();
+    try {
+      const timedOut = () => Object.assign(new Error('Engine call feed.hashtag timed out'), { code: 'RPC_TIMEOUT' });
+      // A stalled DAPI: each read hangs until it times out.
+      let fail: (error: Error) => void = () => undefined;
+      const stalled = () =>
+        new Promise<Page<PostDTO>>((_, reject) => {
+          fail = reject;
+        });
+      fakeEngine.method('feed.hashtag').mockRejectedValueOnce(timedOut()).mockImplementation(stalled);
+      await renderAt('/hashtag/stall');
+      expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
+      expect(screen.queryByTestId('hashtag-posts-error-retrying')).toBeNull();
+
+      // The backoff's first retry, 2 s on: the error stays, with "Retrying…", not "Loading posts…".
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(2_000);
+      });
+      expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
+      expect(screen.getByTestId('hashtag-posts-error-retrying')).toHaveAccessibleName('Retrying…');
+      expect(screen.queryByTestId('hashtag-posts-loading')).toBeNull();
+
+      // It times out too: the error, without the note.
+      await act(async () => fail(timedOut()));
+      expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
+      expect(screen.queryByTestId('hashtag-posts-error-retrying')).toBeNull();
+
+      // "Try again" while the next retry stalls: it reads afresh, with the loading state, rather than joining it.
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(4_000);
+      });
+      expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(3);
+      expect(screen.getByTestId('hashtag-posts-error-retrying')).toBeTruthy();
+      fireEvent.press(screen.getByTestId('hashtag-posts-error-action'));
+      await act(async () => {});
+      expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(4);
+      expect(screen.getByTestId('hashtag-posts-loading')).toBeTruthy();
+      await act(async () => fail(timedOut()));
+      expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
+      expect(screen.queryByTestId('hashtag-posts-error-retrying')).toBeNull();
+
+      // "Try again" is the reader's own read: it shows the loading state as before.
+      fireEvent.press(screen.getByTestId('hashtag-posts-error-action'));
+      await act(async () => {});
+      expect(screen.getByTestId('hashtag-posts-loading')).toBeTruthy();
+      expect(screen.queryByTestId('hashtag-posts-error')).toBeNull();
+      await act(async () => fail(timedOut()));
+    } finally {
+      stopRetry();
+      jest.useRealTimers();
+    }
   });
 
   it('reads a cashtag link in storage form and shows the empty state', async () => {

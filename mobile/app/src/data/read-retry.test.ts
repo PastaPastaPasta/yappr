@@ -3,9 +3,10 @@ import { notifyManager, QueryObserver, type QueryObserverOptions } from '@tansta
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { getLogs } from '~/engine/logs';
-import { queryClient } from '~/state/query-client';
+import { queryClient, retriedReadError } from '~/state/query-client';
 
 import { startConnectivity } from './connectivity';
+import { withRetriedError } from './queries';
 import { EARLY_RETRY_GAP_MS, NO_READ_RETRY, startReadRetry } from './read-retry';
 import { fakeEngine } from './testing/fake-engine';
 
@@ -72,6 +73,72 @@ it('reads a list that found Dash Platform unavailable again at 2, 4 and 8 s, the
   expect(observer.getCurrentResult().data).toBe('posts');
   await jest.advanceTimersByTimeAsync(120_000);
   expect(read).toHaveBeenCalledTimes(7);
+});
+
+it("shows a retried read as the error it was while the retry runs, not TanStack's pending (NEW-R-A-02)", async () => {
+  const key = ['engine', 'devnet', 'hashtag'];
+  let fail: (error: Error) => void = () => undefined;
+  const read = jest
+    .fn()
+    .mockRejectedValueOnce(unavailable())
+    .mockImplementation(() => new Promise((_, reject) => (fail = reject)));
+  const observer = show('hashtag', read);
+  await jest.advanceTimersByTimeAsync(0);
+  expect(withRetriedError(key, observer.getCurrentResult())).not.toHaveProperty('isRetrying');
+
+  // The backoff's retry stalls: TanStack is back on pending, error cleared; the screen is not.
+  await jest.advanceTimersByTimeAsync(2_000);
+  expect(observer.getCurrentResult()).toMatchObject({ status: 'pending', error: null });
+  expect(withRetriedError(key, observer.getCurrentResult())).toMatchObject({
+    status: 'error',
+    isError: true,
+    isPending: false,
+    isLoading: false,
+    isRetrying: true,
+    error: expect.objectContaining({ code: 'TIMEOUT' }),
+  });
+
+  // Settled: the read's own state again.
+  fail(unavailable());
+  await jest.advanceTimersByTimeAsync(0);
+  expect(retriedReadError(key)).toBeUndefined();
+  expect(withRetriedError(key, observer.getCurrentResult())).not.toHaveProperty('isRetrying');
+
+  // A read of the screen's own (its "Try again") shows pending as before.
+  observer.refetch().catch(() => undefined);
+  expect(withRetriedError(key, observer.getCurrentResult()).status).toBe('pending');
+  fail(unavailable());
+  await jest.advanceTimersByTimeAsync(0);
+});
+
+it("lets the reader's own read (\"Try again\") end a stalled retry and read afresh", async () => {
+  const key = ['engine', 'devnet', 'hashtag'];
+  const stalls: ((error: Error) => void)[] = [];
+  const read = jest
+    .fn()
+    .mockRejectedValueOnce(unavailable())
+    .mockImplementation(() => new Promise((_, reject) => stalls.push(reject)));
+  const observer = show('hashtag', read);
+  await jest.advanceTimersByTimeAsync(2_000);
+  const held = withRetriedError(key, observer.getCurrentResult());
+  expect(held).toMatchObject({ status: 'error', isRetrying: true });
+  expect(read).toHaveBeenCalledTimes(2);
+
+  // TanStack alone would join the stalled retry: no new read, still the hold.
+  held.refetch().catch(() => undefined);
+  await jest.advanceTimersByTimeAsync(0);
+  expect(read).toHaveBeenCalledTimes(3);
+  expect(retriedReadError(key)).toBeUndefined();
+  expect(withRetriedError(key, observer.getCurrentResult())).toMatchObject({ status: 'pending', fetchStatus: 'fetching' });
+  expect(withRetriedError(key, observer.getCurrentResult())).not.toHaveProperty('isRetrying');
+
+  // The cancelled retry's late answer is dropped; the reader's read decides.
+  stalls[0](unavailable());
+  await jest.advanceTimersByTimeAsync(0);
+  expect(observer.getCurrentResult().fetchStatus).toBe('fetching');
+  stalls[1](unavailable());
+  await jest.advanceTimersByTimeAsync(0);
+  expect(observer.getCurrentResult()).toMatchObject({ status: 'error', fetchStatus: 'idle' });
 });
 
 it('starts the backoff over for the next outage', async () => {

@@ -166,6 +166,7 @@ function EngagementList({
       <ErrorState
         message={readErrorMessage(list.error)}
         onRetry={() => refetch().catch(() => undefined)}
+        retrying={list.isRetrying}
         testID="engagements-error"
       />
     );

@@ -153,6 +153,7 @@ export function BlockedAccountsScreen() {
         onRetry={() => {
           list.refetch().catch(() => undefined);
         }}
+        retrying={list.isRetrying}
         testID="blocked-error"
       />
     );

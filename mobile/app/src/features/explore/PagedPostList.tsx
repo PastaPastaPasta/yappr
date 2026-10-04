@@ -158,6 +158,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
         onRetry={() => {
           query.refetch().catch(() => undefined);
         }}
+        retrying={query.isRetrying}
         testID={`${testID}-error`}
       />
     );

@@ -142,6 +142,7 @@ function ProfileTabList({
             onRetry={() => {
               posts.refetch().catch(() => undefined);
             }}
+            retrying={posts.isRetrying}
             testID="profile-posts-error"
           />
         ),
@@ -393,6 +394,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
         onRetry={() => {
           refreshProfile().catch(() => undefined);
         }}
+        retrying={profileQuery.isRetrying}
         testID="profile-error"
       />
     );

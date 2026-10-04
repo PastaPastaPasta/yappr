@@ -1,7 +1,7 @@
 import { parse, stringify } from '@engine/protocol/codec';
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
-import { QueryCache, QueryClient, type Query, type QueryKey } from '@tanstack/react-query';
-import type { PersistedClient, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
+import { hashKey, QueryCache, QueryClient, type Query, type QueryKey } from '@tanstack/react-query';
+import type { PersistedClient, Persister, PersistQueryClientProviderProps } from '@tanstack/react-query-persist-client';
 
 import { config } from '~/config';
 import { ENGINE_BUNDLE_HASH } from '~/engine/bundle-hash';
@@ -124,7 +124,8 @@ function firstPageOnly(data: unknown): unknown {
  * What goes to disk (PRD FEED-11): each list's first page, at most
  * {@link PERSISTED_LIST_MAX} items, and a query whose last refetch failed as
  * the data it still shows. The persister re-serializes the whole cache on
- * every cache event, so keeping it this small is what keeps that cheap.
+ * every change to a persisted query ({@link persistOnChange}), so keeping it
+ * this small is what keeps that cheap.
  */
 export function forDisk(client: PersistedClient): PersistedClient {
   const queries = client.clientState.queries.map((query) => {
@@ -145,12 +146,25 @@ const PERSIST_KEY = 'yappr-query-cache';
 let cacheGeneration = 0;
 let measured: { generation: number; bytes: number } | null = null;
 
-const persister = createAsyncStoragePersister({
+/**
+ * A save that threw (the persister swallows it): forget what is on disk, so
+ * the next cache event saves again rather than the next change.
+ */
+function saveFailed(error: unknown): never {
+  persister.forget();
+  throw error;
+}
+
+const storagePersister = createAsyncStoragePersister({
   key: PERSIST_KEY,
   storage: {
     getItem: syncStorage.getItem,
     setItem: (key: string, value: string) => {
-      syncStorage.setItem(key, value);
+      try {
+        syncStorage.setItem(key, value);
+      } catch (error) {
+        saveFailed(error);
+      }
       cacheGeneration += 1;
     },
     removeItem: (key: string) => {
@@ -159,9 +173,83 @@ const persister = createAsyncStoragePersister({
     },
   },
   // The engine's codec, so a restored post keeps its Dates (and bigints, Maps...).
-  serialize: (client) => stringify(forDisk(client)),
+  serialize: (client) => {
+    try {
+      return stringify(forDisk(client));
+    } catch (error) {
+      return saveFailed(error);
+    }
+  },
   deserialize: (cache) => parse(cache) as PersistedClient,
 });
+
+/**
+ * Ids for data values, so a signature tells a replaced value from the same one without holding on to it.
+ * A primitive is its own id: `setState` can change one without a new `dataUpdatedAt`.
+ */
+const dataIds = new WeakMap<object, number>();
+let lastDataId = 0;
+
+function dataId(data: unknown): number | string {
+  if (typeof data === 'function') return 'function';
+  if (typeof data !== 'object' || data === null) return `${typeof data}:${String(data)}`;
+  let id = dataIds.get(data);
+  if (id === undefined) {
+    lastDataId += 1;
+    id = lastDataId;
+    dataIds.set(data, id);
+  }
+  return id;
+}
+
+/**
+ * What the disk copy of `client` depends on: each persisted query's hash,
+ * data (by identity: TanStack replaces it on every change), age, status and
+ * invalidation, and the paused mutations. Its timestamp is left out.
+ */
+export function diskSignature(client: PersistedClient): string {
+  const { queries, mutations } = client.clientState;
+  const parts = queries.map(
+    ({ queryHash, state }) =>
+      `${queryHash}\u0000${dataId(state.data)}:${state.dataUpdatedAt}:${state.status}:${state.isInvalidated ? 1 : 0}`,
+  );
+  for (const { mutationKey, state } of mutations) parts.push(`m:${String(mutationKey)}:${state.submittedAt}:${state.status}`);
+  return `${client.buster}\u0001${parts.join('\u0001')}`;
+}
+
+/**
+ * `persister` writing only when the disk copy would change (D-L3a-011). The
+ * persist client dehydrates and saves on every cache event, of any query,
+ * and the save (throttled to once a second) deep-copies every persisted
+ * query through the codec and re-serializes it whole: megabytes of garbage a
+ * second while a feed scrolls, though most events are a card's own reads (a
+ * poll, a link preview, a repost's marks) that are never persisted. Now an
+ * event that leaves every persisted query as it was costs a short signature.
+ */
+export function persistOnChange(persister: Persister): Persister & {
+  /** The last save failed: the next call saves whatever it is given. */
+  forget: () => void;
+} {
+  let last: string | null = null;
+  return {
+    forget: () => {
+      last = null;
+    },
+    persistClient: (client) => {
+      const signature = diskSignature(client);
+      if (signature === last) return undefined;
+      last = signature;
+      return persister.persistClient(client);
+    },
+    restoreClient: () => persister.restoreClient(),
+    removeClient: () => {
+      last = null;
+      return persister.removeClient();
+    },
+  };
+}
+
+const persister = persistOnChange(storagePersister);
 
 /**
  * Opted-in queries with data. A failed refetch or next page keeps the data
@@ -198,6 +286,42 @@ export async function clearAccountCache(): Promise<void> {
 /** Which failed reads to read again; every one by default. */
 export type FailedReadFilter = (query: Query) => boolean;
 
+/**
+ * The error each failed read showed when NET-03's backoff started reading it
+ * again (`refetchFailedReads` with `holdErrors`), by query hash, until that
+ * read settles. TanStack puts a read with no data back to `pending` for every
+ * refetch, error cleared, so without this a screen would trade G-11's error
+ * for its loading spinner for each 30-60 s attempt of an outage
+ * (NEW-R-A-02). The data hooks show it instead (`withRetriedError`).
+ */
+const retriedErrors = new Map<string, Error>();
+
+queryClient.getQueryCache().subscribe((event) => {
+  if (retriedErrors.size === 0) return;
+  // Settled (an answer, a failure, a cancel's revert, a reset) or gone: the error is the read's own again.
+  if (event.type === 'removed' || (event.type === 'updated' && event.query.state.fetchStatus === 'idle')) {
+    retriedErrors.delete(event.query.queryHash);
+  }
+});
+
+/** The error a read showed before NET-03's backoff began reading it again, while that retry runs. */
+export function retriedReadError(key: QueryKey): Error | undefined {
+  return retriedErrors.size === 0 ? undefined : retriedErrors.get(hashKey(key));
+}
+
+/**
+ * Ends the backoff's retry of `key`, if one is running, so the reader's own
+ * read ("Try again") starts afresh: TanStack would join the retry instead
+ * (a read with no data is never restarted), and a stalled one takes 30-60 s
+ * to fail, all that time with "Try again" doing nothing. The cancel puts the
+ * read back on the error it showed, which releases the hold; the engine's
+ * call runs on and its answer is dropped.
+ */
+export async function cancelRetriedRead(key: QueryKey): Promise<void> {
+  if (!retriedReadError(key)) return;
+  await queryClient.cancelQueries({ queryKey: key, exact: true });
+}
+
 /** Failed reads a screen is showing, other than a list whose next page failed ({@link nextPageFailed}). */
 const failedReads = (only: FailedReadFilter) => ({
   type: 'active' as const,
@@ -218,11 +342,22 @@ export function failedReadCount(only: FailedReadFilter = anyFailure): number {
  * `data/read-retry.ts`, with `only` the inline errors of that category).
  * The home feeds never refetch by themselves otherwise. A list whose next
  * page failed is left to its "Load More" ({@link nextPageFailed}). `why`
- * goes to the diagnostics log.
+ * goes to the diagnostics log. `holdErrors` (the backoff) keeps each read's
+ * error on screen while it is read again ({@link retriedReadError}).
  */
-export async function refetchFailedReads(why: string, only: FailedReadFilter = anyFailure): Promise<void> {
-  const count = failedReadCount(only);
+export async function refetchFailedReads(
+  why: string,
+  only: FailedReadFilter = anyFailure,
+  { holdErrors = false }: { holdErrors?: boolean } = {},
+): Promise<void> {
+  const failed = queryClient.getQueryCache().findAll(failedReads(only));
+  const count = failed.length;
   if (count === 0) return;
+  if (holdErrors) {
+    for (const query of failed) {
+      if (query.state.error && !query.isDisabled()) retriedErrors.set(query.queryHash, query.state.error);
+    }
+  }
   appendLog('info', 'host', `${why}: retrying ${count} failed ${count === 1 ? 'read' : 'reads'}`);
   // A read already in flight again (TanStack's own reconnect refetch) is joined, not restarted.
   await queryClient.refetchQueries(failedReads(only), { cancelRefetch: false });
