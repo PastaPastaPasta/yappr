@@ -261,8 +261,13 @@ function onContent(ctx: DmContext, conv: Conv, held: HeldMessage): void {
   }
   // A leave counts only on the current base: one from before a removal (reached later through `prev`,
   // e.g. after the member was added back) must not remove them again.
-  if (content.type === 'leave' && conv.kind === 'group' && isMe(ctx, conv.owner) && !isMe(ctx, held.sender) && held.pointer.b === conv.epoch.b) {
+  if (content.type !== 'leave' || conv.kind !== 'group' || held.pointer.b !== conv.epoch.b) return
+  if (isMe(ctx, conv.owner) && !isMe(ctx, held.sender)) {
     if (isMember(conv, held.sender, ctx.me.id)) ctx.pendingLeaves.set(`${conv.key}:${hexId(held.sender)}`, { conv, member: held.sender })
+  } else if (isMe(ctx, held.sender) && !isMe(ctx, conv.owner)) {
+    // My own leave, read from the chain (another device, or this one after a reinstall), while the
+    // owner has not removed me yet: I left here too, so the group is no longer mine to write to (§6.4).
+    ctx.cache.noteLeft(conv.key)
   }
 }
 

@@ -674,7 +674,12 @@ against about 33 for one feed load. No credits.
   per group, shared with the repair step, and at most one attempt per group
   per poll), and one whose keyring landed but whose roster replace did not is
   finished by the repair below on the owner's next poll, on any of the
-  owner's devices.
+  owner's devices. The member's clients stop sending to the group at once:
+  the leaving device marks it left in its local cache, and any other device
+  (or the same one after a reinstall) marks it left when it reads the
+  member's own `0x02` on the current base from the chain. A grant on a later
+  base (the owner adding them back) clears the mark; an old-base leave never
+  sets it.
 - **Owner leaves:** the group ends (tombstone roster, members kept). Nobody
   can send any more, and ended groups are not polled in the background, but
   opening the thread still discovers and backfills its history.
