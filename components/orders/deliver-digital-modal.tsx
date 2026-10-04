@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, isDigitalOnly, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, isDigitalOnly, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -20,11 +20,15 @@ interface DeliverDigitalModalProps {
   order: StoreOrder
   payload: OrderPayload
   kits: ReadonlyMap<string, SellerKit>
+  /** The seller's own listing of each item the order names: the lines are buyer-written. */
+  listings: ReadonlyMap<string, ItemListing>
   sellerId: string
   sellerPrivateKey: Uint8Array
   /** True when this order already has a delivery: sending again takes no new unique codes by default. */
   alreadyDelivered: boolean
   onDelivered: (result: FulfillOrderResult) => void
+  /** A failed delivery may still have rewritten pools (see FulfillmentError). */
+  onFailed: (error: unknown) => void
 }
 
 /**
@@ -38,10 +42,12 @@ export function DeliverDigitalModal({
   order,
   payload,
   kits,
+  listings,
   sellerId,
   sellerPrivateKey,
   alreadyDelivered,
   onDelivered,
+  onFailed,
 }: DeliverDigitalModalProps) {
   const formId = useId()
   const [message, setMessage] = useState('')
@@ -49,6 +55,8 @@ export function DeliverDigitalModal({
   const [includeNewKeys, setIncludeNewKeys] = useState(!alreadyDelivered)
   const [extras, setExtras] = useState<Record<string, DigitalAsset[]>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+  // The seller has checked lines that disagree with their listings (title, variant, price).
+  const [reviewed, setReviewed] = useState(false)
   // Lines with an attachment still uploading: its key is not in `extras` until it finishes.
   const [uploadingLines, setUploadingLines] = useState<ReadonlySet<string>>(new Set())
   const setLineUploading = useCallback((lineKey: string, busy: boolean) => {
@@ -80,7 +88,14 @@ export function DeliverDigitalModal({
   }, [lines, kits, extras, includeNewKeys])
 
   const plan = useMemo(() => planDelivery(payload, effectiveKits, message), [payload, effectiveKits, message])
-  const blockers = useMemo(() => planBlockers(plan), [plan])
+  // The buyer wrote these lines: the kit sent is chosen by itemId, whatever title or price they claim.
+  const problems = useMemo(() => lineProblems(payload, order.storeId, listings), [payload, order.storeId, listings])
+  const blockers = useMemo(() => [
+    ...problems.filter((problem) => problem.blocking).map((problem) => problem.text),
+    ...planBlockers(plan),
+  ], [problems, plan])
+  const warnings = problems.filter((problem) => !problem.blocking)
+  const needsReview = warnings.length > 0 && !reviewed
   const orderSellsKeys = lines.some((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined)
 
   const handleClose = () => {
@@ -89,7 +104,7 @@ export function DeliverDigitalModal({
   }
 
   const handleSubmit = async () => {
-    if (blockers.length > 0 || isSubmitting || isUploading) return
+    if (blockers.length > 0 || needsReview || isSubmitting || isUploading) return
     setIsSubmitting(true)
     try {
       const result = await fulfillOrder({
@@ -109,6 +124,7 @@ export function DeliverDigitalModal({
     } catch (error) {
       // Recovery details carry plaintext license keys: shown to the seller, never logged.
       logger.error('Digital delivery failed:', loggableFulfillmentError(error))
+      onFailed(error)
       toast.error(fulfillmentErrorText(error), { duration: error instanceof KeyRecoveryError ? Infinity : 8_000 })
     } finally {
       setIsSubmitting(false)
@@ -209,6 +225,31 @@ export function DeliverDigitalModal({
           <span className="text-sm">Also mark the order Delivered</span>
         </label>
 
+        {warnings.length > 0 && (
+          <div role="alert" className="p-3 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg space-y-2">
+            <p className="text-sm font-medium text-orange-900 dark:text-orange-100">This order does not match your listings</p>
+            {warnings.map((warning, index) => (
+              <p key={index} className="flex items-start gap-2 text-sm text-orange-800 dark:text-orange-200">
+                <ExclamationTriangleIcon className="h-4 w-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                {warning.text}
+              </p>
+            ))}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={reviewed}
+                onChange={(e) => setReviewed(e.target.checked)}
+                disabled={isSubmitting}
+                className="mt-0.5 w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+              />
+              <span className="text-sm">
+                I checked what this buyer ordered and paid for
+                <span className="block text-xs text-gray-500">The buyer writes the order, so its titles and prices can differ from what is delivered: each product&apos;s own content is sent.</span>
+              </span>
+            </label>
+          </div>
+        )}
+
         {blockers.length > 0 && (
           <div role="alert" className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg space-y-1">
             {blockers.map((blocker, index) => (
@@ -223,7 +264,7 @@ export function DeliverDigitalModal({
 
       <div className="flex items-center justify-end gap-3 px-4 py-3 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-neutral-950">
         <Button variant="ghost" onClick={handleClose} disabled={isSubmitting}>Cancel</Button>
-        <Button onClick={() => { handleSubmit().catch((error) => logger.error(error)) }} disabled={blockers.length > 0 || isSubmitting || isUploading}>
+        <Button onClick={() => { handleSubmit().catch((error) => logger.error(error)) }} disabled={blockers.length > 0 || needsReview || isSubmitting || isUploading}>
           {isSubmitting ? 'Delivering…' : isUploading ? 'Uploading…' : 'Deliver'}
         </Button>
       </div>

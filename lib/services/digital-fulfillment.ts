@@ -47,12 +47,42 @@ export interface FulfillOrderResult {
   /** Kits whose pools this delivery drew on, keyed by item id; merge into the caller's kit map. */
   updatedKits: Map<string, SellerKit>;
   warnings: string[];
+  /**
+   * For a pending delivery that holds unique codes: which codes are out of
+   * their pools, so the seller can put them back if it never lands. Carries
+   * plaintext codes: show it, never log it.
+   */
+  pendingRecoveryText?: string;
 }
 
 /** License keys the seller may need to put back in a product's pool by hand. */
 export interface KeyRecoveryEntry {
   itemTitle: string;
   keys: string[];
+}
+
+const recoveryInstructions = (message: string, entries: readonly KeyRecoveryEntry[]) =>
+  `${message} Check these products' unique codes and re-add any of these not already there: ${entries.map((entry) => `"${entry.itemTitle}": ${entry.keys.join(', ')}`).join('; ')}.`;
+
+/**
+ * A fulfilment that failed after writing some pools (the reservation, or a
+ * restore of it). `updatedKits` holds those pools at their new revisions:
+ * merge them like a result's, or the caller's copies are stale and every
+ * later delivery from them is refused. The kits hold plaintext pools, so they
+ * are kept off the object's own properties: log this error by its message.
+ */
+export class FulfillmentError extends Error {
+  readonly #updatedKits: ReadonlyMap<string, SellerKit>;
+
+  constructor(message: string, updatedKits: ReadonlyMap<string, SellerKit>, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'FulfillmentError';
+    this.#updatedKits = updatedKits;
+  }
+
+  get updatedKits(): ReadonlyMap<string, SellerKit> {
+    return this.#updatedKits;
+  }
 }
 
 /**
@@ -62,25 +92,24 @@ export interface KeyRecoveryEntry {
  * the seller only through {@link KeyRecoveryError.recoveryText}, shown in the
  * UI. Log this error by its message, never the object.
  */
-export class KeyRecoveryError extends Error {
+export class KeyRecoveryError extends FulfillmentError {
   readonly #entries: KeyRecoveryEntry[];
 
-  constructor(message: string, entries: KeyRecoveryEntry[], options?: { cause?: unknown }) {
-    super(message, options);
+  constructor(message: string, entries: KeyRecoveryEntry[], updatedKits: ReadonlyMap<string, SellerKit>, options?: { cause?: unknown }) {
+    super(message, updatedKits, options);
     this.name = 'KeyRecoveryError';
     this.#entries = entries;
   }
 
   /** Seller-facing recovery instructions, keys included. Show it; never log it. */
   recoveryText(): string {
-    const lines = this.#entries.map((entry) => `"${entry.itemTitle}": ${entry.keys.join(', ')}`);
-    return `${this.message} Check these products' unique codes and re-add any of these not already there: ${lines.join('; ')}.`;
+    return recoveryInstructions(this.message, this.#entries);
   }
 }
 
-/** What to log for a fulfilment failure: never the key-bearing recovery details. */
+/** What to log for a fulfilment failure: never the key-bearing recovery details or kits. */
 export const loggableFulfillmentError = (error: unknown): unknown =>
-  error instanceof KeyRecoveryError ? `${error.name}: ${error.message}` : error;
+  error instanceof FulfillmentError ? `${error.name}: ${error.message}` : error;
 
 /** What to show the seller for a fulfilment failure. */
 export const fulfillmentErrorText = (error: unknown): string =>
@@ -101,24 +130,27 @@ const keysTaken = (input: FulfillOrderInput, itemId: string): KeyRecoveryEntry =
 
 /**
  * Put the pools a failed delivery drew on back as they were, at their new
- * revisions. Returns the pools it could not restore (or could not confirm).
+ * revisions. Returns the pools it restored (at their new revisions) and the
+ * ones it could not restore (or could not confirm).
  */
 async function restorePools(
   input: FulfillOrderInput,
   drawn: ReadonlyMap<string, SellerKit>
-): Promise<KeyRecoveryEntry[]> {
+): Promise<{ current: Map<string, SellerKit>; unrestored: KeyRecoveryEntry[] }> {
+  const current = new Map<string, SellerKit>();
   const unrestored: KeyRecoveryEntry[] = [];
   for (const [itemId, after] of drawn) {
     const before = input.kits.get(itemId);
     if (!before) continue;
     try {
-      await itemDeliverableService.saveKit(input.sellerId, itemId, before.kit, input.sellerPrivateKey, after.deliverable);
+      const deliverable = await itemDeliverableService.saveKit(input.sellerId, itemId, before.kit, input.sellerPrivateKey, after.deliverable);
+      current.set(itemId, { deliverable, kit: before.kit });
     } catch (error) {
       logger.error(`Could not restore the license-key pool for item ${itemId}:`, error);
       unrestored.push(keysTaken(input, itemId));
     }
   }
-  return unrestored;
+  return { current, unrestored };
 }
 
 /** Reads after an unconfirmed delivery: a node may lag the one that took it. */
@@ -154,12 +186,12 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
       const deliverable = await itemDeliverableService.saveKit(sellerId, itemId, kit, sellerPrivateKey, previous);
       updatedKits.set(itemId, { deliverable, kit });
     } catch (error) {
-      const recovery = await restorePools(input, updatedKits);
+      const { current, unrestored: recovery } = await restorePools(input, updatedKits);
       // This pool's own write may have landed unseen: its keys may be gone too.
       if (error instanceof KitWriteUncertainError) recovery.push(keysTaken(input, itemId));
       const message = `Nothing was delivered: the unique codes for "${titleOf(input.delivery, itemId)}" could not be reserved (${error instanceof Error ? error.message : 'unknown error'}).`;
-      if (recovery.length > 0) throw new KeyRecoveryError(message, recovery, { cause: error });
-      throw new Error(message, { cause: error });
+      if (recovery.length > 0) throw new KeyRecoveryError(message, recovery, current, { cause: error });
+      throw new FulfillmentError(message, current, { cause: error });
     }
   }
 
@@ -181,16 +213,21 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
       // Not seen on chain, which does not prove it never will be: keep the keys reserved.
       const message = 'The delivery could not be confirmed. Check the order before delivering again.';
       const keys = reserved();
-      if (keys.length > 0) throw new KeyRecoveryError(`${message} If it never arrives, its unique codes are out of their pools.`, keys, { cause: error });
-      throw new Error(message, { cause: error });
+      // The pools stay reserved on chain at their new revisions: hand them back either way.
+      if (keys.length > 0) throw new KeyRecoveryError(`${message} If it never arrives, its unique codes are out of their pools.`, keys, updatedKits, { cause: error });
+      throw new FulfillmentError(message, updatedKits, { cause: error });
     }
     delivery = { ...found, payload: input.delivery };
   }
 
   const warnings: string[] = [];
+  let pendingRecoveryText: string | undefined;
 
   if (pending) {
     warnings.push('The delivery was sent but is not confirmed yet. It appears in the buyer\'s library once it lands; check the order before sending it again.');
+    // Nothing else records which codes it holds once the page reloads.
+    const keys = reserved();
+    if (keys.length > 0) pendingRecoveryText = recoveryInstructions('If this delivery never arrives, its unique codes are out of their pools.', keys);
   }
 
   let status: OrderStatusUpdate | undefined;
@@ -204,5 +241,5 @@ export async function fulfillOrder(input: FulfillOrderInput): Promise<FulfillOrd
     }
   }
 
-  return { delivery: pending ? { ...delivery, unconfirmed: true } : delivery, pending, status, updatedKits, warnings };
+  return { delivery: pending ? { ...delivery, unconfirmed: true } : delivery, pending, status, updatedKits, warnings, ...(pendingRecoveryText ? { pendingRecoveryText } : {}) };
 }

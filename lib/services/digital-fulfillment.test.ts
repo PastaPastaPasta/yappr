@@ -13,7 +13,7 @@ vi.mock('./order-delivery-service', () => ({
   orderDeliveryService: { seal, publish, findSealed },
 }))
 vi.mock('./order-status-service', () => ({ orderStatusService: { createStatusUpdate } }))
-import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderInput } from './digital-fulfillment'
+import { fulfillOrder, fulfillmentErrorText, FulfillmentError, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderInput } from './digital-fulfillment'
 import type { ItemDeliverablePayload, StoreOrder } from '../../types'
 
 const SEALED = { encryptedPayload: new Uint8Array([9]), nonce: new Uint8Array(24) }
@@ -106,7 +106,12 @@ describe('fulfillOrder', () => {
     ])
     const reserved = { ...deliverable, $revision: 5 }
     saveKit.mockResolvedValueOnce(reserved).mockRejectedValueOnce(new Error('stale revision')).mockResolvedValueOnce({ ...deliverable, $revision: 6 })
-    await expect(run({ kits: twoKits, consumedKeys: new Map([['game', 1], ['dlc', 1]]) })).rejects.toThrow(/Nothing was delivered/)
+    const error = await run({ kits: twoKits, consumedKeys: new Map([['game', 1], ['dlc', 1]]) }).then(() => null, (reason: unknown) => reason)
+    expect(error).toBeInstanceOf(FulfillmentError)
+    expect((error as Error).message).toMatch(/Nothing was delivered/)
+    // The restored pool comes back at its new revision, so the caller's copy is not left stale.
+    expect((error as FulfillmentError).updatedKits.get('game')?.deliverable.$revision).toBe(6)
+    expect(String(loggableFulfillmentError(error))).not.toMatch(/k1/)
     expect(saveKit).toHaveBeenCalledTimes(3)
     expect(saveKit.mock.calls[2][2]).toBe(kit)
     expect(saveKit.mock.calls[2][4]).toBe(reserved)
@@ -126,6 +131,8 @@ describe('fulfillOrder', () => {
     expect(String(loggableFulfillmentError(error))).not.toMatch(/k1/)
     expect(JSON.stringify(error)).not.toMatch(/k1/)
     expect(Object.values(error).join(' ')).not.toMatch(/k1/)
+    // The reserved pools stay on chain at their new revisions.
+    expect(error.updatedKits.get('game')?.deliverable.$revision).toBe(5)
   })
 
   it('treats a delivery that landed despite a failed response as delivered', async () => {
@@ -148,6 +155,8 @@ describe('fulfillOrder', () => {
     expect(createStatusUpdate).not.toHaveBeenCalled()
     expect(saveKit).toHaveBeenCalledTimes(1)
     expect(result.warnings).toHaveLength(1)
+    // Which codes it holds is shown to the seller, since nothing else records it.
+    expect(result.pendingRecoveryText).toMatch(/"Game": k1/)
   })
 
   it('confirms an unconfirmed broadcast it can find on chain', async () => {

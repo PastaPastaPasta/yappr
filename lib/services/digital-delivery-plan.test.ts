@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
-  MAX_BULK_KEYS_PER_LINE,
+  MAX_BULK_KEYS_PER_ITEM,
   MAX_DELIVERY_PLAINTEXT_BYTES,
   isSafeDeliveryUrl,
   normalizeLinkInput,
@@ -15,9 +15,10 @@ import {
   isDigitalOnly,
   isReadyForBulkDelivery,
   kitsAfterDelivery,
+  lineProblems,
   planDelivery,
 } from './digital-delivery-plan'
-import type { BulkReadinessInput } from './digital-delivery-plan'
+import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
 import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
 
 const KEY = 'A'.repeat(43) + '='
@@ -28,9 +29,10 @@ const line = (itemId: string, quantity = 1, extra: Partial<OrderItem> = {}): Ord
   ({ itemId, itemTitle: itemId.toUpperCase(), quantity, unitPrice: 100, fulfillment: 'digital', ...extra })
 const kit = (extra: Partial<ItemDeliverablePayload> = {}): ItemDeliverablePayload =>
   ({ v: 1, assets: [], deliverWhen: 'payment_confirmed', ...extra })
-/** These items, listed as digital in store `store`. */
-const listed = (itemIds: string[]) =>
-  new Map(itemIds.map((itemId) => [itemId, { storeId: 'store', fulfillment: 'digital' as const }]))
+/** These items, listed as digital in store `store` (title and price as `line()` writes them). */
+const listing = (itemId: string, extra: Partial<ItemListing> = {}): ItemListing =>
+  ({ storeId: 'store', fulfillment: 'digital', title: itemId.toUpperCase(), basePrice: 100, currency: 'USD', ...extra })
+const listed = (itemIds: string[]) => new Map(itemIds.map((itemId) => [itemId, listing(itemId)]))
 
 describe('planDelivery', () => {
   it('delivers only digital lines, with the assets of each line\'s variant', () => {
@@ -91,6 +93,34 @@ describe('planDelivery', () => {
   })
 })
 
+describe('lineProblems', () => {
+  const variants = { axes: [{ name: 'Format', options: ['PDF', 'Deluxe'] }], combinations: [{ key: 'PDF', price: 100 }, { key: 'Deluxe', price: 900 }] }
+  const check = (items: OrderItem[], listings: Map<string, ItemListing>, currency = 'USD') =>
+    lineProblems({ items, currency }, 'store', listings)
+
+  it('passes a line that matches its listing, and ignores shipped lines', () => {
+    expect(check([line('ebook'), line('mug', 1, { fulfillment: undefined })], listed(['ebook']))).toEqual([])
+    expect(check([line('ebook', 1, { variantKey: 'Deluxe', unitPrice: 900 })], new Map([['ebook', listing('ebook', { variants })]]))).toEqual([])
+  })
+
+  it('blocks a line that names no digital product of this store', () => {
+    for (const listings of [new Map(), new Map([['ebook', listing('ebook', { storeId: 'elsewhere' })]]), new Map([['ebook', listing('ebook', { fulfillment: 'shipped' })]])]) {
+      expect(check([line('ebook')], listings).map((p) => p.blocking)).toEqual([true])
+    }
+  })
+
+  it('flags a title, variant, price or currency the listing does not have, for review', () => {
+    const withVariants = new Map([['ebook', listing('ebook', { variants })]])
+    // The premium variant at the cheap variant's price.
+    expect(check([line('ebook', 1, { variantKey: 'Deluxe', unitPrice: 100 })], withVariants)).toHaveLength(1)
+    expect(check([line('ebook', 1, { variantKey: 'Gold' })], withVariants)).toHaveLength(1)
+    expect(check([line('ebook')], withVariants)).toHaveLength(1)
+    expect(check([line('ebook', 1, { itemTitle: 'Something else' })], listed(['ebook']))).toHaveLength(1)
+    expect(check([line('ebook')], listed(['ebook']), 'EUR')).toHaveLength(1)
+    expect(check([line('ebook', 1, { itemTitle: 'X', unitPrice: 5 })], listed(['ebook'])).every((p) => !p.blocking)).toBe(true)
+  })
+})
+
 describe('isReadyForBulkDelivery', () => {
   const kits = new Map([['song', kit({ assets: [file('song.mp3')] })], ['now', kit({ deliverWhen: 'on_order', assets: [file('now.zip')] })]])
   const ready = (items: OrderItem[], latestStatus?: OrderStatus, extra: Partial<BulkReadinessInput> = {}) =>
@@ -113,18 +143,22 @@ describe('isReadyForBulkDelivery', () => {
 
   it('only trusts the seller\'s listing, not the buyer-written line', () => {
     // An item from another of the seller's stores.
-    expect(ready([line('now')], undefined, { listings: new Map([['now', { storeId: 'other-store', fulfillment: 'digital' }]]) })).toBe(false)
+    expect(ready([line('now')], undefined, { listings: new Map([['now', listing('now', { storeId: 'other-store' })]]) })).toBe(false)
     // Switched back to shipped: its old kit is still there.
-    expect(ready([line('now')], undefined, { listings: new Map([['now', { storeId: 'store', fulfillment: 'shipped' }]]) })).toBe(false)
+    expect(ready([line('now')], undefined, { listings: new Map([['now', listing('now', { fulfillment: 'shipped' })]]) })).toBe(false)
     // Not found (or its read failed).
     expect(ready([line('now')], undefined, { listings: new Map() })).toBe(false)
+    // An expensive product dressed as a cheap one: the id decides what is sent.
+    expect(ready([line('now', 1, { itemTitle: 'CHEAP THING' })])).toBe(false)
+    expect(ready([line('now', 1, { unitPrice: 1 })])).toBe(false)
   })
 
-  it('leaves a large key order for the seller to review', () => {
+  it('leaves a large key order for the seller to review, however its lines are split', () => {
     const pool = Array.from({ length: 50 }, (_, i) => `k${i}`)
     const many = new Map([['game', kit({ deliverWhen: 'on_order', licenseKeys: pool })]])
-    expect(ready([line('game', MAX_BULK_KEYS_PER_LINE)], undefined, { kits: many })).toBe(true)
-    expect(ready([line('game', MAX_BULK_KEYS_PER_LINE + 1)], undefined, { kits: many })).toBe(false)
+    expect(ready([line('game', MAX_BULK_KEYS_PER_ITEM)], undefined, { kits: many })).toBe(true)
+    expect(ready([line('game', MAX_BULK_KEYS_PER_ITEM + 1)], undefined, { kits: many })).toBe(false)
+    expect(ready([line('game', MAX_BULK_KEYS_PER_ITEM), line('game', MAX_BULK_KEYS_PER_ITEM)], undefined, { kits: many })).toBe(false)
   })
 
   it('holds an order whose key pool has run out', () => {
@@ -139,6 +173,10 @@ describe('isReadyForBulkDelivery', () => {
 })
 
 describe('wire format', () => {
+  it('keeps each unique code once in a kit\'s pool', () => {
+    expect(decodeKit(encodeKit(kit({ licenseKeys: ['A', 'B', 'A'] }))).licenseKeys).toEqual(['A', 'B'])
+  })
+
   it('round-trips a kit and a delivery', () => {
     const original = kit({ assets: [file('a.zip', 'Pro'), { kind: 'link', label: 'Site', url: 'https://example.com' }], licenseKeys: ['X'], instructions: 'hi', deliverWhen: 'on_order' })
     expect(decodeKit(encodeKit(original))).toEqual(original)

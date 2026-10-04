@@ -30,11 +30,12 @@ export const MAX_INSTRUCTIONS_LENGTH = 2000
 export const MAX_CODE_LENGTH = 500
 /**
  * Quantities come from the order payload, which the BUYER writes. A line must
- * be a whole number of units, and "Deliver all" leaves any line drawing more
- * license keys than this for the seller to review by hand.
+ * be a whole number of units, and "Deliver all" leaves any order drawing more
+ * license keys than this from one product's pool (over all its lines) for the
+ * seller to review by hand.
  */
 export const MAX_LINE_QUANTITY = 1000
-export const MAX_BULK_KEYS_PER_LINE = 10
+export const MAX_BULK_KEYS_PER_ITEM = 10
 export const MAX_DELIVERY_MESSAGE_LENGTH = 1000
 
 /** Statuses after which an order is never delivered in bulk. */
@@ -182,10 +183,58 @@ export function kitsAfterDelivery(
 }
 
 /** The seller's own listing of an item, read from the chain. */
-export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment'>
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'>
+
+/** A way an order line disagrees with the seller's listing of the item it names. */
+export interface LineProblem {
+  itemTitle: string
+  text: string
+  /**
+   * The line names no digital product of this order's store (or its listing
+   * could not be read): its kit is not one this order may draw from. A
+   * non-blocking problem (title, variant, price) needs the seller's review.
+   */
+  blocking: boolean
+}
+
+/**
+ * Every way the order's digital lines disagree with the seller's listings.
+ *
+ * The order payload is BUYER-written: a line's `itemId` decides which kit is
+ * sent, while its title, variant and price are only what the buyer claims. A
+ * buyer could name an expensive product's id with a cheap one's title and
+ * price, so the seller's page would show the cheap one while the expensive
+ * content went out. Deliveries are therefore checked against the listing.
+ * A listing edited since the order (a new price or title) also shows up here,
+ * which is the safe direction: the seller reviews it.
+ */
+export function lineProblems(
+  payload: Pick<OrderPayload, 'items'> & Partial<Pick<OrderPayload, 'currency'>>,
+  storeId: string,
+  listings: ReadonlyMap<string, ItemListing>
+): LineProblem[] {
+  const problems: LineProblem[] = []
+  for (const line of digitalLines(payload)) {
+    const listing = listings.get(line.itemId)
+    const problem = (text: string, blocking = false) => problems.push({ itemTitle: line.itemTitle, text, blocking })
+    if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
+    if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }
+    if (listing.fulfillment !== 'digital') { problem(`"${line.itemTitle}" is not listed as a digital product.`, true); continue }
+    if (listing.title !== line.itemTitle) problem(`The order calls "${listing.title}" "${line.itemTitle}".`)
+    const combinations = listing.variants?.combinations ?? []
+    const combination = line.variantKey ? combinations.find((c) => c.key === line.variantKey) : undefined
+    if (line.variantKey && !combination) problem(`"${listing.title}" has no variant "${line.variantKey.replace(/\|/g, ' / ')}".`)
+    else if (!line.variantKey && combinations.length > 0) problem(`The order names no variant of "${listing.title}".`)
+    // What checkout charges (storeItemService.getPrice): the variant's price, else the base price, else 0.
+    const listedPrice = combination ? combination.price : (listing.basePrice ?? 0)
+    if (line.unitPrice !== listedPrice) problem(`The order's price for "${listing.title}" differs from your listing.`)
+    if (listing.currency && payload.currency && payload.currency !== listing.currency) problem(`The order is in ${payload.currency}, but "${listing.title}" is priced in ${listing.currency}.`)
+  }
+  return problems
+}
 
 export interface BulkReadinessInput {
-  payload: Pick<OrderPayload, 'items'>
+  payload: Pick<OrderPayload, 'items'> & Partial<Pick<OrderPayload, 'currency'>>
   /** The store the order was placed with. */
   storeId: string
   latestStatus: OrderStatus | undefined
@@ -198,28 +247,26 @@ export interface BulkReadinessInput {
 /**
  * Whether "Deliver ready orders" may fulfil this order without the seller
  * opening it: it has digital lines, nothing was delivered yet, it is not
- * closed, every digital line is a product this store currently sells as
- * digital, every one has a kit with keys enough, and every kit's timing rule
- * is met (`on_order` always; `payment_confirmed` once the seller has marked
- * payment received).
+ * closed, every digital line agrees with the seller's listing (a digital
+ * product of this store, with the listed title, variant and price), every one
+ * has a kit with keys enough, and every kit's timing rule is met (`on_order`
+ * always; `payment_confirmed` once the seller has marked payment received).
  *
  * The listing check matters because the order payload is buyer-written: a
- * line's `itemId` and `fulfillment` prove nothing. Without it a buyer could
- * name another store's item, or one switched back to shipped whose old kit
- * remains, and have its content sent automatically.
+ * line's `itemId`, `fulfillment`, title and price prove nothing (see
+ * {@link lineProblems}). Without it a buyer could name another store's item,
+ * one switched back to shipped whose old kit remains, or an expensive product
+ * dressed as a cheap one, and have its content sent automatically.
  */
 export function isReadyForBulkDelivery({ payload, storeId, latestStatus, alreadyDelivered, kits, listings }: BulkReadinessInput): boolean {
   if (alreadyDelivered || !hasDigitalLines(payload)) return false
   if (latestStatus && CLOSED_STATUSES.has(latestStatus)) return false
-  const listedAsDigital = (itemId: string) => {
-    const listing = listings.get(itemId)
-    return listing?.storeId === storeId && listing.fulfillment === 'digital'
-  }
-  if (!digitalLines(payload).every((line) => listedAsDigital(line.itemId))) return false
+  if (lineProblems(payload, storeId, listings).length > 0) return false
   const plan = planDelivery(payload, kits)
   if (planBlockers(plan).length > 0) return false
-  // A large key order is the seller's call, not the bulk button's.
-  if (plan.delivery.items.some((item) => (item.licenseKeys?.length ?? 0) > MAX_BULK_KEYS_PER_LINE)) return false
+  // A large key order is the seller's call, not the bulk button's: counted per
+  // product, so splitting it over several lines does not get round the cap.
+  if ([...plan.consumedKeys.values()].some((taken) => taken > MAX_BULK_KEYS_PER_ITEM)) return false
   const paid = latestStatus !== undefined && PAID_STATUSES.has(latestStatus)
   return digitalLines(payload).every((line) => kits.get(line.itemId)?.deliverWhen === 'on_order' || paid)
 }
@@ -312,6 +359,11 @@ const parseAssets = (value: unknown): DigitalAsset[] =>
 
 const parseKeys = (value: unknown): string[] | undefined =>
   Array.isArray(value) ? value.filter((key): key is string => typeof key === 'string' && key.length > 0) : undefined
+/** A kit's pool keeps each code once, so no code can go to two buyers. */
+const parsePool = (value: unknown): string[] | undefined => {
+  const keys = parseKeys(value)
+  return keys && [...new Set(keys)]
+}
 
 const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
 const decodeJson = (bytes: Uint8Array): unknown => JSON.parse(new TextDecoder().decode(bytes))
@@ -329,7 +381,7 @@ export function decodeKit(bytes: Uint8Array): ItemDeliverablePayload {
   if (!isRecord(value) || value.v !== 1) throw new Error('Unsupported delivery kit version')
   const deliverWhen: DeliverWhen = value.deliverWhen === 'on_order' ? 'on_order' : 'payment_confirmed'
   const instructions = optionalString(value.instructions)
-  const licenseKeys = parseKeys(value.licenseKeys)
+  const licenseKeys = parsePool(value.licenseKeys)
   return {
     v: 1,
     assets: parseAssets(value.assets),

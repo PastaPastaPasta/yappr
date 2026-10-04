@@ -101,14 +101,21 @@ payload.
 - **Deliver all** sends every *ready* order in one pass. An order is ready when:
   - it has digital lines and nothing has been delivered;
   - it is not closed;
-  - every digital line is a product this store currently lists as digital,
-    read from the seller's own `storeItem` (the order payload is
-    buyer-written, so its `fulfillment` and `itemId` prove nothing);
+  - every digital line agrees with the seller's own `storeItem`: a product
+    this store currently lists as digital, with the listed title, variant,
+    price and currency. The order payload is buyer-written and the kit sent is
+    chosen by `itemId`, so a line's `fulfillment`, title and price prove
+    nothing: an expensive product dressed as a cheap one must not go out;
   - every line has a kit with enough keys, and the delivery fits the payload
     cap;
   - every kit's timing is met;
-  - no line draws more than 10 keys (larger key orders are left for the seller
-    to review).
+  - no product's pool gives more than 10 keys to the order, over all its lines
+    (larger key orders are left for the seller to review).
+
+  The deliver modal runs the same listing check. A line naming no digital
+  product of the order's store (or whose listing could not be read) cannot be
+  delivered; a title, variant or price that differs is shown, and the seller
+  confirms they checked it before delivering.
 
   An order whose delivery or status read failed is never ready, because a
   failed read must not pass for "nothing delivered". This is the closest a
@@ -132,12 +139,22 @@ payload.
      the exact keys to check (shown on screen, never logged).
   4. A broadcast whose confirmation timed out stays *pending*: the order is not
      marked Delivered and the keys stay reserved. The delivery shows in the
-     buyer's library once it lands.
+     buyer's library once it lands, and the seller is shown the codes it holds
+     in case it never does.
   5. A bulk run re-plans each order against the pool the previous one left.
+- A pool keeps each code once: a code pasted twice is stored once, so it can
+  never reach two buyers.
 - The product editor writes the kit only when the seller changed it. It writes
   at the revision it read, so a stale editor can never restore keys that have
   since been sent. A first save that is broadcast but not yet seen on chain is
   not taken as saved: the editor stays dirty and asks the seller to save again.
+  When a failed save finds a kit on chain other than the one the draft was
+  edited from, it reloads that kit (content and revision together) for review
+  instead of attaching the new revision to the old draft.
+- A new product whose create was broadcast but not seen is held as pending,
+  not as an edit: the next save looks for that exact listing first, and the
+  kit (which must reference it) is written only once it is found. If it never
+  appears, the seller may choose to create it again.
 
 **Buyer receives**: the order card shows *Your digital items*, and the
 **Library** tab lists every delivery. Links open in a new tab, codes and access
@@ -166,6 +183,20 @@ deliver a `javascript:` link.
 - Today the Library is built from the buyer's loaded orders (`orderId in`
   queries). The `buyerDeliveries` index is there for a paginated library or
   notifications that do not start from the order list.
+
+## Moderation (open questions, not decided here)
+
+The storefront contract keeps v5's moderation: a contract-owner banlist,
+suspensions and warnings, and moderator delete on reviews only.
+
+- A banned or suspended seller cannot write an `orderDelivery`, so orders a
+  buyer already paid for cannot be delivered until the ban ends.
+- Stores and items have no moderator takedown (41115), and kits and
+  deliveries are encrypted, so a moderator can neither see nor remove what a
+  digital product delivers. The banlist only stops the seller's future
+  writes; the listing stays up.
+- `itemDeliverable` and `orderDelivery` give moderators no ability, so no
+  moderator removal frees their unique slot (unlike the review slots, QA U7).
 
 ## Deploy
 

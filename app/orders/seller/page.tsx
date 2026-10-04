@@ -20,7 +20,7 @@ import { DeliveryContents } from '@/components/digital'
 import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
-import { fulfillOrder, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
+import { fulfillOrder, FulfillmentError, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
@@ -52,6 +52,18 @@ interface DigitalState {
    * for "nothing delivered yet", or "Deliver all" would send them again.
    */
   uncertain: Set<string>
+  /** Orders whose deliveries WERE read (with or without any): no longer uncertain. */
+  checked: Set<string>
+}
+
+/** Kit copies merged by revision: whichever is newer wins, wherever it was read. */
+function newerKits(current: ReadonlyMap<string, SellerKit>, incoming: ReadonlyMap<string, SellerKit>): Map<string, SellerKit> {
+  const merged = new Map(current)
+  for (const [itemId, kit] of incoming) {
+    const held = merged.get(itemId)
+    if (!held || (kit.deliverable.$revision ?? 0) >= (held.deliverable.$revision ?? 0)) merged.set(itemId, kit)
+  }
+  return merged
 }
 
 /**
@@ -67,7 +79,7 @@ async function loadDigitalState(
 ): Promise<DigitalState> {
   const orders = storefrontSupportsDigital() ? digitalOrders(pageOrders, payloads) : []
   const uncertain = new Set<string>()
-  if (orders.length === 0) return { deliveries: new Map(), kits: new Map(), listings: new Map(), uncertain }
+  if (orders.length === 0) return { deliveries: new Map(), kits: new Map(), listings: new Map(), uncertain, checked: new Set() }
 
   const itemIds = orders.flatMap((order) => {
     const payload = payloads.get(order.id)
@@ -90,14 +102,16 @@ async function loadDigitalState(
       : Promise.resolve(new Map<string, SellerKit>()),
     // An item that cannot be read has no listing, so it is never delivered in bulk.
     storeItemService.getMany(itemIds)
-      .then((items) => new Map(items.map((item): [string, ItemListing] => [item.id, { storeId: item.storeId, fulfillment: item.fulfillment }])))
+      .then((items) => new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants }): [string, ItemListing] =>
+        [id, { storeId, fulfillment, title, basePrice, currency, variants }])))
       .catch((e) => {
         logger.error('Failed to load listings for digital orders:', e)
         return new Map<string, ItemListing>()
       }),
   ])
 
-  return { deliveries, kits, listings, uncertain }
+  const checked = new Set(orders.map((order) => order.id).filter((orderId) => !uncertain.has(orderId)))
+  return { deliveries, kits, listings, uncertain, checked }
 }
 
 /**
@@ -174,16 +188,17 @@ function SellerOrdersPage() {
 
   /**
    * Fold loaded deliveries and kits into the page (`replace` for a fresh first
-   * page). A kit already in memory wins over a freshly read one: it may hold a
-   * pool this session advanced, which the chain copy has not caught up with.
+   * page). Of two copies of a kit the newer revision wins: one in memory may
+   * hold a pool this session advanced that a lagging read has not caught up
+   * with, and a fresh read may show one another tab advanced.
    */
   const mergeDigitalState = useCallback((digital: DigitalState, replace = false) => {
     setDeliveries(prev => replace ? digital.deliveries : new Map([...prev, ...digital.deliveries]))
-    setKits(prev => replace ? digital.kits : new Map([...digital.kits, ...prev]))
+    setKits(prev => replace ? digital.kits : newerKits(prev, digital.kits))
     setListings(prev => replace ? digital.listings : new Map([...prev, ...digital.listings]))
     setUncertainOrders(prev => {
       const next = replace ? new Set<string>() : new Set(prev)
-      for (const orderId of digital.deliveries.keys()) next.delete(orderId)
+      for (const orderId of digital.checked) next.delete(orderId)
       for (const orderId of digital.uncertain) next.add(orderId)
       return next
     })
@@ -304,7 +319,14 @@ function SellerOrdersPage() {
     const { delivery, status, updatedKits } = result
     setDeliveries(prev => new Map(prev).set(orderId, [...(prev.get(orderId) ?? []), delivery]))
     if (status) setOrderStatuses(prev => new Map(prev).set(orderId, status))
-    if (updatedKits.size > 0) setKits(prev => new Map([...prev, ...updatedKits]))
+    if (updatedKits.size > 0) setKits(prev => newerKits(prev, updatedKits))
+    // Which codes a pending delivery holds is recorded nowhere else once the page reloads.
+    if (result.pendingRecoveryText) toast.error(`Order ${formatOrderId(orderId)}: ${result.pendingRecoveryText}`, { duration: Infinity })
+  }, [])
+
+  /** Pools a failed fulfilment wrote (reserved, or restored) are newer than the page's copies. */
+  const applyFailedFulfillment = useCallback((error: unknown) => {
+    if (error instanceof FulfillmentError && error.updatedKits.size > 0) setKits(prev => newerKits(prev, error.updatedKits))
   }, [])
 
   /** The seller key is needed to read kits and to key the delivery; ask for it if this device lacks it. */
@@ -357,11 +379,13 @@ function SellerOrdersPage() {
               markDelivered: isDigitalOnly(payload.items),
               sellerPrivateKey,
             })
-            currentKits = new Map([...currentKits, ...result.updatedKits])
+            currentKits = newerKits(currentKits, result.updatedKits)
             applyFulfillment(order.id, result)
             for (const warning of result.warnings) toast.error(warning, { duration: 10_000 })
             delivered++
           } catch (error) {
+            if (error instanceof FulfillmentError) currentKits = newerKits(currentKits, error.updatedKits)
+            applyFailedFulfillment(error)
             // Recovery details carry plaintext license keys: shown to the seller, never logged.
             logger.error(`Bulk delivery failed for order ${order.id}:`, loggableFulfillmentError(error))
             skipped.push(formatOrderId(order.id))
@@ -679,7 +703,8 @@ function SellerOrdersPage() {
                             <Button
                               size="sm"
                               variant={lastDelivery ? 'outline' : 'default'}
-                              disabled={bulkProgress !== null}
+                              // Unknown delivery state must not read as "not delivered": it would take new codes.
+                              disabled={bulkProgress !== null || uncertainOrders.has(order.id)}
                               onClick={() => withSellerKey((sellerPrivateKey) => setDeliverContext({ orderId: order.id, sellerPrivateKey }))}
                             >
                               {lastDelivery ? 'Send again' : 'Deliver now'}
@@ -767,10 +792,12 @@ function SellerOrdersPage() {
               order={deliverOrder}
               payload={deliverPayload}
               kits={kits}
+              listings={listings}
               sellerId={user.identityId}
               sellerPrivateKey={deliverContext.sellerPrivateKey}
               alreadyDelivered={(deliveries.get(deliverOrder.id)?.length ?? 0) > 0}
               onDelivered={(result) => applyFulfillment(deliverOrder.id, result)}
+              onFailed={applyFailedFulfillment}
             />
           )}
     </PageShell>

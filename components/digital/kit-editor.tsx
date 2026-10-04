@@ -17,7 +17,9 @@ interface DigitalKitEditorProps {
   onBusyChange?: (busy: boolean) => void
 }
 
-const parseKeys = (text: string) => text.split('\n').map((line) => line.trim()).filter(Boolean)
+/** Codes one per line, each kept once: a code pasted twice would otherwise reach two buyers. */
+const parseKeys = (text: string) => [...new Set(text.split('\n').map((line) => line.trim()).filter(Boolean))]
+const countLines = (text: string) => text.split('\n').filter((line) => line.trim()).length
 
 const TIMING_OPTIONS: Array<{ value: DeliverWhen; label: string; hint: string }> = [
   { value: 'payment_confirmed', label: 'After I confirm payment', hint: 'Ready to deliver once you mark the order Payment Received.' },
@@ -93,7 +95,9 @@ export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disab
               className="w-full px-3 py-2 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
             />
             <p className="text-xs text-gray-500">
-              {kit.licenseKeys?.length ?? 0} left. Each delivered unit takes the next one. A line that starts with a link reaches the buyer as a link, and anything after it (after a space) as that link&apos;s own access code. When they run out, orders wait until you add more.
+              {kit.licenseKeys?.length ?? 0} left.
+              {countLines(keysText) > (kit.licenseKeys?.length ?? 0) && ` ${countLines(keysText) - (kit.licenseKeys?.length ?? 0)} repeated line(s) count once.`}
+              {' '}Each delivered unit takes the next one. A line that starts with a link reaches the buyer as a link, and anything after it (after a space) as that link&apos;s own access code. When they run out, orders wait until you add more.
             </p>
           </>
         )}
