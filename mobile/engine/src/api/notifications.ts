@@ -175,15 +175,19 @@ export function createNotificationsModule(emit: (event: 'notifications.count', p
       // Before anything persists the store again, which would write the old account's read ids back.
       restoreReadState()
       store().clearNotifications()
+      // Signed out, switched, or overtaken by another account's load: its result belongs to nobody now.
+      const overtaken = () => viewerId() !== viewer || loading?.token !== token
+      const changed = () => new RpcError('The account changed while notifications loaded', 'NOT_SIGNED_IN')
       const result = await notificationService.getInitialNotifications(viewer, store().getReadIdsSet())
+      // Before the failure below: a departed account's load is NOT_SIGNED_IN, never an error to show.
+      if (overtaken()) throw changed()
       // lib answers a failed source with no notifications. With nothing at all, "none" is a guess, and
       // it would stick: polls only read what is newer. Fail instead, so the list shows the G-11 error
       // and a retry reads the 7 days again (NEW-R-vi-002). Partial results show; the next poll reads
       // the failed source's window again (lib keeps the watermark).
       if (result.failure !== undefined && result.notifications.length === 0) throw readFailure(result.failure)
       const blockedNow = await blockedAmong(viewer, result.notifications)
-      // Signed out, switched, or overtaken by another account's load: its result belongs to nobody now.
-      if (viewerId() !== viewer || loading?.token !== token) throw new RpcError('The account changed while notifications loaded', 'NOT_SIGNED_IN')
+      if (overtaken()) throw changed()
       store().setNotifications(result.notifications)
       store().setLastFetchTimestamp(result.latestTimestamp)
       store().setHasFetchedOnce(true)

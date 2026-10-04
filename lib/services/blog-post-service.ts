@@ -237,13 +237,17 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     return result.documents
   }
 
-  async getPostsByBlogs(blogIds: string[], limit: number): Promise<Map<string, BlogPost[]>> {
+  /**
+   * Each blog's newest `limit` posts. A blog whose read fails gets none, and
+   * is reported to `onBlogReadFailure`.
+   */
+  async getPostsByBlogs(blogIds: string[], limit: number, onBlogReadFailure?: (error: unknown) => void): Promise<Map<string, BlogPost[]>> {
     const ids = Array.from(new Set(blogIds))
     const pages = await queryDocumentBundle(ids.map(blogId => ({
       dataContractId: this.contractId, documentTypeName: this.documentType,
       where: [['blogId', '==', blogId], ['$createdAt', '>', 0]],
       orderBy: [['blogId', 'asc'], ['$createdAt', 'desc']], limit,
-    })), true)
+    })), true, onBlogReadFailure)
     return new Map(ids.map((id, index) => [id, pages[index].map(doc => this.transformDocument(doc))]))
   }
 

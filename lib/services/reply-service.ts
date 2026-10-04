@@ -384,36 +384,34 @@ class ReplyService extends BaseDocumentService<Reply> {
    * `parentOwnerRecent [$createdAt, parentOwnerId]` windows, read whole (paged)
    * and since-filtered client-side (see readNotificationWindow).
    *
+   * Rejects when the read fails: an empty answer would let the notification
+   * watermark move past the replies it missed.
+   *
    * @param userId - Identity ID of the content owner
    * @param since - Only return replies created after this timestamp (optional)
    */
   async getRepliesToMyContent(userId: string, since?: Date, preloaded?: Record<string, unknown>[]): Promise<Reply[]> {
-    try {
-      const { getEvoSdk } = await import('./evo-sdk-service');
-      const sdk = await getEvoSdk();
+    const { getEvoSdk } = await import('./evo-sdk-service');
+    const sdk = await getEvoSdk();
 
-      const sinceTimestamp = since?.getTime() || 0;
+    const sinceTimestamp = since?.getTime() || 0;
 
-      const window = notificationWindowFor('reply');
-      const response = preloaded ?? (window
-        ? await readNotificationWindow(window, userId, sinceTimestamp)
-        : await sdk.documents.query({
-          dataContractId: this.contractId,
-          documentTypeName: 'reply',
-          where: [
-            ['parentOwnerId', '==', userId],
-            ['$createdAt', '>', sinceTimestamp]
-          ],
-          orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']],
-          limit: 100
-        }));
+    const window = notificationWindowFor('reply');
+    const response = preloaded ?? (window
+      ? await readNotificationWindow(window, userId, sinceTimestamp)
+      : await sdk.documents.query({
+        dataContractId: this.contractId,
+        documentTypeName: 'reply',
+        where: [
+          ['parentOwnerId', '==', userId],
+          ['$createdAt', '>', sinceTimestamp]
+        ],
+        orderBy: [['parentOwnerId', 'asc'], ['$createdAt', 'desc']],
+        limit: 100
+      }));
 
-      const documents = normalizeSDKResponse(response);
-      return this.withTrueParentOwner(userId, documents.map((doc) => this.transformDocument(doc)));
-    } catch (error) {
-      logger.error('Error getting replies to my content:', error);
-      return [];
-    }
+    const documents = normalizeSDKResponse(response);
+    return this.withTrueParentOwner(userId, documents.map((doc) => this.transformDocument(doc)));
   }
 
   /**

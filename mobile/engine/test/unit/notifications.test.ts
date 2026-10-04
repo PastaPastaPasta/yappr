@@ -72,6 +72,14 @@ describe('notifications.list (NEW-R-vi-002)', () => {
     expect((await notifications.api.list()).items.map(item => item.id)).toEqual(['f1'])
   })
 
+  it('answers NOT_SIGNED_IN, not the read error, for an account that left while its failed load ran', async () => {
+    m.getInitialNotifications.mockImplementationOnce(async () => {
+      m.viewer = 'next'
+      return { notifications: [], latestTimestamp: 1_000, failure: quorumError }
+    })
+    await expect(notifications.api.list()).rejects.toMatchObject({ code: 'NOT_SIGNED_IN' })
+  })
+
   it('still answers an empty list when every source answered', async () => {
     m.getInitialNotifications.mockResolvedValueOnce({ notifications: [], latestTimestamp: 1_000 })
     expect((await notifications.api.list()).items).toEqual([])

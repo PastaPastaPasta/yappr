@@ -13,6 +13,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
 
@@ -66,15 +67,79 @@ describe('failed notification sources', () => {
     expect(polled.latestTimestamp).toBe(1_000)
   })
 
-  it('count a reader that caught its own failure', async () => {
-    const notificationService = await serviceWithSources()
-    vi.mocked(notificationService.getReplyNotifications).mockRestore()
-    const { replyService } = await import('./reply-service')
-    vi.spyOn(replyService, 'getRepliesToMyContent').mockRejectedValue(new Error('DAPI unavailable'))
+  it.each(['v10', 'v11'])('%s: a reply window read that failed holds the watermark, though another source found something newer', async (topology) => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+    // The reply source's cache wires listeners on window.
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const quorum = new Error('invalid quorum: Quorum not found in cache for hash: 00ab')
+    // The real reply reader (readNotificationWindow over the plain query) and quote reader; only the reply windows fail.
+    const query = vi.fn().mockImplementation(async ({ documentTypeName }: QueryDocumentsOptions) => {
+      if (documentTypeName === 'reply') throw quorum
+      return []
+    })
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    const { loadIdentityBatch } = await import('./identity-batch')
+    vi.mocked(loadIdentityBatch).mockResolvedValue({ usernames: new Map(), profiles: [], avatars: new Map() } as unknown as Awaited<ReturnType<typeof loadIdentityBatch>>)
+    bundle.mockImplementation(async (queries: QueryDocumentsOptions[]) => queries.map((q) => q.documentTypeName === 'follow'
+      ? [{ $id: 'follow-1', $ownerId: 'bob', $createdAt: 1_500, followingId: 'viewer' }]
+      : []))
+    const { notificationService } = await import('./notification-service')
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getLikeNotifications').mockResolvedValue([])
 
     const polled = await notificationService.pollNewNotifications('viewer', 1_000)
-    expect(polled.failure).toEqual(new Error('DAPI unavailable'))
+    expect(polled.notifications.map((n) => n.id)).toEqual(['follow-1'])
+    expect(polled.failure).toBe(quorum)
+    // Not the follow's 1_500: the replies between 1_000 and 1_500 are read again next poll.
     expect(polled.latestTimestamp).toBe(1_000)
+  })
+
+  it('count a failed read of the blogs the user follows', async () => {
+    const notificationService = await serviceWithSources()
+    vi.mocked(notificationService.getBlogPostNotifications).mockRestore()
+    const offline = new Error('DAPI unavailable')
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query: vi.fn().mockRejectedValue(offline) } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+    expect(polled.failure).toBe(offline)
+    expect(polled.latestTimestamp).toBe(1_000)
+  })
+
+  it('count a followed blog whose posts could not be read', async () => {
+    const notificationService = await serviceWithSources()
+    vi.mocked(notificationService.getBlogPostNotifications).mockRestore()
+    const { blogFollowService } = await import('./blog-follow-service')
+    vi.spyOn(blogFollowService, 'getFollowedBlogIds').mockResolvedValue(['blog-1'])
+    const offline = new Error('one unavailable')
+    bundle.mockImplementation(async (queries: QueryDocumentsOptions[], _tolerate: boolean, failed?: (error: unknown) => void) => {
+      if (queries.some((q) => q.documentTypeName === 'blogPost')) failed?.(offline)
+      return queries.map(() => [])
+    })
+
+    const polled = await notificationService.pollNewNotifications('viewer', 1_000)
+    expect(polled.failure).toBe(offline)
+    expect(polled.latestTimestamp).toBe(1_000)
+  })
+
+  it('keep each fetch its own: one failing at the same time does not make another look failed', async () => {
+    const quorum = new Error('invalid quorum')
+    bundle.mockImplementation(async (queries: QueryDocumentsOptions[], _tolerate: boolean, failed?: (error: unknown) => void) => {
+      if (queries[0].where?.[0]?.[2] === 'old-account') failed?.(quorum)
+      return queries.map(() => [])
+    })
+    const notificationService = await serviceWithSources()
+
+    const now = Date.now()
+    const [old, current] = await Promise.all([
+      notificationService.pollNewNotifications('old-account', 1_000),
+      notificationService.getInitialNotifications('new-account'),
+    ])
+    expect(old.failure).toBe(quorum)
+    expect(current.failure).toBeUndefined()
+    expect(current.latestTimestamp).toBeGreaterThanOrEqual(now)
   })
 
   it('answer as before when every source answered', async () => {

@@ -419,11 +419,11 @@ describe('v10 like notifications: recent content → like counts → one read pe
     expect(mocks.query).not.toHaveBeenCalled()
   })
 
-  it('returns nothing rather than a partial answer when the read fails', async () => {
+  it('rejects rather than give a partial or empty answer when the read fails, so the notification watermark holds', async () => {
     mocks.query.mockRejectedValueOnce(new Error('DAPI unavailable'))
     const likeService = await likeServiceOn('v10')
 
-    expect(await likeService.getLikesOnMyPosts(ME, new Date(SINCE), 'post')).toEqual([])
+    await expect(likeService.getLikesOnMyPosts(ME, new Date(SINCE), 'post')).rejects.toThrow('DAPI unavailable')
   })
 
   it('v9 keeps the single author-pinned read', async () => {

@@ -930,6 +930,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * index keys the target first, so this is a fan-out over the user's recent
    * content instead ({@link getLikesOnMyRecentContent}; `preloaded` unused).
    *
+   * Rejects when a read fails, so the notification watermark does not move
+   * past the likes it missed.
+   *
    * @param userId - Identity ID of the content owner
    * @param since - Only return likes created after this timestamp (optional)
    * @param kind - Whether to read likes of posts or likes of replies
@@ -938,35 +941,30 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const { docType, ownerField } = likeIndexFor(kind);
     if (!ownerField) return [];
 
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      const sinceTimestamp = since?.getTime() || 0;
-      const shape = indexOnlyLikeShapeFor(kind);
-      // v11: no like index keeps a like's time; timeless notifications diff
-      // likers instead (getRecentTargetLikeCounts + getLikersOf).
-      if (shape && shape.authorTimeIndex === null) return [];
-      if (shape?.authorTimeKeysTarget) {
-        return await this.getLikesOnMyRecentContent(userId, sinceTimestamp, kind, shape);
-      }
-
-      const response = preloaded ?? await sdk.documents.query({
-        dataContractId: this.contractId,
-        documentTypeName: docType,
-        where: [
-          [ownerField, '==', userId],
-          ['$createdAt', '>', sinceTimestamp]
-        ],
-        orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']],
-        limit: 100
-      });
-
-      const documents = normalizeSDKResponse(response);
-      return documents.map((doc) => this.transformDocumentFor(doc, kind));
-    } catch (error) {
-      logger.error('Error getting likes on my posts:', error);
-      return [];
+    const sinceTimestamp = since?.getTime() || 0;
+    const shape = indexOnlyLikeShapeFor(kind);
+    // v11: no like index keeps a like's time; timeless notifications diff
+    // likers instead (getRecentTargetLikeCounts + getLikersOf).
+    if (shape && shape.authorTimeIndex === null) return [];
+    if (shape?.authorTimeKeysTarget) {
+      return this.getLikesOnMyRecentContent(userId, sinceTimestamp, kind, shape);
     }
+
+    const response = preloaded ?? await sdk.documents.query({
+      dataContractId: this.contractId,
+      documentTypeName: docType,
+      where: [
+        [ownerField, '==', userId],
+        ['$createdAt', '>', sinceTimestamp]
+      ],
+      orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']],
+      limit: 100
+    });
+
+    const documents = normalizeSDKResponse(response);
+    return documents.map((doc) => this.transformDocumentFor(doc, kind));
   }
 
   /**
@@ -987,10 +985,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    *    `$createdAt` and its target, read off the row itself.
    *
    * Normally 1 composite + 1 read per kind; a full read falls back to
-   * per-target keyset reads. A failed read throws here, but
-   * getLikesOnMyPosts catches it and returns nothing, so the notification
-   * watermark can then pass this source (a known, pre-existing trait of every
-   * notification source).
+   * per-target keyset reads. A failed read rejects (no partial answer), and
+   * the notification fetch then keeps its watermark, so the next poll reads
+   * these likes again.
    */
   private async getLikesOnMyRecentContent(userId: string, sinceTimestamp: number, kind: TargetKind, shape: IndexOnlyLikeShape): Promise<LikeDocument[]> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
