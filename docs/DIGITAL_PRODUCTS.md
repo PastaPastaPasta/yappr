@@ -185,6 +185,13 @@ deliver a `javascript:` link.
   delivery (a worst-case 600-byte title, the longest variant and code), so
   every kit it saves is deliverable, one code per receipt if need be. Files have no such cap: they live on IPFS, up to 100 MB each, because
   they are encrypted in memory.
+- A listing and its kit are two documents, written one after the other, and
+  their fit is checked by the client, not by consensus. Two saves of the same
+  product from different devices at the same moment can still leave variant
+  names and content that no longer fit one delivery. The editor re-checks the
+  pair after each save and tells the seller, delivery refuses an oversized
+  receipt (nothing wrong is sent), and editing either document repairs it.
+  Closing this fully needs both written in one batch transition.
 - Delivery is the seller's act; consensus cannot see payment. The **buyer**
   writes the order payload, including line quantities and prices. With *as
   soon as it is ordered*, delivery happens whether or not anything was paid,

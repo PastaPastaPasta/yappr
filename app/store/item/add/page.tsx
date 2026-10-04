@@ -528,6 +528,23 @@ function AddItemPage() {
       // A locked or unreadable kit, or an untouched one, is left as it is.
       if (willSaveKit && sellerPrivateKey && !kitFirst && !(await writeKit(savedItemId, true))) return
 
+      // The listing and the kit are two documents, written one after the
+      // other; a save from another device in between can still leave a pair
+      // that no longer fits one delivery. Check the pair as it now stands and
+      // tell the seller, rather than leave silently. (Delivery refuses an
+      // oversized receipt, so nothing wrong is ever sent; editing either one
+      // repairs it.)
+      if (willSaveKit || keysGrow) {
+        const now = await storeItemService.getManyFresh([savedItemId]).then(([item]) => item, () => undefined)
+        const pairError = now
+          ? await retainedKitFitError(savedItemId, user.identityId, now.variants?.combinations.map((combo) => combo.key) ?? [])
+          : null
+        if (pairError) {
+          setError(`The product was saved, but it was also changed elsewhere at the same time, and its variants and delivery content no longer fit together: ${pairError} Edit the variants or the delivery content before it sells.`)
+          return
+        }
+      }
+
       router.push('/store/manage')
     } catch (err) {
       logger.error(`Failed to ${editingItemId ? 'update' : 'create'} item:`, err)
