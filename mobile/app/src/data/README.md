@@ -130,9 +130,12 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     unconfirmed: kept, and nothing said.
   - `unconfirmed`: the write may have landed, so the change stays and
     nothing is said (PRD G-3). The reconciler (`reconcile.ts`) checks it by
-    itself: 5, 20 and 80 s after, when the app returns to the foreground,
-    and when a feed, profile or thread read shows a document it names
-    (`writes.check`, never a resend). A check that proves it absent undoes
+    itself: 5, 20, 80 and 130 s after, when the app returns to the
+    foreground, when a feed, profile or thread read shows a document it
+    names, and when a message's conversation is read (`writes.check`,
+    never a resend). The engine calls a write absent only 2 minutes after
+    it stopped (`ABSENCE_AFTER_MS`), so the earlier checks can only find
+    it; the 130 s one can also prove it never landed. A check that proves it absent undoes
     the change and toasts the same `failureMessage`, with **Retry**. Once
     the automatic checks run out the job is `exhausted`
     (`useReconcileStore`, `isExhausted`): a screen that shows the write may
@@ -159,7 +162,7 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   too, so a like, unlike, like run sends one like.
 - **Offline (PRD G-1).** While the OS reports no connectivity, `runWrite`
   (and Retry) send nothing and make no optimistic change: the toast says
-  "You're offline. Nothing was sent." and the result is `refused`.
+  "You're offline. Try again when you're connected." and the result is `refused`.
 - **Short of credits or YAPP (PRD G-5).** `INSUFFICIENT_CREDITS` and
   `INSUFFICIENT_YAPP` failures toast the mobile copy (YAPP with "Get
   YAPP"), never Retry. `writeFailureText` gives the same text to a spec

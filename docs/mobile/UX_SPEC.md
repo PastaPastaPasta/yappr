@@ -397,7 +397,7 @@ Replaces the action bar on optimistic cards.
 
 | State | Row content |
 | --- | --- |
-| Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`). Also while the outcome is unknown (the network's answer timed out, an engine restart cut the call short, a minute with no answer): the app checks it by itself 5, 20 and 80 s after, again when the app returns to the foreground, and when a feed, profile or thread read shows it. No manual check exists |
+| Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`). Also while the outcome is unknown (the network's answer timed out, an engine restart cut the call short, a minute with no answer): the app checks it by itself 5, 20, 80 and 130 s after, again when the app returns to the foreground, and when a feed, profile or thread read shows it. No manual check exists. A post that never went out is called so only from the 130 s check ("Couldn't post" with Retry): before then it may still be on its way |
 | Thread progress | spinner + "Posting 2 of 5…" |
 | Couldn't confirm | `ExclamationCircleIcon` 14 `text.secondary` + "Couldn't confirm" + " · " + "Edit" (`link`). Only once the automatic checks ran out without proof either way (or a failure that may have landed), with the toast `toast.postUnconfirmed` once. Edit opens compose on its text, parts known to have posted kept posted. Never Retry (it may have landed), and never while the post's call still runs (it may still land). Checks go on (foreground, reads): the card becomes the post by itself if it turns up |
 | Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`). Only when the post was refused, or a check proved it absent |
@@ -568,7 +568,7 @@ Banners sit directly under the navigation bar of the current screen, push conten
 - Max width 78% of the screen. Padding 10 × 14. `radius.2xl` with the corner nearest the sender reduced to `radius.sm` on the last bubble of a run. `body` text.
 - Own: `bubble.own`, right-aligned. Other: `bubble.other`, left-aligned; in groups a 24 avatar on the last bubble of a run and the sender name (`caption.strong`, `text.secondary`) above the first.
 - Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Not delivered · Tap to retry" (`error`).
-- A send that may have gone out but is not proved (the network's answer timed out, no answer for 60 s, or an engine restart cut it short) still reads "Sending…": the app checks it by itself (5, 20 and 80 s after, on foreground, and when the conversation is read), and it turns "Sent" once it lands. Only once those checks ran out without proof does it read "Couldn't confirm · Tap to check" (`error`); a tap checks again, with a small spinner beside the status while it runs (a second tap does nothing, no toast). A send the engine never took goes back to the composer with `toast.dmNotSent`. Only a proved absence offers "Not delivered · Tap to retry". A refusal the engine won't retry reads "Not delivered · Tap to edit": the tap puts the unsent text back in the composer.
+- A send that may have gone out but is not proved (the network's answer timed out, no answer for 60 s, or an engine restart cut it short) still reads "Sending…": the app checks it by itself (5, 20, 80 and 130 s after, on foreground, and when the conversation's messages are read), and it turns "Sent" once it lands. Only once those checks ran out without proof does it read "Couldn't confirm · Tap to check" (`error`); a tap checks again, with a small spinner beside the status while it runs (a second tap does nothing, no toast). A send the engine never took goes back to the composer with `toast.dmNotSent`. Only a proved absence offers "Not delivered · Tap to retry". A refusal the engine won't retry reads "Not delivered · Tap to edit": the tap puts the unsent text back in the composer.
 - Time shown on long-press only (iOS swipe-left reveals times, as Messages; Android: tap a bubble toggles its time).
 - Day separator: centered `caption` `text.secondary` with 16 vertical margin.
 
@@ -1613,7 +1613,8 @@ A failed write toasts one sentence: the mobile copy for its engine code when the
 | `BUILD_DEFECT` | Something went wrong. Nothing was charged. Please report this. |
 | `MEDIA_UNREADABLE` | That image link didn't work. Edit the post to fix or remove it. |
 | `NONCE_CONFLICT` | None: it may be this very write executing, so it is checked like any unknown outcome, never re-sent |
-| `PARENT_TOO_YOUNG`, `FEE_SHARE_MISMATCH`, `FEE_CHANGED` | None at first: the engine sends the write again by itself after 2, 5 and 15 s (Platform refused it, so nothing can be duplicated), then the default |
+| `PARENT_TOO_YOUNG`, `FEE_CHANGED` | None at first: the engine sends the write again by itself after 2, 5 and 15 s (Platform refused it, so nothing can be duplicated), then the default |
+| `FEE_SHARE_MISMATCH` | The default, at once: the app and the contract disagree about the fee, so a re-send would be refused (and charged) the same way |
 | Anything else (sponsor fees, ownership, private feed sync, the engine's own restarts) | The write's failure sentence (below) |
 
 | Write | Failure sentence |
@@ -1930,7 +1931,7 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | network.testnet | Yappr is running on Dash Platform Testnet. Posts and accounts may be reset. |
 | network.state | Connected / Connecting… / Can't connect right now (booting and restarting both read "Connecting…") |
 | offline.banner | You're offline. Showing saved posts. |
-| offline.toast | You're offline. Nothing was sent. |
+| offline.toast | You're offline. Try again when you're connected. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
 | engine.tryAgain | Try again |
 | read.retrying | Retrying… (under a list's G-11 error while NET-03's backoff reads it again, §2.16) |

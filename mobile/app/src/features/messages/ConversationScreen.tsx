@@ -8,7 +8,7 @@ import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-re
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatBubbleOvalLeftEllipsisIcon, EllipsisHorizontalIcon, LockClosedIcon } from 'react-native-heroicons/outline';
 
-import { errorCode } from '~/data/writes';
+import { errorCode, OFFLINE_MESSAGE } from '~/data/writes';
 import { openUser } from '~/features/post/post-navigation';
 import { blockFromConversation, unblockFromConversation } from '~/features/safety/block-state';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
@@ -207,7 +207,7 @@ export function ConversationScreen() {
     if (!viewerId || !draft.trim()) return;
     if (offline) {
       // PRD G-1: nothing is sent, and the text stays in the composer.
-      toast("You're offline. Nothing was sent.");
+      toast(OFFLINE_MESSAGE);
       return;
     }
     // Taken from the store, not this render: a second tap before the re-render finds it empty.

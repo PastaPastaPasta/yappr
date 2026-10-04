@@ -31,6 +31,11 @@ function job(answer: () => boolean = () => false) {
 
 let stop: () => void = () => undefined;
 
+/** When the last automatic check runs: 130 s after the job starts. */
+const ALL_CHECKS_MS = RECHECK_GAPS_MS.reduce((sum, gap) => sum + gap, 0);
+/** The engine's `ABSENCE_AFTER_MS` (engine `writes/tickets.ts`): before it, a check can only confirm a landing. */
+const ENGINE_ABSENCE_AFTER_MS = 2 * 60_000;
+
 beforeAll(() => notifyManager.setScheduler((callback) => callback()));
 
 beforeEach(() => {
@@ -46,14 +51,15 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
-it('checks at 5 s, then 15 s and 60 s later, and only then says the checks ran out', async () => {
-  expect(RECHECK_GAPS_MS).toEqual([5_000, 15_000, 60_000]);
+it('checks at 5, 20, 80 and 130 s, and only then says the checks ran out', async () => {
+  expect(RECHECK_GAPS_MS).toEqual([5_000, 15_000, 60_000, 50_000]);
   const run = job();
   reconcile('ticket:t1', { run });
   for (const [gap, calls] of [
     [5_000, 1],
     [15_000, 2],
     [60_000, 3],
+    [50_000, 4],
   ] as const) {
     await jest.advanceTimersByTimeAsync(gap - 1);
     expect(run).toHaveBeenCalledTimes(calls - 1);
@@ -64,7 +70,12 @@ it('checks at 5 s, then 15 s and 60 s later, and only then says the checks ran o
   expect(isExhausted('ticket:t1')).toBe(true);
   // No more automatic checks after that.
   await jest.advanceTimersByTimeAsync(10 * 60_000);
-  expect(run).toHaveBeenCalledTimes(3);
+  expect(run).toHaveBeenCalledTimes(4);
+});
+
+it('runs its last automatic check past the engine\'s absence window, so a write that never landed can be proved absent', () => {
+  // With a margin for the moment the app hears of the ticket after the engine settled it.
+  expect(ALL_CHECKS_MS).toBeGreaterThanOrEqual(ENGINE_ABSENCE_AFTER_MS + 10_000);
 });
 
 it('stops once a check settles the outcome, and never says anything ran out', async () => {
@@ -84,7 +95,7 @@ it('checks every job again when the app comes back to the foreground, also once 
   let landed = false;
   const run = job(() => landed);
   reconcile('ticket:t3', { run });
-  await jest.advanceTimersByTimeAsync(80_000);
+  await jest.advanceTimersByTimeAsync(ALL_CHECKS_MS);
   expect(isExhausted('ticket:t3')).toBe(true);
 
   appStateListener()('background');
@@ -92,13 +103,13 @@ it('checks every job again when the app comes back to the foreground, also once 
   landed = true;
   appStateListener()('active');
   await jest.advanceTimersByTimeAsync(0);
-  expect(run).toHaveBeenCalledTimes(4);
+  expect(run).toHaveBeenCalledTimes(5);
   // Settled: the job is gone, and with it "ran out".
   expect(isExhausted('ticket:t3')).toBe(false);
   appStateListener()('background');
   appStateListener()('active');
   await jest.advanceTimersByTimeAsync(0);
-  expect(run).toHaveBeenCalledTimes(4);
+  expect(run).toHaveBeenCalledTimes(5);
 });
 
 it('checks a job when a feed, profile or thread read shows what it touched, at most every 10 s', async () => {
@@ -131,18 +142,29 @@ it('checks a job when a feed, profile or thread read shows what it touched, at m
   expect(run).toHaveBeenCalledTimes(3);
 });
 
+it('checks a message job when its conversation\'s messages are read', async () => {
+  const run = job();
+  reconcile('ticket:t7', { run, shownIn: (ids) => ids.has('conv-1') });
+  await queryClient.fetchQuery({ queryKey: queryKeys.dm.messages('conv-2'), queryFn: async () => ({ pages: [] }) });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(run).not.toHaveBeenCalled();
+  await queryClient.fetchQuery({ queryKey: queryKeys.dm.messages('conv-1'), queryFn: async () => ({ pages: [] }) });
+  await jest.advanceTimersByTimeAsync(0);
+  expect(run).toHaveBeenCalledTimes(1);
+});
+
 it('never runs out while the write’s own call still runs, and starts over when a new phase begins', async () => {
   const run = job();
   reconcile('ticket:t5', { run, canExhaust: false, episode: 'running' });
-  await jest.advanceTimersByTimeAsync(80_000);
-  expect(run).toHaveBeenCalledTimes(3);
+  await jest.advanceTimersByTimeAsync(ALL_CHECKS_MS);
+  expect(run).toHaveBeenCalledTimes(4);
   expect(isExhausted('ticket:t5')).toBe(false);
 
   // The call answered, still without proof: the schedule starts again, and may run out now.
   reconcile('ticket:t5', { run, episode: 'settled' });
   await jest.advanceTimersByTimeAsync(5_000);
-  expect(run).toHaveBeenCalledTimes(4);
-  await jest.advanceTimersByTimeAsync(75_000);
+  expect(run).toHaveBeenCalledTimes(5);
+  await jest.advanceTimersByTimeAsync(ALL_CHECKS_MS - 5_000);
   expect(isExhausted('ticket:t5')).toBe(true);
   // The same phase again keeps the schedule (no restart).
   reconcile('ticket:t5', { run, episode: 'settled' });
@@ -173,7 +195,7 @@ it('treats a check that could not run as no answer, and forgets a job that was s
   await jest.advanceTimersByTimeAsync(5_000);
   expect(run).toHaveBeenCalledTimes(1);
   stopReconciling('ticket:t6');
-  await jest.advanceTimersByTimeAsync(80_000);
+  await jest.advanceTimersByTimeAsync(ALL_CHECKS_MS);
   expect(run).toHaveBeenCalledTimes(1);
   expect(isExhausted('ticket:t6')).toBe(false);
 });

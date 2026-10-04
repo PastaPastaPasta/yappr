@@ -790,7 +790,7 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
       const first = publish(['first']);
       publish(['second']);
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(80_000 - 1);
+        await jest.advanceTimersByTimeAsync(130_000 - 1);
       });
       expect(pendingStatus(usePendingPosts.getState().entries[first]!)).toEqual({ state: 'posting' });
       expect(toastMessage()).toBeUndefined();
@@ -864,11 +864,11 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
       expect(pendingStatus(only()!)).toEqual({ state: 'posting' });
       expect(toastMessage()).toBeUndefined();
 
-      // The 80 s check is the last: "Couldn't confirm · Edit", never Retry, and a toast once.
+      // The 130 s check is the last: "Couldn't confirm · Edit", never Retry, and a toast once.
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(60_000);
+        await jest.advanceTimersByTimeAsync(110_000);
       });
-      expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(3);
+      expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(4);
       expect(isExhausted(ticketJob(t.id))).toBe(true);
       expect(pendingStatus(only()!)).toEqual({ state: 'unconfirmed' });
       const { result } = renderHook(() => usePendingWriteStatus(localId));
@@ -878,7 +878,7 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
       await act(async () => {
         await jest.advanceTimersByTimeAsync(10 * 60_000);
       });
-      expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(3);
+      expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(4);
       expect(toastMessage()).toBeUndefined();
 
       // A refresh that shows it adopts it, and checks it again.
@@ -889,7 +889,7 @@ describe('an engine restart while a post was in flight (NET-04, COMP-10)', () =>
       await act(async () => {
         await jest.advanceTimersByTimeAsync(0);
       });
-      expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(4);
+      expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(5);
 
       // Edit takes it back: the text to compose (the landed part kept posted), the ticket dismissed.
       act(() => editPending(localId));

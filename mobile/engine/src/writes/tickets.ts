@@ -40,15 +40,18 @@ export const PENDING_DEADLINE_MS = 60_000
 /**
  * Refusals that say nothing about the write itself, only about the moment
  * (PRD G-4, UX_SPEC §5.4): a parent too young to reference, a fee multiplier
- * or moderator share that moved. Platform refused them, so they never
- * executed and sending again cannot duplicate anything. The ticket stays
+ * that moved. Platform refused them, so they never executed and sending
+ * again cannot duplicate anything. A moderators-share mismatch
+ * (`FEE_SHARE_MISMATCH`) is not one: lib always agrees to the full declared
+ * fee, so it means the client and the contract disagree, and each re-send
+ * would only be refused (and charged) the same way. The ticket stays
  * `pending` and is sent again after each of `AUTO_RETRY_DELAYS_MS`; only the
  * last refusal is reported. A nonce refusal (`NONCE_CONFLICT`) is not one: it
  * may be this very transition executing, so it stays `unconfirmed` for a
  * check, and lib's pending-nonce refusal (`PENDING_WRITE`) is not either: it
  * holds for minutes, so re-sending would only loop.
  */
-export const AUTO_RETRY_CODES: ReadonlySet<EngineErrorData['code']> = new Set(['PARENT_TOO_YOUNG', 'FEE_SHARE_MISMATCH', 'FEE_CHANGED'])
+export const AUTO_RETRY_CODES: ReadonlySet<EngineErrorData['code']> = new Set(['PARENT_TOO_YOUNG', 'FEE_CHANGED'])
 /** The backoff before each silent re-send: three at most. */
 export const AUTO_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_000]
 
@@ -70,7 +73,13 @@ export type ProbeResult =
 export interface WriteRunContext {
   /** The ticket as it stands (on a retry: its documents name what already landed). */
   readonly ticket: WriteTicket
-  stage(stage: WriteStage): void
+  /**
+   * The stage the attempt is in. From the first stage on, a restart no
+   * longer proves the attempt sent nothing (`stagedSends`), unless
+   * `beforeSend` says this stage comes before any write call
+   * (`settleTarget`'s wait for a parent, which may last minutes).
+   */
+  stage(stage: WriteStage, beforeSend?: boolean): void
   progress(done: number, total: number): void
   /** Record document ids as soon as they are known, so a later `check` can prove them. */
   documents(documents: TicketDocument[]): void
@@ -230,6 +239,27 @@ export const STILL_SENDING_ERROR: EngineErrorData = {
   userMessage: 'Still waiting for this write\'s answer.',
 }
 
+/**
+ * How long after a write's last attempt stopped running (`ProbeKit.sinceSettled`)
+ * a check that does not find it counts as proof it never landed: a
+ * transition that went out executes within a block or two (lib's
+ * `identity-nonce.ts`), so after this it is not still on its way. Before
+ * it, not found is only "not yet": the ticket stays `unconfirmed`
+ * (`NOT_FOUND_YET_ERROR`), never retryable, so a like, delete or post still
+ * propagating is never rolled back or offered a second send. The host's
+ * reconciler checks once more past it (mobile/app `RECHECK_GAPS_MS`).
+ */
+export const ABSENCE_AFTER_MS = 2 * 60_000
+
+/** A check found nothing, too soon after the attempt stopped to call it absent (`ABSENCE_AFTER_MS`). */
+export const NOT_FOUND_YET_ERROR: EngineErrorData = {
+  code: 'UNKNOWN',
+  consensusCode: null,
+  outcome: 'unknown',
+  retryable: false,
+  userMessage: 'Not seen yet: a write that went out moments ago can take a while to show.',
+}
+
 const NOT_FOUND_ERROR: EngineErrorData = {
   code: 'NOT_RECORDED',
   consensusCode: null,
@@ -309,9 +339,10 @@ export function createTicketStore(options: TicketStoreOptions) {
         // Interrupted by a crash or restart, and never re-sent. Still `queued` under a handler that
         // reports a stage before it sends anything, the attempt sent nothing: failed, and it may be
         // sent again (the parts an earlier attempt posted are confirmed documents, kept for the
-        // resume). Otherwise whether it went out is unknown. (`unsent` holds until the first stage:
-        // a ticket its deadline settled no longer shows that stage.)
-        const queued = timedOut || restored.stage === 'queued'
+        // resume). Otherwise whether it went out is unknown. (`unsent` holds until the first stage
+        // that may send: a ticket its deadline settled no longer shows that stage. A wait for a
+        // parent before any send keeps it.)
+        const queued = timedOut || restored.stage === 'queued' || restored.stage === 'waiting-parent'
         const notSent = unsent === true && queued && restored.documents.every(doc => doc.confirmed)
         const interrupted: Partial<WriteTicket> = notSent
           ? { state: 'failed', stage: null, error: RESTARTED_UNSENT_ERROR, retryable: true, updatedAt: new Date(settled) }
@@ -509,10 +540,10 @@ export function createTicketStore(options: TicketStoreOptions) {
     }
     const ctx: WriteRunContext = {
       get ticket() { return clone(recordOf(id).ticket) },
-      stage: stage => {
+      stage: (stage, beforeSend) => {
         // From here the attempt may send: a restart no longer proves it sent nothing.
         const record = recordOf(id)
-        record.unsent = false
+        if (!beforeSend) record.unsent = false
         record.stage = stage
         // Past its deadline the ticket is no longer pending: it shows no stage.
         if (record.ticket.state === 'pending') update(id, { stage })
@@ -718,8 +749,14 @@ export function createTicketStore(options: TicketStoreOptions) {
       switch (result.state) {
         case 'applied':
           return update(id, { state: 'confirmed', error: null, retryable: false, lastCheckedAt, documents: allConfirmed(documents) })
-        case 'not-applied':
+        case 'not-applied': {
+          // Not found this soon after the attempt stopped may be a transition still on its way.
+          const settledAt = records.get(id)?.settledAt
+          if (settledAt === undefined || now() - settledAt < ABSENCE_AFTER_MS) {
+            return update(id, { error: NOT_FOUND_YET_ERROR, retryable: false, lastCheckedAt, documents })
+          }
           return update(id, { error: NOT_FOUND_ERROR, retryable: true, lastCheckedAt, documents })
+        }
         case 'unknown':
           return update(id, { error: { ...classify(result.error), retryable: false }, retryable: false, lastCheckedAt, documents })
       }

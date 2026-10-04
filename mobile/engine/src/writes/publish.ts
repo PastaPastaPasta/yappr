@@ -9,7 +9,7 @@ import { isUnconfirmed } from '@/lib/unconfirmed-writes'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { RpcError } from '../protocol/envelope'
 import { assertId, assertMediaUrl, assertTarget, badRequest, characters, settleTarget, signer, socialDoc } from './handler-kit'
-import { NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
+import { ABSENCE_AFTER_MS, NotSentError, type ProbeKit, type ProbeResult, type WriteHandler, type WriteResult, type WriteRunContext } from './tickets'
 import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types'
 
 /**
@@ -111,12 +111,6 @@ const FOUND_SKEW_MS = 60_000
  * is an earlier post of the same words, not this part.
  */
 const SEARCH_BACK_MS = 60 * 60_000
-/**
- * How long after the attempt stopped running a part not found counts as
- * absent: a transition that went out executes within a block or two (lib's
- * `identity-nonce.ts`), so after this it is not still on its way.
- */
-export const ABSENCE_AFTER_MS = 2 * 60_000
 
 type PartSearch = { found: TicketDocument[]; absent: number; unclear: string | null }
 

@@ -213,7 +213,7 @@ function record(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
 }
 
 /** PRD G-1: a write tapped while the OS reports no connectivity. */
-export const OFFLINE_MESSAGE = "You're offline. Nothing was sent.";
+export const OFFLINE_MESSAGE = "You're offline. Try again when you're connected.";
 
 /**
  * The mobile copy for the engine codes that have something the user can act
@@ -351,8 +351,8 @@ function settle(ticket: WriteTicket): void {
 /**
  * Hands an unknown outcome to the reconciler (`./reconcile`), and takes it
  * back once the ticket settles: every unconfirmed ticket of the active
- * account, followed by a spec or not, is checked automatically (5 s, 15 s,
- * 60 s, then on foreground and on reads that show it).
+ * account, followed by a spec or not, is checked automatically (5, 20, 80
+ * and 130 s after, then on foreground and on reads that show it).
  */
 function watch(ticket: WriteTicket): void {
   const key = ticketJob(ticket.id);
@@ -364,7 +364,13 @@ function watch(ticket: WriteTicket): void {
   }
   // Its call still runs past the engine's deadline: its answer settles it, so its checks never run out.
   const running = stillRunning(ticket);
-  const shown = [ticket.target && 'id' in ticket.target ? ticket.target.id : null, ...ticket.documents.map((d) => d.id)];
+  // What a read shows it by: the post it names or created, or (a message) its conversation.
+  const target = ticket.target;
+  const shown = [
+    target && 'id' in target ? target.id : null,
+    target && 'conversationKey' in target ? target.conversationKey : null,
+    ...ticket.documents.map((d) => d.id),
+  ];
   reconcile(key, {
     run: async () => {
       const checked = await checkWrite(ticket.id);

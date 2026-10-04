@@ -11,11 +11,11 @@ import { queryClient } from '~/state/query-client';
  * job, keyed by what it follows (`ticket:<id>`, a post or a message whose call
  * never named its ticket). A job runs its check:
  *
- * - automatically, `RECHECK_GAPS_MS` apart (5 s after it starts, then 15 s,
- *   then 60 s later);
+ * - automatically, `RECHECK_GAPS_MS` apart (5, 20, 80 and 130 s after it
+ *   starts);
  * - when the app comes back to the foreground;
- * - when a feed, profile or thread read shows what the write touched
- *   (`shownIn`).
+ * - when a feed, profile or thread read shows what the write touched, or a
+ *   conversation's messages are read (`shownIn`).
  *
  * A check that settles the outcome (landed, or proved absent) ends the job.
  * Once the automatic checks are used up without an answer, the job is
@@ -24,8 +24,15 @@ import { queryClient } from '~/state/query-client';
  * still settles by itself. Nothing here ever re-sends a write.
  */
 
-/** The gaps before each automatic check: at 5 s, 20 s and 80 s after the job starts. */
-export const RECHECK_GAPS_MS: readonly number[] = [5_000, 15_000, 60_000];
+/**
+ * The gaps before each automatic check: at 5, 20, 80 and 130 s after the job
+ * starts. The engine calls a write absent only once its attempt stopped at
+ * least 2 minutes before (`ABSENCE_AFTER_MS`, engine `writes/tickets.ts`):
+ * the earlier checks can only confirm a landing, and the last one, past that
+ * window, can also prove it never landed (Retry), so "Couldn't confirm" is
+ * left for what no read can tell.
+ */
+export const RECHECK_GAPS_MS: readonly number[] = [5_000, 15_000, 60_000, 50_000];
 /** A foreground or a read checks one job again at most this often. */
 export const TRIGGER_GAP_MS = 10_000;
 /** A scheduled check that finds a check already running waits this long. */
@@ -185,10 +192,16 @@ function idsIn(value: unknown, into: Set<string> = new Set()): Set<string> {
   return into;
 }
 
-/** The reads that show posts and what was done to them: feeds, profiles and threads. */
-function isContentRead(key: readonly unknown[]): boolean {
+/**
+ * What a read shows, for jobs' `shownIn`: every id in a feed, profile or
+ * thread read (posts and what was done to them), a conversation's key for
+ * its messages. Null for any other read.
+ */
+function shownBy(key: readonly unknown[], data: unknown): Set<string> | null {
   const family = key[2];
-  return family === 'feed' || family === 'profile' || family === 'post';
+  if (family === 'feed' || family === 'profile' || family === 'post') return idsIn(data);
+  if (family === 'dm' && key[3] === 'messages' && typeof key[4] === 'string') return new Set([key[4]]);
+  return null;
 }
 
 let stopTriggers: (() => void) | null = null;
@@ -204,8 +217,8 @@ export function startReconciler(): () => void {
     });
     const stopCache = queryClient.getQueryCache().subscribe((event) => {
       if (jobs.size === 0 || event.type !== 'updated' || event.action.type !== 'success') return;
-      if (!isContentRead(event.query.queryKey)) return;
-      recheckAll('read', idsIn(event.query.state.data));
+      const shown = shownBy(event.query.queryKey, event.query.state.data);
+      if (shown) recheckAll('read', shown);
     });
     stopTriggers = () => {
       appState.remove();

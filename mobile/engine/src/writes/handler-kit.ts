@@ -70,7 +70,8 @@ export async function settleTarget(ctx: WriteRunContext, id: string): Promise<vo
   if (!isUnconfirmed(id)) return
   let landed = false
   for (let round = 0; round < PARENT_WAIT_ROUNDS && !landed; round++) {
-    ctx.stage('waiting-parent')
+    // Before any send: a restart while it waits finds it never sent (a stagedSends handler's).
+    ctx.stage('waiting-parent', true)
     landed = await settleUnconfirmed(id)
   }
   if (!landed) throw new RpcError('The post this write names never showed up, so nothing was sent.', 'PARENT_UNCONFIRMED')
@@ -83,7 +84,9 @@ export async function settleTarget(ctx: WriteRunContext, id: string): Promise<vo
  * says whether the write's effect is visible to the ticket's signer,
  * `expected` whether it should be. One node can lag, so an answer that
  * disagrees counts only when a second read agrees with it. A read that
- * throws proves nothing.
+ * throws proves nothing. `check` takes a not-applied answer as proof only
+ * once the attempt stopped `ABSENCE_AFTER_MS` before: until then the write
+ * may still be on its way.
  *
  * Several lib reads report a failed query as "absent". Where only those
  * exist, a not-applied verdict may be wrong; the retry it allows is still

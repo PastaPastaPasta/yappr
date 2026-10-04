@@ -14,7 +14,7 @@ import { getLogs } from '~/engine/logs';
 import { isExhausted, ticketJob } from './reconcile';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { useSessionStore } from './session';
-import { adoptRestoredWrites, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { adoptRestoredWrites, OFFLINE_MESSAGE, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 let mockOffline = false;
@@ -144,16 +144,16 @@ describe('submitWrite', () => {
       expect(isExhausted(ticketJob(pending.id))).toBe(false);
     });
 
-    it('checks it again at 5, 20 and 80 s, then says nothing more, and settles when a check finds it', async () => {
+    it('checks it again at 5, 20, 80 and 130 s, then says nothing more, and settles when a check finds it', async () => {
       const pending = await submitPending();
       const unconfirmed = advance(pending, { state: 'unconfirmed' });
       act(() => fakeEngine.emit('write.status', unconfirmed));
       const check = fakeEngine.method('writes.check');
       check.mockImplementation(async () => ({ ...unconfirmed, lastCheckedAt: new Date() }));
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(80_000);
+        await jest.advanceTimersByTimeAsync(130_000);
       });
-      expect(check).toHaveBeenCalledTimes(3);
+      expect(check).toHaveBeenCalledTimes(4);
       expect(isExhausted(ticketJob(pending.id))).toBe(true);
       expect(currentToast()).toBeNull();
       expect(undo).not.toHaveBeenCalled();
@@ -174,7 +174,7 @@ describe('submitWrite', () => {
       act(() => fakeEngine.emit('write.status', stalled));
       fakeEngine.method('writes.check').mockImplementation(async () => ({ ...stalled, lastCheckedAt: new Date() }));
       await act(async () => {
-        await jest.advanceTimersByTimeAsync(80_000);
+        await jest.advanceTimersByTimeAsync(130_000);
       });
       expect(isExhausted(ticketJob(pending.id))).toBe(false);
     });
@@ -201,7 +201,7 @@ describe('submitWrite', () => {
       try {
         act(() => fakeEngine.emit('write.status', ticket({ identityId: 'someone-else', state: 'unconfirmed' })));
         await act(async () => {
-          await jest.advanceTimersByTimeAsync(80_000);
+          await jest.advanceTimersByTimeAsync(130_000);
         });
         expect(fakeEngine.method('writes.check')).not.toHaveBeenCalled();
       } finally {
@@ -435,12 +435,12 @@ describe('submitWrite', () => {
     expect(currentToast()).toBeNull();
   });
 
-  it('sends nothing while offline: no change, and "Nothing was sent" (PRD G-1)', async () => {
+  it('sends nothing while offline: no change, and the offline toast (PRD G-1)', async () => {
     mockOffline = true;
     await expect(runWrite(spec, target)).resolves.toMatchObject({ status: 'refused', error: { code: 'OFFLINE' } });
     expect(apply).not.toHaveBeenCalled();
     expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
-    expect(currentToast()).toMatchObject({ message: "You're offline. Nothing was sent." });
+    expect(currentToast()).toMatchObject({ message: OFFLINE_MESSAGE });
   });
 
   it('says what a code the user can act on means, in mobile copy (UX_SPEC §5.4)', async () => {

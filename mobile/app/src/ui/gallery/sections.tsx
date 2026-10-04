@@ -331,7 +331,7 @@ function FeedbackSection() {
             label="Success"
             size="sm"
             variant="secondary"
-            onPress={() => toast.success('Post created successfully!')}
+            onPress={() => toast.success('Posted')}
           />
           <Button
             label="Error"

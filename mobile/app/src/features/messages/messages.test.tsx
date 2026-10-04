@@ -546,13 +546,13 @@ describe('Conversation (DM-03, DM-04)', () => {
     });
     fakeEngine.method('writes.check').mockResolvedValue(advance(unknown, { lastCheckedAt: new Date() }));
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(80_000 - 1);
+      await jest.advanceTimersByTimeAsync(130_000 - 1);
     });
     expect(screen.getByText('Sending…')).toBeTruthy();
     await act(async () => {
       await jest.advanceTimersByTimeAsync(1);
     });
-    expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(3);
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(4);
     expect(screen.getByText("Couldn't confirm · Tap to check")).toBeTruthy();
     expect(useToastStore.getState().current).toBeNull();
 
@@ -564,7 +564,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByTestId('dm-status-checking')).toBeTruthy();
     fireEvent.press(screen.getByText("Couldn't confirm · Tap to check"));
     await act(async () => {});
-    expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(4);
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledTimes(5);
     // Found: "Sent", and no toast.
     const confirmed = advance(unknown, { state: 'confirmed', error: null, updatedAt: new Date(Date.now() + 5000) });
     fakeEngine
@@ -832,7 +832,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     // The engine still lists the landed send's ticket; the first send has none.
     fakeEngine.method('writes.list').mockResolvedValue([advance(later, { state: 'confirmed' })]);
     await act(async () => {
-      await jest.advanceTimersByTimeAsync(80_000);
+      await jest.advanceTimersByTimeAsync(130_000);
     });
     expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
   });
