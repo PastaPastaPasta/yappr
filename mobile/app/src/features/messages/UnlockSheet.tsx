@@ -38,12 +38,14 @@ function unlocked(close: () => void): void {
 const KEY_SHAPE = /^([1-9A-HJ-NP-Za-km-z]{51,52}|[0-9a-fA-F]{64})$/;
 
 /**
- * Why a key was not taken: text that is not a key at all gets the formats,
- * a key that is one but not this account's says so.
+ * Why a key was not taken: text that is not a key at all gets the formats;
+ * a key that is one but not the one messages use says so, whichever way it
+ * is not (another account's, another of this account's keys, another
+ * network's).
  */
 export function keyError(value: string): string {
   return KEY_SHAPE.test(value.trim())
-    ? "That key doesn't match this account."
+    ? "That isn't the encryption key for this account's messages."
     : "That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr.";
 }
 

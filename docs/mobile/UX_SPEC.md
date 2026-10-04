@@ -1198,7 +1198,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Routes** `/messages/new`, `/messages/new-group` (modals) · **Stories** DM-05, DM-06.
 - **New message:** title "New message", description line "Choose a person to start an encrypted conversation.", search field "Search by username...", hint line, then "Your followers" section of user rows (no follow buttons). Tapping a row opens the conversation and closes the modal.
 - **Creating:** the form locks with a spinner on "Create group" and the caption "Creating group…". Confirmed: the new group opens. An unknown outcome (a timeout, an engine restart) goes to the inbox, read again, which shows the group once it is there; the form never offers a second creation, and the engine refuses one while the first still runs.
-- **Keys the creation missed:** the owner's app sends them again by itself, with no toast: on group open, on app foreground and after each backoff (30 s, then 2 min), at most 3 times per member, never while a resend for that member still runs (its `dm.group` deadline is 5 minutes). Only once the attempts are used up: "1 member hasn't been added yet." / "{n} members haven't been added yet." with "Retry".
+- **Keys the creation missed:** the owner's app sends them again by itself, with no toast: on group open, on app foreground and after each backoff (30 s, then 2 min), at most 3 times per member, never while a resend for that member still runs (its `dm.group` deadline is 5 minutes). A member the owner removes is dropped. Only once the attempts are used up, and only for members whose every attempt proved it failed: "1 member hasn't been added to {group} yet." / "{n} members haven't been added to {group} yet." with "Retry". A member with any resend whose outcome stayed unknown (it may have landed) is let go with no toast; "Re-invite" stays in the member menu.
 - **New group:** title "New group", description "Name the group and pick its members.", "Group name" field (counter at 80+/100), selected members as chips (avatar `xs` + name + ×), the same search and followers list with checkmarks, and "Create group" (primary, in the navigation bar on iOS, a full-width bottom button on Android that stays above the keyboard while the search field has focus), disabled until a name and at least one member.
 
 ### 4.22 Group info
@@ -1223,7 +1223,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Ended or left:** the actions are replaced by the state text.
 - **Re-invite** (owner's member menu): the fallback when the app's own key resends could not reach a member; toast "Invite sent".
-- **Leave:** after the confirm, the inbox at once, without the group; it comes back only if the leave fails.
+- **Leave:** after the confirm, the inbox at once, without the group; it comes back only if the leave is proved not to have gone out, or the account changes first.
 - **Legacy (testnet):** no groups; a link here goes to the inbox.
 - Confirmations use the confirm dialog (2.13) with copy 5.8.
 
@@ -1781,7 +1781,7 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | dm.unlock.placeholder | Paste your encryption key |
 | dm.unlock.done | Messages unlocked |
 | dm.unlock.invalid | That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr. |
-| dm.unlock.mismatch | That key doesn't match this account. |
+| dm.unlock.mismatch | That isn't the encryption key for this account's messages. (another account's key, another of this account's keys, or another network's) |
 | dm.thread.empty | No messages yet. Start the conversation! **(web)** |
 | dm.composer | Type a message... **(web)** |
 | dm.send | Send message **(web)** |
@@ -1801,7 +1801,7 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | dm.group.max | A group can have at most 100 members. **(web)** |
 | dm.group.createFailed | Could not create the group **(web)** |
 | dm.group.creating | Creating group… |
-| dm.group.keysFailed | 1 member hasn't been added yet. / {n} members haven't been added yet. (action: Retry; only once the app's own resends are used up) |
+| dm.group.keysFailed | 1 member hasn't been added to {group} yet. / {n} members haven't been added to {group} yet. / (the inbox has not read the name) 1 member hasn't been added yet. / {n} members haven't been added yet. (action: Retry; only once the app's own resends are used up, for members whose every resend proved it failed) |
 | dm.group.info | Group info |
 | dm.group.owner | Owner **(web)** |
 | dm.group.rename / renamed | Rename / Group renamed **(web)** |

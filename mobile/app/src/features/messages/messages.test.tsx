@@ -214,7 +214,7 @@ describe('Messages inbox (DM-01, DM-02)', () => {
     fireEvent.changeText(screen.getByTestId('dm-unlock-key'), 'ab'.repeat(32));
     fireEvent.press(screen.getByTestId('dm-unlock-save'));
     await act(async () => {});
-    expect(screen.getByTestId('dm-unlock-error')).toHaveTextContent("That key doesn't match this account.");
+    expect(screen.getByTestId('dm-unlock-error')).toHaveTextContent("That isn't the encryption key for this account's messages.");
   });
 
   it('lists conversations with previews, filters by search, and keeps archived ones behind the footer (#18)', async () => {

@@ -176,6 +176,8 @@ export default function KeySignInScreen() {
               layoutStyle={{ alignSelf: 'flex-start' }}
               testID="key-add-account"
               onPress={() => {
+                // The add flow opens its own sign-in on top: the key typed here is not left behind it.
+                onChangeKey('');
                 addAccount().catch(() => undefined);
               }}
             />

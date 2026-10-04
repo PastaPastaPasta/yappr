@@ -6,6 +6,7 @@ import { create } from 'zustand';
 import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
+import { writeTicketOf } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
@@ -87,24 +88,43 @@ async function commitArchive(key: string): Promise<void> {
 
 /**
  * A group just left (PRD DM-08): out of the inbox at once, while the leave
- * (`ticketId`) goes out. Back if the leave fails (the tracker says so); once
- * it is confirmed the engine keeps it out itself.
+ * (`ticketId`) goes out. Back if the leave fails (the tracker says so), or
+ * if the account changes first; once it is confirmed the engine keeps it out
+ * itself. An outcome that stays unknown keeps it out for this session: lib
+ * hides a group it sees left.
  */
 export function hideWhileLeaving(key: string, ticketId: string): void {
   hideLocally(key);
-  const stop = onEngineEvent('write.status', (ticket: WriteTicket) => {
-    if (ticket.id !== ticketId) return;
-    if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) {
-      stop();
+  const identityId = useSessionStore.getState().session?.identityId ?? null;
+  let done = false;
+  let stopEvents = () => {};
+  let stopSession = () => {};
+  const finish = (refresh: boolean) => {
+    done = true;
+    stopEvents();
+    stopSession();
+    if (!refresh) {
       unhideLocally(key);
-    } else if (ticket.state === 'confirmed') {
-      stop();
-      queryClient
-        .invalidateQueries({ queryKey: queryKeys.dm.conversations })
-        .catch(() => undefined)
-        .finally(() => unhideLocally(key));
+      return;
     }
+    queryClient
+      .invalidateQueries({ queryKey: queryKeys.dm.conversations })
+      .catch(() => undefined)
+      .finally(() => unhideLocally(key));
+  };
+  const settle = (ticket: WriteTicket | null) => {
+    if (done || ticket?.id !== ticketId) return;
+    // Proved not to have left (the tracker says "Couldn't leave the group"); a failure that may have landed stays out.
+    const notLeft = ticket.state === 'failed' ? ticket.error?.outcome !== 'unknown' : ticket.state === 'unconfirmed' && ticket.retryable;
+    if (notLeft) finish(false);
+    else if (ticket.state === 'confirmed') finish(true);
+  };
+  stopEvents = onEngineEvent('write.status', settle);
+  stopSession = useSessionStore.subscribe((state) => {
+    if ((state.session?.identityId ?? null) !== identityId) finish(false);
   });
+  // It may have settled before this listened (a refusal answered with the ticket).
+  settle(writeTicketOf(ticketId));
 }
 
 /**

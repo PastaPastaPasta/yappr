@@ -6,6 +6,8 @@ import { errorCode, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { toast } from '~/ui/toast';
 
+import { forgetKeyResend } from './group-keys';
+
 /**
  * Group changes (PRD DM-06, DM-07): `dm.group` write tickets. Each confirms
  * with its toast and re-reads the inbox; failures are the tracker's to
@@ -50,12 +52,21 @@ export const addMemberWrite = groupSpec<{ key: string; memberId: string; name: s
   ({ key, memberId }) => `dm.group:${key}:${memberId}`,
 );
 
-export const removeMemberWrite = groupSpec<{ key: string; memberId: string }>(
+const removeMember = groupSpec<{ key: string; memberId: string }>(
   (api, { key, memberId }) => api.dm.removeMember(key, memberId),
   'Member removed',
   GROUP_UPDATE_FAILED,
   ({ key, memberId }) => `dm.group:${key}:${memberId}`,
 );
+
+export const removeMemberWrite: WriteSpec<{ key: string; memberId: string }> = {
+  ...removeMember,
+  onConfirmed: (ticket, vars) => {
+    // Out of the group: nothing more is resent to them.
+    forgetKeyResend(vars.key, vars.memberId);
+    removeMember.onConfirmed?.(ticket, vars);
+  },
+};
 
 export const resendKeysWrite = groupSpec<{ key: string; memberId: string }>(
   (api, { key, memberId }) => api.dm.resendKeys(key, memberId),

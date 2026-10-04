@@ -1,11 +1,13 @@
-import type { WriteTicket } from '@engine/api';
+import type { ConversationDTO, WriteTicket } from '@engine/api';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { onEngineEvent } from '~/data/events';
+import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { errorCode, writeTicketOf } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { queryClient } from '~/state/query-client';
 import { toast } from '~/ui/toast';
 
 /**
@@ -21,14 +23,19 @@ import { toast } from '~/ui/toast';
  * with its 5-minute deadline (#666): while its call still runs (pending, or
  * `STILL_SENDING` past the deadline) nothing else is sent for that member,
  * so one never races another. A refusal that proves the member is no longer
- * missing a key (the group ended, they left or were removed) drops them.
+ * missing a key (the group ended, they left or were removed) drops them, and
+ * so does the owner removing them (`forgetKeyResend`).
  *
  * Background upkeep, not a user's write: it calls the engine itself rather
  * than through the write tracker, whose every failure is a toast. The user
- * hears only the end: "1 member hasn't been added yet." with Retry, once the
- * attempts are used up. It lives in memory: after the app is killed, a
- * member still without the key sees "Waiting for access…", and the owner
- * has "Re-invite" in the group's member menu.
+ * hears only the end, and only when every attempt proved it failed:
+ * "1 member hasn't been added to {group} yet." with Retry. A resend whose
+ * outcome stays unknown (a transport error, a timeout, an engine restart:
+ * the engine cannot prove a key resend either way) may well have landed, so
+ * a member with one is dropped silently once the attempts are used up. It
+ * lives in memory: after the app is killed, or when it gives up, a member
+ * still without the key sees "Waiting for access…", and the owner has
+ * "Re-invite" in the group's member menu.
  */
 
 export const MAX_ATTEMPTS = 3;
@@ -39,7 +46,10 @@ interface Missing {
   viewerId: string;
   groupKey: string;
   memberId: string;
+  /** Resends sent, at most `MAX_ATTEMPTS`. */
   attempts: number;
+  /** Of those, the ones whose outcome stayed unknown: they may have landed. */
+  unknown: number;
   /** Not before this time (ms). */
   nextAt: number;
   /** The resend whose outcome is awaited, as last heard of. */
@@ -59,6 +69,17 @@ let stopListening: (() => void) | null = null;
 /** The resend's call still runs, so its answer is still to come (`stillRunning` in data/writes). */
 const inFlight = (ticket: WriteTicket | null) =>
   ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && ticket.error?.code === 'STILL_SENDING');
+
+/**
+ * What a settled resend proved: landed, failed (refused, never sent, or
+ * proved absent), or nothing (it may have landed; the engine's check cannot
+ * tell for a key resend, so such a ticket never confirms).
+ */
+function outcomeOf(ticket: WriteTicket | null): 'confirmed' | 'failed' | 'unknown' {
+  if (ticket?.state === 'confirmed') return 'confirmed';
+  if (ticket?.state === 'failed') return ticket.error?.outcome === 'unknown' ? 'unknown' : 'failed';
+  return ticket?.state === 'unconfirmed' && ticket.retryable ? 'failed' : 'unknown';
+}
 
 /**
  * A resend still "running" this long after it was sent has outlived the
@@ -124,12 +145,29 @@ function scheduleNext(now: number): void {
   }, Math.min(...waits));
 }
 
-/** "1 member hasn't been added yet." with Retry, once a group's attempts are used up (UX_SPEC §5.8 dm.group.keysFailed). */
-function giveUp(viewerId: string, groupKey: string, memberIds: string[]): void {
-  appendLog('warn', 'host', `Group keys: gave up resending to ${memberIds.length} member(s)`);
-  const n = memberIds.length;
-  toast.error(n === 1 ? "1 member hasn't been added yet." : `${n} members haven't been added yet.`, {
-    action: { label: 'Retry', onPress: () => queueKeyResend(viewerId, groupKey, memberIds) },
+/** The group's name as the inbox last read it: the toast may come from any screen, minutes later. */
+function groupName(groupKey: string): string | null {
+  const conversations = queryClient.getQueryData<ConversationDTO[]>(queryKeys.dm.conversations);
+  return conversations?.find((c) => c.key === groupKey)?.name?.trim() || null;
+}
+
+/** "1 member hasn't been added to {group} yet." */
+export function keysFailedText(count: number, group: string | null): string {
+  const to = group ? ` to ${group}` : '';
+  return count === 1 ? `1 member hasn't been added${to} yet.` : `${count} members haven't been added${to} yet.`;
+}
+
+/**
+ * Once a group's attempts are used up: "1 member hasn't been added to {group}
+ * yet." with Retry, for the members whose every resend proved it failed
+ * (UX_SPEC §5.8 dm.group.keysFailed). Members with an unknown outcome are
+ * let go without a word: their key may have landed.
+ */
+function giveUp(viewerId: string, groupKey: string, failed: string[], unknown: number): void {
+  appendLog('warn', 'host', `Group keys: stopped resending: ${failed.length} failed, ${unknown} unknown`);
+  if (failed.length === 0) return;
+  toast.error(keysFailedText(failed.length, groupName(groupKey)), {
+    action: { label: 'Retry', onPress: () => queueKeyResend(viewerId, groupKey, failed) },
   });
 }
 
@@ -142,8 +180,8 @@ function refresh(entry: Missing): void {
     .get(id)
     .then((ticket) => {
       if (entry.ticket?.id !== id) return;
-      // Gone from the engine (a restart that kept no record): an attempt used up.
-      entry.ticket = ticket ?? { ...entry.ticket, state: 'failed', updatedAt: new Date() };
+      // Gone from the engine (a restart that kept no record): an attempt used up, its outcome unknown.
+      entry.ticket = ticket ?? { ...entry.ticket, state: 'unconfirmed', error: null, retryable: false, updatedAt: new Date() };
       // Still running: look again only after another stale period.
       if (inFlight(entry.ticket)) entry.sentAt = Date.now();
     })
@@ -198,11 +236,13 @@ export function resendMissingKeys(groupKey?: string): void {
         continue;
       }
       entry.ticket = null;
-      if (ticket?.state === 'confirmed') {
+      const outcome = outcomeOf(ticket);
+      if (outcome === 'confirmed') {
         missing.delete(key);
         continue;
       }
-      // Failed, proved absent, or unknown (an engine restart): an attempt used up.
+      // Failed, or unknown (it may have landed): an attempt used up either way, so a resend is never paid for blindly forever.
+      if (outcome === 'unknown') entry.unknown += 1;
       entry.nextAt = now + BACKOFF_MS[Math.min(entry.attempts - 1, BACKOFF_MS.length - 1)];
     }
     if (entry.attempts >= MAX_ATTEMPTS) continue;
@@ -210,14 +250,17 @@ export function resendMissingKeys(groupKey?: string): void {
     if (entry.nextAt <= now && (groupKey === undefined || entry.groupKey === groupKey)) due.push(entry);
   }
   // Used up, in a group with nothing else on its way: one "{n} members haven't been added yet." for them all.
-  const exhausted = new Map<string, string[]>();
+  const exhausted = new Map<string, { failed: string[]; unknown: number }>();
   for (const [key, entry] of missing) {
     const done = entry.viewerId === viewerId && !entry.submitting && !entry.ticket && entry.attempts >= MAX_ATTEMPTS;
     if (!done || busy.has(entry.groupKey)) continue;
     missing.delete(key);
-    exhausted.set(entry.groupKey, [...(exhausted.get(entry.groupKey) ?? []), entry.memberId]);
+    const group = exhausted.get(entry.groupKey) ?? { failed: [], unknown: 0 };
+    if (entry.unknown > 0) group.unknown += 1;
+    else group.failed.push(entry.memberId);
+    exhausted.set(entry.groupKey, group);
   }
-  for (const [group, members] of exhausted) if (viewerId) giveUp(viewerId, group, members);
+  for (const [group, { failed, unknown }] of exhausted) if (viewerId) giveUp(viewerId, group, failed, unknown);
   // One per pass, and the next once the engine has answered this one: they run on its serial queue anyway.
   const next = due[0];
   if (next) {
@@ -238,9 +281,18 @@ export function queueKeyResend(viewerId: string, groupKey: string, memberIds: re
   for (const memberId of memberIds) {
     const key = slot(groupKey, memberId);
     if (missing.has(key)) continue;
-    missing.set(key, { viewerId, groupKey, memberId, attempts: 0, nextAt: 0, ticket: null, sentAt: 0, submitting: false });
+    missing.set(key, { viewerId, groupKey, memberId, attempts: 0, unknown: 0, nextAt: 0, ticket: null, sentAt: 0, submitting: false });
   }
   listen();
+  resendMissingKeys(groupKey);
+}
+
+/**
+ * The owner removed `memberId` from the group: nothing more is resent to
+ * them (a resend already on its way ends as it ends, unheard of).
+ */
+export function forgetKeyResend(groupKey: string, memberId: string): void {
+  if (!missing.delete(slot(groupKey, memberId))) return;
   resendMissingKeys(groupKey);
 }
 
@@ -248,15 +300,22 @@ export function queueKeyResend(viewerId: string, groupKey: string, memberIds: re
  * Follows a group creation's ticket to its end, wherever the user is by then
  * (the form goes to the inbox on an unknown outcome): once confirmed, the
  * members it could not give the key are queued (`dm.createdGroup`). After an
- * engine restart the engine no longer knows them, and nothing is queued.
+ * engine restart the engine no longer knows them, and nothing is queued: an
+ * account change (which restarts it) ends the following.
  */
 export function followGroupCreation(viewerId: string, ticketId: string): void {
   let done = false;
+  let stopEvents = () => {};
+  let stopSession = () => {};
+  const finish = () => {
+    done = true;
+    stopEvents();
+    stopSession();
+  };
   const settle = (ticket: WriteTicket | null) => {
     if (done || !ticket || ticket.id !== ticketId || inFlight(ticket)) return;
     if (ticket.state === 'unconfirmed' && !ticket.retryable) return; // Still unknown: the next word settles it.
-    done = true;
-    stop();
+    finish();
     if (ticket.state !== 'confirmed') return;
     engine.api.dm
       .createdGroup(ticketId)
@@ -265,7 +324,10 @@ export function followGroupCreation(viewerId: string, ticketId: string): void {
       })
       .catch((error: unknown) => appendLog('warn', 'host', `Group keys: reading the new group failed: ${errorMessage(error)}`));
   };
-  const stop = onEngineEvent('write.status', settle);
+  stopEvents = onEngineEvent('write.status', settle);
+  stopSession = useSessionStore.subscribe((state) => {
+    if ((state.session?.identityId ?? null) !== viewerId) finish();
+  });
   settle(writeTicketOf(ticketId));
 }
 

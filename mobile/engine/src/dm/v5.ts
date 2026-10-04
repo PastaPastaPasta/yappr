@@ -580,7 +580,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       return found?.key ?? null
     },
 
-    /** The group a management action targets: it must exist, and only its owner manages members. */
+    /** The group a management action targets: it must exist, only its owner manages members, and keys go only to members. */
     assertGroupAction(identityId: string, request: DmGroupAction): void {
       const found = conversationOf(readyEngine(identityId), request.key)
       if (found?.kind !== 'group') throw new RpcError('Group not found', 'BAD_REQUEST')
@@ -588,6 +588,10 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       const ownerOnly = request.action !== 'leave'
       if (ownerOnly !== found.isOwner) {
         throw new RpcError(found.isOwner ? 'The owner ends the group instead of leaving it' : 'Only the group owner can do this', 'BAD_REQUEST')
+      }
+      // Refused here, not in lib's run: there it is an unknown outcome, and the app's resend queue would keep at it.
+      if (request.action === 'resendKeys' && !found.memberIds.includes(request.memberId)) {
+        throw new RpcError('They are not in this group.', 'BAD_REQUEST')
       }
     },
   }

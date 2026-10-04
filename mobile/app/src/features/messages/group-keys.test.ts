@@ -1,12 +1,24 @@
-import type { SessionDTO, WriteTicket } from '@engine/api';
+import type { ConversationDTO, EngineErrorData, SessionDTO, WriteTicket } from '@engine/api';
 import { act } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 
+import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 
-import { BACKOFF_MS, MAX_ATTEMPTS, followGroupCreation, queueKeyResend, resendMissingKeys, resetKeyResends } from './group-keys';
+import { removeMemberWrite } from './dm-writes';
+import {
+  BACKOFF_MS,
+  MAX_ATTEMPTS,
+  followGroupCreation,
+  forgetKeyResend,
+  keysFailedText,
+  queueKeyResend,
+  resendMissingKeys,
+  resetKeyResends,
+} from './group-keys';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 
@@ -40,6 +52,7 @@ beforeEach(() => {
   fakeEngine.reset();
   resetKeyResends();
   useToastStore.setState({ current: null });
+  queryClient.clear();
   useSessionStore.setState({ status: 'signed-in', session: session(ALICE), accounts: [] });
   appStateListeners = [];
   // Swapped, not spied: jest-expo's AppState is a mock whose restore would drop its implementation.
@@ -67,6 +80,25 @@ function resendTickets(): WriteTicket[] {
 }
 
 const emit = (next: WriteTicket) => act(() => fakeEngine.emit('write.status', next));
+
+/** A resend's error, as the engine classifies it. */
+const error = (code: EngineErrorData['code'], outcome: EngineErrorData['outcome']): EngineErrorData => ({
+  code,
+  consensusCode: null,
+  outcome,
+  retryable: false,
+  userMessage: '',
+});
+
+/** Runs Bob's every attempt to its end, each settled as `settled(attempt)`. */
+async function runAttempts(issued: WriteTicket[], settled: (attempt: number) => Partial<WriteTicket>) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+    await settle();
+    await emit(advance(issued[attempt], settled(attempt)));
+    await wait(BACKOFF_MS[BACKOFF_MS.length - 1]);
+  }
+  await settle();
+}
 
 describe('group key resends (#8)', () => {
   it('resends a missed key once, and is done when it lands, with nothing said', async () => {
@@ -171,6 +203,67 @@ describe('group key resends (#8)', () => {
     expect(useToastStore.getState().current?.message).toBe("1 member hasn't been added yet.");
   });
 
+  it('names the group in the toast when the inbox has read its name', async () => {
+    queryClient.setQueryData<Partial<ConversationDTO>[]>(queryKeys.dm.conversations, [{ key: GROUP, name: 'Builders' }]);
+    const issued = resendTickets();
+    queueKeyResend(ALICE, GROUP, [BOB]);
+    await runAttempts(issued, () => ({ state: 'failed', retryable: true }));
+    expect(useToastStore.getState().current?.message).toBe("1 member hasn't been added to Builders yet.");
+    expect(keysFailedText(2, 'Builders')).toBe("2 members haven't been added to Builders yet.");
+  });
+
+  it('lets a member go silently when the resends may have landed (an unknown outcome is no proof of failure)', async () => {
+    const issued = resendTickets();
+    queueKeyResend(ALICE, GROUP, [BOB]);
+    // A transport error past the broadcast: unconfirmed, not retryable; the engine's check never settles a key resend.
+    await runAttempts(issued, () => ({ state: 'unconfirmed', retryable: false, error: error('NETWORK', 'unknown') }));
+    expect(resend()).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+    expect(useToastStore.getState().current).toBeNull();
+    await wait(60 * 60_000);
+    resendMissingKeys(GROUP);
+    await settle();
+    expect(resend()).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+  });
+
+  it('names only the members whose every attempt proved it failed', async () => {
+    const issued = resendTickets();
+    queueKeyResend(ALICE, GROUP, [BOB, CAROL]);
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+      await settle();
+      await settle();
+      const [bob, carol] = issued.slice(-2);
+      // Bob's first is final yet unknown (PR B's failed + unknown); Carol's all proved failed.
+      await emit(advance(bob, attempt === 0 ? { state: 'failed', error: error('UNKNOWN', 'unknown') } : { state: 'failed', retryable: true }));
+      await emit(advance(carol, { state: 'failed', retryable: true, error: error('RULE_VIOLATION', 'refused') }));
+      await wait(BACKOFF_MS[BACKOFF_MS.length - 1]);
+    }
+    await settle();
+    expect(resend()).toHaveBeenCalledTimes(MAX_ATTEMPTS * 2);
+    // Only Carol is named, and Retry is for her alone.
+    const toast = useToastStore.getState().current;
+    expect(toast?.message).toBe("1 member hasn't been added yet.");
+    act(() => toast?.action?.onPress());
+    await settle();
+    expect(resend()).toHaveBeenLastCalledWith(GROUP, CAROL);
+    expect(resend()).toHaveBeenCalledTimes(MAX_ATTEMPTS * 2 + 1);
+  });
+
+  it('stops resending to a member the owner removed', async () => {
+    const issued = resendTickets();
+    queueKeyResend(ALICE, GROUP, [BOB]);
+    await settle();
+    await emit(advance(issued[0], { state: 'failed', retryable: true }));
+    // The removal's confirmation forgets them.
+    act(() => removeMemberWrite.onConfirmed?.(ticket({ op: 'dm.group', state: 'confirmed' }), { key: GROUP, memberId: BOB }));
+    await wait(60 * 60_000);
+    resendMissingKeys(GROUP);
+    await settle();
+    expect(resend()).toHaveBeenCalledTimes(1);
+    expect(useToastStore.getState().current?.message).toBe('Member removed');
+    // Forgetting someone not queued is nothing.
+    forgetKeyResend(GROUP, CAROL);
+  });
+
   it('drops a member the engine says no longer needs the key (left, removed, group ended)', async () => {
     resend().mockRejectedValue(Object.assign(new Error('They are not in this group.'), { code: 'BAD_REQUEST' }));
     queueKeyResend(ALICE, GROUP, [BOB]);
@@ -210,6 +303,18 @@ describe('group key resends (#8)', () => {
     await settle();
     expect(resend()).toHaveBeenCalledTimes(1);
     expect(resend()).toHaveBeenCalledWith(GROUP, CAROL);
+  });
+
+  it('stops following a creation once the account changes (its engine restart forgets the creation)', async () => {
+    resendTickets();
+    const created = ticket({ op: 'dm.group' });
+    fakeEngine.method('dm.createdGroup').mockResolvedValue({ key: GROUP, failed: [CAROL] });
+    followGroupCreation(ALICE, created.id);
+    act(() => useSessionStore.setState({ session: session(CAROL) }));
+    act(() => useSessionStore.setState({ session: session(ALICE) }));
+    await emit(advance(created, { state: 'confirmed' }));
+    await settle();
+    expect(fakeEngine.method('dm.createdGroup')).not.toHaveBeenCalled();
   });
 
   it('queues nothing for a creation that failed', async () => {
