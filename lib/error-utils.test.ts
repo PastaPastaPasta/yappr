@@ -294,7 +294,7 @@ describe('4.2.0-beta.4 rejections', () => {
       "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
     ['41200 ContractModeratedDocumentTypeNotYetUsableError', isModerationNotYetSeatedError,
-      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /elects its moderation team/i],
+      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /isn't available yet/i],
   ]
 
   it.each(cases)('%s is recognised, permanent and given its own message', (_label, matcher, message, expected) => {

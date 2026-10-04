@@ -14,6 +14,8 @@ describe('engine method kinds', () => {
     'dm.messages',
     'dm.createdGroup',
     'dm.refresh',
+    'safety.followedBlockLists',
+    'safety.reportsOpen',
     'feed.home',
     'posts.get',
   ])('%s is a read: replayed once after a restart, with the 30 s read deadline (SR-15)', (path) => {
@@ -21,7 +23,7 @@ describe('engine method kinds', () => {
     expect(methodTimeoutMs(path)).toBe(30_000);
   });
 
-  it.each(['safety.block', 'safety.report', 'safety.withdrawReport', 'engage.like', 'writes.retry', 'dm.send', 'dm.open', 'dm.markRead', 'posts.publish'])(
+  it.each(['safety.block', 'dm.setBlocked', 'safety.report', 'safety.withdrawReport', 'engage.like', 'writes.retry', 'dm.send', 'dm.open', 'dm.markRead', 'posts.publish'])(
     '%s is a write: never replayed, 15 s deadline',
     (path) => {
       expect(methodKind(path)).toBe('write');

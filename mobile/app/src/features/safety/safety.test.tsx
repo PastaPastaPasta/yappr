@@ -1,6 +1,7 @@
 import type {
   BlockedUserDTO,
   CapabilitiesDTO,
+  EngineErrorCode,
   OwnReportDTO,
   PostDTO,
   ProfileDTO,
@@ -258,12 +259,16 @@ describe('blocking', () => {
     fakeEngine.method('safety.block').mockResolvedValue(pending);
     renderPosts(bobPosts());
 
-    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }, copy.toast.blocked));
+    await act(async () =>
+      sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }, copy.toast.blocked('@bob')),
+    );
     expect(fakeEngine.method('safety.block')).toHaveBeenCalledWith(BOB.id, null);
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
     expect(screen.queryByTestId('post-card-b2')).toBeNull();
     expect(screen.getByTestId('post-card-c1')).toBeTruthy();
-    expect(toastMessage()).toBe('User blocked');
+    expect(toastMessage()).toBe('Blocked @bob');
+    // No Messages capability: nothing to block there.
+    expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
 
     act(() =>
       fakeEngine.emit(
@@ -387,6 +392,87 @@ describe('blocking', () => {
       ),
     );
     expect(toastMessage()).toBe(copy.toast.stillBlocked);
+    expect(toastMessage()).toBe('Unblocked, but a block list you follow still hides them.');
+  });
+
+  describe('on DM v5, one Block covers Messages too (SAFE-01, SAFE-02)', () => {
+    const failed = {
+      state: 'failed' as const,
+      error: { code: 'UNKNOWN' as const, consensusCode: null, outcome: 'refused' as const, retryable: false, userMessage: '' },
+    };
+
+    beforeEach(() => {
+      fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm: 'v5' } } });
+      // The engine says whether the call changed anything.
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(true);
+    });
+
+    it('blocks them in Messages with the block, and lifts that again when the block fails', async () => {
+      const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(pending);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB.id, true);
+
+      await act(async () => fakeEngine.emit('write.status', advance(pending, failed)));
+      expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([
+        [BOB.id, true],
+        [BOB.id, false],
+      ]);
+    });
+
+    it('keeps a block in Messages made before (on web) when a profile block fails', async () => {
+      const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(pending);
+      // Already blocked in Messages: the engine changed nothing.
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(false);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      await act(async () => fakeEngine.emit('write.status', advance(pending, failed)));
+      expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([[BOB.id, true]]);
+    });
+
+    it('lifts the block in Messages with an unblock, also when a followed block list keeps the posts hidden', async () => {
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false }));
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB.id, false);
+
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            error: { code: 'STILL_BLOCKED', consensusCode: null, outcome: 'local', retryable: false, userMessage: 'x' },
+          }),
+        ),
+      );
+      // The own block is gone all the same, so Messages stays unblocked: the undo never re-blocks it.
+      expect(fakeEngine.method('dm.setBlocked').mock.calls.every(([, blocked]) => blocked === false)).toBe(true);
+    });
+
+    it('never lets an older undo override a newer choice', async () => {
+      const block = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(block);
+      let changed: (value: boolean) => void = () => undefined;
+      fakeEngine.method('dm.setBlocked').mockReturnValueOnce(new Promise((resolve) => (changed = resolve)));
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      await act(async () => fakeEngine.emit('write.status', advance(block, failed)));
+      // A new block before the first call answered: the first one's undo stays out of it.
+      const again = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(again);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      await act(async () => changed(true));
+      expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([
+        [BOB.id, true],
+        [BOB.id, true],
+      ]);
+    });
+
+    it('never touches Messages on the legacy backend, which follows the account blocks itself', async () => {
+      fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm: 'legacy' } } });
+      fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -400,26 +486,55 @@ describe('BlockScreen', () => {
     await settle();
 
     expect(screen.getByText('Block @bob?')).toBeTruthy();
-    expect(screen.getByText(copy.block.noteHint)).toBeTruthy();
+    // The public note waits behind "Add a note".
+    expect(screen.queryByTestId('block-note')).toBeNull();
+    fireEvent.press(screen.getByTestId('block-add-note'));
+    expect(screen.getByText('Anyone can see this note.')).toBeTruthy();
     fireEvent.changeText(screen.getByTestId('block-note'), '  spam bot  ');
     await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
 
     expect(fakeEngine.method('safety.block')).toHaveBeenCalledWith(BOB.id, { message: 'spam bot' });
     expect(router.back).toHaveBeenCalled();
-    expect(toastMessage()).toBe('User blocked');
+    expect(toastMessage()).toBe('Blocked @bob');
+  });
+
+  it('blocks without a note when none was added', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
+    withProviders(<BlockScreen />);
+    await settle();
+    await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
+    expect(fakeEngine.method('safety.block')).toHaveBeenCalledWith(BOB.id, null);
   });
 
   it.each([
-    ['legacy', /They can still message you, but their messages won't show as unread/],
-    ['v5', /This doesn't stop their messages: to do that, block them from your conversation in Messages/],
-  ] as const)('promises only what a block does to %s messages (SR-20)', async (dm, messages) => {
-    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm } } });
+    [
+      'v5',
+      "They won't be able to message you, and you won't see their posts or replies. Blocks are public on Dash Platform.",
+    ],
+    [
+      'legacy',
+      "You won't see their posts or replies. They can still message you, but it won't show as unread. Blocks are public on Dash Platform.",
+    ],
+    [undefined, "You won't see their posts or replies. Blocks are public on Dash Platform."],
+  ] as const)('promises only what a block does to %s messages (SR-20)', async (dm, body) => {
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm } as CapabilitiesDTO } });
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
     withProviders(<BlockScreen />);
     await settle();
-    expect(screen.getByText(messages)).toBeTruthy();
-    expect(screen.getByText(/^You won't see their posts or replies\./)).toBeTruthy();
-    expect(screen.queryByText(/won't be able to message you/)).toBeNull();
+    expect(screen.getByText(body)).toBeTruthy();
+  });
+
+  it('on DM v5, blocks them in Messages too from the sheet', async () => {
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm: 'v5' } } });
+    fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
+    fakeEngine.method('dm.setBlocked').mockResolvedValue(undefined);
+    withProviders(<BlockScreen />);
+    await settle();
+    await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
+    expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB.id, true);
+    expect(toastMessage()).toBe('Blocked @bob');
   });
 
   it('offers Unblock for an account already blocked', async () => {
@@ -431,7 +546,7 @@ describe('BlockScreen', () => {
     expect(screen.getByText('You blocked @bob')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByTestId('unblock-confirm')));
     expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(BOB.id);
-    expect(toastMessage()).toBe('User unblocked');
+    expect(toastMessage()).toBe('Unblocked @bob');
   });
 
   it('keeps the profile it holds when a refetch fails', async () => {
@@ -471,20 +586,30 @@ describe('BlockScreen', () => {
 
 describe('ReportScreen', () => {
   const post = fixturePost({ id: 'p1' });
+  const target = { id: 'p1', kind: 'post' as const, ownerId: BOB.id, rootPostId: null };
+  const refused = (code: EngineErrorCode) => ({
+    state: 'failed' as const,
+    error: { code, consensusCode: null, outcome: 'refused' as const, retryable: false, userMessage: 'x' },
+  });
 
   beforeEach(() => {
     params.mockReturnValue({ postId: 'p1', kind: 'post' });
     fakeEngine.method('posts.get').mockResolvedValue(post);
+    fakeEngine.method('safety.reportsOpen').mockResolvedValue(true);
   });
 
   it('files a report with its reason and note, then offers to block', async () => {
     fakeEngine.method('safety.ownReport').mockResolvedValue(null);
-    const pending = ticket({ op: 'report', target: { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null } });
+    const pending = ticket({ op: 'report', target });
     fakeEngine.method('safety.report').mockResolvedValue(pending);
     withProviders(<ReportScreen />);
     await settle();
 
-    expect(screen.getByText(/You can come back here to see how the moderators resolved it/)).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
+      ),
+    ).toBeTruthy();
     expect(screen.getByTestId('report-submit')).toBeDisabled();
     fireEvent.press(screen.getByTestId('report-reason-8'));
     expect(screen.getByText('Details (required)')).toBeTruthy();
@@ -492,24 +617,74 @@ describe('ReportScreen', () => {
     fireEvent.changeText(screen.getByTestId('report-note'), 'Phishing link');
     await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
 
-    expect(fakeEngine.method('safety.report')).toHaveBeenCalledWith(
-      { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null },
-      8,
-      'Phishing link',
-    );
+    expect(fakeEngine.method('safety.report')).toHaveBeenCalledWith(target, 8, 'Phishing link');
     expect(screen.getByText('Reporting…')).toBeTruthy();
 
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(screen.getByTestId('report-sent')).toBeTruthy();
+    expect(screen.getByText('Thanks for letting us know.')).toBeTruthy();
     // The sheet says it; no toast on top.
     expect(toastMessage()).toBeUndefined();
+    expect(screen.getByText('Also block @bob')).toBeTruthy();
     fireEvent.press(screen.getByTestId('report-also-block'));
     expect(router.replace).toHaveBeenCalledWith({ pathname: '/block/[userId]', params: { userId: BOB.id } });
   });
 
-  it('sends one report for a double tap, and toasts a confirmation that lands after the sheet closed', async () => {
+  it('counts a report the network has not confirmed yet as sent, and brings the form back only when it proved absent', async () => {
     fakeEngine.method('safety.ownReport').mockResolvedValue(null);
-    const pending = ticket({ op: 'report', target: { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null } });
+    const pending = ticket({ op: 'report', target });
+    fakeEngine.method('safety.report').mockResolvedValue(pending);
+    withProviders(<ReportScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+
+    const unconfirmed = advance(pending, {
+      state: 'unconfirmed',
+      error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+    });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(screen.getByTestId('report-sent')).toBeTruthy();
+    expect(screen.queryByText(/not confirmed/i)).toBeNull();
+    expect(toastMessage()).toBeUndefined();
+
+    // A check proved it never landed: the form is back with the reason chosen, and the toast says so.
+    act(() =>
+      fakeEngine.emit('write.status', advance(unconfirmed, { retryable: true, lastCheckedAt: new Date() })),
+    );
+    expect(screen.getByTestId('report-sheet')).toBeTruthy();
+    expect(screen.getByTestId('report-submit')).toBeEnabled();
+    expect(toastMessage()).toMatch(/report/i);
+  });
+
+  it('shows a report not confirmed yet as sent when the sheet reopens, never the form for a second one', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    const pending = ticket({ op: 'report', target });
+    fakeEngine.method('safety.report').mockResolvedValue(pending);
+    const first = withProviders(<ReportScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'unconfirmed',
+          error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
+        }),
+      ),
+    );
+    first.unmount();
+
+    withProviders(<ReportScreen />);
+    await settle();
+    expect(screen.getByTestId('report-sent')).toBeTruthy();
+    expect(screen.queryByTestId('report-submit')).toBeNull();
+  });
+
+  it('sends one report for a double tap, and says it went when the sheet closed before the engine took it', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    const pending = ticket({ op: 'report', target });
     let answer: (value: typeof pending) => void = () => undefined;
     fakeEngine.method('safety.report').mockReturnValue(new Promise((resolve) => (answer = resolve)));
     const { unmount } = withProviders(<ReportScreen />);
@@ -517,19 +692,21 @@ describe('ReportScreen', () => {
     fireEvent.press(screen.getByTestId('report-reason-0'));
     fireEvent.press(screen.getByTestId('report-submit'));
     fireEvent.press(screen.getByTestId('report-submit'));
+    unmount();
     await act(async () => answer(pending));
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
-
-    unmount();
-    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(toastMessage()).toBe('Report sent');
-    // Nothing was queued behind the first report to go out now.
+
+    // Its confirmation is reconciled silently, and nothing was queued behind it to go out now.
+    act(() => useToastStore.setState({ current: null }));
+    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(toastMessage()).toBeUndefined();
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
   });
 
   it('follows a report still on its way when the sheet is dismissed and reopened, and sends no second one', async () => {
     fakeEngine.method('safety.ownReport').mockResolvedValue(null);
-    const pending = ticket({ op: 'report', target: { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null } });
+    const pending = ticket({ op: 'report', target });
     fakeEngine.method('safety.report').mockResolvedValue(pending);
     const first = withProviders(<ReportScreen />);
     await settle();
@@ -550,7 +727,7 @@ describe('ReportScreen', () => {
 
   it('drops a report sent from a reopened sheet before the first one has its ticket', async () => {
     fakeEngine.method('safety.ownReport').mockResolvedValue(null);
-    const pending = ticket({ op: 'report', target: { id: 'p1', kind: 'post', ownerId: BOB.id, rootPostId: null } });
+    const pending = ticket({ op: 'report', target });
     let answer: (value: typeof pending) => void = () => undefined;
     fakeEngine.method('safety.report').mockReturnValue(new Promise((resolve) => (answer = resolve)));
     const first = withProviders(<ReportScreen />);
@@ -570,13 +747,41 @@ describe('ReportScreen', () => {
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
   });
 
-  it('checks again before offering the form over a cached "no report"', async () => {
-    queryClient.setQueryData(queryKeys.post.ownReport('p1'), null);
-    fakeEngine.method('safety.ownReport').mockReturnValue(new Promise(() => undefined));
+  it("shows the form at once while it reads the viewer's report, and the report once it is found", async () => {
+    let found: (report: OwnReportDTO | null) => void = () => undefined;
+    fakeEngine.method('safety.ownReport').mockReturnValue(new Promise((resolve) => (found = resolve)));
     withProviders(<ReportScreen />);
     await settle();
-    expect(screen.getByTestId('report-checking')).toBeTruthy();
+    expect(screen.getByTestId('report-sheet')).toBeTruthy();
+    expect(screen.queryByText(/Checking/)).toBeNull();
+
+    await act(async () =>
+      found({ id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null }),
+    );
+    expect(screen.getByTestId('report-existing')).toBeTruthy();
     expect(screen.queryByTestId('report-submit')).toBeNull();
+  });
+
+  it('lets the report go when that read fails, and shows the report a DUPLICATE refusal finds', async () => {
+    fakeEngine.method('safety.ownReport').mockRejectedValue(new Error('unavailable'));
+    const pending = ticket({ op: 'report', target });
+    fakeEngine.method('safety.report').mockResolvedValue(pending);
+    withProviders(<ReportScreen />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    });
+    expect(screen.getByTestId('report-sheet')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+    expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
+
+    fakeEngine.method('safety.ownReport').mockResolvedValue({
+      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null,
+    });
+    await act(async () => fakeEngine.emit('write.status', advance(pending, refused('DUPLICATE'))));
+    await settle();
+    expect(toastMessage()).toBe('You already reported this.');
+    expect(screen.getByTestId('report-existing')).toBeTruthy();
   });
 
   it('trusts a listed copy when the fresh read finds nothing, and says gone without one', async () => {
@@ -592,26 +797,39 @@ describe('ReportScreen', () => {
     setSettings({});
     withProviders(<ReportScreen />);
     await settle();
-    expect(screen.getByTestId('report-gone')).toBeTruthy();
+    expect(screen.getByText('This post no longer exists.')).toBeTruthy();
   });
 
-  it('shows an existing report instead of the form', async () => {
+  it("says the post couldn't load when it can't be read, never that the report check failed", async () => {
+    fakeEngine.method('posts.get').mockRejectedValue(new Error('unavailable'));
+    withProviders(<ReportScreen />);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    });
+    expect(screen.getByTestId('report-error')).toBeTruthy();
+    expect(screen.getByText("Couldn't load this post. Try again.")).toBeTruthy();
+  });
+
+  it.each([
+    [2, null, 'You reported this on Sep 30, 2026 for spam or scam · Resolved: Content removed'],
+    [null, null, 'You reported this on Sep 30, 2026 for spam or scam · Under review'],
+  ] as const)('shows an existing report instead of the form (status %s)', async (status, _resolution, line) => {
     const report: OwnReportDTO = {
       id: 'r1',
       reason: 0,
       note: 'Same link everywhere',
-      createdAt: new Date('2026-09-30T12:00:00Z'),
-      status: 2,
+      createdAt: new Date(2026, 8, 30, 12),
+      status,
       resolution: null,
-      moderatedAt: new Date('2026-10-01T12:00:00Z'),
+      moderatedAt: status === null ? null : new Date(2026, 9, 1, 12),
     };
     fakeEngine.method('safety.ownReport').mockResolvedValue(report);
     withProviders(<ReportScreen />);
     await settle();
 
-    expect(screen.getByText(/you reported it for Spam or scam/)).toBeTruthy();
+    expect(screen.getByText(line)).toBeTruthy();
     expect(screen.getByText('Same link everywhere')).toBeTruthy();
-    expect(screen.getByText(/Resolved by the moderators: Content removed/)).toBeTruthy();
+    expect(screen.getByText('Reports close after 90 days.')).toBeTruthy();
     expect(screen.queryByTestId('report-submit')).toBeNull();
   });
 
@@ -625,7 +843,6 @@ describe('ReportScreen', () => {
       resolution: null,
       moderatedAt: null,
     };
-    const target = { id: 'p1', kind: 'post' as const, ownerId: BOB.id, rootPostId: null };
     let answer: (choice: 'Withdraw' | 'Cancel') => void = () => undefined;
 
     beforeEach(() => {
@@ -637,7 +854,17 @@ describe('ReportScreen', () => {
 
     afterEach(() => jest.mocked(Alert.alert).mockRestore());
 
-    it('asks first, withdraws the report, then closes with "Report withdrawn"', async () => {
+    async function withdraw() {
+      const pending = ticket({ op: 'report.withdraw', target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      const sheet = withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+      return { pending, sheet };
+    }
+
+    it('asks first, then withdraws at once: "Report withdrawn", and the sheet closes', async () => {
       const pending = ticket({ op: 'report.withdraw', target });
       fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
       withProviders(<ReportScreen />);
@@ -653,13 +880,14 @@ describe('ReportScreen', () => {
       );
       await act(async () => answer('Withdraw'));
       expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledWith(target, 'r1');
-      expect(screen.getByText(copy.report.withdrawing)).toBeTruthy();
-      expect(router.back).not.toHaveBeenCalled();
-
-      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
       expect(toastMessage()).toBe('Report withdrawn');
       expect(router.back).toHaveBeenCalledTimes(1);
-      // A reopened sheet re-checks before offering the form.
+      // The sheet keeps the report on screen while it closes, though the cache dropped it.
+      expect(screen.getByTestId('report-existing')).toBeTruthy();
+      expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toBeNull();
+
+      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(router.back).toHaveBeenCalledTimes(1);
       expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toBeNull();
     });
 
@@ -672,76 +900,34 @@ describe('ReportScreen', () => {
       expect(screen.getByText(copy.report.withdraw)).toBeTruthy();
     });
 
-    it("says so in a neutral toast when the report is already gone, and closes, as on web", async () => {
-      const pending = ticket({ op: 'report.withdraw', target });
-      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
-      withProviders(<ReportScreen />);
-      await settle();
-      fireEvent.press(screen.getByTestId('report-withdraw'));
-      await act(async () => answer('Withdraw'));
-
-      fakeEngine.method('safety.ownReport').mockResolvedValue(null);
-      await act(async () =>
+    it('brings the report back only when the withdrawal fails', async () => {
+      const { pending } = await withdraw();
+      act(() =>
         fakeEngine.emit(
           'write.status',
           advance(pending, {
             state: 'failed',
-            error: { code: 'REPORT_GONE', consensusCode: null, outcome: 'local', retryable: false, userMessage: 'x' },
+            error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: false, userMessage: '' },
           }),
         ),
       );
+      expect(toastMessage()).toBe("Couldn't withdraw your report. Try again.");
+      expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toEqual(report);
+    });
+
+    it('says so in a neutral toast when the report is already closed, and reads it again', async () => {
+      const { pending } = await withdraw();
+      fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+      await act(async () => fakeEngine.emit('write.status', advance(pending, refused('REPORT_GONE'))));
       await settle();
-      expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: copy.toast.reportGone });
-      expect(router.back).toHaveBeenCalledTimes(1);
-      // The viewer's report is read again: a reopened sheet offers the form.
+      expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: 'This report was already closed.' });
       expect(fakeEngine.method('safety.ownReport')).toHaveBeenCalledTimes(2);
     });
 
-    it('never offers Withdraw again while an unconfirmed withdrawal may land, and checks it', async () => {
-      const pending = ticket({ op: 'report.withdraw', target });
-      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
-      withProviders(<ReportScreen />);
-      await settle();
-      fireEvent.press(screen.getByTestId('report-withdraw'));
-      await act(async () => answer('Withdraw'));
-
-      // A wait timeout (a DAPI 504): it may have landed.
-      const unconfirmed = advance(pending, {
-        state: 'unconfirmed',
-        error: { code: 'TIMEOUT', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'x' },
-      });
-      act(() => fakeEngine.emit('write.status', unconfirmed));
-      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
-      expect(screen.queryByTestId('report-withdraw')).toBeNull();
-      // The open sheet says it; no toast on top.
-      expect(toastMessage()).toBeUndefined();
-      expect(router.back).not.toHaveBeenCalled();
-
-      const confirmed = advance(unconfirmed, { state: 'confirmed', error: null, lastCheckedAt: new Date() });
-      fakeEngine.method('writes.check').mockImplementation(async () => {
-        fakeEngine.emit('write.status', confirmed);
-        return confirmed;
-      });
-      await act(async () => fireEvent.press(screen.getByTestId('report-withdraw-check')));
-      expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
-      expect(toastMessage()).toBe('Report withdrawn');
-      expect(router.back).toHaveBeenCalledTimes(1);
-      expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
-    });
-
-    it('a reopened sheet follows the withdrawal an earlier one sent', async () => {
-      const pending = ticket({ op: 'report.withdraw', target });
-      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
-      const first = withProviders(<ReportScreen />);
-      await settle();
-      fireEvent.press(screen.getByTestId('report-withdraw'));
-      await act(async () => answer('Withdraw'));
-      first.unmount();
-
-      // Reopened while it is on its way: Withdrawing…, never a second delete.
-      const second = withProviders(<ReportScreen />);
-      await settle();
-      expect(screen.getByText(copy.report.withdrawing)).toBeTruthy();
+    it('reconciles a withdrawal not confirmed yet silently, and a reopened sheet never offers Withdraw again', async () => {
+      const { pending, sheet } = await withdraw();
+      sheet.unmount();
+      act(() => useToastStore.setState({ current: null }));
       act(() =>
         fakeEngine.emit(
           'write.status',
@@ -751,64 +937,57 @@ describe('ReportScreen', () => {
           }),
         ),
       );
-      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
-      second.unmount();
+      expect(toastMessage()).toBeUndefined();
 
-      // Reopened after it went unconfirmed: it says so, with Check again.
       withProviders(<ReportScreen />);
       await settle();
-      expect(screen.getByTestId('report-withdraw-unconfirmed')).toBeTruthy();
+      expect(screen.getByTestId('report-withdrawn')).toBeTruthy();
+      expect(screen.queryByTestId('report-withdraw')).toBeNull();
+      expect(screen.queryByTestId('report-submit')).toBeNull();
       expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
     });
-
-    it('toasts "Not confirmed yet" when no sheet is open to say it', async () => {
-      const pending = ticket({ op: 'report.withdraw', target });
-      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
-      const sheet = withProviders(<ReportScreen />);
-      await settle();
-      fireEvent.press(screen.getByTestId('report-withdraw'));
-      await act(async () => answer('Withdraw'));
-      sheet.unmount();
-      act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
-      expect(toastMessage()).toBe('Not confirmed yet');
-    });
   });
 
-  it('never offers a second report when the check fails', async () => {
-    fakeEngine.method('safety.ownReport').mockRejectedValue(new Error('unavailable'));
+  it('goes straight to email where reports wait for a moderation team that is not seated', async () => {
+    fakeEngine.method('safety.reportsOpen').mockResolvedValue(false);
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValueOnce(true);
     withProviders(<ReportScreen />);
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-    });
-    expect(screen.getByTestId('report-check-failed')).toBeTruthy();
-    expect(screen.queryByTestId('report-submit')).toBeNull();
+    await settle();
+
+    expect(screen.getByTestId('report-email')).toBeTruthy();
+    expect(screen.queryByTestId('report-sheet')).toBeNull();
+    expect(screen.queryByTestId('report-refused')).toBeNull();
+    expect(screen.getByText('Report by email')).toBeTruthy();
+    expect(
+      screen.getByText(
+        'Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose.',
+      ),
+    ).toBeTruthy();
+    // The link stays inside the email.
+    expect(screen.queryByText(/\/post\?id=p1/)).toBeNull();
+    expect(screen.getByTestId('report-email-send')).toBeDisabled();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    fireEvent.changeText(screen.getByTestId('report-note'), 'Same link everywhere');
+    await act(async () => fireEvent.press(screen.getByTestId('report-email-send')));
+    expect(decodeURIComponent(openURL.mock.calls[0]?.[0] ?? '')).toContain(
+      '/post?id=p1\n\nReason: Spam or scam\n\nSame link everywhere',
+    );
+    expect(fakeEngine.method('safety.report')).not.toHaveBeenCalled();
   });
 
-  it('offers email when the moderation team is not seated yet', async () => {
+  it('offers email with what was chosen when the network refuses for want of a seated team', async () => {
     fakeEngine.method('safety.ownReport').mockResolvedValue(null);
-    const pending = ticket({ op: 'report' });
+    const pending = ticket({ op: 'report', target });
     fakeEngine.method('safety.report').mockResolvedValue(pending);
     withProviders(<ReportScreen />);
     await settle();
     fireEvent.press(screen.getByTestId('report-reason-0'));
     await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
-    act(() =>
-      fakeEngine.emit(
-        'write.status',
-        advance(pending, {
-          state: 'failed',
-          error: {
-            code: 'MODERATION_NOT_SEATED',
-            consensusCode: null,
-            outcome: 'refused',
-            retryable: false,
-            userMessage: 'x',
-          },
-        }),
-      ),
-    );
-    expect(screen.getByText(copy.report.notSeated, { exact: false })).toBeTruthy();
-    expect(screen.getByTestId('report-email-send')).toBeTruthy();
+    act(() => fakeEngine.emit('write.status', advance(pending, refused('MODERATION_NOT_SEATED'))));
+    expect(screen.getByTestId('report-refused')).toBeTruthy();
+    expect(screen.getAllByText("Your report wasn't sent. Send it by email instead.").length).toBeGreaterThan(0);
+    expect(screen.getByTestId('report-email-send')).toBeEnabled();
+    expect(screen.queryByText(/elects its moderation team|Nothing was posted/)).toBeNull();
   });
 
   it("opens the email report from a post's menu even signed out, where the contract takes no reports", () => {
@@ -828,14 +1007,16 @@ describe('ReportScreen', () => {
     withProviders(<ReportScreen />);
 
     expect(screen.getByText('Report by email')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('report-reason-1'));
     await act(async () => fireEvent.press(screen.getByTestId('report-email-send')));
 
     const url = openURL.mock.calls[0]?.[0] ?? '';
     expect(url).toMatch(/^mailto:support@yap\.pr\?subject=Report%3A%20post%20p1&body=/);
-    expect(decodeURIComponent(url)).toContain('/post?id=p1\n\nReason: ');
+    expect(decodeURIComponent(url)).toContain('/post?id=p1\n\nReason: Harassment or bullying');
     expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining('support@yap.pr'));
     expect(toastMessage()).toBe(copy.toast.reportCopied);
     expect(fakeEngine.method('safety.report')).not.toHaveBeenCalled();
+    expect(fakeEngine.method('safety.reportsOpen')).not.toHaveBeenCalled();
   });
 });
 
@@ -852,7 +1033,8 @@ describe('BlockedAccountsScreen', () => {
     await settle();
 
     expect(screen.getByText('Spam')).toBeTruthy();
-    expect(screen.getByText(copy.blocked.listsNote)).toBeTruthy();
+    // Following no block list: nothing about them.
+    expect(screen.queryByTestId('blocked-lists-note')).toBeNull();
     await act(async () => fireEvent.press(screen.getByTestId(`unblock-${BOB.id}`)));
     expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(BOB.id);
     expect(screen.queryByTestId(`blocked-${BOB.id}`)).toBeNull();
@@ -910,6 +1092,27 @@ describe('BlockedAccountsScreen', () => {
     expect(screen.queryByTestId(`blocked-${BOB.id}`)).toBeNull();
     expect(screen.getByTestId(`blocked-${AUTHORS.carol.id}`)).toBeTruthy();
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
+  });
+
+  it.each([
+    [1, 'Also hidden by 1 block list you follow ·'],
+    [3, 'Also hidden by 3 block lists you follow ·'],
+  ])('mentions the %s block lists the viewer follows, with where to manage them', async (lists, note) => {
+    fakeEngine.method('safety.blocked').mockResolvedValue({ items: blocked, cursor: null, hasMore: false });
+    fakeEngine.method('safety.followedBlockLists').mockResolvedValue(lists);
+    withProviders(<BlockedAccountsScreen />);
+    await settle();
+    expect(screen.getByText(note)).toBeTruthy();
+    expect(screen.getByText('Manage on yap.pr')).toBeTruthy();
+  });
+
+  it('says nothing about block lists to someone who follows none', async () => {
+    fakeEngine.method('safety.blocked').mockResolvedValue({ items: blocked, cursor: null, hasMore: false });
+    fakeEngine.method('safety.followedBlockLists').mockResolvedValue(0);
+    withProviders(<BlockedAccountsScreen />);
+    await settle();
+    expect(screen.queryByTestId('blocked-lists-note')).toBeNull();
+    expect(screen.queryByText(/block list/)).toBeNull();
   });
 
   it('says when nobody is blocked', async () => {

@@ -169,7 +169,7 @@ labelled code (`code=41118`, `"code":41118`), never bare digits.
 | 40135–40138 | `ReferencedContractRequirementNotMet`, `ReferencedIdentityKeyRequirementNotMet`, `ReferencedDocumentLookupInvalid`, `ReferencedDocumentListInvalid` | `isReferenceRequirementError` | code-level defect. **Excluded from `isReferenceNotFoundError`**: 40135 also says "referenced … for path", and tombstone repair would otherwise drop a reference whose target is alive. |
 | 40139 | `DocumentActionFeeModeratorsShareMismatch` | `isModeratorsShareMismatchError` (also in `isActionFeeAgreementError`) | "the moderator fee share didn't match the seated charter" — not "reload". Drive checks the share only when the agreement offers LESS than declared; Yappr always agrees to the full declared moderators fee, which passes seated or not (pinned in `transition-agreements.test.ts`). |
 | 40307 | `VoteChoiceNotAllowedForVotePoll` | in `isPermanentProtocol14Error` | code-level defect |
-| 41200 | `ContractModeratedDocumentTypeNotYetUsable` | `isModerationNotYetSeatedError` | "opens once the community elects its moderation team" |
+| 41200 | `ContractModeratedDocumentTypeNotYetUsable` | `isModerationNotYetSeatedError` | "This isn't available yet. Try again later." |
 | 41101 / 41113, 41117–41122, 41201–41203, 10904, 11000 / 11001, 40105 / 40111 in a moderation context | moderator-side refusals | `classifyModerationError` → `ModerationErrorKind` | per-kind messages in `moderation-service` |
 
 All the user-reachable ones join `isPermanentProtocol14Error`, so

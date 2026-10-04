@@ -29,7 +29,7 @@ export function stubText(state: StubState, kind: CardKind): string {
   const noun = kind === 'reply' ? 'reply' : 'post';
   switch (state) {
     case 'removed':
-      return `This ${noun} was removed by the contract's moderators.`;
+      return `This ${noun} was removed by community moderators.`;
     case 'deleted':
       return `This ${noun} was deleted by its author.`;
     case 'failed':
@@ -48,8 +48,6 @@ export interface PostStubProps {
   variant?: 'card' | 'embed';
   /** A moderator's stated reason, for `removed`. */
   reason?: string;
-  /** v11 kept fields of a removed post: its first tag and date, e.g. "#dash · posted Sep 30". */
-  kept?: string;
   testID?: string;
   /** A card stub's menu, if it has one (Bookmarks' "Remove bookmark"): its "⋯" trigger, at the line's end. */
   more?: ReactNode;
@@ -61,15 +59,15 @@ const MORE_ACTION = [{ name: 'more', label: 'More' }];
 
 /**
  * The hole a removed, deleted, unloadable or blocked post leaves (UX_SPEC
- * §2.5): one italic line with its icon, plus the reason or kept fields. Not
+ * §2.5): one italic line with its icon, plus a removal's reason. Not
  * tappable, and one element for screen readers. A stub with a menu opens it
  * from its "⋯", a long press, or the "More" action.
  */
-export function PostStub({ state, kind = 'post', variant = 'card', reason, kept, testID, more, onMore }: PostStubProps) {
+export function PostStub({ state, kind = 'post', variant = 'card', reason, testID, more, onMore }: PostStubProps) {
   const c = useColors();
   const Icon = ICONS[state];
   const text = stubText(state, kind);
-  const detail = state === 'removed' && reason ? `Reason: ${reason}` : kept;
+  const detail = state === 'removed' && reason ? `Reason: ${reason}` : undefined;
 
   const frame = {
     accessible: true,

@@ -390,9 +390,8 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
 
     const confirm = page.getByRole('dialog', { name: /Delete/ })
     await expect(confirm).toBeVisible()
-    // The copy must match what the contract does: a tombstone on v9 (never a
-    // promise of permanent removal), a permanent removal on v10.
-    await expect(confirm.getByText(DELETES_ARE_REAL ? /permanently removed/ : /tombstone remains on-chain/)).toBeVisible()
+    // One sentence on every topology, never a promise of permanent removal.
+    await expect(confirm.getByText("This can't be undone. Replies and quotes will show that it was deleted.")).toBeVisible()
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(confirm).toBeHidden({ timeout: COMPOSE_TIMEOUT })
 

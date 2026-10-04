@@ -10,8 +10,10 @@ import { ChatBubbleOvalLeftEllipsisIcon, EllipsisHorizontalIcon, LockClosedIcon 
 
 import { errorCode } from '~/data/writes';
 import { openUser } from '~/features/post/post-navigation';
+import { blockFromConversation, unblockFromConversation } from '~/features/safety/block-state';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
+import { handleOf } from '~/ui/handle';
 import { IconButton } from '~/ui/IconButton';
 import { Screen } from '~/ui/Screen';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
@@ -22,7 +24,7 @@ import { useColors } from '~/ui/tokens';
 
 import { Composer, ComposerBanner } from './Composer';
 import { ConversationAvatar } from './ConversationAvatar';
-import { deleteConversation, setBlockedInMessages } from './dm-actions';
+import { deleteConversation } from './dm-actions';
 import {
   markConversationRead,
   openConversation,
@@ -44,6 +46,8 @@ import { forgetLanded, mergeOutbox, resolveFailed, sendInBackground, useOutboxFo
 import { useStickToNewest } from './stick-to-newest';
 import { UnlockSheet } from './UnlockSheet';
 import { useAppActive } from './use-app-active';
+
+const openBlockSheet = (userId: string) => router.push({ pathname: '/block/[userId]', params: { userId } });
 
 /** Hides the tab bar while this screen is focused (UX_SPEC §4.20). */
 function useHiddenTabBar(): void {
@@ -227,9 +231,23 @@ export function ConversationScreen() {
           if (deleted && router.canGoBack()) router.back();
         })
         .catch(() => undefined);
-    } else if ((id === 'block' || id === 'unblock') && v5) setBlockedInMessages(peerId, id === 'block').catch(() => undefined);
-    // Legacy follows the account's blocks (SAFE-01): the block screen blocks, or shows the block with Unblock.
-    else if (id === 'block' || id === 'unblock') router.push({ pathname: '/block/[userId]', params: { userId: peerId } });
+    } else if (v5 && conversation.peer && (id === 'block' || id === 'unblock')) {
+      const handle = handleOf(conversation.peer);
+      // v5 shows Unblock for a block in Messages: lifted with the account's own block, if any.
+      if (id === 'unblock') {
+        if (viewerId) unblockFromConversation(viewerId, peerId, handle).catch(() => undefined);
+      } else {
+        // The same Block sheet as everywhere (SAFE-01), which blocks in Messages too; already
+        // blocked on the account, only Messages is left to block.
+        blockFromConversation(peerId, handle)
+          .then((next) => {
+            if (next === 'sheet') openBlockSheet(peerId);
+          })
+          .catch(() => undefined);
+      }
+    }
+    // Legacy follows the account's blocks (SAFE-01): the sheet blocks, or shows the block with Unblock.
+    else if (id === 'block' || id === 'unblock') openBlockSheet(peerId);
   };
 
   const header = (

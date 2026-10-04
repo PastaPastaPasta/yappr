@@ -32,7 +32,7 @@ type KeyValueArea = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
  * (PRD AUTH-11).
  */
 export function dmLocalKeys(identityId: string): string[] {
-  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId)]
+  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId), blocksKey(identityId)]
 }
 
 /**
@@ -41,6 +41,36 @@ export function dmLocalKeys(identityId: string): string[] {
  * this, so a save that fails before the app is killed would lose it (SR-23).
  */
 const retentionKey = (identityId: string) => scopedKey(`yappr_engine_dm_retention:${identityId}`)
+
+/**
+ * Blocks in Messages asked for while this device had no encryption key, or
+ * before the saved state loaded: a Block made from a profile also blocks in
+ * Messages (PRD SAFE-01), so it is kept here and applied once it can be.
+ */
+const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${identityId}`)
+
+/** Peer id → blocked, the latest choice per peer. */
+function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<string, boolean> {
+  try {
+    const value = JSON.parse(storage.getItem(blocksKey(identityId)) ?? 'null') as unknown
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
+    }
+  } catch {
+    // Unreadable: nothing to restore.
+  }
+  return {}
+}
+
+/**
+ * Block or unblock `peerId` unless that already stands (an unblock of
+ * someone never blocked writes nothing). Returns whether it changed anything.
+ */
+function applyBlock(running: DmEngine, peerId: string, blocked: boolean): boolean {
+  if (running.getSnapshot().blocked.includes(peerId) === blocked) return false
+  running.setBlocked(peerId, blocked)
+  return true
+}
 
 interface PendingRetention {
   retention: RetentionSetting
@@ -210,6 +240,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       if (loaded || !engine.getSnapshot().ready) return
       loaded = true
       restoreRetention(identityId, engine)
+      restoreBlocks(identityId, engine)
     }
     const unsubscribe = engine.subscribe(() => {
       restoreOnceLoaded()
@@ -255,6 +286,13 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     const running = engine(identityId)
     if (!running.getSnapshot().ready) throw new RpcError('Messages are still loading', 'ENGINE_BUSY')
     return running
+  }
+
+  /** Once the saved state has loaded: apply the blocks asked for before it could be (locked, or still loading). */
+  function restoreBlocks(identityId: string, running: DmEngine): void {
+    const pending = readPendingBlocks(storage(), identityId)
+    storage().removeItem(blocksKey(identityId))
+    for (const [peerId, blocked] of Object.entries(pending)) applyBlock(running, peerId, blocked)
   }
 
   /** The engine holding conversation `key` (a closed draft is held but not in the snapshot). */
@@ -378,6 +416,21 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
 
     async hide(identityId: string, key: string): Promise<void> {
       holding(identityId, key).hide(key)
+    },
+
+    /**
+     * Block or unblock in Messages: their messages and group invitations are
+     * ignored. Saved at once; nothing is written when it already stands.
+     * Without an encryption key on this device, or before the saved state has
+     * loaded, it is kept on the device and applied once the state loads.
+     * Returns whether it changed anything (kept for later counts as a change).
+     */
+    setBlocked(identityId: string, peerId: string, blocked: boolean): boolean {
+      const running = engineOf(identityId)
+      if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked)
+      const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: blocked }
+      storage().setItem(blocksKey(identityId), JSON.stringify(pending))
+      return true
     },
 
     /** "Reclaim message fees": applied at once and saved now, kept on the device until the save lands. */

@@ -408,7 +408,7 @@ The card body renders at 70% opacity while Posting; full opacity in the other st
 ### 2.5 Removed and deleted stubs
 
 - Card variant: 16 × 12 padding, `border` bottom. Embed variant: inside a quote frame (`radius.xl`, `border.strong`, 12 padding).
-- One line: icon 16 (`ShieldExclamationIcon` removed, `TrashIcon` deleted, `ExclamationTriangleIcon` failed or unavailable) + the sentence in `subhead` italic `text.secondary`. Removed with a reason: a second line "Reason: …" not italic. v11 kept fields: a second line "#tag · posted Sep 30".
+- One line: icon 16 (`ShieldExclamationIcon` removed, `TrashIcon` deleted, `ExclamationTriangleIcon` failed or unavailable) + the sentence in `subhead` italic `text.secondary`. Removed with a reason: a second line "Reason: …" not italic. Nothing else of what a removal record kept (v11's tag and date) is shown, on mobile or web.
 - Blocked-author variant (G-6): `NoSymbolIcon` + "Reply from an account you blocked" / "Post from an account you blocked".
 - Not tappable, no menu. a11y: one static text element.
 
@@ -1292,7 +1292,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.29 Blocked accounts
 
 - **Route** `/settings/blocked` · **Story** SAFE-03.
-- User rows with the block note under the handle (`subhead`, `text.secondary`, italic) and "Unblock" (`outline sm`). Footer note with the yap.pr link. Empty state "You haven't blocked anyone".
+- User rows with the block note under the handle (`subhead`, `text.secondary`, italic) and "Unblock" (`outline sm`). Footer note `blocked.listsNote` with the "Manage on yap.pr" link, only when the viewer follows at least one block list (`safety.followedBlockLists`); nothing about block lists otherwise. Empty state "You haven't blocked anyone".
 
 ### 4.30 Settings: Appearance
 
@@ -1411,8 +1411,10 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ### 4.39 Report sheet and block sheet
 
-- **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The disclosure paragraph (`subhead`, `text.secondary`). "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`). "Details (optional)" text area with counter "0/500". "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). Already-reported state replaces the form with the summary, "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), shows "Withdrawing…" until the network answers, then closes the sheet with toast "Report withdrawn". Not confirmed yet (it may have landed), the sheet says so (`report.withdrawUnconfirmed`) with "Check again" (outline) and "Done", and never offers Withdraw again until a check settles it; a sheet reopened meanwhile shows the same. A report already gone closes the sheet with a neutral toast `toast.reportGone`, as on web.
-- **Block** (SAFE-01): bottom sheet, medium detent. Title "Block @x?", explanation paragraph, "Add a note (optional)" field with counter at 260+/280 and the note "Visible to anyone on Dash Platform", "Block" (destructive block), "Cancel" (ghost).
+- **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The form shows at once: the one-line disclosure `report.disclosure` (`subhead`, `text.secondary`), "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`), "Details (optional)" text area with counter "0/500", "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). The viewer's existing report is read beside the form, never in front of it; found, it replaces the form. A failed read never blocks the report: a `DUPLICATE` refusal toasts `report.duplicate` and shows the existing report. "Reporting…" until the engine has the report; then, confirmed or not confirmed yet, `report.sent` with "Also block @x" (outline) and "Done". The network's answer is reconciled in the background; only a report proven not to have landed (or refused) brings the form back, with the toast `toast.reportFailed`. A post that cannot be read shows `report.loadFailed` with "Try again".
+- **Existing report**: `report.existing` (date, reason, "Under review" or "Resolved: {outcome}"), the note, the moderators' resolution text when there is one, `report.expiry` (muted), "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), then withdraws optimistically: toast "Report withdrawn" and the sheet closes at once. A withdrawal proven not to have landed brings the report back with `toast.withdrawFailed`; a report already gone toasts `toast.reportGone` (neutral). A sheet reopened while a withdrawal is still settling shows "Report withdrawn", never Withdraw again.
+- **Report by email** (SAFE-05): where the contract takes no reports (testnet), and where it waits for an elected moderation team that is not seated (decided before the form, `safety.reportsOpen`): title `report.emailTitle`, body `report.emailBody`, the same reasons and details, and "Email the Yappr team" (disabled until valid), which opens the mail composer prefilled with the post's link, the reason and the details. The link is never shown on the sheet. A late `MODERATION_NOT_SEATED` refusal shows the same view with the warning `report.notSeated` above it, keeping what was chosen.
+- **Block** (SAFE-01): bottom sheet, medium detent. Title "Block @x?", the body for the network's Messages (`block.body*`), an "Add a note" link that opens the note field (counter at 260+/280, hint "Anyone can see this note."), "Block" (destructive block), "Cancel" (ghost). On DM v5 the Block also blocks them in Messages (and Unblock lifts both), so one Block covers everything; from a conversation's menu it opens the same sheet.
 
 ---
 
@@ -1533,12 +1535,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | replybar.signedOut | Sign in to reply |
 | post.cantReplyDeleted | This post was deleted, so it can't be replied to. **(web)** |
 | post.cantReplyRemoved | This post was removed by moderators, so it can't be replied to. |
-| stub.removed | This {post\|reply} was removed by the contract's moderators. **(web)** |
+| stub.removed | This {post\|reply} was removed by community moderators. **(web)** |
 | stub.reason | Reason: {reason} **(web)** |
 | stub.deleted | This {post\|reply} was deleted by its author. **(web)** |
 | stub.failed | This {post\|reply} could not be loaded. Try again later. **(web)** |
 | stub.unavailable | This {post\|reply} is unavailable. **(web)** |
-| stub.kept | #{tag} · posted {date} |
 | stub.blockedReply | Reply from an account you blocked |
 | stub.blockedPost | Post from an account you blocked |
 | private.title | Private post |
@@ -1613,8 +1614,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | menu.report | Report post / Report reply **(web)** |
 | menu.deleteQuote | Delete your quote **(web)** |
 | delete.title | Delete post? / Delete reply? **(web)** |
-| delete.body | This action cannot be undone. The {post} will be permanently removed from the platform. **(web)** |
-| delete.bodyHoles | This action cannot be undone. The {post} will be permanently removed from the platform. Replies and quotes stay, and show that it was deleted. **(web)** |
+| delete.body | This can't be undone. Replies and quotes will show that it was deleted. **(web)** One string on every contract, whether a delete erases the document or leaves a tombstone. |
 | toast.deleted | Post deleted / Reply deleted **(web)** |
 | bookmarks.title | Bookmarks |
 | bookmarks.search | Search bookmarks **(web)** |
@@ -1785,41 +1785,48 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | --- | --- |
 | block.title | Block @{handle}? |
 | block.body | You won't see their posts or replies. Blocks are public on Dash Platform. **(no Messages capability)** |
-| block.body.legacyDm | You won't see their posts or replies. They can still message you, but their messages won't show as unread, and you can't message them until you unblock them. Blocks are public on Dash Platform. **(testnet: legacy DMs follow the account's blocks)** |
-| block.body.v5Dm | You won't see their posts or replies. This doesn't stop their messages: to do that, block them from your conversation in Messages. Blocks are public on Dash Platform. **(devnet: DM v5 keeps its own private block list, DM-10, DM-12)** |
-| block.note | Add a note (optional) |
-| block.noteHint | Visible to anyone on Dash Platform |
+| block.body.legacyDm | You won't see their posts or replies. They can still message you, but it won't show as unread. Blocks are public on Dash Platform. **(testnet: legacy DMs follow the account's blocks)** |
+| block.body.v5Dm | They won't be able to message you, and you won't see their posts or replies. Blocks are public on Dash Platform. **(devnet: the Block also blocks them in Messages, DM-10; Unblock lifts both)** |
+| block.addNote | Add a note |
+| block.note | Note |
+| block.noteHint | Anyone can see this note. |
 | block.confirm | Block |
-| toast.blocked | User blocked **(web)** |
-| toast.blockedRevoked | User blocked and private feed access revoked **(web)** |
-| toast.unblocked | User unblocked **(web)** |
-| toast.stillBlocked | Your block was removed, but a block list you follow still blocks this user **(web)** |
+| toast.blocked | Blocked @{handle} |
+| toast.unblocked | Unblocked @{handle} |
+| toast.stillBlocked | Unblocked, but a block list you follow still hides them. |
 | block.self | You cannot block yourself **(web)** |
 | toast.blockFailed | Failed to update block status **(web)** |
 | blocked.title | Blocked accounts |
 | blocked.empty | You haven't blocked anyone |
-| blocked.listsNote | Block lists you follow are managed on yap.pr. |
+| blocked.listsNote | Also hidden by {N} block list(s) you follow · Manage on yap.pr ("1 block list", "2 block lists"; only when N ≥ 1) |
 | report.title | Report post / Report reply |
-| report.disclosure | Your report goes to this community's moderators. Reports are public on Dash Platform: anyone, including the {post}'s author, can see that you reported it, the reason you pick and anything you write in the details. You can come back here to see how the moderators resolved it. A report expires after 90 days. **(web)** The "You can come back here…" sentence only where `reportsResolved` is on. |
+| report.disclosure | Reports are public. Anyone, including the author, can see that you reported this, your reason and any details. |
 | report.question | What is wrong with it? **(web)** |
 | report.reasons | Spam or scam — Repetitive, misleading or fraudulent content / Harassment or bullying — Targeting, insulting or intimidating someone / Hate — Attacking people for who they are / Violence or threats — Threatening, inciting or glorifying violence / Sexual content — Explicit sexual content / Self-harm — Encouraging suicide or self-injury / Illegal goods or activity — Selling or promoting something illegal / Impersonation — Pretending to be someone else / Something else — Say what in the details **(web, `lib/reports.ts`)** |
 | report.details | Details (optional) / Details (required) **(web)** |
 | report.placeholder | Anything the moderators should know **(web)** |
 | report.submit / busy | Report {post} / Reporting… **(web)** |
-| toast.reportSent | Report sent |
-| toast.reportUnconfirmed | Report sent. The network has not confirmed it yet; it reaches the moderators once it does. **(web)** |
-| report.existing | On {date} you reported it for {reason}. **(web)** |
-| report.resolved | Resolved by the moderators: {No action taken \| Content removed \| Author actioned} on {date}. **(web)** |
+| report.sent | Report sent / Thanks for letting us know. |
+| toast.reportSent | Report sent (only when the sheet closed before the engine took it) |
+| toast.reportFailed | Couldn't send your report. Try again. |
+| report.duplicate | You already reported this. |
+| report.gone | This {post\|reply} no longer exists. |
+| report.loadFailed | Couldn't load this {post\|reply}. Try again. |
+| report.existing | You reported this on {date} for {reason} · Under review / · Resolved: {No action taken \| Content removed \| Author actioned} |
+| report.expiry | Reports close after 90 days. |
 | report.withdraw / withdrawing | Withdraw report / Withdrawing… **(web)** |
 | toast.reportWithdrawn | Report withdrawn **(web)** |
 | report.withdrawConfirm | Withdraw your report? / The moderators will no longer see it. / Withdraw |
-| toast.reportGone | This report is already gone: the moderators dismissed it, or it was withdrawn elsewhere. **(web)** |
-| toast.withdrawFailed | Failed to withdraw the report. Please try again. |
-| report.withdrawUnconfirmed | Withdrawal not confirmed yet / The network has not confirmed that your report is withdrawn. Check again in a moment; until it confirms, the moderators may still see it. / Check again (Checking…) |
+| toast.reportGone | This report was already closed. |
+| toast.withdrawFailed | Couldn't withdraw your report. Try again. |
+| report.emailTitle | Report by email |
+| report.emailBody | Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose. |
 | report.email | Email the Yappr team |
 | report.emailSubject | Report: post {id} |
+| report.emailBodyDraft | {link} / Reason: {reason} / {details} (the mail's body, prefilled) |
+| report.notSeated | Your report wasn't sent. Send it by email instead. |
 | toast.reportCopied | Report address copied. Send it from any email app. |
-| report.alsoBlock | Also block @{handle}? |
+| report.alsoBlock | Also block @{handle} |
 | nsfw.cover | NSFW · The author flagged this post **(web)** |
 | nsfw.show | Show **(web)** / label: Show post flagged as NSFW **(web)** |
 | mediaGate.text | Media from someone you don't follow **(web)** |
@@ -1900,7 +1907,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Session | Your session has expired. Please log in again. (mobile replaces "log in" with "sign in") |
 | Too long (bytes) | This is too long for the network once emoji and special characters are counted. Shorten it and try again. |
 | Nonce clash | Another write from your account went out at the same moment, so this one was not saved. Try again. |
-| Not seated | This opens once the community elects its moderation team. Nothing was posted. |
+| Not seated | This isn't available yet. Try again later. (a report shows `report.notSeated` and the email path instead) |
 | Barred | Your account has been banned or suspended here by a moderator, so this action isn't allowed right now. |
 | Too young | What this depends on was only just published. Wait a minute and try again. |
 | Target gone | What this points to no longer exists on Dash Platform, so this action can't be completed. |

@@ -124,7 +124,7 @@ There is no analytics or crash SDK. Every metric is measured from the stores, CI
 | M1 | Crash rate (iOS) | ≤ 1 crash per 100 tester sessions; no crash signature from 3 or more testers | TestFlight crash reports, Xcode Organizer |
 | M2 | Crash rate (Android) | Pre-launch report clean on the device matrix; no crash cluster in closed-track vitals | Play Console pre-launch report and Android vitals |
 | M3 | P0 story pass rate | 100% of P0 stories pass on iOS and Android, light and dark, with screenshot evidence | Agentic QA story matrix; Maestro |
-| M4 | ADR E8 flows | Signed-out browse, key sign-in, key exchange, post, like, reply, follow, DM round trip, block and report all green on iOS and Android on every release candidate. Read flows run on both variants; write flows run on the devnet build only, with sakura pool identities (ADR E6). Until sakura has a seated moderation team or an interim owner, the report flow asserts the "elects its moderation team" refusal path. | Maestro on CI (smoke on every PR, write flows nightly) |
+| M4 | ADR E8 flows | Signed-out browse, key sign-in, key exchange, post, like, reply, follow, DM round trip, block and report all green on iOS and Android on every release candidate. Read flows run on both variants; write flows run on the devnet build only, with sakura pool identities (ADR E6). Until sakura has a seated moderation team or an interim owner, the report flow accepts the email path (SAFE-05) in place of the form. | Maestro on CI (smoke on every PR, write flows nightly) |
 | M5 | Write reliability | ≥ 99% of engine contract-test writes become visible within 2 minutes on sakura; zero duplicate documents from any retry path | Engine contract tests (ADR E8), run serially with retries |
 | M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Engine diagnostics (SET-08) |
 | M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Engine diagnostics "boot time" field |
@@ -414,13 +414,13 @@ As a reader who opens a reply, I want to see what it answers, so that it makes s
 #### POST-04 · Removed and deleted stubs · P0 · all
 As a reader, I want a clear note where a post used to be, so that a thread still makes sense.
 - A missing post or reply renders a stub with an icon and one sentence, in card or embed form (`components/moderation/removed-post-stub.tsx`):
-  - removed by moderators (`moderated`): "This post was removed by the contract's moderators." plus "Reason: …" when the removal record has one;
+  - removed by moderators (`moderated`): "This post was removed by community moderators." plus "Reason: …" when the removal record has one;
   - deleted by the author (`deletesLeaveHoles`, proven absent with no removal record): "This post was deleted by its author.";
   - read failed: "This post could not be loaded. Try again later.";
   - otherwise: "This post is unavailable."
 - "post" reads "reply" for replies.
 - The stub never asserts "removed" or "deleted" before the engine proves it; until then it shows "unavailable".
-- On v11 (`removalKeepsFields`) a removed post's stub adds what the record kept: "#tag · posted Sep 30" (a reply: "posted Sep 30").
+- Nothing else of what a removal record keeps (v11's tag and date) is shown, on mobile or web.
 - Stubs have no action bar and no menu.
 
 #### POST-05 · Thread whose root is gone · P0 · dev (`deletesLeaveHoles`, `moderated`)
@@ -543,7 +543,7 @@ As a writer, I want to know why I can't post, so that I can fix it.
 - Offline: Post disabled, hint "You're offline" (G-1).
 - Signed out: compose opens the sign-in sheet first (G-8).
 - Over a limit: Post disabled (COMP-02).
-- A refusal that names a policy shows its categorized message, kept from web: "This opens once the community elects its moderation team. Nothing was posted.", "Your account has been banned or suspended here by a moderator, so this action isn't allowed right now.", "Another write from your account went out at the same moment, so this one was not saved. Try again.", "This is too long for the network once emoji and special characters are counted. Shorten it and try again."
+- A refusal that names a policy shows its categorized message, kept from web: "This isn't available yet. Try again later." (no moderation team seated yet; a report offers email instead, SAFE-04), "Your account has been banned or suspended here by a moderator, so this action isn't allowed right now.", "Another write from your account went out at the same moment, so this one was not saved. Try again.", "This is too long for the network once emoji and special characters are counted. Shorten it and try again."
 
 #### COMP-12 · Keyboard and input · P1 · all
 As a writer, I want the editor to behave like a native text field, so that typing is comfortable.
@@ -605,7 +605,7 @@ As a reader, I want to share a post outside Yappr, so that friends can see it.
 #### ENG-06 · Delete my post or reply · P0 · all
 As an author, I want to delete my post, so that it's gone from Yappr.
 - The context menu of the viewer's own item has "Delete post" / "Delete reply" in red.
-- Confirmation: "Delete post?" with the web body ("This action cannot be undone. The post will be permanently removed from the platform." and, on dev, "Replies and quotes stay, and show that it was deleted."), "Delete" (destructive) and "Cancel".
+- Confirmation: "Delete post?" / "Delete reply?" with one body on every contract, the same as web: "This can't be undone. Replies and quotes will show that it was deleted.", "Delete" (destructive) and "Cancel".
 - On confirm the item disappears from every list at once (optimistic), toast "Post deleted" / "Reply deleted". On failure it comes back (G-4).
 - A bare repost and the viewer's quote (dev) are undone through the repost menu (ENG-02); a quote post also shows "Delete post" here when opened as its own card.
 
@@ -867,7 +867,7 @@ As a user, I want to remove a conversation from my list, so that the inbox stays
 
 #### DM-10 · Block from a conversation · P0 · all
 As a user, I want to block someone from the chat, so that they stop messaging me.
-- The conversation menu has "Block" / "Unblock" (1:1 only), using SAFE-01.
+- The conversation menu has "Block" / "Unblock" (1:1 only). "Block" opens the SAFE-01 sheet, the same Block as everywhere: on v5 it also blocks them in Messages. On v5, someone the account already blocks (a block made on web, or before Block covered Messages) is blocked in Messages at once, toast "Blocked @x". On v5 "Unblock" lifts the block in Messages and the account's own block, if there is one; toast "Unblocked @x".
 - After blocking, the composer is replaced by "You blocked this person. Unblock them to send messages." and their new messages and group invitations are ignored.
 
 #### DM-11 · Legacy DMs on testnet · P0 · v2 (`dmVersion` v3)
@@ -892,36 +892,40 @@ As a user, I want what I sent to stay sent when I switch apps, so that nothing i
 
 #### SAFE-01 · Block someone · P0 · all
 As a user, I want to block an account, so that I stop seeing it.
-- "Block @x" (post menu, profile menu, conversation menu) opens a confirmation sheet: "Block @x?" with a body that promises only what the block enforces on that network's Messages (UX_SPEC §5.9 `block.body*`; a block never stops anyone sending a message), with an optional "Add a note (optional)" field (≤ 280 characters, note "Visible to anyone on Dash Platform"), "Block" (destructive) and "Cancel" (PD-5).
-- On confirm: the author's content disappears from every list, thread, notification and cache at once (G-6); toast "User blocked" ("User blocked and private feed access revoked" when the engine reports it).
+- "Block @x" (post menu, profile menu, conversation menu) opens a confirmation sheet: "Block @x?" with a body that promises only what the block enforces on that network's Messages (UX_SPEC §5.9 `block.body*`), an "Add a note" link that opens the optional public note (≤ 280 characters, hint "Anyone can see this note."), "Block" (destructive) and "Cancel" (PD-5).
+- On DM v5 the Block also blocks them in Messages (DM-10), so one Block covers everything and the body says "They won't be able to message you". The engine writes nothing in Messages when that block already stands, and keeps it on the device until Messages unlock where the encryption key isn't there yet. On legacy DMs (testnet) the body keeps the caveat that they can still message you.
+- On confirm: the author's content disappears from every list, thread, notification and cache at once (G-6); toast "Blocked @x".
 - Blocking yourself is impossible ("You cannot block yourself").
 
 #### SAFE-02 · Unblock · P0 · all
 As a user, I want to unblock, so that I see someone again.
-- "Unblock @x" (menus, the blocked profile, the blocked list) unblocks without confirmation; toast "User unblocked".
-- When a followed block list still blocks them: "Your block was removed, but a block list you follow still blocks this user".
+- "Unblock @x" (menus, the blocked profile, the blocked list) unblocks without confirmation; toast "Unblocked @x". On DM v5 it lifts the block in Messages too.
+- When a followed block list still blocks them: "Unblocked, but a block list you follow still hides them.".
 
 #### SAFE-03 · Blocked accounts list · P0 · all
 As a user, I want to see everyone I blocked, so that I can review my blocks.
 - Settings → Privacy & Safety → "Blocked accounts" (also from the own profile menu): user rows with the block note (if any) and "Unblock".
 - Empty: "You haven't blocked anyone".
-- A footer notes "Block lists you follow are managed on yap.pr." with a link (in-app browser).
+- Only for someone who follows at least one block list (set up on web), a footer notes "Also hidden by {N} block list(s) you follow · Manage on yap.pr", the link opening the in-app browser. Nobody else hears about block lists.
 
 #### SAFE-04 · Report a post or reply · P0 · dev (`reports`)
 As a reader, I want to report harmful content, so that moderators can act.
-- "Report post" / "Report reply" opens a sheet:
-  - the disclosure, verbatim from web: "Your report goes to this community's moderators. Reports are public on Dash Platform: anyone, including the post's author, can see that you reported it, the reason you pick and anything you write in the details. You can come back here to see how the moderators resolved it. A report expires after 90 days." (the sentence "You can come back here…" only where `reportsResolved` is on, as web);
+- "Report post" / "Report reply" opens a sheet with the form at once:
+  - the one required disclosure: "Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.";
   - "What is wrong with it?" with the reasons of `lib/reports.ts` (label and hint): Spam or scam; Harassment or bullying; Hate; Violence or threats; Sexual content; Self-harm; Illegal goods or activity; Impersonation; Something else;
   - "Details (optional)" ("Details (required)" for Something else), placeholder "Anything the moderators should know", max 500 with a counter;
-  - "Report post" (disabled until valid); "Reporting…" while sending.
-- Success toast "Report sent" (unconfirmed: "Report sent. The network has not confirmed it yet; it reaches the moderators once it does.").
-- Reporting again shows the existing report: "On {date} you reported it for {reason}.", the note, and, when resolved (`reportsResolved`), "Resolved by the moderators: {No action taken | Content removed | Author actioned} on {date}."; with "Withdraw report" (toast "Report withdrawn") and "Done".
-- Before a moderation team exists the refusal reads "This opens once the community elects its moderation team. Nothing was posted." and the sheet offers "Email the Yappr team" instead (SAFE-05).
-- Reporting also offers "Block @x" after success ("Also block @x?"), P1.
+  - "Report post" (disabled until valid); "Reporting…" while the engine takes it.
+- The viewer's existing report is read beside the form, never in front of it, and a failed read never blocks reporting. A `DUPLICATE` refusal says "You already reported this." and shows the report.
+- Sent (confirmed, or not confirmed yet): "Report sent" / "Thanks for letting us know.", with "Also block @x" (P1) and "Done". The network's answer is reconciled in the background; only a report proven not to have landed brings the form back, with "Couldn't send your report. Try again."
+- Reporting again shows the existing report: "You reported this on {date} for {reason} · Under review" (or "· Resolved: {No action taken | Content removed | Author actioned}" where `reportsResolved`), the note, the muted line "Reports close after 90 days.", "Withdraw report" and "Done".
+- "Withdraw report" asks first, then is optimistic: toast "Report withdrawn" and the sheet closes. Only a withdrawal proven not to have landed brings the report back ("Couldn't withdraw your report. Try again."); a report already gone says "This report was already closed."
+- Where the contract waits for an elected moderation team that isn't seated, the sheet decides before the form (`safety.reportsOpen`) and opens the email path (SAFE-05) directly. A late refusal reads "Your report wasn't sent. Send it by email instead." above the email path, keeping the reason chosen.
+- A post that can't be read says "Couldn't load this post. Try again."
 
 #### SAFE-05 · Report by email · P1 · all (v2 always; dev as fallback)
 As a reader on testnet, I want a way to report content, so that abuse doesn't go unanswered.
-- Where `reports` is off, "Report post" opens the mail composer to the Yappr support address with subject "Report: post {id}" and a body with the post link and an empty "Reason:" line (PD-13).
+- Where `reports` is off, "Report post" opens the email sheet: "Report by email", "Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose.", the same reasons and details as SAFE-04, and "Email the Yappr team".
+- It opens the mail composer to the Yappr support address with subject "Report: post {id}" and a body prefilled with the post link, "Reason: {reason}" and the details (PD-13). The link stays inside the email; the sheet never shows it.
 - With no mail app configured, the address and link are copied, toast "Report address copied. Send it from any email app."
 
 #### SAFE-06 · NSFW gate · P0 · all

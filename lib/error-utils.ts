@@ -1073,7 +1073,7 @@ export function categorizeError(error: unknown): string {
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
   if (isModerationNotYetSeatedError(error)) {
-    return 'This opens once the community elects its moderation team. Nothing was posted.'
+    return 'This isn\'t available yet. Try again later.'
   }
   if (isPropertyMaxBytesError(error)) {
     // maxLength counts characters and the UI enforces it; maxBytes counts

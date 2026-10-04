@@ -97,6 +97,10 @@ export const queryKeys = {
   blockStatus: (userId: string) => [...root, 'blockStatus', userId] as const,
   /** Every `blockStatus`: a prefix of the key above. */
   blockStatusAll: [...root, 'blockStatus'] as const,
+  /** `safety.followedBlockLists`: how many block lists the viewer follows. */
+  blockLists: [...root, 'blockLists'] as const,
+  /** `safety.reportsOpen`: whether a report can be filed now, or goes by email. */
+  reportsOpen: [...root, 'reportsOpen'] as const,
 
   /** `settings.get`. */
   settings: [...root, 'settings'] as const,

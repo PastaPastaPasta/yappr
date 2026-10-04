@@ -13,6 +13,7 @@ import { Button } from '~/ui/Button';
 import { ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
 import { mediumImpact } from '~/ui/haptics';
+import { LinkText } from '~/ui/LinkText';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
@@ -29,9 +30,10 @@ export const BLOCK_NOTE_MAX = 280;
 /**
  * Block or unblock an account (PRD SAFE-01, SAFE-02; UX_SPEC §4.39), from a
  * post's, profile's or conversation's menu. A block is a public, paid
- * document, so it asks first, with an optional public note. On "Block" the
- * account's posts leave every list at once and the sheet closes; the toast
- * follows the write. An account already blocked offers "Unblock".
+ * document, so it asks first, with an optional public note behind "Add a
+ * note". On "Block" the account's posts leave every list at once (on DM v5
+ * Messages blocks them too) and the sheet closes; the toast follows the
+ * write. An account already blocked offers "Unblock".
  */
 export function BlockScreen() {
   const { userId = '' } = useLocalSearchParams<{ userId?: string }>();
@@ -45,6 +47,7 @@ export function BlockScreen() {
   });
   const blocked = useAuthorBlocked(userId, profile.data?.viewer?.blocks);
   const [note, setNote] = useState('');
+  const [noteOpen, setNoteOpen] = useState(false);
   const c = useColors();
   const dm = useCapabilities()?.dm ?? null;
 
@@ -100,12 +103,12 @@ export function BlockScreen() {
     sendWrite(
       blockWrite,
       { viewerId: ownViewerId, userId, block: true, message: message || undefined, user: row },
-      copy.toast.blocked,
+      copy.toast.blocked(handle),
     );
     closeSheet();
   };
   const unblock = () => {
-    sendWrite(blockWrite, { viewerId: ownViewerId, userId, block: false }, copy.toast.unblocked);
+    sendWrite(blockWrite, { viewerId: ownViewerId, userId, block: false }, copy.toast.unblocked(handle));
     closeSheet();
   };
 
@@ -145,19 +148,30 @@ export function BlockScreen() {
         ) : (
           <>
             <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.title(handle)} body={copy.block.body(dm)} />
-            <View className="gap-1">
-              <TextField
-                label={copy.block.note}
-                value={note}
-                onChangeText={setNote}
-                maxLength={BLOCK_NOTE_MAX}
-                multiline
-                testID="block-note"
+            {noteOpen ? (
+              <View className="gap-1">
+                <TextField
+                  label={copy.block.note}
+                  value={note}
+                  onChangeText={setNote}
+                  maxLength={BLOCK_NOTE_MAX}
+                  multiline
+                  autoFocus
+                  testID="block-note"
+                />
+                <Text variant="caption" tone="secondary">
+                  {copy.block.noteHint}
+                </Text>
+              </View>
+            ) : (
+              <LinkText
+                label={copy.block.addNote}
+                role="button"
+                className="self-start"
+                onPress={() => setNoteOpen(true)}
+                testID="block-add-note"
               />
-              <Text variant="caption" tone="secondary">
-                {copy.block.noteHint}
-              </Text>
-            </View>
+            )}
             <Button
               label={copy.block.confirm}
               variant="destructive"

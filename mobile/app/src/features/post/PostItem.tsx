@@ -193,14 +193,12 @@ function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBook
   return items;
 }
 
-/** The delete confirmation's body, by what a delete does on this contract (web DeleteConfirmationModal). */
-function deleteMessage(noun: string, capabilities: CapabilitiesDTO | null): string {
-  if (capabilities?.deletesAreTombstones) {
-    return `This can't be undone. The text and media are erased; the ${noun} is hidden from feeds and shows as 'deleted by its author' in threads and quotes, and its likes and replies stay.`;
-  }
-  const base = `This action cannot be undone. The ${noun} will be permanently removed from the platform.`;
-  return capabilities?.repostsAreQuotes ? `${base} Replies and quotes stay, and show that it was deleted.` : base;
-}
+/**
+ * The delete confirmation's body: one sentence on every contract, as on web
+ * (DeleteConfirmationModal). Whether the document is erased or blanked is
+ * the network's business; either way replies and quotes show the delete.
+ */
+const DELETE_MESSAGE = "This can't be undone. Replies and quotes will show that it was deleted.";
 
 const DELETED_TOAST = { post: 'Post deleted', reply: 'Reply deleted', quote: 'Quote deleted' } as const;
 
@@ -208,13 +206,12 @@ const DELETED_TOAST = { post: 'Post deleted', reply: 'Reply deleted', quote: 'Qu
 async function confirmDelete(
   target: TargetRef,
   noun: keyof typeof DELETED_TOAST,
-  capabilities: CapabilitiesDTO | null,
   quotedPostId?: string,
 ): Promise<void> {
   const kind = noun === 'reply' ? 'reply' : 'post';
   const confirmed = await confirmAlert({
     title: `Delete ${kind}?`,
-    message: deleteMessage(kind, capabilities),
+    message: DELETE_MESSAGE,
     confirmText: 'Delete',
     destructive: true,
   });
@@ -282,7 +279,7 @@ export const PostItem = memo(function PostItem({
         return;
       }
       const target: TargetRef = { id: quoteId, kind: 'post', ownerId: viewerId, rootPostId: null };
-      confirmDelete(target, 'quote', capabilities, post.id).catch(() => undefined);
+      confirmDelete(target, 'quote', post.id).catch(() => undefined);
     };
 
     const repost = (on: boolean) => {
@@ -316,7 +313,7 @@ export const PostItem = memo(function PostItem({
       delete: () => {
         // A v10 quote holds the viewer's one slot on the post it quotes: deleting it frees that.
         const quotedPostId = capabilities?.repostsAreQuotes ? post.quotedPostId : undefined;
-        confirmDelete(targetOf(post), post.kind, capabilities, quotedPostId).catch(() => undefined);
+        confirmDelete(targetOf(post), post.kind, quotedPostId).catch(() => undefined);
       },
       block: () => requireAuth(() => router.push({ pathname: '/block/[userId]', params: { userId: post.author.id } })),
       report: () => {
