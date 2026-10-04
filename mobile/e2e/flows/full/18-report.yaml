@@ -86,14 +86,20 @@ tags:
       - tapOn:
           text: "Withdraw|WITHDRAW"
           rightOf: "Cancel|CANCEL"
-      # Withdrawn at once (the network's answer is reconciled in the background): the sheet closes.
+      # Withdrawn at once (the network's answer is reconciled in the background): the sheet
+      # closes with a 3 s "Report withdrawn" toast. On a loaded host Maestro's tap above can
+      # spend longer than that waiting for the screen to settle (the toast animates), so the
+      # toast is checked but not required; the sheet closing back to the post is.
       - extendedWaitUntil:
           visible: "Report withdrawn"
-          timeout: 30000
+          timeout: 5000
+          optional: true
       - extendedWaitUntil:
           notVisible:
             id: report-existing
           timeout: 30000
+      - assertVisible:
+          id: more-btn-${output.peerPostId}
       - takeScreenshot: report-withdrawn
 # Email instead (no seated moderation team): the sheet asks for the reason, and closes on Cancel.
 - runFlow:
