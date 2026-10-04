@@ -28,7 +28,7 @@ import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
   MODERATOR_FLAG, TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
 } from './battery-lib.mjs';
-import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
+import { buildDocument, describeErr, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
@@ -58,6 +58,11 @@ const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, ite
 // Digital payloads are opaque ciphertext to consensus, so random bytes stand in.
 const deliverableData = ({ itemId }) => ({ itemId, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
 const deliveryData = ({ orderId, buyerId }) => ({ orderId, buyerId, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
+/** A kit's stored ciphertext, or null when it does not read back. */
+async function kitBytes(battery, id) {
+  const stored = (await battery.fetchDocument('itemDeliverable', id))?.toObject?.().encryptedPayload;
+  return stored ? Buffer.from(stored) : null;
+}
 /** The two doctypes that live UNDER a store, addressed by name for the s2 tables. */
 const UNDER_STORE = { storeItem: (storeId, tag) => itemData({ storeId, title: tag }), shippingZone: (storeId, tag) => zoneData({ storeId, name: tag }) };
 
@@ -461,10 +466,23 @@ async function caseS22Digital(ctx) {
   await kit('s22f a second kit for the same item is rejected (unique itemDeliverable)', DUPLICATE_UNIQUE, seller);
   if (created.ok) {
     const read = await battery.revisionOf('itemDeliverable', created.id);
-    await battery.probeReplace('s22g the seller replaces the kit (a sale consumed license keys)', null, seller, 'itemDeliverable', created.id, deliverableData({ itemId: id32(item.id) }), read);
+    const first = deliverableData({ itemId: id32(item.id) });
+    await battery.probeReplace('s22g the seller replaces the kit (a sale consumed license keys)', null, seller, 'itemDeliverable', created.id, first, read);
     // The client's reservation rests on this: a pool written from a stale read
-    // (another tab delivered meanwhile) must never put sent keys back.
-    await battery.probeReplace('s22g2 a second replace from the SAME read revision is refused (40106 stale revision)', STALE_REVISION, seller, 'itemDeliverable', created.id, deliverableData({ itemId: id32(item.id) }), read);
+    // (another tab delivered meanwhile) must never put sent keys back. Judged
+    // by content: probeReplace's revision check would count the FIRST replace
+    // as this one landing.
+    const stale = deliverableData({ itemId: id32(item.id) });
+    const outcome = await battery.attemptWrite(
+      { accepted: async () => (await kitBytes(battery, created.id))?.equals(Buffer.from(stale.encryptedPayload)) === true },
+      () => battery.sdk.documents.replace({
+        document: buildDocument({ contractId: ctx.contractId, docType: 'itemDeliverable', ownerId: seller.ownerId, data: stale, revision: BigInt(read) + 1n, id: id32(created.id) }).document,
+        identityKey: seller.identityKey,
+        signer: seller.signer,
+      })
+    );
+    battery.expectRejected('s22g2 a second replace from the SAME read revision is refused (40106 stale revision)', outcome, STALE_REVISION);
+    battery.check('s22g3 the kit still holds the first replace', (await kitBytes(battery, created.id))?.equals(Buffer.from(first.encryptedPayload)) === true);
     // The stranger's own item is a real target, so this is about immutability.
     const strangerItem = await battery.probeCreate('s22h fixture: a stranger item', null, stranger, 'storeItem', { ...itemData({ storeId: id32(ctx.strangerStoreId), title: `Other ${run}` }), fulfillment: 'digital' });
     if (strangerItem.ok) {
