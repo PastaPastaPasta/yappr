@@ -241,7 +241,7 @@ class MainActivity : ReactActivity() {
     expect(withFontScaleConfigChange(undefined)).toBe('fontScale');
   });
 
-  it('has MainActivity pass the new scale on to JS at once, idempotently', () => {
+  it('has MainActivity pass the new scale on to JS and the stack headers at once, idempotently', () => {
     const patched = withConfigurationHandler(TEMPLATE, 'kt');
     expect(patched).toMatch(/^package pr\.yap\.app\.dev\nimport android\.content\.res\.Configuration\n/);
     expect(patched).toContain('import com.facebook.react.ReactApplication\n');
@@ -249,6 +249,10 @@ class MainActivity : ReactActivity() {
     expect(patched).toContain('override fun onConfigurationChanged(newConfig: Configuration) {');
     expect(patched).toContain('super.onConfigurationChanged(newConfig)');
     expect(patched).toContain('getNativeModule("DeviceInfo") as? LifecycleEventListener)?.onHostResume()');
+    // react-native-screens sets the header title's sp size only on an update: every header applies it again.
+    expect(patched).toContain('import com.swmansion.rnscreens.ScreenStackHeaderConfig\n');
+    expect(patched).toContain('updateStackHeaders(window.decorView)');
+    expect(patched).toContain('if (view is ScreenStackHeaderConfig) {\n      view.onUpdate()');
     // Inside the class: the override comes before the class's closing brace.
     expect(patched.trimEnd().endsWith('// @generated end yappr-font-scale\n}')).toBe(true);
     expect(withConfigurationHandler(patched, 'kt')).toBe(patched);
