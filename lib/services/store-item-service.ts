@@ -284,7 +284,9 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       sku: string;
       variants: ItemVariants;
       fulfillment: ItemFulfillment;
-    }>
+    }>,
+    /** Refuse (DocumentChangedError) unless the listing is still at this revision. */
+    options: { atRevision?: number } = {}
   ): Promise<StoreItem> {
     // Fetch existing item to preserve required fields
     const existing = await this.get(itemId);
@@ -315,7 +317,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('variants' in data) documentData.variants = data.variants && JSON.stringify(data.variants);
     if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
 
-    return this.update(itemId, ownerId, documentData);
+    return this.update(itemId, ownerId, documentData, options.atRevision);
   }
 
   /**

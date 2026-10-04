@@ -106,6 +106,14 @@ export function withCreationTime(doc: Record<string, unknown>, startedAt: number
   return doc.$createdAt == null && doc.createdAt == null ? { ...doc, $createdAt: startedAt } : doc;
 }
 
+/** A document changed since the revision a write was decided on; nothing was written. */
+export class DocumentChangedError extends Error {
+  constructor(readonly documentId: string) {
+    super('This was changed elsewhere since it was checked. Reload and try again.');
+    this.name = 'DocumentChangedError';
+  }
+}
+
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
@@ -335,7 +343,12 @@ export abstract class BaseDocumentService<T> {
    * Update a document through the typed `Document` replace path.
    * Binary fields should already be `Uint8Array` when they reach this layer.
    */
-  async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
+  /**
+   * `expectedRevision`, when given, binds the write to a revision the caller
+   * decided on: a document changed since then is refused with
+   * {@link DocumentChangedError} rather than overwritten.
+   */
+  async update(documentId: string, ownerId: string, data: Record<string, unknown>, expectedRevision?: number): Promise<T> {
     try {
       logger.debug(`Updating ${this.documentType} document ${documentId}:`, data);
 
@@ -348,6 +361,9 @@ export abstract class BaseDocumentService<T> {
         throw new Error('Document not found');
       }
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
+      if (expectedRevision !== undefined && revision !== expectedRevision) {
+        throw new DocumentChangedError(documentId);
+      }
       logger.debug(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
 
       // Merge existing document data with partial update.
