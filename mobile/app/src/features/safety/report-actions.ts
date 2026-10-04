@@ -87,6 +87,20 @@ export function withdrawalUnsettled(ticket: WriteTicket | null): boolean {
   return ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && !ticket.retryable);
 }
 
+/** Report tickets a toast already announced as sent: each is announced once. */
+const announced = new Set<string>();
+
+/**
+ * "Report sent" for a report whose sheet closed before it could say so
+ * (closed before the engine took it, or while it was on its way). Once per
+ * ticket.
+ */
+export function announceReportSent(ticketId: string): void {
+  if (announced.has(ticketId)) return;
+  announced.add(ticketId);
+  toast.success(copy.toast.reportSent);
+}
+
 /**
  * Report a post or reply (`safety.report`, PRD SAFE-04). Once the engine
  * has it, the report counts as sent ("Report sent"), and the network's
@@ -145,9 +159,12 @@ export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
     queryClient.setQueryData(queryKeys.post.ownReport(target.id), null);
   },
   announceUnconfirmed: false,
+  // Already gone: no report to show (the undo put it back), even with no sheet on screen to read it again.
   onFailed: (ticket, { target }) => {
     if (ticket.error?.code !== 'REPORT_GONE') return;
-    queryClient.invalidateQueries({ queryKey: queryKeys.post.ownReport(target.id) }).catch(() => undefined);
+    const key = queryKeys.post.ownReport(target.id);
+    queryClient.setQueryData(key, null);
+    queryClient.invalidateQueries({ queryKey: key }).catch(() => undefined);
   },
   failureText: (ticket) => (ticket.error?.code === 'REPORT_GONE' ? copy.toast.reportGone : null),
   failureNeutral: (ticket) => ticket.error?.code === 'REPORT_GONE',

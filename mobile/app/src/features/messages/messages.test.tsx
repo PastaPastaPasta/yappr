@@ -603,6 +603,27 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(useToastStore.getState().current?.message).toBe('Unblocked @bob');
     });
 
+    it("changes nothing when the account's block can't be read, and says so", async () => {
+      await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
+      fakeEngine.method('safety.blockedBy').mockRejectedValue(new Error('unavailable'));
+      await select('unblock');
+      await act(async () => {});
+      expect(fakeEngine.method('safety.unblock')).not.toHaveBeenCalled();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(useToastStore.getState().current?.message).toBe("Couldn't unblock @bob. Try again.");
+    });
+
+    it('ignores a second tap while the first still reads the account block', async () => {
+      await openConversation();
+      let answer: (sources: Record<string, null>) => void = () => undefined;
+      fakeEngine.method('safety.blockedBy').mockReturnValue(new Promise((resolve) => (answer = resolve)));
+      await select('block');
+      await select('block');
+      await act(async () => answer({ [BOB_ID]: null }));
+      expect(fakeEngine.method('safety.blockedBy')).toHaveBeenCalledTimes(1);
+      expect(pathname()).toBe(`/block/${BOB_ID}`);
+    });
+
     it('lifts only the block in Messages when there is no account block (one made on web)', async () => {
       await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
       fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: null });

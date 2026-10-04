@@ -8,6 +8,7 @@ import { useEngineQuery } from '~/data/queries';
 import { useCapabilities, useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
 import { errorMessage } from '~/engine/logs';
+import { useDmStatus } from '~/features/messages/dm-data';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { ErrorState } from '~/ui/EmptyState';
@@ -50,6 +51,11 @@ export function BlockScreen() {
   const [noteOpen, setNoteOpen] = useState(false);
   const c = useColors();
   const dm = useCapabilities()?.dm ?? null;
+  // On DM v5 the Block reaches Messages on this device once they are unlocked here (until then the engine
+  // keeps it for later), so only then does the body promise they can't message you (SAFE-01).
+  const dmStatus = useDmStatus(signedIn && !self && dm === 'v5');
+  const bodyFor = dm === 'v5' && dmStatus.data?.locked !== false ? null : dm;
+  const reading = profile.isPending || (dm === 'v5' && dmStatus.isPending);
 
   const title = blocked ? 'Blocked account' : 'Block account';
   const header = <Stack.Screen options={{ title }} />;
@@ -129,7 +135,7 @@ export function BlockScreen() {
             </View>
           </View>
         ) : null}
-        {profile.isPending ? (
+        {reading ? (
           <View className="items-center py-6" testID="block-loading">
             <Spinner />
           </View>
@@ -147,7 +153,7 @@ export function BlockScreen() {
           </>
         ) : (
           <>
-            <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.title(handle)} body={copy.block.body(dm)} />
+            <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.title(handle)} body={copy.block.body(bodyFor)} />
             {noteOpen ? (
               <View className="gap-1">
                 <TextField

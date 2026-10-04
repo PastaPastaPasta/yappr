@@ -231,15 +231,15 @@ export function ConversationScreen() {
           if (deleted && router.canGoBack()) router.back();
         })
         .catch(() => undefined);
-    } else if (v5 && conversation.peer && (id === 'block' || id === 'unblock')) {
+    } else if (v5 && conversation.peer && viewerId && (id === 'block' || id === 'unblock')) {
       const handle = handleOf(conversation.peer);
       // v5 shows Unblock for a block in Messages: lifted with the account's own block, if any.
       if (id === 'unblock') {
-        if (viewerId) unblockFromConversation(viewerId, peerId, handle).catch(() => undefined);
+        unblockFromConversation(viewerId, peerId, handle).catch(() => undefined);
       } else {
         // The same Block sheet as everywhere (SAFE-01), which blocks in Messages too; already
         // blocked on the account, only Messages is left to block.
-        blockFromConversation(peerId, handle)
+        blockFromConversation(viewerId, peerId, handle)
           .then((next) => {
             if (next === 'sheet') openBlockSheet(peerId);
           })

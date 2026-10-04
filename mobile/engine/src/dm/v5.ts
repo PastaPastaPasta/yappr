@@ -1,3 +1,4 @@
+import bs58 from 'bs58'
 import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
 import type { Conv } from '@/lib/services/dm-v5/conversation'
@@ -49,12 +50,22 @@ const retentionKey = (identityId: string) => scopedKey(`yappr_engine_dm_retentio
  */
 const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${identityId}`)
 
-/** Peer id → blocked, the latest choice per peer. */
-function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<string, boolean> {
+/** A choice kept for later: block or unblock, and when it was made (a newer one from another device wins). */
+interface PendingBlock {
+  blocked: boolean
+  changedAt: number
+}
+
+const isPendingBlock = (value: unknown): value is PendingBlock =>
+  typeof value === 'object' && value !== null &&
+  typeof (value as PendingBlock).blocked === 'boolean' && Number.isFinite((value as PendingBlock).changedAt)
+
+/** Peer id → the latest choice for that peer. */
+function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<string, PendingBlock> {
   try {
     const value = JSON.parse(storage.getItem(blocksKey(identityId)) ?? 'null') as unknown
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-      return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, boolean] => typeof entry[1] === 'boolean'))
+      return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, PendingBlock] => isPendingBlock(entry[1])))
     }
   } catch {
     // Unreadable: nothing to restore.
@@ -70,6 +81,11 @@ function applyBlock(running: DmEngine, peerId: string, blocked: boolean): boolea
   if (running.getSnapshot().blocked.includes(peerId) === blocked) return false
   running.setBlocked(peerId, blocked)
   return true
+}
+
+/** When the saved state last changed the block on `peerId` (any device), or 0 when it never did. */
+function savedBlockChange(running: DmEngine, peerId: string): number {
+  return running.ctx.store.state.blocks.find(entry => bs58.encode(entry.id) === peerId)?.changedAt ?? 0
 }
 
 interface PendingRetention {
@@ -288,11 +304,18 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     return running
   }
 
-  /** Once the saved state has loaded: apply the blocks asked for before it could be (locked, or still loading). */
+  /**
+   * Once the saved state has loaded: apply the blocks asked for before it
+   * could be (locked, or still loading), unless the saved state holds a
+   * newer choice for that person, made on another device meanwhile (the
+   * newer change wins, as in a merge).
+   */
   function restoreBlocks(identityId: string, running: DmEngine): void {
     const pending = readPendingBlocks(storage(), identityId)
     storage().removeItem(blocksKey(identityId))
-    for (const [peerId, blocked] of Object.entries(pending)) applyBlock(running, peerId, blocked)
+    for (const [peerId, { blocked, changedAt }] of Object.entries(pending)) {
+      if (savedBlockChange(running, peerId) < changedAt) applyBlock(running, peerId, blocked)
+    }
   }
 
   /** The engine holding conversation `key` (a closed draft is held but not in the snapshot). */
@@ -422,13 +445,16 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      * Block or unblock in Messages: their messages and group invitations are
      * ignored. Saved at once; nothing is written when it already stands.
      * Without an encryption key on this device, or before the saved state has
-     * loaded, it is kept on the device and applied once the state loads.
-     * Returns whether it changed anything (kept for later counts as a change).
+     * loaded, it is kept on the device with when it was made, and applied once
+     * the state loads unless a newer choice from another device is saved by
+     * then. Sign-out drops it (AUTH-11): the host promises nothing about
+     * Messages while they are locked here. Returns whether it changed
+     * anything (kept for later counts as a change).
      */
     setBlocked(identityId: string, peerId: string, blocked: boolean): boolean {
       const running = engineOf(identityId)
       if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked)
-      const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: blocked }
+      const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: Date.now() } }
       storage().setItem(blocksKey(identityId), JSON.stringify(pending))
       return true
     },

@@ -1,6 +1,7 @@
 import type {
   BlockedUserDTO,
   CapabilitiesDTO,
+  DmStatusDTO,
   EngineErrorCode,
   OwnReportDTO,
   PostDTO,
@@ -88,6 +89,22 @@ const viewer: SessionDTO = {
 };
 
 const IMAGE = { type: 'image' as const, url: 'https://example.com/a.jpg', width: 1200, height: 675 };
+
+/** `dm.status` on DM v5, with Messages unlocked on this device or not. */
+function dmStatus(locked: boolean): DmStatusDTO {
+  return {
+    backend: 'v5',
+    locked,
+    ready: !locked,
+    unreadTotal: 0,
+    unreadConversations: 0,
+    capReached: false,
+    retention: locked ? null : 'never',
+    blocked: [],
+    recovery: null,
+    error: null,
+  };
+}
 
 function profileOf(blocks: boolean): ProfileDTO {
   return {
@@ -520,13 +537,25 @@ describe('BlockScreen', () => {
   ] as const)('promises only what a block does to %s messages (SR-20)', async (dm, body) => {
     fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm } as CapabilitiesDTO } });
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    fakeEngine.method('dm.status').mockResolvedValue(dmStatus(false));
     withProviders(<BlockScreen />);
     await settle();
     expect(screen.getByText(body)).toBeTruthy();
   });
 
+  it('on DM v5 with Messages locked on this device, promises nothing about messages', async () => {
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm: 'v5' } } });
+    fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    fakeEngine.method('dm.status').mockResolvedValue(dmStatus(true));
+    withProviders(<BlockScreen />);
+    await settle();
+    expect(screen.getByText("You won't see their posts or replies. Blocks are public on Dash Platform.")).toBeTruthy();
+    expect(screen.queryByText(/message you/)).toBeNull();
+  });
+
   it('on DM v5, blocks them in Messages too from the sheet', async () => {
     fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm: 'v5' } } });
+    fakeEngine.method('dm.status').mockResolvedValue(dmStatus(false));
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
     fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
     fakeEngine.method('dm.setBlocked').mockResolvedValue(undefined);
@@ -713,16 +742,39 @@ describe('ReportScreen', () => {
     fireEvent.press(screen.getByTestId('report-reason-0'));
     await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
     first.unmount();
+    // Dismissed while it was on its way: the toast says it went.
+    expect(toastMessage()).toBe('Report sent');
+    act(() => useToastStore.setState({ current: null }));
 
-    withProviders(<ReportScreen />);
+    const second = withProviders(<ReportScreen />);
     await settle();
     // The reopened sheet shows the first report going out, not a fresh form.
     expect(screen.getByText('Reporting…')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
     await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(screen.getByTestId('report-sent')).toBeTruthy();
-    expect(toastMessage()).toBeUndefined();
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
+    // The sheet says it now, and the report was already announced: no toast on top, nor when it closes.
+    second.unmount();
+    expect(toastMessage()).toBeUndefined();
+  });
+
+  it('says "Report sent" once when the sheet is dismissed while the report is on its way, and nothing more when it confirms', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    const pending = ticket({ op: 'report', target });
+    fakeEngine.method('safety.report').mockResolvedValue(pending);
+    const sheet = withProviders(<ReportScreen />);
+    await settle();
+    fireEvent.press(screen.getByTestId('report-reason-0'));
+    await act(async () => fireEvent.press(screen.getByTestId('report-submit')));
+    expect(screen.getByText('Reporting…')).toBeTruthy();
+    expect(toastMessage()).toBeUndefined();
+
+    sheet.unmount();
+    expect(toastMessage()).toBe('Report sent');
+    act(() => useToastStore.setState({ current: null }));
+    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(toastMessage()).toBeUndefined();
   });
 
   it('drops a report sent from a reopened sheet before the first one has its ticket', async () => {
@@ -922,6 +974,20 @@ describe('ReportScreen', () => {
       await settle();
       expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: 'This report was already closed.' });
       expect(fakeEngine.method('safety.ownReport')).toHaveBeenCalledTimes(2);
+    });
+
+    it('never keeps the closed report cached once its sheet is gone', async () => {
+      const { pending, sheet } = await withdraw();
+      sheet.unmount();
+      await act(async () => fakeEngine.emit('write.status', advance(pending, refused('REPORT_GONE'))));
+      expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toBeNull();
+
+      // Reopened, the sheet offers the form, not Withdraw for a report that is gone.
+      fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+      withProviders(<ReportScreen />);
+      expect(screen.queryByTestId('report-withdraw')).toBeNull();
+      await settle();
+      expect(screen.getByTestId('report-sheet')).toBeTruthy();
     });
 
     it('reconciles a withdrawal not confirmed yet silently, and a reopened sheet never offers Withdraw again', async () => {

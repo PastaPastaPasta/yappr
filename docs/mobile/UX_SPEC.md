@@ -1784,7 +1784,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Key | String |
 | --- | --- |
 | block.title | Block @{handle}? |
-| block.body | You won't see their posts or replies. Blocks are public on Dash Platform. **(no Messages capability)** |
+| block.body | You won't see their posts or replies. Blocks are public on Dash Platform. **(no Messages capability; also DM v5 while Messages are locked on this device, where the block in Messages waits until they unlock here)** |
 | block.body.legacyDm | You won't see their posts or replies. They can still message you, but it won't show as unread. Blocks are public on Dash Platform. **(testnet: legacy DMs follow the account's blocks)** |
 | block.body.v5Dm | They won't be able to message you, and you won't see their posts or replies. Blocks are public on Dash Platform. **(devnet: the Block also blocks them in Messages, DM-10; Unblock lifts both)** |
 | block.addNote | Add a note |
@@ -1796,6 +1796,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | toast.stillBlocked | Unblocked, but a block list you follow still hides them. |
 | block.self | You cannot block yourself **(web)** |
 | toast.blockFailed | Failed to update block status **(web)** |
+| toast.unblockFailed | Couldn't unblock @{handle}. Try again. **(a DM v5 conversation's Unblock when the account's block can't be read)** |
 | blocked.title | Blocked accounts |
 | blocked.empty | You haven't blocked anyone |
 | blocked.listsNote | Also hidden by {N} block list(s) you follow · Manage on yap.pr ("1 block list", "2 block lists"; only when N ≥ 1) |
@@ -1807,7 +1808,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | report.placeholder | Anything the moderators should know **(web)** |
 | report.submit / busy | Report {post} / Reporting… **(web)** |
 | report.sent | Report sent / Thanks for letting us know. |
-| toast.reportSent | Report sent (only when the sheet closed before the engine took it) |
+| toast.reportSent | Report sent (only when the sheet closed before it could say so: before the engine took the report, or while it was on its way; once per report) |
 | toast.reportFailed | Couldn't send your report. Try again. |
 | report.duplicate | You already reported this. |
 | report.gone | This {post\|reply} no longer exists. |

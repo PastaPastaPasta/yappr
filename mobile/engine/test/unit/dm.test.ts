@@ -700,10 +700,34 @@ describe('dm on DM v5: blocks asked for before they can apply (PRD SAFE-01)', ()
     expect(await user.dm.setBlocked(bob, true)).toBe(true)
     await user.dm.setBlocked(carol, true)
     await user.dm.setBlocked(carol, false)
-    expect(JSON.parse(user.local.getItem(pendingKey) as string)).toEqual({ [bob]: true, [carol]: false })
+    expect(JSON.parse(user.local.getItem(pendingKey) as string)).toEqual({
+      [bob]: { blocked: true, changedAt: expect.any(Number) },
+      [carol]: { blocked: false, changedAt: expect.any(Number) },
+    })
 
     user.setLocked(false)
     await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ locked: false, ready: true, blocked: [bob] }))
+    expect(user.local.getItem(pendingKey)).toBeNull()
+  })
+
+  it('never applies a kept choice over a newer one saved from another device', async () => {
+    const ledger = ledgerNow()
+    // On another device: bob blocked and unblocked again, carol never touched.
+    const other = await ready(userOn(ledger, alice))
+    expect(await other.dm.setBlocked(bob, true)).toBe(true)
+    expect(await other.dm.setBlocked(bob, false)).toBe(true)
+    expect(await other.engine().flush()).toBe(true)
+
+    const user = userOn(ledger, alice)
+    await user.hooks.stop()
+    user.setLocked(true)
+    user.hooks.sessionChanged(started(alice))
+    // Both blocked here before that, while Messages were locked on this device.
+    user.local.setItem(pendingKey, JSON.stringify({ [bob]: { blocked: true, changedAt: 1 }, [carol]: { blocked: true, changedAt: 1 } }))
+
+    user.setLocked(false)
+    await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ locked: false, ready: true }))
+    expect((await user.dm.status()).blocked).toEqual([carol])
     expect(user.local.getItem(pendingKey)).toBeNull()
   })
 

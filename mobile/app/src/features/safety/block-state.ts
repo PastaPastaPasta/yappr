@@ -1,4 +1,4 @@
-import type { BlockedUserDTO, ProfileDTO, WriteTicket } from '@engine/api';
+import type { BlockedUserDTO, BlockSourceDTO, ProfileDTO, WriteTicket } from '@engine/api';
 import { type InvalidateQueryFilters } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { create } from 'zustand';
@@ -9,8 +9,11 @@ import { useEngineQuery, type EngineRemote } from '~/data/queries';
 import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
 import { sendWrite, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
+import { appendLog, errorMessage } from '~/engine/logs';
 import { setBlockedInMessages, syncMessagesBlock } from '~/features/messages/dm-actions';
 import { queryClient } from '~/state/query-client';
+import { errorFeedback } from '~/ui/haptics';
+import { toast } from '~/ui/toast';
 
 import { copy } from './copy';
 
@@ -286,36 +289,75 @@ export const blockWrite: WriteSpec<BlockVars> = {
   failureMessage: copy.toast.blockFailed,
 };
 
-/** Where the account's block on `peerId` comes from, or null (not blocked, or unreadable). */
-const accountBlockOf = (peerId: string) =>
-  engine.api.safety.blockedBy([peerId]).then(
-    (sources) => sources[peerId] ?? null,
-    () => null,
-  );
+/**
+ * Where the account's block on `peerId` comes from, or null when it isn't
+ * blocked. A failed read falls back to this device's decision, and rejects
+ * without one: guessing "not blocked" would lift only Messages on an Unblock
+ * and still say "Unblocked".
+ */
+async function accountBlockOf(viewerId: string, peerId: string): Promise<BlockSourceDTO | null> {
+  try {
+    return (await engine.api.safety.blockedBy([peerId]))[peerId] ?? null;
+  } catch (error) {
+    const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, peerId)];
+    if (!decided) throw error;
+    if (!decided.blocked) return null;
+    return decided.listOnly ? 'list' : 'self';
+  }
+}
+
+/** Peers whose conversation Block or Unblock is reading the account's block: a repeat tap does nothing meanwhile. */
+const conversationReads = new Set<string>();
+
+async function whileReading<T>(peerId: string, idle: T, run: () => Promise<T>): Promise<T> {
+  if (conversationReads.has(peerId)) return idle;
+  conversationReads.add(peerId);
+  try {
+    return await run();
+  } finally {
+    conversationReads.delete(peerId);
+  }
+}
 
 /**
  * "Block" from a DM v5 conversation, which shows it while Messages don't
- * block them. Not blocked yet: 'sheet', for the Block sheet (which blocks in
- * Messages too). Already blocked on the account (a block from before Block
- * covered Messages, or made on web): only Messages is left, so it blocks
- * there now, with the same "Blocked @x".
+ * block them. Not blocked yet (or the account's block can't be read): 'sheet',
+ * for the Block sheet (which blocks in Messages too). Already blocked on the
+ * account (a block from before Block covered Messages, or made on web): only
+ * Messages is left, so it blocks there now, with the same "Blocked @x".
+ * 'done' too for a repeat tap while the first is still reading.
  */
-export async function blockFromConversation(peerId: string, handle: string): Promise<'sheet' | 'done'> {
-  if ((await accountBlockOf(peerId)) === null) return 'sheet';
-  await setBlockedInMessages(peerId, true, copy.toast.blocked(handle));
-  return 'done';
+export function blockFromConversation(viewerId: string, peerId: string, handle: string): Promise<'sheet' | 'done'> {
+  return whileReading(peerId, 'done' as const, async () => {
+    const source = await accountBlockOf(viewerId, peerId).catch(() => null);
+    if (source === null) return 'sheet';
+    await setBlockedInMessages(peerId, true, copy.toast.blocked(handle));
+    return 'done';
+  });
 }
 
 /**
  * "Unblock" from a DM v5 conversation, which shows it for a block in
  * Messages: the account's own block goes too when there is one (it lifts
  * Messages with it), else only the block in Messages (one made in Messages
- * on web). The same "Unblocked @x" either way.
+ * on web). The same "Unblocked @x" either way. When the account's block
+ * can't be read, nothing changes and the toast asks to try again.
  */
-export async function unblockFromConversation(viewerId: string, peerId: string, handle: string): Promise<void> {
-  if ((await accountBlockOf(peerId)) === 'self') {
-    sendWrite(blockWrite, { viewerId, userId: peerId, block: false }, copy.toast.unblocked(handle));
-  } else {
-    await setBlockedInMessages(peerId, false, copy.toast.unblocked(handle));
-  }
+export function unblockFromConversation(viewerId: string, peerId: string, handle: string): Promise<void> {
+  return whileReading(peerId, undefined, async () => {
+    let source: BlockSourceDTO | null;
+    try {
+      source = await accountBlockOf(viewerId, peerId);
+    } catch (error) {
+      appendLog('warn', 'host', `Reading the block before an unblock failed: ${errorMessage(error)}`);
+      errorFeedback();
+      toast.error(copy.toast.unblockFailed(handle));
+      return;
+    }
+    if (source === 'self') {
+      sendWrite(blockWrite, { viewerId, userId: peerId, block: false }, copy.toast.unblocked(handle));
+    } else {
+      await setBlockedInMessages(peerId, false, copy.toast.unblocked(handle));
+    }
+  });
 }

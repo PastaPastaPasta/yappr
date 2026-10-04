@@ -565,6 +565,11 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   }
 }
 
+/** A ticket by id, as it stands now (outside React). */
+export function writeTicketOf(ticketId: string): WriteTicket | null {
+  return useWriteTickets.getState().byId[ticketId] ?? null;
+}
+
 /** A ticket by id, live. */
 export function useWriteTicket(ticketId: string | null): WriteTicket | null {
   return useWriteTickets((s) => (ticketId ? (s.byId[ticketId] ?? null) : null));

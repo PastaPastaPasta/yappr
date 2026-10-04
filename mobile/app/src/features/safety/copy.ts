@@ -10,8 +10,10 @@ export const copy = {
     /**
      * Only what a block enforces, per Messages backend (SR-20). DM v5: the
      * Block also blocks them in Messages (`blockWrite`), so they can't
-     * message you. Legacy (testnet) DMs follow the account's blocks, which
-     * only stop counting their messages as unread: they can still send.
+     * message you; while Messages are locked on this device the block in
+     * Messages waits for them to unlock here, so the sheet passes null then.
+     * Legacy (testnet) DMs follow the account's blocks, which only stop
+     * counting their messages as unread: they can still send.
      */
     body: (dm: 'v5' | 'legacy' | null) =>
       dm === 'v5'
@@ -35,6 +37,7 @@ export const copy = {
     unblocked: (handle: string) => `Unblocked ${handle}`,
     stillBlocked: 'Unblocked, but a block list you follow still hides them.',
     blockFailed: 'Failed to update block status',
+    unblockFailed: (handle: string) => `Couldn't unblock ${handle}. Try again.`,
     reportSent: 'Report sent',
     reportFailed: "Couldn't send your report. Try again.",
     reportCopied: 'Report address copied. Send it from any email app.',

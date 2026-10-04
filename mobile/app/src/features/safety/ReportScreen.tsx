@@ -15,7 +15,7 @@ import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { NO_READ_RETRY } from '~/data/read-retry';
 import { useCapabilities, useSession } from '~/data/session';
-import { runWrite, useWrite, useWriteTicket } from '~/data/writes';
+import { runWrite, useWrite, useWriteTicket, writeTicketOf } from '~/data/writes';
 import { postWebUrl } from '~/features/post/post-navigation';
 import { targetOf } from '~/features/post/post-writes';
 import { Button } from '~/ui/Button';
@@ -39,6 +39,7 @@ import {
   reportStatusLabel,
 } from './report-reasons';
 import {
+  announceReportSent,
   emailReport,
   rememberReportTicket,
   rememberWithdrawTicket,
@@ -235,6 +236,16 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
   // The sheet says how it went while it is open.
   useEffect(() => watchReportSheet(post.id), [post.id]);
 
+  // Dismissed while the report is on its way: nothing on screen will say it went, and a report the engine
+  // took counts as sent (only one proven not to have landed says otherwise).
+  const onItsWay = outcome === 'pending' ? (current?.id ?? null) : null;
+  useEffect(() => {
+    if (!onItsWay) return undefined;
+    return () => {
+      if (writeTicketOf(onItsWay)?.state === 'pending') announceReportSent(onItsWay);
+    };
+  }, [onItsWay]);
+
   // A duplicate means a report exists after all: show it.
   const refetchOwn = own.refetch;
   useEffect(() => {
@@ -300,7 +311,7 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
         if (result.status !== 'submitted') return;
         rememberReportTicket(post.id, result.ticket.id);
         // Closed before the engine took it: nothing on screen says it went.
-        if (!reportSheetOpen(post.id)) toast.success(copy.toast.reportSent);
+        if (!reportSheetOpen(post.id)) announceReportSent(result.ticket.id);
       })
       .catch(() => undefined)
       .finally(() => setSending(false));
