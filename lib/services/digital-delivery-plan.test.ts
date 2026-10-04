@@ -119,6 +119,12 @@ describe('lineProblems', () => {
     expect(check([odd, line('ebook')], withVariants).some((p) => p.blocking)).toBe(true)
   })
 
+  it('blocks a malformed currency instead of throwing', () => {
+    const payload = { items: [line('ebook')], currency: Object.create(null) as unknown as string }
+    expect(() => lineProblems(payload, 'store', listed(['ebook']))).not.toThrow()
+    expect(lineProblems(payload, 'store', listed(['ebook'])).map((p) => p.blocking)).toEqual([true])
+  })
+
   it('flags a title, variant, price or currency the listing does not have, for review', () => {
     const withVariants = new Map([['ebook', listing('ebook', { variants })]])
     // The premium variant at the cheap variant's price.

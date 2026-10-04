@@ -21,7 +21,7 @@ import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, lineProblems, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -64,6 +64,23 @@ async function readListings(itemIds: string[]): Promise<Map<string, ItemListing>
   const items = await storeItemService.getManyFresh(itemIds)
   return new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants }): [string, ItemListing] =>
     [id, { storeId, fulfillment, title, basePrice, currency, variants }]))
+}
+
+/**
+ * An order's latest status and whether anything was delivered for it, read
+ * from Platform just before a bulk delivery; null when either read fails.
+ */
+async function currentOrderState(orderId: string): Promise<{ status: OrderStatusUpdate | undefined; delivered: boolean } | null> {
+  try {
+    const [statuses, deliveries] = await Promise.all([
+      orderStatusService.getLatestStatuses([orderId]),
+      orderDeliveryService.getForOrders([orderId]),
+    ])
+    return { status: statuses.get(orderId), delivered: (deliveries.get(orderId)?.length ?? 0) > 0 }
+  } catch (error) {
+    logger.error(`Could not re-read order ${orderId} before delivering it:`, error)
+    return null
+  }
 }
 
 /** Kit copies merged by revision: whichever is newer wins, wherever it was read. */
@@ -362,7 +379,8 @@ function SellerOrdersPage() {
    * time so each draws license keys from the pool the previous one left.
    */
   const handleDeliverReady = async (sellerPrivateKey: Uint8Array) => {
-    if (!user?.identityId || bulkProgress) return
+    // A status write in flight could close an order this batch is about to send.
+    if (!user?.identityId || bulkProgress || isSubmitting) return
     const batch = readyOrders
     let currentKits = new Map(kits)
     let delivered = 0
@@ -383,9 +401,22 @@ function SellerOrdersPage() {
       setListings(prev => new Map([...prev, ...freshListings]))
       for (const [index, order] of batch.entries()) {
         const payload = orderPayloads.get(order.id)
+        // Re-check the order as it stands now, not as the page loaded it: it may
+        // have been cancelled, refunded or delivered from another device since.
+        // A read that fails holds the order.
+        const now = payload ? await currentOrderState(order.id) : null
+        if (now?.status) setOrderStatuses(prev => new Map(prev).set(order.id, now.status as OrderStatusUpdate))
         // Keys can run out part-way through a batch: re-plan against the pool as it now stands.
-        const plan = payload ? planDelivery(payload, toKitPayloads(currentKits)) : null
-        if (!payload || !plan || planBlockers(plan).length > 0 || lineProblems(payload, order.storeId, freshListings).length > 0) {
+        const stillReady = payload && now && isReadyForBulkDelivery({
+          payload,
+          storeId: order.storeId,
+          latestStatus: now.status?.status,
+          alreadyDelivered: now.delivered,
+          kits: toKitPayloads(currentKits),
+          listings: freshListings,
+        })
+        const plan = payload && stillReady ? planDelivery(payload, toKitPayloads(currentKits)) : null
+        if (!payload || !plan) {
           skipped.push(formatOrderId(order.id))
         } else {
           try {
@@ -422,7 +453,8 @@ function SellerOrdersPage() {
   }
 
   const handleUpdateStatus = async (orderId: string) => {
-    if (!user?.identityId) return
+    // "Deliver all" decides from each order's status: no status change while it runs.
+    if (!user?.identityId || bulkProgress) return
 
     setIsSubmitting(true)
     try {
@@ -511,7 +543,7 @@ function SellerOrdersPage() {
                 </p>
                 <Button
                   size="sm"
-                  disabled={bulkProgress !== null}
+                  disabled={bulkProgress !== null || isSubmitting}
                   onClick={() => withSellerKey((key) => { handleDeliverReady(key).catch((error) => logger.error(error)) })}
                 >
                   Deliver all
@@ -754,6 +786,7 @@ function SellerOrdersPage() {
                           <Button
                             variant="outline"
                             size="sm"
+                            disabled={bulkProgress !== null}
                             onClick={() => {
                               setUpdateOrderId(order.id)
                               setNewStatus(status?.status || 'pending')
@@ -785,7 +818,7 @@ function SellerOrdersPage() {
                               setTrackingCarrier('')
                               setStatusMessage('')
                             }}
-                            isSubmitting={isSubmitting}
+                            isSubmitting={isSubmitting || bulkProgress !== null}
                           />
                         )}
                       </div>

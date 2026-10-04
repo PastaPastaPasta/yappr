@@ -70,8 +70,10 @@ export async function fetchDecryptedFile(asset: DigitalFileAsset): Promise<Blob>
   const key = base64ToBytes(asset.key);
   // A non-ipfs:// URL comes back as itself.
   const urls = getAllGatewayUrls(asset.url);
-  let lastError: unknown = null;
-  for (const url of urls) {
+  // The URL may carry the seller's secret (a token in its path or query): it
+  // is never logged, and errors keep only their kind and URL-free message.
+  let lastError: Error | null = null;
+  for (const [attempt, url] of urls.entries()) {
     try {
       const response = await fetchWithResponseTimeout(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -79,8 +81,9 @@ export async function fetchDecryptedFile(asset: DigitalFileAsset): Promise<Blob>
       // Never the seller's MIME type: an html/svg blob on this origin must not render if `download` is ignored.
       return new Blob([plaintext], { type: 'application/octet-stream' });
     } catch (error) {
-      logger.warn(`Digital file download from ${url} failed:`, error);
-      lastError = error;
+      const reason = error instanceof Error ? `${error.name}: ${error.message.split(url).join('<url>')}` : 'unknown error';
+      logger.warn(`Digital file download attempt ${attempt + 1} of ${urls.length} failed (${reason})`);
+      lastError = new Error(reason);
     }
   }
   throw new Error('Could not download this file from any IPFS gateway. Try again in a few minutes.', { cause: lastError });

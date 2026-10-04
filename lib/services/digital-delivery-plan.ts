@@ -226,6 +226,10 @@ export function lineProblems(
   listings: ReadonlyMap<string, ItemListing>
 ): LineProblem[] {
   const problems: LineProblem[] = []
+  // The currency is buyer-written too, and interpolated below.
+  if (payload.currency !== undefined && typeof payload.currency !== 'string') {
+    return [{ itemTitle: '', text: 'This order\'s currency is malformed, so it cannot be delivered from here. Check it with the buyer.', blocking: true }]
+  }
   const malformed = linesOf(payload).filter(isDigitalLine).length - digitalLines(payload).length
   if (malformed > 0) problems.push({ itemTitle: '', text: `${malformed} digital line${malformed === 1 ? ' of this order is' : 's of this order are'} malformed, so the order cannot be delivered from here. Check it with the buyer.`, blocking: true })
   for (const line of digitalLines(payload)) {

@@ -112,6 +112,12 @@ payload.
   - no product's pool gives more than 10 keys to the order, over all its lines
     (larger key orders are left for the seller to review).
 
+  Listings are read from Platform, never the document cache. Right before
+  each order is fulfilled, "Deliver all" re-reads the listings, the order's
+  latest status and its deliveries, so an order cancelled, refunded or
+  delivered from another device since the page loaded is held, and so is one
+  whose re-read fails. Status changes on the page wait until the batch ends.
+
   The deliver modal runs the same listing check. A line naming no digital
   product of the order's store (or whose listing could not be read) cannot be
   delivered; a title, variant or price that differs is shown, and the seller
