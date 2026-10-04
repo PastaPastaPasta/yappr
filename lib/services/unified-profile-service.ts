@@ -898,7 +898,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     if (!result.success || !result.document) {
       throw new Error(result.error || 'Failed to create profile');
     }
-    this.clearCache();
+    // The inherited cache only: other owners' landed writes (another account on this device) keep their guard.
+    super.clearCache();
     cacheManager.invalidateByTag(`user:${ownerId}`);
     const written = asCreated(withCreationTime(result.document, startedAt));
     // Only a create known to have landed stands in for reads that miss it (one whose wait timed out may never execute).

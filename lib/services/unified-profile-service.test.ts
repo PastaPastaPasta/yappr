@@ -168,6 +168,27 @@ describe('a first edit without a profile', () => {
     expect(await unifiedProfileService.getProfile(ownerId)).toBeNull();
   });
 
+  it("keeps another account's landed save when this one creates its profile", async () => {
+    const otherOwner = '33333333333333333333333333333333';
+    query.mockResolvedValue([raw]);
+    await unifiedProfileService.updateProfile(ownerId, { bio: 'New bio' });
+
+    // Another account on this device makes its first save.
+    query.mockResolvedValue([]);
+    await unifiedProfileService.updateProfile(otherOwner, { displayName: 'Bea' });
+
+    // A feed page from a node behind seeds the first account's previous revision.
+    query.mockResolvedValue([raw]);
+    cacheManager.invalidateByTag(`user:${ownerId}`);
+    unifiedProfileService.seedProfileDocuments([raw], [ownerId]);
+    expect((await unifiedProfileService.getProfile(ownerId))?.bio).toBe('New bio');
+    updateDocument.mockClear();
+    await unifiedProfileService.updateProfile(ownerId, { location: 'Porto' });
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_PROFILE_CONTRACT_ID, 'profile', documentId, ownerId, expect.objectContaining({ bio: 'New bio', location: 'Porto' }), 8
+    );
+  });
+
   it('rejects, and creates nothing, when the profile read fails', async () => {
     query.mockRejectedValue(new Error('DAPI timeout'));
     await expect(unifiedProfileService.updateProfile(ownerId, { bio: 'hi' })).rejects.toThrow('DAPI timeout');
