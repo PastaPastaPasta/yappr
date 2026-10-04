@@ -6,6 +6,8 @@
  */
 
 import bs58 from 'bs58'
+import { sha256 } from '@noble/hashes/sha2.js'
+import { bytesToHex } from '@noble/hashes/utils.js'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
 import type {
   DeliverWhen,
@@ -39,6 +41,19 @@ export const MAX_CODE_LENGTH = 500
 export const MAX_LINE_QUANTITY = 1000
 export const MAX_BULK_KEYS_PER_ITEM = 10
 export const MAX_DELIVERY_MESSAGE_LENGTH = 1000
+/** Longest variant name a receipt carries for display. */
+export const MAX_VARIANT_LABEL_LENGTH = 60
+
+/**
+ * A fixed-size reference to a variant, for matching receipts to order lines
+ * (16 hex characters of SHA-256). Receipts carry this, never the variant key,
+ * so the listing's variant names cannot make a receipt larger than the kit
+ * was checked for.
+ */
+export const variantRef = (variantKey: string) => bytesToHex(sha256(new TextEncoder().encode(variantKey))).slice(0, 16)
+/** A receipt item is for this line: same item, same variant. */
+export const deliveredFor = (item: Pick<DeliveredItem, 'itemId' | 'variantRef'>, line: Pick<OrderItem, 'itemId' | 'variantKey'>) =>
+  item.itemId === line.itemId && (item.variantRef ?? '') === (line.variantKey ? variantRef(line.variantKey) : '')
 
 /** Statuses after which an order is never delivered in bulk. */
 const CLOSED_STATUSES: ReadonlySet<OrderStatus> = new Set(['delivered', 'cancelled', 'refunded', 'disputed'])
@@ -146,7 +161,7 @@ export function planDelivery(
     const item: DeliveredItem = {
       itemId: line.itemId,
       itemTitle: line.itemTitle,
-      ...(line.variantKey ? { variantKey: line.variantKey } : {}),
+      ...(line.variantKey ? { variantRef: variantRef(line.variantKey), variantLabel: line.variantKey.slice(0, MAX_VARIANT_LABEL_LENGTH) } : {}),
       assets: assetsForVariant(kit.assets, line.variantKey).map(withoutVariant),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
     }
@@ -207,7 +222,7 @@ export function lineCoverage(line: Pick<OrderItem, 'itemId' | 'variantKey' | 'qu
       continue
     }
     for (const item of delivery.payload.items) {
-      if (item.itemId !== line.itemId || (item.variantKey ?? '') !== (line.variantKey ?? '')) continue
+      if (!deliveredFor(item, line)) continue
       const codes = item.licenseKeys?.length ?? 0
       coverage.possibly = true
       coverage.possiblyCodes += codes
@@ -227,26 +242,28 @@ const MAX_ID_LENGTH = 44
 
 /**
  * Why this kit could not go out for one unit in one delivery, or null when it
- * can. Worst case: a full-length title (in 3-byte characters), the longest
- * variant key, every asset and the longest unique code. A kit that passes is
- * never undeliverable for size alone (a long message aside, which the seller
- * can shorten): an order too big for one receipt can be split line by line,
- * and a line's codes unit by unit.
+ * can. A receipt's size depends only on the kit and on fixed limits: a
+ * full-length title at its largest once serialized, a fixed-size variant
+ * reference and a cut variant label (never the listing's variant names), every
+ * asset and the largest unique code. So a kit that passes stays deliverable
+ * whatever happens to the listing (a long message aside, which the seller can
+ * shorten): an order too big for one receipt can be split line by line, and a
+ * line's codes unit by unit.
  */
-export function kitDeliveryFitError(kit: ItemDeliverablePayload, variantKeys: readonly string[] = []): string | null {
+export function kitDeliveryFitError(kit: ItemDeliverablePayload): string | null {
   // Largest by what it adds to the receipt: UTF-8 bytes after JSON escaping, not string length.
   const size = (value: string) => new TextEncoder().encode(JSON.stringify(value)).length
-  const longest = (values: readonly string[]) => values.reduce((a, b) => (size(b) > size(a) ? b : a), '')
-  const variantKey = longest(variantKeys)
-  const licenseKey = longest(kit.licenseKeys ?? [])
+  const licenseKey = (kit.licenseKeys ?? []).reduce((a, b) => (size(b) > size(a) ? b : a), '')
+  // The most a string can take once serialized: a control character is
+  // escaped as \uXXXX, 6 bytes per UTF-16 code unit.
+  const worst = (length: number) => '\u0001'.repeat(length)
   const delivery: OrderDeliveryPayload = {
     v: 1,
     items: [{
       itemId: 'x'.repeat(MAX_ID_LENGTH),
-      // The most a title can take once serialized: a control character is
-      // escaped as \uXXXX, 6 bytes per UTF-16 code unit.
-      itemTitle: '\u0001'.repeat(MAX_ITEM_TITLE_LENGTH),
-      ...(variantKey ? { variantKey } : {}),
+      itemTitle: worst(MAX_ITEM_TITLE_LENGTH),
+      variantRef: variantRef(''),
+      variantLabel: worst(MAX_VARIANT_LABEL_LENGTH),
       assets: kit.assets.map(withoutVariant),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
       ...(licenseKey ? { licenseKeys: [licenseKey] } : {}),
@@ -555,14 +572,16 @@ export function decodeDelivery(bytes: Uint8Array): OrderDeliveryPayload {
   const items: DeliveredItem[] = []
   for (const raw of value.items) {
     if (!isRecord(raw) || typeof raw.itemId !== 'string' || typeof raw.itemTitle !== 'string') continue
-    const variantKey = optionalString(raw.variantKey)
+    const variantRefValue = optionalString(raw.variantRef)
+    const variantLabel = optionalString(raw.variantLabel)
     const instructions = optionalString(raw.instructions)
     const licenseKeys = parseKeys(raw.licenseKeys)
     items.push({
       itemId: raw.itemId,
       itemTitle: raw.itemTitle,
       assets: parseAssets(raw.assets),
-      ...(variantKey ? { variantKey } : {}),
+      ...(variantRefValue ? { variantRef: variantRefValue } : {}),
+      ...(variantLabel ? { variantLabel } : {}),
       ...(instructions ? { instructions } : {}),
       ...(licenseKeys ? { licenseKeys } : {}),
     })

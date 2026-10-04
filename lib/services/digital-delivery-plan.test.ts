@@ -13,6 +13,7 @@ import {
   decodeKit,
   encodeDelivery,
   encodeKit,
+  deliveredFor,
   digitalLines,
   isDigitalOnly,
   isReadyForBulkDelivery,
@@ -21,6 +22,7 @@ import {
   kitsAfterDelivery,
   lineProblems,
   planDelivery,
+  variantRef,
   wholeOrderProblems,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
@@ -67,6 +69,22 @@ describe('planDelivery', () => {
     expect(plan.consumedKeys.get(GAME_ID)).toBe(3)
     expect(plan.shortOnKeys).toEqual([])
     expect(kitsAfterDelivery(kits, plan.consumedKeys).get(GAME_ID)?.licenseKeys).toEqual(['k4'])
+  })
+
+  it('names a variant in a receipt by a fixed-size reference, never by its key', () => {
+    const variantKey = 'V'.repeat(5000)
+    const kits = new Map([[EBOOK_ID, kit({ assets: [file('book.pdf')] })]])
+    const order = line(EBOOK_ID, 1, { variantKey })
+    const [item] = planDelivery({ items: [order] }, kits).delivery.items
+    expect(item.variantRef).toBe(variantRef(variantKey))
+    expect(item.variantRef).toHaveLength(16)
+    expect(item.variantLabel?.length).toBeLessThanOrEqual(60)
+    expect(JSON.stringify(item)).not.toContain('V'.repeat(61))
+    // Receipts still match their own line, and only that one.
+    expect(deliveredFor(item, order)).toBe(true)
+    expect(deliveredFor(item, line(EBOOK_ID, 1, { variantKey: 'V'.repeat(4999) }))).toBe(false)
+    expect(deliveredFor(item, line(EBOOK_ID))).toBe(false)
+    expect(decodeDelivery(encodeDelivery({ v: 1, items: [item] })).items[0]).toEqual(item)
   })
 
   it('takes no new codes for lines the seller re-sends without asking for them', () => {
@@ -365,7 +383,7 @@ describe('wire format', () => {
   })
 
   it('sizes unique codes by their UTF-8 bytes, not their length', () => {
-    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1400
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1800
     // 150 kana (450 bytes) outweigh 200 ASCII characters.
     const pool = ['a'.repeat(200), '\u3042'.repeat(150)]
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room - 300), licenseKeys: pool }))).toMatch(/too large/)
@@ -379,11 +397,10 @@ describe('wire format', () => {
   })
 
   it('refuses a kit that could not go out for one unit in one delivery', () => {
-    // Room left after the worst-case 1,200-byte title and the envelope.
-    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1400
+    // Room left after the worst-case title (1,200 bytes), variant label (360) and the envelope.
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1800
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }))).toBeNull()
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES) }))).toMatch(/too large to send in one delivery/)
-    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }), ['V'.repeat(500)])).toMatch(/too large/)
   })
 
   it('refuses a delivery past the contract\'s payload cap', () => {

@@ -182,17 +182,15 @@ deliver a `javascript:` link.
 - Each encrypted payload is at most 16,000 bytes (contract cap). That holds
   roughly 300 unique codes in a kit, and the client refuses a larger kit before
   writing. It also refuses a kit that could not go out for one unit in one
-  delivery (a worst-case 600-byte title, the longest variant and code), so
-  every kit it saves is deliverable, one code per receipt if need be. Files have no such cap: they live on IPFS, up to 100 MB each, because
-  they are encrypted in memory.
-- A listing and its kit are two documents, written one after the other, and
-  their fit is checked by the client, not by consensus. Two saves of the same
-  product from different devices at the same moment can still leave variant
-  names and content that no longer fit one delivery. Whichever save writes
-  last re-checks the pair, and on a mismatch PAUSES the product (checkout
-  refuses a paused product) and tells the seller to repair it. Delivery
-  refuses an oversized receipt, so nothing wrong is ever sent. Closing the
-  window fully needs both written in one batch transition.
+  delivery, so every kit it saves is deliverable, one code per receipt if need
+  be. A receipt's size depends on the kit alone: the title is budgeted at its
+  largest (200 characters at their largest once serialized), and a receipt
+  names the variant by a fixed-size reference (16 hex characters of SHA-256)
+  plus a label cut to 60 characters, never by the listing's variant key. So
+  no listing edit (from this device or another, at any time) can make a saved
+  kit undeliverable, and the fit needs no coordination between the listing
+  and the kit. Files have no such cap: they live on IPFS, up to 100 MB each,
+  because they are encrypted in memory.
 - "Deliver all" holds a line whose product is no longer on sale (paused, sold
   out or deleted); the seller can still deliver an earlier purchase by hand.
 - Delivery is the seller's act; consensus cannot see payment. The **buyer**

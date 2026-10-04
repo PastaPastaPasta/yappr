@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { deliveredFor, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -202,8 +202,7 @@ export function DeliverDigitalModal({
         </Dialog.Description>
 
         {lines.map((line, index) => {
-          // planDelivery omits an empty variantKey, so compare '' and absent as equal.
-          const planned = plan.delivery.items.find((item) => item.itemId === line.itemId && (item.variantKey ?? '') === (line.variantKey ?? ''))
+          const planned = plan.delivery.items.find((item) => deliveredFor(item, line))
           return (
             <div key={`${line.itemId}-${line.variantKey ?? ''}-${index}`} className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg space-y-2 ${selected.has(index) ? '' : 'opacity-60'}`}>
               <label className="flex items-start gap-2 text-sm font-medium">

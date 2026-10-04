@@ -519,7 +519,14 @@ export interface ItemDeliverable {
 export interface DeliveredItem {
   itemId: string
   itemTitle: string
-  variantKey?: string
+  /**
+   * Which variant this fulfils, as a fixed-size reference (`variantRef()`),
+   * not the variant key itself: a receipt's size must not depend on the
+   * listing's variant names, which can change after the kit was checked.
+   */
+  variantRef?: string
+  /** The variant's name for display, cut to a fixed length. */
+  variantLabel?: string
   assets: DigitalAsset[]
   licenseKeys?: string[]
   instructions?: string
