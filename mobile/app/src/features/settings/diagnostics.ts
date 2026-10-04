@@ -6,11 +6,15 @@ import type { EngineErrorEntry } from '~/engine/errors';
 import type { LogLine } from '~/engine/logs';
 import type { EngineStatus } from '~/engine/supervisor';
 
-/** Engine diagnostics copy (UX_SPEC §4.32, §5.10). */
+/** Troubleshooting copy (UX_SPEC §4.32, §5.10). */
 export const diagCopy = {
   share: 'Share',
   copy: 'Copy diagnostics',
+  copied: 'Diagnostics copied',
   shareDiagnostics: 'Share diagnostics',
+  reconnect: 'Reconnect',
+  reconnectTitle: 'Reconnect to Dash Platform?',
+  reconnectBody: 'Lists reload; nothing you posted is lost.',
   wasm: 'WASM compile',
   boot: 'Boot time',
   dapi: 'DAPI endpoints',

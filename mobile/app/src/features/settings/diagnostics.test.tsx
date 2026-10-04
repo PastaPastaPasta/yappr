@@ -3,14 +3,16 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import type { ReactElement, ReactNode } from 'react';
-import { Share } from 'react-native';
+import { Alert, Share, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { fakeEngine } from '~/data/testing/fake-engine';
+import { engineSupervisor } from '~/engine';
 import { getEngineErrors, recordEngineError } from '~/engine/errors';
 import type { EngineStatus } from '~/engine/supervisor';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
+import { useToastStore } from '~/ui/toast';
 
 import { capabilityRows, diagnosticsText, formatAgo, formatBytes } from './diagnostics';
 import { DiagnosticsScreen } from './DiagnosticsScreen';
@@ -128,7 +130,7 @@ describe('diagnostics helpers', () => {
   });
 });
 
-describe('Engine diagnostics (SET-08)', () => {
+describe('Troubleshooting (SET-08)', () => {
   it('shows WASM compile, DAPI endpoints, capabilities, every contract with copy, the cache and recent errors', async () => {
     syncStorage.setItem('yappr-query-cache', 'x'.repeat(3072));
     recordEngineError('feed.home', 'Dash Platform is temporarily unavailable');
@@ -210,5 +212,37 @@ describe('Engine diagnostics (SET-08)', () => {
     const header = renderScreen(<>{mockHeader.right?.()}</>);
     fireEvent.press(header.getByTestId('diagnostics-share-header'));
     expect(share).toHaveBeenCalledTimes(2);
+  });
+
+  it('leads with Copy diagnostics, and says it copied', async () => {
+    useToastStore.setState({ current: null });
+    renderScreen(<DiagnosticsScreen />);
+    await settle();
+
+    const ids = screen.UNSAFE_root.findAll((node) => typeof node.type === 'string' && typeof node.props.testID === 'string').map(
+      (node) => node.props.testID as string,
+    );
+    expect(ids.indexOf('diagnostics-copy')).toBeLessThan(ids.indexOf('diagnostics-dapi'));
+    await act(async () => fireEvent.press(screen.getByTestId('diagnostics-copy')));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining(`pollr ${CONTRACTS.pollr}`));
+    expect(useToastStore.getState().current?.message).toBe('Diagnostics copied');
+  });
+
+  it('offers Reconnect, not "Restart engine", and asks first', async () => {
+    let buttons: AlertButton[] = [];
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, given) => {
+      buttons = given ?? [];
+    });
+    const restart = jest.spyOn(engineSupervisor, 'restart').mockImplementation(() => undefined);
+    renderScreen(<DiagnosticsScreen />);
+    await settle();
+
+    expect(screen.queryByText(/Restart engine/)).toBeNull();
+    fireEvent.press(screen.getByTestId('diagnostics-restart'));
+    expect(screen.getByTestId('diagnostics-restart')).toHaveTextContent('Reconnect');
+    expect(alert).toHaveBeenCalledWith('Reconnect to Dash Platform?', 'Lists reload; nothing you posted is lost.', expect.any(Array));
+    expect(restart).not.toHaveBeenCalled();
+    act(() => buttons.find((button) => button.text === 'Reconnect')?.onPress?.());
+    expect(restart).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
-import { Children, isValidElement, type ReactNode } from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Children, isValidElement, type ReactElement, type ReactNode } from 'react';
+import { Platform, Pressable, ScrollView, View, type RefreshControlProps } from 'react-native';
 import { ChevronRightIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
@@ -53,12 +53,22 @@ export function SettingsPage({ children, testID }: { children: ReactNode; testID
   );
 }
 
-export function SettingsScroll({ children, testID }: { children: ReactNode; testID?: string }) {
+export function SettingsScroll({
+  children,
+  refreshControl,
+  testID,
+}: {
+  children: ReactNode;
+  /** Pull to refresh (Account's balance). */
+  refreshControl?: ReactElement<RefreshControlProps>;
+  testID?: string;
+}) {
   return (
     <ScrollView
       className={cn('flex-1', PAGE)}
       contentInsetAdjustmentBehavior="automatic"
       contentContainerClassName="pb-10"
+      refreshControl={refreshControl}
       testID={testID}
     >
       {children}
@@ -126,6 +136,8 @@ export interface SettingsRowProps {
   /** Tint for the leading icon's square on iOS. */
   iconTint?: string;
   onPress?: () => void;
+  /** A hidden extra (About → Version copies the build details); the row stays a plain row otherwise. */
+  onLongPress?: () => void;
   /** A navigation row: chevron on iOS. Off for actions and external links. */
   chevron?: boolean;
   /** Something trailing in place of the chevron (a check mark, a button). */
@@ -149,6 +161,7 @@ export function SettingsRow({
   icon: Icon,
   iconTint,
   onPress,
+  onLongPress,
   chevron = !!onPress,
   trailing,
   destructive = false,
@@ -209,7 +222,7 @@ export function SettingsRow({
   );
 
   const className = cn('flex-row items-center gap-3 px-4 py-3', ios ? 'min-h-[52px]' : 'min-h-14');
-  if (!onPress) {
+  if (!onPress && !onLongPress) {
     return (
       <View className={className} testID={testID} accessible accessibilityLabel={accessibilityLabel ?? [label, value].filter(Boolean).join(', ')}>
         {body}
@@ -225,6 +238,7 @@ export function SettingsRow({
       accessibilityState={{ disabled }}
       disabled={disabled}
       onPress={onPress}
+      onLongPress={onLongPress}
       testID={testID}
       className={cn(className, tw.pressed, disabled && 'opacity-50')}
     >

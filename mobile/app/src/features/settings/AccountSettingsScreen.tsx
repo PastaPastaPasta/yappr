@@ -1,9 +1,8 @@
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Platform, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Platform, RefreshControl, View } from 'react-native';
 import {
-  ArrowPathIcon,
   ArrowTopRightOnSquareIcon,
   DocumentDuplicateIcon,
   LockClosedIcon,
@@ -16,12 +15,12 @@ import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { useAccounts } from '~/features/auth/accounts';
 import { confirmSignOut } from '~/features/auth/AccountSwitcher';
+import { truncateId } from '~/lib-allowlist';
 import { EmptyState } from '~/ui/EmptyState';
-import { IconButton } from '~/ui/IconButton';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
-import { colors, monoFont } from '~/ui/tokens';
+import { colors, useColors } from '~/ui/tokens';
 
 import { copy } from './copy';
 import { formatCredits, formatDash, formatDate } from './format';
@@ -61,69 +60,70 @@ function AccountsRow({ count }: { count: number }) {
   );
 }
 
-/** The identity id, monospace on two lines, with a copy button (SET-02). */
-function IdentityRow({ identityId }: { identityId: string }) {
+/** The account (identity) id, last on the screen: shortened, and a tap copies it whole (SET-02). */
+function AccountIdRow({ identityId }: { identityId: string }) {
   const copyId = () => {
     Clipboard.setStringAsync(identityId)
       .then(() => toast.success(copy.account.idCopied))
       .catch(() => undefined);
   };
   return (
-    <View className="min-h-[52px] flex-row items-center gap-3 py-3 pl-4 pr-2">
-      <Text
-        variant="subhead"
-        selectable
-        numberOfLines={2}
-        style={monoFont}
-        className="flex-1"
-        accessibilityLabel={`${copy.account.id}: ${identityId}`}
-        testID="account-identity-id"
-      >
-        {identityId}
+    <SettingsRow
+      label={copy.account.copyId}
+      value={truncateId(identityId)}
+      icon={DocumentDuplicateIcon}
+      iconTint={colors.gray500}
+      chevron={false}
+      accessibilityLabel={copy.account.copyId}
+      onPress={copyId}
+      testID="account-copy-id"
+    />
+  );
+}
+
+/** Balance in DASH (4 decimals) with the raw credits in a muted caption (SET-02). */
+function BalanceRow({ credits }: { credits: bigint }) {
+  return (
+    <View
+      className="min-h-[52px] justify-center gap-0.5 px-4 py-3"
+      accessible
+      accessibilityLabel={`${copy.account.balance}: ${formatDash(credits)}`}
+      testID="account-balance"
+    >
+      <Text variant="bodyStrong" tabular selectable>
+        {formatDash(credits)}
       </Text>
-      <IconButton
-        icon={DocumentDuplicateIcon}
-        accessibilityLabel={copy.account.copyId}
-        onPress={copyId}
-        testID="account-copy-id"
-      />
+      <Text variant="caption" tone="secondary" tabular>
+        {copy.account.credits(formatCredits(credits))}
+      </Text>
     </View>
   );
 }
 
-/** Balance in DASH (8 decimals) with the raw credits, and a refresh button (SET-02). */
-function BalanceRow({ credits }: { credits: bigint }) {
-  const [refreshing, setRefreshing] = useState(false);
-  const refresh = () => {
-    setRefreshing(true);
-    // The new balance arrives as `session.changed {reason: 'balance'}` when it moved.
-    engine.api.session
-      .refreshBalance()
-      .catch((error: unknown) => {
-        appendLog('warn', 'host', `Refreshing the balance failed: ${errorMessage(error)}`);
-        toast.error(copy.account.refreshFailed);
-      })
-      .finally(() => setRefreshing(false));
-  };
-  return (
-    <View className="min-h-[52px] flex-row items-center gap-3 py-3 pl-4 pr-2" testID="account-balance">
-      <View className="flex-1 gap-0.5" accessible accessibilityLabel={`${copy.account.balance}: ${formatDash(credits)}`}>
-        <Text variant="bodyStrong" tabular selectable>
-          {formatDash(credits)}
-        </Text>
-        <Text variant="caption" tone="secondary" tabular>
-          {copy.account.credits(formatCredits(credits))}
-        </Text>
-      </View>
-      {refreshing ? (
-        <View className="h-9 w-9 items-center justify-center">
-          <Spinner size="sm" testID="account-balance-refreshing" />
-        </View>
-      ) : (
-        <IconButton icon={ArrowPathIcon} accessibilityLabel={copy.account.refresh} onPress={refresh} testID="account-refresh" />
-      )}
-    </View>
+/** Reads the balance again; the new one arrives as `session.changed {reason: 'balance'}` when it moved. */
+function refreshBalance({ quiet }: { quiet: boolean }): Promise<void> {
+  return engine.api.session.refreshBalance().then(
+    () => undefined,
+    (error: unknown) => {
+      appendLog('warn', 'host', `Refreshing the balance failed: ${errorMessage(error)}`);
+      if (!quiet) toast.error(copy.account.refreshFailed);
+    },
   );
+}
+
+/** The balance is read again when Account opens (quietly) and on pull to refresh (a failure says so). */
+function useBalanceRefresh(identityId: string | null) {
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    if (identityId) refreshBalance({ quiet: true }).catch(() => undefined);
+  }, [identityId]);
+  const onRefresh = () => {
+    setRefreshing(true);
+    refreshBalance({ quiet: false })
+      .finally(() => setRefreshing(false))
+      .catch(() => undefined);
+  };
+  return { refreshing, onRefresh };
 }
 
 /**
@@ -135,6 +135,8 @@ export function AccountSettingsScreen() {
   const { session, accounts, status } = useSession();
   const profile = useViewerProfile();
   const transition = useAccounts((s) => s.transition);
+  const c = useColors();
+  const balance = useBalanceRefresh(session?.identityId ?? null);
 
   if (!session) {
     if (status !== 'unknown' && !transition && accounts.length > 0) {
@@ -170,13 +172,19 @@ export function AccountSettingsScreen() {
   const joinedAt = profile.data?.joinedAt;
 
   return (
-    <SettingsScroll testID="account-settings">
+    <SettingsScroll
+      testID="account-settings"
+      refreshControl={
+        <RefreshControl
+          refreshing={balance.refreshing}
+          onRefresh={balance.onRefresh}
+          tintColor={c.accent}
+          colors={[c.accent]}
+          progressBackgroundColor={c.bg}
+        />
+      }
+    >
       <SettingsHeader title={copy.sections.account} />
-
-      <SettingsGroup title={copy.account.id}>
-        <IdentityRow identityId={session.identityId} />
-        {joinedAt ? <SettingsRow label={copy.account.created} value={formatDate(joinedAt)} /> : null}
-      </SettingsGroup>
 
       <SettingsGroup title={copy.account.usernames}>
         {usernames.length > 0 ? (
@@ -185,7 +193,7 @@ export function AccountSettingsScreen() {
           <SettingsRow label={copy.account.noUsername} testID="account-no-username" />
         )}
         <SettingsRow
-          label={copy.account.register}
+          label={usernames.length > 0 ? copy.account.registerAnother : copy.account.register}
           link
           chevron={false}
           accessibilityRole="link"
@@ -208,6 +216,11 @@ export function AccountSettingsScreen() {
           onPress={() => router.push('/settings/app-lock')}
           testID="account-app-lock"
         />
+      </SettingsGroup>
+
+      <SettingsGroup>
+        {joinedAt ? <SettingsRow label={copy.account.created} value={formatDate(joinedAt)} /> : null}
+        <AccountIdRow identityId={session.identityId} />
       </SettingsGroup>
 
       <SettingsGroup>

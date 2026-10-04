@@ -279,7 +279,8 @@ it('signs an account in again: parks it, restarts signed out, opens sign-in aime
   bootsAs(null);
 
   const preparing = reauthenticate('alice');
-  expect(useAccounts.getState().transition).toEqual({ kind: 'add', label: 'Getting ready to sign in again…' });
+  // One label for signing in again, the same as the reload after it (agent-isms #12).
+  expect(useAccounts.getState().transition).toEqual({ kind: 'add', label: 'Signing in as @alice…' });
   await preparing;
   expect(fakeEngine.method('session.prepareAddAccount')).toHaveBeenCalledTimes(1);
   expect(restart).toHaveBeenCalledWith('Signing in again');

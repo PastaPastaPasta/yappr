@@ -7,6 +7,7 @@ import { Pressable, RefreshControl, View } from 'react-native';
 import { ArrowTopRightOnSquareIcon } from 'react-native-heroicons/outline';
 import { useReducedMotion } from 'react-native-reanimated';
 
+import { config } from '~/config';
 import { openExternal } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
 import { engineSupervisor } from '~/engine';
@@ -73,8 +74,13 @@ function itemType(post: PostDTO): string {
   return post.media.length > 0 ? 'media' : 'text';
 }
 
+/**
+ * The older posts web's previous deployment holds (testnet only): the end of
+ * a feed links to it. Mainnet and devnet never show it, nor do empty states.
+ */
 function LegacyLink() {
   const c = useColors();
+  if (config.network !== 'testnet') return null;
   return (
     <Pressable
       accessibilityRole="link"
@@ -84,7 +90,7 @@ function LegacyLink() {
       className="min-h-11 flex-row items-center justify-center gap-1.5 px-4"
     >
       <Text variant="subhead" tone="link" className="text-center">
-        Looking for older posts? Browse the previous version of Yappr
+        Looking for older posts? Open Yappr classic
       </Text>
       <ArrowTopRightOnSquareIcon size={16} color={c.link} />
     </Pressable>
@@ -226,7 +232,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
     } else if (hasNextPage && (isFetchNextPageError || paused || nothingShown)) {
       footer = (
         <View className="items-center p-6">
-          <Button label="Load More" size="sm" onPress={loadMore} testID="feed-load-more" />
+          <Button label="Load more" size="sm" onPress={loadMore} testID="feed-load-more" />
         </View>
       );
     } else if (!hasNextPage && feed.isSuccess && !nothingShown) {
@@ -275,9 +281,7 @@ export function FeedPage({ tab, sort, window, readable, live, offline, ref }: Fe
             : undefined
         }
         testID="feed-empty"
-      >
-        <LegacyLink />
-      </EmptyState>
+      />
     );
   }
 

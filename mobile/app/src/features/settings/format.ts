@@ -1,20 +1,22 @@
 /** 1 DASH = 10^8 duffs = 10^11 credits on Dash Platform. */
 export const CREDITS_PER_DASH = 100_000_000_000n;
-/** 1 duff = 1000 credits: the smallest step the 8-decimal DASH value shows. */
-const CREDITS_PER_DUFF = 1000n;
+/** The smallest step the 4-decimal DASH value shows: 0.0001 DASH. */
+const CREDITS_PER_STEP = CREDITS_PER_DASH / 10_000n;
 
 const group = (digits: string) => digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
 /**
- * Credits as DASH with up to 8 decimals, trailing zeros dropped (PRD SET-02):
- * 123_456_789_000n → "1.23456789 DASH". Below one duff it reads "< 0.00000001 DASH".
+ * Credits as DASH with up to 4 decimals, cut (never rounded up) and trailing
+ * zeros dropped (PRD SET-02): 25_674_582_414n → "0.2567 DASH". Below the
+ * smallest step it reads "< 0.0001 DASH", never zero. The exact credits go
+ * in a caption beside it (`formatCredits`).
  */
 export function formatDash(credits: bigint): string {
   if (credits < 0n) return `-${formatDash(-credits)}`;
-  if (credits > 0n && credits < CREDITS_PER_DUFF) return '< 0.00000001 DASH';
-  const duffs = credits / CREDITS_PER_DUFF;
-  const whole = duffs / 100_000_000n;
-  const fraction = (duffs % 100_000_000n).toString().padStart(8, '0').replace(/0+$/, '');
+  if (credits > 0n && credits < CREDITS_PER_STEP) return '< 0.0001 DASH';
+  const steps = credits / CREDITS_PER_STEP;
+  const whole = steps / 10_000n;
+  const fraction = (steps % 10_000n).toString().padStart(4, '0').replace(/0+$/, '');
   return `${group(whole.toString())}${fraction ? `.${fraction}` : ''} DASH`;
 }
 

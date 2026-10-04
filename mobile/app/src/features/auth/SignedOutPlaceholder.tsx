@@ -9,7 +9,6 @@ import {
   ShieldCheckIcon,
   UserIcon,
   UsersIcon,
-  WrenchScrewdriverIcon,
 } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
@@ -25,7 +24,7 @@ const PLACEHOLDERS = {
   following: {
     icon: UsersIcon,
     title: 'See posts from people you follow',
-    description: 'Log in to view your personalized following feed and see updates from accounts you care about.',
+    description: 'Sign in to see posts from people you follow.',
   },
   notifications: {
     icon: BellIcon,
@@ -46,17 +45,11 @@ const PLACEHOLDERS = {
 
 export type SignedOutKind = keyof typeof PLACEHOLDERS;
 
-/** The Settings sections that need no account (AUTH-02). */
+/** The Settings sections that need no account (AUTH-02). Troubleshooting is at the bottom of About. */
 const SETTINGS_LINKS: { label: string; href: Href; icon: IconComponent; testID: string }[] = [
   { label: 'Appearance', href: '/settings/appearance', icon: PaintBrushIcon, testID: 'signed-out-settings-appearance' },
   { label: 'Privacy & Safety', href: '/settings/privacy', icon: ShieldCheckIcon, testID: 'signed-out-settings-privacy' },
   { label: 'About', href: '/settings/about', icon: InformationCircleIcon, testID: 'signed-out-settings-about' },
-  {
-    label: 'Engine diagnostics',
-    href: '/settings/diagnostics',
-    icon: WrenchScrewdriverIcon,
-    testID: 'signed-out-settings-diagnostics',
-  },
 ];
 
 function SettingsLinks() {

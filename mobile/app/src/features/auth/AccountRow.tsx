@@ -16,11 +16,10 @@ import { monoFont, tw, useColors } from '~/ui/tokens';
 
 import { accountName } from './accounts';
 import { copy } from './copy';
-import { networkName as networkLabel } from './onboarding';
 
 /**
  * One signed-in account (UX_SPEC §4.26 "Accounts"): avatar, display name or
- * truncated id, @handle and network, a check on the current one, and "Sign
+ * truncated id, @handle, a check on the current one, and "Sign
  * in again" when its stored key no longer signs (AUTH-14): a button beside
  * the row with `onSignInAgain`, else a mark in it. The profile is a cached
  * read, so the row paints from the persisted cache offline.
@@ -62,7 +61,6 @@ export function AccountRow({
         accessibilityLabel={[
           name,
           showHandle ? handle : null,
-          networkLabel,
           account.active ? 'current account' : null,
           expired ? copy.accounts.signInAgain : null,
         ]
@@ -79,9 +77,11 @@ export function AccountRow({
           <Text variant="bodyStrong" numberOfLines={1} style={name === handle && !account.username ? monoFont : undefined}>
             {name}
           </Text>
-          <Text variant="subhead" tone="secondary" numberOfLines={1}>
-            {showHandle ? `${handle} · ${networkLabel}` : networkLabel}
-          </Text>
+          {showHandle ? (
+            <Text variant="subhead" tone="secondary" numberOfLines={1}>
+              {handle}
+            </Text>
+          ) : null}
           {expired && !onSignInAgain ? (
             <Text variant="subheadStrong" tone="error" numberOfLines={1} testID={signInAgainId}>
               {copy.accounts.signInAgain}

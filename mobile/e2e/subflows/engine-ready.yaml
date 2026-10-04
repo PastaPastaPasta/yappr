@@ -1,6 +1,6 @@
 # Wait until the engine is up. Devnet and testnet builds show a network chip
-# whose label names the engine state; mainnet has no chip, so there it waits
-# for Home's first page instead.
+# whose label ends with the connection state ("... Connected."); mainnet has no
+# chip, so there it waits for Home's first page instead.
 appId: ${APP_ID}
 ---
 - extendedWaitUntil:
@@ -15,5 +15,5 @@ appId: ${APP_ID}
       - extendedWaitUntil:
           visible:
             id: network-chip
-            text: ".*Engine ready.*"
+            text: ".*Data may be reset\\. Connected\\."
           timeout: 120000

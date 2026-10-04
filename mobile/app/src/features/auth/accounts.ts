@@ -221,7 +221,7 @@ function runSwitch(
  * itself is durable, and the next boot loads the secrets.
  */
 export function loadSignedInAgain(session: SessionDTO): Promise<SessionDTO> {
-  return withTransition({ kind: 'reload', label: copy.accounts.loadingAgain(accountName(session)) }, async () => {
+  return withTransition({ kind: 'reload', label: copy.accounts.signingInAs(accountName(session)) }, async () => {
     try {
       const restored = await restartEngine('Signed in again');
       if (restored?.identityId !== session.identityId) throw new Error('The account did not restore');
@@ -290,8 +290,10 @@ export function addAccount(): Promise<void> {
  * it returns to the account that was active, still marked "Sign in again".
  */
 export function reauthenticate(identityId: string, { returnTo }: { returnTo?: string | null } = {}): Promise<void> {
+  const account = useSessionStore.getState().accounts.find((a) => a.identityId === identityId);
   return signInBesideCurrent({
-    label: copy.accounts.reauthing,
+    // The same label as the reload after the sign-in (`loadSignedInAgain`): one "Signing in as @x…" to the user.
+    label: copy.accounts.signingInAs(accountName(account ?? { identityId, username: null })),
     failed: copy.accounts.reauthFailed,
     reauth: identityId,
     returnTo,

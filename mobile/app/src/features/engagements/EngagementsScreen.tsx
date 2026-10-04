@@ -200,7 +200,7 @@ function EngagementList({
           </View>
         ) : list.isFetchNextPageError ? (
           <View className="items-center py-6">
-            <Button label="Load More" size="sm" onPress={loadMore} testID="engagements-load-more" />
+            <Button label="Load more" size="sm" onPress={loadMore} testID="engagements-load-more" />
           </View>
         ) : null
       }
