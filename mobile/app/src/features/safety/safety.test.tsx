@@ -276,8 +276,9 @@ describe('blocking', () => {
     fakeEngine.method('safety.block').mockResolvedValue(pending);
     renderPosts(bobPosts());
 
+    const user = { username: 'bob', displayName: 'Bob', avatar: BOB.avatar };
     await act(async () =>
-      sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }, copy.toast.blocked('@bob')),
+      sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, user }, copy.toast.blocked('@bob')),
     );
     expect(fakeEngine.method('safety.block')).toHaveBeenCalledWith(BOB.id, null);
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
@@ -297,7 +298,8 @@ describe('blocking', () => {
       ),
     );
     expect(screen.getByTestId('post-card-b1')).toBeTruthy();
-    expect(toastMessage()).toBe(copy.toast.blockFailed);
+    // The block's own sentence, naming who; web's generic text never shows.
+    expect(toastMessage()).toBe("Couldn't block @bob. Try again.");
   });
 
   it('collapses a blocked author in threads, and their quotes everywhere', async () => {
@@ -1011,6 +1013,37 @@ describe('ReportScreen', () => {
       expect(screen.queryByTestId('report-withdraw')).toBeNull();
       expect(screen.queryByTestId('report-submit')).toBeNull();
       expect(fakeEngine.method('safety.withdrawReport')).toHaveBeenCalledTimes(1);
+    });
+
+    it('checks an unconfirmed withdrawal by itself once its sheet is gone, and still says nothing', async () => {
+      const pending = ticket({ op: 'report.withdraw', identityId: VIEWER_ID, target });
+      fakeEngine.method('safety.withdrawReport').mockResolvedValue(pending);
+      const sheet = withProviders(<ReportScreen />);
+      await settle();
+      fireEvent.press(screen.getByTestId('report-withdraw'));
+      await act(async () => answer('Withdraw'));
+      sheet.unmount();
+      // "Report withdrawn" showed when the engine took it (optimistic); the network's answer is silent.
+      act(() => useToastStore.setState({ current: null }));
+      jest.useFakeTimers();
+      try {
+        const unconfirmed = advance(pending, { state: 'unconfirmed' });
+        fakeEngine.method('writes.check').mockImplementation(async () => {
+          const confirmed = advance(unconfirmed, { state: 'confirmed', lastCheckedAt: new Date() });
+          fakeEngine.emit('write.status', confirmed);
+          return confirmed;
+        });
+        act(() => fakeEngine.emit('write.status', unconfirmed));
+        expect(toastMessage()).toBeUndefined();
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(5_000);
+        });
+        expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
+        expect(toastMessage()).toBeUndefined();
+        expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toBeNull();
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 

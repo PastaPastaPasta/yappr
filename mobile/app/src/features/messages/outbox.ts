@@ -4,15 +4,8 @@ import { create } from 'zustand';
 
 import { onEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import {
-  adoptRestoredWrites,
-  checkWrite,
-  errorCode,
-  isFollowedWrite,
-  retryWrite,
-  runWrite,
-  type WriteSpec,
-} from '~/data/writes';
+import { recheck, reconcile, stopReconciling, ticketJob, useReconcileStore } from '~/data/reconcile';
+import { adoptRestoredWrites, errorCode, isFollowedWrite, retryWrite, runWrite, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { queryClient } from '~/state/query-client';
@@ -25,8 +18,11 @@ import { useDrafts } from './drafts';
 /**
  * Sends of this device (PRD DM-04): each shows as a bubble at once, follows
  * its `dm.send` ticket ("Sending…", then the engine's own message takes its
- * place), and stays on screen with its error when it fails ("Failed · Tap to
- * retry"). Memory only: the text is decrypted content (src/data/README.md).
+ * place), and stays on screen when it fails ("Not delivered · Tap to retry").
+ * A send whose outcome is unknown stays "Sending…" while the reconciler
+ * checks it (`data/reconcile.ts`); only once its checks run out does it read
+ * "Couldn't confirm · Tap to check". Memory only: the text is decrypted
+ * content (src/data/README.md).
  */
 
 export type OutboxState = 'sending' | 'confirmed' | 'failed' | 'unconfirmed';
@@ -47,6 +43,10 @@ export interface OutboxEntry {
   ticketId: string | null;
   state: OutboxState;
   retryable: boolean;
+  /** Unconfirmed, and its automatic checks ran out ("Couldn't confirm · Tap to check"). */
+  exhausted?: boolean;
+  /** A check of it is running (the bubble's spinner). */
+  checking?: boolean;
 }
 
 export const useOutbox = create<{ entries: OutboxEntry[] }>()(() => ({ entries: [] }));
@@ -64,26 +64,56 @@ function remove(id: string): void {
 }
 
 function applyTicket(entryId: string, ticket: Pick<WriteTicket, 'id' | 'state' | 'retryable'>): void {
+  // The ticket's own reconciliation takes over from the search for it.
+  stopReconciling(unticketedJob(entryId));
   update(entryId, {
     ticketId: ticket.id,
     state: ticket.state === 'pending' ? 'sending' : ticket.state,
     retryable: ticket.retryable,
   });
+  // It follows another job now: its flags are that job's.
+  syncReconcileState();
   if (ticket.state !== 'pending') {
     const entry = useOutbox.getState().entries.find((e) => e.id === entryId);
     if (entry) queryClient.invalidateQueries({ queryKey: queryKeys.dm.messages(entry.key) }).catch(() => undefined);
   }
 }
 
+/** The reconciler's job for a send: its ticket's, or the search for a ticket a cut-short call never named. */
+const unticketedJob = (entryId: string) => `dm.send:${entryId}`;
+const jobOf = (entry: OutboxEntry) => (entry.ticketId ? ticketJob(entry.ticketId) : unticketedJob(entry.id));
+
+/** Each send's `exhausted` and `checking`, as the reconciler has them. */
+function syncReconcileState(): void {
+  const { checking, exhausted } = useReconcileStore.getState();
+  useOutbox.setState(({ entries }) => {
+    let changed = false;
+    const next = entries.map((e) => {
+      const key = jobOf(e);
+      const patch = { exhausted: exhausted[key] === true, checking: checking[key] === true };
+      if (Boolean(e.exhausted) === patch.exhausted && Boolean(e.checking) === patch.checking) return e;
+      changed = true;
+      return { ...e, ...patch };
+    });
+    return changed ? { entries: next } : { entries };
+  });
+}
+
 let following: (() => void) | null = null;
 
-/** Follows `dm.send` tickets for the app's lifetime (started on the first send). */
+/** Follows `dm.send` tickets and their reconciliation for the app's lifetime (started on the first send). */
 function followTickets(): void {
-  following ??= onEngineEvent('write.status', (ticket) => {
+  if (following) return;
+  const stopTickets = onEngineEvent('write.status', (ticket) => {
     if (ticket.op !== 'dm.send') return;
     const entry = useOutbox.getState().entries.find((e) => e.ticketId === ticket.id);
     if (entry) applyTicket(entry.id, ticket);
   });
+  const stopReconcile = useReconcileStore.subscribe(syncReconcileState);
+  following = () => {
+    stopTickets();
+    stopReconcile();
+  };
 }
 
 interface SendVars {
@@ -96,13 +126,10 @@ const sendSpec: WriteSpec<SendVars> = {
   submit: (api, { key, text }) => api.dm.send(key, text),
   // Every send is its own write: two messages in a row never queue behind each other.
   key: ({ entryId }) => `dm.send:${entryId}`,
-  noun: 'message',
-  failureMessage: 'Failed to send message. Please try again.',
-  // The bubble says it ("Not confirmed · Tap to check"); a toast on top would repeat it.
-  announceUnconfirmed: false,
+  failureMessage: "Couldn't send your message. Try again.",
   matches: (ticket, { key }) =>
     ticket.op === 'dm.send' && !!ticket.target && 'conversationKey' in ticket.target && ticket.target.conversationKey === key,
-  // The cut-short send's bubble follows the restored ticket: "Tap to check" and retry act on it.
+  // The cut-short send's bubble follows the restored ticket: its checks and retry act on it.
   onAdopted: (ticket, { entryId }) => applyTicket(entryId, ticket),
   onRejected: (error) => {
     // Refused before anything went out: the text is back in the composer, and the lock asks for the key.
@@ -162,10 +189,11 @@ export async function sendMessage(identityId: string, key: string, text: string)
       useDrafts.getState().restore(identityId, key, text);
       return;
     case 'unknown':
-      // The engine restarted under the call: it may have gone out. A check settles it, once the
-      // tracker adopts the ticket the engine restores (`onAdopted`), unless it already has.
+      // The engine restarted under the call: it may have gone out. It reads "Sending…" while the
+      // reconciler looks for the ticket the engine restores (`onAdopted`), unless it already has one.
       if (useOutbox.getState().entries.find((e) => e.id === entry.id)?.ticketId === null) {
         update(entry.id, { state: 'unconfirmed' });
+        reconcile(unticketedJob(entry.id), { run: () => checkUnticketed(entry.id) });
       }
       return;
     case 'queued':
@@ -174,9 +202,10 @@ export async function sendMessage(identityId: string, key: string, text: string)
 }
 
 /**
- * A failed bubble was tapped (DM-04): retry once the engine proved it absent,
- * "check again" while it may have landed, or put the text back in the
- * composer when the engine won't retry it.
+ * A bubble with an error was tapped (DM-04): retry once the engine proved it
+ * absent, check again once its automatic checks ran out (the bubble shows a
+ * spinner meanwhile), or put the text back in the composer when the engine
+ * won't retry it.
  */
 export async function resolveFailed(entryId: string): Promise<void> {
   const entry = useOutbox.getState().entries.find((e) => e.id === entryId);
@@ -188,17 +217,8 @@ export async function resolveFailed(entryId: string): Promise<void> {
     else update(entry.id, { state: entry.state });
     return;
   }
-  if (entry.state === 'unconfirmed' && entry.ticketId) {
-    const ticket = await checkWrite(entry.ticketId);
-    if (ticket) applyTicket(entry.id, ticket);
-    // Its call still runs (a stall): the engine answers at once, and the bubble alone would not change.
-    if (ticket?.state === 'unconfirmed' && ticket.error?.code === 'STILL_SENDING') {
-      toast('Still sending. Tap again in a moment.');
-    }
-    return;
-  }
   if (entry.state === 'unconfirmed') {
-    await resolveUnticketed(entry);
+    if (!entry.checking) await recheck(jobOf(entry));
     return;
   }
   // A long send refused part way: only the parts that did not go out come back (the rest is in the conversation).
@@ -215,30 +235,24 @@ const TICKET_SKEW_MS = 1_000;
  */
 export const UNTICKETED_WAIT_MS = 60_000;
 
+/** The toast for a send the engine never took: nothing went out, and the text is back. */
+const NOT_SENT_MESSAGE = "Message not sent. It's back in the message box.";
+
 /**
- * "Tap to check" on a send whose call was cut short before it answered with
- * a ticket (SR-16). The ticket the engine made is followed from here; when
- * the engine has none for it, the send never started, so its text goes back
- * to the composer (PRD G-4).
+ * One check of a send whose call was cut short before it answered with a
+ * ticket (SR-16), run by the reconciler. The ticket the engine made is
+ * followed from here (`onAdopted`); when the engine has none for it once any
+ * would show, the send never started, so its text goes back to the composer
+ * (PRD G-4). Resolves true once that is known.
  */
-async function resolveUnticketed(entry: OutboxEntry): Promise<void> {
-  let tickets: WriteTicket[];
-  try {
-    // Follows the send's ticket, if the engine made one (`onAdopted`).
-    await adoptRestoredWrites();
-    tickets = await engine.api.writes.list();
-  } catch (error) {
-    appendLog('warn', 'host', `Checking a message failed: ${errorMessage(error)}`);
-    toast.error("Couldn't check. Try again in a moment.");
-    return;
-  }
-  const current = useOutbox.getState().entries.find((e) => e.id === entry.id);
-  if (!current) return;
-  if (current.ticketId) {
-    const ticket = await checkWrite(current.ticketId);
-    if (ticket) applyTicket(current.id, ticket);
-    return;
-  }
+async function checkUnticketed(entryId: string): Promise<boolean> {
+  const entry = useOutbox.getState().entries.find((e) => e.id === entryId);
+  if (!entry || entry.state !== 'unconfirmed' || entry.ticketId) return true;
+  // Follows the send's ticket, if the engine made one (`onAdopted`). A failed read proves nothing.
+  await adoptRestoredWrites();
+  const tickets = await engine.api.writes.list();
+  const current = useOutbox.getState().entries.find((e) => e.id === entryId);
+  if (!current || current.ticketId) return true;
   const unclaimed = tickets.some(
     (t) =>
       sendSpec.matches?.(t, { entryId: entry.id, key: entry.key, text: entry.text }) === true &&
@@ -248,12 +262,12 @@ async function resolveUnticketed(entry: OutboxEntry): Promise<void> {
   );
   if (unclaimed || Date.now() - entry.createdAt < UNTICKETED_WAIT_MS) {
     queryClient.invalidateQueries({ queryKey: queryKeys.dm.messages(entry.key) }).catch(() => undefined);
-    toast('Still checking. Tap again in a moment.');
-    return;
+    return false;
   }
   remove(entry.id);
   useDrafts.getState().restore(entry.identityId, entry.key, entry.text);
-  toast("This message wasn't sent. It's back in the message box.");
+  toast(NOT_SENT_MESSAGE);
+  return true;
 }
 
 /**
@@ -290,7 +304,9 @@ function statusOf(entry: OutboxEntry): OutboxStatus {
     case 'failed':
       return entry.retryable ? 'failed-retry' : 'failed-edit';
     case 'unconfirmed':
-      return entry.retryable ? 'failed-retry' : 'unconfirmed';
+      // Unknown: still "Sending…" while it is checked; said only once the checks ran out.
+      if (entry.retryable) return 'failed-retry';
+      return entry.exhausted ? 'unconfirmed' : 'sending';
   }
 }
 
@@ -375,6 +391,7 @@ export function mergeOutbox(
       own: true,
       pending: entry.state === 'sending',
       outbox: statusOf(entry),
+      ...(entry.checking ? { checking: true } : {}),
     }));
   return { messages: [...messages, ...local], sending, landed };
 }

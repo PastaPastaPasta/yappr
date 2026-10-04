@@ -55,7 +55,8 @@ tags:
 - extendedWaitUntil:
     visible: ".*Maestro post ${RUN}.*"
     timeout: 30000
-# Confirmed: the write-status row gives way to the action bar.
+# Confirmed: the write-status row ("Posting…") gives way to the action bar. A post whose
+# wait timed out stays "Posting…" while the app checks it (5, 20 and 80 s), well inside this.
 - extendedWaitUntil:
     notVisible:
       id: write-status

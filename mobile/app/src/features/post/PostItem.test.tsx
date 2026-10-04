@@ -116,7 +116,7 @@ describe('PostItem actions', () => {
       ),
     );
     expect(byId('like-btn-like-me')).toHaveAccessibleName('Like, 48 likes');
-    expect(toastMessage()).toBe('Failed to update like. Please try again.');
+    expect(toastMessage()).toBe("Couldn't like this post. Try again.");
   });
 
   it('asks a signed-out reader to sign in instead of writing', () => {
@@ -224,6 +224,24 @@ describe('PostItem actions', () => {
       rootPostId: null,
     });
     expect(toastMessage()).toBe('Quote deleted');
+  });
+
+  it('reads the slot when QUOTE_HAS_TEXT meets a quote not loaded yet, then confirms deleting it (no "try again in a moment")', async () => {
+    const post = fixturePost({ id: 'qt2', viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: null, ownQuoteBare: false } });
+    fakeEngine.method('engage.unrepost').mockRejectedValue(Object.assign(new Error('text'), { code: 'QUOTE_HAS_TEXT' }));
+    fakeEngine.method('engage.stats').mockResolvedValue({
+      qt2: { stats: post.stats, viewer: { liked: false, reposted: true, bookmarked: false, ownQuoteId: 'q2', ownQuoteBare: false } },
+    });
+    fakeEngine.method('posts.delete').mockResolvedValue(ticket({ op: 'post.delete' }));
+    renderPost(post);
+
+    fireEvent.press(byId('repost-btn-qt2'));
+    await act(async () => sheet?.choose('Undo repost'));
+    expect(fakeEngine.method('engage.stats')).toHaveBeenCalledWith([{ id: 'qt2', kind: 'post' }]);
+    expect(alert?.title).toBe('Delete post?');
+    await act(async () => alert?.press('Delete'));
+    expect(fakeEngine.method('posts.delete')).toHaveBeenCalledWith(expect.objectContaining({ id: 'q2' }));
+    expect(toastMessage()).not.toMatch(/in a moment/);
   });
 
   it('bookmarks with a toast, and hides bookmark where the contract has none', async () => {
@@ -355,7 +373,7 @@ describe('PostItem menu', () => {
       ),
     );
     expect(byId('post-card-mine')).toBeTruthy();
-    expect(useToastStore.getState().current).toMatchObject({ message: 'Network error.', action: { label: 'Retry' } });
+    expect(useToastStore.getState().current).toMatchObject({ message: "Couldn't delete post. Try again.", action: { label: 'Retry' } });
   });
 });
 
@@ -385,14 +403,20 @@ describe('PostItem removal', () => {
 });
 
 describe('PostItem bare reposts', () => {
-  it("doesn't act on a bare repost's marks before they load", async () => {
+  it("doesn't act on a bare repost's marks before they load: those buttons wait with a spinner, no toast", async () => {
     let answer: (stats: object) => void = () => undefined;
     fakeEngine.method('engage.stats').mockReturnValue(new Promise((resolve) => (answer = resolve)));
     const target = fixturePost({ id: 'tgt', author: AUTHORS.carol, viewer: undefined });
     renderPost(fixturePost({ id: 'br', content: '', bareRepost: true, quoted: target, quotedPostId: 'tgt' }));
+    for (const id of ['like-btn-tgt', 'repost-btn-tgt', 'bookmark-btn-tgt']) {
+      expect(byId(id)).toBeDisabled();
+      expect(byId(id).props.accessibilityState).toMatchObject({ busy: true });
+    }
     fireEvent.press(byId('like-btn-tgt'));
     expect(fakeEngine.method('engage.like')).not.toHaveBeenCalled();
-    expect(toastMessage()).toBe('Loading this post. Try again in a moment.');
+    expect(toastMessage()).toBeUndefined();
+    // Reply and share need no marks.
+    expect(byId('reply-btn-tgt')).not.toBeDisabled();
 
     // Signed out, the sign-in sheet comes first.
     act(() => useSessionStore.setState({ status: 'signed-out', session: null }));

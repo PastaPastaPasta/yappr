@@ -174,9 +174,21 @@ describe('buildTimeline', () => {
       { sending: true, peerReadAt: null, now },
     ).filter((i) => i.type === 'message');
     expect(items.map((i) => [i.status, i.statusIsError])).toEqual([
-      ['Failed · Tap to retry', true],
+      ['Not delivered · Tap to retry', true],
       ['Sending…', false],
     ]);
+  });
+
+  it('labels each local send state plainly (UX_SPEC §2.23)', () => {
+    const label = (outbox: TimelineMessage['outbox']) =>
+      buildTimeline([message('a', 0, { outbox })], { sending: false, peerReadAt: null, now }).flatMap((i) =>
+        i.type === 'message' ? [i.status] : [],
+      )[0];
+    expect(label('sending')).toBe('Sending…');
+    expect(label('sent')).toBe('Sent');
+    expect(label('failed-retry')).toBe('Not delivered · Tap to retry');
+    expect(label('failed-edit')).toBe('Not delivered · Tap to edit');
+    expect(label('unconfirmed')).toBe("Couldn't confirm · Tap to check");
   });
 
   it('starts a new day with a separator', () => {

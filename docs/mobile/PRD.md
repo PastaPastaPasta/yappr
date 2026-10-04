@@ -167,9 +167,9 @@ Every story inherits these rules. A story repeats one only to add something spec
 | --- | --- | --- |
 | **G-1 Offline** | Every screen | Given the OS reports no connectivity, the screen shows its persisted cache and the offline banner "You're offline. Showing saved posts." A write tap makes no optimistic change and shows the toast "You're offline. Nothing was sent." Compose stays usable and its Post button is disabled with the hint "You're offline". When connectivity returns the banner hides, and visible lists refresh once. |
 | **G-2 Engine booting** | Every screen | While the engine boots, cached content renders at once and a "Connecting to Dash Platform…" state shows only where there is no cache. Reads issued during boot are queued and resolve after boot. A write issued during boot is queued, shown optimistically, and resolves like any other write. |
-| **G-3 Unconfirmed write** | Every write | When the broadcast succeeds but the confirmation wait times out (the DAPI 504 in the root CLAUDE.md), the write counts as done: no error toast, and the optimistic state stays. Creates that are not yet readable show "Not confirmed yet · Check again" after 60 s (COMP-10). No write is ever resent automatically. |
-| **G-4 Failed write** | Every write | The optimistic change rolls back, a toast shows the message from `lib/error-utils.ts` `categorizeError` verbatim (6 s for messages over 80 characters, else 3 s), and a haptic error fires. Composer text is never lost: it returns to the draft. |
-| **G-5 Insufficient credits** | Every paid write | When the identity's credit balance cannot cover the write: toast "Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted." On v2 when YAPP is short: "You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again." with an "Open yap.pr" action. Nothing is retried. |
+| **G-3 Unconfirmed write** | Every write | When the broadcast succeeds but the confirmation wait times out (the DAPI 504 in the root CLAUDE.md), or an engine restart cuts the call short, the write counts as done: no toast, and the optimistic state stays. The app re-checks it by itself 5, 20 and 80 s after, when the app returns to the foreground, and when a feed, profile or thread read shows it; nobody is asked to check. A check that proves the write absent rolls it back with its failure sentence (G-4). Posts keep "Posting…" (COMP-10) and messages "Sending…" (DM-04) while the checks run. A write that may have landed is never resent, automatically or by a blind Retry. |
+| **G-4 Failed write** | Every write | The optimistic change rolls back, a toast shows one sentence (6 s for messages over 80 characters, else 3 s), and a haptic error fires: the mobile copy for its engine code where the user can act on it (out of credits or YAPP, not allowed from this account, the post no longer exists, update the app, a defect), otherwise the write's own failure sentence ("Couldn't like this post. Try again."), the same for a refusal and a write a check proved absent (UX_SPEC §5.4.1). `categorizeError`'s text goes to diagnostics only. A refusal for a passing reason (a parent too young to reference, a fee multiplier or moderator share that moved) is sent again by the engine after 2, 5 and 15 s before it is reported. Composer text is never lost: it returns to the draft. |
+| **G-5 Insufficient credits** | Every paid write | When the identity's credit balance cannot cover the write: toast "You don't have enough credits for this. Top up from your Dash wallet." When YAPP is short: "You need YAPP for this." with a "Get YAPP" action (yap.pr). Nothing is retried. |
 | **G-6 Blocked authors** | Every list and thread | Content whose author the viewer blocks (own block or a followed block list) is removed from feeds, search, hashtag pages, profiles' lists, engagements lists and notifications as soon as the block is known, including from caches. In a thread, a reply by a blocked author collapses to "Reply from an account you blocked" with no content. Quote embeds of blocked authors show "Post from an account you blocked". |
 | **G-7 Missing documents** | Every post reference | A post or reply that is gone renders the stub from POST-04, never a blank space or an infinite skeleton. |
 | **G-8 Signed out** | Every write control | Write controls stay visible. A tap opens the sign-in sheet; after sign-in the user returns to the same screen and position and the action is not performed (PD-7), except compose, which reopens with its text. |
@@ -496,8 +496,8 @@ As a writer, I want to post several connected posts at once, so that I can say m
 - "Add to thread" under the last post adds a new editor (placeholder "Continue your thread..."), up to 10 in total. Each item has its own counter and a remove button ("Remove this post") once there are two or more.
 - With 2 or more items the button reads "Post all (N)".
 - Posting publishes the items in order. Progress shows on the optimistic thread as "Posting 2 of 5…".
-- If an item fails, the posted ones stay posted and are marked "Posted" in the draft, and the status reads "Posted 2 of 5 · Retry the rest". Retry resumes from the first unposted item and never reposts a posted one. The failure toast reads "Thread partly posted. Post {n} failed: {reason}" (a mobile string: web's "Press Post to retry" does not apply once compose has closed).
-- On success with N > 1, the toast is "Thread with N posts created!".
+- If an item fails, the posted ones stay posted and are marked "Posted" in the draft, and the status reads "Posted 2 of 5 · Retry the rest". Retry resumes from the first unposted item and never reposts a posted one. The failure toast reads "Thread partly posted. Post {n} didn't go through." (a mobile string; the engine's reason goes to diagnostics).
+- On success with N > 1, the toast is "Thread posted".
 - Threads are unavailable for replies and quotes.
 
 #### COMP-06 · Mention autocomplete · P0 · all
@@ -532,19 +532,20 @@ As a writer, I want my unfinished text kept, so that an interruption doesn't los
 As a writer, I want to see whether my post went through, so that I neither lose it nor post it twice.
 - Tapping Post closes the sheet, fires a success haptic, and inserts the post optimistically: new posts at the top of the active Home list and of the author's profile; replies in the thread under their parent.
 - The optimistic card shows the write-status row "Posting…" with a small spinner and no action bar.
-- When the engine reports the broadcast accepted and the document readable, the row disappears and the card becomes normal. The toast reads "Post created successfully!" (a reply: "Reply posted").
-- Broadcast accepted but not readable after 60 s: the row reads "Not confirmed yet · Check again". "Check again" asks the engine to look for the document. The card never offers a blind resend.
-- Failed (the broadcast was refused): the row reads "Couldn't post · Retry · Edit". "Retry" resends the same content as a new write only after the engine has proved the original absent. "Edit" reopens compose with the draft. The error toast follows G-4.
-- A "Not confirmed yet" card that later appears on chain becomes normal without user action on the next refresh.
+- When the engine reports the broadcast accepted and the document readable, the row disappears and the card becomes normal. The toast reads "Posted" (a reply: "Reply posted"; a quote: "Quote posted").
+- Broadcast accepted but not readable (the wait timed out, 60 s without an answer, or an engine restart): the row keeps "Posting…" while the app checks it (G-3). The card never offers a manual check or a blind resend.
+- Failed (the broadcast was refused, or a check proved it absent): the row reads "Couldn't post · Retry · Edit". "Retry" resends the same content as a new write only after the engine has proved the original absent. "Edit" reopens compose with the draft. The error toast follows G-4.
+- Checks used up without proof either way: the row reads "Couldn't confirm · Edit", once, with the toast "We couldn't confirm your post. Check your profile before posting it again." Never Retry. Checks go on (foreground, reads).
+- A card whose post later appears on chain becomes normal without user action on the next refresh.
 - Leaving the screen does not cancel the write. The status follows the card wherever it is shown.
-- Unsent drafts and in-flight writes survive an engine restart; an in-flight write after a restart shows "Not confirmed yet · Check again" (NET-04).
+- Unsent drafts and in-flight writes survive an engine restart; an in-flight write after a restart keeps "Posting…" while it is checked (NET-04).
 
 #### COMP-11 · Disabled reasons · P0 · all
 As a writer, I want to know why I can't post, so that I can fix it.
 - Offline: Post disabled, hint "You're offline" (G-1).
 - Signed out: compose opens the sign-in sheet first (G-8).
 - Over a limit: Post disabled (COMP-02).
-- A refusal that names a policy shows its categorized message, kept from web: "This isn't available yet. Try again later." (no moderation team seated yet; a report offers email instead, SAFE-04), "Your account has been banned or suspended here by a moderator, so this action isn't allowed right now.", "Another write from your account went out at the same moment, so this one was not saved. Try again.", "This is too long for the network once emoji and special characters are counted. Shorten it and try again."
+- A refusal shows G-4's sentence for its code (UX_SPEC §5.4.1): "You can't do this from this account." for a moderation bar, otherwise "Couldn't post. Try again."; the categorized text goes to diagnostics. A nonce clash is checked like any unknown outcome, never resent.
 
 #### COMP-12 · Keyboard and input · P1 · all
 As a writer, I want the editor to behave like a native text field, so that typing is comfortable.
@@ -564,8 +565,9 @@ As a reader, I want to like a post or reply, so that I can show appreciation.
 - Tapping the heart fills it (`red-600` light / `red-500` dark), plays the spring scale, fires a light haptic and adds one to the count, immediately.
 - Tapping again unlikes: outline heart, count minus one, no haptic.
 - Double-tap on a post's media also likes it (never unlikes), with a heart burst over the image. Reduce Motion replaces the burst with a fade.
-- If the target is not readable yet (just posted, not confirmed): "This post has not confirmed yet. Try again in a moment." and no change.
-- Failure follows G-4 with "Failed to update like. Please try again." unless a categorized message applies (G-5 for YAPP or credits).
+- If the target is not readable yet (just posted by this device, not confirmed): the like shows at once and is sent once the post is readable (up to about two minutes); no toast.
+- While a bare repost's marks load, its like, repost and bookmark buttons show a spinner and take no taps.
+- Failure follows G-4 with "Couldn't like this post. Try again." unless a code has its own copy (G-5 for YAPP or credits).
 - Screen-reader label: "Like, {N} likes" / "Unlike, {N} likes", toggle trait.
 
 #### ENG-02 · Repost and quote menu · P0 · all
@@ -650,7 +652,7 @@ As a reader, I want to follow someone, so that their posts show in my Following 
 - Tapping "Following" asks "Unfollow @x?" (action sheet) with "Unfollow" (destructive). Confirmed: "Follow", count −1, toast "Unfollowed" (PD-6).
 - The own profile has no follow button. Following yourself is impossible ("You cannot follow yourself").
 - The new follow state shows on every visible surface for that user (cards' menus, user rows) and lifts the media gate for that author.
-- Failure: G-4 with "Failed to update follow status".
+- Failure: G-4 with "Couldn't follow this account. Try again." ("unfollow" for an unfollow).
 
 #### PROF-04 · Followers and following lists · P0 · all
 As anyone, I want to see who follows whom, so that I can find people.
@@ -831,7 +833,8 @@ As a user, I want to read a conversation, so that I know what was said.
 #### DM-04 · Send a message · P0 · all
 As a user, I want to send a message, so that I can talk privately.
 - Composer: "Type a message..." multiline, grows to 5 lines; a send button ("Send message") enabled when there is visible text.
-- Sending: the bubble appears at once with "Sending…"; then "Sent" (shown under the last own bubble only); or "Failed · Tap to retry" in red. Retry sends the same content only after the engine reports it absent.
+- Sending: the bubble appears at once with "Sending…"; then "Sent" (shown under the last own bubble only); or "Not delivered · Tap to retry" in red. Retry sends the same content only after the engine reports it absent. A refusal the engine won't retry reads "Not delivered · Tap to edit" (the text goes back to the composer).
+- An unknown outcome (G-3) keeps "Sending…" while the app checks it. Only once the checks ran out does it read "Couldn't confirm · Tap to check"; a tap checks again, with a spinner on the bubble, and no toast. A send the engine never took goes back to the composer with "Message not sent. It's back in the message box."
 - On v5, text over 4081 UTF-8 bytes (`MAX_TEXT_BYTES`) is sent as several messages, in order, and shown as one bubble per part.
 - A light haptic on send. Offline follows G-1 (the text stays in the composer).
 - The unsent composer text is kept per conversation on the device.
@@ -1029,12 +1032,12 @@ As a user, I want an honest message when Dash Platform is down, so that I don't 
 #### NET-04 · Engine restart · P0 · all
 As a user, I want a crash in the engine to be invisible, so that I can keep going.
 - When the WebView process dies (`onContentProcessDidTerminate` / `onRenderProcessGone`), the supervisor restarts it; visible reads resume without user action and lists keep their content.
-- Writes in flight at the crash show "Not confirmed yet · Check again" (COMP-10); none is resent.
+- Writes in flight at the crash keep "Posting…" / "Sending…" while the app checks them (COMP-10, DM-04); none is resent.
 - After 3 restarts within 2 minutes, the "Couldn't connect" banner shows instead of looping.
 
 #### NET-05 · Unconfirmed writes · P0 · all
 As a user, I want likes and follows that timed out to settle to the truth, so that what I see matches the chain.
-- G-3 for every write. A like, follow, bookmark, block or repost whose confirmation timed out keeps its optimistic state; the next refresh shows the chain's truth, and if the write is absent the state reverts with a toast "Your {like} didn't go through. Try again."
+- G-3 for every write. A like, follow, bookmark, block or repost whose confirmation timed out keeps its optimistic state; the app checks it by itself (G-3), and if the write is absent the state reverts with its failure sentence ("Couldn't like this post. Try again.", UX_SPEC §5.4.1).
 
 #### NET-06 · Lockdown Mode · P0 · iOS (PD-17)
 As an iPhone user with Lockdown Mode on, I want to know why Yappr can't connect, so that I can fix it.
@@ -1091,7 +1094,7 @@ As a user sensitive to motion, I want animations reduced when I ask, so that the
 
 #### A11Y-06 · Announcements · P1 · all
 As a screen-reader user, I want to hear when something I did succeeds or fails, so that I'm not left guessing.
-- Toasts are announced. Write status changes ("Posted", "Not confirmed yet", "Couldn't post") are announced once. The new-posts pill is announced when it first appears.
+- Toasts are announced. Write status changes ("Posting…", "Couldn't confirm", "Couldn't post") are announced once. The new-posts pill is announced when it first appears.
 
 #### A11Y-07 · Right-to-left content · P0 · all
 As a reader of Arabic or Hebrew posts, I want them laid out right to left, so that they read naturally.

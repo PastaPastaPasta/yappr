@@ -10,6 +10,7 @@ import { onEngineEvent } from './events';
 import { queryKeys } from './keys';
 import { useRemovedPosts } from './optimistic';
 import { startReadRetry } from './read-retry';
+import { startReconciler } from './reconcile';
 import { startSessionSync, useSessionStore } from './session';
 import { adoptRestoredWrites, resetWriteTracking, startWriteTracking } from './writes';
 
@@ -63,9 +64,10 @@ function contentCreated({ kind, post }: ContentCreatedEvent): void {
 }
 
 /**
- * The app-wide engine subscriptions: the session store, write tickets,
- * created content, and the re-reads of failed reads (connectivity, the
- * engine coming up, NET-03's backoff). The root layout starts it once; returns the stop.
+ * The app-wide engine subscriptions: the session store, write tickets (and
+ * their reconciler's foreground and read triggers), created content, and the
+ * re-reads of failed reads (connectivity, the engine coming up, NET-03's
+ * backoff). The root layout starts it once; returns the stop.
  */
 export function startDataLayer(): () => void {
   // Another account's writes and deletes mean nothing to the next one.
@@ -103,6 +105,7 @@ export function startDataLayer(): () => void {
   const stops = [
     startSessionSync(),
     startWriteTracking(),
+    startReconciler(),
     startConnectivity(),
     startReadRetry(),
     onEngineEvent('content.created', contentCreated),

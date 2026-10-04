@@ -10,8 +10,9 @@ import { onEngineEvent } from '~/data/events';
 import { forgetDmDrafts } from '~/features/messages/drafts';
 import { queryKeys } from '~/data/keys';
 import { EMPTY_VIEWER, holdOwnQuote, updateCachedPosts, useRemovedPosts } from '~/data/optimistic';
+import { reconcile, stopReconciling, ticketJob, useReconcileStore } from '~/data/reconcile';
 import { getCapabilities, useSessionStore } from '~/data/session';
-import { checkWrite, runWrite, writeFailureText, type WriteSpec } from '~/data/writes';
+import { noteTicket, recheckWrite, runWrite, writeFailureText, type WriteSpec } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
 import { toast } from '~/ui/toast';
@@ -39,6 +40,12 @@ import {
  * refetches, until the ticket confirms (the card becomes the real post) or
  * the user takes it back with Edit. A failed post's text returns to its
  * draft (PRD G-4).
+ *
+ * A post whose outcome is unknown (the network's answer timed out, a restart
+ * cut the call short) still reads "Posting…": the reconciler checks it
+ * (`data/reconcile.ts`), and the card changes only once it landed, is proved
+ * absent ("Couldn't post · Retry · Edit"), or the checks ran out ("Couldn't
+ * confirm · Edit", never a blind Retry).
  */
 
 export interface PendingPost {
@@ -64,16 +71,16 @@ export interface PendingPost {
    */
   orphaned?: boolean;
   /**
-   * An orphan "Check again" found no ticket for, once any ticket its call
+   * An orphan the reconciler found no ticket for, once any ticket its call
    * made would show: the engine persists a ticket before it sends anything,
    * so the call never ran and nothing went out ("Couldn't post · Retry").
    */
   lost?: boolean;
   /**
-   * "Check again" left it unconfirmed long enough after it was sent that
-   * waiting will not settle it (`UNPROVABLE_AFTER_MS`): the card also offers
-   * Edit, its text back in compose with the parts known to have posted kept
-   * posted. Never Retry: it may have landed.
+   * The reconciler's automatic checks ran out with the outcome still unknown:
+   * the card reads "Couldn't confirm · Edit", its text back in compose with
+   * the parts known to have posted kept posted. Never Retry: it may have
+   * landed. Checks go on (foreground, reads), so it may still settle.
    */
   unprovable?: boolean;
   /** When the last call went out (a retry's republish is later than `createdAt`). */
@@ -107,7 +114,7 @@ function restore(): Record<string, PendingPost> {
     const raw = syncStorage.getItem(STORAGE_KEY);
     const parsed = raw ? (parse(raw) as Record<string, PendingPost>) : {};
     // A post killed between submit and the engine's answer never got its ticket id: it may or may
-    // not have gone out, so it reads "Not confirmed yet" until its ticket shows up, never re-sent.
+    // not have gone out, so the reconciler looks for its ticket (`followOrphan`); it is never re-sent.
     for (const entry of Object.values(parsed)) {
       if (!entry.ticketId && !entry.refused && !entry.confirmedAt) entry.orphaned = true;
     }
@@ -164,38 +171,58 @@ export function postedIds(entry: PendingPost): (string | null)[] {
  * broadcast): never re-sent. The engine's check only looks at unconfirmed
  * tickets, so it can never settle this one: Edit is offered at once.
  */
-const mayHaveLanded = (ticket: WriteTicket) =>
-  ticket.state === 'failed' && !ticket.retryable && ticket.error?.outcome === 'unknown';
+const mayHaveLanded = (ticket: WriteTicket | null) =>
+  ticket?.state === 'failed' && !ticket.retryable && ticket.error?.outcome === 'unknown';
+
+/**
+ * The engine's call for the post still runs past its deadline (a DAPI stall):
+ * it may still land, and its answer will settle the card. Waiting does tell.
+ */
+const stillSending = (entry: PendingPost) => entry.ticket?.error?.code === 'STILL_SENDING';
+
+/**
+ * Where a post stands, before the card words it: on its way (`working`),
+ * may have landed but not proved either way (`unsettled`: an engine restart,
+ * a timeout, a call that has not answered for a minute, a part whose id lib
+ * never said), refused or proved absent (`failed`), or landed (`done`).
+ */
+type Phase = 'working' | 'unsettled' | 'failed' | 'done';
+
+function phaseOf(entry: PendingPost): Phase {
+  const ticket = entry.ticket;
+  if (entry.confirmedAt) return 'done';
+  if (entry.refused) return 'failed';
+  if (!entry.ticketId && entry.orphaned) return entry.lost ? 'failed' : 'unsettled';
+  if (!ticket || ticket.state === 'pending') return 'working';
+  if (mayHaveLanded(ticket)) return 'unsettled';
+  if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) return 'failed';
+  if (ticket.state === 'unconfirmed') return 'unsettled';
+  return 'done';
+}
 
 /**
  * The write-status row for an entry (UX_SPEC §2.4.11); null once confirmed.
- * A write that may have landed is "Not confirmed yet · Check again" (PRD
- * COMP-10, NET-04), however it got there (an engine restart, a timeout, a
- * call that has not answered for a minute, a part whose id lib never said):
- * the engine's check looks for it by id or by its text, and only a proved
- * absence offers Retry. One that checking cannot settle also offers Edit, so
+ * A post that may have landed reads "Posting…" while the reconciler checks
+ * it (PRD COMP-10, NET-04): the engine looks for it by id or by its text,
+ * and only a proved absence offers Retry. Once the automatic checks ran out
+ * (never while its call still runs), it reads "Couldn't confirm · Edit", so
  * no card is stuck for good.
  */
 export function pendingStatus(entry: PendingPost): CardWriteState | null {
   const total = entry.draft.parts.length;
-  const posted = postedIds(entry).filter(Boolean).length;
-  const failed: CardWriteState =
-    total > 1 && posted > 0 ? { state: 'partial', posted, total } : { state: 'failed' };
-  const unconfirmed: CardWriteState = entry.unprovable ? { state: 'unconfirmed', canEdit: true } : { state: 'unconfirmed' };
-  const ticket = entry.ticket;
-  if (entry.confirmedAt) return null;
-  if (entry.refused) return failed;
-  if (!entry.ticketId && entry.orphaned) return entry.lost ? failed : unconfirmed;
-  if (!ticket || ticket.state === 'pending') {
-    const progress = ticket?.progress;
-    return total > 1 && progress
-      ? { state: 'threadProgress', index: Math.min(progress.done + 1, total), total }
-      : { state: 'posting' };
+  const phase = phaseOf(entry);
+  if (phase === 'done') return null;
+  if (phase === 'failed') {
+    const posted = postedIds(entry).filter(Boolean).length;
+    return total > 1 && posted > 0 ? { state: 'partial', posted, total } : { state: 'failed' };
   }
-  if (mayHaveLanded(ticket)) return { state: 'unconfirmed', canEdit: true };
-  if (ticket.state === 'failed' || (ticket.state === 'unconfirmed' && ticket.retryable)) return failed;
-  if (ticket.state === 'unconfirmed') return unconfirmed;
-  return null;
+  if (phase === 'unsettled' && (entry.unprovable || mayHaveLanded(entry.ticket)) && !stillSending(entry)) {
+    return { state: 'unconfirmed' };
+  }
+  const progress = entry.ticket?.progress;
+  return total > 1 && progress
+    ? { state: 'threadProgress', index: Math.min(progress.done + 1, total), total }
+    : { state: 'posting' };
 }
 
 // ---------------------------------------------------------------------------
@@ -374,24 +401,35 @@ function bumpTarget(entry: PendingPost | undefined): () => void {
 const partText = (index: number) => `Post ${index + 1}`;
 
 /** The engine could not read the post's image link (`MEDIA_UNREADABLE`, UX_SPEC §5.4 toast.mediaUnreadable). */
-export const MEDIA_UNREADABLE_TEXT =
-  "Couldn't read the image at that link, so nothing was posted. Edit the post to fix the link or remove the image.";
+export const MEDIA_UNREADABLE_TEXT = "That image link didn't work. Edit the post to fix or remove it.";
 
-/** "Thread partly posted. Post {n} failed: {reason}" (UX_SPEC §5.4), or the deleted-target line for a reply. */
+/** The post's failure sentence (UX_SPEC §5.4), for a refusal and a post proved absent alike. */
+const POST_FAILED = "Couldn't post. Try again.";
+
+/** Its automatic checks ran out with the outcome still unknown (UX_SPEC §5.4 toast.postUnconfirmed). */
+export const POST_UNCONFIRMED_TEXT = "We couldn't confirm your post. Check your profile before posting it again.";
+
+/**
+ * "Thread partly posted. Post {n} didn't go through." (UX_SPEC §5.4), or the
+ * deleted-target line for a reply. The engine's own reason goes to
+ * diagnostics only (`data/writes.ts`), unless its code has mobile copy (out
+ * of credits), which then says why instead.
+ */
 function failureTextFor(ticket: WriteTicket, entry: PendingPost | undefined): string | null {
   if (!entry) return null;
   // Posting the same link again fails the same way: say what to fix (QA D-L3a-012).
   if (ticket.error?.code === 'MEDIA_UNREADABLE') return MEDIA_UNREADABLE_TEXT;
-  // PRD G-5's copy when credits or YAPP ran short, else the engine's message.
-  const reason = ticket.error ? writeFailureText(ticket.error, ticket.error.userMessage || 'Something went wrong.') : 'Something went wrong.';
-  if (entry.draft.replyTo && /not found|deleted/i.test(reason) && ticket.error?.outcome !== 'unknown') {
+  const raw = ticket.error?.userMessage ?? '';
+  const gone = ticket.error?.code === 'TARGET_GONE' || /not found|deleted/i.test(raw);
+  if (entry.draft.replyTo && gone && ticket.error?.outcome !== 'unknown') {
     return "This post was deleted, so it can't be replied to.";
   }
   const total = entry.draft.parts.length;
   const posted = postedIds({ ...entry, ticket });
   const failedAt = posted.findIndex((id) => !id);
   if (total < 2 || failedAt <= 0 || posted.every((id) => !id)) return null;
-  return `Thread partly posted. ${partText(failedAt)} failed: ${reason}`;
+  const why = writeFailureText(ticket.error, '');
+  return `Thread partly posted. ${why || `${partText(failedAt)} didn't go through.`}`;
 }
 
 /**
@@ -419,8 +457,7 @@ export const publishWrite: WriteSpec<PublishVars> = {
     return retry && entry.ticketId ? api.writes.retry(entry.ticketId) : api.posts.publish(entry.draft);
   },
   optimistic: ({ localId }) => bumpTarget(getEntry(localId)),
-  noun: 'post',
-  failureMessage: "Couldn't post. Please try again.",
+  failureMessage: POST_FAILED,
   failureText: (ticket, { localId }) => failureTextFor(ticket, getEntry(localId)),
   // An unreadable image link is fixed in compose, never by a retry.
   failureAction: (ticket, { localId }) =>
@@ -496,6 +533,7 @@ async function submit(localId: string, retry: boolean): Promise<void> {
   } else if (result.status === 'unknown' && !retry) {
     // Cut short: it may have run. It waits for its ticket (PRD COMP-10), never re-sent.
     patchEntry(localId, { orphaned: true, lost: false });
+    followOrphan(localId);
   } else if (result.status === 'refused' && !retry) {
     // Refused before any ticket: nothing went out.
     patchEntry(localId, { refused: true });
@@ -634,53 +672,41 @@ function settleNeverTaken(entry: PendingPost, tickets: WriteTicket[], now = Date
 }
 
 /**
- * Past this, a post Check again leaves unconfirmed will not settle by
- * waiting: the engine's probe has had its two minutes, and a cut-short
- * call's ticket that confirmed is no longer listed (`LISTED_CONFIRMED_MS`).
+ * The reconciler's automatic checks of a post ran out with its outcome still
+ * unknown: the card reads "Couldn't confirm · Edit", and a toast says so
+ * once. Never while its call still runs (its answer will settle it): a post
+ * edited and posted again then would land twice. A resumed thread has no
+ * card to edit from: its text goes back to the draft instead.
  */
-const UNPROVABLE_AFTER_MS = 10 * 60_000;
-
-/**
- * The engine's call for the post still runs past its deadline (a DAPI stall):
- * it may still land, and its answer will settle the card. Waiting does tell.
- */
-const stillSending = (entry: PendingPost) => entry.ticket?.error?.code === 'STILL_SENDING';
-
-/**
- * A check left the post unconfirmed: once waiting cannot settle it, the card
- * offers Edit too. Never while its call still runs: a post edited and posted
- * again then would land twice.
- */
-function noteUnsettled(localId: string, now = Date.now()): void {
+function markUnprovable(localId: string): void {
   const entry = getEntry(localId);
-  if (!entry || entry.unprovable || stillSending(entry) || pendingStatus(entry)?.state !== 'unconfirmed') return;
-  if (now - (entry.submittedAt ?? entry.createdAt) >= UNPROVABLE_AFTER_MS) patchEntry(localId, { unprovable: true });
+  if (!entry || entry.unprovable || stillSending(entry) || phaseOf(entry) !== 'unsettled') return;
+  patchEntry(localId, { unprovable: true });
+  if (entry.placement === 'none') settleFailure({ ...entry, unprovable: true });
+  else toast(POST_UNCONFIRMED_TEXT);
 }
 
+/** The reconciler's job for a post whose call never named its ticket. */
+const orphanJob = (localId: string) => `post.orphan:${localId}`;
+
 /**
- * "Check again" on an unconfirmed post. An orphan first looks for its
- * ticket; when the engine never took the call, nothing went out. One that
- * still cannot be told either way, long after it was sent, offers Edit.
+ * One check of an orphan, run by the reconciler: it looks for the ticket its
+ * call made (`writes.list`), and when the engine never took the call, nothing
+ * went out ("Couldn't post · Retry · Edit"). Resolves true once that is known.
  */
-export function checkPending(localId: string): void {
-  const run = async () => {
-    const entry = getEntry(localId);
-    if (entry?.orphaned && !entry.ticketId) {
-      const tickets = await adoptOrphans();
-      const after = getEntry(localId);
-      if (after && !after.ticketId) {
-        settleNeverTaken(after, tickets);
-        noteUnsettled(localId);
-        return;
-      }
-    }
-    const ticketId = getEntry(localId)?.ticketId;
-    if (!ticketId) return;
-    const ticket = await checkWrite(ticketId);
-    if (ticket) receiveTicket(ticket);
-    noteUnsettled(localId);
-  };
-  run().catch((error: unknown) => appendLog('warn', 'host', `Checking a post failed: ${errorMessage(error)}`));
+async function checkOrphan(localId: string): Promise<boolean> {
+  const unsettled = (e: PendingPost | undefined) => e?.orphaned === true && !e.ticketId && !e.confirmedAt && !e.lost;
+  if (!unsettled(getEntry(localId))) return true;
+  const tickets = await adoptOrphans();
+  const after = getEntry(localId);
+  if (!after || !unsettled(after)) return true;
+  settleNeverTaken(after, tickets);
+  return !unsettled(getEntry(localId));
+}
+
+/** Hands an orphan to the reconciler (5 s, 15 s, 60 s, then on foreground). */
+function followOrphan(localId: string): void {
+  reconcile(orphanJob(localId), { run: () => checkOrphan(localId) });
 }
 
 /** Follows each orphan whose ticket the engine now lists (`writes.list`); returns the list. */
@@ -689,7 +715,8 @@ async function adoptOrphans(): Promise<WriteTicket[]> {
   if (orphans().length === 0) return [];
   const tickets = await engine.api.writes.list();
   for (const ticket of [...tickets].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())) {
-    receiveTicket(ticket);
+    // Through the tracker too: an adopted ticket that is still unconfirmed is checked from here.
+    receiveTicket(noteTicket(ticket));
   }
   return tickets;
 }
@@ -753,14 +780,16 @@ export function editPending(localId: string): void {
 /** Forgets a pending post and its card (compose posts its returned draft anew, or Edit). */
 export function discardPending(localId: string): void {
   const entry = getEntry(localId);
+  stopReconciling(orphanJob(localId));
   dropEntry(localId);
   replaceInCaches(localId, null);
   if (entry?.ticketId) engine.api.writes.dismiss(entry.ticketId).catch(() => undefined);
 }
 
+/** UX_SPEC §5.4: "Posted", "Reply posted", "Quote posted"; a thread of several parts, "Thread posted". */
 const SUCCESS = {
-  post: 'Post created successfully!',
-  quote: 'Post created successfully!',
+  post: 'Posted',
+  quote: 'Quote posted',
   reply: 'Reply posted',
 } as const;
 
@@ -775,6 +804,7 @@ function confirmed(entry: PendingPost, ticket: WriteTicket | null): void {
   const realId = firstPostedId(ticket ? { ...entry, ticket } : entry);
   const real = realId ? (queryClient.getQueryData<PostDTO>(queryKeys.post.detail(realId)) ?? null) : null;
   const post = realId ? { ...entry.post, id: realId, ...(real ?? {}) } : null;
+  stopReconciling(orphanJob(entry.localId));
   if (post) patchEntry(entry.localId, { ...(ticket ? { ticket } : {}), post, confirmedAt: Date.now(), orphaned: false });
   else dropEntry(entry.localId);
   replaceInCaches(entry.localId, post);
@@ -784,14 +814,14 @@ function confirmed(entry: PendingPost, ticket: WriteTicket | null): void {
   deleteDraft(entry.identityId, { ...entry.context, pendingId: entry.localId });
   if (!ticket) return;
   const total = entry.draft.parts.length;
-  toast.success(total > 1 ? `Thread with ${total} posts created!` : SUCCESS[entry.context.mode]);
+  toast.success(total > 1 ? 'Thread posted' : SUCCESS[entry.context.mode]);
 }
 
 /**
  * The orphan a ticket the app has not followed belongs to: only when exactly
  * one could have made it (two posts cut short together cannot be told apart,
- * so neither is guessed: each settles when a list shows it, or Check again
- * offers Edit once waiting cannot tell). None while a submit still waits
+ * so neither is guessed: each settles when a list shows it, or offers Edit
+ * once the reconciler's checks run out). None while a submit still waits
  * for its own.
  */
 function orphanFor(ticket: WriteTicket, entries: PendingPost[]): PendingPost | undefined {
@@ -807,28 +837,32 @@ function receiveTicket(ticket: WriteTicket): void {
     // Not ours yet: a cut-short call's ticket, restored by the engine.
     const orphan = orphanFor(ticket, entries);
     if (!orphan) return;
+    // Its ticket's own checks take over from the search for it.
+    stopReconciling(orphanJob(orphan.localId));
     patchEntry(orphan.localId, { ticketId: ticket.id, orphaned: false, lost: false, unprovable: false });
   }
   const entry = Object.values(usePendingPosts.getState().entries).find((e) => e.ticketId === ticket.id);
   if (!entry || entry.confirmedAt) return;
-  const before = pendingStatus(entry)?.state;
+  const before = phaseOf(entry);
   const next = { ...entry, ticket };
   if (ticket.state === 'confirmed') {
     confirmed(entry, ticket);
     return;
   }
   patchEntry(entry.localId, { ticket });
-  const after = pendingStatus(next)?.state;
+  const after = phaseOf(next);
   // Unconfirmed while its call ran, then still unconfirmed once it answered: that answer counts.
   const answered = stillSending(entry) && !stillSending(next);
   if (before === after && !answered) return;
-  if (after === 'failed' || after === 'partial') settleFailure(next);
-  // A resumed thread has no card to check again from: with a part whose id is not known, its text
-  // returns to the draft (the parts known to have posted marked as posted). Not while its call
-  // still runs: those parts may still land, and posted again from the draft they would land twice.
-  else if (after === 'unconfirmed' && next.placement === 'none' && !stillSending(next) && postedIds(next).some((id) => !id)) {
+  if (after === 'failed') settleFailure(next);
+  // A resumed thread has no card to wait on: with a part whose id is not known, its text returns
+  // to the draft (the parts known to have posted marked as posted). Not while its call still
+  // runs: those parts may still land, and posted again from the draft they would land twice.
+  else if (after === 'unsettled' && next.placement === 'none' && !stillSending(next) && postedIds(next).some((id) => !id)) {
     settleFailure(next);
   }
+  // A failure the engine cannot check (it may have landed): "Couldn't confirm · Edit" at once.
+  else if (mayHaveLanded(ticket)) markUnprovable(entry.localId);
 }
 
 /** Whether `post` is what an entry's card shows: same author, kind, parent, quote and text. */
@@ -881,19 +915,19 @@ function postsIn(value: unknown, into: PostDTO[] = []): PostDTO[] {
 }
 
 /**
- * A refreshed list that shows a "Not confirmed yet" post on chain (PRD
+ * A refreshed list that shows a post whose outcome is unknown on chain (PRD
  * COMP-10: it "becomes normal without user action on the next refresh").
  * A card whose post is there by its text becomes that post, so the list
- * never shows both. With a ticket, the engine is asked to confirm it, which
- * it proves by id or by text; a cut-short call with none (its ticket never
- * made, or no longer listed) is settled by the sighting itself, when it is a
- * single post. Nothing is ever sent.
+ * never shows both. With a ticket, the reconciler checks it now, which the
+ * engine proves by id or by text; a cut-short call with none (its ticket
+ * never made, or no longer listed) is settled by the sighting itself, when
+ * it is a single post. Nothing is ever sent.
  */
 function settleSeen(data: unknown, now = Date.now()): void {
   const viewerId = useSessionStore.getState().session?.identityId;
   const entries = Object.values(usePendingPosts.getState().entries);
   const waiting = entries.filter(
-    (e) => e.identityId === viewerId && e.placement !== 'none' && pendingStatus(e)?.state === 'unconfirmed',
+    (e) => e.identityId === viewerId && e.placement !== 'none' && phaseOf(e) === 'unsettled',
   );
   if (waiting.length === 0) return;
   const posts = postsIn(data);
@@ -916,30 +950,35 @@ function settleSeen(data: unknown, now = Date.now()): void {
       if (adopted && entry.draft.parts.length === 1) confirmed(adopted, null);
       continue;
     }
-    // Only an unconfirmed ticket can be checked, and one waiting cannot settle has been checked
-    // enough: Check again stays for the user.
-    if (entry.ticket?.state !== 'unconfirmed' || entry.unprovable) continue;
+    // Only an unconfirmed ticket can be checked (also once its automatic checks ran out).
+    if (entry.ticket?.state !== 'unconfirmed') continue;
     if (now - (seenChecks.get(entry.localId) ?? 0) < SEEN_CHECK_MS) continue;
     seenChecks.set(entry.localId, now);
-    const { localId } = entry;
     // Quietly: the user asked for nothing. The outcome arrives as `write.status`, ahead of the reply.
-    engine.api.writes
-      .check(entry.ticketId)
-      .then(() => noteUnsettled(localId))
-      .catch((error: unknown) => appendLog('warn', 'host', `Checking a listed post failed: ${errorMessage(error)}`));
+    recheckWrite(entry.ticketId).catch((error: unknown) =>
+      appendLog('warn', 'host', `Checking a listed post failed: ${errorMessage(error)}`),
+    );
   }
 }
 
-/** Asks the engine for every pending ticket of the account (after a restart); a ticket it no longer has goes. */
-function reconcile(identityId: string): void {
+/**
+ * Asks the engine for every pending ticket of the account (after a restart);
+ * a ticket it no longer has goes. Posts whose call never named its ticket go
+ * back to the reconciler.
+ */
+function resumeAccount(identityId: string): void {
   for (const entry of Object.values(usePendingPosts.getState().entries)) {
-    if (entry.identityId !== identityId || !entry.ticketId || entry.confirmedAt) continue;
+    if (entry.identityId !== identityId || entry.confirmedAt) continue;
+    if (!entry.ticketId) {
+      if (entry.orphaned && !entry.lost) followOrphan(entry.localId);
+      continue;
+    }
     engine.api.writes
       .get(entry.ticketId)
       .then((ticket) => {
-        const state = pendingStatus(entry)?.state;
-        if (ticket) receiveTicket(ticket);
-        else if (state !== 'failed' && state !== 'partial') {
+        // Through the tracker too: one unconfirmed since before a relaunch is checked from here.
+        if (ticket) receiveTicket(noteTicket(ticket));
+        else if (phaseOf(entry) !== 'failed') {
           // Pruned by the engine: it confirmed long ago. The next refresh shows the real post.
           dropEntry(entry.localId);
           replaceInCaches(entry.localId, null);
@@ -950,15 +989,22 @@ function reconcile(identityId: string): void {
   // Calls a restart cut short: their tickets, if the engine made them.
   adoptOrphans()
     .then((tickets) => {
-      // A resumed thread has no card to check again from: with no ticket, its text returns to the draft.
+      // A resumed thread has no card to wait on: with no ticket, its text returns to the draft.
       for (const entry of Object.values(usePendingPosts.getState().entries)) {
         if (entry.identityId !== identityId || !entry.orphaned || entry.ticketId || entry.placement !== 'none') continue;
         if (!neverTaken(entry, tickets)) continue;
+        stopReconciling(orphanJob(entry.localId));
         patchEntry(entry.localId, { lost: true });
         settleFailure({ ...entry, lost: true });
       }
     })
     .catch((error: unknown) => appendLog('warn', 'host', `Reading restored posts failed: ${errorMessage(error)}`));
+}
+
+/** The reconciler's job that follows an entry's outcome, if any. */
+function jobOfEntry(entry: PendingPost): string | null {
+  if (entry.ticketId) return ticketJob(entry.ticketId);
+  return entry.orphaned ? orphanJob(entry.localId) : null;
 }
 
 /** Signing out deletes the account's drafts, its unsent messages and the posts it had on their way (PRD AUTH-11). */
@@ -1009,7 +1055,7 @@ export function startPendingPosts(): () => void {
     const key = `${engineSupervisor.getStatus().epoch}:${session?.identityId ?? ''}`;
     if (status !== 'signed-in' || !session || key === reconciled) return;
     reconciled = key;
-    reconcile(session.identityId);
+    resumeAccount(session.identityId);
     placeCards();
   };
   const stopSession = useSessionStore.subscribe(onSession);
@@ -1041,7 +1087,16 @@ export function startPendingPosts(): () => void {
       if (entry.confirmedAt && ids.has(entry.post.id)) dropEntry(entry.localId);
     }
   });
+  // A post whose automatic checks ran out: "Couldn't confirm · Edit", said once.
+  const stopExhausted = useReconcileStore.subscribe(({ exhausted }, previous) => {
+    if (exhausted === previous.exhausted) return;
+    for (const entry of Object.values(usePendingPosts.getState().entries)) {
+      const job = jobOfEntry(entry);
+      if (job && exhausted[job] && !previous.exhausted[job]) markUnprovable(entry.localId);
+    }
+  });
   return () => {
+    stopExhausted();
     stopTickets();
     stopCreated();
     stopCache();
@@ -1069,7 +1124,6 @@ export function usePendingWriteStatus(postId: string): WriteStatusProps | null {
   const { localId } = entry;
   return {
     status,
-    onCheckAgain: () => checkPending(localId),
     onRetry: () => retryPending(localId),
     onRetryRest: () => retryPending(localId),
     onEdit: () => editPending(localId),

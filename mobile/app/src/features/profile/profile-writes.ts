@@ -37,6 +37,5 @@ export const profileUpdateWrite: WriteSpec<ProfileUpdateVars> = {
     refetch(queryKeys.post.all);
   },
   matches: (ticket, { viewerId }) => ticket.op === 'profile.update' && targetIdentity(ticket) === viewerId,
-  noun: 'profile update',
-  failureMessage: 'Failed to update profile',
+  failureMessage: "Couldn't save your profile. Try again.",
 };

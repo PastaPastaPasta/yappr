@@ -107,6 +107,8 @@ export interface PostCardProps {
   /** Engine capabilities for this post's kind. */
   canRepost?: boolean;
   canBookmark?: boolean;
+  /** The viewer's marks are still loading: like, repost and bookmark wait with a spinner (`PostActionBar`). */
+  marksLoading?: boolean;
   /** The optimistic variant's write status. */
   writeStatus?: WriteStatusProps;
   /**
@@ -397,6 +399,7 @@ export const PostCard = memo(function PostCard({
   authorPending = false,
   canRepost = true,
   canBookmark = true,
+  marksLoading = false,
   writeStatus,
   repostQuoteCounts,
   tagMaxLength,
@@ -679,6 +682,7 @@ export const PostCard = memo(function PostCard({
               canReply={canReply}
               canRepost={canRepost}
               canBookmark={canBookmark}
+              marksLoading={marksLoading}
               onReply={actions.onReply}
               onRepost={actions.onRepost}
               onLike={actions.onLike}

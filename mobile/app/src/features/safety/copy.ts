@@ -36,7 +36,8 @@ export const copy = {
     blocked: (handle: string) => `Blocked ${handle}`,
     unblocked: (handle: string) => `Unblocked ${handle}`,
     stillBlocked: 'Unblocked, but a block list you follow still hides them.',
-    blockFailed: 'Failed to update block status',
+    blockFailed: (block: boolean, handle: string | null) =>
+      `Couldn't ${block ? 'block' : 'unblock'} ${handle ?? 'this account'}. Try again.`,
     unblockFailed: (handle: string) => `Couldn't unblock ${handle}. Try again.`,
     reportSent: 'Report sent',
     reportFailed: "Couldn't send your report. Try again.",
