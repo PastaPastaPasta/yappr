@@ -3,6 +3,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { FullWindowOverlay } from 'react-native-screens';
+import type { ReactTestInstance } from 'react-test-renderer';
 
 import { Avatar, svgFromDataUri } from './Avatar';
 import { AvatarSvgProvider } from './avatar-svg';
@@ -25,6 +26,14 @@ import { toast, toastDuration, useToastStore } from './toast';
 import { ToastHost } from './ToastHost';
 import { followLabel, UserRow } from './UserRow';
 import { WriteStatus } from './WriteStatus';
+
+/** The nearest host `View` above an element: the native parent it would get if not flattened. */
+function hostViewAbove(element: ReactTestInstance): ReactTestInstance | null {
+  let node = element.parent;
+  // Host elements have a string type; a test renderer's are React Native's names, not JSX's.
+  while (node && (node.type as string) !== 'View') node = node.parent;
+  return node;
+}
 
 describe('Button', () => {
   it('presses, and labels itself with its text', () => {
@@ -51,17 +60,24 @@ describe('Button', () => {
 describe('Button variants', () => {
   const labelColor = () => StyleSheet.flatten(screen.getByText(/^Follow/).props.style)?.color;
 
-  it('restyles its label when the variant changes on a mounted button (D-L3a-001)', () => {
+  it('restyles its label when the variant changes on a mounted button', () => {
     // Follow → Following → Follow, as the profile header does.
     const { rerender } = render(<Button label="Follow" variant="primary" size="sm" />);
     expect(labelColor()).toBe(colors.white);
-    const first = screen.getByText('Follow');
     rerender(<Button label="Following" variant="outline" size="sm" />);
     expect(labelColor()).toBe(colors.gray900);
     rerender(<Button label="Follow" variant="primary" size="sm" />);
     expect(labelColor()).toBe(colors.white);
-    // A fresh label: nothing of the outline style stays on it.
-    expect(screen.getByText('Follow')).not.toBe(first);
+  });
+
+  it('keeps the label in one native parent while loading toggles', () => {
+    // A flattenable wrapper whose opacity toggles would move the label between native parents,
+    // which crashes Android when it happens inside a screen being popped.
+    const labelBox = () => hostViewAbove(screen.getByText('Save'));
+    const { rerender } = render(<Button label="Save" loading />);
+    expect(labelBox()?.props.collapsable).toBe(false);
+    rerender(<Button label="Save" />);
+    expect(labelBox()?.props.collapsable).toBe(false);
   });
 
   it('colors the label like its icon and spinner, for every variant', () => {
@@ -149,6 +165,18 @@ describe('TextField', () => {
     );
     expect(screen.getByText('Too long')).toBeTruthy();
     expect(screen.getByText('25 / 30')).toBeTruthy();
+  });
+
+  it('keeps the input in one native parent whether or not it is editable', () => {
+    // The box dims while a form saves. Were it flattenable, the input would move out of it when
+    // the save ends, and on Android that move crashed the app inside a closing modal.
+    const { rerender } = render(<TextField label="Name" value="Jana" editable={false} onChangeText={jest.fn()} />);
+    const box = () => hostViewAbove(screen.getByLabelText('Name'));
+    expect(box()?.props.className).toContain('opacity-50');
+    expect(box()?.props.collapsable).toBe(false);
+    rerender(<TextField label="Name" value="Jana" onChangeText={jest.fn()} />);
+    expect(box()?.props.className).not.toContain('opacity-50');
+    expect(box()?.props.collapsable).toBe(false);
   });
 
   it('hides the counter far from the limit', () => {

@@ -646,7 +646,8 @@ export const PostCard = memo(function PostCard({
               </Text>
             </Text>
           ) : null}
-          <View style={posting ? { opacity: 0.7 } : undefined}>
+          {/* Its own native parent, so the body doesn't move when the post lands (mobile/CLAUDE.md, "Native view structure"). */}
+          <View collapsable={false} style={posting ? { opacity: 0.7 } : undefined}>
             <SensitiveGate active={gated} revealed={revealed} onReveal={reveal}>
               {body}
             </SensitiveGate>
@@ -724,7 +725,11 @@ function DetailMeta({
                 onPress={() => onCountPress(tab)}
                 testID={`count-${tab}`}
               >
-                {({ pressed }) => <View className={pressed ? 'opacity-60' : undefined}>{label}</View>}
+                {({ pressed }) => (
+                  <View collapsable={false} className={pressed ? 'opacity-60' : undefined}>
+                    {label}
+                  </View>
+                )}
               </Pressable>
             ) : (
               <View key={tab}>{label}</View>

@@ -73,7 +73,11 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   const [form, setForm] = useState<ProfileForm>(initial);
   const [pickerOpen, setPickerOpen] = useState(false);
   const save = useWrite(profileUpdateWrite);
-  const saving = save.status === 'pending';
+  // A finished save closes the modal (below), and the form keeps its saving look until it has
+  // gone. Re-enabling the fields in the render that closes it would move the inputs between
+  // native parents inside a screen Android has started to animate out, which crashes the app.
+  const closing = save.status === 'confirmed' || save.status === 'unconfirmed';
+  const saving = save.status === 'pending' || closing;
   const creating = !profile.hasProfile;
   const patch = patchOf(initial, form, creating);
   const errors = validateForm(form, limits);
@@ -113,7 +117,9 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     if (save.status !== 'confirmed' && save.status !== 'unconfirmed') return;
     if (save.status === 'confirmed') toast.success('Profile updated!');
     leaving.current = true;
+    // Opened on its own (a cold link), with nothing under it: the profile it edited.
     if (router.canGoBack()) router.back();
+    else router.replace('/profile');
   }, [save.status]);
 
   const onSave = () => {

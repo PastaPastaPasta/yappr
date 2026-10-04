@@ -147,6 +147,21 @@ root layout). A screen with a fixed background of its own mounts its own
 media viewer does. Only the bar's button style can be set: the app is edge to
 edge, so its background is whatever the screen draws behind it.
 
+**Native view structure (Android).** Don't let a state change move children
+to another native parent. Fabric flattens a plain `View` that only does
+layout, and gives it a native view of its own (with its children inside) once
+it gets an opacity below 1, a transform, `pointerEvents` `none`/`box-only`,
+clipping or accessibility props. Toggling one of those (`!editable &&
+'opacity-50'`, `loading ? { opacity: 0 }`, `busy ? 'none' : 'auto'`) moves the
+children between native parents. When a stack screen is popped,
+react-native-screens marks every view in it as transitioning, and Android then
+keeps their old parent: a move committed in the same tick as the pop crashes
+the app (`addViewAt: failed to insert view … The specified child already has a
+parent`, the edit-profile save). Give such a `View` `collapsable={false}`, and
+keep a screen's tree unchanged in the render that leaves it (a form that
+closes after a save stays in its saving state). Animated components are never
+flattened (Reanimated sets `collapsable={false}`).
+
 ## Build variants
 
 `APP_VARIANT` selects the variant at prebuild, start and export time. The

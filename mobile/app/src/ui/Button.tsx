@@ -41,9 +41,7 @@ const buttonVariants = cva('flex-row items-center justify-center gap-1.5 rounded
   defaultVariants: { variant: 'primary', size: 'md' },
 });
 
-// The label's size. Its color is `contentColor`, as the icon's and the spinner's: a
-// NativeWind color class swapped on a mounted label (Follow → Following → Follow)
-// can leave the label unpainted on device.
+// The label's size. Its color is `contentColor`, as the icon's and the spinner's.
 const labelVariants = cva('text-center', {
   variants: {
     size: {
@@ -113,9 +111,10 @@ export function Button({
     >
       {({ pressed }) => (
         <>
-          {/* Loading keeps the label's width: it goes invisible under the spinner. A new variant
-              mounts a new label, so nothing of the old variant's style stays on it. */}
-          <View key={variant} className="flex-row items-center gap-1.5" style={loading ? { opacity: 0 } : undefined}>
+          {/* Loading keeps the label's width: it goes invisible under the spinner. Always the
+              label's native parent, so loading on and off never moves it (mobile/CLAUDE.md,
+              "Native view structure"). */}
+          <View collapsable={false} className="flex-row items-center gap-1.5" style={loading ? { opacity: 0 } : undefined}>
             {Icon ? <Icon size={16} color={color} /> : null}
             <Text
               className={cn(labelVariants({ size }), variant === 'link' && pressed && 'underline')}

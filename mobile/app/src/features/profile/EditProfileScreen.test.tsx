@@ -168,6 +168,27 @@ describe('EditProfileScreen', () => {
     expect(router.back).toHaveBeenCalled();
   });
 
+  it('keeps the form as it was while saving in the render that closes it (Android crash, profile-save-crash-dark)', async () => {
+    // Re-enabling the fields as the modal closes moved the inputs between native parents inside
+    // a screen Android was animating out: "addViewAt: … The specified child already has a parent".
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    const fields = ['edit-name', 'edit-bio', 'edit-pronouns', 'edit-location', 'edit-website', 'edit-banner'];
+    for (const id of fields) expect(screen.getByTestId(id)).toBeDisabled();
+
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(router.back).toHaveBeenCalled();
+    for (const id of fields) expect(screen.getByTestId(id)).toBeDisabled();
+    expect(screen.getByTestId('edit-saving')).toBeTruthy();
+    expect(screen.queryByTestId('edit-save')).toBeNull();
+    expect(screen.getByTestId('edit-cancel')).toBeDisabled();
+  });
+
   it('counts the two documents a dev save writes in the title: "Saving… (1 of 2)" (D-L3a-006)', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });

@@ -58,6 +58,9 @@ export function SensitiveGate({
   return (
     <View className={cn('relative', v.frame)}>
       <View
+        // Revealing changes this view's opacity and touch handling; without it the content would
+        // also move to another native parent (mobile/CLAUDE.md, "Native view structure").
+        collapsable={false}
         style={revealed ? undefined : { opacity: 0 }}
         importantForAccessibility={revealed ? 'auto' : 'no-hide-descendants'}
         accessibilityElementsHidden={!revealed}
