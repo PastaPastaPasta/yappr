@@ -66,21 +66,47 @@ async function readListings(itemIds: string[]): Promise<Map<string, ItemListing>
     [id, { storeId, fulfillment, title, basePrice, currency, variants }]))
 }
 
+interface CurrentOrderState {
+  status: OrderStatusUpdate | undefined
+  delivered: boolean
+  listings: Map<string, ItemListing>
+  /** The kits of the order's items that were read and decrypted just now. */
+  kits: Map<string, SellerKit>
+}
+
 /**
- * An order's latest status and whether anything was delivered for it, read
- * from Platform just before a bulk delivery; null when either read fails.
+ * An order as it stands on Platform just before a bulk delivery: its latest
+ * status, whether anything was delivered for it, and the current listing and
+ * kit of each item it names. Null when any read fails.
  */
-async function currentOrderState(orderId: string): Promise<{ status: OrderStatusUpdate | undefined; delivered: boolean } | null> {
+async function currentOrderState(orderId: string, itemIds: string[], sellerPrivateKey: Uint8Array): Promise<CurrentOrderState | null> {
   try {
-    const [statuses, deliveries] = await Promise.all([
+    const [statuses, deliveries, listings, kits] = await Promise.all([
       orderStatusService.getLatestStatuses([orderId]),
       orderDeliveryService.getForOrders([orderId]),
+      readListings(itemIds),
+      itemDeliverableService.loadKits(itemIds, sellerPrivateKey),
     ])
-    return { status: statuses.get(orderId), delivered: (deliveries.get(orderId)?.length ?? 0) > 0 }
+    return { status: statuses.get(orderId), delivered: (deliveries.get(orderId)?.length ?? 0) > 0, listings, kits }
   } catch (error) {
     logger.error(`Could not re-read order ${orderId} before delivering it:`, error)
     return null
   }
+}
+
+/**
+ * The kit of each item, newest of this session's copy and the one just read;
+ * null when an item has no kit in the fresh read (missing, unreadable, or not
+ * decryptable here), so a stale copy can never stand in for it.
+ */
+function kitsOf(itemIds: string[], held: ReadonlyMap<string, SellerKit>, fresh: ReadonlyMap<string, SellerKit>): Map<string, SellerKit> | null {
+  const kits = new Map<string, SellerKit>()
+  for (const itemId of new Set(itemIds)) {
+    const read = fresh.get(itemId)
+    if (!read) return null
+    kits.set(itemId, newerKits(held, new Map([[itemId, read]])).get(itemId) ?? read)
+  }
+  return kits
 }
 
 /** Kit copies merged by revision: whichever is newer wins, wherever it was read. */
@@ -388,32 +414,29 @@ function SellerOrdersPage() {
     let firstFailure: string | null = null
     setBulkProgress({ done: 0, total: batch.length })
     try {
-      // Re-read the listings now: the page's copy may predate the seller
-      // switching a product to shipped elsewhere. A failed read holds the batch.
-      const batchItemIds = batch.flatMap((order) => {
-        const payload = orderPayloads.get(order.id)
-        return payload ? digitalLines(payload).map((line) => line.itemId) : []
-      })
-      const freshListings = await readListings(batchItemIds).catch((error) => {
-        logger.error('Failed to re-read listings before bulk delivery:', error)
-        return new Map<string, ItemListing>()
-      })
-      setListings(prev => new Map([...prev, ...freshListings]))
       for (const [index, order] of batch.entries()) {
         const payload = orderPayloads.get(order.id)
-        // Re-check the order as it stands now, not as the page loaded it: it may
-        // have been cancelled, refunded or delivered from another device since.
-        // A read that fails holds the order.
-        const now = payload ? await currentOrderState(order.id) : null
+        // Re-check the order as it stands NOW, not as the page loaded it: its
+        // status, deliveries, listings and kits may all have changed on
+        // another device since (cancelled, delivered, switched to shipped, a
+        // kit's timing changed). Any read that fails holds the order.
+        const now = payload ? await currentOrderState(order.id, digitalLines(payload).map((line) => line.itemId), sellerPrivateKey) : null
         if (now?.status) setOrderStatuses(prev => new Map(prev).set(order.id, now.status as OrderStatusUpdate))
-        // Keys can run out part-way through a batch: re-plan against the pool as it now stands.
-        const stillReady = payload && now && isReadyForBulkDelivery({
+        if (now) {
+          setListings(prev => new Map([...prev, ...now.listings]))
+          // A pool this batch reserved may be newer than a lagging read: keep the newer.
+          currentKits = newerKits(currentKits, now.kits)
+          setKits(prev => newerKits(prev, now.kits))
+        }
+        // Every line's kit must have been read just now; a stale copy never stands in.
+        const kitsNow = now && payload ? kitsOf(digitalLines(payload).map((line) => line.itemId), currentKits, now.kits) : null
+        const stillReady = payload && now && kitsNow && isReadyForBulkDelivery({
           payload,
           storeId: order.storeId,
           latestStatus: now.status?.status,
           alreadyDelivered: now.delivered,
-          kits: toKitPayloads(currentKits),
-          listings: freshListings,
+          kits: toKitPayloads(kitsNow),
+          listings: now.listings,
         })
         const plan = payload && stillReady ? planDelivery(payload, toKitPayloads(currentKits)) : null
         if (!payload || !plan) {

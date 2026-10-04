@@ -384,7 +384,18 @@ const parsePool = (value: unknown): string[] | undefined => {
 }
 
 const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(value))
-const decodeJson = (bytes: Uint8Array): unknown => JSON.parse(new TextDecoder().decode(bytes))
+/**
+ * Parse decrypted JSON. A parser error can quote its input, which here is
+ * plaintext (codes, links), and callers log decode failures: so a failure
+ * becomes a generic error that keeps neither the message nor the cause.
+ */
+const decodeJson = (bytes: Uint8Array): unknown => {
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes))
+  } catch {
+    throw new Error('Malformed encrypted payload')
+  }
+}
 
 export function encodeKit(kit: ItemDeliverablePayload): Uint8Array {
   const bytes = encodeJson(kit)

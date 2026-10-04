@@ -30,22 +30,57 @@ import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload, OrderDelivery } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
 
+/** A seller's encryption public key, which both order and delivery decryption need. */
+async function sellerEncryptionPublicKey(sellerId: string): Promise<Uint8Array | null> {
+  const sellerIdentity = await identityService.getIdentity(sellerId)
+  const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
+  return sellerEncryptionKey?.data ? normalizeBytes(sellerEncryptionKey.data) : null
+}
+
 /**
- * Deliveries for the buyer's digital orders, each decrypted with the key both
- * parties derive from the order (lib/crypto/digital-delivery.ts). A delivery
- * that does not decrypt is kept without a payload, so the card can say so.
+ * Everything delivered to this buyer, read from the `buyerDeliveries` index
+ * (not just the loaded order page), each delivery decrypted with the key both
+ * parties derive from its order (lib/crypto/digital-delivery.ts). Orders
+ * outside `knownOrders` are fetched, since decryption needs them. A delivery
+ * that does not decrypt is kept without a payload, so the reader can say so.
  */
-function loadBuyerDeliveries(
-  orders: StoreOrder[],
-  payloads: ReadonlyMap<string, OrderPayload>,
+async function loadBuyerLibrary(
+  buyerId: string,
+  knownOrders: readonly StoreOrder[],
   buyerPrivateKey: Uint8Array | null,
-  sellerKeys: ReadonlyMap<string, Uint8Array>
-): Promise<Map<string, OrderDelivery[]>> {
-  return orderDeliveryService.loadDecrypted(digitalOrders(orders, payloads), (delivery, order) => {
+  sellerKeys: Map<string, Uint8Array>
+): Promise<{ deliveries: Map<string, OrderDelivery[]>; orders: StoreOrder[] }> {
+  const byOrder = await orderDeliveryService.getForBuyer(buyerId)
+  const ordersById = new Map(knownOrders.map((order) => [order.id, order]))
+  const missing = [...byOrder.keys()].filter((orderId) => !ordersById.has(orderId))
+  for (const order of await storeOrderService.getMany(missing)) ordersById.set(order.id, order)
+
+  const sellerIds = new Set([...byOrder.keys()].flatMap((orderId) => ordersById.get(orderId)?.sellerId ?? []))
+  for (const sellerId of sellerIds) {
+    if (sellerKeys.has(sellerId)) continue
+    const key = await sellerEncryptionPublicKey(sellerId).catch(() => null)
+    if (key) sellerKeys.set(sellerId, key)
+  }
+
+  const deliveries = new Map<string, OrderDelivery[]>()
+  const orders: StoreOrder[] = []
+  for (const [orderId, list] of byOrder) {
+    const order = ordersById.get(orderId)
+    if (!order) continue
+    orders.push(order)
     const sellerKey = sellerKeys.get(order.sellerId)
-    if (!buyerPrivateKey || !sellerKey) throw new Error('No key on this device to decrypt the delivery')
-    return orderDeliveryService.decryptAsBuyer(delivery, order, buyerPrivateKey, sellerKey)
-  })
+    deliveries.set(orderId, list.map((delivery) => {
+      try {
+        if (!buyerPrivateKey || !sellerKey) throw new Error('No key on this device to decrypt the delivery')
+        return { ...delivery, payload: orderDeliveryService.decryptAsBuyer(delivery, order, buyerPrivateKey, sellerKey) }
+      } catch (error) {
+        logger.warn(`Could not decrypt delivery ${delivery.id}:`, error instanceof Error ? error.message : 'unknown error')
+        return delivery
+      }
+    }))
+  }
+  orders.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+  return { deliveries, orders }
 }
 
 function OrdersPage() {
@@ -65,15 +100,22 @@ function OrdersPage() {
   // Digital delivery (storefront v6)
   const supportsDigital = storefrontSupportsDigital()
   const [deliveries, setDeliveries] = useState<Map<string, OrderDelivery[]>>(new Map())
+  // Every order with a delivery, including ones older than the loaded order page.
+  const [libraryOrders, setLibraryOrders] = useState<StoreOrder[]>([])
   const [tab, setTab] = useState<'orders' | 'library'>('orders')
   // Seller encryption keys fetched while decrypting orders; reused to decrypt deliveries.
   const sellerKeysRef = useRef<Map<string, Uint8Array>>(new Map())
 
-  const refreshDeliveries = useCallback(async (orderList: StoreOrder[], payloads: ReadonlyMap<string, OrderPayload>) => {
+  const refreshDeliveries = useCallback(async (orderList: StoreOrder[]) => {
     if (!supportsDigital || !user?.identityId) return
     try {
-      const latest = await loadBuyerDeliveries(orderList, payloads, getEncryptionKeyBytes(user.identityId), sellerKeysRef.current)
-      setDeliveries(prev => new Map([...prev, ...latest]))
+      const library = await loadBuyerLibrary(user.identityId, orderList, getEncryptionKeyBytes(user.identityId), sellerKeysRef.current)
+      setDeliveries(prev => new Map([...prev, ...library.deliveries]))
+      setLibraryOrders(library.orders)
+      // Store names for library orders outside the loaded page.
+      const storeIds = [...new Set(library.orders.map((order) => order.storeId))]
+      const fetched = await storeService.getMany(storeIds.filter((id) => !orderList.some((order) => order.storeId === id)))
+      if (fetched.length > 0) setStores(prev => new Map([...prev, ...fetched.map((store): [string, Store] => [store.id, store])]))
     } catch (e) {
       logger.warn('Failed to refresh deliveries:', e)
     }
@@ -149,11 +191,7 @@ function OrdersPage() {
               if (buyerPrivKey) {
                 try {
                   // Fetch seller's public key for decryption
-                  const sellerIdentity = await identityService.getIdentity(order.sellerId)
-                  const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
-                  const sellerPubKey = sellerEncryptionKey?.data
-                    ? normalizeBytes(sellerEncryptionKey.data)
-                    : null
+                  const sellerPubKey = await sellerEncryptionPublicKey(order.sellerId)
 
                   // Skip decryption if seller public key is missing
                   if (!sellerPubKey) {
@@ -187,7 +225,7 @@ function OrdersPage() {
         setOrderStatuses(statusMap)
         setStores(storeMap)
         setReviewedOrders(reviewedSet)
-        await refreshDeliveries(userOrders, payloadMap)
+        await refreshDeliveries(userOrders)
       } catch (error) {
         logger.error('Failed to load orders:', error)
       } finally {
@@ -203,16 +241,15 @@ function OrdersPage() {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && orders.length > 0) {
         refreshStatuses(orders).catch((err) => logger.error('Failed to refresh order statuses:', err))
-        refreshDeliveries(orders, orderPayloads).catch((err) => logger.error('Failed to refresh deliveries:', err))
+        refreshDeliveries(orders).catch((err) => logger.error('Failed to refresh deliveries:', err))
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [orders, orderPayloads, refreshStatuses, refreshDeliveries])
+  }, [orders, refreshStatuses, refreshDeliveries])
 
-  const hasDigitalOrders = supportsDigital && digitalOrders(orders, orderPayloads).length > 0
-  const libraryOrders = orders.filter((order) => (deliveries.get(order.id)?.length ?? 0) > 0)
+  const hasDigitalOrders = supportsDigital && (digitalOrders(orders, orderPayloads).length > 0 || libraryOrders.length > 0)
 
   return (
     <>

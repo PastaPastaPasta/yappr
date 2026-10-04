@@ -114,9 +114,10 @@ payload.
 
   Listings are read from Platform, never the document cache. Right before
   each order is fulfilled, "Deliver all" re-reads the listings, the order's
-  latest status and its deliveries, so an order cancelled, refunded or
-  delivered from another device since the page loaded is held, and so is one
-  whose re-read fails. Status changes on the page wait until the batch ends.
+  latest status, its deliveries and its items' kits (decrypted), so an order
+  cancelled, refunded or delivered from another device since the page
+  loaded, or whose kit timing changed, is held, and so is one whose re-read
+  fails. Status changes on the page wait until the batch ends.
 
   The deliver modal runs the same listing check. A line naming no digital
   product of the order's store (or whose listing could not be read) cannot be
@@ -186,9 +187,9 @@ deliver a `javascript:` link.
 - The buyer derives the delivery key with the seller's *current* encryption
   public key. If the seller rotates that key, older deliveries stop decrypting
   for the buyer until the seller sends them again.
-- Today the Library is built from the buyer's loaded orders (`orderId in`
-  queries). The `buyerDeliveries` index is there for a paginated library or
-  notifications that do not start from the order list.
+- The Library reads the `buyerDeliveries` index page by page, so it covers
+  every delivery, including orders older than the loaded order history (those
+  orders are fetched for decryption).
 
 ## Moderation (open questions, not decided here)
 

@@ -196,6 +196,15 @@ describe('isReadyForBulkDelivery', () => {
 })
 
 describe('wire format', () => {
+  it('never quotes malformed plaintext in its decode errors', () => {
+    const secret = new TextEncoder().encode('{"v":1,"licenseKeys":["SECRET-CODE"')
+    for (const decode of [decodeKit, decodeDelivery]) {
+      const error = (() => { try { decode(secret); return null } catch (e) { return e as Error } })()
+      expect(error?.message).toBe('Malformed encrypted payload')
+      expect(String(error?.cause ?? '')).not.toMatch(/SECRET/)
+    }
+  })
+
   it('keeps each unique code once in a kit\'s pool', () => {
     expect(decodeKit(encodeKit(kit({ licenseKeys: ['A', 'B', 'A'] }))).licenseKeys).toEqual(['A', 'B'])
   })

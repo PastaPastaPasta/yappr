@@ -81,6 +81,32 @@ class OrderDeliveryService extends BaseDocumentService<OrderDelivery> {
   }
 
   /**
+   * Every delivery to this buyer (the `buyerDeliveries` index), grouped by
+   * order, oldest first. Walked page by page: a buyer's library must not end
+   * where their loaded order history does.
+   */
+  async getForBuyer(buyerId: string): Promise<Map<string, OrderDelivery[]>> {
+    const byOrder = new Map<string, OrderDelivery[]>();
+    let startAfter: string | undefined;
+    for (;;) {
+      const { documents } = await this.query({
+        where: [['buyerId', '==', buyerId]],
+        orderBy: [['$createdAt', 'asc']],
+        limit: DELIVERY_PAGE_SIZE,
+        startAfter,
+      });
+      for (const delivery of documents) {
+        const list = byOrder.get(delivery.orderId) ?? [];
+        list.push(delivery);
+        byOrder.set(delivery.orderId, list);
+      }
+      if (documents.length < DELIVERY_PAGE_SIZE) break;
+      startAfter = documents[documents.length - 1].id;
+    }
+    return byOrder;
+  }
+
+  /**
    * Every delivery for these orders, each decrypted by `decrypt` (the buyer's
    * or the seller's view). A delivery that does not decrypt is kept without a
    * payload, so the reader can say it is there but unreadable on this device.
