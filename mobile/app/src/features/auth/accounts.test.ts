@@ -6,6 +6,7 @@ import { useSessionStore } from '~/data/session';
 import { isSessionExpired, markSessionExpired, useExpiredSessions } from '~/data/session-expiry';
 import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
 import { useToastStore } from '~/ui/toast';
 
 import {
@@ -14,6 +15,7 @@ import {
   finishWalletSwitch,
   loadSignedInAgain,
   reauthenticate,
+  recoverInterruptedAdd,
   returnFromAddAccount,
   startReauthTracking,
   signOutAccount,
@@ -61,6 +63,10 @@ const restartsAs = (next: SessionDTO | null, { auto = false } = {}) => {
   return boot;
 };
 const bootsAs = (next: SessionDTO | null) => restartsAs(next, { auto: true });
+/** Where an "Add account" in progress is kept across an app kill (NEW-R-vi-001). */
+const ADDING_KEY = 'yappr.accounts.adding.devnet-test';
+/** The app was killed: what lived only in memory is gone, MMKV is not. */
+const kill = () => useAccounts.setState({ transition: null, returnTo: null, reauth: null });
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -70,6 +76,7 @@ beforeEach(() => {
   useExpiredSessions.setState({ ids: [] });
   useToastStore.setState({ current: null });
   useOnboarding.setState({ welcomed: true });
+  syncStorage.removeItem(ADDING_KEY);
 });
 
 it('names accounts by their handle without the .dash suffix', () => {
@@ -143,6 +150,113 @@ it('adds an account: parks the current one, restarts signed out, opens sign-in, 
   await flush();
   expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
   expect(useAccounts.getState().returnTo).toBeNull();
+});
+
+describe('an "Add account" the app was killed in (NEW-R-vi-001)', () => {
+  /** Adds an account up to the open sign-in flow, then kills the app: the next launch restores nobody. */
+  async function killedWhileAdding(add: () => Promise<void> = addAccount) {
+    fakeEngine.method('session.prepareAddAccount').mockResolvedValue(undefined);
+    bootsAs(null);
+    await add();
+    expect(router.push).toHaveBeenCalledWith('/sign-in');
+    kill();
+    useSessionStore.setState({ status: 'signed-out', session: null, accounts: [] });
+    fakeEngine.method('session.accounts').mockResolvedValue([account('alice'), account('bob')]);
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+    jest.clearAllMocks();
+  }
+
+  it('goes back to the parked account at the next launch', async () => {
+    await killedWhileAdding();
+    bootsAs(session('alice'));
+
+    await recoverInterruptedAdd({ resume: false });
+
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+    expect(useSessionStore.getState().session?.identityId).toBe('alice');
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+    // Once: a later launch has nothing left to go back to.
+    jest.clearAllMocks();
+    await recoverInterruptedAdd({ resume: false });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+  });
+
+  it('carries the flow on when its wallet request resumes, so abandoning it still goes back', async () => {
+    markSessionExpired('alice');
+    await killedWhileAdding(() => reauthenticate('alice'));
+
+    await recoverInterruptedAdd({ resume: true });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    expect(useAccounts.getState()).toMatchObject({ returnTo: 'alice', reauth: 'alice' });
+
+    bootsAs(session('alice'));
+    returnFromAddAccount();
+    await flush();
+    await flush();
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
+
+  it('keeps it for the next launch when the switch back after an abandoned flow fails', async () => {
+    fakeEngine.method('session.prepareAddAccount').mockResolvedValue(undefined);
+    bootsAs(null);
+    await addAccount();
+    fakeEngine.method('session.switchAccount').mockResolvedValue(undefined);
+    bootsAs(null);
+    returnFromAddAccount();
+    await flush();
+    await flush();
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+    expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
+  });
+
+  it('tries again at the next launch when going back fails', async () => {
+    await killedWhileAdding();
+    bootsAs(null);
+
+    await recoverInterruptedAdd({ resume: false });
+    expect(fakeEngine.method('session.switchAccount')).toHaveBeenCalledWith('alice');
+    expect(syncStorage.getItem(ADDING_KEY)).not.toBeNull();
+  });
+
+  it('forgets an account that is no longer on the device', async () => {
+    await killedWhileAdding();
+    fakeEngine.method('session.accounts').mockResolvedValue([account('bob')]);
+
+    await recoverInterruptedAdd({ resume: false });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
+
+  it('has nothing to do once an account is signed in', async () => {
+    await killedWhileAdding();
+    useSessionStore.setState({ status: 'signed-in', session: session('bob'), accounts: [] });
+
+    await recoverInterruptedAdd({ resume: false });
+    expect(fakeEngine.method('session.switchAccount')).not.toHaveBeenCalled();
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
+
+  it('is finished by a sign-in, and by a switch', async () => {
+    const stop = startReauthTracking();
+    try {
+      await killedWhileAdding();
+      fakeEngine.emit('session.changed', { session: session('carol'), reason: 'signed-in' });
+      expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+
+      await killedWhileAdding();
+      fakeEngine.emit('session.changed', { session: session('bob'), reason: 'switched' });
+      expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+    } finally {
+      stop();
+    }
+  });
+
+  it('keeps nothing when the account could not be parked', async () => {
+    fakeEngine.method('session.prepareAddAccount').mockRejectedValue(new Error('RESTART_REQUIRED'));
+    await addAccount();
+    expect(syncStorage.getItem(ADDING_KEY)).toBeNull();
+  });
 });
 
 it('signs an account in again: parks it, restarts signed out, opens sign-in aimed at it (AUTH-14)', async () => {

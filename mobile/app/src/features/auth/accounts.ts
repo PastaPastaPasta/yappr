@@ -5,9 +5,10 @@ import { create } from 'zustand';
 import { onEngineEvent } from '~/data/events';
 import { accountCacheSettled, useSessionStore } from '~/data/session';
 import { clearSessionExpired, useSessionExpired } from '~/data/session-expiry';
-import { engine, engineStorage, engineSupervisor } from '~/engine';
+import { engine, engineNetworkKey, engineStorage, engineSupervisor } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { refetchFailedReads } from '~/state/query-client';
+import { syncStorage } from '~/state/storage';
 import { handleOf } from '~/ui/handle';
 import { toast } from '~/ui/toast';
 
@@ -38,6 +39,36 @@ interface AccountsState {
 }
 
 export const useAccounts = create<AccountsState>()(() => ({ transition: null, returnTo: null, reauth: null }));
+
+/**
+ * `returnTo` and `reauth` of an "Add account" (or "Sign in again") in
+ * progress, kept on the device as well: the engine parks the active account
+ * before the sign-in flow opens, so an app killed during that flow (by the
+ * user, or by iOS while the wallet is open) comes back with nobody signed in
+ * and the parked accounts out of reach (NEW-R-vi-001). The next launch reads
+ * it back (`recoverInterruptedAdd`). Identity ids only, no secrets.
+ */
+const ADDING_KEY = `yappr.accounts.adding.${engineNetworkKey}`;
+
+interface Adding {
+  returnTo: string;
+  reauth: string | null;
+}
+
+function rememberAdding(adding: Adding | null): void {
+  if (adding) syncStorage.setItem(ADDING_KEY, JSON.stringify(adding));
+  else syncStorage.removeItem(ADDING_KEY);
+}
+
+function interruptedAdd(): Adding | null {
+  try {
+    const stored = JSON.parse(syncStorage.getItem(ADDING_KEY) ?? 'null') as Partial<Adding> | null;
+    if (typeof stored?.returnTo !== 'string' || !stored.returnTo) return null;
+    return { returnTo: stored.returnTo, reauth: typeof stored.reauth === 'string' ? stored.reauth : null };
+  } catch {
+    return null;
+  }
+}
 
 /** The engine can take a while to boot (wasm, SDK, contracts). */
 const RESTART_TIMEOUT_MS = 90_000;
@@ -209,18 +240,25 @@ async function signInBesideCurrent({
   const from = useSessionStore.getState().session?.identityId ?? null;
   if (!from) {
     useAccounts.setState({ reauth, returnTo });
+    rememberAdding(returnTo ? { returnTo, reauth } : null);
     router.push('/sign-in');
     return;
   }
   await withTransition({ kind: 'add', label }, async () => {
+    let parked = false;
     try {
+      // Before the engine parks `from`: from here on, a launch that finds nobody signed in goes back to it.
+      rememberAdding({ returnTo: from, reauth });
       await engine.api.session.prepareAddAccount();
+      parked = true;
       if (await restartEngine(reauth ? 'Signing in again' : 'Adding an account')) {
         throw new Error('The engine restored an account');
       }
       useAccounts.setState({ returnTo: from, reauth });
       router.push('/sign-in');
     } catch (error) {
+      // Nothing was parked. Once something was, the next launch settles it (`recoverInterruptedAdd`).
+      if (!parked) rememberAdding(null);
       appendLog('warn', 'host', `Preparing to sign in failed: ${errorMessage(error)}`);
       toast.error(failed);
     }
@@ -264,22 +302,65 @@ export function useReauthTarget(): string | null {
  */
 export function startReauthTracking(): () => void {
   return onEngineEvent('session.changed', ({ reason }) => {
-    if (reason === 'signed-in' || reason === 'switched') useAccounts.setState({ reauth: null });
+    if (reason !== 'signed-in' && reason !== 'switched') return;
+    useAccounts.setState({ reauth: null });
+    // An account is in the session slot again: no launch needs to go back to the parked one.
+    rememberAdding(null);
   });
 }
 
 /**
  * The sign-in flow closed. After an abandoned "Add account", go back to the
- * account that was parked; after a completed one, forget it.
+ * account that was parked; after a completed one, forget it. A switch back
+ * that fails leaves it for the next launch (`recoverInterruptedAdd`).
  */
 export function returnFromAddAccount(): void {
   const { returnTo } = useAccounts.getState();
   useAccounts.setState({ returnTo: null, reauth: null });
-  if (!returnTo) return;
   const { status, accounts } = useSessionStore.getState();
-  if (status !== 'signed-out') return;
+  if (!returnTo || status !== 'signed-out') {
+    rememberAdding(null);
+    return;
+  }
   const account = accounts.find((a) => a.identityId === returnTo) ?? { identityId: returnTo, username: null };
-  switchAccount(account).catch(() => undefined);
+  switchAccount(account)
+    .then((switched) => {
+      if (switched) rememberAdding(null);
+    })
+    .catch(() => undefined);
+}
+
+/**
+ * At launch, once the engine has restored the session: an "Add account" or
+ * "Sign in again" the last launch was killed in the middle of
+ * (NEW-R-vi-001). Signed in, there is nothing to go back to. Signed out:
+ * with `resume` (the engine still holds that flow's wallet request, and the
+ * sign-in flow reopens on it) the flow carries on, so abandoning it goes
+ * back as it would have; otherwise switch back to the parked account now.
+ * A switch that fails is tried again at the next launch.
+ */
+export async function recoverInterruptedAdd({ resume }: { resume: boolean }): Promise<void> {
+  const adding = interruptedAdd();
+  if (!adding) return;
+  const { status } = useSessionStore.getState();
+  if (status === 'signed-in') {
+    rememberAdding(null);
+    return;
+  }
+  if (status !== 'signed-out') return;
+  if (resume) {
+    if (!useAccounts.getState().returnTo) useAccounts.setState(adding);
+    return;
+  }
+  // Only a flow of this launch (none should run yet) owns what is in memory.
+  if (useAccounts.getState().returnTo || useAccounts.getState().transition) return;
+  const account = (await refreshAccounts()).find((a) => a.identityId === adding.returnTo);
+  if (!account) {
+    rememberAdding(null);
+    return;
+  }
+  appendLog('info', 'host', 'Going back to the account parked by an interrupted sign-in');
+  if (await switchAccount(account)) rememberAdding(null);
 }
 
 /**
