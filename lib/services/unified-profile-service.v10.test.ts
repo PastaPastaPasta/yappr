@@ -241,6 +241,28 @@ describe('v10 profile reads after a save', () => {
     expect((await profiles.getProfile(ownerId))?.pronouns).toBe('they/them');
   });
 
+  it('keeps the saved revision after one caught-up read, when the next node is still behind', async () => {
+    const profiles = await service();
+    await profiles.updateProfile(ownerId, { pronouns: 'she/they' });
+    const saved = { ...extension, $revision: 2, pronouns: 'she/they' };
+
+    // One node has caught up...
+    stored[YAPPR_CONTRACT_ID] = [saved];
+    await dropCache();
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBe('she/they');
+
+    // ...the next is still behind: neither a feed seed nor an edit's fresh read takes its revision 1.
+    stored[YAPPR_CONTRACT_ID] = [extension];
+    await dropCache();
+    profiles.seedProfileDocuments([extension], [ownerId], 'extension');
+    expect((await profiles.getProfile(ownerId))?.pronouns).toBe('she/they');
+    updateDocument.mockClear();
+    await profiles.updateProfile(ownerId, { location: 'Porto' });
+    expect(updateDocument).toHaveBeenCalledWith(
+      YAPPR_CONTRACT_ID, 'yapprProfile', 'ext-doc', ownerId, expect.objectContaining({ location: 'Porto', pronouns: 'she/they' }), 2
+    );
+  });
+
   it('does not stand in for reads with a create that was never confirmed (it may not land)', async () => {
     stored[YAPPR_CONTRACT_ID] = [];
     createDocument.mockImplementationOnce(async (_contract, type, owner, data) => ({

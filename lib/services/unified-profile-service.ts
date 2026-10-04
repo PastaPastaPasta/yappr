@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import type { EvoSDK } from '@dashevo/evo-sdk';
-import { BaseDocumentService } from './document-service';
+import { BaseDocumentService, withCreationTime } from './document-service';
 import { dpnsService } from './dpns-service';
 import { cacheManager } from '../cache-manager';
 import { YAPPR_PROFILE_CONTRACT_ID, profileArraysAreTyped } from '../constants';
@@ -315,9 +315,14 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     const key = `${role}:${ownerId}`;
     const own = this.ownWrites.get(key);
     if (!own) return read;
-    if (own.until <= Date.now() || (read && documentRevision(read) >= documentRevision(own.record))) {
-      // Expired, or the read has caught up with the write (or passed it: another device's edit).
+    if (own.until <= Date.now()) {
       this.ownWrites.delete(key);
+      return read;
+    }
+    if (read && documentRevision(read) >= documentRevision(own.record)) {
+      // Caught up (or passed: another device's edit). Keep the high-water mark
+      // until it expires: the next read may come from a node still behind.
+      own.record = read;
       return read;
     }
     return own.record;
@@ -880,9 +885,21 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       documentData.socialLinks = this.encodeSocialLinks(data.socialLinks);
     }
 
-    const result = await this.create(ownerId, documentData);
+    const startedAt = Date.now();
+    const result = await stateTransitionService.createDocument(this.contractId, this.documentType, ownerId, documentData);
+    if (!result.success || !result.document) {
+      throw new Error(result.error || 'Failed to create profile');
+    }
+    this.clearCache();
     cacheManager.invalidateByTag(`user:${ownerId}`);
-    return result;
+    const written = withCreationTime(result.document, startedAt);
+    // Only a create known to have landed stands in for reads that miss it (one whose wait timed out may never execute).
+    if (result.confirmed !== false) this.rememberWrite('base', ownerId, written);
+    const user = this.transformDocument(written);
+    if (typeof result.confirmed === 'boolean') {
+      (user as unknown as Record<string, unknown>).__createConfirmed = result.confirmed;
+    }
+    return user;
   }
 
   /**
