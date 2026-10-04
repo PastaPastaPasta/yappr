@@ -2013,6 +2013,7 @@ Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this 
   - settings rows stack value under label;
   - buttons grow in height; labels never truncate (they wrap to two lines).
 - Line heights scale proportionally; no fixed-height container holds text, except the chip and badges (which cap their multiplier).
+- Changing the text size while the app is open (Android font size, iOS Dynamic Type) keeps the user's screen and typed text; every screen already open re-lays out its text at the new size, never clipped or left at the old box size.
 
 ### 6.2 Screen readers
 
