@@ -32,6 +32,36 @@ const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : Shar
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/** Reposts and quotes told apart, as the detail counts row shows them (`RepostQuoteCounts`). */
+export interface RepostSplit {
+  reposts: number;
+  quotes: number;
+  /** Floors read off a list that filled up: "100+ reposts". */
+  truncated: boolean;
+}
+
+/**
+ * The repost control's label (UX_SPEC §5.13): "Repost or quote, {N} reposts",
+ * and where the detail counts row tells quotes apart, the same split, so a
+ * screen reader never hears "1 repost" beside a row reading "1 Quote"
+ * (D-L4a-009). The viewer's own quote with text reads "quoted", a bare
+ * repost (or a repost on contracts without quotes) "reposted".
+ */
+export function repostLabel(
+  total: number,
+  split: RepostSplit | null | undefined,
+  state: { reposted: boolean; quoted: boolean },
+): string {
+  let counts = plural(total, 'repost', 'reposts');
+  if (split && split.quotes > 0) {
+    const floor = split.truncated ? '+' : '';
+    const phrase = (n: number, one: string, many: string) => `${n}${floor} ${n === 1 && !floor ? one : many}`;
+    counts = `${phrase(split.reposts, 'repost', 'reposts')}, ${phrase(split.quotes, 'quote', 'quotes')}`;
+  }
+  const mark = state.reposted ? (state.quoted ? ', quoted' : ', reposted') : '';
+  return `Repost or quote, ${counts}${mark}`;
+}
+
 interface ActionProps {
   icon: IconComponent;
   activeIcon?: IconComponent;
@@ -115,9 +145,13 @@ export interface PostActionBarProps {
   replies: number;
   /** Reposts plus quotes: the repost control counts both (web `totalReposts`). */
   reposts: number;
+  /** Detail only: `reposts` split as the counts row shows it; the label follows it. */
+  repostSplit?: RepostSplit | null;
   likes: number;
   liked?: boolean;
   reposted?: boolean;
+  /** The viewer's repost is their own quote with text (`viewer.ownQuoteId`, not bare). */
+  quoted?: boolean;
   bookmarked?: boolean;
   /** Private posts take no replies or quotes (PRD POST-08). */
   canReply?: boolean;
@@ -150,9 +184,11 @@ export function PostActionBar({
   postId,
   replies,
   reposts,
+  repostSplit,
   likes,
   liked = false,
   reposted = false,
+  quoted = false,
   bookmarked = false,
   canReply = true,
   canRepost = true,
@@ -188,7 +224,7 @@ export function PostActionBar({
             tone="repost"
             count={reposts}
             showCount={showCount}
-            label={`Repost or quote, ${plural(reposts, 'repost', 'reposts')}${reposted ? ', reposted' : ''}`}
+            label={repostLabel(reposts, repostSplit, { reposted, quoted })}
             onPress={onRepost}
             testID={`repost-btn-${postId}`}
           />

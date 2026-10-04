@@ -378,7 +378,7 @@ The core list cell. Web source: `components/post/post-card.tsx`. One component w
 | Slot | Icon | Active token | Count | Label (a11y) |
 | --- | --- | --- | --- | --- |
 | Reply | `ChatBubbleOvalLeftIcon` | — | yes | "Reply, {N} replies" |
-| Repost | `ArrowPathIcon` | `repost` | yes | "Repost or quote, {N} reposts" |
+| Repost | `ArrowPathIcon` | `repost` | yes | "Repost or quote, {N} reposts" (detail, where the counts row tells quotes apart: "Repost or quote, {N} reposts, {N} quotes"), then ", reposted" / ", quoted" (the viewer's own quote with text) when active |
 | Like | `HeartIcon` | `like` | yes | "Like, {N} likes" / "Unlike, {N} likes" |
 | Bookmark | `BookmarkIcon` | `link` | no | "Bookmark" / "Remove bookmark" |
 | Share | Share icon (1.10) | — | no | "Share" |
@@ -1914,7 +1914,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | FAB | New post |
 | Card "⋯" | Post options / Reply options **(web)** |
 | Reply | Reply, {N} replies **(web)** |
-| Repost | Repost or quote, {N} reposts **(web: "Repost or quote")** |
+| Repost | Repost or quote, {N} reposts **(web: "Repost or quote")**; on detail with quotes told apart (§2.4.4): Repost or quote, {N} reposts, {N} quotes (floors read "{N}+"); active: …, reposted / …, quoted (own quote with text) |
 | Like | Like, {N} likes **(web)** / Unlike, {N} likes (mobile) |
 | Bookmark | Bookmark / Remove bookmark |
 | Share | Share **(web)** |
@@ -1951,7 +1951,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 
 ### 6.2 Screen readers
 
-- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
+- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.") and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
 - **Focus order:** navigation bar → banners → tabs or segments → list → FAB → tab bar.
 - **Headings:** screen titles, section headers and empty-state titles have the header role.
 - **Live updates:** toasts and write-status changes are announced once (A11Y-06); counters are not live.

@@ -148,7 +148,7 @@ describe('PostItem actions', () => {
     expect(router.push).toHaveBeenCalledWith({ pathname: '/post/[id]', params: { id: 'my-quote' } });
   });
 
-  it('offers a v10 own quote with text, reposted as on web, "Delete your quote" / "View your quote" (D-L3a-002)', async () => {
+  it('offers a v10 own quote with text, reposted (read "quoted") as on web, "Delete your quote" / "View your quote" (D-L3a-002)', async () => {
     const post = fixturePost({
       id: 'qw',
       stats: { likes: 0, reposts: 0, replies: 0, quotes: 1 },
@@ -156,7 +156,7 @@ describe('PostItem actions', () => {
     });
     fakeEngine.method('posts.delete').mockResolvedValue(ticket({ op: 'post.delete' }));
     renderPost(post);
-    expect(byId('repost-btn-qw')).toHaveAccessibleName('Repost or quote, 1 repost, reposted');
+    expect(byId('repost-btn-qw')).toHaveAccessibleName('Repost or quote, 1 repost, quoted');
 
     fireEvent.press(byId('repost-btn-qw'));
     expect(sheet?.options).toEqual(['Delete your quote', 'View your quote', 'Cancel']);

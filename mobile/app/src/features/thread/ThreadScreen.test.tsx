@@ -372,6 +372,8 @@ describe('ThreadScreen', () => {
     renderThread();
     await act(async () => {});
     expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '1 Quote');
+    // The repost control's label says what the row says (D-L4a-009).
+    expect(screen.getByTestId('repost-btn-root')).toHaveAccessibleName('Repost or quote, 0 reposts, 1 quote');
 
     // Someone quoted the post with text since.
     const quoted = { ...root, stats: { ...root.stats, quotes: 2 } };
@@ -385,6 +387,7 @@ describe('ThreadScreen', () => {
     expect(fakeEngine.method('posts.engagementCounts')).toHaveBeenCalledTimes(2);
     expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '2 Quotes');
     expect(screen.queryByTestId('count-reposts')).toBeNull();
+    expect(screen.getByTestId('repost-btn-root')).toHaveAccessibleName('Repost or quote, 0 reposts, 2 quotes');
   });
 
   it("falls back to the post's own counts when the split cannot be read (D-L4a-009)", async () => {

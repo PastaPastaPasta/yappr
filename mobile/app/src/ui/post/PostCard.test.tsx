@@ -334,6 +334,30 @@ describe('PostCard variants', () => {
     expect(screen.getByText('1.2K Likes')).toBeTruthy();
   });
 
+  it("detail: the repost control and the card's summary read the counts row's repost/quote split (D-L4a-009)", () => {
+    // v10: the viewer's own quote with text is the one quote post; the card counts it as a repost.
+    const post = fixturePost({
+      id: 'own-quoted',
+      stats: { likes: 0, reposts: 0, replies: 0, quotes: 1 },
+      viewer: { ...POSTS.basic.viewer!, reposted: true, ownQuoteId: 'mine', ownQuoteBare: false },
+    });
+    const split = { reposts: 0, quotes: 1, truncated: false };
+    const { rerender } = render(<PostCard post={post} variant="detail" repostQuoteCounts={split} />);
+    expect(screen.getByText('1 Quote')).toBeTruthy();
+    expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 0 reposts, 1 quote, quoted');
+    expect(byId('repost-btn-own-quoted')).toBeSelected();
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 0 reposts, 1 quotes, 0 likes\.$/);
+
+    // Floors off a list that filled up, as the row shows them.
+    rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 100, quotes: 3, truncated: true }} />);
+    expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 100+ reposts, 3+ quotes, quoted');
+
+    // Feed cards have no split: the one count the control shows.
+    rerender(<PostCard post={post} repostQuoteCounts={split} />);
+    expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 1 repost, quoted');
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 1 reposts, 0 likes\.$/);
+  });
+
   it('compact and tombstoned cards have no action bar', () => {
     const { rerender } = render(<PostCard post={POSTS.basic} variant="compact" />);
     expect(screen.queryByTestId('action-bar-post-basic')).toBeNull();
