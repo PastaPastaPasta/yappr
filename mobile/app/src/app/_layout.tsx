@@ -2,7 +2,7 @@ import '~/global.css';
 
 import { BottomSheetModalProvider } from '@gorhom/bottom-sheet';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
-import { Stack, ThemeProvider } from 'expo-router';
+import { Stack, ThemeProvider, useNavigationContainerRef } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useColorScheme } from 'nativewind';
 import { useEffect } from 'react';
@@ -17,6 +17,7 @@ import { AuthGates } from '~/features/auth/AuthGates';
 import { startRecentSearchCleanup } from '~/features/explore/recent-searches';
 import { resolveAvatarSvg, useIpfsGateway, useUnsupportedEngineRoute } from '~/engine/hooks';
 import { startPendingPosts } from '~/features/compose/pending-posts';
+import { startTabStacksFollowAccount } from '~/navigation/account-stacks';
 import { useAppearance } from '~/state/appearance';
 import { ActionSheetHost } from '~/ui/action-sheet';
 import { AvatarSvgProvider } from '~/ui/avatar-svg';
@@ -95,6 +96,9 @@ export default function RootLayout() {
   useEffect(() => startPendingPosts(), []);
   // A signed-out account's recent searches go with it (AUTH-11).
   useEffect(() => startRecentSearchCleanup(), []);
+  // Another account taking over takes every tab back to its root (AUTH-10, D-rc5a-003).
+  const navigation = useNavigationContainerRef();
+  useEffect(() => startTabStacksFollowAccount(navigation), [navigation]);
   const ipfsGateway = useIpfsGateway();
   const dark = useColorScheme().colorScheme === 'dark';
 

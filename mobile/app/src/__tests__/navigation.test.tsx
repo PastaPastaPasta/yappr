@@ -1,8 +1,14 @@
 import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
+import type { SessionDTO } from '@engine/api';
+
 import { useSignInPrompt } from '~/data/require-auth';
+import { useSessionStore } from '~/data/session';
+import { engineNetworkKey } from '~/engine';
+import { useAccounts } from '~/features/auth/accounts';
 import { useOnboarding } from '~/features/auth/onboarding';
+import { acceptTerms } from '~/features/auth/terms';
 
 // Resolved against Jest's cwd, mobile/app.
 const APP_DIR = './src/app';
@@ -200,5 +206,88 @@ describe('app shell', () => {
 
     expect(app.getPathname()).toBe(url.split('?')[0]);
     if (pr) expect(screen.getByText(`Coming in the ${pr} PR`)).toBeTruthy();
+  });
+});
+
+describe('account changes (AUTH-10)', () => {
+  const session = (identityId: string): SessionDTO => ({
+    identityId,
+    network: 'devnet',
+    username: identityId,
+    credits: 1n,
+    hasEncryptionKey: false,
+    method: 'key',
+  });
+  const signIn = (identityId: string) =>
+    act(() => useSessionStore.setState({ status: 'signed-in', session: session(identityId) }));
+
+  /** A post on Explore, Settings › Accounts on Profile, and a conversation on Messages, the current tab (which hides the tab bar). */
+  function openScreensOnEveryTab() {
+    fireEvent.press(tab('Explore'));
+    act(() => router.push('/post/abc123'));
+    fireEvent.press(tab('Profile'));
+    act(() => router.push('/settings'));
+    act(() => router.push('/settings/accounts'));
+    fireEvent.press(tab('Messages'));
+    act(() => router.push('/messages/c1'));
+  }
+
+  beforeEach(() => {
+    useOnboarding.setState({ welcomed: true });
+    for (const id of ['alice', 'bob']) acceptTerms(engineNetworkKey, id);
+    useSessionStore.setState({ status: 'signed-in', session: session('alice'), accounts: [] });
+  });
+  afterEach(() => {
+    act(() => {
+      useAccounts.setState({ transition: null, returnTo: null });
+      useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
+    });
+  });
+
+  it("takes every tab back to its root when another account takes over, leaving none of the last account's screens (D-rc5a-003)", async () => {
+    const app = await renderApp('/');
+    openScreensOnEveryTab();
+
+    signIn('bob');
+    expect(app.getPathname()).toBe('/messages');
+    fireEvent.press(tab('Explore'));
+    expect(app.getPathname()).toBe('/explore');
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/profile');
+  });
+
+  it('does the same when the active account signs out', async () => {
+    const app = await renderApp('/');
+    openScreensOnEveryTab();
+
+    act(() => {
+      useAccounts.setState({ transition: { kind: 'sign-out', label: 'Signing out…' } });
+      useSessionStore.setState({ status: 'signed-out', session: null });
+    });
+    expect(app.getPathname()).toBe('/messages');
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/profile');
+  });
+
+  it('keeps the place of an "Add account" that ends back on the same account, and of a sign-in from signed out', async () => {
+    const app = await renderApp('/');
+    openScreensOnEveryTab();
+
+    // The account parked while the sign-in flow is open, then back.
+    act(() => {
+      useAccounts.setState({ transition: { kind: 'add', label: 'Adding…' } });
+      useSessionStore.setState({ status: 'signed-out', session: null });
+    });
+    act(() => useAccounts.setState({ transition: null }));
+    signIn('alice');
+    expect(app.getPathname()).toBe('/messages/c1');
+
+    // Signed out (the session lapsed), then signing in where the reader is.
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    signIn('alice');
+    expect(app.getPathname()).toBe('/messages/c1');
+    act(() => router.back());
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/settings/accounts');
   });
 });
