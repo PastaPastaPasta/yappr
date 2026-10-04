@@ -291,3 +291,27 @@ describe('account changes (AUTH-10)', () => {
     expect(app.getPathname()).toBe('/settings/accounts');
   });
 });
+
+describe('sign-in flow', () => {
+  beforeEach(() => useOnboarding.setState({ welcomed: true }));
+
+  it('gives the wallet QR screen a Cancel when a relaunch reopens it as the first screen (NEW-resumed-kx-no-close)', async () => {
+    const app = await renderApp('/');
+    // As AuthGates resumes a wallet request the last launch left waiting.
+    act(() => router.push('/sign-in/qr?resume=1'));
+    expect(app.getPathname()).toBe('/sign-in/qr');
+
+    fireEvent.press(screen.getByTestId('sign-in-close'));
+    expect(app.getPathname()).toBe('/');
+  });
+
+  it('keeps Back on the QR screen opened from the sign-in screen', async () => {
+    const app = await renderApp('/');
+    act(() => router.push('/sign-in'));
+    expect(screen.getByTestId('sign-in-close')).toBeTruthy();
+    act(() => router.push('/sign-in/qr'));
+    expect(app.getPathname()).toBe('/sign-in/qr');
+    // Only the focused screen's header is drawn here: the QR screen's has no Cancel of its own.
+    expect(screen.queryByTestId('sign-in-close')).toBeNull();
+  });
+});

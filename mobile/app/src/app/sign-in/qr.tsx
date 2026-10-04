@@ -1,9 +1,9 @@
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams, useNavigation, useRoute } from 'expo-router';
 import { useEffect } from 'react';
 import { View } from 'react-native';
 
 import { copy } from '~/features/auth/copy';
-import { checkAgain, retry, startKeyExchange, useKeyExchange } from '~/features/auth/key-exchange';
+import { cancelKeyExchange, checkAgain, retry, startKeyExchange, useKeyExchange } from '~/features/auth/key-exchange';
 import {
   CopyLinkButton,
   DevWalletUri,
@@ -15,7 +15,8 @@ import {
   useSignedInHandoff,
   WaitingLine,
 } from '~/features/auth/KeyExchangeParts';
-import { SignInBody } from '~/features/auth/SignInChrome';
+import { useCloseSignIn } from '~/features/auth/navigation';
+import { HeaderClose, SignInBody } from '~/features/auth/SignInChrome';
 import { Button } from '~/ui/Button';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
@@ -28,6 +29,13 @@ export default function QrSignInScreen() {
   useForegroundRepoll();
   useSignedInHandoff();
   useCancelOnBack();
+  const close = useCloseSignIn();
+  const navigation = useNavigation();
+  const { key } = useRoute();
+  // Reopened by a relaunch (AUTH-03 resume), this screen is the sign-in flow's first and has no Back:
+  // it gets the flow's Cancel, which closes it as the swipe-down does (an abandoned "Add account" goes
+  // back to the previous account).
+  const first = navigation.getState()?.routes[0]?.key === key;
 
   useEffect(() => {
     const current = useKeyExchange.getState();
@@ -117,7 +125,22 @@ export default function QrSignInScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: '', headerShadowVisible: false }} />
+      <Stack.Screen
+        options={{
+          title: '',
+          headerShadowVisible: false,
+          headerLeft: first
+            ? () => (
+                <HeaderClose
+                  onPress={() => {
+                    cancelKeyExchange();
+                    close();
+                  }}
+                />
+              )
+            : undefined,
+        }}
+      />
       <KeepAwake />
       <SignInBody footer={footer} testID="sign-in-qr">
         {content}

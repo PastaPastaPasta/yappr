@@ -794,6 +794,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - Keeps the screen awake while visible. States as 4.3.
+- Reopened as the flow's first screen (a relaunch resuming a waiting request, AUTH-03), it has the sign-in modal's "Cancel" (iOS) / close × (Android) in place of Back, as 4.3 does; it closes the flow as the swipe-down does, and an abandoned "Add account" goes back to the previous account.
 
 ### 4.5 First-time key registration
 
