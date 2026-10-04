@@ -62,13 +62,24 @@ export function startTabStacksFollowAccount(navigation: TabStacksNavigation): ()
   const initial = useSessionStore.getState();
   /** The account the stacks were opened as; null for signed out. */
   let owner = initial.status === 'unknown' ? lastIdentity() : (initial.session?.identityId ?? null);
-  return useSessionStore.subscribe(({ status, session }) => {
+  /**
+   * A sign-out has taken the owner's account off the device (the account list
+   * read during it no longer has it), so its signed-out session, which may
+   * arrive after the sign-out has finished (the engine restarts), ends it.
+   */
+  let ownerSignedOut = false;
+  return useSessionStore.subscribe(({ status, session, accounts }) => {
+    const signingOut = useAccounts.getState().transition?.kind === 'sign-out';
+    if (signingOut && owner !== null && !accounts.some((account) => account.identityId === owner)) ownerSignedOut = true;
     if (status === 'signed-in' && session) {
-      if (owner !== null && owner !== session.identityId) popTabStacksToRoot(navigation);
+      if (owner === session.identityId) return;
+      if (owner !== null) popTabStacksToRoot(navigation);
       owner = session.identityId;
-    } else if (status === 'signed-out' && owner !== null && useAccounts.getState().transition?.kind === 'sign-out') {
+      ownerSignedOut = false;
+    } else if (status === 'signed-out' && owner !== null && (signingOut || ownerSignedOut)) {
       popTabStacksToRoot(navigation);
       owner = null;
+      ownerSignedOut = false;
     }
   });
 }

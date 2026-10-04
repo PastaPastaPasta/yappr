@@ -1,7 +1,7 @@
 import { router, type Href } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
-import type { SessionDTO } from '@engine/api';
+import type { AccountDTO, SessionDTO } from '@engine/api';
 
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
@@ -267,6 +267,45 @@ describe('account changes (AUTH-10)', () => {
     expect(app.getPathname()).toBe('/messages');
     fireEvent.press(tab('Profile'));
     expect(app.getPathname()).toBe('/profile');
+  });
+
+  it('does the same when the signed-out session arrives after the sign-out has finished (the engine restarting)', async () => {
+    const app = await renderApp('/');
+    openScreensOnEveryTab();
+
+    act(() => {
+      useAccounts.setState({ transition: { kind: 'sign-out', label: 'Signing out…' } });
+      // The account list read during the sign-out no longer has the account.
+      useSessionStore.setState({ accounts: [] });
+    });
+    act(() => useAccounts.setState({ transition: null }));
+    expect(app.getPathname()).toBe('/messages/c1');
+
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    expect(app.getPathname()).toBe('/messages');
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/profile');
+  });
+
+  it('keeps the place when another account signs out and the active one then lapses', async () => {
+    const app = await renderApp('/');
+    openScreensOnEveryTab();
+    const account = (identityId: string): AccountDTO => ({
+      identityId,
+      username: identityId,
+      method: 'key',
+      lastUsedAt: new Date(0),
+      active: identityId === 'alice',
+    });
+
+    act(() => {
+      useAccounts.setState({ transition: { kind: 'sign-out', label: 'Signing out…' } });
+      useSessionStore.setState({ accounts: [account('alice')] });
+    });
+    act(() => useAccounts.setState({ transition: null }));
+    act(() => useSessionStore.setState({ status: 'signed-out', session: null }));
+    signIn('alice');
+    expect(app.getPathname()).toBe('/messages/c1');
   });
 
   it('keeps the place of an "Add account" that ends back on the same account, and of a sign-in from signed out', async () => {
