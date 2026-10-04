@@ -142,7 +142,7 @@ export async function loadEnginePage(snapshot: StorageSnapshot, simulate: Simula
   const engineDir = `${Paths.bundle.uri}engine/`;
   const pageUrl = `${engineDir}index.html`;
   if (devUrl || !new File(pageUrl).exists) {
-    // Dev: re-fetched on every boot, so "Restart engine" picks up a rebuilt engine. No index.html:
+    // Dev: re-fetched on every boot, so "Reconnect" picks up a rebuilt engine. No index.html:
     // a dev client built before the engine was split, which bundles only the inline page.
     const inline = devUrl
       ? await (await fetchDev('engine.inline.html')).text()

@@ -107,11 +107,15 @@ export const copy = {
     version: 'Version',
     /** Long-pressing Version copies the build details (`buildDetails`). */
     versionCopied: 'Version info copied',
+    /** The Version row's screen-reader hint: a tap does nothing, a long press copies. */
+    versionHint: 'Long press to copy version info',
     terms: 'Terms of Use',
     privacy: 'Privacy Policy',
     communityRules: 'Community rules',
     support: 'Support',
     sendDiagnostics: 'Send diagnostics',
+    /** The first line of the diagnostics the share sheet offers (no mail app), so any target still says where it goes. */
+    sendDiagnosticsTo: (email: string) => `Send to ${email}`,
     licenses: 'Open-source licenses',
     web: 'Yappr on the web',
     supportCopied: 'Support address copied. Send it from any email app.',

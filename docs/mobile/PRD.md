@@ -113,7 +113,7 @@ In story **Gating** lines: `all` = every build; `v2` = testnet build; `dev` = de
 
 - **Situation.** Runs Maestro flows and agent QA on simulators and emulators against sakura pool identities. Has no human wallet.
 - **Wants.** Deterministic sign-in, visible engine state, a way to export diagnostics, and stable accessibility identifiers.
-- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Engine diagnostics (SET-08); give every interactive element a stable `testID` (A11Y-08).
+- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Troubleshooting (diagnostics, SET-08); give every interactive element a stable `testID` (A11Y-08).
 
 ## 5. Success metrics
 
@@ -126,8 +126,8 @@ There is no analytics or crash SDK. Every metric is measured from the stores, CI
 | M3 | P0 story pass rate | 100% of P0 stories pass on iOS and Android, light and dark, with screenshot evidence | Agentic QA story matrix; Maestro |
 | M4 | ADR E8 flows | Signed-out browse, key sign-in, key exchange, post, like, reply, follow, DM round trip, block and report all green on iOS and Android on every release candidate. Read flows run on both variants; write flows run on the devnet build only, with sakura pool identities (ADR E6). Until sakura has a seated moderation team or an interim owner, the report flow asserts the "elects its moderation team" refusal path. | Maestro on CI (smoke on every PR, write flows nightly) |
 | M5 | Write reliability | ≥ 99% of engine contract-test writes become visible within 2 minutes on sakura; zero duplicate documents from any retry path | Engine contract tests (ADR E8), run serially with retries |
-| M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Engine diagnostics (SET-08) |
-| M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Engine diagnostics "boot time" field |
+| M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Troubleshooting (SET-08) |
+| M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Troubleshooting (SET-08) "boot" field |
 | M8 | Scroll | ≥ 58 fps p95 on Home; no frame over 50 ms | Perf monitor on the mid-tier device, per QA_RELEASE budgets |
 | M9 | Sign-in success | ≥ 90% of beta testers who try wallet sign-in succeed on the first attempt | One question in the beta feedback form; support reports |
 | M10 | Beta satisfaction | Median ≥ 4 of 5 on "How native does Yappr feel?" and "Did you trust that your posts went through?" | Beta feedback form (GitHub Discussions + TestFlight feedback) |
@@ -986,7 +986,7 @@ As a user, I want light, dark or system appearance, so that the app is comfortab
 #### SET-06 · About · P0 · all
 As a user, I want to know which version I run and where to get help, so that I can report problems.
 - "Yappr / Decentralized social media on Dash Platform", "Version" with the version and build. A long press on Version copies the build details ("Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet", toast "Version info copied"); the commit, engine and network are not rows.
-- Links: "Terms of Use", "Privacy Policy", "Community rules", "Support" (mail), "Send diagnostics" (a mail to the support address with the redacted SET-08 text; with no mail app, the native share sheet with the same text), "Open-source licenses" (a native list generated at build time), "Yappr on the web" (yap.pr).
+- Links: "Terms of Use", "Privacy Policy", "Community rules", "Support" (mail), "Send diagnostics" (a mail to the support address with the redacted SET-08 text, sized for a mail link: newest 10 errors, last 40 log lines, at most 5,000 characters; with no mail app, the native share sheet with the same text, led by the support address), "Open-source licenses" (a native list generated at build time), "Yappr on the web" (yap.pr).
 - A muted last row, "Troubleshooting", opens SET-08, signed in or out.
 
 #### SET-07 · Terms and privacy · P0 · all
@@ -1131,7 +1131,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | DM requests inbox, DM report, delete-for-me, reactions | No | Not in E7; DM reports wait for the cut | 1.1+ |
 | Muted words | No | 1.1 per PRODUCT_UX | 1.1 |
 | Share extension, widgets | No | Native extension targets | 1.1 |
-| Query inspector / developer settings | Yes | Engine diagnostics replaces it on mobile | Not planned |
+| Query inspector / developer settings | Yes | Troubleshooting (SET-08) replaces it on mobile | Not planned |
 | Storage provider settings | Yes | No upload in 1.0 | With upload |
 | iPad, foldable layouts | Yes (responsive web) | ADR E7 | 1.x |
 | Localization | No | ADR E7 | 1.1 |

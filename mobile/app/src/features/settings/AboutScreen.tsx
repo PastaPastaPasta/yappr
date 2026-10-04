@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import {
   ArrowTopRightOnSquareIcon,
@@ -101,6 +101,20 @@ function TroubleshootingRow() {
 export function AboutScreen() {
   const { info } = useEngineStatus();
   const [rulesOpen, setRulesOpen] = useState(false);
+  // The engine's live figures can hold the mail up to 2 s: one send at a time, the row disabled meanwhile.
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+  const sendDiagnosticsOnce = () => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    sendDiagnostics()
+      .catch((error: unknown) => appendLog('warn', 'host', `Sending diagnostics failed: ${errorMessage(error)}`))
+      .finally(() => {
+        sendingRef.current = false;
+        setSending(false);
+      });
+  };
   const copyBuildDetails = () => {
     Clipboard.setStringAsync(buildDetails(info?.evoSdkVersion ?? config.engine?.evoSdkVersion))
       .then(() => toast.success(copy.about.versionCopied))
@@ -127,6 +141,7 @@ export function AboutScreen() {
           value={appVersion}
           chevron={false}
           onLongPress={copyBuildDetails}
+          accessibilityHint={copy.about.versionHint}
           testID="about-version"
         />
       </SettingsGroup>
@@ -176,11 +191,8 @@ export function AboutScreen() {
           icon={PaperAirplaneIcon}
           iconTint={colors.gray500}
           chevron={false}
-          onPress={() => {
-            sendDiagnostics().catch((error: unknown) =>
-              appendLog('warn', 'host', `Sending diagnostics failed: ${errorMessage(error)}`),
-            );
-          }}
+          disabled={sending}
+          onPress={sendDiagnosticsOnce}
           testID="about-send-diagnostics"
         />
         <SettingsRow

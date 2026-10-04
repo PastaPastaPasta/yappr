@@ -175,9 +175,12 @@ tags:
       - assertNotVisible:
           id: network-sheet-diagnostics
       - takeScreenshot: network-sheet
-      # The scrim closes it.
-      - tapOn:
-          point: 50%, 12%
+      # A swipe down on the sheet itself closes it: anchored to the status line, so it
+      # holds on any screen size or orientation (a scrim tap would need a coordinate).
+      - swipe:
+          from:
+            id: network-sheet-status
+          direction: DOWN
       - waitForAnimationToEnd
       - assertNotVisible:
           id: network-sheet-status

@@ -1302,10 +1302,10 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.31 Settings: About
 
 - Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line. No "Powered by Dash Platform" footer: the tagline says it.
-- One info row above the links: "Version" (version and build, "1.0.0 (123)"). A long press copies the build details, "Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet" (the commit's first 8 characters, baked in at build time and never fetched; a part the build doesn't know is left out), with the toast "Version info copied". No Network, Engine or Commit rows.
+- One info row above the links: "Version" (version and build, "1.0.0 (123)"). A long press copies the build details, "Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet" (the commit's first 8 characters, baked in at build time and never fetched; a part the build doesn't know is left out), with the toast "Version info copied". A tap does nothing; screen readers hear the hint "Long press to copy version info". No Network, Engine or Commit rows.
 - Rows: "Terms of Use", "Privacy Policy", "Community rules", then "Support" (mail), "Send diagnostics", "Open-source licenses", "Yappr on the web".
 - "Community rules" opens one sheet: the 4.7 summary first (`about.rulesIntro` and its 4 bullets), then the full rules the 4.7 gate expands under "Community rules", until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
-- "Send diagnostics" opens the mail composer to the support address (PRD §11.1 OQ-1) with the redacted 4.32 text as the body (its last 40 log lines). With no mail app, the native share sheet offers the same text.
+- "Send diagnostics" opens the mail composer to the support address (PRD §11.1 OQ-1) with the redacted 4.32 text as the body, sized for a mail link: its newest 10 errors (each clipped to 300 characters) and last 40 log lines, within 5,000 characters (the oldest log lines go first). With no mail app, the native share sheet offers the same text, led by "Send to support@yap.pr" so a message or note still says where it goes. The row is disabled until the composer or share sheet opens (up to 2 s while the engine's live figures load), so a second tap sends nothing.
 - Last, a muted row "Troubleshooting" (`subhead`, `text.secondary`, centered, 44 tall) opens 4.32. It is there signed out and in every build, and is the only way in.
 - "Open-source licenses" pushes a native list (`/settings/licenses`) generated at build time from the app's production lockfile and the packages the engine bundles (`mobile/engine/bundled-packages.json`, from esbuild's metafiles): one row per package with its version and license; a row opens to the package's license text.
 
@@ -1863,6 +1863,8 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | about.rows | Terms of Use / Privacy Policy / Community rules / Support / Send diagnostics / Open-source licenses / Yappr on the web |
 | about.info | Version |
 | about.versionCopied | Version info copied |
+| about.versionHint | Long press to copy version info (Version row's accessibility hint) |
+| about.sendDiagnosticsTo | Send to {email} (first line of the shared diagnostics) |
 | about.troubleshooting | Troubleshooting (About's muted last row) |
 | diag.title | Troubleshooting |
 | diag.states | Booting / Ready / Restarting / Unavailable (the screen's Engine row only) |

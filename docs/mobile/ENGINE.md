@@ -516,7 +516,7 @@ The "Wraps" column names the `lib/` (or vendor) functions each method composes, 
 | --- | --- | --- |
 | `info` | `() => Promise<EngineInfo>` | `manifest.json`; `getContractTopology()` (`lib/constants.ts:348`); the capability predicates below |
 | `ping` | `() => Promise<{ t: number }>` | — |
-| `diagnostics` | `() => Promise<{ wasmMs: number \| null; dapi: { configured: number; endpoints: { origin; requests; failures; lastOkAt; lastErrorAt }[]; lastOkAt: number \| null } }>` | Engine diagnostics' live figures (PRD SET-08), polled every 2 s while the screen is open: the WASM init time (`src/wasm-timing.ts`) and each DAPI endpoint's last answer, counted by a `fetch` wrapper over the SDK's gRPC-web requests (`src/dapi-monitor.ts`; origins and outcomes only). Engine-local, no network. `engine.info().contracts` also carries `pollr`. |
+| `diagnostics` | `() => Promise<{ wasmMs: number \| null; dapi: { configured: number; endpoints: { origin; requests; failures; lastOkAt; lastErrorAt }[]; lastOkAt: number \| null } }>` | Troubleshooting's live figures (PRD SET-08), polled every 2 s while the screen is open: the WASM init time (`src/wasm-timing.ts`) and each DAPI endpoint's last answer, counted by a `fetch` wrapper over the SDK's gRPC-web requests (`src/dapi-monitor.ts`; origins and outcomes only). Engine-local, no network. `engine.info().contracts` also carries `pollr`. |
 
 ```ts
 interface EngineInfo {

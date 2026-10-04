@@ -126,7 +126,7 @@ The common definition of done (§4) applies to every PR in addition to its row.
   - the `expo-secure-store` bridge with key encoding and the per-identity index;
   - the `AppState` and NetInfo lifecycle bridge with the background flush, including a minimal local Expo module for the iOS background window (`mobile/app/modules/background-flush`, ENGINE §3.4);
   - the Lockdown and WebView-outdated screens;
-  - the diagnostics screen (timings, health, logs ring buffer, Restart engine, Reset devnet data);
+  - the diagnostics screen (timings, health, logs ring buffer, Reconnect, Reset devnet data; now "Troubleshooting", SET-08);
   - a config plugin that copies `mobile/engine/dist/<variant>` into the iOS bundle and the Android assets;
   - the TanStack Query client, persisted to MMKV, with DM keys excluded.
 - **Exit checks:**

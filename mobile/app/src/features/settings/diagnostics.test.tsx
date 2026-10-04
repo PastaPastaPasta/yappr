@@ -16,6 +16,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { capabilityRows, diagnosticsText, formatAgo, formatBytes } from './diagnostics';
 import { DiagnosticsScreen } from './DiagnosticsScreen';
+import { EMAIL_ERRORS, EMAIL_LOG_LINES, EMAIL_MAX_CHARS, emailDiagnosticsText } from './send-diagnostics';
 
 jest.mock('~/engine', () => {
   const fake = jest.requireActual('~/data/testing/fake-engine').engineModule;
@@ -127,6 +128,37 @@ describe('diagnostics helpers', () => {
     expect(text).toContain('cache: 2.0 KB');
     expect(text).toContain('profiles.get signing with');
     expect(text).not.toContain(WIF);
+  });
+
+  it('sizes the support email: the newest errors and log lines, within a mail-safe length', () => {
+    const status = { state: 'ready', epoch: 1, restarts: 0, queued: 0, reason: null, unsupported: null, hello: null, caps: null, timings: null, info: INFO as EngineInfo } as EngineStatus;
+    const now = Date.now();
+    const logs = (count: number, size: number) =>
+      Array.from({ length: count }, (_, i) => ({ id: i, at: now, level: 'info' as const, source: 'host' as const, message: `log-${i}:${'x'.repeat(size)}` }));
+    const errors = (count: number, size: number) =>
+      Array.from({ length: count }, (_, i) => ({ id: i, at: now, operation: 'feed.home', message: `error-${i}:${'y'.repeat(size)}` }));
+    const snapshot = { status, diagnostics: diagnostics(4000), cacheBytes: 0, networkKey: 'devnet-sakura', now };
+
+    // A quiet session: every one of the last 40 log lines, nothing older.
+    const quiet = emailDiagnosticsText({ ...snapshot, errors: errors(3, 10), logs: logs(60, 10) });
+    expect(quiet.match(/log-\d+:/g)).toHaveLength(EMAIL_LOG_LINES);
+    expect(quiet).toContain('log-59:');
+    expect(quiet).not.toContain('log-19:');
+    expect(quiet).toContain('recent errors (3):');
+
+    // A flaky session: 50 long errors, 30 DAPI endpoints and a full log still fit a mailto body.
+    const endpoints = Array.from({ length: 30 }, (_, i) => ({ origin: `https://10.0.0.${i}:1443`, requests: 9, failures: 9, lastOkAt: null, lastErrorAt: now }));
+    const flaky = emailDiagnosticsText({
+      ...snapshot,
+      diagnostics: { wasmMs: 2180, dapi: { configured: 30, lastOkAt: null, endpoints } },
+      errors: errors(50, 1500),
+      logs: logs(200, 300),
+    });
+    expect(flaky.length).toBeLessThanOrEqual(EMAIL_MAX_CHARS);
+    expect(flaky).toContain(`recent errors (${EMAIL_ERRORS}):`);
+    expect(flaky).toContain('error-49:');
+    expect(flaky).not.toContain('error-39:');
+    expect(flaky.startsWith('Yappr ')).toBe(true);
   });
 });
 

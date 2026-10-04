@@ -15,5 +15,5 @@ appId: ${APP_ID}
       - extendedWaitUntil:
           visible:
             id: network-chip
-            text: ".*Data may be reset\\. Connected\\."
+            text: ".*Data may be reset\\. Connected\\..*"
           timeout: 120000

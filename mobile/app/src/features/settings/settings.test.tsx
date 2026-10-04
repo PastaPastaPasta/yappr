@@ -747,6 +747,8 @@ describe('About (SET-06, SET-07)', () => {
     renderScreen(<AboutScreen />);
 
     expect(byId('about-version')).toHaveAccessibleName('Version, 1.0.0');
+    // A tap does nothing; screen readers hear what the long press does.
+    expect(byId('about-version').props.accessibilityHint).toBe('Long press to copy version info');
     // Network, engine and commit are build details, not rows (agent-isms #16).
     for (const id of ['about-network', 'about-engine', 'about-commit', 'about-rules']) expect(screen.queryByTestId(id)).toBeNull();
     expect(screen.queryByText(/evo-sdk|Engine|Commit|Network|Powered by/)).toBeNull();
@@ -807,10 +809,33 @@ describe('About (SET-06, SET-07)', () => {
     openURL.mockRejectedValueOnce(new Error('No mail app'));
     fireEvent.press(byId('about-send-diagnostics'));
     await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    // Messages, Notes or Slack get no subject: the text itself says where it goes.
     expect(share).toHaveBeenCalledWith(
-      { message: expect.stringContaining('wasm compile: 2180 ms') },
+      { message: expect.stringMatching(/^Send to support@yap\.pr\n\nYappr [\s\S]*wasm compile: 2180 ms/) },
       { subject: 'Yappr diagnostics for support@yap.pr' },
     );
+  });
+
+  it('sends diagnostics once per tap, the row disabled until the mail opens', async () => {
+    let opened: (value: boolean) => void = () => undefined;
+    const openURL = jest.spyOn(Linking, 'openURL').mockImplementation(() => new Promise((resolve) => (opened = resolve)));
+    fakeEngine.setStatus({
+      info: { network: 'devnet', contracts: { social: 'social-id' }, capabilities: { dm: 'v5' } } as unknown as EngineInfo,
+    });
+    fakeEngine.method('engine.diagnostics').mockResolvedValue({ wasmMs: 2180, dapi: { configured: 13, lastOkAt: null, endpoints: [] } });
+    renderScreen(<AboutScreen />);
+
+    fireEvent.press(byId('about-send-diagnostics'));
+    fireEvent.press(byId('about-send-diagnostics'));
+    await waitFor(() => expect(openURL).toHaveBeenCalledTimes(1));
+    expect(byId('about-send-diagnostics')).toBeDisabled();
+
+    await act(async () => opened(true));
+    // The second tap queued nothing.
+    expect(openURL).toHaveBeenCalledTimes(1);
+    expect(byId('about-send-diagnostics')).not.toBeDisabled();
+    fireEvent.press(byId('about-send-diagnostics'));
+    await waitFor(() => expect(openURL).toHaveBeenCalledTimes(2));
   });
 
   it('opens the native open-source licenses list, not a web page', () => {
