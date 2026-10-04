@@ -30,7 +30,8 @@ import { hitSlopFor, motion, useColors, useLargeText, type IconComponent } from 
 
 const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : ShareIcon;
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** A spoken count: "1 reply", "2 replies", "0 likes". Every count a screen reader hears goes through it. */
+export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** Reposts and quotes told apart, as the detail counts row shows them (`RepostQuoteCounts`). */
 export interface RepostSplit {
@@ -65,6 +66,11 @@ export function repostSplitParts(split: RepostSplit | null | undefined): RepostS
   return shown.length > 0 ? shown : null;
 }
 
+/** One split count as spoken: "1 quote", "0 quotes"; a floor is always plural ("1+ quotes"). */
+export function splitPartLabel({ count, floor, kind }: RepostSplitPart): string {
+  return floor ? `${count}${floor} ${kind}s` : plural(count, kind, `${kind}s`);
+}
+
 /**
  * The repost control's label (UX_SPEC §5.13): "Repost or quote, {N} reposts",
  * and where the detail counts row tells quotes apart, the same split, so a
@@ -79,7 +85,7 @@ export function repostLabel(
 ): string {
   const parts = repostSplitParts(split);
   const counts = parts
-    ? parts.map(({ count, floor, kind }) => `${count}${floor} ${count === 1 && !floor ? kind : `${kind}s`}`).join(', ')
+    ? parts.map(splitPartLabel).join(', ')
     : plural(total, 'repost', 'reposts');
   const mark = state.reposted ? (state.quoted ? ', quoted' : ', reposted') : '';
   return `Repost or quote, ${counts}${mark}`;

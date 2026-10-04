@@ -2014,7 +2014,7 @@ Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this 
 
 ### 6.2 Screen readers
 
-- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row) and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
+- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row; a count of 1 reads singular, "1 reply", "1 repost", "1 quote", "1 like", and a floor stays plural, "1+ quotes") and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
 - **Focus order:** navigation bar → banners → tabs or segments → list → FAB → tab bar.
 - **Headings:** screen titles, section headers and empty-state titles have the header role.
 - **Live updates:** toasts and write-status changes are announced once (A11Y-06); counters are not live.

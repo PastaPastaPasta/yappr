@@ -106,6 +106,17 @@ describe('PostCard (feed)', () => {
     expect(onLike).toHaveBeenCalled();
   });
 
+  it('speaks every count of the summary in the singular for 1 (D-rc5a-002)', () => {
+    const post = fixturePost({ id: 'ones', stats: { likes: 1, reposts: 1, replies: 1, quotes: 0 } });
+    const { rerender } = render(<PostCard post={post} />);
+    expect(byId('post-card-ones').props.accessibilityLabel).toMatch(/ 1 reply, 1 repost, 1 like\.$/);
+    rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 1, quotes: 1, truncated: false }} />);
+    expect(byId('post-card-ones').props.accessibilityLabel).toMatch(/ 1 reply, 1 repost, 1 quote, 1 like\.$/);
+    // A floor stays plural, as the counts row reads it.
+    rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 1, quotes: 1, truncated: true }} />);
+    expect(byId('post-card-ones').props.accessibilityLabel).toMatch(/ 1 reply, 1\+ reposts, 1\+ quotes, 1 like\.$/);
+  });
+
   it('keeps the spoken time in its screen-reader summary current', () => {
     jest.useFakeTimers({ now: Date.UTC(2026, 9, 3, 12, 0, 30) });
     try {
@@ -345,7 +356,7 @@ describe('PostCard variants', () => {
     expect(screen.getByText('1 Quote')).toBeTruthy();
     expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 0 reposts, 1 quote, quoted');
     expect(byId('repost-btn-own-quoted')).toBeSelected();
-    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 0 reposts, 1 quotes, 0 likes\.$/);
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 0 reposts, 1 quote, 0 likes\.$/);
 
     // Floors off a list that filled up, as the row shows them.
     rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 100, quotes: 3, truncated: true }} />);
@@ -360,7 +371,7 @@ describe('PostCard variants', () => {
     // Feed cards have no split: the one count the control shows.
     rerender(<PostCard post={post} repostQuoteCounts={split} />);
     expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 1 repost, quoted');
-    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 1 reposts, 0 likes\.$/);
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 1 repost, 0 likes\.$/);
   });
 
   it('compact and tombstoned cards have no action bar', () => {
