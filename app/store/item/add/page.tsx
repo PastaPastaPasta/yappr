@@ -38,6 +38,9 @@ const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
 const kitHasContent = (kit: ItemDeliverablePayload) =>
   kit.assets.length > 0 || kit.licenseKeys !== undefined || Boolean(kit.instructions)
+/** Whether two reads are the same kit document at the same revision (or both found none). */
+const sameKitRevision = (a: ItemDeliverable | null, b: ItemDeliverable | null) =>
+  a === null || b === null ? a === b : a.id === b.id && a.$revision === b.$revision
 
 /**
  * The digital kit's state on this device: `ready` (editable), `locked` (one
@@ -76,6 +79,12 @@ function AddItemPage() {
   }, [])
   // A create whose kit failed to save keeps its form; the next submit edits this item.
   const [createdItemId, setCreatedItemId] = useState<string | null>(null)
+  // A create that was broadcast but not seen on chain. Until a read finds it,
+  // the form is neither an edit (it may not exist) nor free to create again
+  // (it may still land): the next submit looks for this exact listing first.
+  const [pendingItemId, setPendingItemId] = useState<string | null>(null)
+  // A look for the pending listing came back empty: the seller may choose to create it again.
+  const [pendingStillMissing, setPendingStillMissing] = useState(false)
   /** The item being edited: the URL's, or the one this form just created. */
   const editingItemId = itemId || createdItemId
   const isDigital = supportsDigital && fulfillment === 'digital'
@@ -363,15 +372,40 @@ function AddItemPage() {
       // A create has no stored value to defer to, so the URL leads there.
       const effectiveStoreId = editingItemId ? (loadedStoreId || storeId) : (storeId || loadedStoreId)
 
+      // An earlier create of this form that was not confirmed: find that exact
+      // listing before anything else. Found, it is edited; not found, nothing
+      // is written, since creating again could list the product twice.
+      let targetItemId = editingItemId
+      if (!targetItemId && pendingItemId) {
+        if (!(await storeItemService.isOnChain(pendingItemId))) {
+          setPendingStillMissing(true)
+          setError('Your new product was sent but is still not confirmed. Wait a moment and save again. If it never appears in your store, you can create it again.')
+          return
+        }
+        setCreatedItemId(pendingItemId)
+        setPendingItemId(null)
+        setPendingStillMissing(false)
+        targetItemId = pendingItemId
+      }
+
       let savedItemId: string
-      if (editingItemId && effectiveStoreId) {
-        await storeItemService.updateItem(editingItemId, user.identityId, effectiveStoreId, itemData)
-        savedItemId = editingItemId
+      if (targetItemId && effectiveStoreId) {
+        await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData)
+        savedItemId = targetItemId
       } else if (effectiveStoreId) {
         const created = await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+        setLoadedStoreId(effectiveStoreId)
+        // Broadcast but not seen: the kit cannot reference it yet, and the form
+        // must not turn into an edit of a listing that may never exist.
+        const confirmed = (created as { __createConfirmed?: boolean }).__createConfirmed !== false
+        if (!confirmed && !(await storeItemService.isOnChain(created.id))) {
+          setPendingItemId(created.id)
+          setPendingStillMissing(false)
+          setError('Your new product was sent but is not confirmed yet. Wait a moment, then save again: that looks for this product first and never creates it twice.')
+          return
+        }
         savedItemId = created.id
         setCreatedItemId(created.id)
-        setLoadedStoreId(effectiveStoreId)
       } else {
         setError('Store ID is required')
         return
@@ -385,19 +419,21 @@ function AddItemPage() {
           setKitDirty(false)
         } catch (kitError) {
           logger.error('Failed to save delivery content:', kitError)
-          // Re-read what is on chain: a create that landed despite the error must
-          // be replaced next time, not created twice (unique per item), and a kit
-          // changed elsewhere (a delivery took keys) must not be overwritten.
-          const onChain = await itemDeliverableService.getForItem(savedItemId).catch(() => existingDeliverable)
-          if (onChain && existingDeliverable && onChain.$revision !== existingDeliverable.$revision) {
+          // Re-read the chain. The draft stays tied to the kit it was edited
+          // from: a revision it was not built from (this save landing late, or
+          // another tab or device changing it, e.g. a delivery taking unique
+          // codes) is never attached to it, or the next save would write the
+          // stale pool over that revision and put sent codes back. Such a kit
+          // is reloaded whole (content and revision together) for review.
+          const onChain = await itemDeliverableService.getForItem(savedItemId).catch(() => undefined)
+          if (onChain !== undefined && !sameKitRevision(onChain, existingDeliverable)) {
             await loadKit(savedItemId, user.identityId)
-            setError('The product was saved, but its delivery content changed elsewhere (for example, a delivery used unique codes) and was reloaded. Review it and save again.')
+            setError('The product was saved. Its delivery content on chain is not the version this page started from (this save may have landed late, or it was changed elsewhere, for example by a delivery that used unique codes), so it was reloaded. Review it and save again if needed.')
           } else if (kitError instanceof KitWriteUncertainError) {
-            // It may yet land: the next save re-reads and replaces it rather than creating twice.
-            setExistingDeliverable(onChain)
+            // It may yet land. The next save writes from the same base, which
+            // the chain refuses if this one landed meanwhile.
             setError('The product was saved. Its delivery content was sent but is not confirmed yet; wait a moment, then save again to make sure it is stored.')
           } else {
-            setExistingDeliverable(onChain)
             setError(`The product was saved, but its delivery content was not: ${kitError instanceof Error ? kitError.message : 'unknown error'}. Save again to retry.`)
           }
           return
@@ -456,6 +492,26 @@ function AddItemPage() {
               >
                 {error}
               </motion.div>
+            )}
+            {pendingItemId && pendingStillMissing && (
+              <div className="p-3 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg space-y-2">
+                <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                  Creating it again is safe only if the first one never lands. If it does, your store lists this product twice, and you can mark the extra one deleted.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    setPendingItemId(null)
+                    setPendingStillMissing(false)
+                    setError(null)
+                  }}
+                >
+                  Create it again on next save
+                </Button>
+              </div>
             )}
 
             {/* Title */}
@@ -867,8 +923,8 @@ function AddItemPage() {
                 className="w-full"
               >
                 {isSubmitting
-                  ? (editingItemId ? 'Saving...' : 'Creating...')
-                  : (editingItemId ? 'Save Changes' : 'Create Product')}
+                  ? (editingItemId || pendingItemId ? 'Saving...' : 'Creating...')
+                  : (editingItemId || pendingItemId ? 'Save Changes' : 'Create Product')}
               </Button>
             </div>
           </form>

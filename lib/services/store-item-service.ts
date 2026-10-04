@@ -6,6 +6,7 @@
  */
 
 import { BaseDocumentService } from './document-service';
+import { stateTransitionService } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped } from '../constants';
 import { LIST_LIMITS, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
@@ -93,6 +94,15 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
    */
   async getById(itemId: string): Promise<StoreItem | null> {
     return this.get(itemId);
+  }
+
+  /**
+   * Whether a listing created without confirmation (`__createConfirmed ===
+   * false`) is on chain yet, polled a few times. False is not proof it never
+   * will be: the broadcast may still execute.
+   */
+  async isOnChain(itemId: string, attempts = 3): Promise<boolean> {
+    return stateTransitionService.waitForDocument(this.contractId, this.documentType, itemId, { attempts });
   }
 
   /**

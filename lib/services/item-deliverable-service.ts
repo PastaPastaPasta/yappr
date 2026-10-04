@@ -127,10 +127,12 @@ class ItemDeliverableService extends BaseDocumentService<ItemDeliverable> {
    * Whether this attempt's write is on chain. Returns:
    * - the kit document when it holds exactly this attempt's ciphertext (a
    *   plaintext match would also accept another tab's identical reservation);
-   * - `refused` when a different write holds the revision this one needed,
-   *   which is the definite stale-write refusal;
+   * - `refused` when a different write holds exactly the revision this one
+   *   needed, which is the definite stale-write refusal;
    * - `unknown` when the document is still at the old revision (the write may
-   *   yet land, or may have been refused) or the chain cannot be read.
+   *   yet land, or may have been refused), when it has moved PAST the needed
+   *   revision (this write may have landed there and been replaced since; no
+   *   history is kept to tell), or when the chain cannot be read.
    */
   private async reconcile(
     itemId: string,
@@ -143,7 +145,10 @@ class ItemDeliverableService extends BaseDocumentService<ItemDeliverable> {
       try {
         const current = await this.getForItem(itemId);
         if (current && bytesEqual(current.encryptedPayload, attempted)) return current;
-        if (current && (current.$revision ?? 0) >= neededRevision) return 'refused';
+        // A different document (the kit deleted and created again) or a later
+        // revision proves nothing about this attempt.
+        if (current && current.$revision === neededRevision && (!existing || current.id === existing.id)) return 'refused';
+        if (current && ((existing && current.id !== existing.id) || (current.$revision ?? 0) > neededRevision)) return 'unknown';
       } catch (error) {
         logger.warn(`Could not reconcile the delivery kit for item ${itemId}:`, error);
       }

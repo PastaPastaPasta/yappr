@@ -69,6 +69,23 @@ describe('saveKit', () => {
     await expect(save()).rejects.toThrow('stale revision')
   })
 
+  it('reports an unknown outcome when the kit has moved past the revision this write needed', async () => {
+    // This write may have landed at 5 and been replaced by another device since.
+    failingReplace('gateway timeout')
+    query.mockResolvedValue([await onChain(6, kit)])
+    await expect(save()).rejects.toBeInstanceOf(KitWriteUncertainError)
+  })
+
+  it('reports an unknown outcome when an unconfirmed create finds a kit already replaced', async () => {
+    const create = vi.spyOn(itemDeliverableService, 'create')
+    create.mockRejectedValue(new Error('gateway timeout'))
+    query.mockResolvedValue([await onChain(2, kit)])
+    await expect(save(null)).rejects.toBeInstanceOf(KitWriteUncertainError)
+    query.mockResolvedValue([await onChain(1, kit)])
+    await expect(save(null)).rejects.toThrow('gateway timeout')
+    create.mockRestore()
+  })
+
   it('reports an unknown outcome when the chain still shows the old revision', async () => {
     failingReplace('gateway timeout')
     query.mockResolvedValue([await onChain(4, kit)])
