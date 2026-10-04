@@ -14,9 +14,13 @@ tags:
     visible:
       id: "post-card-.*"
     timeout: 90000
+# Tap the card's top padding, not its centre: the feed is global, and a centre tap on a
+# quote post lands on its quote embed, which opens the quoted post (deleted ones can't
+# be replied to, so there is no "Sign in to reply").
 - tapOn:
     id: "post-card-.*"
     index: 0
+    point: "50%, 3%"
 - extendedWaitUntil:
     visible:
       id: thread-focus
@@ -30,6 +34,30 @@ tags:
     timeout: 60000
 - assertNotVisible:
     id: replies-error
+# The feed is global and shows its cached first page at launch: the first card can be a
+# post its author (another test run) deleted since. Its thread says so instead of
+# offering a reply; take the next card then.
+- runFlow:
+    when:
+      visible: "This .* (was deleted|is unavailable), so it can't be replied to\\."
+    commands:
+      - runFlow: ../../subflows/back.yaml
+      - extendedWaitUntil:
+          visible:
+            id: home-header
+          timeout: 15000
+      - tapOn:
+          id: "post-card-.*"
+          index: 1
+          point: "50%, 3%"
+      - extendedWaitUntil:
+          visible:
+            id: thread-focus
+          timeout: 60000
+      - extendedWaitUntil:
+          notVisible:
+            id: replies-loading
+          timeout: 60000
 - assertVisible: "Sign in to reply"
 - takeScreenshot: thread
 - runFlow: ../../subflows/back.yaml
