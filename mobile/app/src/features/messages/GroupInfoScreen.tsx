@@ -103,6 +103,10 @@ function ActionRow({
   return (
     <Pressable
       accessibilityRole="button"
+      // Always labelled: Android rewrites a view's description only when it has something to say
+      // (React Native's BaseViewManager), so with no label the "busy" a write adds stays on the
+      // row after the write is done, and it reads busy until the screen closes (QA D-RVa-dc-01).
+      accessibilityLabel={label}
       accessibilityState={{ disabled: !!disabled, busy: !!loading }}
       disabled={disabled}
       onPress={onPress}

@@ -41,6 +41,7 @@ import { DaySeparator, MessageBubble } from './MessageBubble';
 import { DmLocked } from './DmStates';
 import { takeDraft, useDraft, useDrafts } from './drafts';
 import { forgetLanded, mergeOutbox, resolveFailed, sendInBackground, useOutboxFor } from './outbox';
+import { useStickToNewest } from './stick-to-newest';
 import { UnlockSheet } from './UnlockSheet';
 import { useAppActive } from './use-app-active';
 
@@ -190,9 +191,15 @@ export function ConversationScreen() {
   );
 
   const listRef = useRef<FlashListRef<TimelineItem>>(null);
-  const scrollToNewest = useCallback((animated = true) => {
-    requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
-  }, []);
+  const stick = useStickToNewest(listRef, timeline.length, timeline.at(-1)?.id);
+  const { pin } = stick;
+  const scrollToNewest = useCallback(
+    (animated = true) => {
+      pin();
+      requestAnimationFrame(() => listRef.current?.scrollToEnd({ animated }));
+    },
+    [pin],
+  );
   // The newest message stays in view when the keyboard opens.
   useEffect(() => {
     const sub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => scrollToNewest());
@@ -356,6 +363,7 @@ export function ConversationScreen() {
             ListFooterComponent={<View className="h-2" />}
             keyboardDismissMode="interactive"
             keyboardShouldPersistTaps="handled"
+            {...stick.scrollProps}
             testID="dm-messages"
           />
         )}

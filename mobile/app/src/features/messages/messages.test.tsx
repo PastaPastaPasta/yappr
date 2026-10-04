@@ -1,7 +1,7 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, renderHook, screen } from '@testing-library/react-native';
-import { Alert, AppState, Platform, type AppStateStatus } from 'react-native';
+import { act, fireEvent, renderHook, screen, within } from '@testing-library/react-native';
+import { Alert, AppState, KeyboardAvoidingView, Platform, type AppStateStatus } from 'react-native';
 import { Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
@@ -409,6 +409,13 @@ describe('Conversation (DM-03, DM-04)', () => {
     } finally {
       AppState.addEventListener = original;
     }
+  });
+
+  it("follows the user's own scrolls, to keep the newest in view while they read there (QA dm-thread-stale-after-cold-launch)", async () => {
+    await openConversation();
+    const list = screen.getByTestId('dm-messages');
+    expect(list.props.onScrollEndDrag).toEqual(expect.any(Function));
+    expect(list.props.onMomentumScrollEnd).toEqual(expect.any(Function));
   });
 
   it('keeps the conversation out of Android Recents and screenshots while it is open', async () => {
@@ -913,6 +920,15 @@ describe('New group (DM-06)', () => {
     expect(useToastStore.getState().current?.message).toBe('1 member(s) did not get the group key yet.');
   });
 
+  it('keeps "Create group" above the keyboard on Android while members are searched for (QA keyboard-overlaps)', async () => {
+    await onAndroid(async () => {
+      await fillForm();
+      const avoider = screen.UNSAFE_getByType(KeyboardAvoidingView);
+      expect(within(avoider).getByTestId('new-group-create')).toBeTruthy();
+      expect(within(avoider).getByTestId('picker-search')).toBeTruthy();
+    });
+  });
+
   it('waits out the first load (a cold start) instead of failing the creation', async () => {
     await fillForm();
     const created = ticket({ op: 'dm.group' });
@@ -1086,6 +1102,39 @@ describe('Group info (DM-07, DM-08)', () => {
     await act(async () => {});
     expect(pathname()).toBe('/messages');
     alert.mockRestore();
+  });
+
+  it('adds a member, and the row says busy only while the write runs (QA D-RVa-dc-01)', async () => {
+    const CAROL = 'CarolId11111111111111111111111111111111111';
+    const owned = group({ ownerId: VIEWER, isOwner: true });
+    fakeEngine
+      .method('graph.followers')
+      .mockResolvedValue({ items: [{ ...BOB, id: CAROL, username: 'carol', displayName: 'Carol' }], cursor: null, hasMore: false });
+    await openInfo(owned);
+    fireEvent.press(screen.getByTestId('group-add'));
+    await act(async () => {});
+    const added = ticket({ op: 'dm.group', target: { conversationKey: GROUP } });
+    fakeEngine.method('dm.addMember').mockResolvedValue(added);
+    fireEvent.press(screen.getByTestId(`picker-user-${CAROL}`));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.addMember')).toHaveBeenCalledWith(GROUP, CAROL);
+    // Labelled in every state: Android keeps a "busy" description on an unlabelled view after the write is done.
+    expect(screen.getByTestId('group-add').props).toMatchObject({
+      accessibilityLabel: 'Done adding',
+      accessibilityState: { busy: true },
+    });
+
+    fakeEngine.method('dm.conversations').mockResolvedValue([{ ...owned, members: [VIEWER, BOB_ID, CAROL] }]);
+    await act(async () => {
+      fakeEngine.emit('write.status', advance(added, { state: 'confirmed' }));
+    });
+    await act(async () => {});
+    expect(screen.getByTestId('group-add').props).toMatchObject({
+      accessibilityLabel: 'Done adding',
+      accessibilityState: { busy: false },
+    });
+    expect(useToastStore.getState().current?.message).toBe('Member added');
+    expect(screen.getByTestId(`group-member-${CAROL}`)).toBeTruthy();
   });
 
   it('shows an error with Retry when the status read fails', async () => {

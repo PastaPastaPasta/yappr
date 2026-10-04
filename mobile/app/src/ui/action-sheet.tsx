@@ -1,4 +1,4 @@
-import { ActionSheetIOS, Platform, Pressable } from 'react-native';
+import { ActionSheetIOS, Keyboard, Platform, Pressable } from 'react-native';
 import { create } from 'zustand';
 
 import { cn } from '~/lib-allowlist';
@@ -47,6 +47,9 @@ export function showActionSheet(request: ActionSheetRequest): void {
     );
     return;
   }
+  // A sheet of choices takes no typing, and Android draws the keyboard over it: an open keyboard
+  // (a focused composer) would hide every row (QA keyboard-overlaps). iOS presents it above.
+  Keyboard.dismiss();
   useActionSheet.setState({ request, open: true });
 }
 

@@ -11,6 +11,7 @@ import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { Button } from '~/ui/Button';
 import { selectionTick } from '~/ui/haptics';
+import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
 import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
@@ -178,57 +179,61 @@ export function NewGroupScreen() {
   return (
     <Screen>
       {header}
-      <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentInsetAdjustmentBehavior="automatic">
-        <View className="gap-3 px-4 pb-2 pt-3">
-          <Text variant="subhead" tone="secondary">
-            Name the group and pick its members.
-          </Text>
-          <TextField
-            label="Group name"
-            value={name}
-            onChangeText={setName}
-            maxLength={GROUP_NAME_MAX}
-            error={nameError}
-            editable={!busy}
-            placeholder="Builders"
-            returnKeyType="done"
-            testID="new-group-name"
-          />
-          {members.length > 0 ? (
-            <View className="flex-row flex-wrap gap-2" testID="new-group-chips">
-              {members.map((user) => (
-                <MemberChip key={user.id} user={user} disabled={busy} onRemove={() => toggle(user)} />
-              ))}
-            </View>
-          ) : null}
-          {unconfirmed ? (
-            <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1" accessibilityLiveRegion="polite">
-              <Text variant="caption" tone="secondary" testID="new-group-unconfirmed">
-                Not confirmed yet. It may still have gone through.
-              </Text>
-              {checking ? (
-                <Spinner size="sm" />
-              ) : (
-                <LinkText label="Check" onPress={check} testID="new-group-check" />
-              )}
-            </View>
-          ) : busy ? (
-            <Text variant="caption" tone="secondary" accessibilityLiveRegion="polite" testID="new-group-progress">
-              Creating the group and sending each member its key. This can take a little while.
+      {/* Android's "Create group" sits under the list, and the keyboard is up while members are
+          searched for: the footer rides above it (QA keyboard-overlaps). */}
+      <KeyboardAvoider>
+        <ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" contentInsetAdjustmentBehavior="automatic">
+          <View className="gap-3 px-4 pb-2 pt-3">
+            <Text variant="subhead" tone="secondary">
+              Name the group and pick its members.
             </Text>
-          ) : null}
-        </View>
-        {/* Its own native parent while busy and after, so creating the group (which then leaves this
-            screen) never moves the picker (mobile/CLAUDE.md, "Native view structure"). */}
-        <View collapsable={false} pointerEvents={busy ? 'none' : 'auto'} className={busy ? 'opacity-50' : undefined}>
-          <UserPicker viewerId={viewerId} multi selectedIds={selected} onPick={toggle} />
-        </View>
-      </ScrollView>
-      {Platform.OS === 'android' ? (
-        <View className={cn('border-t px-4 pt-3', tw.border)} style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
-          {createButton}
-        </View>
-      ) : null}
+            <TextField
+              label="Group name"
+              value={name}
+              onChangeText={setName}
+              maxLength={GROUP_NAME_MAX}
+              error={nameError}
+              editable={!busy}
+              placeholder="Builders"
+              returnKeyType="done"
+              testID="new-group-name"
+            />
+            {members.length > 0 ? (
+              <View className="flex-row flex-wrap gap-2" testID="new-group-chips">
+                {members.map((user) => (
+                  <MemberChip key={user.id} user={user} disabled={busy} onRemove={() => toggle(user)} />
+                ))}
+              </View>
+            ) : null}
+            {unconfirmed ? (
+              <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1" accessibilityLiveRegion="polite">
+                <Text variant="caption" tone="secondary" testID="new-group-unconfirmed">
+                  Not confirmed yet. It may still have gone through.
+                </Text>
+                {checking ? (
+                  <Spinner size="sm" />
+                ) : (
+                  <LinkText label="Check" onPress={check} testID="new-group-check" />
+                )}
+              </View>
+            ) : busy ? (
+              <Text variant="caption" tone="secondary" accessibilityLiveRegion="polite" testID="new-group-progress">
+                Creating the group and sending each member its key. This can take a little while.
+              </Text>
+            ) : null}
+          </View>
+          {/* Its own native parent while busy and after, so creating the group (which then leaves this
+              screen) never moves the picker (mobile/CLAUDE.md, "Native view structure"). */}
+          <View collapsable={false} pointerEvents={busy ? 'none' : 'auto'} className={busy ? 'opacity-50' : undefined}>
+            <UserPicker viewerId={viewerId} multi selectedIds={selected} onPick={toggle} />
+          </View>
+        </ScrollView>
+        {Platform.OS === 'android' ? (
+          <View className={cn('border-t px-4 pt-3', tw.border)} style={{ paddingBottom: Math.max(insets.bottom, 12) }}>
+            {createButton}
+          </View>
+        ) : null}
+      </KeyboardAvoider>
     </Screen>
   );
 }
