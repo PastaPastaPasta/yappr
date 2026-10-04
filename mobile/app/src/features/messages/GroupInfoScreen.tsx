@@ -38,7 +38,7 @@ import {
   resendKeysWrite,
 } from './dm-writes';
 import { resendMissingKeys } from './group-keys';
-import { UserPicker } from './UserPicker';
+import { usePickerReveal, UserPicker } from './UserPicker';
 
 function RenameDialog({
   open,
@@ -177,6 +177,7 @@ export function GroupInfoScreen() {
 
   const [renaming, setRenaming] = useState(false);
   const [adding, setAdding] = useState(false);
+  const picker = usePickerReveal();
 
   const header = <Stack.Screen options={{ title: 'Group info' }} />;
 
@@ -274,7 +275,12 @@ export function GroupInfoScreen() {
   return (
     <Screen>
       {header}
-      <ScrollView keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic" testID="group-info">
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentInsetAdjustmentBehavior="automatic"
+        {...picker.scrollProps}
+        testID="group-info"
+      >
         <View className="items-center gap-2 px-4 pt-6">
           <ConversationAvatar conversation={group} size="xl" />
           <Text variant="title" tone="emphasis" className="text-center" testID="group-info-name">
@@ -348,7 +354,7 @@ export function GroupInfoScreen() {
         })}
 
         {owner && !inactive ? (
-          <View className="mt-2">
+          <View className="mt-2" {...picker.sectionProps} testID="group-add-section">
             <ActionRow
               label={adding ? 'Done adding' : 'Add members'}
               icon={<PlusCircleIcon size={22} color={c.link} />}
@@ -363,11 +369,14 @@ export function GroupInfoScreen() {
                 collapsable={false}
                 pointerEvents={busy ? 'none' : 'auto'}
                 className={busy ? 'opacity-60' : undefined}
+                style={{ minHeight: picker.minHeight }}
+                testID="group-add-picker"
               >
                 <UserPicker
                   viewerId={viewerId}
                   excludeIds={new Set(group.members)}
                   note="New members can read messages sent after they join."
+                  onSearchFocus={picker.reveal}
                   onPick={(user) => add.run({ key, memberId: user.id, name: user.displayName }).catch(() => undefined)}
                 />
               </View>

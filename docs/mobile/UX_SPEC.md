@@ -1227,6 +1227,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Leave:** after the confirm, the inbox at once, without the group; it comes back only if the leave is proved not to have gone out, or the account changes first.
 - **Legacy (testnet):** no groups; a link here goes to the inbox.
 - Confirmations use the confirm dialog (2.13) with copy 5.8.
+- **Add members:** the person picker opens under the row. Focusing its search scrolls the row to the top of the screen, so the results show between the field and the keyboard on both platforms, never under it.
 
 ### 4.23 Message settings
 
