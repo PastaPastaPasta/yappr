@@ -326,7 +326,12 @@ function AddItemPage() {
         setError(sizeError instanceof Error ? sizeError.message : 'Delivery content is too large')
         return
       }
-      // A kit that fits storage must also fit one delivery for one unit, or no order could receive it.
+    }
+    // The kit (saved or not) must fit one delivery for one unit with the
+    // variants being saved, or no order could receive it. Variant keys go
+    // into every receipt, so a listing edit alone can break an untouched kit.
+    // Checked only, never rewritten: an untouched pool is not written back.
+    if (isDigital && kitState === 'ready') {
       const fitError = kitDeliveryFitError(kit, hasVariants ? combinations : [])
       if (fitError) {
         setError(fitError)

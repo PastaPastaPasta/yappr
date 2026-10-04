@@ -284,6 +284,25 @@ export function kitsAfterDelivery(
 /** The seller's own listing of an item, read from the chain. */
 export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'>
 
+const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantKey'>) => `${line.itemId}|${line.variantKey ?? ''}`
+const repeatedLineText = (line: Pick<OrderItem, 'itemTitle'>) => `"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`
+
+/**
+ * Lines that repeat an earlier line's item and variant. The cart keeps one
+ * line per item and variant, so a repeat can only be hand-written, and it
+ * would let one receipt count for two lines. Checked over the WHOLE order:
+ * a delivery of part of it must not hide one.
+ */
+export function repeatedLines(payload: Pick<OrderPayload, 'items'>): string[] {
+  const seen = new Set<string>()
+  return digitalLines(payload).flatMap((line) => {
+    const key = lineKey(line)
+    if (seen.has(key)) return [repeatedLineText(line)]
+    seen.add(key)
+    return []
+  })
+}
+
 /** A way an order line disagrees with the seller's listing of the item it names. */
 export interface LineProblem {
   itemTitle: string
@@ -319,14 +338,12 @@ export function lineProblems(
   }
   const malformed = linesOf(payload).filter(isDigitalLine).length - digitalLines(payload).length
   if (malformed > 0) problems.push({ itemTitle: '', text: `${malformed} digital line${malformed === 1 ? ' of this order is' : 's of this order are'} malformed, so the order cannot be delivered from here. Check it with the buyer.`, blocking: true })
-  // The cart keeps one line per item and variant. A repeat can only be
-  // hand-written, and would let one receipt count for two lines.
   const seen = new Set<string>()
   for (const line of digitalLines(payload)) {
     const listing = listings.get(line.itemId)
     const problem = (text: string, blocking = false) => problems.push({ itemTitle: line.itemTitle, text, blocking })
-    const key = `${line.itemId}|${line.variantKey ?? ''}`
-    if (seen.has(key)) { problem(`"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`, true); continue }
+    const key = lineKey(line)
+    if (seen.has(key)) { problem(repeatedLineText(line), true); continue }
     seen.add(key)
     if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
     if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }

@@ -21,6 +21,7 @@ import {
   kitsAfterDelivery,
   lineProblems,
   planDelivery,
+  repeatedLines,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
 import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
@@ -153,6 +154,11 @@ describe('lineProblems', () => {
     expect(check([line(EBOOK_ID), line(EBOOK_ID)], listed([EBOOK_ID])).map((p) => p.blocking)).toEqual([true])
     const variants = { axes: [{ name: 'F', options: ['A', 'B'] }], combinations: [{ key: 'A', price: 100 }, { key: 'B', price: 100 }] }
     expect(check([line(EBOOK_ID, 1, { variantKey: 'A' }), line(EBOOK_ID, 1, { variantKey: 'B' })], new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]]))).toEqual([])
+  })
+
+  it('finds a repeated line over the whole order, whichever part is delivered', () => {
+    expect(repeatedLines({ items: [line(EBOOK_ID), line(SONG_ID), line(EBOOK_ID)] })).toHaveLength(1)
+    expect(repeatedLines({ items: [line(EBOOK_ID), line(SONG_ID)] })).toEqual([])
   })
 
   it('blocks a malformed currency instead of throwing', () => {

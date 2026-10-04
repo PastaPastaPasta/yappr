@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, repeatedLines, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -141,9 +141,11 @@ export function DeliverDigitalModal({
   const problems = useMemo(() => lineProblems(selectedPayload, order.storeId, listings), [selectedPayload, order.storeId, listings])
   const blockers = useMemo(() => [
     ...(selectedLines.length === 0 ? ['Choose at least one item to deliver.'] : []),
+    // Over the whole order: unticking a repeat must not hide it.
+    ...repeatedLines(payload),
     ...problems.filter((problem) => problem.blocking).map((problem) => problem.text),
     ...planBlockers(plan),
-  ], [selectedLines, problems, plan])
+  ], [selectedLines, payload, problems, plan])
   const warnings = problems.filter((problem) => !problem.blocking)
   const needsReview = warnings.length > 0 && !reviewed
   const sendsAgain = lines.some((_, index) => selected.has(index) && coverage[index].possibly)
