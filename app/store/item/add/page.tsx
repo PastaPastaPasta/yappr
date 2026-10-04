@@ -130,9 +130,6 @@ function AddItemPage() {
 
   // Variant state
   const [hasVariants, setHasVariants] = useState(false)
-  // The variant keys the listing was loaded with: a kit this device cannot
-  // read was only ever known to fit receipts carrying keys no larger than these.
-  const [loadedVariantKeys, setLoadedVariantKeys] = useState<string[]>([])
   const [variantAxes, setVariantAxes] = useState<VariantAxis[]>([])
   const [newAxisName, setNewAxisName] = useState('')
   const [newAxisOptions, setNewAxisOptions] = useState('')
@@ -220,7 +217,6 @@ function AddItemPage() {
           }
           setCombinationPrices(prices)
           setCombinationStocks(stocks)
-          setLoadedVariantKeys(item.variants.combinations.map((combo) => combo.key))
         }
       } catch (err) {
         logger.error('Failed to load item:', err)
@@ -367,13 +363,19 @@ function AddItemPage() {
         setError(fitError)
         return
       }
-    } else if (supportsDigital && editingItemId && largestReceiptBytes(variantKeysNow) > largestReceiptBytes(loadedVariantKeys)) {
-      // Receipts grow while the kit on chain stays as it is (digital or not,
-      // since a physical product keeps its kit). Check THAT kit, read now: not
-      // this page's snapshot or an unsaved draft. If it cannot be read and
-      // decrypted here, the growth is refused.
+    } else if (supportsDigital && editingItemId && largestReceiptBytes(variantKeysNow) > 0) {
+      // The variants being saved replace whatever the listing holds NOW (this
+      // page may be stale: another editor may have shortened them and saved a
+      // larger kit), while the kit on chain stays as it is, digital or not
+      // (a physical product keeps its kit). If they make receipts larger than
+      // the current listing does, check that kit, read now: not this page's
+      // snapshot or an unsaved draft. A kit that cannot be read and decrypted
+      // here refuses the growth.
       setIsSubmitting(true)
-      const retainedError = await retainedKitFitError(editingItemId, user.identityId, variantKeysNow)
+      const current = await storeItemService.getManyFresh([editingItemId]).then(([item]) => item, () => undefined)
+      const currentKeys = current?.variants?.combinations.map((combo) => combo.key)
+      const grows = currentKeys === undefined || largestReceiptBytes(variantKeysNow) > largestReceiptBytes(currentKeys)
+      const retainedError = grows ? await retainedKitFitError(editingItemId, user.identityId, variantKeysNow) : null
       setIsSubmitting(false)
       if (retainedError) {
         setError(retainedError)
