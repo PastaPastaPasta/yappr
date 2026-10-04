@@ -175,12 +175,14 @@ tags:
       - assertNotVisible:
           id: network-sheet-diagnostics
       - takeScreenshot: network-sheet
-      # A swipe down on the sheet itself closes it: anchored to the status line, so it
-      # holds on any screen size or orientation (a scrim tap would need a coordinate).
+      # A swipe down on the sheet itself closes it. Not anchored to an element: Maestro
+      # ends an element swipe DOWN at 90% of the screen height, and this short sheet's
+      # rows all sit below ~80%, so that swipe is ~100 px (or even upwards) and the
+      # sheet springs back. From 84% (inside the sheet on phones of either platform)
+      # to the bottom edge drags it most of its height.
       - swipe:
-          from:
-            id: network-sheet-status
-          direction: DOWN
+          start: 50%, 84%
+          end: 50%, 99%
       - waitForAnimationToEnd
       - assertNotVisible:
           id: network-sheet-status
