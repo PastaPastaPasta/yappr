@@ -469,11 +469,12 @@ All fire `selectionAsync()` on change. a11y: tabs role `tab` with selected state
 
 - Editor: borderless multi-line input, `body.large`, placeholder per mode, grows with content. Leading avatar `sm` per item; thread items are joined by a 2 pt `border` line between avatars (web thread line).
 - Inline highlighting: mentions, hashtags and links in `link` color; over-limit text gets `error.bg` background from the first over-limit grapheme.
-- Footer row per item (above the keyboard for the active item): counter right-aligned; on dev the byte-overflow line under the editor in `error` `caption`.
-- Editors grow rather than scroll themselves, so compose scrolls for them: when text is added at an item's end (typing, a paste) or the item goes over a limit, its end, with the byte-overflow line, is scrolled above the keyboard.
+- Footer row per item (above the keyboard for the active item): counter right-aligned; over a limit, "Your post is too long." under the editor in `error` `caption`.
+- Editors grow rather than scroll themselves, so compose scrolls for them: when text is added at an item's end (typing, a paste) or the item goes over a limit, its end, with the too-long line, is scrolled above the keyboard.
 - **Limits and counting:** the limits come from `engine.info()` capabilities (`contentLimits`); the UI counts locally on each keystroke with the rules of `lib/compose/limits.ts` (code points, UTF-8 bytes, default-ignorable characters), without importing it at runtime (PRD COMP-02).
-- **Counter:** "{current} / {limit}" with tabular figures, `caption`; `text.secondary`, `warning` at ≤ 50 left, `error` when over. The "/" is `text.decorative`. a11y label "{current} of {limit} characters" (+ ", {N} over limit", or ", {N} bytes over the size limit" when only the bytes are over), not live.
-- **Keyboard accessory bar** (sticks above the keyboard): "Add to thread" (`PlusCircleIcon` + label, `link`; hidden in reply and quote modes and at 10 items), then the counter of the active item.
+- **Counter:** the characters left, with tabular figures, `caption`: the room left under both limits, counted in the characters a plain letter fills (one code point, one UTF-8 byte), so emoji and non-Latin text use up more of it. It reaches 0 exactly at the longest post the contract takes and goes negative past it ("-3"). `text.secondary`, `warning` at ≤ 50 left, `error` below 0. a11y label "{n} characters left" / "Too long by {n}", not live. It never mentions bytes.
+- **Keyboard accessory bar** (sticks above the keyboard): "Add to thread" (`PlusCircleIcon` + label, `link`; hidden in reply and quote modes and at 10 items), the image-link toggle (`LinkIcon`, a11y "Add image link" / "Remove image link"), then the counter of the active item.
+- **Image link:** the toggle opens one URL field under the editors, placeholder "Paste an image link", with a preview once typing pauses. Web (https) and IPFS links are both taken; the field never names URL schemes. Errors: "That doesn't look like an image link." / "That link is too long." (over the contracts' 512 characters).
 - **Mention suggestions:** a list docked above the accessory bar, max 4 visible rows (`md` avatars, name, handle), `bg.elevated`, `shadow-lg`, `radius.lg` top corners.
 
 ### 2.13 Sheets and dialogs
@@ -970,11 +971,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │                                 │
 │ ┌ quoted post embed ──────────┐ │  quote mode only
 │ └─────────────────────────────┘ │
-│ ⚠ 12 bytes over the size limit. │  dev byte line (error)
-│   Emoji and non-Latin text      │
-│   count extra.                  │
+│ Your post is too long.          │  over a limit (error)
 ├─────────────────────────────────┤
-│ ⊕ Add to thread        482/500 │  keyboard accessory bar
+│ ⊕ Add to thread   🔗         18 │  accessory bar: characters left
 ├─────────────────────────────────┤
 │           keyboard              │
 └─────────────────────────────────┘
@@ -983,7 +982,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **NSFW toggle:** a chip in the header: off = outline `border.strong`, `text.secondary` "NSFW"; on = amber-500 fill, black text. a11y "Mark this post as NSFW", switch role.
 - **Post button:** disabled per COMP-01 / COMP-02 / COMP-11; offline it stays disabled and the accessory bar shows "You're offline" instead of "Add to thread".
 - **Close:** "Cancel" (iOS) / × (Android). With content: action sheet "Save draft" / "Delete draft" (destructive) / "Cancel".
-- **Mention suggestions:** 2.12. **Hints:** first-mention and first-tag hints in `caption` `warning` under the active editor (dev).
+- **Mention suggestions:** 2.12. **Mentions (dev, only the first notifies):** with 2 or more different @mentions, a muted caption under the editor, "Only @{first} will be notified." Nothing about tags: a tag longer than the contract indexes is simply not highlighted as a link.
 - **Posting:** the sheet closes at once (PRD PD-3); the optimistic card appears in the list behind it.
 - **Platform:** iOS `fullScreenModal` with the keyboard up on open; Android full-screen dialog, `adjustResize`, IME action = newline.
 
@@ -1033,15 +1032,12 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ├─────────────────────────────────┤
 │▓▓▓▓▓▓ banner preview ▓▓▓▓▓▓▓▓▓▓│  tap → "Banner image link" field focus
 │ (88)  Change avatar             │  link → avatar sheet
-│ ── DashPay profile ──────────── │  dev only: section header + note
-│ This also updates your DashPay  │  caption secondary
-│ profile, which other Dash apps  │
-│ show.                           │
 │ Name                     12/25  │
 │ [ Bob Builder               ]   │
 │ Bio                     40/140  │
 │ [ Builder of things.        ]   │
-│ ── Yappr profile ────────────── │  dev only
+│ Your name and bio also show in  │  dev only: caption secondary
+│ other Dash apps, like DashPay.  │
 │ Pronouns  [ he/him          ]   │
 │ Location  [ Lisbon          ]   │
 │ Website   [ https://bob.dev ]   │
@@ -1052,8 +1048,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 └─────────────────────────────────┘
 ```
 
-- v2 shows one ungrouped list: Name (required, 50), Bio (160), Pronouns, Location, Website (200), Banner image link, NSFW.
-- **Save:** disabled until changed and valid; shows a spinner and "Saving…" in the navigation bar title position; on dev, a save that writes both documents counts them: "Saving… (1 of 2)", then "Saving… (2 of 2)".
+- One list on every contract, whichever documents hold the fields: Name, Bio, Pronouns, Location, Website, Banner image link, NSFW. v2: Name (required, 50), Bio (160). Dev: Name (25), Bio (140), with the footnote under Bio.
+- **Save:** disabled until changed and valid; shows a spinner and "Saving…" in the navigation bar title position, however many documents the save writes. If a dev save writes the DashPay profile and then fails on the Yappr profile, the toast names what did not save: "Couldn't save pronouns, location and website. Try again." (copy 5.6 `toast.profilePartial`).
 - **Avatar sheet** (bottom sheet, large detent): segmented "Generated / Image link". Generated: a 4-column grid of 28 style tiles (64 avatars with labels), selected tile has a 2 pt `accent` ring; under it "Seed" field + "Randomize" (`secondary sm`). Image link: URL field + 88 preview + error line. "Use this avatar" (primary block) at the bottom.
 
 ### 4.14 Followers and following
@@ -1133,12 +1129,11 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ ↻ (40) Dan reposted your post  │
 │ 👤 (40) Eve started following   │
 │        you                      │
-│ Older replies and quotes may    │  dev footer (NOTIF-07)
-│ not appear here.                │
 └─────────────────────────────────┘
 ```
 
-- **Row:** type icon 20 (decorative colors 1.2) in a 40 column, then avatar `md` (or stacked `xs` avatars for grouped likes), the sentence ("**Alice** liked your post", name `body.strong`, phrase `body`), the snippet (`subhead`, `text.secondary`, 2 lines, quoted), time (`caption`, `text.secondary`).
+- **Row:** type icon 20 (decorative colors 1.2) in a 40 column, then avatar `md` (or stacked `xs` avatars for grouped likes), the sentence ("**Alice** liked your post", name `body.strong`, phrase `body`), the snippet (`subhead`, `text.secondary`, 2 lines, quoted), time (`caption`, `text.secondary`). Likes that keep no time of their own (dev, v11) show no time at all, never when this device saw them.
+- **End of the list:** nothing; the list just ends.
 - **Tap:** opens the target and marks read. Swipe actions: none in 1.0.
 - **Signed out:** empty state "Sign in to see your notifications" + "Sign in".
 
@@ -1156,13 +1151,14 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │      You: see you there         │  unread dot
 │ (40) Builders (group)      1h   │
 │      Bob: shipped it            │
-│ Show 2 deleted conversations    │  footer link (v5)
+│ Archived (2)                    │  footer link (v5); "Hide archived"
 └─────────────────────────────────┘
 ```
 
 - **Unread rows:** name and preview in `text.primary` weight 600; read rows' preview `text.secondary`.
-- **Swipe (iOS) / long-press menu (Android):** "Delete conversation" (v5).
-- **Locked (no encryption key):** the whole tab shows the unlock empty state (copy 5.8) with "Enter encryption key" opening the unlock sheet (4.38).
+- **Swipe (iOS) / long-press menu (Android):** "Archive" / "Archive conversation" (v5), with no confirmation: the row leaves the list at once with the toast "Conversation archived" and "Undo" (6 s). It is saved once Undo has passed or the app leaves the foreground; a new message brings it back.
+- **Archived:** behind the footer link "Archived ({N})" / "Hide archived". Everything archived: the empty state "No conversations yet" with the footer link under it.
+- **Locked (no encryption key):** the whole tab shows the unlock empty state (copy 5.8) with "Unlock messages" opening the unlock sheet (4.38).
 - **Order:** last activity, newest first. A group with no message yet is placed by when this device joined it (or created it); a 1:1 just opened to write is on top; nothing without a time goes above active conversations.
 - **Loading:** until the engine has loaded the saved conversations, the conversation skeleton (2.15), with "Connecting to Dash Platform…" under it while the engine boots (4.34). If that first load fails: the inline error state (2.16) with the categorized message and "Try again", which checks again at once (as pull to refresh does). Neither shows the welcome or the "Couldn't check for new messages" notice; the notice is only for a list already on screen.
 - **Empty:** welcome empty state with "New message", only once the conversations have loaded and there are none.
@@ -1190,7 +1186,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 └─────────────────────────────────┘
 ```
 
-- **Header "⋯":** 1:1: "Block" / "Unblock", "Delete conversation" (v5). Group: "Group info".
+- **Header "⋯":** 1:1: "Block" / "Unblock", "Archive conversation" (v5). Group: "Group info", "Archive conversation" (v5). Archiving goes back to the inbox, where the toast offers Undo.
+- **Group key missing (member):** the composer banner reads "Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you."; the inbox preview "Waiting for access…".
 - **Composer:** text area growing to 5 lines; send disabled when empty; replaced by the state banners of DM-08 / DM-10 (`bg.muted`, centered `subhead`).
 - **Keyboard:** the list stays pinned to the newest message when the keyboard opens (inverted list). Long-pressing a bubble closes the keyboard before the Copy sheet opens (Android draws the keyboard over sheets).
 - **Pinned to the newest:** while the user reads at the end, the list stays at the newest message whenever messages arrive or history loads above (a thread opened after a cold launch fills in its history after it opens); nothing moves the list while the user's own scroll is under way (finger down, or a fling still moving), and once it comes to rest away from the end nothing moves it until they are back at the end.
@@ -1200,6 +1197,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Routes** `/messages/new`, `/messages/new-group` (modals) · **Stories** DM-05, DM-06.
 - **New message:** title "New message", description line "Choose a person to start an encrypted conversation.", search field "Search by username...", hint line, then "Your followers" section of user rows (no follow buttons). Tapping a row opens the conversation and closes the modal.
+- **Creating:** the form locks with a spinner on "Create group" and the caption "Creating group…". Confirmed: the new group opens. An unknown outcome (a timeout, an engine restart) goes to the inbox, read again, which shows the group once it is there; the form never offers a second creation, and the engine refuses one while the first still runs.
+- **Keys the creation missed:** the owner's app sends them again by itself, with no toast: on group open, on app foreground and after each backoff (30 s, then 2 min), at most 3 times per member, never while a resend for that member still runs (its `dm.group` deadline is 5 minutes). Only once the attempts are used up: "1 member hasn't been added yet." / "{n} members haven't been added yet." with "Retry".
 - **New group:** title "New group", description "Name the group and pick its members.", "Group name" field (counter at 80+/100), selected members as chips (avatar `xs` + name + ×), the same search and followers list with checkmarks, and "Create group" (primary, in the navigation bar on iOS, a full-width bottom button on Android that stays above the keyboard while the search field has focus), disabled until a name and at least one member.
 
 ### 4.22 Group info
@@ -1213,24 +1212,27 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │          Builders               │  title; "Rename" link under it (owner)
 │ 5 members                       │  section header
 │ (40) Bob (you)          Owner   │
-│ (40) Alice                  ⋯   │  owner: ⋯ → Remove member
+│ (40) Alice                  ⋯   │  owner: ⋯ → Re-invite / Remove member
 │ ⊕ Add members                   │  owner
 │ New members can read messages   │  caption
 │ sent after they join.           │
-│ Resend keys                     │  owner, link row
 │ End group                       │  owner, destructive row
 │ Leave group                     │  member, destructive row
 └─────────────────────────────────┘
 ```
 
 - **Ended or left:** the actions are replaced by the state text.
+- **Re-invite** (owner's member menu): the fallback when the app's own key resends could not reach a member; toast "Invite sent".
+- **Leave:** after the confirm, the inbox at once, without the group; it comes back only if the leave fails.
+- **Legacy (testnet):** no groups; a link here goes to the inbox.
 - Confirmations use the confirm dialog (2.13) with copy 5.8.
 
 ### 4.23 Message settings
 
 - **Route** `/messages/settings` · **Story** DM-12.
-- Section "Reclaim message fees": radio rows "Never (keep paying for storage)", "After 30 days", "After 90 days", "After 1 year"; the explanation paragraph below (copy 5.8).
-- Section "Blocked": rows with "Unblock"; empty text.
+- Section "Delete old sent messages": radio rows "Never", "After 30 days", "After 90 days", "After 1 year"; the footer below (copy 5.8 `dm.retention.footer`), which keeps the privacy caveat. Never called "disappearing messages".
+- Section "Blocked": rows with "Unblock"; empty: "No blocked accounts" with the caption "Messages and group invites from people you block are ignored."
+- **Legacy (testnet):** nothing to set; a link here goes to the inbox.
 
 ### 4.24 Bookmarks
 
@@ -1410,7 +1412,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ### 4.38 Unlock messages sheet
 
-- Bottom sheet (large detent). First "Recovering Key…" with a spinner and "Attempting to automatically recover your encryption key…"; then either "Key Recovered!" / "Your encryption key was automatically recovered." (auto-closes after 1 s) or the manual form: secure field (placeholder "WIF (cXyz...) or hex (64 chars)"), error line, "Save key" (primary block). Toast "Encryption key saved".
+- Bottom sheet (large detent). First "Unlocking your messages…" with a spinner (the automatic recovery). On success the sheet closes onto the inbox with the toast "Messages unlocked", with no "recovered" step. If recovery can't work, the manual form: title "Unlock your messages", body `dm.unlock.body`, one secure field (placeholder "Paste your encryption key"), error line, "Unlock" (primary block); success is the same "Messages unlocked". The key's formats are named only in the error for text that is not a key (`dm.unlock.invalid`); a key that is one but not this account's reads `dm.unlock.mismatch`. Sentence case, no "!".
 
 ### 4.39 Report sheet and block sheet
 
@@ -1502,6 +1504,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | signin.reauth | Sign in again as @{name} with its wallet or key. |
 | signInPrompt.reauthBody | Sign in again to keep posting as @{name}. You can keep browsing in the meantime. |
 | accounts.signingInAs | Signing in as @{name}… **(AUTH-14: the one full-screen progress label of signing in again, both while the app parks the current account before the sign-in flow and while it reloads the account just signed in, to load its other keys)** |
+| signin.alreadySignedIn | You're signed in as @{current}. Add @{x} as another account? / (without @{x}) Add this account too? / (without @{current}) Another account is signed in. … (the engine refused a sign-in beside the active account; on the key screen with the action "Add account") |
 | signin.walletKeyDisabled | This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key. **(AUTH-14: the "Sign-in failed" message. A disabled key can't be re-enabled, so never "Reconnect wallet")** |
 
 ### 5.2 Home
@@ -1547,7 +1550,7 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | stub.blockedReply | Reply from an account you blocked |
 | stub.blockedPost | Post from an account you blocked |
 | private.title | Private post |
-| private.body | Only {name}'s private followers can read this. Private feeds aren't in the app yet. |
+| private.body | Only approved followers can see this. (with "Open on yap.pr") |
 | private.open | Open on yap.pr |
 | poll.votes | {N} votes |
 | poll.endsIn / ended / noEnd | Ends in {time} / Ended / No end date |
@@ -1575,11 +1578,12 @@ Sentence case everywhere except the network chip, and "Sign in", never "Log in".
 | compose.remove | Remove this post **(web)** |
 | compose.nsfw | NSFW |
 | compose.nsfwLabel | Mark this post as NSFW **(web)** |
-| compose.counterLabel | {current} of {limit} characters / , {N} over limit **(web)** / , {N} bytes over the size limit (only the bytes over) |
-| compose.bytesOver | {N} bytes over the size limit. Emoji and non-Latin text count extra. **(web)** |
-| compose.tagTooLong | Tags can be up to {N} characters |
-| compose.firstMention | Only the first @mention notifies the person. |
-| compose.firstTag | Only the first #tag puts this post on a tag page. |
+| compose.counter | {n} (the characters left; negative past the limit) |
+| compose.counterLabel | {n} characters left / 1 character left / Too long by {n} |
+| compose.tooLong | Your post is too long. |
+| compose.mentionNote | Only @{first} will be notified. (dev, with 2 or more different mentions; muted) |
+| compose.imageLink | Add image link / Remove image link (toggle a11y) / Paste an image link (placeholder) / Image link (field a11y) |
+| compose.imageLink.invalid / tooLong | That doesn't look like an image link. / That link is too long. |
 | compose.offline | You're offline |
 | compose.close.save / delete / cancel | Save draft / Delete draft / Cancel |
 | status.posting | Posting… |
@@ -1695,14 +1699,13 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | profile.aka | Also known as {names} |
 | profile.joined | Joined {Month YYYY} |
 | edit.title | Edit profile |
-| edit.dashpayHeader / note | DashPay profile / This also updates your DashPay profile, which other Dash apps show. |
-| edit.yapprHeader | Yappr profile |
+| edit.dashpayNote | Your name and bio also show in other Dash apps, like DashPay. (dev, under Bio) |
 | edit.fields | Name / Bio / Pronouns / Location / Website / Banner image link **(web: Name, Pronouns, Location, Website)** |
 | edit.nsfw | NSFW Content / Mark your profile as containing adult content **(web)** |
-| edit.saving | Saving… / Saving… ({n} of 2) (dev, while a save writes both the DashPay and the Yappr profile) |
+| edit.saving | Saving… |
 | toast.profileUpdated | Profile updated! **(web)** |
 | toast.profileFailed | Couldn't save your profile. Try again. (§5.4.1) |
-| toast.profilePartial | Your DashPay profile was saved, but your Yappr profile wasn't. Try again. |
+| toast.profilePartial | Couldn't save {fields}. Try again. ({fields}: what the second document held, "pronouns, location and website"; "banner", "NSFW setting") / Couldn't save all of your changes. Try again. (only an avatar) |
 | edit.discard | Discard changes? / Discard / Keep editing |
 | avatar.change | Change avatar |
 | avatar.modes | Generated / Image link |
@@ -1752,7 +1755,6 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | notif.filters | All / Likes / Reposts / Replies / Follows / Mentions **(web)** |
 | notif.phrase | started following you / mentioned you in a post / liked your post / reposted your post / quoted your post / replied to your post **(web)** |
 | notif.grouped | {name} and {N} others liked your post |
-| notif.noticed | Noticed {time} |
 | notif.nsfw | NSFW content **(web)** |
 | notif.loading | Loading notifications… **(web)** |
 | notif.empty.all | When someone interacts with you, you'll see it here **(web)** |
@@ -1761,7 +1763,6 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | notif.empty.replies | When someone replies to your post, you'll see it here **(web)** |
 | notif.empty.follows | When someone follows you, you'll see it here **(web)** |
 | notif.empty.mentions | When someone mentions you, you'll see it here **(web)** |
-| notif.windowed | Older replies and quotes may not appear here. |
 | notif.unknown | Unknown user |
 | dm.title | Messages **(web)** |
 | dm.search | Search messages **(web)** |
@@ -1774,12 +1775,13 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | dm.you | You: **(web)** |
 | dm.restoring | Restoring your messages **(web)** |
 | dm.restoring.steps | Finding conversations people started with you / Checking recent chats with people you follow / Finding your groups / Checking older chats with people you follow **(web)** |
-| dm.unlock | Unlock your messages / Messages are encrypted with your encryption key. Enter it on this device to read and send them. / Enter encryption key **(web)** |
-| dm.unlock.recovering | Recovering Key… / Attempting to automatically recover your encryption key… **(web)** |
-| dm.unlock.recovered | Key Recovered! / Your encryption key was automatically recovered. **(web)** |
-| dm.unlock.placeholder | WIF (cXyz...) or hex (64 chars) **(web)** |
-| dm.unlock.saved | Encryption key saved **(web)** |
-| dm.unlock.invalid | Invalid key **(web)** |
+| dm.locked | Unlock your messages / Your messages are encrypted. Unlock them to read and send them on this device. / Unlock messages |
+| dm.unlock.recovering | Unlocking your messages… |
+| dm.unlock | Unlock your messages / Your messages are encrypted. Paste your encryption key to read and send them on this device. / Unlock |
+| dm.unlock.placeholder | Paste your encryption key |
+| dm.unlock.done | Messages unlocked |
+| dm.unlock.invalid | That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr. |
+| dm.unlock.mismatch | That key doesn't match this account. |
 | dm.thread.empty | No messages yet. Start the conversation! **(web)** |
 | dm.composer | Type a message... **(web)** |
 | dm.send | Send message **(web)** |
@@ -1798,27 +1800,30 @@ A like, repost, bookmark or reply on a post this device just made and has not se
 | dm.group.create | Create group **(web)** |
 | dm.group.max | A group can have at most 100 members. **(web)** |
 | dm.group.createFailed | Could not create the group **(web)** |
+| dm.group.creating | Creating group… |
+| dm.group.keysFailed | 1 member hasn't been added yet. / {n} members haven't been added yet. (action: Retry; only once the app's own resends are used up) |
 | dm.group.info | Group info |
 | dm.group.owner | Owner **(web)** |
 | dm.group.rename / renamed | Rename / Group renamed **(web)** |
 | dm.group.add | Add members |
 | dm.group.addNote | New members can read messages sent after they join. **(web)** |
-| dm.group.remove | Remove member? / Remove / Member removed **(web)** |
-| dm.group.resend | Resend keys / Keys sent **(web)** |
+| dm.group.remove | Remove {name} from the group? / They won't see new messages. / Remove / Member removed |
+| dm.group.reinvite | Re-invite / Invite sent (owner's member menu) |
 | dm.group.end | End this group? / Nobody will be able to send messages to it any more. This cannot be undone. / End group / Group ended **(web)** |
-| dm.group.leave | Leave this group? / The owner removes you the next time they open the app. Until then you can still read new messages. / Leave / You left the group **(web)** |
+| dm.group.leave | Leave group? / You'll stop getting messages from this group. / Leave / You left the group |
 | dm.state.ended | This group has ended. **(web)** |
 | dm.state.left | You are no longer a member of this group. **(web)** |
-| dm.state.noKeys | You cannot read this group yet. Ask the owner to resend your keys: they can do it from the group settings. **(web)** |
+| dm.state.noKeys | Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you. (composer banner) / Waiting for access… (inbox preview) |
 | dm.state.blocked | You blocked this person. Unblock them to send messages. **(web)** |
-| dm.delete | Delete conversation **(web)** |
-| toast.dmDeleted | Conversation deleted. It comes back if a new message arrives. **(web)** |
-| dm.deleted.show / hide | Show {N} deleted conversations / Hide deleted conversations **(web)** |
-| dm.retention | Reclaim message fees **(web)** |
-| dm.retention.options | Never (keep paying for storage) / After 30 days / After 90 days / After 1 year **(web)** (web lists the periods first and Never last; mobile lists Never first) |
-| dm.retention.body | Your sent messages stay on Dash Platform and you keep paying for their storage. Choose a period below to delete them once they are that old and get most of their storage fee back. This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have. **(web, shown while "Never" is selected)** |
-| dm.retention.bodyPeriod | Delete your sent messages from Dash Platform after {period} and get most of their storage fee back. This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have. **(web, shown while a period is selected)** |
-| dm.blocked.empty | Nobody. Blocked people's messages and group invitations are ignored. **(web)** |
+| dm.archive | Archive conversation (menus) / Archive (iOS swipe) |
+| toast.dmArchived | Conversation archived (action: Undo) |
+| toast.dmArchiveFailed | Couldn't archive the conversation. Try again. |
+| dm.archived.show / hide | Archived ({N}) / Hide archived |
+| dm.list.allArchived | No conversations yet |
+| dm.retention | Delete old sent messages (never "disappearing messages") |
+| dm.retention.options | Never / After 30 days / After 90 days / After 1 year |
+| dm.retention.footer | Deleting old sent messages refunds most of their storage fee. It doesn't make them private: people you messaged keep their copies, and Dash Platform keeps a history. |
+| dm.blocked.empty | No blocked accounts / Messages and group invites from people you block are ignored. |
 
 ### 5.9 Safety
 
@@ -1955,6 +1960,7 @@ Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this 
 | Network | Network error. Please check your connection and try again. |
 | Session | Your session has expired. Please log in again. (mobile replaces "log in" with "sign in") |
 | Too long (bytes) | This is too long for the network once emoji and special characters are counted. Shorten it and try again. |
+| Not supported (`NOT_SUPPORTED`, a view these contracts lack) | This isn't available yet. (mobile; never names the contract or network) |
 | Nonce clash | Another write from your account went out at the same moment, so this one was not saved. Try again. |
 | Not seated | This isn't available yet. Try again later. (a report shows `report.notSeated` and the email path instead) |
 | Barred | Your account has been banned or suspended here by a moderator, so this action isn't allowed right now. |
@@ -2020,7 +2026,7 @@ Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this 
 
 - Every text pair in 1.2 passes WCAG AA (4.5:1, or 3:1 at 18 pt+ / 14 pt bold) in both themes, except the logged exception for white on `accent` fills **[OQ-2]**.
 - Non-text controls (icons, switch tracks, focus ring, input borders) are at least 3:1 against their background; `border.strong` is used for input borders for that reason.
-- Information is never color-only: active actions also switch to the solid icon; the counter adds ", over limit" in its label; unread rows also have the dot.
+- Information is never color-only: active actions also switch to the solid icon; the counter goes negative and its label says "Too long by {n}", with "Your post is too long." under the editor; unread rows also have the dot.
 
 ### 6.4 Hit targets
 
