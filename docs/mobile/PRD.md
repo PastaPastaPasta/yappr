@@ -667,7 +667,7 @@ As a user, I want my own profile to be my hub, so that I can reach my things.
 
 #### PROF-06 · Edit profile (v2) · P0 · v2 (`profileExtension` off)
 As a testnet user, I want to edit my profile, so that people know who I am.
-- "Edit profile" opens a modal form, one list: Name (required, 1–50), Bio (160), Pronouns (20), Location (50), Website (200), "NSFW Content / Mark your profile as containing adult content" toggle, Avatar (PROF-08), Banner image URL (512). While saving, the title reads "Saving…".
+- "Edit profile" opens a modal form, one list: Name (required, 1–50), Bio (160), Pronouns (20), Location (50), Website (200), "NSFW content / Mark your profile as containing adult content" toggle, Avatar (PROF-08), Banner image URL (512). While saving, the title reads "Saving…".
 - Each field shows a counter when within 20 of its limit. "Save" is disabled while invalid or unchanged.
 - Save writes the profile document, then closes with the toast "Profile updated!". The first save creates the profile (#605 behaviour; a failed read never counts as "no profile").
 - "Cancel" with changes asks "Discard changes?".

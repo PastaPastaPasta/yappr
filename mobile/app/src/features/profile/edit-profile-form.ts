@@ -86,7 +86,7 @@ export function validateForm(form: ProfileForm, limits: FormLimits): FormErrors 
   if (charCount(form.location.trim()) > FIXED_LIMITS.location) errors.location = `At most ${FIXED_LIMITS.location} characters`;
   if (charCount(form.website.trim()) > FIXED_LIMITS.website) errors.website = `At most ${FIXED_LIMITS.website} characters`;
   const banner = form.bannerUri.trim();
-  if (banner && !isMediaUrl(banner)) errors.bannerUri = 'Use an https:// or ipfs:// image link';
+  if (banner && !isMediaUrl(banner)) errors.bannerUri = "That doesn't look like an image link.";
   else if (banner.length > FIXED_LIMITS.banner) errors.bannerUri = `At most ${FIXED_LIMITS.banner} characters`;
   return errors;
 }

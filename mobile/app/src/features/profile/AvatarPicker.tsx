@@ -194,7 +194,7 @@ export function AvatarPicker({ open, identityId, value, avatarStyles, onClose, o
                 label="Image link"
                 value={link}
                 onChangeText={setLink}
-                placeholder="https://… or ipfs://…"
+                placeholder="Paste an image link"
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"

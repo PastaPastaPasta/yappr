@@ -105,7 +105,8 @@ describe('edit-profile-form', () => {
     // v2 requires a name; a blank DashPay name keeps the stored one.
     expect(validateForm({ ...form, displayName: ' ' }, V2_LIMITS).displayName).toBe('Name is required');
     expect(validateForm({ ...form, displayName: ' ' }, DEV_LIMITS)).toEqual({});
-    expect(validateForm({ ...form, bannerUri: 'http://x/y.png' }, DEV_LIMITS).bannerUri).toBeDefined();
+    // Compose's copy: no URL schemes named.
+    expect(validateForm({ ...form, bannerUri: 'http://x/y.png' }, DEV_LIMITS).bannerUri).toBe("That doesn't look like an image link.");
     expect(validateForm({ ...form, bannerUri: 'ipfs://bafy' }, DEV_LIMITS)).toEqual({});
     // Code points, not UTF-16 units: 25 emoji fit a 25-character name.
     expect(validateForm({ ...form, displayName: '😀'.repeat(25) }, DEV_LIMITS)).toEqual({});
