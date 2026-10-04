@@ -19,7 +19,9 @@ import type {
  * proves that attempt sent nothing (`stagedSends`). A write whose lib call
  * goes a minute without a word (a DAPI stall: the fetch never settles) reads
  * `unconfirmed` (`STILL_SENDING`) while the call runs on; its answer still
- * settles the ticket. Nothing is ever re-sent on its own.
+ * settles the ticket. Nothing that may have landed is ever re-sent on its
+ * own: only a refusal Platform gave for a passing reason (`AUTO_RETRY_CODES`)
+ * is sent again, a few times, while the ticket stays `pending`.
  */
 
 /** Engine kv key (write-through to the host's MMKV). */
@@ -34,6 +36,21 @@ const CONFIRMED_LISTED_MS = 10 * 60 * 1000
  * yet" after 60 s). Default for every handler (`WriteHandler.deadlineMs`).
  */
 export const PENDING_DEADLINE_MS = 60_000
+
+/**
+ * Refusals that say nothing about the write itself, only about the moment
+ * (PRD G-4, UX_SPEC §5.4): a parent too young to reference, a fee multiplier
+ * or moderator share that moved. Platform refused them, so they never
+ * executed and sending again cannot duplicate anything. The ticket stays
+ * `pending` and is sent again after each of `AUTO_RETRY_DELAYS_MS`; only the
+ * last refusal is reported. A nonce refusal (`NONCE_CONFLICT`) is not one: it
+ * may be this very transition executing, so it stays `unconfirmed` for a
+ * check, and lib's pending-nonce refusal (`PENDING_WRITE`) is not either: it
+ * holds for minutes, so re-sending would only loop.
+ */
+export const AUTO_RETRY_CODES: ReadonlySet<EngineErrorData['code']> = new Set(['PARENT_TOO_YOUNG', 'FEE_SHARE_MISMATCH', 'FEE_CHANGED'])
+/** The backoff before each silent re-send: three at most. */
+export const AUTO_RETRY_DELAYS_MS: readonly number[] = [2_000, 5_000, 15_000]
 
 /** What a write's lib call came to. Thrown errors are classified instead. */
 export type WriteResult =
@@ -139,6 +156,8 @@ interface TicketRecord {
   deadline?: ReturnType<typeof setTimeout>
   /** The last stage the latest attempt reported, kept past its deadline (which clears the ticket's). */
   stage?: WriteStage | null
+  /** Silent re-sends after a passing refusal (`AUTO_RETRY_CODES`) since the write was last started by the host. */
+  autoRetries?: number
 }
 
 /** The persisted form: dates as epoch ms. */
@@ -172,14 +191,21 @@ export interface TicketStoreOptions {
   absenceRecheckMs?: number
   /** `PENDING_DEADLINE_MS` unless a test says otherwise. */
   pendingDeadlineMs?: number
+  /** `AUTO_RETRY_DELAYS_MS` unless a test says otherwise (`[]` turns silent re-sends off). */
+  autoRetryDelaysMs?: readonly number[]
 }
 
+/**
+ * The ticket store's own errors. Their `userMessage` is for diagnostics: the
+ * host words every one of them itself (the write's own failure sentence, or
+ * nothing while it checks), so none is ever shown.
+ */
 export const RESTARTED_ERROR: EngineErrorData = {
   code: 'ENGINE_RESTARTED',
   consensusCode: null,
   outcome: 'unknown',
   retryable: false,
-  userMessage: 'The app closed before this was confirmed. Check again to see whether it went through.',
+  userMessage: 'An engine restart cut this write short before it was confirmed: checking whether it landed.',
 }
 
 /** A restart cut the write short before it sent anything (`stagedSends`): it may simply be sent again. */
@@ -188,7 +214,7 @@ export const RESTARTED_UNSENT_ERROR: EngineErrorData = {
   consensusCode: null,
   outcome: 'not-sent',
   retryable: true,
-  userMessage: 'The app closed before this was sent. Nothing was posted. Try again.',
+  userMessage: 'An engine restart cut this write short before it sent anything.',
 }
 
 /**
@@ -201,7 +227,7 @@ export const STILL_SENDING_ERROR: EngineErrorData = {
   consensusCode: null,
   outcome: 'unknown',
   retryable: false,
-  userMessage: 'This is taking longer than usual. It may still go through: check again in a moment.',
+  userMessage: 'Still waiting for this write\'s answer.',
 }
 
 const NOT_FOUND_ERROR: EngineErrorData = {
@@ -209,7 +235,7 @@ const NOT_FOUND_ERROR: EngineErrorData = {
   consensusCode: null,
   outcome: 'not-recorded',
   retryable: true,
-  userMessage: 'This was not found on the network. Try again.',
+  userMessage: 'Checked: this write did not land.',
 }
 
 export type TicketStore = ReturnType<typeof createTicketStore>
@@ -222,6 +248,7 @@ export function createTicketStore(options: TicketStoreOptions) {
   const observers = new Set<(ticket: WriteTicket) => void>()
   const absenceRecheckMs = options.absenceRecheckMs ?? 2_000
   const pendingDeadlineMs = options.pendingDeadlineMs ?? PENDING_DEADLINE_MS
+  const autoRetryDelaysMs = options.autoRetryDelaysMs ?? AUTO_RETRY_DELAYS_MS
   let attempts = 0
 
   const clone = (ticket: WriteTicket): WriteTicket => structuredClone(ticket)
@@ -378,6 +405,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       state = ticketStateFor(classified)
       if (state === 'unconfirmed') data = { ...classified, outcome: 'unknown', retryable: false }
     }
+    if (state === 'failed' && data.retryable && resendLater(id, data, merged)) return
     const ticket = update(id, {
       state,
       stage: null,
@@ -386,6 +414,47 @@ export function createTicketStore(options: TicketStoreOptions) {
       documents: merged,
     })
     if (data.code === 'NO_KEY') options.onKeyRequired?.(ticket.identityId)
+  }
+
+  /**
+   * A passing refusal (`AUTO_RETRY_CODES`) with silent re-sends left: the
+   * ticket goes back to `pending` (queued) and is sent again after the next
+   * backoff, as `retry` would, without the host asking. Returns false when
+   * it is the host's to see (another code, no re-sends left, no arguments).
+   */
+  function resendLater(id: string, error: EngineErrorData, documents: TicketDocument[]): boolean {
+    const record = recordOf(id)
+    const handler = handlers.get(record.ticket.op)
+    const done = record.autoRetries ?? 0
+    if (!AUTO_RETRY_CODES.has(error.code) || done >= autoRetryDelaysMs.length || !handler || record.args === undefined) return false
+    // A part out but not seen confirmed (a thread's): only the host's Retry, after a check, decides about it.
+    if (documents.some(doc => doc.action === 'create' && !doc.confirmed)) return false
+    record.autoRetries = done + 1
+    // Refused, so nothing of this attempt is out: a restart during the wait finds it unsent.
+    record.unsent = true
+    update(id, {
+      state: 'pending',
+      stage: 'queued',
+      error: null,
+      retryable: false,
+      // As `retry`: confirmed documents (thread parts) stay, and a delete names the same document again.
+      documents,
+      progress: null,
+    })
+    const waiting = record.ticket
+    setTimeout(() => {
+      const current = records.get(id)
+      // Dismissed meanwhile, or no longer this wait's ticket.
+      if (!current || current.ticket !== waiting || current.running !== undefined) return
+      if (restartRequired || current.ticket.identityId !== options.currentIdentity()) {
+        // The account is changing: it is not this engine's to send. Reported as it was refused.
+        update(id, { state: 'failed', stage: null, error, retryable: error.retryable })
+        return
+      }
+      current.unsent = handler.stagedSends === true
+      start(id, handler, current.args)
+    }, autoRetryDelaysMs[done])
+    return true
   }
 
   /**
@@ -677,6 +746,7 @@ export function createTicketStore(options: TicketStoreOptions) {
       const documents = ticket.documents.filter(doc => doc.confirmed || doc.action === 'delete')
       recordOf(id).unsent = handler.stagedSends === true
       // The earlier attempt's progress ("2 of 2") says nothing about this one, which may write less.
+      recordOf(id).autoRetries = 0
       const restarted = update(id, { state: 'pending', stage: 'queued', error: null, retryable: false, documents, progress: null })
       start(id, handler, args)
       return restarted

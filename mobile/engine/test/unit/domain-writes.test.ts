@@ -110,6 +110,7 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => {
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
 const { createTicketStore } = await import('../../src/writes/tickets')
+const { PARENT_WAIT_ROUNDS } = await import('../../src/writes/handler-kit')
 const { createEngageWrites } = await import('../../src/api/engage')
 const { createGraphWrites } = await import('../../src/api/graph')
 const { createPostWrites } = await import('../../src/api/posts')
@@ -142,9 +143,10 @@ function storage() {
   return { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } }
 }
 
-function engine() {
+function engine({ autoRetryDelaysMs = [] as readonly number[] } = {}) {
+  // Silent re-sends of a passing refusal are off unless a test turns them on (`AUTO_RETRY_CODES`).
   const tickets = createTicketStore({
-    storage: storage(), emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0,
+    storage: storage(), emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0, autoRetryDelaysMs,
   })
   return {
     tickets,
@@ -207,12 +209,26 @@ describe('engage writes', () => {
     expect(await settled(tickets, refused.id)).toMatchObject({ state: 'confirmed' })
   })
 
+  it('queues a write on a post still on its way: it waits for it, then sends (UX_SPEC §5.4)', async () => {
+    const { outcome, engage } = engine()
+    m.unconfirmed.add(TARGET.id)
+    m.settle.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true)
+    m.likeService.likePost.mockResolvedValue(true)
+    const ticket = await outcome(engage.like(TARGET))
+    expect(ticket).toMatchObject({ state: 'confirmed' })
+    expect(m.settle).toHaveBeenCalledTimes(3)
+    // Each round of the wait is a word from the run, so the ticket stays pending past the deadline.
+    expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'waiting-parent', 'waiting-parent', 'signing', null])
+  })
+
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
     const { outcome, engage } = engine()
     m.unconfirmed.add(TARGET.id)
     m.settle.mockResolvedValue(false)
     const ticket = await outcome(engage.bookmark(TARGET))
     expect(ticket).toMatchObject({ state: 'failed', error: { code: 'PARENT_UNCONFIRMED', outcome: 'local' } })
+    expect(m.settle).toHaveBeenCalledTimes(PARENT_WAIT_ROUNDS)
+    expect(ticket.error?.userMessage).not.toMatch(/try again in a moment/i)
     expect(m.bookmarkService.bookmarkPost).not.toHaveBeenCalled()
   })
 
@@ -592,6 +608,35 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.objectContaining({ rootPostId: id('post0') }), expect.anything())
   })
 
+  it('re-sends a passing refusal silently, resuming past the parts that landed (UX_SPEC §5.4)', async () => {
+    const { tickets, outcome, posts } = engine({ autoRetryDelaysMs: [0, 0, 0] })
+    creating(1, FEE_CHANGED)
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'one' }, { text: 'two' }] }))
+    // The refusal never reached the host: the ticket went back to pending and the re-send landed.
+    expect(ticket).toMatchObject({ state: 'confirmed', error: null, documents: [{ part: 0 }, { part: 1, type: 'reply' }] })
+    expect(emitted.some(e => e.event === 'write.status' && (e.payload as WriteTicket).id === ticket.id && (e.payload as WriteTicket).state === 'failed')).toBe(false)
+    // Part one once; part two refused, then sent again under a fresh nonce.
+    expect(m.postService.createPost).toHaveBeenCalledTimes(1)
+    expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('reports a passing refusal once its silent re-sends ran out, and never re-sends anything else', async () => {
+    const { tickets, outcome, posts } = engine({ autoRetryDelaysMs: [0, 0] })
+    m.postService.createPost.mockRejectedValue(new Error(FEE_CHANGED))
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'one' }] }))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' } })
+    // The first send and two re-sends.
+    expect(m.postService.createPost).toHaveBeenCalledTimes(3)
+
+    // A refusal that may be this very write executing (a nonce refusal) is not re-sent: it is for a check.
+    m.postService.createPost.mockReset().mockRejectedValue(new Error('Invalid identity nonce: nonce already present'))
+    const nonce = await outcome(posts.publish({ parts: [{ text: 'two' }] }))
+    expect(nonce).toMatchObject({ state: 'unconfirmed', error: { code: 'NONCE_CONFLICT' } })
+    expect(m.postService.createPost).toHaveBeenCalledTimes(1)
+    await expect(tickets.retry(nonce.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+  })
+
   it('keeps the image on the first part: a resume past it carries none', async () => {
     const { tickets, outcome, posts } = engine()
     creating(1, FEE_CHANGED)
@@ -602,6 +647,14 @@ describe('posts.publish and posts.delete', () => {
     await tickets.retry(ticket.id)
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+
+    // A silent re-send, the same.
+    const silent = engine({ autoRetryDelaysMs: [0] })
+    creating(1, FEE_CHANGED)
+    m.replyService.createReply.mockClear()
+    expect(await silent.outcome(silent.posts.publish(draft))).toMatchObject({ state: 'confirmed' })
+    expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
+    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
 
     // The host's own resume, the same.
     creating()
@@ -791,6 +844,25 @@ describe('posts.publish and posts.delete', () => {
     m.documentExists.mockResolvedValue(false)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
     expect(m.documentExists).toHaveBeenCalledTimes(2)
+  })
+
+  it('queues a reply to a post of this session still on its way, as engage writes do', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id))
+    m.unconfirmed.add(TARGET.id)
+    m.settle.mockResolvedValueOnce(false).mockResolvedValue(true)
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'hi' }], replyTo: TARGET }))
+    expect(ticket).toMatchObject({ state: 'confirmed' })
+    expect(m.settle).toHaveBeenCalledWith(TARGET.id)
+    expect(m.replyService.createReply).toHaveBeenCalledTimes(1)
+
+    // One that never shows: refused before anything is sent.
+    m.settle.mockReset().mockResolvedValue(false)
+    m.replyService.createReply.mockClear()
+    const never = await outcome(posts.publish({ parts: [{ text: 'hi again' }], replyTo: TARGET }))
+    expect(never).toMatchObject({ state: 'failed', error: { code: 'PARENT_UNCONFIRMED' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
   })
 
   it('replies to a loaded target, refuses a private one, and carries v10 media hashes', async () => {

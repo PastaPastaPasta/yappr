@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { NotSentError, PENDING_DEADLINE_MS, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, STILL_SENDING_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
+import { AUTO_RETRY_CODES, NotSentError, PENDING_DEADLINE_MS, RESTARTED_ERROR, RESTARTED_UNSENT_ERROR, STILL_SENDING_ERROR, WRITES_STORAGE_KEY, createTicketStore, type TicketStoreOptions, type WriteHandler, type WriteResult } from '../../src/writes/tickets'
 import type { TicketDocument, WriteTicket } from '../../src/writes/types'
 import { fromBoolean, fromTransitionResult } from '../../src/writes/lib-results'
 
@@ -805,5 +805,93 @@ describe('a write whose call never answers (PRD G-3; QA D-L2a-007, D-L4a-002)', 
     expect(store.get('t1')?.state).toBe('unconfirmed')
     await pass(60 * 60_000)
     expect(store.get('t2')?.state).toBe('pending')
+  })
+})
+
+describe('silent re-sends of a passing refusal (UX_SPEC §5.4)', () => {
+  /** Platform's refusal when the fee multiplier moved past the agreed tolerance (`FEE_CHANGED`). */
+  const FEE_MOVED = () => new Error('Document create of type post agreed to an action fee priced with a fee multiplier of 1000 permille and at most 10% more, but the fee multiplier is 1500 permille')
+
+  it('re-sends only passing refusals, never one that may have landed or one lib holds for minutes', () => {
+    expect([...AUTO_RETRY_CODES].sort()).toEqual(['FEE_CHANGED', 'FEE_SHARE_MISMATCH', 'PARENT_TOO_YOUNG'])
+  })
+
+  it('keeps the ticket pending while it sends again, and reports the last refusal once the re-sends ran out', async () => {
+    const { store, events } = setup({ autoRetryDelaysMs: [0, 0] })
+    const { handler, runs } = controlled()
+    store.register('like', handler)
+    store.submit({ op: 'like', args: { postId: 'P' } })
+    await settle()
+    runs[0].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    // Sent again, the host never told.
+    expect(runs).toHaveLength(2)
+    expect(store.get('t1')).toMatchObject({ state: 'pending' })
+    expect(events.some(e => e.state === 'failed')).toBe(false)
+    runs[1].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    runs[2].reject(FEE_MOVED())
+    await settle()
+    expect(runs).toHaveLength(3)
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' } })
+
+    // The host's own Retry starts the silent re-sends again.
+    await store.retry('t1')
+    await settle()
+    runs[3].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    expect(runs).toHaveLength(5)
+    runs[4].resolve({ state: 'confirmed' })
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('finds a write a restart caught in its wait unsent: failed and retryable, never "may have landed"', async () => {
+    const storage = memoryStorage()
+    // A wait the test never lets end.
+    const { store } = setup({ storage, autoRetryDelaysMs: [60 * 60_000] })
+    const { handler, runs } = controlled()
+    store.register('like', handler)
+    store.submit({ op: 'like', args: { postId: 'P' } })
+    await settle()
+    runs[0].reject(FEE_MOVED())
+    await settle()
+    expect(store.get('t1')).toMatchObject({ state: 'pending', stage: 'queued' })
+
+    const next = setup({ storage })
+    next.store.register('like', { ...handler, persistArgs: true })
+    expect(next.store.get('t1')).toMatchObject({ state: 'failed', error: RESTARTED_UNSENT_ERROR })
+  })
+
+  it('sends nothing for an account that is switching away during the wait: reported as refused', async () => {
+    let identity = 'alice'
+    const { store } = setup({ autoRetryDelaysMs: [0], currentIdentity: () => identity })
+    const { handler, runs } = controlled()
+    store.register('like', handler)
+    store.submit({ op: 'like', args: { postId: 'P' } })
+    await settle()
+    identity = 'bob'
+    runs[0].reject(FEE_MOVED())
+    await settle()
+    await settle()
+    expect(runs).toHaveLength(1)
+    identity = 'alice'
+    expect(store.get('t1')).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' } })
+  })
+
+  it('never re-sends a thread with a part out but not seen confirmed', async () => {
+    const { store } = setup({ autoRetryDelaysMs: [0] })
+    const { handler, runs } = controlled()
+    store.register('post.publish', handler)
+    store.submit({ op: 'post.publish', args: {} })
+    await settle()
+    runs[0].resolve({ state: 'failed', error: FEE_MOVED(), documents: [{ ...POST, part: 0 }] })
+    await settle()
+    await settle()
+    expect(runs).toHaveLength(1)
+    expect(store.get('t1')).toMatchObject({ state: 'failed', error: { code: 'FEE_CHANGED' } })
   })
 })
