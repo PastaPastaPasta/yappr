@@ -175,11 +175,13 @@ tags:
       - assertNotVisible:
           id: network-sheet-diagnostics
       - takeScreenshot: network-sheet
-      # A swipe down on the sheet itself closes it: anchored to the status line, so it
-      # holds on any screen size or orientation (a scrim tap would need a coordinate).
+      # A swipe down on the sheet itself closes it: anchored to the sheet's chip, its
+      # top row, so it holds on any screen size or orientation (a scrim tap would need
+      # a coordinate). The status line is the sheet's last row, a few dp above the
+      # screen's bottom edge: a swipe from there is too short to close it.
       - swipe:
           from:
-            id: network-sheet-status
+            id: network-sheet-chip
           direction: DOWN
       - waitForAnimationToEnd
       - assertNotVisible:

@@ -18,14 +18,15 @@ appId: ${APP_ID}
       id: "settings-account|settings-sign-in"
       enabled: true
     timeout: 90000
-# The account row reads "Account: <name>, @<handle> · <balance>".
+# The account row reads "Account: <name>, @<handle>" (no balance: that is on Account).
+# Maestro matches the whole label, so the handle must end it: no prefix of another handle.
 - runFlow:
     when:
       visible:
         id: settings-account
       notVisible:
         id: settings-account
-        text: ".*@${SELF_HANDLE} .*"
+        text: ".*@${SELF_HANDLE}"
     file: sign-out.yaml
 - runFlow:
     when:
@@ -42,5 +43,5 @@ appId: ${APP_ID}
 - extendedWaitUntil:
     visible:
       id: settings-account
-      text: ".*@${SELF_HANDLE} .*"
+      text: ".*@${SELF_HANDLE}"
     timeout: 60000
