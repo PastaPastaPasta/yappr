@@ -38,6 +38,9 @@ const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
 const kitHasContent = (kit: ItemDeliverablePayload) =>
   kit.assets.length > 0 || kit.licenseKeys !== undefined || Boolean(kit.instructions)
+/** What the largest of these variant keys adds to a delivery receipt, in UTF-8 bytes once serialized. */
+const largestReceiptBytes = (variantKeys: readonly string[]) =>
+  Math.max(0, ...variantKeys.map((key) => new TextEncoder().encode(JSON.stringify(key)).length))
 /** Whether two reads are the same kit document at the same revision (or both found none). */
 const sameKitRevision = (a: ItemDeliverable | null, b: ItemDeliverable | null) =>
   a === null || b === null ? a === b : a.id === b.id && a.$revision === b.$revision
@@ -104,6 +107,9 @@ function AddItemPage() {
 
   // Variant state
   const [hasVariants, setHasVariants] = useState(false)
+  // The variant keys the listing was loaded with: a kit this device cannot
+  // read was only ever known to fit receipts carrying keys no larger than these.
+  const [loadedVariantKeys, setLoadedVariantKeys] = useState<string[]>([])
   const [variantAxes, setVariantAxes] = useState<VariantAxis[]>([])
   const [newAxisName, setNewAxisName] = useState('')
   const [newAxisOptions, setNewAxisOptions] = useState('')
@@ -191,6 +197,7 @@ function AddItemPage() {
           }
           setCombinationPrices(prices)
           setCombinationStocks(stocks)
+          setLoadedVariantKeys(item.variants.combinations.map((combo) => combo.key))
         }
       } catch (err) {
         logger.error('Failed to load item:', err)
@@ -337,6 +344,16 @@ function AddItemPage() {
         setError(fitError)
         return
       }
+    }
+    // A kit this device cannot read cannot be checked, so a variant key that
+    // makes receipts larger than before is refused until it is unlocked (or
+    // replaced). Other listing edits go through, and the kit is left as it is.
+    if (isDigital && (kitState === 'locked' || kitState === 'unreadable') &&
+      largestReceiptBytes(hasVariants ? combinations : []) > largestReceiptBytes(loadedVariantKeys)) {
+      setError(kitState === 'locked'
+        ? 'Add your encryption key to change these variants: their names go into every delivery, and the delivery content must be checked to still fit.'
+        : 'These variants make deliveries larger, and the delivery content does not decrypt on this device to check it still fits. Replace the delivery content, or keep the variant names as they were.')
+      return
     }
 
     setIsSubmitting(true)
