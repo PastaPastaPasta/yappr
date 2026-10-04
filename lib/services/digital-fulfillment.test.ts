@@ -13,7 +13,7 @@ vi.mock('./order-delivery-service', () => ({
   orderDeliveryService: { seal, publish, findSealed },
 }))
 vi.mock('./order-status-service', () => ({ orderStatusService: { createStatusUpdate } }))
-import { fulfillOrder, fulfillmentErrorText, FulfillmentError, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderInput } from './digital-fulfillment'
+import { fulfillOrder, fulfillmentErrorText, FulfillmentError, KeyRecoveryError, kitsOf, loggableFulfillmentError, newerKits, type FulfillOrderInput } from './digital-fulfillment'
 import type { ItemDeliverablePayload, StoreOrder } from '../../types'
 
 const SEALED = { encryptedPayload: new Uint8Array([9]), nonce: new Uint8Array(24) }
@@ -176,5 +176,27 @@ describe('fulfillOrder', () => {
     const result = await run()
     expect(result.delivery).toEqual({ id: 'delivery' })
     expect(result.warnings).toHaveLength(1)
+  })
+})
+
+describe('kit merging', () => {
+  const at = (id: string, revision: number, deliverWhen: ItemDeliverablePayload['deliverWhen']) =>
+    ({ deliverable: { ...deliverable, id, $revision: revision }, kit: { ...kit, deliverWhen } })
+
+  it('keeps this session\'s newer revision of the same document over a lagging read', () => {
+    const held = new Map([['game', at('kit-doc', 6, 'on_order')]])
+    expect(newerKits(held, new Map([['game', at('kit-doc', 5, 'on_order')]])).get('game')?.deliverable.$revision).toBe(6)
+    expect(newerKits(held, new Map([['game', at('kit-doc', 7, 'on_order')]])).get('game')?.deliverable.$revision).toBe(7)
+  })
+
+  it('adopts a replacement document even at a lower revision (deleted and created again)', () => {
+    const held = new Map([['game', at('old-doc', 9, 'on_order')]])
+    const fresh = new Map([['game', at('new-doc', 1, 'payment_confirmed')]])
+    expect(newerKits(held, fresh).get('game')?.kit.deliverWhen).toBe('payment_confirmed')
+    expect(kitsOf(['game'], held, fresh)?.get('game')?.deliverable.id).toBe('new-doc')
+  })
+
+  it('refuses to plan from a kit the fresh read did not return', () => {
+    expect(kitsOf(['game'], new Map([['game', at('kit-doc', 3, 'on_order')]]), new Map())).toBeNull()
   })
 })

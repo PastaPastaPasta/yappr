@@ -98,6 +98,11 @@ payload.
 - **Deliver now** on an order opens the deliver modal. It shows each line's kit,
   lets the seller add links, codes or files for this order only, takes a message,
   and optionally marks the order Delivered (default on for all-digital orders).
+  A delivery too large for one receipt goes out in parts: the seller unticks
+  some lines, delivers, then delivers the rest. Lines an earlier delivery
+  covered are marked, unique codes are taken only for the chosen lines (and
+  for re-sent ones only on request), and the order can be marked Delivered
+  only once every line has gone out.
 - **Deliver all** sends every *ready* order in one pass. An order is ready when:
   - it has digital lines and nothing has been delivered;
   - it is not closed;

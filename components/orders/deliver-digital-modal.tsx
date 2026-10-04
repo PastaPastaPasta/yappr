@@ -12,7 +12,7 @@ import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { digitalLines, isDigitalOnly, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
-import type { DigitalAsset, ItemDeliverablePayload, OrderPayload, StoreOrder } from '@/lib/types'
+import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderPayload, StoreOrder } from '@/lib/types'
 
 interface DeliverDigitalModalProps {
   isOpen: boolean
@@ -26,6 +26,8 @@ interface DeliverDigitalModalProps {
   sellerPrivateKey: Uint8Array
   /** True when this order already has a delivery: sending again takes no new unique codes by default. */
   alreadyDelivered: boolean
+  /** The order's earlier deliveries (decrypted where possible): which lines they covered. */
+  previousDeliveries: readonly OrderDelivery[]
   onDelivered: (result: FulfillOrderResult) => void
   /** A failed delivery may still have rewritten pools (see FulfillmentError). */
   onFailed: (error: unknown) => void
@@ -46,13 +48,29 @@ export function DeliverDigitalModal({
   sellerId,
   sellerPrivateKey,
   alreadyDelivered,
+  previousDeliveries,
   onDelivered,
   onFailed,
 }: DeliverDigitalModalProps) {
   const formId = useId()
+  const lines = useMemo(() => digitalLines(payload), [payload])
+  // A line an earlier delivery already covered (same item and variant). An
+  // earlier delivery this device cannot read might have covered any of them.
+  const deliveredBefore = useMemo(() => {
+    const unreadable = previousDeliveries.some((delivery) => !delivery.payload)
+    return lines.map((line) => unreadable || previousDeliveries.some((delivery) =>
+      delivery.payload?.items.some((item) => item.itemId === line.itemId && (item.variantKey ?? '') === (line.variantKey ?? ''))))
+  }, [lines, previousDeliveries])
+  // The lines this delivery covers. A delivery too large for one receipt goes
+  // out in parts: untick some lines, deliver, then deliver the rest.
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => {
+    const pending = lines.flatMap((_, index) => (deliveredBefore[index] ? [] : [index]))
+    return new Set(pending.length > 0 ? pending : lines.map((_, index) => index))
+  })
   const [message, setMessage] = useState('')
   const [markDelivered, setMarkDelivered] = useState(isDigitalOnly(payload.items))
-  const [includeNewKeys, setIncludeNewKeys] = useState(!alreadyDelivered)
+  // New unique codes by default only when none of the chosen lines went out before.
+  const [includeNewKeys, setIncludeNewKeys] = useState(() => !lines.some((_, index) => selected.has(index) && deliveredBefore[index]))
   const [extras, setExtras] = useState<Record<string, DigitalAsset[]>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   // The seller has checked lines that disagree with their listings (title, variant, price).
@@ -70,11 +88,19 @@ export function DeliverDigitalModal({
   }, [])
   const isUploading = uploadingLines.size > 0
 
-  const lines = useMemo(() => digitalLines(payload), [payload])
+  const selectedLines = useMemo(() => lines.filter((_, index) => selected.has(index)), [lines, selected])
+  // Every digital line is in this delivery or an earlier one: only then is the order complete.
+  const completesOrder = lines.every((_, index) => selected.has(index) || deliveredBefore[index])
+  const toggleLine = (index: number) => setSelected((prev) => {
+    const next = new Set(prev)
+    if (next.has(index)) next.delete(index)
+    else next.add(index)
+    return next
+  })
 
   const effectiveKits = useMemo(() => {
     const merged = new Map<string, ItemDeliverablePayload>()
-    for (const itemId of new Set(lines.map((line) => line.itemId))) {
+    for (const itemId of new Set(selectedLines.map((line) => line.itemId))) {
       const base = kits.get(itemId)?.kit
       const extra = extras[itemId] ?? []
       if (!base && extra.length === 0) continue
@@ -85,18 +111,26 @@ export function DeliverDigitalModal({
       merged.set(itemId, kit)
     }
     return merged
-  }, [lines, kits, extras, includeNewKeys])
+  }, [selectedLines, kits, extras, includeNewKeys])
 
-  const plan = useMemo(() => planDelivery(payload, effectiveKits, message), [payload, effectiveKits, message])
+  // The order with only the chosen digital lines (its other lines, malformed ones included, kept).
+  const selectedPayload = useMemo(() => {
+    const unchosen = new Set(lines.filter((_, index) => !selected.has(index)))
+    return { ...payload, items: payload.items.filter((item) => !unchosen.has(item)) }
+  }, [payload, lines, selected])
+  const plan = useMemo(() => planDelivery(selectedPayload, effectiveKits, message), [selectedPayload, effectiveKits, message])
   // The buyer wrote these lines: the kit sent is chosen by itemId, whatever title or price they claim.
-  const problems = useMemo(() => lineProblems(payload, order.storeId, listings), [payload, order.storeId, listings])
+  const problems = useMemo(() => lineProblems(selectedPayload, order.storeId, listings), [selectedPayload, order.storeId, listings])
   const blockers = useMemo(() => [
+    ...(selectedLines.length === 0 ? ['Choose at least one item to deliver.'] : []),
     ...problems.filter((problem) => problem.blocking).map((problem) => problem.text),
     ...planBlockers(plan),
-  ], [problems, plan])
+  ], [selectedLines, problems, plan])
   const warnings = problems.filter((problem) => !problem.blocking)
   const needsReview = warnings.length > 0 && !reviewed
-  const orderSellsKeys = lines.some((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined)
+  const orderSellsKeys = selectedLines.some((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined)
+  // Re-sending a line whose codes already went out: new codes only if the seller asks.
+  const sendsAgain = lines.some((_, index) => selected.has(index) && deliveredBefore[index])
 
   const handleClose = () => {
     if (isSubmitting) return
@@ -113,7 +147,8 @@ export function DeliverDigitalModal({
         delivery: plan.delivery,
         consumedKeys: plan.consumedKeys,
         kits,
-        markDelivered,
+        // A part of the order is not the whole of it.
+        markDelivered: markDelivered && completesOrder,
         sellerPrivateKey,
       })
       if (result.pending) toast('Sent, awaiting confirmation')
@@ -135,7 +170,7 @@ export function DeliverDigitalModal({
     <Modal open={isOpen} onOpenChange={(open) => !open && handleClose()} variant="sheet" className="max-w-lg">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
         <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
-          {alreadyDelivered ? 'Send again' : 'Deliver digital items'}
+          {alreadyDelivered ? (sendsAgain ? 'Send again' : 'Deliver the rest') : 'Deliver digital items'}
         </Dialog.Title>
         <IconButton aria-label="Close delivery" onClick={handleClose}>
           <XMarkIcon className="h-5 w-5" />
@@ -151,13 +186,28 @@ export function DeliverDigitalModal({
           // planDelivery omits an empty variantKey, so compare '' and absent as equal.
           const planned = plan.delivery.items.find((item) => item.itemId === line.itemId && (item.variantKey ?? '') === (line.variantKey ?? ''))
           return (
-            <div key={`${line.itemId}-${line.variantKey ?? ''}-${index}`} className="p-3 border border-gray-200 dark:border-gray-800 rounded-lg space-y-2">
-              <p className="text-sm font-medium">
-                {line.itemTitle}
-                {line.variantKey && <span className="text-gray-500 font-normal"> ({line.variantKey.replace(/\|/g, ' / ')})</span>}
-                <span className="text-gray-500 font-normal"> ×{line.quantity}</span>
-              </p>
-              {planned ? (
+            <div key={`${line.itemId}-${line.variantKey ?? ''}-${index}`} className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg space-y-2 ${selected.has(index) ? '' : 'opacity-60'}`}>
+              <label className="flex items-start gap-2 text-sm font-medium">
+                {lines.length > 1 && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(index)}
+                    onChange={() => toggleLine(index)}
+                    disabled={isSubmitting}
+                    aria-label={`Include ${line.itemTitle} in this delivery`}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
+                  />
+                )}
+                <span>
+                  {line.itemTitle}
+                  {line.variantKey && <span className="text-gray-500 font-normal"> ({line.variantKey.replace(/\|/g, ' / ')})</span>}
+                  <span className="text-gray-500 font-normal"> ×{line.quantity}</span>
+                  {deliveredBefore[index] && <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-300">Sent before</span>}
+                </span>
+              </label>
+              {!selected.has(index) ? (
+                <p className="text-xs text-gray-500">Not in this delivery.</p>
+              ) : planned ? (
                 <p className="text-xs text-gray-500">
                   {planned.assets.length} item{planned.assets.length === 1 ? '' : 's'}
                   {planned.licenseKeys ? ` · ${planned.licenseKeys.length} unique code${planned.licenseKeys.length === 1 ? '' : 's'}` : ''}
@@ -185,7 +235,13 @@ export function DeliverDigitalModal({
           )
         })}
 
-        {alreadyDelivered && orderSellsKeys && (
+        {lines.length > 1 && (
+          <p className="text-xs text-gray-500">
+            Too much for one delivery? Untick some items, deliver, then deliver the rest. Each delivery is its own receipt.
+          </p>
+        )}
+
+        {sendsAgain && orderSellsKeys && (
           <label className="flex items-start gap-3 cursor-pointer">
             <input
               type="checkbox"
@@ -217,12 +273,15 @@ export function DeliverDigitalModal({
         <label className="flex items-center gap-3 cursor-pointer">
           <input
             type="checkbox"
-            checked={markDelivered}
+            checked={markDelivered && completesOrder}
             onChange={(e) => setMarkDelivered(e.target.checked)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !completesOrder}
             className="w-4 h-4 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
           />
-          <span className="text-sm">Also mark the order Delivered</span>
+          <span className="text-sm">
+            Also mark the order Delivered
+            {!completesOrder && <span className="block text-xs text-gray-500">Once every item has been delivered.</span>}
+          </span>
         </label>
 
         {warnings.length > 0 && (

@@ -118,6 +118,40 @@ export const fulfillmentErrorText = (error: unknown): string =>
 export const toKitPayloads = (kits: ReadonlyMap<string, SellerKit>) =>
   new Map([...kits].map(([itemId, { kit }]) => [itemId, kit]));
 
+/**
+ * Kit copies merged: the incoming copy wins unless the held one is the SAME
+ * document at a newer revision (a reservation this session made that a
+ * lagging read has not caught up with). Revisions of different documents say
+ * nothing about which is current: a kit deleted and created again starts over
+ * at revision 1, so the incoming (just read or just written) document wins.
+ */
+export function newerKits(current: ReadonlyMap<string, SellerKit>, incoming: ReadonlyMap<string, SellerKit>): Map<string, SellerKit> {
+  const merged = new Map(current);
+  for (const [itemId, kit] of incoming) {
+    const held = merged.get(itemId);
+    const heldIsNewer = held !== undefined && held.deliverable.id === kit.deliverable.id &&
+      (held.deliverable.$revision ?? 0) > (kit.deliverable.$revision ?? 0);
+    if (!heldIsNewer) merged.set(itemId, kit);
+  }
+  return merged;
+}
+
+/**
+ * The kit of each item for a delivery about to go out: the one just read,
+ * unless this session holds the same document at a newer revision. Null when
+ * an item has no kit in the fresh read (missing, unreadable, or not
+ * decryptable here), so a stale copy can never stand in for it.
+ */
+export function kitsOf(itemIds: readonly string[], held: ReadonlyMap<string, SellerKit>, fresh: ReadonlyMap<string, SellerKit>): Map<string, SellerKit> | null {
+  const kits = new Map<string, SellerKit>();
+  for (const itemId of new Set(itemIds)) {
+    const read = fresh.get(itemId);
+    if (!read) return null;
+    kits.set(itemId, newerKits(held, new Map([[itemId, read]])).get(itemId) ?? read);
+  }
+  return kits;
+}
+
 
 const titleOf = (delivery: OrderDeliveryPayload, itemId: string) =>
   delivery.items.find((item) => item.itemId === itemId)?.itemTitle ?? itemId;

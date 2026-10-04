@@ -20,7 +20,7 @@ import { DeliveryContents } from '@/components/digital'
 import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
-import { fulfillOrder, FulfillmentError, KeyRecoveryError, loggableFulfillmentError, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
+import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, loggableFulfillmentError, newerKits, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
@@ -92,31 +92,6 @@ async function currentOrderState(orderId: string, itemIds: string[], sellerPriva
     logger.error(`Could not re-read order ${orderId} before delivering it:`, error)
     return null
   }
-}
-
-/**
- * The kit of each item, newest of this session's copy and the one just read;
- * null when an item has no kit in the fresh read (missing, unreadable, or not
- * decryptable here), so a stale copy can never stand in for it.
- */
-function kitsOf(itemIds: string[], held: ReadonlyMap<string, SellerKit>, fresh: ReadonlyMap<string, SellerKit>): Map<string, SellerKit> | null {
-  const kits = new Map<string, SellerKit>()
-  for (const itemId of new Set(itemIds)) {
-    const read = fresh.get(itemId)
-    if (!read) return null
-    kits.set(itemId, newerKits(held, new Map([[itemId, read]])).get(itemId) ?? read)
-  }
-  return kits
-}
-
-/** Kit copies merged by revision: whichever is newer wins, wherever it was read. */
-function newerKits(current: ReadonlyMap<string, SellerKit>, incoming: ReadonlyMap<string, SellerKit>): Map<string, SellerKit> {
-  const merged = new Map(current)
-  for (const [itemId, kit] of incoming) {
-    const held = merged.get(itemId)
-    if (!held || (kit.deliverable.$revision ?? 0) >= (held.deliverable.$revision ?? 0)) merged.set(itemId, kit)
-  }
-  return merged
 }
 
 /**
@@ -871,6 +846,7 @@ function SellerOrdersPage() {
               sellerId={user.identityId}
               sellerPrivateKey={deliverContext.sellerPrivateKey}
               alreadyDelivered={(deliveries.get(deliverOrder.id)?.length ?? 0) > 0}
+              previousDeliveries={deliveries.get(deliverOrder.id) ?? []}
               onDelivered={(result) => applyFulfillment(deliverOrder.id, result)}
               onFailed={applyFailedFulfillment}
             />

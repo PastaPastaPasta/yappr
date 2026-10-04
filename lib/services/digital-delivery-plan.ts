@@ -5,6 +5,7 @@
  * docs/DIGITAL_PRODUCTS.md describes the flow end to end.
  */
 
+import bs58 from 'bs58'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
 import type {
   DeliverWhen,
@@ -59,8 +60,17 @@ export const isDigitalLine = (line: Pick<OrderItem, 'fulfillment'> | null | unde
  * object `itemTitle` would otherwise throw (or fail to render) in a scan that
  * runs over every order on the seller's page.
  */
+/** A base58 document id: 32 bytes. Buyer-written ids are queried in batches, where one bad operand fails them all. */
+export function isDocumentId(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  try {
+    return bs58.decode(value).length === 32
+  } catch {
+    return false
+  }
+}
 const isWellFormedLine = (line: Partial<OrderItem>) =>
-  typeof line.itemId === 'string' && typeof line.itemTitle === 'string' &&
+  isDocumentId(line.itemId) && typeof line.itemTitle === 'string' &&
   typeof line.quantity === 'number' && typeof line.unitPrice === 'number' &&
   (line.variantKey === undefined || typeof line.variantKey === 'string')
 /** The order's digital lines that are well formed; a malformed one is never planned or delivered (see {@link lineProblems}). */
@@ -423,7 +433,7 @@ export function decodeKit(bytes: Uint8Array): ItemDeliverablePayload {
 export function encodeDelivery(delivery: OrderDeliveryPayload): Uint8Array {
   const bytes = encodeJson(delivery)
   if (bytes.length > MAX_DELIVERY_PLAINTEXT_BYTES) {
-    throw new Error(`This delivery is too large (${bytes.length} of ${MAX_DELIVERY_PLAINTEXT_BYTES} bytes). Shorten the message or deliver the items separately.`)
+    throw new Error(`This delivery is too large (${bytes.length} of ${MAX_DELIVERY_PLAINTEXT_BYTES} bytes). Shorten the message, or deliver the items in parts: untick some, deliver, then deliver the rest.`)
   }
   return bytes
 }
