@@ -22,7 +22,6 @@ import { resetWriteTracking } from '~/data/writes';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
-import { SENT_ECHO_MS } from '~/ui/native-text';
 import { useToastStore } from '~/ui/toast';
 
 import { ConversationScreen } from './ConversationScreen';
@@ -527,9 +526,9 @@ describe('Conversation (DM-03, DM-04)', () => {
     fireEvent.press(screen.getByTestId('dm-send'));
     await act(async () => {});
     expect(fakeEngine.method('dm.send')).toHaveBeenCalledWith(KEY, 'see you');
-    // The draft emptied by the send clears the box in place: the same input, keyboard and focus.
+    // A send empties the box with a fresh input, which takes the focus (QA rc9 c2).
     expect(composer()).toHaveDisplayValue('');
-    expect(composer().props.autoFocus).toBeUndefined();
+    expect(composer().props.autoFocus).toBe(true);
     // The next message's typing is the input's own again: nothing is put in over it.
     fireEvent.changeText(composer(), 'and');
     expect(composer()).toHaveDisplayValue('and');
@@ -541,53 +540,62 @@ describe('Conversation (DM-03, DM-04)', () => {
     /** The conversation's draft as the store holds it ('' when none). */
     const draftNow = () => Object.values(useDrafts.getState().byKey).join('|');
     const composer = () => screen.getByTestId('dm-composer');
-    async function sendHello() {
+    async function typeHello() {
       await openConversation();
       fakeEngine.method('dm.send').mockResolvedValue(ticket({ op: 'dm.send', target: { conversationKey: KEY } }));
       fireEvent(composer(), 'focus');
       fireEvent.changeText(composer(), 'hello');
     }
     const sentTexts = () => fakeEngine.method('dm.send').mock.calls.map((call) => call[1]);
+    /** The change handler of the input in the box now, to deliver its events late. */
+    const changeHandlerNow = (): ((text: string) => void) => composer().props.onChangeText;
 
-    it('keeps a keystroke reported with the sent text in front of it as the keystroke alone', async () => {
+    it('never brings the sent text back with a keystroke the old field reports late', async () => {
       // The field still held "hello" when "x" went in (Android dropped the clear: its event count was
-      // behind the keystroke), and reported "hellox" after the send had emptied the draft.
-      await sendHello();
+      // behind the keystroke), and reported "hellox" after the send.
+      await typeHello();
+      const sentField = composer();
+      const lateChange = changeHandlerNow();
       fireEvent.press(screen.getByTestId('dm-send'));
-      fireEvent.changeText(composer(), 'hellox');
+      act(() => lateChange('hellox'));
       await act(async () => {});
-      expect(composer()).toHaveDisplayValue('x');
-      expect(draftNow()).toBe('x');
+      expect(composer()).not.toBe(sentField);
+      expect(composer()).toHaveDisplayValue('');
+      expect(draftNow()).toBe('');
+      // The fresh box keeps the keyboard, and takes what is typed next.
+      expect(composer().props.autoFocus).toBe(true);
+      fireEvent.changeText(composer(), 'y');
       fireEvent.press(screen.getByTestId('dm-send'));
       await act(async () => {});
-      expect(sentTexts()).toEqual(['hello', 'x']);
+      expect(sentTexts()).toEqual(['hello', 'y']);
     });
 
-    it('does the same when the keystroke reaches the app before the emptied draft renders', async () => {
-      await sendHello();
+    it('does the same when the late report reaches the app before the emptied draft renders', async () => {
+      await typeHello();
+      const lateChange = changeHandlerNow();
       await act(async () => {
         fireEvent.press(screen.getByTestId('dm-send'));
-        fireEvent.changeText(composer(), 'hellox');
+        lateChange('hellox');
       });
-      expect(composer()).toHaveDisplayValue('x');
-      expect(draftNow()).toBe('x');
+      expect(composer()).toHaveDisplayValue('');
+      expect(draftNow()).toBe('');
       expect(sentTexts()).toEqual(['hello']);
     });
 
-    it('takes several such reports, then lets the field hold its own text again', async () => {
-      await sendHello();
+    it('keeps a paste right after Send whole, even one that starts with the message sent', async () => {
+      // One change event for the whole paste (or an IME's whole-text insert): nothing is taken off it.
+      await typeHello();
       fireEvent.press(screen.getByTestId('dm-send'));
-      for (const late of ['hellox', 'helloxy', 'helloxyz']) fireEvent.changeText(composer(), late);
-      expect(composer()).toHaveDisplayValue('xyz');
-      expect(draftNow()).toBe('xyz');
-      // The field now reports text of its own: uncontrolled again, nothing taken off.
-      fireEvent.changeText(composer(), 'xyzw');
-      expect(composer().props.value).toBeUndefined();
-      expect(draftNow()).toBe('xyzw');
+      fireEvent.changeText(composer(), 'hello again');
+      expect(composer()).toHaveDisplayValue('hello again');
+      expect(draftNow()).toBe('hello again');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(sentTexts()).toEqual(['hello', 'hello again']);
     });
 
-    it('never takes anything off a message typed afresh that starts like the one sent', async () => {
-      await sendHello();
+    it('keeps a message typed afresh that starts like the one sent', async () => {
+      await typeHello();
       fireEvent.press(screen.getByTestId('dm-send'));
       await act(async () => {});
       for (const text of ['h', 'he', 'hel', 'hell', 'hello', 'hello ', 'hello again']) fireEvent.changeText(composer(), text);
@@ -595,7 +603,7 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(composer()).toHaveDisplayValue('hello again');
     });
 
-    it('never takes anything off a failed message put back in the box', async () => {
+    it('keeps a failed message put back in the box, and what is typed after it', async () => {
       await openConversation();
       fakeEngine
         .method('dm.send')
@@ -607,17 +615,6 @@ describe('Conversation (DM-03, DM-04)', () => {
       fireEvent.changeText(composer(), 'hello?!');
       expect(draftNow()).toBe('hello?!');
       expect(composer()).toHaveDisplayValue('hello?!');
-    });
-
-    it('stops after a moment: a later report is the field’s own text', async () => {
-      // renderRouter runs on Jest's fake timers, whose clock is performance.now's too.
-      await sendHello();
-      fireEvent.press(screen.getByTestId('dm-send'));
-      act(() => {
-        jest.advanceTimersByTime(SENT_ECHO_MS + 1);
-      });
-      fireEvent.changeText(composer(), 'hellox');
-      expect(draftNow()).toBe('hellox');
     });
   });
 

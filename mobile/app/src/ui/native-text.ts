@@ -22,6 +22,17 @@ import type { TextInputProps } from 'react-native';
  * cannot refuse a keystroke by keeping its old `value` (no caller does):
  * limit the input with its own props (`maxLength`) instead.
  *
+ * `clear()` (Send) mounts a fresh input instead of clearing the old one. A
+ * change event the old field sent before a clear landed, or after Android
+ * dropped it (a clear carries the event count JS last saw, and Android
+ * ignores one behind the field's own), reports the sent text with whatever
+ * was typed after it. Nothing in the event tells it from text typed or
+ * pasted after the clear: a JS-set text sends no event and does not move the
+ * count, on Android or iOS. A fresh field cannot get the old one's
+ * keystrokes, and events from the old one are ignored: a keystroke typed in
+ * the instant after Send can be lost, but the sent text is never sent again,
+ * and nothing typed or pasted afterwards is cut.
+ *
  * What the field reported is kept outside React state, updated as each
  * keystroke arrives, and compared once a render commits: a caller whose
  * value lives in a store (a DM draft) re-renders in another lane than this
@@ -37,11 +48,6 @@ interface Mount {
   /** Whether the input it replaced had focus, so the new one takes it. */
   refocus: boolean;
   focused: boolean;
-  /**
-   * Set only just after `clear()`, while a change event the field sent before
-   * it may still come in: the text the field must show (`sentEcho`).
-   */
-  value?: string;
 }
 
 /** The mounted input, as far as this needs it: `TextInput.clear()` (a wrapper may not pass it on). */
@@ -55,13 +61,6 @@ export interface ClearableInput {
  * recognise such renders is dropped.
  */
 export const RENDER_LAG_MS = 10_000;
-
-/**
- * How long after `clear()` a change event may still be one the field sent
- * before it: a keystroke typed right after Send, reported with the sent text
- * still in front of it (QA rc9 c2).
- */
-export const SENT_ECHO_MS = 1_500;
 
 /** The native field's text as JS hears of it, and the input it renders. */
 function createField(value: string | undefined) {
@@ -82,13 +81,6 @@ function createField(value: string | undefined) {
    * exactly that text right after typing it is taken for a late render.
    */
   let behind: { text: string; at: number }[] = [];
-  /**
-   * The text `clear()` took out, while a change event sent before the clear
-   * may still arrive with it in front of the new keystrokes. One event that
-   * does not start with it (the field was cleared), a programmatic value, or
-   * `SENT_ECHO_MS` ends it.
-   */
-  let sent: { text: string; at: number } | null = null;
   const listeners = new Set<() => void>();
   const publish = (next: Mount) => {
     mount = next;
@@ -111,44 +103,24 @@ function createField(value: string | undefined) {
     attach: (next: ClearableInput | null | undefined) => {
       input = next ?? null;
     },
-    /**
-     * The field reported `next`; returns the text the caller hears. Just after
-     * `clear()`, a report of the cleared text with keystrokes after it was sent
-     * before the clear landed (or Android dropped the clear: its event count
-     * was behind the keystroke): the keystrokes alone are the text, and the
-     * field is held to them until it reports text of its own.
-     */
-    typed: (next: string): string => {
+    /** The field of mount `generation` reported `next`; false when that input has since been replaced. */
+    typed: (next: string, generation: number): boolean => {
+      if (generation !== mount.generation) return false;
+      if (next === text) return true;
       const now = performance.now();
-      if (sent && now - sent.at > SENT_ECHO_MS) sent = null;
-      let heard = next;
-      if (sent && next.length > sent.text.length && next.startsWith(sent.text)) {
-        heard = next.slice(sent.text.length);
-        publish({ ...mount, value: heard });
-      } else if (sent || mount.value !== undefined) {
-        sent = null;
-        if (mount.value !== undefined) publish({ ...mount, value: undefined });
-      }
-      if (heard === text) return heard;
       dropExpired(now);
       if (text !== undefined) behind.push({ text, at: now });
-      text = heard;
-      return heard;
+      text = next;
+      return true;
     },
-    /** Empties the field now (a message sent), from the event that empties the caller's text. */
+    /** Empties the field now (a message sent): a fresh input, which takes the focus the old one had. */
     clear: () => {
-      sent = text ? { text, at: performance.now() } : null;
       text = '';
       behind = [];
-      if (input?.clear) {
-        input.clear();
-        if (mount.value !== undefined) publish({ ...mount, value: undefined });
-      } else {
-        publish({ initial: '', generation: mount.generation + 1, refocus: mount.focused, focused: false });
-      }
+      publish({ initial: '', generation: mount.generation + 1, refocus: mount.focused, focused: false });
     },
-    focus: (focused: boolean) => {
-      if (mount.focused !== focused) publish({ ...mount, focused });
+    focus: (focused: boolean, generation: number) => {
+      if (generation === mount.generation && mount.focused !== focused) publish({ ...mount, focused });
     },
     /** The caller's `value` as a committed render shows it. */
     shown: (value: string | undefined, editable: boolean) => {
@@ -167,13 +139,9 @@ function createField(value: string | undefined) {
         input.clear();
         text = '';
         behind = [];
-        sent = null;
-        if (mount.value !== undefined) publish({ ...mount, value: undefined });
       } else {
         text = value;
         behind = [];
-        // A text put back (a failed message) is the user's: nothing is taken off its front.
-        sent = null;
         // The input that had the focus is gone; the new one says so itself when it takes it.
         publish({ initial: value, generation: mount.generation + 1, refocus: mount.focused && editable, focused: false });
       }
@@ -187,16 +155,12 @@ export interface NativeText {
   /** Pass as the TextInput's `ref`, so an emptied value clears it in place. */
   attach: (input: ClearableInput | null | undefined) => void;
   /**
-   * Empties the field at once, from the handler that empties the caller's
-   * text (Send), and takes a change event sent before it for the keystrokes
-   * after the cleared text only.
+   * Empties the field at once with a fresh input, from the handler that
+   * empties the caller's text (Send): the old input's late events are ignored.
    */
   clear: () => void;
-  /**
-   * Spread on the TextInput, in place of the caller's `value` (it holds a `value` of its own only
-   * briefly after `clear()`). Its own `onChangeText`, `onFocus` and `onBlur` are these.
-   */
-  inputProps: Pick<TextInputProps, 'value' | 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
+  /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
+  inputProps: Pick<TextInputProps, 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
   focused: boolean;
 }
 
@@ -214,24 +178,25 @@ export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus,
     field.shown(value, !locked);
   }, [field, value, locked]);
 
+  const { generation } = mount;
   return {
-    key: mount.generation,
+    key: generation,
     attach: field.attach,
     clear: field.clear,
     focused: mount.focused,
     inputProps: {
-      value: mount.value,
       defaultValue: mount.initial,
-      autoFocus: mount.generation === 0 ? autoFocus : mount.refocus,
+      autoFocus: generation === 0 ? autoFocus : mount.refocus,
+      // Each input's handlers name its own mount: a replaced input's late events change nothing.
       onChangeText: (text) => {
-        onChangeText?.(field.typed(text));
+        if (field.typed(text, generation)) onChangeText?.(text);
       },
       onFocus: (event) => {
-        field.focus(true);
+        field.focus(true, generation);
         onFocus?.(event);
       },
       onBlur: (event) => {
-        field.focus(false);
+        field.focus(false, generation);
         onBlur?.(event);
       },
     },

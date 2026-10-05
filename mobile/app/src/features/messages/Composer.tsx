@@ -25,9 +25,9 @@ export interface ComposerProps {
  * there is visible text. The screen pads it above the keyboard or the
  * home indicator. The input is uncontrolled (`useNativeText`), so no
  * keystroke is lost; the draft clearing after a send, or coming back into the
- * box, is put in. A send empties the box from the tap itself, and a keystroke
- * typed just after it is kept alone, never behind the sent text (QA rc9 c2:
- * a second Send would have sent the first message again).
+ * box, is put in. A send empties the box from the tap itself, with a fresh
+ * input: the old one's late keystroke events would bring the sent text back
+ * with them (QA rc9 c2: a second Send sent the first message again).
  */
 export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
   const c = useColors();
