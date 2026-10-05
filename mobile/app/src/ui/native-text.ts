@@ -74,7 +74,7 @@ export interface ClearableInput {
 export const RENDER_LAG_MS = 10_000;
 
 /** The native field's text as JS hears of it, and the input it renders. */
-function createField(value: string | undefined, autoFocus: boolean) {
+function createField(value: string | undefined, autoFocus: boolean, resetToken: unknown) {
   let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false, retiring: null };
   let input: ClearableInput | null = null;
   /**
@@ -109,6 +109,36 @@ function createField(value: string | undefined, autoFocus: boolean) {
   };
   /** The first unconsumed entry with `shown`, or -1. */
   const pending = (shown: string) => behind.findIndex((entry) => entry.text === shown);
+  /** Whether the field takes input now (a locked one is not handed the focus). */
+  let editable = true;
+  /** The caller's reset token as last seen (`NativeTextOptions.resetToken`). */
+  let token = resetToken;
+  /**
+   * A fresh input holds `next`, so the old one's late events (a keystroke
+   * reported after the change, or after a native clear its event count made
+   * Android or iOS drop) change nothing. While the old one has the focus it
+   * stays, hidden, until the fresh one has taken it (`retiring`). A swap made
+   * before that happened (a failed message put back right after Send)
+   * carries the handoff on: the input holding the keyboard stays the one
+   * retiring, and the newest input takes the focus from it.
+   */
+  const swap = (next: string) => {
+    text = next;
+    behind = [];
+    const handoff = mount.retiring !== null && !mount.focused ? mount.retiring : null;
+    const hadFocus = mount.focused || focusExpected || (handoff !== null && mount.refocus);
+    focusExpected = false;
+    const refocus = hadFocus && editable;
+    const retiring = refocus ? (handoff ?? { generation: mount.generation, initial: mount.initial }) : null;
+    const generation = mount.generation + 1;
+    publish({ initial: next, generation, refocus, focused: false, retiring });
+    // The new input may never say it took the focus (the app went to the background).
+    if (retiring) {
+      setTimeout(() => {
+        if (mount.generation === generation && mount.retiring) publish({ ...mount, retiring: null });
+      }, RETIRE_MS);
+    }
+  };
   return {
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -132,27 +162,10 @@ function createField(value: string | undefined, autoFocus: boolean) {
     },
     /**
      * Sets the field's text now, for an action of the user's (Send, Clear, a
-     * recent search, Randomize): never mistaken for a late render of typing.
-     * A fresh input holds it, so the old one's late events (a keystroke
-     * reported after the action, or after a native clear its event count
-     * made Android or iOS drop) change nothing; while the old one has the
-     * focus it stays, hidden, until the fresh one has taken it (`retiring`).
+     * recent search, Randomize) or a message put back: never mistaken for a
+     * late render of typing (`swap`).
      */
-    reset: (next: string) => {
-      text = next;
-      behind = [];
-      const generation = mount.generation + 1;
-      const hadFocus = mount.focused || focusExpected;
-      focusExpected = false;
-      const retiring = hadFocus ? { generation: mount.generation, initial: mount.initial } : null;
-      publish({ initial: next, generation, refocus: hadFocus, focused: false, retiring });
-      // The new input may never say it took the focus (the app went to the background).
-      if (retiring) {
-        setTimeout(() => {
-          if (mount.generation === generation && mount.retiring) publish({ ...mount, retiring: null });
-        }, RETIRE_MS);
-      }
-    },
+    reset: (next: string) => swap(next),
     /** The input of mount `generation` took or lost the focus; false when it has since been replaced. */
     focus: (focused: boolean, generation: number): boolean => {
       if (generation !== mount.generation) return false;
@@ -162,9 +175,16 @@ function createField(value: string | undefined, autoFocus: boolean) {
       else if (mount.focused !== focused) publish({ ...mount, focused });
       return true;
     },
-    /** The caller's `value` as a committed render shows it. */
-    shown: (value: string | undefined, editable: boolean) => {
+    /** The caller's `value` as a committed render shows it, with its reset token. */
+    shown: (value: string | undefined, takesInput: boolean, resetToken: unknown) => {
+      editable = takesInput;
       if (value === undefined) return;
+      if (resetToken !== token) {
+        // The caller put this text in itself (a failed message back in the box): never an echo.
+        token = resetToken;
+        swap(value);
+        return;
+      }
       dropExpired(performance.now());
       const index = pending(value);
       if (index >= 0) {
@@ -180,16 +200,7 @@ function createField(value: string | undefined, autoFocus: boolean) {
         text = '';
         behind = [];
       } else {
-        text = value;
-        behind = [];
-        // The input that had the focus is gone; the new one says so itself when it takes it.
-        publish({
-          initial: value,
-          generation: mount.generation + 1,
-          refocus: mount.focused && editable,
-          focused: false,
-          retiring: null,
-        });
+        swap(value);
       }
     },
   };
@@ -231,16 +242,23 @@ export interface NativeText {
 export type NativeTextOptions = Pick<
   TextInputProps,
   'value' | 'onChangeText' | 'onFocus' | 'onBlur' | 'autoFocus' | 'editable'
->;
+> & {
+  /**
+   * Changes when the caller puts text in itself that a late render of typing
+   * could look like (a failed message restored into the box): the `value`
+   * that comes with it is set as `reset` would, never taken for an echo.
+   */
+  resetToken?: unknown;
+};
 
-export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable }: NativeTextOptions): NativeText {
-  const [field] = useState(() => createField(value, autoFocus === true));
+export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable, resetToken }: NativeTextOptions): NativeText {
+  const [field] = useState(() => createField(value, autoFocus === true, resetToken));
   const mount = useSyncExternalStore(field.subscribe, field.mount);
   const locked = editable === false;
 
   useLayoutEffect(() => {
-    field.shown(value, !locked);
-  }, [field, value, locked]);
+    field.shown(value, !locked, resetToken);
+  }, [field, value, locked, resetToken]);
 
   // Each input's handlers name its own mount: a replaced input's late events change nothing.
   const propsFor = (generation: number, initial: string | undefined, focus: boolean | undefined): InputProps => ({

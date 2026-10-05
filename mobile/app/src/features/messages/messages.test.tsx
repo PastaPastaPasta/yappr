@@ -1,4 +1,4 @@
-import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
+import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO, WriteTicket } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react-native';
 import {
@@ -684,6 +684,48 @@ describe('Conversation (DM-03, DM-04)', () => {
         expect(screen.queryByTestId('dm-composer-mirror', { includeHiddenElements: true })).toBeNull();
         expect(StyleSheet.flatten(composer().props.style).height).toBeUndefined();
       });
+    });
+
+    /** Send "hello" with the engine's answer held back; returns the refusal to deliver later. */
+    async function sendHeldBack() {
+      await openConversation();
+      let refuse: (error: Error) => void = () => undefined;
+      fakeEngine.method('dm.send').mockImplementationOnce(() => new Promise<WriteTicket>((_, reject) => (refuse = reject)));
+      fireEvent(composer(), 'focus');
+      fireEvent.changeText(composer(), 'hello');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      return () => refuse(Object.assign(new Error('Unblock this person to message them.'), { code: 'BAD_REQUEST' }));
+    }
+
+    it('shows a failed message put back in the box, though the box last held that text (QA rc7 review)', async () => {
+      // "hello" pasted and deleted in the fresh box before the screen re-rendered: a late render of
+      // it is an echo, but the message put back is not.
+      const refuse = await sendHeldBack();
+      fireEvent(composer(), 'focus');
+      act(() => {
+        fireEvent.changeText(composer(), 'hello');
+        fireEvent.changeText(composer(), '');
+      });
+      expect(draftNow()).toBe('');
+      await act(async () => refuse());
+      expect(draftNow()).toBe('hello');
+      expect(composer()).toHaveDisplayValue('hello');
+      fireEvent.changeText(composer(), 'hello!');
+      expect(draftNow()).toBe('hello!');
+    });
+
+    it('hands the keyboard on to the message put back when Send fails before the fresh box has the focus', async () => {
+      const refuse = await sendHeldBack();
+      // The box that held "hello" still has the keyboard; the fresh one has not said it took it.
+      const holding = screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true });
+      await act(async () => refuse());
+      expect(composer()).toHaveDisplayValue('hello');
+      expect(composer().props.autoFocus).toBe(true);
+      // The input holding the keyboard stays until the box with the message takes it.
+      expect(screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBe(holding);
+      fireEvent(composer(), 'focus');
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
     });
 
     it('keeps a paste right after Send whole, even one that starts with the message sent', async () => {

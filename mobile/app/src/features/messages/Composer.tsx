@@ -20,6 +20,8 @@ export interface ComposerProps {
   onChangeText: (text: string) => void;
   /** Sends the text; true when it took it (the box is then emptied at once). */
   onSend: () => boolean;
+  /** Changes when `value` was put back by the app (a failed message): set as such, never taken for an echo. */
+  restoreToken?: number;
   disabled?: boolean;
 }
 
@@ -35,10 +37,15 @@ export interface ComposerProps {
  * input stays, hidden by its slot (`InputSlot`), until the new one has the
  * focus, so the keyboard stays up (QA rc11 c3, rc12 c1).
  */
-export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
+export function Composer({ value, onChangeText, onSend, disabled = false, restoreToken }: ComposerProps) {
   const c = useColors();
   const scale = useWindowDimensions().fontScale;
-  const { key: inputKey, attach, clear, inputProps, retiring, focused } = useNativeText({ value, onChangeText, editable: !disabled });
+  const { key: inputKey, attach, clear, inputProps, retiring, focused } = useNativeText({
+    value,
+    onChangeText,
+    editable: !disabled,
+    resetToken: restoreToken,
+  });
   /** The same input for the live box and the one it replaced: only its handlers, text and test id differ. */
   const field = (props: TextInputProps, testID: string, ref?: (input: TextInput | null) => void) => (
     <TextInput

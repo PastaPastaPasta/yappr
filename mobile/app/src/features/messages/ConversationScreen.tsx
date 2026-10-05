@@ -42,7 +42,7 @@ import { buildTimeline, chronological, composerBlockedReason, conversationTitle,
 import { DaySeparator, MessageBubble } from './MessageBubble';
 import { DmLocked } from './DmStates';
 import { resendMissingKeys } from './group-keys';
-import { takeDraft, useDraft, useDrafts } from './drafts';
+import { takeDraft, useDraft, useDraftRestores, useDrafts } from './drafts';
 import { forgetLanded, mergeOutbox, resolveFailed, sendInBackground, useOutboxFor } from './outbox';
 import { useStickToNewest } from './stick-to-newest';
 import { UnlockSheet } from './UnlockSheet';
@@ -194,6 +194,7 @@ export function ConversationScreen() {
   );
 
   const draft = useDraft(viewerId, key);
+  const draftRestores = useDraftRestores(viewerId, key);
   const setDraft = useCallback(
     (text: string) => {
       if (viewerId) useDrafts.getState().set(viewerId, key, text);
@@ -390,7 +391,13 @@ export function ConversationScreen() {
           <ComposerBanner text={blockedReason} />
         ) : (
           // Sends wait for the first page: a send's baseline is the messages held when it was sent.
-          <Composer value={draft} onChangeText={setDraft} onSend={send} disabled={!messages.data} />
+          <Composer
+            value={draft}
+            onChangeText={setDraft}
+            onSend={send}
+            disabled={!messages.data}
+            restoreToken={draftRestores}
+          />
         )}
       </Animated.View>
     </Screen>
