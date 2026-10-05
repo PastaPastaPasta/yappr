@@ -108,6 +108,12 @@ interface Tracked {
   previous?: string;
   /** Refused before anything went out, it gave the key back to `previous`; its Retry takes it again. */
   handedBack?: boolean;
+  /**
+   * A check proved it absent while a newer write held its key: kept, so that
+   * if the newer one is refused unsent this one's failure is still reported
+   * (`handBack`).
+   */
+  absentWhileSuperseded?: WriteTicket;
 }
 
 /**
@@ -350,14 +356,13 @@ function settle(ticket: WriteTicket): void {
       return;
     }
     case 'unconfirmed':
-      if (!latest) return;
+      if (!latest) {
+        // A newer write decides the state, unless it is refused unsent: then this outcome is reported.
+        if (ticket.retryable) entry.absentWhileSuperseded = ticket;
+        return;
+      }
       if (ticket.retryable) {
-        // A check proved it did not land: the same sentence as a refusal.
-        logFailure(ticket);
-        undo(entry);
-        spec.onFailed?.(ticket, entry.vars);
-        fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
-        release(entry.key, false);
+        reportAbsent(ticket, entry);
       } else if (!stillRunning(ticket)) {
         // It may have landed (PRD G-3): nothing to say, the reconciler checks it (`watch`). Send the
         // newer intent, which is harmless if it did not. Not while its call still runs: the newer one
@@ -365,6 +370,21 @@ function settle(ticket: WriteTicket): void {
         release(entry.key, true);
       }
   }
+}
+
+/**
+ * A check proved the latest write for its key did not land: undone, and the
+ * same sentence as a refusal, with Retry.
+ */
+function reportAbsent(ticket: WriteTicket, entry: Tracked): void {
+  const { spec } = entry;
+  entry.absentWhileSuperseded = undefined;
+  logFailure(ticket);
+  undo(entry);
+  spec.onFailed?.(ticket, entry.vars);
+  const retry = { label: 'Retry', onPress: () => retryWrite(ticket.id) };
+  fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
+  release(entry.key, false);
 }
 
 /**
@@ -410,11 +430,18 @@ function watch(ticket: WriteTicket): void {
  */
 function handBack(entry: Tracked): void {
   const { key, previous } = entry;
-  if (key === undefined || previous === undefined || !tracked.has(previous)) return;
+  const earlier = previous === undefined ? undefined : tracked.get(previous);
+  if (key === undefined || previous === undefined || !earlier) return;
   const before = useWriteTickets.getState().byId[previous];
-  if (!before || !(before.state === 'pending' || (before.state === 'unconfirmed' && !before.retryable))) return;
+  if (!before) return;
+  const mayLand = before.state === 'pending' || (before.state === 'unconfirmed' && !before.retryable);
+  // Proved absent while this one held the key: its event was handled (and its checks stopped) then,
+  // with nothing undone or said, so it is reported now, once.
+  const provedAbsent = before.state === 'unconfirmed' && before.retryable ? earlier.absentWhileSuperseded : undefined;
+  if (!mayLand && !provedAbsent) return;
   latestByKey.set(key, previous);
   entry.handedBack = true;
+  if (provedAbsent) reportAbsent(provedAbsent, earlier);
 }
 
 /** The pending write for `key` settled: send the write queued behind it, or drop it. */

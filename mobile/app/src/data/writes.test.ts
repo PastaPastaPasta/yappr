@@ -274,6 +274,42 @@ describe('submitWrite', () => {
     expect(fakeEngine.method('writes.retry')).toHaveBeenCalledTimes(1);
   });
 
+  it('reports an absence proved while a newer write held the key, once that newer write is refused unsent', async () => {
+    const first = await submitPending();
+    const maybe = advance(first, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', maybe));
+    const second = await submitPending();
+    undo.mockClear();
+
+    // The first is proved absent while the second holds the key: nothing said or undone yet.
+    const absent = advance(maybe, {
+      state: 'unconfirmed',
+      retryable: true,
+      error: { code: 'NOT_RECORDED', consensusCode: null, outcome: 'not-recorded', retryable: true, userMessage: 'Checked.' },
+    });
+    act(() => fakeEngine.emit('write.status', absent));
+    expect(undo).not.toHaveBeenCalled();
+    expect(currentToast()).toBeNull();
+
+    // The second is refused before anything went out: the first's absence is reported now.
+    const notSent = { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Network error.' } as const;
+    act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: notSent })));
+    // Both changes undone: the second's, then the first's.
+    expect(undo).toHaveBeenCalledTimes(2);
+    expect(currentToast()).toMatchObject({ kind: 'error', message: "Couldn't like this post. Try again." });
+    const retryFirst = currentToast()?.action;
+
+    // Once only: the same event again changes nothing.
+    act(() => useToastStore.setState({ current: null }));
+    act(() => fakeEngine.emit('write.status', absent));
+    expect(undo).toHaveBeenCalledTimes(2);
+    expect(currentToast()).toBeNull();
+
+    answer('writes.retry', advance(absent, { state: 'pending', retryable: false, error: null }));
+    await act(async () => retryFirst?.onPress());
+    expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(first.id);
+  });
+
   it('acts on a status that overtook the call’s answer', async () => {
     const pending = ticket();
     fakeEngine.method('engage.like').mockImplementationOnce(async () => {
