@@ -22,6 +22,7 @@ import { resetWriteTracking } from '~/data/writes';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
+import { RETIRE_MS } from '~/ui/native-text';
 import { useToastStore } from '~/ui/toast';
 
 import { ConversationScreen } from './ConversationScreen';
@@ -580,6 +581,47 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(composer()).toHaveDisplayValue('');
       expect(draftNow()).toBe('');
       expect(sentTexts()).toEqual(['hello']);
+    });
+
+    it('keeps the old input, hidden, until the fresh one has the focus, so the keyboard stays up (QA rc11 c3)', async () => {
+      await typeHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      // Both mounted: the fresh box, taking the focus, and the one that held "hello", out of sight.
+      const retiring = screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true });
+      expect(retiring.props.pointerEvents).toBe('none');
+      expect(retiring.props.importantForAccessibility).toBe('no-hide-descendants');
+      expect(StyleSheet.flatten(retiring.props.style)).toMatchObject({ position: 'absolute', opacity: 0 });
+      expect(composer().props.autoFocus).toBe(true);
+      expect(composer()).toHaveDisplayValue('');
+      // Its late events, and its blur as the focus moves, change nothing.
+      fireEvent.changeText(retiring, 'hellox');
+      fireEvent(retiring, 'blur');
+      expect(draftNow()).toBe('');
+      // The fresh box has the focus: only now does the old one go.
+      fireEvent(composer(), 'focus');
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+      fireEvent.changeText(composer(), 'y');
+      expect(draftNow()).toBe('y');
+    });
+
+    it('lets the old input go anyway if the fresh one never says it has the focus', async () => {
+      await typeHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      expect(screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeTruthy();
+      act(() => {
+        jest.advanceTimersByTime(RETIRE_MS);
+      });
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+    });
+
+    it('swaps straight away when the box did not have the focus', async () => {
+      await openConversation();
+      fakeEngine.method('dm.send').mockResolvedValue(ticket({ op: 'dm.send', target: { conversationKey: KEY } }));
+      fireEvent.changeText(composer(), 'hello');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+      expect(composer()).toHaveDisplayValue('');
     });
 
     it('keeps a paste right after Send whole, even one that starts with the message sent', async () => {

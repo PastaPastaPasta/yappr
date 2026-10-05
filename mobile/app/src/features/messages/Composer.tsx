@@ -27,12 +27,23 @@ export interface ComposerProps {
  * keystroke is lost; the draft clearing after a send, or coming back into the
  * box, is put in. A send empties the box from the tap itself, with a fresh
  * input: the old one's late keystroke events would bring the sent text back
- * with them (QA rc9 c2: a second Send sent the first message again).
+ * with them (QA rc9 c2: a second Send sent the first message again). The old
+ * input stays, hidden, until the new one has the focus, so the keyboard
+ * stays up (QA rc11 c3).
  */
 export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
   const c = useColors();
   const scale = useWindowDimensions().fontScale;
-  const { key: inputKey, attach, clear, inputProps, focused } = useNativeText({ value, onChangeText, editable: !disabled });
+  const { key: inputKey, attach, clear, inputProps, retiring, focused } = useNativeText({ value, onChangeText, editable: !disabled });
+  const inputStyle = {
+    fontSize: 16,
+    lineHeight: LINE * scale,
+    minHeight: 40,
+    maxHeight: LINE * scale * MAX_LINES + 16,
+    paddingTop: 9,
+    paddingBottom: 9,
+    textAlignVertical: 'center' as const,
+  };
   const send = () => {
     if (onSend()) clear();
   };
@@ -50,6 +61,21 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
           tw.bg,
         )}
       >
+        {retiring ? (
+          // The input that held the sent text, until the fresh one below has the focus: out of the
+          // layout (the box takes the empty input's height at once), invisible, and out of reach.
+          <TextInput
+            key={retiring.key}
+            {...retiring.inputProps}
+            multiline
+            editable={!disabled}
+            pointerEvents="none"
+            accessibilityElementsHidden
+            importantForAccessibility="no-hide-descendants"
+            style={[inputStyle, { position: 'absolute', left: 16, right: 16, top: 0, opacity: 0 }]}
+            testID="dm-composer-retiring"
+          />
+        ) : null}
         <TextInput
           key={inputKey}
           ref={attach}
@@ -62,15 +88,7 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
           cursorColor={c.accent}
           selectionColor={c.accent}
           className="text-gray-900 dark:text-gray-100"
-          style={{
-            fontSize: 16,
-            lineHeight: LINE * scale,
-            minHeight: 40,
-            maxHeight: LINE * scale * MAX_LINES + 16,
-            paddingTop: 9,
-            paddingBottom: 9,
-            textAlignVertical: 'center',
-          }}
+          style={inputStyle}
           testID="dm-composer"
         />
       </View>

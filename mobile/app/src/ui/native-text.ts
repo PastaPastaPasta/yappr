@@ -31,7 +31,13 @@ import type { TextInputProps } from 'react-native';
  * count, on Android or iOS. A fresh field cannot get the old one's
  * keystrokes, and events from the old one are ignored: a keystroke typed in
  * the instant after Send can be lost, but the sent text is never sent again,
- * and nothing typed or pasted afterwards is cut.
+ * and nothing typed or pasted afterwards is cut. The swap is double-buffered
+ * (`retiring`): while the old input has the focus, it stays mounted, hidden,
+ * until the new one has taken the focus from it, so the keyboard moves from
+ * one to the other instead of starting to close (QA rc11 c3).
+ *
+ * (Clearing in place on iOS instead is not safe either: iOS drops a JS text
+ * update whose event count is not the field's own, as Android does.)
  *
  * What the field reported is kept outside React state, updated as each
  * keystroke arrives, and compared once a render commits: a caller whose
@@ -48,7 +54,12 @@ interface Mount {
   /** Whether the input it replaced had focus, so the new one takes it. */
   refocus: boolean;
   focused: boolean;
+  /** The input `clear()` replaced while it had the focus, kept until the new one has taken it. */
+  retiring: { generation: number; initial: string | undefined } | null;
 }
+
+/** How long a replaced input waits for the new one to take the focus before it goes anyway. */
+export const RETIRE_MS = 500;
 
 /** The mounted input, as far as this needs it: `TextInput.clear()` (a wrapper may not pass it on). */
 export interface ClearableInput {
@@ -64,7 +75,7 @@ export const RENDER_LAG_MS = 10_000;
 
 /** The native field's text as JS hears of it, and the input it renders. */
 function createField(value: string | undefined) {
-  let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false };
+  let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false, retiring: null };
   let input: ClearableInput | null = null;
   /** The text the native field holds. */
   let text = value;
@@ -122,16 +133,27 @@ function createField(value: string | undefined) {
       text = next;
       behind = [];
       if (next === '' && input?.clear) input.clear();
-      else publish({ initial: next, generation: mount.generation + 1, refocus: mount.focused, focused: false });
+      else publish({ initial: next, generation: mount.generation + 1, refocus: mount.focused, focused: false, retiring: null });
     },
     /** Empties the field now (a message sent): a fresh input, which takes the focus the old one had. */
     clear: () => {
       text = '';
       behind = [];
-      publish({ initial: '', generation: mount.generation + 1, refocus: mount.focused, focused: false });
+      const generation = mount.generation + 1;
+      const retiring = mount.focused ? { generation: mount.generation, initial: mount.initial } : null;
+      publish({ initial: '', generation, refocus: mount.focused, focused: false, retiring });
+      // The new input may never say it took the focus (the app went to the background).
+      if (retiring) {
+        setTimeout(() => {
+          if (mount.generation === generation && mount.retiring) publish({ ...mount, retiring: null });
+        }, RETIRE_MS);
+      }
     },
     focus: (focused: boolean, generation: number) => {
-      if (generation === mount.generation && mount.focused !== focused) publish({ ...mount, focused });
+      if (generation !== mount.generation) return;
+      // The new input has the focus: the one it replaced can go now, without the keyboard closing.
+      if (focused && mount.retiring) publish({ ...mount, focused, retiring: null });
+      else if (mount.focused !== focused) publish({ ...mount, focused });
     },
     /** The caller's `value` as a committed render shows it. */
     shown: (value: string | undefined, editable: boolean) => {
@@ -154,7 +176,13 @@ function createField(value: string | undefined) {
         text = value;
         behind = [];
         // The input that had the focus is gone; the new one says so itself when it takes it.
-        publish({ initial: value, generation: mount.generation + 1, refocus: mount.focused && editable, focused: false });
+        publish({
+          initial: value,
+          generation: mount.generation + 1,
+          refocus: mount.focused && editable,
+          focused: false,
+          retiring: null,
+        });
       }
     },
   };
@@ -164,6 +192,8 @@ function createField(value: string | undefined) {
 export interface TextResetHandle {
   reset: (value: string) => void;
 }
+
+type InputProps = Pick<TextInputProps, 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
 
 export interface NativeText {
   /** The TextInput's `key`. */
@@ -182,7 +212,13 @@ export interface NativeText {
    */
   reset: (value: string) => void;
   /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
-  inputProps: Pick<TextInputProps, 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
+  inputProps: InputProps;
+  /**
+   * The input `clear()` replaced, while the new one has not taken the focus
+   * yet: render it as well, hidden and out of the layout, before the new
+   * one, with its own `key` and no `ref`. Only a caller of `clear()` gets one.
+   */
+  retiring: { key: number; inputProps: InputProps } | null;
   focused: boolean;
 }
 
@@ -200,28 +236,30 @@ export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus,
     field.shown(value, !locked);
   }, [field, value, locked]);
 
-  const { generation } = mount;
+  // Each input's handlers name its own mount: a replaced input's late events change nothing.
+  const propsFor = (generation: number, initial: string | undefined, focus: boolean | undefined): InputProps => ({
+    defaultValue: initial,
+    autoFocus: focus,
+    onChangeText: (text) => {
+      if (field.typed(text, generation)) onChangeText?.(text);
+    },
+    onFocus: (event) => {
+      field.focus(true, generation);
+      onFocus?.(event);
+    },
+    onBlur: (event) => {
+      field.focus(false, generation);
+      onBlur?.(event);
+    },
+  });
+  const { generation, retiring } = mount;
   return {
     key: generation,
     attach: field.attach,
     clear: field.clear,
     reset: field.reset,
-    focused: mount.focused,
-    inputProps: {
-      defaultValue: mount.initial,
-      autoFocus: generation === 0 ? autoFocus : mount.refocus,
-      // Each input's handlers name its own mount: a replaced input's late events change nothing.
-      onChangeText: (text) => {
-        if (field.typed(text, generation)) onChangeText?.(text);
-      },
-      onFocus: (event) => {
-        field.focus(true, generation);
-        onFocus?.(event);
-      },
-      onBlur: (event) => {
-        field.focus(false, generation);
-        onBlur?.(event);
-      },
-    },
+    focused: mount.focused || retiring !== null,
+    inputProps: propsFor(generation, mount.initial, generation === 0 ? autoFocus : mount.refocus),
+    retiring: retiring ? { key: retiring.generation, inputProps: propsFor(retiring.generation, retiring.initial, false) } : null,
   };
 }
