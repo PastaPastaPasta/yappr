@@ -9,13 +9,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
-import { resetWriteTracking } from '~/data/writes';
+import { resetWriteTracking, runWrite } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { BookmarksScreen } from './BookmarksScreen';
 import { EditProfileScreen } from './EditProfileScreen';
+import { profileUpdateWrite } from './profile-writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 /** The screen's navigation listeners (`beforeRemove`), so a test can try to leave. */
@@ -619,6 +620,73 @@ describe('EditProfileScreen', () => {
       expect(cachedProfile()).not.toHaveProperty('location');
       expect(shown).toEqual(["Couldn't save location. Try again."]);
     });
+  });
+
+  it('takes no second Save while the first waits for the engine to take it', async () => {
+    // A second Save would be queued behind the first, its name shown, and dropped if the first failed.
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    let answer: (t: WriteTicket) => void = () => undefined;
+    fakeEngine.method('profiles.update').mockImplementationOnce(() => new Promise<WriteTicket>((resolve) => (answer = resolve)));
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana A');
+    act(() => fireEvent.press(screen.getByTestId('edit-save')));
+    expect(screen.queryByTestId('edit-save')).toBeNull();
+    expect(screen.getByTestId('edit-saving')).toBeTruthy();
+    expect(screen.getByTestId('edit-name')).toBeDisabled();
+
+    // Refused before a ticket: Save comes back for another try.
+    await act(async () => answer(pending));
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Network.' },
+        }),
+      ),
+    );
+    expect(screen.getByTestId('edit-save')).toBeEnabled();
+    expect(fakeEngine.method('profiles.update')).toHaveBeenCalledTimes(1);
+  });
+
+  it('ends at the chain’s name when a save queued behind another is dropped as that one fails', async () => {
+    // The tracker's own guard, for any queue: two names, the first fails, the second is never sent.
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    const first = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    let answer: (t: WriteTicket) => void = () => undefined;
+    fakeEngine.method('profiles.update').mockImplementationOnce(() => new Promise<WriteTicket>((resolve) => (answer = resolve)));
+    let sending: Promise<unknown> = Promise.resolve();
+    act(() => {
+      sending = runWrite(profileUpdateWrite, { viewerId: VIEWER, patch: { displayName: 'Jana A' } });
+    });
+    await act(async () => {
+      await expect(runWrite(profileUpdateWrite, { viewerId: VIEWER, patch: { displayName: 'Jana B' } })).resolves.toEqual({
+        status: 'queued',
+      });
+    });
+    expect(cachedProfile()?.displayName).toBe('Jana B');
+    await act(async () => {
+      answer(first);
+      await sending;
+    });
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(first, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'No.' },
+        }),
+      ),
+    );
+    await flush();
+    expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+    expect(fakeEngine.method('profiles.update')).toHaveBeenCalledTimes(1);
   });
 
   it('blocks saving an over-long name', async () => {

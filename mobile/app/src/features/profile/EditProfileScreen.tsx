@@ -54,7 +54,12 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   // gone. Re-enabling the fields in the render that closes it would move the inputs between
   // native parents inside a screen Android has started to animate out, which crashes the app.
   const closing = save.status === 'confirmed' || save.status === 'unconfirmed';
-  const saving = save.status === 'pending' || closing;
+  // From the tap: until the engine answers with a ticket the status is still idle, and a second
+  // Save would be queued behind the first with its change shown, one save the user never meant.
+  const [sending, setSending] = useState(false);
+  // A second tap before the re-render that disables Save.
+  const sendingNow = useRef(false);
+  const saving = sending || save.status === 'pending' || closing;
   const creating = !profile.hasProfile;
   const patch = patchOf(initial, form, creating);
   const errors = validateForm(form, limits);
@@ -101,9 +106,17 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   }, [save.status]);
 
   const onSave = () => {
-    if (!canSave) return;
+    if (!canSave || sendingNow.current) return;
     const avatar = patch.avatar === undefined ? undefined : avatarDtoOf(form.avatar, viewerId, defaultStyle);
-    save.send({ viewerId, patch, avatar }).catch(() => undefined);
+    sendingNow.current = true;
+    setSending(true);
+    save
+      .send({ viewerId, patch, avatar })
+      .catch(() => undefined)
+      .finally(() => {
+        sendingNow.current = false;
+        setSending(false);
+      });
   };
 
   const nameField = (
