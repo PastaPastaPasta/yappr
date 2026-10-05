@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { useState } from 'react';
+import { createRef, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
@@ -20,7 +20,7 @@ import { RadioGroup } from './RadioGroup';
 import { SwitchRow } from './Switch';
 import { FilterChips, TopTabs } from './Tabs';
 import { Text } from './Text';
-import { RENDER_LAG_MS } from './native-text';
+import { RENDER_LAG_MS, type TextResetHandle } from './native-text';
 import { TextField } from './TextField';
 import { colors } from './tokens';
 import { toast, toastDuration, useToastStore } from './toast';
@@ -321,6 +321,33 @@ describe('TextField', () => {
       } finally {
         now.mockRestore();
       }
+    });
+
+    it('sets the text its parent resets it to, even a text a late render would show (Randomize, Clear)', () => {
+      const field = createRef<TextResetHandle>();
+      function Seed() {
+        const [seed, setSeed] = useState('');
+        return (
+          <>
+            <TextField ref={field} label="Name" value={seed} onChangeText={setSeed} />
+            <Button
+              label="Back to a"
+              onPress={() => {
+                field.current?.reset('a');
+                setSeed('a');
+              }}
+            />
+          </>
+        );
+      }
+      render(<Seed />);
+      fireEvent(input(), 'focus');
+      act(() => {
+        for (const text of ['a', 'ab', 'a', 'ab']) fireEvent.changeText(input(), text);
+      });
+      fireEvent.press(screen.getByRole('button', { name: 'Back to a' }));
+      expect(input()).toHaveDisplayValue('a');
+      expect(input().props.autoFocus).toBe(true);
     });
 
     it('does not hand the focus back to a locked field it resets (a sign-in going through)', () => {

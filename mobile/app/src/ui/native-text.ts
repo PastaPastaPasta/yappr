@@ -113,6 +113,17 @@ function createField(value: string | undefined) {
       text = next;
       return true;
     },
+    /**
+     * Sets the field's text now, for an action of the user's (Clear, a recent
+     * search, Randomize): never mistaken for a late render of typing. Empty
+     * clears it in place, keeping the focus and keyboard.
+     */
+    reset: (next: string) => {
+      text = next;
+      behind = [];
+      if (next === '' && input?.clear) input.clear();
+      else publish({ initial: next, generation: mount.generation + 1, refocus: mount.focused, focused: false });
+    },
     /** Empties the field now (a message sent): a fresh input, which takes the focus the old one had. */
     clear: () => {
       text = '';
@@ -149,6 +160,11 @@ function createField(value: string | undefined) {
   };
 }
 
+/** What a field that owns its text lets its parent do: set the text for an action of the user's. */
+export interface TextResetHandle {
+  reset: (value: string) => void;
+}
+
 export interface NativeText {
   /** The TextInput's `key`. */
   key: number;
@@ -159,6 +175,12 @@ export interface NativeText {
    * empties the caller's text (Send): the old input's late events are ignored.
    */
   clear: () => void;
+  /**
+   * Sets the text for an action of the user's (Clear, a recent search,
+   * Randomize), then the caller updates its own value to it: a `value`
+   * change alone can be taken for a late render of typing.
+   */
+  reset: (value: string) => void;
   /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
   inputProps: Pick<TextInputProps, 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
   focused: boolean;
@@ -183,6 +205,7 @@ export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus,
     key: generation,
     attach: field.attach,
     clear: field.clear,
+    reset: field.reset,
     focused: mount.focused,
     inputProps: {
       defaultValue: mount.initial,

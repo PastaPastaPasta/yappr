@@ -246,7 +246,7 @@ export function UserPicker({
   const focusHandlers = useRevealOnFocus(onSearchFocus, onSearchBlur);
   const [query, setQuery] = useState(initialQuery);
   // Uncontrolled, so a busy render (each key searches) never drops a keystroke (QA rc7 D-2).
-  const { key: inputKey, attach, inputProps } = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
+  const { key: inputKey, attach, reset, inputProps } = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
   const byId = isIdentityIdText(text);
@@ -346,7 +346,10 @@ export function UserPicker({
               accessibilityRole="button"
               accessibilityLabel="Clear search"
               hitSlop={hitSlopFor(20)}
-              onPress={() => setQuery('')}
+              onPress={() => {
+                reset('');
+                setQuery('');
+              }}
             >
               <XCircleIcon size={18} color={c.textSecondary} />
             </Pressable>

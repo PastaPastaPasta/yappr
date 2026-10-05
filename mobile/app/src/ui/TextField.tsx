@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useImperativeHandle, useState, type Ref } from 'react';
 import { TextInput, View, useWindowDimensions, type TextInputProps } from 'react-native';
 import { EyeIcon, EyeSlashIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
-import { useNativeText } from './native-text';
+import { useNativeText, type TextResetHandle } from './native-text';
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
 
@@ -31,6 +31,8 @@ export interface TextFieldProps extends Omit<TextInputProps, 'multiline' | 'secu
   /** Show the `maxLength` counter from the first character ("0 / 500"), not only near the limit. */
   alwaysCount?: boolean;
   className?: string;
+  /** `reset(value)`: sets the text for an action of the user's (Clear, Randomize), before the caller's value follows. */
+  ref?: Ref<TextResetHandle>;
 }
 
 /**
@@ -57,10 +59,12 @@ export function TextField({
   onFocus,
   onBlur,
   autoFocus,
+  ref,
   ...props
 }: TextFieldProps) {
   const c = useColors();
-  const { key: inputKey, attach, inputProps, focused } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable });
+  const { key: inputKey, attach, reset, inputProps, focused } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable });
+  useImperativeHandle(ref, () => ({ reset }), [reset]);
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;

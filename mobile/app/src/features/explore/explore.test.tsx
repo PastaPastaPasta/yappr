@@ -2,8 +2,10 @@ import type { CapabilitiesDTO, Page, PostDTO, RankedUserDTO, SessionDTO, TagDTO,
 import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
+import { render } from '@testing-library/react-native';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
-import { ActionSheetIOS, RefreshControl } from 'react-native';
+import { useState } from 'react';
+import { ActionSheetIOS, RefreshControl, Text } from 'react-native';
 
 import HashtagRoute from '~/app/(tabs)/(home,explore,notifications,messages,profile)/hashtag/[tag]';
 import SearchResultsRoute from '~/app/(tabs)/(explore)/explore/search/[kind]';
@@ -20,6 +22,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { ExploreScreen } from './ExploreScreen';
 import { useExplorePrefs } from './explore-prefs';
+import { SearchField } from './SearchField';
 import { addRecent, clearRecent, getRecent, startRecentSearchCleanup } from './recent-searches';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -124,6 +127,33 @@ beforeEach(() => {
   clearRecent('signed-out');
   clearRecent(viewer.identityId);
   jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: true } as ReturnType<typeof NetInfo.useNetInfo>);
+});
+
+
+describe('SearchField', () => {
+  it('clears on Clear even right after a delete and retype that rendered once (QA rc7 review)', () => {
+    // a, '', a reach the field before the search's one render with "a": a Clear's '' is not a late echo.
+    function Search() {
+      const [text, setText] = useState('');
+      return (
+        <>
+          <SearchField value={text} onChangeText={setText} />
+          <Text testID="held">{text}</Text>
+        </>
+      );
+    }
+    render(<Search />);
+    const input = () => screen.getByTestId('search-input');
+    fireEvent(input(), 'focus');
+    act(() => {
+      for (const text of ['a', '', 'a']) fireEvent.changeText(input(), text);
+    });
+    expect(input()).toHaveDisplayValue('a');
+    fireEvent.press(screen.getByTestId('search-clear'));
+    expect(input()).toHaveDisplayValue('');
+    expect(screen.getByTestId('held')).toHaveTextContent('');
+    expect(screen.queryByTestId('search-clear')).toBeNull();
+  });
 });
 
 describe('Explore', () => {

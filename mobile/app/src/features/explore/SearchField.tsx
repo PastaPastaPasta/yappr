@@ -1,8 +1,9 @@
+import { useImperativeHandle, type Ref } from 'react';
 import { Platform, Pressable, TextInput, View, type TextInputProps } from 'react-native';
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
-import { useNativeText } from '~/ui/native-text';
+import { useNativeText, type TextResetHandle } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 
@@ -37,6 +38,8 @@ export function SearchLauncher({ onPress }: { onPress: () => void }) {
 export interface SearchFieldProps extends Omit<TextInputProps, 'value' | 'onChangeText'> {
   value: string;
   onChangeText: (text: string) => void;
+  /** `reset(text)`: sets the search for an action of the user's (a recent search), before `value` follows. */
+  ref?: Ref<TextResetHandle>;
 }
 
 /**
@@ -44,9 +47,10 @@ export interface SearchFieldProps extends Omit<TextInputProps, 'value' | 'onChan
  * Uncontrolled (`useNativeText`), so no keystroke is lost while results
  * load; Clear and a recent search tapped are put in.
  */
-export function SearchField({ value, onChangeText, onFocus, onBlur, autoFocus, ...props }: SearchFieldProps) {
+export function SearchField({ value, onChangeText, ref, onFocus, onBlur, autoFocus, ...props }: SearchFieldProps) {
   const c = useColors();
-  const { key: inputKey, attach, inputProps } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
+  const { key: inputKey, attach, reset, inputProps } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
+  useImperativeHandle(ref, () => ({ reset }), [reset]);
   return (
     <View className={cn(FIELD, 'flex-1')}>
       <MagnifyingGlassIcon size={16} color={c.textSecondary} />
@@ -76,7 +80,10 @@ export function SearchField({ value, onChangeText, onFocus, onBlur, autoFocus, .
           accessibilityRole="button"
           accessibilityLabel="Clear search"
           hitSlop={hitSlopFor(20)}
-          onPress={() => onChangeText('')}
+          onPress={() => {
+            reset('');
+            onChangeText('');
+          }}
           testID="search-clear"
         >
           <XCircleIcon size={18} color={c.textSecondary} />

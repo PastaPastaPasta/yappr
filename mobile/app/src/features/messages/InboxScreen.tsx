@@ -78,7 +78,7 @@ function HeaderActions({ v5 }: { v5: boolean }) {
 /** Uncontrolled (`useNativeText`), so no keystroke is lost; Clear is put in. */
 function SearchBox({ value, onChange }: { value: string; onChange: (text: string) => void }) {
   const c = useColors();
-  const { key: inputKey, attach, inputProps } = useNativeText({ value, onChangeText: onChange });
+  const { key: inputKey, attach, reset, inputProps } = useNativeText({ value, onChangeText: onChange });
   return (
     <View className="px-4 pb-2 pt-1">
       <View
@@ -107,7 +107,15 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
           testID="messages-search"
         />
         {value ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={hitSlopFor(20)} onPress={() => onChange('')}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+            hitSlop={hitSlopFor(20)}
+            onPress={() => {
+              reset('');
+              onChange('');
+            }}
+          >
             <XCircleIcon size={18} color={c.textSecondary} />
           </Pressable>
         ) : null}
