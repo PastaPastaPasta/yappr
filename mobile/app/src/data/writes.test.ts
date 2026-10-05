@@ -310,6 +310,67 @@ describe('submitWrite', () => {
     expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(first.id);
   });
 
+  describe('an absence proved while a newer write held the key, then that one fails after it was sent', () => {
+    const absentCheck = (t: WriteTicket) =>
+      advance(t, {
+        state: 'unconfirmed',
+        retryable: true,
+        error: { code: 'NOT_RECORDED', consensusCode: null, outcome: 'not-recorded', retryable: true, userMessage: 'Checked.' },
+      });
+
+    /** The first write proved absent while the second holds its key; returns both and the toasts shown from here. */
+    async function supersededAbsence() {
+      const first = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(first, { state: 'unconfirmed' })));
+      const second = await submitPending();
+      undo.mockClear();
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(first, { state: 'unconfirmed' }))));
+      expect(undo).not.toHaveBeenCalled();
+      const shown: string[] = [];
+      const stop = useToastStore.subscribe((state) => {
+        if (state.current) shown.push(state.current.message);
+      });
+      return { first, second, shown, stop };
+    }
+
+    it('undoes both when the newer one is refused, with one toast whose Retry re-sends the newer one', async () => {
+      const { second, shown, stop } = await supersededAbsence();
+      const refused = { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Refused.' } as const;
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: refused })));
+      stop();
+      expect(undo).toHaveBeenCalledTimes(2);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      answer('writes.retry', advance(second, { state: 'pending', retryable: false, error: null }));
+      await act(async () => currentToast()?.action?.onPress());
+      expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(second.id);
+    });
+
+    it('undoes both when the newer one is proved absent too, with one toast', async () => {
+      const { second, shown, stop } = await supersededAbsence();
+      const maybe = advance(second, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      stop();
+      expect(undo).toHaveBeenCalledTimes(2);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      answer('writes.retry', advance(second, { state: 'pending', retryable: false, error: null }));
+      await act(async () => currentToast()?.action?.onPress());
+      expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(second.id);
+    });
+
+    it('says the earlier write failed, once, when the newer one is refused unsent', async () => {
+      const { first, second, shown, stop } = await supersededAbsence();
+      const notSent = { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Network error.' } as const;
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: notSent })));
+      stop();
+      expect(undo).toHaveBeenCalledTimes(2);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      answer('writes.retry', advance(first, { state: 'pending', retryable: false, error: null }));
+      await act(async () => currentToast()?.action?.onPress());
+      expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(first.id);
+    });
+  });
+
   it('acts on a status that overtook the call’s answer', async () => {
     const pending = ticket();
     fakeEngine.method('engage.like').mockImplementationOnce(async () => {

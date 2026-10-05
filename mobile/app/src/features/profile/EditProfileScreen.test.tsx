@@ -505,6 +505,50 @@ describe('EditProfileScreen', () => {
     expect(cachedProfile()).not.toHaveProperty('location');
   });
 
+  it('undoes a save proved absent under a later save that is sent and refused, with one toast for the later one', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const first = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValueOnce(first);
+    const view = renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    const unconfirmed = advance(first, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    view.unmount();
+
+    const second = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValueOnce(second);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-location'), 'Taipei');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+
+    const shown: string[] = [];
+    const stop = useToastStore.subscribe((state) => {
+      if (state.current) shown.push(state.current.message);
+    });
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(second, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Refused.' },
+        }),
+      ),
+    );
+    stop();
+    expect(shown).toEqual(["Couldn't save your profile. Try again."]);
+    expect(useToastStore.getState().current?.action?.label).toBe('Retry');
+    // Neither change is left: the later save's undo does not bring the earlier one back.
+    expect(cachedProfile()).not.toHaveProperty('pronouns');
+    expect(cachedProfile()).not.toHaveProperty('location');
+    // The form stays open with the later change, for Save or Retry.
+    expect(screen.getByTestId('edit-location')).toHaveDisplayValue('Taipei');
+  });
+
   it('blocks saving an over-long name', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     renderScreen(<EditProfileScreen />);

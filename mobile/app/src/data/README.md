@@ -153,7 +153,12 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     (outcome `not-sent`) changed nothing, so it gives the key back to the
     write before it while that one may still land: a check proving that one
     absent still undoes it and says so. The refused write's Retry takes the
-    key again.
+    key again. A check that proved the write before it absent while the
+    newer one held the key is kept: once the newer one fails for good (sent
+    and refused, or proved absent too), the earlier one is undone as well,
+    after the newer one's undo, and the newer one's toast and Retry say it
+    (one toast). If the newer one was refused unsent, the earlier one's
+    failure is the toast, with its own Retry.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might

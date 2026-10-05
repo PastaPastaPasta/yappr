@@ -342,17 +342,26 @@ function settle(ticket: WriteTicket): void {
       if (!latest) return;
       undo(entry);
       spec.onFailed?.(ticket, entry.vars);
-      if (sessionFailed) {
-        failSessionExpired(signerOf(ticket));
-      } else {
+      const unsent = ticket.error?.outcome === 'not-sent';
+      const earlier = supersededAbsence(entry);
+      if (unsent && earlier && !sessionFailed) {
+        // It changed nothing: the earlier write's absence is the news, said by `handBack` with its Retry.
         logFailure(ticket);
-        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
-        if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
-        else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
+      } else {
+        // The earlier write is undone too, quietly: this failure's toast and Retry say it.
+        if (earlier) retireAbsence(earlier);
+        if (sessionFailed) {
+          failSessionExpired(signerOf(ticket));
+        } else {
+          logFailure(ticket);
+          const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
+          if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
+          else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
+        }
       }
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
-      if (ticket.error?.outcome === 'not-sent') handBack(entry);
+      if (unsent) handBack(entry);
       return;
     }
     case 'unconfirmed':
@@ -382,9 +391,46 @@ function reportAbsent(ticket: WriteTicket, entry: Tracked): void {
   logFailure(ticket);
   undo(entry);
   spec.onFailed?.(ticket, entry.vars);
+  // A write before it proved absent too is undone quietly: this toast and its Retry say it.
+  const earlier = supersededAbsence(entry);
+  if (earlier) retireAbsence(earlier);
   const retry = { label: 'Retry', onPress: () => retryWrite(ticket.id) };
   fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
   release(entry.key, false);
+}
+
+interface SupersededAbsence {
+  id: string;
+  entry: Tracked;
+  ticket: WriteTicket;
+}
+
+/**
+ * The write before `entry` for its key, when a check proved it absent while
+ * `entry` held the key (and nothing has changed that since): its change is
+ * still on screen, under `entry`'s.
+ */
+function supersededAbsence(entry: Tracked): SupersededAbsence | undefined {
+  const id = entry.previous;
+  const earlier = id === undefined ? undefined : tracked.get(id);
+  const kept = earlier?.absentWhileSuperseded;
+  const now = id === undefined ? undefined : useWriteTickets.getState().byId[id];
+  if (id === undefined || !earlier || !kept || now?.state !== 'unconfirmed' || !now.retryable) return undefined;
+  return { id, entry: earlier, ticket: kept };
+}
+
+/**
+ * A superseded write proved absent, undone once the newer write that held its
+ * key has failed too (after that one's undo, which put this one's change
+ * back). The newer write's failure says it: no toast of its own, and no
+ * Retry (the newer one's re-sends that change).
+ */
+function retireAbsence({ id, entry, ticket }: SupersededAbsence): void {
+  entry.absentWhileSuperseded = undefined;
+  logFailure(ticket);
+  undo(entry);
+  entry.spec.onFailed?.(ticket, entry.vars);
+  tracked.delete(id);
 }
 
 /**
@@ -436,12 +482,12 @@ function handBack(entry: Tracked): void {
   if (!before) return;
   const mayLand = before.state === 'pending' || (before.state === 'unconfirmed' && !before.retryable);
   // Proved absent while this one held the key: its event was handled (and its checks stopped) then,
-  // with nothing undone or said, so it is reported now, once.
-  const provedAbsent = before.state === 'unconfirmed' && before.retryable ? earlier.absentWhileSuperseded : undefined;
+  // with nothing undone or said, so it is reported now, once, with its own Retry.
+  const provedAbsent = supersededAbsence(entry);
   if (!mayLand && !provedAbsent) return;
   latestByKey.set(key, previous);
   entry.handedBack = true;
-  if (provedAbsent) reportAbsent(provedAbsent, earlier);
+  if (provedAbsent) reportAbsent(provedAbsent.ticket, earlier);
 }
 
 /** The pending write for `key` settled: send the write queued behind it, or drop it. */
