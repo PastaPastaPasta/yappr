@@ -370,6 +370,48 @@ describe('submitWrite', () => {
       expect(readAgain()).toBe(true);
     });
 
+    it('reports a Retry that fails before its call answers, once, with a Retry that works', async () => {
+      // The ticket's own Retry call is not a newer write: its failure is the latest action's.
+      const { second } = await overlapping();
+      const failed = advance(second, { state: 'failed', retryable: true, error: refused });
+      act(() => fakeEngine.emit('write.status', failed));
+      const firstRetry = currentToast()?.action;
+      act(() => useToastStore.setState({ current: null }));
+
+      const failedAgain = advance(failed, { state: 'failed', retryable: true, error: refused });
+      fakeEngine.method('writes.retry').mockImplementationOnce(async () => {
+        // The engine reports the failure before it answers the call.
+        fakeEngine.emit('write.status', failedAgain);
+        return failedAgain;
+      });
+      const { shown, stop } = toasts();
+      await act(async () => firstRetry?.onPress());
+      stop();
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      expect(undo).not.toHaveBeenCalled();
+      answer('writes.retry', advance(failedAgain, { state: 'pending', retryable: false, error: null }));
+      await act(async () => currentToast()?.action?.onPress());
+      expect(fakeEngine.method('writes.retry')).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads the chain when a queued write is dropped because the one before it failed', async () => {
+      // The queued change sits on the failed one's: neither undo can be trusted to restore the chain.
+      const queuedUndo = jest.fn();
+      const later: WriteSpec<TargetRef> = { ...spec, optimistic: () => queuedUndo };
+      const first = await submitPending();
+      await expect(runWrite(later, target)).resolves.toEqual({ status: 'queued' });
+      invalidate.mockClear();
+      act(() => fakeEngine.emit('write.status', advance(first, { state: 'failed', retryable: true, error: refused })));
+      expect(queuedUndo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+      // And the key is contested: a write over it now is reconciled by reading the chain too.
+      const next = await submitPending();
+      undo.mockClear();
+      act(() => fakeEngine.emit('write.status', advance(next, { state: 'failed', retryable: true, error: refused })));
+      expect(undo).not.toHaveBeenCalled();
+    });
+
     it('undoes none of a like, unlike, like run when the last fails, with one toast', async () => {
       const writes: WriteTicket[] = [];
       for (let i = 0; i < 3; i += 1) {

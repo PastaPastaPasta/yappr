@@ -159,7 +159,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     the chain says (lib keeps a confirmed own write over a read from a node
     behind, and a read that lands while a write's call still runs gets that
     write's change back, `reapply`). Only the user's latest action for the
-    key says anything, with its Retry, which applies its change again over
+    key says anything (a ticket's own Retry call is that ticket's, not a
+    newer write), with its Retry, which applies its change again over
     what the chain shows. The same goes for a change taken back with no
     ticket to settle: a call refused before a ticket, a refused Retry, a
     queued write dropped. The key goes back to plain undo once none of its
@@ -177,8 +178,11 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   have landed (not while its call still runs: a ticket unconfirmed by the
   engine's one-minute deadline, `STILL_SENDING`, keeps its key busy until the
   call answers; a queued write lives in memory, so quitting the app first
-  drops it), and dropped when the pending one fails, since that failure's
-  undo restored the very state a toggle back asked for. It is also dropped,
+  drops it), and dropped when the pending one fails. Its change was shown
+  over the failed one's, so neither undo can be trusted to restore the
+  chain (a profile undo leaves a copy another change moved on): the key
+  is contested and read back from the chain, as for writes that overlap
+  (below). It is also dropped,
   undone and announced when the pending one's call is cut short (below). With `intent` on the
   spec, a queued write that asks for what the pending one asked is dropped
   too, so a like, unlike, like run sends one like.

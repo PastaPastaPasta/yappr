@@ -188,13 +188,17 @@ interface WriteOf {
  * Each call marks its key with its own token and clears only that mark: a
  * queued write released while the call settles marks the key itself.
  */
-const submitting = new Map<string, WriteOf & { token: symbol }>();
+const submitting = new Map<string, WriteOf & { token: symbol; retryOf?: string }>();
 
-/** Marks `key` busy for one call; the result clears the mark if it is still that call's. */
-function markSubmitting(key: string | undefined, write: WriteOf): () => void {
+/**
+ * Marks `key` busy for one call; the result clears the mark if it is still
+ * that call's. `retryOf` names the ticket a Retry call is for: that call is
+ * the ticket's own, not a newer write.
+ */
+function markSubmitting(key: string | undefined, write: WriteOf, retryOf?: string): () => void {
   if (key === undefined) return () => undefined;
   const token = Symbol(key);
-  submitting.set(key, { ...write, token });
+  submitting.set(key, { ...write, token, retryOf });
   return () => {
     if (submitting.get(key)?.token === token) submitting.delete(key);
   };
@@ -575,7 +579,9 @@ function readChain(ticket: WriteTicket, entry: Tracked, say: () => void): void {
   entry.undo = null;
   logFailure(ticket);
   repairFromChain(entry.key);
-  const latestAction = isLatest(ticket.id, entry) && !(entry.key !== undefined && submitting.has(entry.key));
+  // A newer write's call still runs (not this ticket's own Retry): that one is the latest action.
+  const call = entry.key === undefined ? undefined : submitting.get(entry.key);
+  const latestAction = isLatest(ticket.id, entry) && (call === undefined || call.retryOf === ticket.id);
   if (!latestAction) return;
   say();
   release(entry.key, false);
@@ -615,13 +621,24 @@ function watch(ticket: WriteTicket): void {
   });
 }
 
-/** The pending write for `key` settled: send the write queued behind it, or drop it. */
+/**
+ * The pending write for `key` settled: send the write queued behind it, or
+ * drop it. A dropped write's change was applied over the pending one's, so
+ * neither undo can be trusted to restore what the chain holds (a profile
+ * undo leaves a copy another change has moved on): the key is contested,
+ * and the chain read back (`repairFromChain`).
+ */
 function release(key: string | undefined, send: boolean): void {
   if (key === undefined) return;
   const next = queued.get(key);
   if (!next) return;
   queued.delete(key);
-  if (send) runQueued(next).catch(() => undefined);
+  if (send) {
+    runQueued(next).catch(() => undefined);
+  } else if (next.undo) {
+    contested.add(key);
+    repairFromChain(key);
+  }
 }
 
 /**
@@ -917,7 +934,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     return null;
   }
   contest(key, ticketId);
-  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
+  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars }, ticketId);
   try {
     const { optimistic } = entry.spec;
     if (!entry.undo && optimistic) entry.undo = touching(key, () => optimistic(entry.vars));
