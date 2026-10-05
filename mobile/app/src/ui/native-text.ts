@@ -44,6 +44,13 @@ export interface ClearableInput {
   clear?: () => void;
 }
 
+/**
+ * How long a render from before a keystroke may take to commit: past this,
+ * the JS thread stalled longer than any lag seen, and the history kept to
+ * recognise such renders is dropped.
+ */
+export const RENDER_LAG_MS = 10_000;
+
 /** The native field's text as JS hears of it, and the input it renders. */
 function createField(value: string | undefined) {
   let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false };
@@ -51,20 +58,28 @@ function createField(value: string | undefined) {
   /** The text the native field holds. */
   let text = value;
   /**
-   * Texts the field held before `text`, oldest first, that the caller's
-   * `value` may still show: its renders come in the order of the keystrokes,
-   * so one showing an entry has shown every entry before it.
+   * Texts the field held before `text`, oldest first (with when each was
+   * typed past), that the caller's `value` may still show. Its renders come
+   * in the order of the keystrokes, so a render showing a text consumes the
+   * history up to the first entry with it, and no further: the same text may
+   * come again later ("a", "ab", "a", "ac"). React may batch keystrokes into
+   * one render, so an entry can be skipped by every render. It goes once a
+   * render shows the field's own text and no entry has it (caught up), or
+   * once it is older than `RENDER_LAG_MS`: until then a programmatic set to
+   * exactly that text right after typing it is taken for a late render.
    */
-  let behind: string[] = [];
+  let behind: { text: string; at: number }[] = [];
   const listeners = new Set<() => void>();
   const publish = (next: Mount) => {
     mount = next;
     listeners.forEach((listener) => listener());
   };
-  /** Drops what a render showing `shown` has already shown. */
-  const pastShown = (shown: string) => {
-    behind = behind.slice(behind.lastIndexOf(shown) + 1);
+  const dropExpired = (now: number) => {
+    const live = behind.findIndex((entry) => now - entry.at < RENDER_LAG_MS);
+    behind = live < 0 ? [] : behind.slice(live);
   };
+  /** The first unconsumed entry with `shown`, or -1. */
+  const pending = (shown: string) => behind.findIndex((entry) => entry.text === shown);
   return {
     subscribe: (listener: () => void) => {
       listeners.add(listener);
@@ -78,7 +93,9 @@ function createField(value: string | undefined) {
     },
     typed: (next: string) => {
       if (next === text) return;
-      if (text !== undefined) behind.push(text);
+      const now = Date.now();
+      dropExpired(now);
+      if (text !== undefined) behind.push({ text, at: now });
       text = next;
     },
     focus: (focused: boolean) => {
@@ -87,13 +104,14 @@ function createField(value: string | undefined) {
     /** The caller's `value` as a committed render shows it. */
     shown: (value: string | undefined, editable: boolean) => {
       if (value === undefined) return;
-      if (value === text) {
-        // Caught up; a text typed earlier and again since may still show from later renders.
-        if (behind.includes(value)) pastShown(value);
-        else behind = [];
-      } else if (behind.includes(value)) {
-        // A render from before the latest keystrokes.
-        pastShown(value);
+      dropExpired(Date.now());
+      const index = pending(value);
+      if (index >= 0) {
+        // A render from before the latest keystrokes (or, the same text typed again, the latest).
+        behind = behind.slice(index + 1);
+      } else if (value === text) {
+        // Caught up.
+        behind = [];
       } else if (value === '' && input?.clear) {
         // Emptied (a message sent, a search cleared): in place, so the input keeps its focus and
         // keyboard, and the caller hears no blur and focus.

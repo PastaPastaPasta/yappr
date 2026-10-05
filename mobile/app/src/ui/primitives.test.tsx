@@ -20,6 +20,7 @@ import { RadioGroup } from './RadioGroup';
 import { SwitchRow } from './Switch';
 import { FilterChips, TopTabs } from './Tabs';
 import { Text } from './Text';
+import { RENDER_LAG_MS } from './native-text';
 import { TextField } from './TextField';
 import { colors } from './tokens';
 import { toast, toastDuration, useToastStore } from './toast';
@@ -281,6 +282,45 @@ describe('TextField', () => {
       for (const value of ['a', 'ab', 'a']) rerender(<TextField label="Name" value={value} onChangeText={onChangeText} />);
       expect(input().props.defaultValue).toBe('');
       expect(input()).toHaveDisplayValue('a');
+    });
+
+    it('does not remount for late renders when a repeated text was typed on past (a, ab, a, ac)', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+      for (const text of ['a', 'ab', 'a', 'ac']) fireEvent.changeText(input(), text);
+      // The first late 'a' must not consume the history the late 'ab' still needs.
+      for (const value of ['a', 'ab', 'a', 'ac']) rerender(<TextField label="Name" value={value} onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('');
+      expect(input()).toHaveDisplayValue('ac');
+    });
+
+    it('drops the history a batched render skipped, so a later set to one of those texts is put in', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+      for (const text of ['a', 'ab', 'abc']) fireEvent.changeText(input(), text);
+      // React batched the keystrokes: one render, straight to the latest text.
+      rerender(<TextField label="Name" value="abc" onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('');
+      // A programmatic set to a text typed past is put in, not taken for a late render.
+      rerender(<TextField label="Name" value="ab" onChangeText={onChangeText} />);
+      expect(input()).toHaveDisplayValue('ab');
+      expect(input().props.defaultValue).toBe('ab');
+    });
+
+    it('keeps the history only as long as a render can lag', () => {
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      try {
+        const onChangeText = jest.fn();
+        const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+        for (const text of ['a', 'ab', 'a']) fireEvent.changeText(input(), text);
+        // A batched render to the latest 'a' cannot tell which 'a' it is: 'ab' stays pending a while.
+        rerender(<TextField label="Name" value="a" onChangeText={onChangeText} />);
+        now.mockReturnValue(1_000_000 + RENDER_LAG_MS);
+        rerender(<TextField label="Name" value="ab" onChangeText={onChangeText} />);
+        expect(input().props.defaultValue).toBe('ab');
+      } finally {
+        now.mockRestore();
+      }
     });
 
     it('does not hand the focus back to a locked field it resets (a sign-in going through)', () => {
