@@ -510,6 +510,32 @@ describe('Conversation (DM-03, DM-04)', () => {
     });
   });
 
+  it('leaves the message text to the input while typing, and clears it once sent (QA rc7 D-2)', async () => {
+    // A `value` composer pushed each keystroke's text back from the draft store, and under load
+    // that echo dropped the keys typed meanwhile.
+    await openConversation();
+    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    const composer = () => screen.getByTestId('dm-composer');
+    fireEvent(composer(), 'focus');
+    for (const text of ['s', 'se', 'see', 'see ', 'see y', 'see yo', 'see you']) fireEvent.changeText(composer(), text);
+    expect(composer().props.value).toBeUndefined();
+    expect(composer().props.defaultValue).toBe('');
+    expect(screen.getByTestId('dm-send')).toBeEnabled();
+
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.send')).toHaveBeenCalledWith(KEY, 'see you');
+    // The draft emptied by the send is put in, and the box keeps the keyboard for the next message.
+    expect(composer()).toHaveDisplayValue('');
+    expect(composer().props.autoFocus).toBe(true);
+    // The next message's typing is the input's own again: nothing is put in over it.
+    fireEvent.changeText(composer(), 'and');
+    expect(composer()).toHaveDisplayValue('and');
+    expect(composer().props.defaultValue).toBe('');
+    expect(screen.getByTestId('dm-send')).toBeEnabled();
+  });
+
   it('sends: a "Sending…" bubble at once, then the engine’s own message with "Sent"', async () => {
     await openConversation();
     const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
@@ -521,7 +547,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('Sending…')).toBeTruthy();
     await act(async () => {});
     expect(fakeEngine.method('dm.send')).toHaveBeenCalledWith(KEY, 'on my way');
-    expect(screen.getByTestId('dm-composer').props.value).toBe('');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('');
 
     // Confirmed: the engine now holds the message; it shows once, with "Sent".
     fakeEngine
@@ -669,7 +695,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     fireEvent.changeText(screen.getByTestId('dm-composer'), 'hello?');
     fireEvent.press(screen.getByTestId('dm-send'));
     await act(async () => {});
-    expect(screen.getByTestId('dm-composer').props.value).toBe('hello?');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('hello?');
     expect(useToastStore.getState().current?.message).toBe('Unblock this person to message them.');
   });
 
@@ -875,14 +901,14 @@ describe('Conversation (DM-03, DM-04)', () => {
     // Each check reads the engine's tickets (to adopt the send's, then to look for it).
     expect(fakeEngine.method('writes.list')).toHaveBeenCalledTimes(4);
     expect(screen.getByText('Sending…')).toBeTruthy();
-    expect(screen.getByTestId('dm-composer').props.value).toBe('');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('');
     expect(useToastStore.getState().current).toBeNull();
 
     // The 80 s check, still no ticket: it never went out.
     await act(async () => {
       await jest.advanceTimersByTimeAsync(60_000);
     });
-    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('did it go?');
     expect(screen.queryByText('Sending…')).toBeNull();
     expect(useToastStore.getState().current?.message).toBe("Message not sent. It's back in the message box.");
   });
@@ -914,7 +940,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     await act(async () => {
       await jest.advanceTimersByTimeAsync(130_000);
     });
-    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('did it go?');
   });
 
   it('puts back only the parts a long send did not deliver when it fails part way (SR-18)', async () => {
@@ -939,7 +965,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     await act(async () => {});
     fireEvent.press(screen.getByText('Not delivered · Tap to edit'));
     await act(async () => {});
-    expect(screen.getByTestId('dm-composer').props.value).toBe(rest);
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue(rest);
   });
 
   it('shows the empty conversation copy', async () => {

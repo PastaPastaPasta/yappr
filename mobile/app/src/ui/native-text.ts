@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import type { TextInputProps } from 'react-native';
 
 /**
@@ -13,24 +13,72 @@ import type { TextInputProps } from 'react-native';
  *
  * So the native field owns the text, and JS only listens. The caller keeps
  * its `value` and `onChangeText`: a `value` that is not what the field last
- * reported (a reset, a cleared search, "Randomize") is a programmatic change,
- * put in by mounting a fresh input with it as `defaultValue` (it takes the
- * focus the old one had). A `value` the field has since typed past is a
- * render from before the latest keystrokes reached the caller, and changes
- * nothing. So a caller cannot refuse a keystroke by keeping its old `value`
- * (no caller does): limit the input with its own props (`maxLength`) instead.
+ * reported (a reset, a cleared search, "Randomize", a message sent) is a
+ * programmatic change, put in by mounting a fresh input with it as
+ * `defaultValue` (it takes the focus the old one had, unless the field is
+ * locked). A `value` the field has since typed past is a render from before
+ * the latest keystrokes reached the caller, and changes nothing. So a caller
+ * cannot refuse a keystroke by keeping its old `value` (no caller does):
+ * limit the input with its own props (`maxLength`) instead.
+ *
+ * What the field reported is kept outside React state, updated as each
+ * keystroke arrives, and compared once a render commits: a caller whose
+ * value lives in a store (a DM draft) re-renders in another lane than this
+ * hook's own state would, so state could lag its value and read a fresh
+ * keystroke as a reset.
  */
 
-interface Held {
+/** What renders the input. */
+interface Mount {
   /** The input's `defaultValue`; `generation` is its `key`, bumped to mount it afresh with a new text. */
   initial: string | undefined;
   generation: number;
   /** Whether the input it replaced had focus, so the new one takes it. */
   refocus: boolean;
-  /** The text the native field holds, as far as JS has heard. */
-  text: string | undefined;
+  focused: boolean;
+}
+
+/** The native field's text as JS hears of it, and the input it renders. */
+function createField(value: string | undefined) {
+  let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false };
+  /** The text the native field holds. */
+  let text = value;
   /** Texts the field held before `text` that the caller's `value` may still show. */
-  behind: readonly string[];
+  let behind: string[] = [];
+  const listeners = new Set<() => void>();
+  const publish = (next: Mount) => {
+    mount = next;
+    listeners.forEach((listener) => listener());
+  };
+  return {
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    mount: () => mount,
+    typed: (next: string) => {
+      if (next === text) return;
+      if (text !== undefined) behind.push(text);
+      text = next;
+    },
+    focus: (focused: boolean) => {
+      if (mount.focused !== focused) publish({ ...mount, focused });
+    },
+    /** The caller's `value` as a committed render shows it. */
+    shown: (value: string | undefined, editable: boolean) => {
+      if (value === undefined) return;
+      if (value === text) {
+        behind = [];
+      } else if (!behind.includes(value)) {
+        text = value;
+        behind = [];
+        // The input that had the focus is gone; the new one says so itself when it takes it.
+        publish({ initial: value, generation: mount.generation + 1, refocus: mount.focused && editable, focused: false });
+      }
+    },
+  };
 }
 
 export interface NativeText {
@@ -47,40 +95,30 @@ export type NativeTextOptions = Pick<
 >;
 
 export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable }: NativeTextOptions): NativeText {
-  const [focused, setFocused] = useState(false);
-  const [held, setHeld] = useState<Held>(() => ({ initial: value, generation: 0, refocus: false, text: value, behind: [] }));
+  const [field] = useState(() => createField(value));
+  const mount = useSyncExternalStore(field.subscribe, field.mount);
+  const locked = editable === false;
 
-  // Adjusted while rendering, so the caller's value and the field's text are compared from one render.
-  if (value !== undefined && value !== held.text) {
-    if (!held.behind.includes(value)) {
-      // A field that is locked (a form saving, a sign-in going through) does not take the focus back.
-      setHeld({ initial: value, generation: held.generation + 1, refocus: focused && editable !== false, text: value, behind: [] });
-      // The input that had it is gone; the new one says so itself when it takes it.
-      setFocused(false);
-    }
-  } else if (held.behind.length > 0) {
-    // The caller caught up with the field.
-    setHeld({ ...held, behind: [] });
-  }
+  useLayoutEffect(() => {
+    field.shown(value, !locked);
+  }, [field, value, locked]);
 
   return {
-    key: held.generation,
-    focused,
+    key: mount.generation,
+    focused: mount.focused,
     inputProps: {
-      defaultValue: held.initial,
-      autoFocus: held.generation === 0 ? autoFocus : held.refocus,
+      defaultValue: mount.initial,
+      autoFocus: mount.generation === 0 ? autoFocus : mount.refocus,
       onChangeText: (text) => {
-        setHeld((h) =>
-          h.text === text ? h : { ...h, text, behind: h.text === undefined ? h.behind : [...h.behind, h.text] },
-        );
+        field.typed(text);
         onChangeText?.(text);
       },
       onFocus: (event) => {
-        setFocused(true);
+        field.focus(true);
         onFocus?.(event);
       },
       onBlur: (event) => {
-        setFocused(false);
+        field.focus(false);
         onBlur?.(event);
       },
     },

@@ -17,6 +17,7 @@ import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { toast } from '~/ui/toast';
+import { useNativeText } from '~/ui/native-text';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 import { ConversationRow } from './ConversationRow';
@@ -74,8 +75,10 @@ function HeaderActions({ v5 }: { v5: boolean }) {
   );
 }
 
+/** Uncontrolled (`useNativeText`), so no keystroke is lost; Clear is put in. */
 function SearchBox({ value, onChange }: { value: string; onChange: (text: string) => void }) {
   const c = useColors();
+  const input = useNativeText({ value, onChangeText: onChange });
   return (
     <View className="px-4 pb-2 pt-1">
       <View
@@ -87,8 +90,8 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
       >
         <MagnifyingGlassIcon size={16} color={c.textSecondary} />
         <TextInput
-          value={value}
-          onChangeText={onChange}
+          key={input.key}
+          {...input.inputProps}
           placeholder="Search messages"
           placeholderTextColor={c.textPlaceholder}
           accessibilityLabel="Search messages"

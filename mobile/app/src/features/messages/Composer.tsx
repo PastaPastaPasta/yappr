@@ -1,9 +1,9 @@
-import { useState } from 'react';
 import { TextInput, View, useWindowDimensions } from 'react-native';
 import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
 import { ScalePressable } from '~/ui/ScalePressable';
+import { useNativeText } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
 import { useRipple } from '~/ui/ripple';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
@@ -22,12 +22,15 @@ export interface ComposerProps {
  * The message composer (UX_SPEC §4.20, PRD DM-04): "Type a message...",
  * growing to 5 lines then scrolling, and a round send button enabled when
  * there is visible text. The screen pads it above the keyboard or the
- * home indicator.
+ * home indicator. The input is uncontrolled (`useNativeText`), so no
+ * keystroke is lost; the draft clearing after a send, or coming back into the
+ * box, is put in.
  */
 export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
   const c = useColors();
   const scale = useWindowDimensions().fontScale;
-  const [focused, setFocused] = useState(false);
+  const input = useNativeText({ value, onChangeText, editable: !disabled });
+  const { focused } = input;
   const canSend = !disabled && value.trim().length > 0;
 
   const sendRipple = useRipple('fill');
@@ -43,15 +46,13 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
         )}
       >
         <TextInput
-          value={value}
-          onChangeText={onChangeText}
+          key={input.key}
+          {...input.inputProps}
           placeholder="Type a message..."
           placeholderTextColor={c.textPlaceholder}
           accessibilityLabel="Message"
           multiline
           editable={!disabled}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
           cursorColor={c.accent}
           selectionColor={c.accent}
           className="text-gray-900 dark:text-gray-100"

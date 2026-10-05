@@ -428,7 +428,7 @@ describe('Search', () => {
     // Tapping a recent query searches it again.
     fireEvent.press(screen.getByTestId('recent-first'));
     await settle();
-    expect(screen.getByTestId('search-input').props.value).toBe('first');
+    expect(screen.getByTestId('search-input')).toHaveDisplayValue('first');
 
     fireEvent.press(screen.getByTestId('search-clear'));
     fireEvent.press(screen.getByTestId('recent-clear'));
