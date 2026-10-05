@@ -153,6 +153,29 @@ const latestByKey = new Map<string, string>();
 const contested = new Set<string>();
 /** Keys whose chain read (`repairFromChain`) is still on its way, with how many. */
 const repairing = new Map<string, number>();
+/**
+ * Per key, every cached query its writes' optimistic changes (and their
+ * `reapply`) wrote, recorded as they write it, whatever the helper: a
+ * profile by id or by name, the viewer's own, an author inside a feed or a
+ * post. Kept while a write for the key may land or the key is contested;
+ * `repairFromChain` takes them.
+ */
+const touched = new Map<string, Set<string>>();
+
+/** Runs an optimistic change (or a `reapply`) for `key`, recording each query it writes. */
+function touching<T>(key: string | undefined, change: () => T): T {
+  if (key === undefined) return change();
+  const hashes = touched.get(key) ?? new Set<string>();
+  touched.set(key, hashes);
+  const stop = queryClient.getQueryCache().subscribe((event) => {
+    if (event.type === 'updated' && event.action.type === 'success' && event.action.manual) hashes.add(event.query.queryHash);
+  });
+  try {
+    return change();
+  } finally {
+    stop();
+  }
+}
 
 /** A write, as the queue and the tracker hold it. */
 interface WriteOf {
@@ -305,7 +328,10 @@ function fail(message: string, action?: ToastAction): void {
 function settle(ticket: WriteTicket): void {
   const key = tracked.get(ticket.id)?.key;
   settleTicket(ticket);
-  if (key !== undefined && ticket.state !== 'pending') endContest(key);
+  if (key === undefined || ticket.state === 'pending') return;
+  endContest(key);
+  // Nothing for the key may land or be repaired: a plain undo is right again, and its copies need no repair.
+  if (!contested.has(key) && !landingFor(key)) touched.delete(key);
 }
 
 function settleTicket(ticket: WriteTicket): void {
@@ -445,11 +471,21 @@ const repairs = new Set<() => void>();
  * a manual `setQueryData`. Such reads are tried again (`REPAIR_RETRY_MS`,
  * not while offline); meanwhile a write on the key is reconciled by reading
  * the chain, never by its captured snapshot. A query dropped from the cache
- * needs no repair.
+ * needs no repair. Every copy the key's writes changed (`touched`) that no
+ * screen shows is dropped first: nothing would read it back, and a later
+ * write's undo could take its never-landed change as the state to restore.
  */
 function repairFromChain(key: string | undefined): void {
   if (key !== undefined) repairing.set(key, (repairing.get(key) ?? 0) + 1);
   const cache = queryClient.getQueryCache();
+  // A copy the key's writes changed that no screen shows would never be read back: it goes, so it is
+  // read afresh when next shown, and can never hand a later write's undo a change that never landed.
+  const copies = key === undefined ? undefined : touched.get(key);
+  if (key !== undefined) touched.delete(key);
+  for (const hash of copies ?? []) {
+    const copy = cache.get(hash);
+    if (copy && copy.getObserversCount() === 0) queryClient.removeQueries({ queryKey: copy.queryKey, exact: true });
+  }
   const outstanding = new Set(
     cache
       .findAll({ queryKey: queryKeys.all })
@@ -670,7 +706,7 @@ function keepChangesOverRead(hash: string): void {
   const only = new Set([hash]);
   for (const key of keys) {
     const write = onItsWay(key);
-    write?.spec.reapply?.(write.vars, only);
+    if (write?.spec.reapply) touching(key, () => write.spec.reapply?.(write.vars, only));
   }
 }
 
@@ -712,6 +748,7 @@ export function resetWriteTracking(): void {
   contested.clear();
   for (const abandon of [...repairs]) abandon();
   repairing.clear();
+  touched.clear();
   // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
   submitting.clear();
   queued.clear();
@@ -750,7 +787,7 @@ export async function runWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteRes
   if (key !== undefined) {
     const pending = pendingIntent(key);
     if (pending !== NO_INTENT) {
-      const undoQueued = spec.optimistic?.(vars) ?? null;
+      const undoQueued = touching(key, () => spec.optimistic?.(vars) ?? null);
       if (spec.intent && pending !== undefined && spec.intent(vars) === pending) {
         // Back to what the pending write asks for: nothing more to send.
         queued.delete(key);
@@ -776,7 +813,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
   const done = markSubmitting(key, { spec, vars });
   let revert = waiting.undo;
   try {
-    revert ??= spec.optimistic?.(vars) ?? null;
+    revert ??= touching(key, () => spec.optimistic?.(vars) ?? null);
     const ticket = await spec.submit(engine.api, vars);
     track(ticket.id, { spec, vars, key, undo: revert, handled: '' });
     if (key !== undefined) latestByKey.set(key, ticket.id);
@@ -882,7 +919,8 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   contest(key, ticketId);
   const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
   try {
-    if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
+    const { optimistic } = entry.spec;
+    if (!entry.undo && optimistic) entry.undo = touching(key, () => optimistic(entry.vars));
     return receive(await engine.api.writes.retry(ticketId), 'call');
   } catch (error) {
     done();
