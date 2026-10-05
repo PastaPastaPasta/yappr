@@ -61,6 +61,18 @@ interface Mount {
 /** How long a replaced input waits for the new one to take the focus before it goes anyway. */
 export const RETIRE_MS = 500;
 
+/**
+ * Spread on the `retiring` input, with `RETIRING_STYLE` over its own style:
+ * out of sight, reach, accessibility and layout (absolute in the box that
+ * holds the live input, which sizes it).
+ */
+export const RETIRING_INPUT = {
+  pointerEvents: 'none',
+  accessibilityElementsHidden: true,
+  importantForAccessibility: 'no-hide-descendants',
+} as const;
+export const RETIRING_STYLE = { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 } as const;
+
 /** The mounted input, as far as this needs it: `TextInput.clear()` (a wrapper may not pass it on). */
 export interface ClearableInput {
   clear?: () => void;
@@ -125,23 +137,19 @@ function createField(value: string | undefined) {
       return true;
     },
     /**
-     * Sets the field's text now, for an action of the user's (Clear, a recent
-     * search, Randomize): never mistaken for a late render of typing. Empty
-     * clears it in place, keeping the focus and keyboard.
+     * Sets the field's text now, for an action of the user's (Send, Clear, a
+     * recent search, Randomize): never mistaken for a late render of typing.
+     * A fresh input holds it, so the old one's late events (a keystroke
+     * reported after the action, or after a native clear its event count
+     * made Android or iOS drop) change nothing; while the old one has the
+     * focus it stays, hidden, until the fresh one has taken it (`retiring`).
      */
     reset: (next: string) => {
       text = next;
       behind = [];
-      if (next === '' && input?.clear) input.clear();
-      else publish({ initial: next, generation: mount.generation + 1, refocus: mount.focused, focused: false, retiring: null });
-    },
-    /** Empties the field now (a message sent): a fresh input, which takes the focus the old one had. */
-    clear: () => {
-      text = '';
-      behind = [];
       const generation = mount.generation + 1;
       const retiring = mount.focused ? { generation: mount.generation, initial: mount.initial } : null;
-      publish({ initial: '', generation, refocus: mount.focused, focused: false, retiring });
+      publish({ initial: next, generation, refocus: mount.focused, focused: false, retiring });
       // The new input may never say it took the focus (the app went to the background).
       if (retiring) {
         setTimeout(() => {
@@ -149,11 +157,13 @@ function createField(value: string | undefined) {
         }, RETIRE_MS);
       }
     },
-    focus: (focused: boolean, generation: number) => {
-      if (generation !== mount.generation) return;
+    /** The input of mount `generation` took or lost the focus; false when it has since been replaced. */
+    focus: (focused: boolean, generation: number): boolean => {
+      if (generation !== mount.generation) return false;
       // The new input has the focus: the one it replaced can go now, without the keyboard closing.
       if (focused && mount.retiring) publish({ ...mount, focused, retiring: null });
       else if (mount.focused !== focused) publish({ ...mount, focused });
+      return true;
     },
     /** The caller's `value` as a committed render shows it. */
     shown: (value: string | undefined, editable: boolean) => {
@@ -200,15 +210,13 @@ export interface NativeText {
   key: number;
   /** Pass as the TextInput's `ref`, so an emptied value clears it in place. */
   attach: (input: ClearableInput | null | undefined) => void;
-  /**
-   * Empties the field at once with a fresh input, from the handler that
-   * empties the caller's text (Send): the old input's late events are ignored.
-   */
+  /** `reset('')`, from the handler that empties the caller's text (Send). */
   clear: () => void;
   /**
    * Sets the text for an action of the user's (Clear, a recent search,
    * Randomize), then the caller updates its own value to it: a `value`
-   * change alone can be taken for a late render of typing.
+   * change alone can be taken for a late render of typing. A caller renders
+   * `retiring` while there is one.
    */
   reset: (value: string) => void;
   /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
@@ -243,20 +251,19 @@ export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus,
     onChangeText: (text) => {
       if (field.typed(text, generation)) onChangeText?.(text);
     },
+    // A replaced input's focus and blur (the focus moving to the fresh one) are not the caller's news.
     onFocus: (event) => {
-      field.focus(true, generation);
-      onFocus?.(event);
+      if (field.focus(true, generation)) onFocus?.(event);
     },
     onBlur: (event) => {
-      field.focus(false, generation);
-      onBlur?.(event);
+      if (field.focus(false, generation)) onBlur?.(event);
     },
   });
   const { generation, retiring } = mount;
   return {
     key: generation,
     attach: field.attach,
-    clear: field.clear,
+    clear: () => field.reset(''),
     reset: field.reset,
     focused: mount.focused || retiring !== null,
     inputProps: propsFor(generation, mount.initial, generation === 0 ? autoFocus : mount.refocus),

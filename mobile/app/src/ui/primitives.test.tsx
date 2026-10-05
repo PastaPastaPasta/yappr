@@ -350,6 +350,36 @@ describe('TextField', () => {
       expect(input().props.autoFocus).toBe(true);
     });
 
+    it('ignores a late event of the input a reset replaced, and keeps what is typed after', () => {
+      const field = createRef<TextResetHandle>();
+      function Cleared() {
+        const [name, setName] = useState('');
+        return (
+          <>
+            <TextField ref={field} label="Name" value={name} onChangeText={setName} />
+            <Button
+              label="Clear"
+              onPress={() => {
+                field.current?.reset('');
+                setName('');
+              }}
+            />
+            <Text testID="held">{name}</Text>
+          </>
+        );
+      }
+      render(<Cleared />);
+      fireEvent(input(), 'focus');
+      fireEvent.changeText(input(), 'luc');
+      const late = input().props.onChangeText as (text: string) => void;
+      fireEvent.press(screen.getByRole('button', { name: 'Clear' }));
+      act(() => late('lucx'));
+      expect(screen.getByTestId('held')).toHaveTextContent('');
+      expect(input()).toHaveDisplayValue('');
+      fireEvent.changeText(input(), 'lucia');
+      expect(screen.getByTestId('held')).toHaveTextContent('lucia');
+    });
+
     it('does not hand the focus back to a locked field it resets (a sign-in going through)', () => {
       const { rerender } = render(<TextField label="Name" value="key" onChangeText={jest.fn()} />);
       fireEvent(input(), 'focus');

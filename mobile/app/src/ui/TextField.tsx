@@ -5,7 +5,7 @@ import { EyeIcon, EyeSlashIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
-import { useNativeText, type TextResetHandle } from './native-text';
+import { RETIRING_INPUT, RETIRING_STYLE, useNativeText, type TextResetHandle } from './native-text';
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
 
@@ -63,12 +63,28 @@ export function TextField({
   ...props
 }: TextFieldProps) {
   const c = useColors();
-  const { key: inputKey, attach, reset, inputProps, focused } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable });
+  const { key: inputKey, attach, reset, inputProps, retiring, focused } = useNativeText({
+    value,
+    onChangeText,
+    onFocus,
+    onBlur,
+    autoFocus,
+    editable,
+  });
   useImperativeHandle(ref, () => ({ reset }), [reset]);
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
   const showCounter = maxLength !== undefined && (alwaysCount || maxLength - length <= COUNTER_WITHIN);
+  const inputStyle = multiline
+    ? {
+        fontSize: 16,
+        minHeight: line * 3 + 20,
+        maxHeight: line * 8 + 20,
+        paddingVertical: 10,
+        textAlignVertical: 'top' as const,
+      }
+    : { fontSize: 16, minHeight: Math.max(42, line + 18), paddingVertical: 0 };
   let borderColor: string = tw.borderStrong;
   if (error) borderColor = 'border-red-600 dark:border-red-400';
   else if (focused) borderColor = 'border-yappr-500';
@@ -90,6 +106,17 @@ export function TextField({
           !editable && 'opacity-50',
         )}
       >
+        {retiring ? (
+          // The input a reset replaced, until the fresh one has the focus (`useNativeText`).
+          <TextInput
+            key={retiring.key}
+            {...retiring.inputProps}
+            {...RETIRING_INPUT}
+            multiline={multiline}
+            secureTextEntry={secure}
+            style={[inputStyle, RETIRING_STYLE]}
+          />
+        ) : null}
         <TextInput
           key={inputKey}
           ref={attach}
@@ -107,17 +134,7 @@ export function TextField({
           {...inputProps}
           // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
           className="flex-1 text-gray-900 dark:text-gray-100"
-          style={
-            multiline
-              ? {
-                  fontSize: 16,
-                  minHeight: line * 3 + 20,
-                  maxHeight: line * 8 + 20,
-                  paddingVertical: 10,
-                  textAlignVertical: 'top',
-                }
-              : { fontSize: 16, minHeight: Math.max(42, line + 18), paddingVertical: 0 }
-          }
+          style={inputStyle}
         />
         {secure ? (
           <IconButton

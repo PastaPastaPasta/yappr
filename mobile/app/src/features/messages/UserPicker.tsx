@@ -9,7 +9,7 @@ import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { handleOf } from '~/ui/handle';
-import { useNativeText } from '~/ui/native-text';
+import { RETIRING_INPUT, RETIRING_STYLE, useNativeText } from '~/ui/native-text';
 import { RowSkeleton } from '~/ui/Skeleton';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, monoFont, tw, useColors } from '~/ui/tokens';
@@ -225,6 +225,8 @@ export function usePickerReveal() {
   };
 }
 
+const PICKER_SEARCH_TEXT = { fontSize: 16, minHeight: 40, paddingVertical: 0 } as const;
+
 /**
  * The person picker (PRD DM-05, DM-06): "Search by username..." (3+
  * characters, or a pasted identity ID) and, before typing, the viewer's
@@ -246,7 +248,7 @@ export function UserPicker({
   const focusHandlers = useRevealOnFocus(onSearchFocus, onSearchBlur);
   const [query, setQuery] = useState(initialQuery);
   // Uncontrolled, so a busy render (each key searches) never drops a keystroke (QA rc7 D-2).
-  const { key: inputKey, attach, reset, inputProps } = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
+  const { key: inputKey, attach, reset, inputProps, retiring } = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
   const byId = isIdentityIdText(text);
@@ -324,6 +326,10 @@ export function UserPicker({
       <View className="px-4 pb-2 pt-1">
         <View className={cn('min-h-10 flex-row items-center gap-2 rounded-[10px] px-3', tw.bgMuted)}>
           <MagnifyingGlassIcon size={16} color={c.textSecondary} />
+          {retiring ? (
+            // The input Clear replaced, until the fresh one has the focus.
+            <TextInput key={retiring.key} {...retiring.inputProps} {...RETIRING_INPUT} style={[PICKER_SEARCH_TEXT, RETIRING_STYLE]} />
+          ) : null}
           <TextInput
             key={inputKey}
             ref={attach}
@@ -338,7 +344,7 @@ export function UserPicker({
             cursorColor={c.accent}
             selectionColor={c.accent}
             className="flex-1 text-gray-900 dark:text-gray-100"
-            style={{ fontSize: 16, minHeight: 40, paddingVertical: 0 }}
+            style={PICKER_SEARCH_TEXT}
             testID="picker-search"
           />
           {query.length > 0 ? (

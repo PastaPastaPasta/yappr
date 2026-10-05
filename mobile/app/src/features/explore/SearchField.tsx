@@ -3,11 +3,13 @@ import { Platform, Pressable, TextInput, View, type TextInputProps } from 'react
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
-import { useNativeText, type TextResetHandle } from '~/ui/native-text';
+import { RETIRING_INPUT, RETIRING_STYLE, useNativeText, type TextResetHandle } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 export const SEARCH_PLACEHOLDER = 'Search Yappr';
+
+const SEARCH_TEXT = { fontSize: 16, minHeight: 36, paddingVertical: 0 } as const;
 
 /** UX_SPEC §2.11: 36 high, `bg.muted`, the UISearchBar's rounded rect on iOS and a pill on Android. */
 const FIELD = cn('min-h-9 flex-row items-center gap-2 px-2.5', tw.bgMuted, Platform.OS === 'ios' ? 'rounded-[10px]' : 'rounded-full px-3.5');
@@ -49,11 +51,15 @@ export interface SearchFieldProps extends Omit<TextInputProps, 'value' | 'onChan
  */
 export function SearchField({ value, onChangeText, ref, onFocus, onBlur, autoFocus, ...props }: SearchFieldProps) {
   const c = useColors();
-  const { key: inputKey, attach, reset, inputProps } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
+  const { key: inputKey, attach, reset, inputProps, retiring } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
   useImperativeHandle(ref, () => ({ reset }), [reset]);
   return (
     <View className={cn(FIELD, 'flex-1')}>
       <MagnifyingGlassIcon size={16} color={c.textSecondary} />
+      {retiring ? (
+        // The input a Clear or a recent search replaced, until the fresh one has the focus.
+        <TextInput key={retiring.key} {...retiring.inputProps} {...RETIRING_INPUT} style={[SEARCH_TEXT, RETIRING_STYLE]} />
+      ) : null}
       <TextInput
         key={inputKey}
         ref={attach}
@@ -70,7 +76,7 @@ export function SearchField({ value, onChangeText, ref, onFocus, onBlur, autoFoc
         selectionColor={c.accent}
         className="flex-1 text-gray-900 dark:text-gray-100"
         // fontSize without a lineHeight: iOS mis-lays out single-line inputs with one.
-        style={{ fontSize: 16, minHeight: 36, paddingVertical: 0 }}
+        style={SEARCH_TEXT}
         testID="search-input"
         {...props}
         {...inputProps}

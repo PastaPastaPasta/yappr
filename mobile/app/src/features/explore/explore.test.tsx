@@ -131,6 +131,37 @@ beforeEach(() => {
 
 
 describe('SearchField', () => {
+  it('ignores a late event of the input Clear replaced, and keeps what is typed or pasted after (QA rc7 review)', () => {
+    function Search() {
+      const [text, setText] = useState('');
+      return (
+        <>
+          <SearchField value={text} onChangeText={setText} />
+          <Text testID="held">{text}</Text>
+        </>
+      );
+    }
+    render(<Search />);
+    const input = () => screen.getByTestId('search-input');
+    fireEvent(input(), 'focus');
+    fireEvent.changeText(input(), 'abc');
+    const late = input().props.onChangeText as (text: string) => void;
+    fireEvent.press(screen.getByTestId('search-clear'));
+    // A keystroke the old input reports after Clear (or after a native clear it dropped).
+    act(() => late('abcx'));
+    expect(screen.getByTestId('held')).toHaveTextContent('');
+    expect(input()).toHaveDisplayValue('');
+    expect(screen.queryByTestId('search-clear')).toBeNull();
+    // The fresh input took over: kept hidden only until it has the focus.
+    expect(screen.getByTestId('search-input').props.autoFocus).toBe(true);
+    fireEvent(input(), 'focus');
+    fireEvent.changeText(input(), 'd');
+    expect(screen.getByTestId('held')).toHaveTextContent('d');
+    fireEvent.changeText(input(), 'abc pasted');
+    expect(screen.getByTestId('held')).toHaveTextContent('abc pasted');
+    expect(input()).toHaveDisplayValue('abc pasted');
+  });
+
   it('clears on Clear even right after a delete and retype that rendered once (QA rc7 review)', () => {
     // a, '', a reach the field before the search's one render with "a": a Clear's '' is not a late echo.
     function Search() {

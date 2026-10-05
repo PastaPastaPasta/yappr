@@ -17,7 +17,7 @@ import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { toast } from '~/ui/toast';
-import { useNativeText } from '~/ui/native-text';
+import { RETIRING_INPUT, RETIRING_STYLE, useNativeText } from '~/ui/native-text';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 import { ConversationRow } from './ConversationRow';
@@ -75,10 +75,12 @@ function HeaderActions({ v5 }: { v5: boolean }) {
   );
 }
 
+const INBOX_SEARCH_TEXT = { fontSize: 16, minHeight: 36, paddingVertical: 0 } as const;
+
 /** Uncontrolled (`useNativeText`), so no keystroke is lost; Clear is put in. */
 function SearchBox({ value, onChange }: { value: string; onChange: (text: string) => void }) {
   const c = useColors();
-  const { key: inputKey, attach, reset, inputProps } = useNativeText({ value, onChangeText: onChange });
+  const { key: inputKey, attach, reset, inputProps, retiring } = useNativeText({ value, onChangeText: onChange });
   return (
     <View className="px-4 pb-2 pt-1">
       <View
@@ -89,6 +91,10 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
         )}
       >
         <MagnifyingGlassIcon size={16} color={c.textSecondary} />
+        {retiring ? (
+          // The input Clear replaced, until the fresh one has the focus.
+          <TextInput key={retiring.key} {...retiring.inputProps} {...RETIRING_INPUT} style={[INBOX_SEARCH_TEXT, RETIRING_STYLE]} />
+        ) : null}
         <TextInput
           key={inputKey}
           ref={attach}
@@ -103,7 +109,7 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
           cursorColor={c.accent}
           selectionColor={c.accent}
           className="flex-1 text-gray-900 dark:text-gray-100"
-          style={{ fontSize: 16, minHeight: 36, paddingVertical: 0 }}
+          style={INBOX_SEARCH_TEXT}
           testID="messages-search"
         />
         {value ? (
