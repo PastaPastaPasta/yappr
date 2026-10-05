@@ -1,9 +1,10 @@
 import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, renderHook, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react-native';
 import {
   Alert,
   AppState,
+  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -26,6 +27,7 @@ import { RETIRE_MS } from '~/ui/native-text';
 import { hostViewAbove } from '~/ui/testing/native-parent';
 import { useToastStore } from '~/ui/toast';
 
+import { Composer } from './Composer';
 import { ConversationScreen } from './ConversationScreen';
 import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
@@ -640,7 +642,8 @@ describe('Conversation (DM-03, DM-04)', () => {
       const mirror = () => screen.getByTestId('dm-composer-mirror', { includeHiddenElements: true });
       fireEvent.changeText(composer(), 'line one\nline two\nline three');
       expect(mirror().props.children).toBe('line one\nline two\nline three');
-      const lineHeight = StyleSheet.flatten(mirror().props.style).lineHeight as number;
+      // A line on screen: the cap is 5 of them plus the padding.
+      const lineHeight = ((style().maxHeight as number) - 18) / 5;
       fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight * 3 } } });
       expect(style().height).toBe(Math.ceil(lineHeight * 3) + 18);
       // Past 5 lines it stays at its maximum, and scrolls.
@@ -652,7 +655,27 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(mirror().props.children).toBe('\u200b');
       fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight } } });
       // One line (40 at the default text size).
-      expect(style().height).toBe(Math.max(40, Math.ceil(lineHeight) + 18));
+      expect(style().height).toBe(style().minHeight);
+    });
+
+    it.each([1, 1.12])('caps the box at exactly 5 full lines at font scale %s (QA rc14 c3)', (fontScale) => {
+      const dimensions = jest.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale });
+      try {
+        render(<Composer value="" onChangeText={jest.fn()} onSend={() => false} />);
+        const style = () => StyleSheet.flatten(composer().props.style);
+        const mirror = screen.getByTestId('dm-composer-mirror', { includeHiddenElements: true });
+        // Given unscaled, as the text's own size is: on screen a line is 22 × the font scale.
+        expect(style().lineHeight).toBe(22);
+        expect(StyleSheet.flatten(mirror.props.style).lineHeight).toBe(22);
+        const line = 22 * fontScale;
+        expect(style().minHeight).toBe(Math.max(40, line + 18));
+        expect(style().maxHeight).toBe(line * 5 + 18);
+        fireEvent(mirror, 'layout', { nativeEvent: { layout: { height: line * 5 } } });
+        // Five lines laid out: the full height of five, within the cap.
+        expect(style().height).toBe(Math.min(line * 5 + 18, Math.ceil(line * 5) + 18));
+      } finally {
+        dimensions.mockRestore();
+      }
     });
 
     it('leaves the box to measure itself on Android', async () => {

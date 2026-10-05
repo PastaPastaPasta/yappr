@@ -14,8 +14,14 @@ import { tw, useColors } from './tokens';
 /** The counter shows once the text is this close to `maxLength` (UX_SPEC §2.11). */
 const COUNTER_WITHIN = 20;
 /** The multi-line input's text, as its `GrowMirror` lays it out. */
-const MIRROR_TEXT = { fontSize: 16 };
 const BODY_LINE_HEIGHT = 24;
+/**
+ * A multi-line field's text: the body line height as given, which React
+ * Native scales with the font as it does the font size, so a line is
+ * `BODY_LINE_HEIGHT * fontScale` tall on screen; its 3-to-8-line bounds are
+ * measured in that (QA rc14 c2). Its `GrowMirror` lays out the same.
+ */
+const MULTILINE_TEXT = { fontSize: 16, lineHeight: BODY_LINE_HEIGHT };
 /** Secrets never reach autofill, the keyboard's dictionary or autocorrect. */
 const SECURE_INPUT: TextInputProps = {
   autoCorrect: false,
@@ -84,7 +90,7 @@ export function TextField({
   const grow = useGrowHeight({ min: line * 3 + 20, max: line * 8 + 20, padding: 20 });
   const inputStyle = multiline
     ? {
-        fontSize: 16,
+        ...MULTILINE_TEXT,
         minHeight: line * 3 + 20,
         maxHeight: line * 8 + 20,
         height: grow.height,
@@ -143,7 +149,7 @@ export function TextField({
         ) : null}
         <InputSlot key={inputKey} style={INPUT_SLOT}>
           {field(inputProps, true)}
-          {multiline ? <GrowMirror text={value ?? ''} style={MIRROR_TEXT} onLayout={grow.onMirrorLayout} /> : null}
+          {multiline ? <GrowMirror text={value ?? ''} style={MULTILINE_TEXT} onLayout={grow.onMirrorLayout} /> : null}
         </InputSlot>
         {secure ? (
           <IconButton

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { createRef, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AccessibilityInfo, Alert, StyleSheet, Text as RNText } from 'react-native';
+import { AccessibilityInfo, Alert, Dimensions, StyleSheet, Text as RNText } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { FullWindowOverlay } from 'react-native-screens';
 
@@ -202,6 +202,26 @@ describe('TextField', () => {
     fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: 1 } } });
     expect(style().height).toBe(style().minHeight);
     expect(input).toBeTruthy();
+  });
+
+  it.each([1, 1.3])('bounds a multi-line field at 3 and 8 lines of its own line height, at font scale %s (QA rc14 c2)', (fontScale) => {
+    const dimensions = jest.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale });
+    try {
+      render(<TextField label="Bio" multiline value="" onChangeText={jest.fn()} />);
+      const style = StyleSheet.flatten(screen.getByLabelText('Bio').props.style);
+      // Given unscaled: React Native scales it with the font, so a line is this tall on screen.
+      expect(style.lineHeight).toBe(24);
+      const line = 24 * fontScale;
+      expect(style.minHeight).toBe(line * 3 + 20);
+      expect(style.maxHeight).toBe(line * 8 + 20);
+      const mirror = screen.UNSAFE_getAllByType(RNText).find((node) => node.props.accessibilityElementsHidden === true);
+      expect(StyleSheet.flatten(mirror!.props.style)).toMatchObject({ fontSize: 16, lineHeight: 24 });
+      // Eight lines laid out: exactly the maximum; more scrolls.
+      fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: line * 8 } } });
+      expect(StyleSheet.flatten(screen.getByLabelText('Bio').props.style).height).toBe(line * 8 + 20);
+    } finally {
+      dimensions.mockRestore();
+    }
   });
 
   it('hides the counter far from the limit', () => {

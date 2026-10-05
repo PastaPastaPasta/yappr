@@ -11,6 +11,8 @@ import { useRipple } from '~/ui/ripple';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 const LINE = 22;
+/** paddingTop + paddingBottom. */
+const PADDING = 18;
 const MAX_LINES = 5;
 
 export interface ComposerProps {
@@ -54,13 +56,17 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
       testID={testID}
     />
   );
-  const textStyle = { fontSize: 16, lineHeight: LINE * scale };
-  const maxHeight = LINE * scale * MAX_LINES + 16;
-  // Grows a line at a time up to 5, then scrolls (UX_SPEC §4.20); iOS needs the measured height (`useGrowHeight`).
-  const grow = useGrowHeight({ min: 40, max: maxHeight, padding: 18 });
+  // The line height as given: React Native scales it with the font, as it does the font size, so a
+  // line is `LINE * scale` tall on screen, and that is what the box is measured in (QA rc14 c3).
+  const textStyle = { fontSize: 16, lineHeight: LINE };
+  const lineOnScreen = LINE * scale;
+  const minHeight = Math.max(40, lineOnScreen + PADDING);
+  const maxHeight = lineOnScreen * MAX_LINES + PADDING;
+  // Grows a line at a time up to 5 full lines, then scrolls (UX_SPEC §4.20); iOS needs the measured height (`useGrowHeight`).
+  const grow = useGrowHeight({ min: minHeight, max: maxHeight, padding: PADDING });
   const inputStyle = {
     ...textStyle,
-    minHeight: 40,
+    minHeight,
     maxHeight,
     height: grow.height,
     paddingTop: 9,
