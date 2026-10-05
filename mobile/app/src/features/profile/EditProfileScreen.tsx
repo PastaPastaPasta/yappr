@@ -88,11 +88,12 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     [navigation, dirty],
   );
 
-  // Unconfirmed may still have landed (PRD G-3: it counts as done): leave rather than invite a
-  // second save of the same change. The reconciler checks it, and says so only if it proves absent.
+  // Unconfirmed may still have landed (PRD G-3: it counts as done, and the profile already shows
+  // it): it closes as a confirmed save does, rather than inviting a second save of the same change.
+  // The reconciler checks it, and only a check that proves it absent says otherwise (and undoes it).
   useEffect(() => {
     if (save.status !== 'confirmed' && save.status !== 'unconfirmed') return;
-    if (save.status === 'confirmed') toast.success('Profile updated!');
+    toast.success('Profile updated!');
     leaving.current = true;
     // Opened on its own (a cold link), with nothing under it: the profile it edited.
     if (router.canGoBack()) router.back();
@@ -101,7 +102,8 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
 
   const onSave = () => {
     if (!canSave) return;
-    save.send({ viewerId, patch }).catch(() => undefined);
+    const avatar = patch.avatar === undefined ? undefined : avatarDtoOf(form.avatar, viewerId, defaultStyle);
+    save.send({ viewerId, patch, avatar }).catch(() => undefined);
   };
 
   const nameField = (

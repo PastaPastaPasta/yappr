@@ -1,4 +1,4 @@
-import type { Page, PostDTO, PostStatsDTO, ViewerStateDTO } from '@engine/api/dto';
+import type { Page, PostDTO, PostStatsDTO, ProfileDTO, ViewerStateDTO } from '@engine/api/dto';
 import { create } from 'zustand';
 
 import { queryClient } from '~/state/query-client';
@@ -247,6 +247,65 @@ export function setFollowing(authorId: string, follows: boolean): () => void {
   return () => {
     applyFollowing(authorId, !follows);
     queryClient.invalidateQueries({ queryKey: queryKeys.profile.detail(authorId) }).catch(() => undefined);
+  };
+}
+
+/** The fields of a `ProfileDTO` an edit changes. `undefined` clears an optional one. */
+export type ProfileChange = Partial<
+  Pick<ProfileDTO, 'displayName' | 'bio' | 'location' | 'website' | 'pronouns' | 'bannerUrl' | 'nsfw' | 'avatar' | 'hasProfile'>
+>;
+
+/** A profile's `id`, `usernames` and `hasProfile` tell a `ProfileDTO` from a user row or an author. */
+const isCachedProfile = (value: Json): boolean =>
+  typeof value.id === 'string' && Array.isArray(value.usernames) && typeof value.hasProfile === 'boolean';
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/** Whether a cached profile already reads as `change` says. */
+const readsAs = (profile: Json, change: ProfileChange) =>
+  Object.entries(change).every(([field, value]) => sameValue(profile[field], value));
+
+function withChange(profile: Json, change: ProfileChange): Json {
+  if (readsAs(profile, change)) return profile;
+  const next: Json = { ...profile };
+  for (const [field, value] of Object.entries(change)) {
+    if (value === undefined) delete next[field];
+    else next[field] = value;
+  }
+  return next;
+}
+
+/**
+ * An edit on every cached copy of a profile (or in the queries named only);
+ * returns the hashes of the queries it changed.
+ */
+export function applyProfileChange(identityId: string, change: ProfileChange, only?: ReadonlySet<string>): Set<string> {
+  return updateCache((object) => (isCachedProfile(object) && object.id === identityId ? withChange(object, change) : object), only);
+}
+
+/**
+ * {@link applyProfileChange} everywhere; returns the undo. The undo puts the
+ * changed fields back as the first copy it changed had them, on every copy that
+ * still reads as the edit left them (one `reapply` put back too; a read that
+ * differs stands), and marks those queries stale without refetching them: a refetch under an open
+ * Edit profile form that is past its freshness would swap the form for its
+ * loading state, and lose what was typed.
+ */
+export function setProfileChange(identityId: string, change: ProfileChange): () => void {
+  const fields = Object.keys(change);
+  const before: { change?: ProfileChange } = {};
+  updateCache((object) => {
+    if (!isCachedProfile(object) || object.id !== identityId || readsAs(object, change)) return object;
+    before.change ??= Object.fromEntries(fields.map((field) => [field, object[field]])) as ProfileChange;
+    return withChange(object, change);
+  });
+  return () => {
+    const previous = before.change;
+    if (!previous) return;
+    const undone = updateCache((object) =>
+      isCachedProfile(object) && object.id === identityId && readsAs(object, change) ? withChange(object, previous) : object,
+    );
+    for (const hash of undone) queryClient.getQueryCache().get(hash)?.invalidate();
   };
 }
 

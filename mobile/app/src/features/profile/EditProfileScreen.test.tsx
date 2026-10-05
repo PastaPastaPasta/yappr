@@ -254,6 +254,9 @@ describe('EditProfileScreen', () => {
       ),
     );
     expect(useToastStore.getState().current?.message).toBe("Couldn't save pronouns and website. Try again.");
+    // The bio went in the DashPay profile, which saved: it stays on the profile; the rest is undone.
+    expect(queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail(VIEWER))).toMatchObject({ bio: 'Film and food.' });
+    expect(queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail(VIEWER))).not.toHaveProperty('pronouns');
   });
 
   it('sends one update for a double-tapped Save, even after the first confirms (SR-14)', async () => {
@@ -299,18 +302,88 @@ describe('EditProfileScreen', () => {
     expect(fakeEngine.method('profiles.update')).toHaveBeenCalledWith({ displayName: 'jana' });
   });
 
-  it('closes on an unconfirmed save rather than offering Save again', async () => {
+  /** The viewer's profile as the cache holds it (what the profile header shows). */
+  const cachedProfile = () => queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail(VIEWER));
+
+  it('closes an unconfirmed save as done, with the profile already showing it (QA rc7 D-1)', async () => {
+    // A save whose confirmation timed out may well have landed (PRD G-3): it closed with no word
+    // and the header kept the old value, so it looked as if nothing had happened.
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
     fakeEngine.method('profiles.update').mockResolvedValue(pending);
     renderScreen(<EditProfileScreen />);
     await flush();
     fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    fireEvent.changeText(screen.getByTestId('edit-bio'), '  ');
     await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    expect(cachedProfile()).toMatchObject({ pronouns: 'she/her', displayName: 'Jana Abara' });
+    expect(cachedProfile()).not.toHaveProperty('bio');
 
     act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
     expect(router.back).toHaveBeenCalled();
-    expect(useToastStore.getState().current?.message).not.toBe('Profile updated!');
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'success', message: 'Profile updated!' });
+    expect(cachedProfile()).toMatchObject({ pronouns: 'she/her' });
+  });
+
+  it('undoes the profile change when the save fails, and keeps the form', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana A.');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    expect(cachedProfile()?.displayName).toBe('Jana A.');
+
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Network error.' },
+        }),
+      ),
+    );
+    expect(cachedProfile()?.displayName).toBe('Jana Abara');
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'error', message: "Couldn't save your profile. Try again." });
+    expect(router.back).not.toHaveBeenCalled();
+    expect(screen.getByTestId('edit-name')).toHaveDisplayValue('Jana A.');
+  });
+
+  it('says an earlier change is still saving, with no Retry, when the save was held back (QA rc7 D-1)', async () => {
+    // lib refuses to send while an earlier change may still land: a Retry then fails the same way.
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'they');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'failed',
+          retryable: true,
+          error: {
+            code: 'PENDING_WRITE',
+            consensusCode: null,
+            outcome: 'not-sent',
+            retryable: true,
+            userMessage: 'An earlier change from this account has not been confirmed yet, so this was not sent.',
+          },
+        }),
+      ),
+    );
+    const shown = useToastStore.getState().current;
+    expect(shown).toMatchObject({ kind: 'info', message: 'Your last change is still saving. Try again in a few minutes.' });
+    expect(shown?.action).toBeUndefined();
+    expect(cachedProfile()?.pronouns).toBeUndefined();
+    expect(router.back).not.toHaveBeenCalled();
+    // Nothing was sent: Save works again.
+    expect(screen.getByTestId('edit-save')).toBeEnabled();
   });
 
   it('blocks saving an over-long name', async () => {

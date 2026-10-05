@@ -210,6 +210,11 @@ covered without registering it.
   `reapply`).
 - `setAuthorBlocked(authorId, blocked)` sets `viewer.authorBlocked` on the
   author's cached posts and quotes, so a block survives a relaunch.
+- `setProfileChange(identityId, change)` edits every cached copy of a
+  profile (`ProfileDTO`, not user rows); `applyProfileChange` is the same
+  without an undo, optionally to some queries only. The undo marks what it
+  put back stale without refetching it (a refetch under an open Edit profile
+  form could swap the form for its loading state).
 - `hidePost(id)` removes a post from every `PostItem` at once.
   `markPostDeleted(id)` turns every cached copy into the "deleted" line, and
   `dropFromLists(id)` takes it out of cached lists (not threads).
