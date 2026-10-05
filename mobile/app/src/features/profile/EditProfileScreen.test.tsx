@@ -549,6 +549,49 @@ describe('EditProfileScreen', () => {
     expect(screen.getByTestId('edit-location')).toHaveDisplayValue('Taipei');
   });
 
+  it('undoes a save proved absent after the save after it was refused, without a second toast', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const first = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValueOnce(first);
+    const view = renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    const unconfirmed = advance(first, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    view.unmount();
+
+    const second = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValueOnce(second);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-location'), 'Taipei');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(second, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Refused.' },
+        }),
+      ),
+    );
+    expect(useToastStore.getState().current?.message).toBe("Couldn't save your profile. Try again.");
+    // The later save's undo leaves the first one showing, which may still land.
+    expect(cachedProfile()).toMatchObject({ pronouns: 'she/her' });
+    expect(cachedProfile()).not.toHaveProperty('location');
+
+    const shown: string[] = [];
+    const stop = useToastStore.subscribe((state) => {
+      if (state.current) shown.push(state.current.message);
+    });
+    act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+    stop();
+    expect(cachedProfile()).not.toHaveProperty('pronouns');
+    expect(shown).toEqual([]);
+  });
+
   it('blocks saving an over-long name', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     renderScreen(<EditProfileScreen />);

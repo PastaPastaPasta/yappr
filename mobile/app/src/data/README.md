@@ -158,7 +158,12 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     and refused, or proved absent too), the earlier one is undone as well,
     after the newer one's undo, and the newer one's toast and Retry say it
     (one toast). If the newer one was refused unsent, the earlier one's
-    failure is the toast, with its own Retry.
+    failure is the toast, with its own Retry. When the newer writes have
+    already failed for good by the time the check proves an earlier one
+    absent (the usual order: an absence is proved only 2 minutes on), the
+    earlier one is undone then, quietly: the newer one's toast already
+    said its action failed. Several earlier writes proved absent are undone
+    newest first.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might

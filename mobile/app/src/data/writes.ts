@@ -151,6 +151,12 @@ export function isFollowedWrite(id: string): boolean {
   return followed.has(id);
 }
 const latestByKey = new Map<string, string>();
+/**
+ * The latest write for its key when each write was sent, by ticket id: kept
+ * after a write stops being tracked, so a key's writes can be walked back
+ * from the latest (`visibleUnder`).
+ */
+const previousById = new Map<string, string>();
 
 /** A write, as the queue and the tracker hold it. */
 interface WriteOf {
@@ -366,8 +372,11 @@ function settle(ticket: WriteTicket): void {
     }
     case 'unconfirmed':
       if (!latest) {
-        // A newer write decides the state, unless it is refused unsent: then this outcome is reported.
-        if (ticket.retryable) entry.absentWhileSuperseded = ticket;
+        if (!ticket.retryable) return;
+        // Proved absent under a newer write. Kept: if the newer one fails for good, this one's change
+        // is back on screen (`supersededAbsence`). If every newer write already has, it is now.
+        entry.absentWhileSuperseded = ticket;
+        if (visibleUnder(ticket.id, entry.key)) retireAbsence({ id: ticket.id, entry, ticket });
         return;
       }
       if (ticket.retryable) {
@@ -419,11 +428,34 @@ function supersededAbsence(entry: Tracked): SupersededAbsence | undefined {
   return { id, entry: earlier, ticket: kept };
 }
 
+/** A write that ended without changing anything: failed with a verdict, or proved absent. */
+const endedWithoutEffect = (ticket: WriteTicket | undefined) =>
+  (ticket?.state === 'failed' && ticket.error?.outcome !== 'unknown') ||
+  (ticket?.state === 'unconfirmed' && ticket.retryable);
+
 /**
- * A superseded write proved absent, undone once the newer write that held its
- * key has failed too (after that one's undo, which put this one's change
- * back). The newer write's failure says it: no toast of its own, and no
- * Retry (the newer one's re-sends that change).
+ * Whether write `id`'s change is what its key shows: every write for the key
+ * after it ended without effect (each one's undo put back the change before
+ * it). False when the chain cannot be followed back to it.
+ */
+function visibleUnder(id: string, key: string | undefined): boolean {
+  if (key === undefined) return false;
+  const byId = useWriteTickets.getState().byId;
+  let newer = latestByKey.get(key);
+  while (newer !== undefined && newer !== id) {
+    if (!endedWithoutEffect(byId[newer])) return false;
+    newer = previousById.get(newer);
+  }
+  return newer === id;
+}
+
+/**
+ * A superseded write proved absent, undone once the newer writes that held
+ * its key have failed too (after their undos, which put this one's change
+ * back), and then the one before it, when that was proved absent too (newer
+ * first, so each undo puts back the state before its own write). The newer
+ * write's failure says it: no toast of its own, and no Retry (the newer
+ * one's re-sends its own change; a like, unlike run asked for the unlike).
  */
 function retireAbsence({ id, entry, ticket }: SupersededAbsence): void {
   entry.absentWhileSuperseded = undefined;
@@ -431,6 +463,8 @@ function retireAbsence({ id, entry, ticket }: SupersededAbsence): void {
   undo(entry);
   entry.spec.onFailed?.(ticket, entry.vars);
   tracked.delete(id);
+  const older = supersededAbsence(entry);
+  if (older) retireAbsence(older);
 }
 
 /**
@@ -620,6 +654,7 @@ export function resetWriteTracking(): void {
   tracked.clear();
   followed.clear();
   latestByKey.clear();
+  previousById.clear();
   // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
   submitting.clear();
   queued.clear();
@@ -687,6 +722,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
     const ticket = await spec.submit(engine.api, vars);
     const previous = key === undefined ? undefined : latestByKey.get(key);
     track(ticket.id, { spec, vars, key, undo: revert, handled: '', previous });
+    if (previous !== undefined) previousById.set(ticket.id, previous);
     if (key !== undefined) latestByKey.set(key, ticket.id);
     done();
     // `write.status` may have overtaken the call's answer: settle on the newest copy.

@@ -371,6 +371,108 @@ describe('submitWrite', () => {
     });
   });
 
+  describe('an earlier write proved absent after the newer one already failed (QA rc7 review)', () => {
+    const absentCheck = (t: WriteTicket) =>
+      advance(t, {
+        state: 'unconfirmed',
+        retryable: true,
+        error: { code: 'NOT_RECORDED', consensusCode: null, outcome: 'not-recorded', retryable: true, userMessage: 'Checked.' },
+      });
+    const refused = { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Refused.' } as const;
+    /** Every toast shown from here. */
+    function toasts() {
+      const shown: string[] = [];
+      const stop = useToastStore.subscribe((state) => {
+        if (state.current) shown.push(state.current.message);
+      });
+      return { shown, stop };
+    }
+
+    it('undoes a like proved absent once the unlike after it was refused: quietly, the unlike said it', async () => {
+      // The common order: an absence is proved only ~130 s on, a refusal comes in seconds.
+      const like = await submitPending();
+      const maybe = advance(like, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      const unlike = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(unlike, { state: 'failed', retryable: true, error: refused })));
+      expect(currentToast()?.message).toBe("Couldn't like this post. Try again.");
+      undo.mockClear();
+
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      stop();
+      expect(undo).toHaveBeenCalledTimes(1);
+      expect(shown).toEqual([]);
+    });
+
+    it('leaves it while a newer write may still land', async () => {
+      const like = await submitPending();
+      const maybe = advance(like, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      const unlike = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(unlike, { state: 'unconfirmed' })));
+      undo.mockClear();
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      expect(undo).not.toHaveBeenCalled();
+      // The newer one is proved absent too: both undone, newer first, with its one toast.
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(unlike, { state: 'unconfirmed' }))));
+      stop();
+      expect(undo).toHaveBeenCalledTimes(2);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+    });
+
+    it('undoes every earlier write proved absent, newer first (like, unlike, like)', async () => {
+      const order: string[] = [];
+      const like1 = ticket();
+      fakeEngine.method('engage.like').mockResolvedValueOnce(like1);
+      apply.mockImplementationOnce(() => jest.fn(() => { order.push('like1'); }));
+      await submitWrite(spec, target);
+      act(() => fakeEngine.emit('write.status', advance(like1, { state: 'unconfirmed' })));
+      const unlike = ticket();
+      fakeEngine.method('engage.like').mockResolvedValueOnce(unlike);
+      apply.mockImplementationOnce(() => jest.fn(() => { order.push('unlike'); }));
+      await submitWrite(spec, target);
+      act(() => fakeEngine.emit('write.status', advance(unlike, { state: 'unconfirmed' })));
+      const like2 = ticket();
+      fakeEngine.method('engage.like').mockResolvedValueOnce(like2);
+      apply.mockImplementationOnce(() => jest.fn(() => { order.push('like2'); }));
+      await submitWrite(spec, target);
+
+      // Both earlier ones proved absent under the last, which then fails: all three undone, newest first.
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(like1, { state: 'unconfirmed' }))));
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(unlike, { state: 'unconfirmed' }))));
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', advance(like2, { state: 'failed', retryable: true, error: refused })));
+      stop();
+      expect(order).toEqual(['like2', 'unlike', 'like1']);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+    });
+
+    it('undoes every earlier write as each is proved absent after the last one failed', async () => {
+      const order: string[] = [];
+      const writes: WriteTicket[] = [];
+      for (const name of ['like1', 'unlike', 'like2']) {
+        const t = ticket();
+        fakeEngine.method('engage.like').mockResolvedValueOnce(t);
+        apply.mockImplementationOnce(() => jest.fn(() => { order.push(name); }));
+        await submitWrite(spec, target);
+        writes.push(t);
+        if (name !== 'like2') act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed' })));
+      }
+      const [like1, unlike, like2] = writes;
+      act(() => fakeEngine.emit('write.status', advance(like2, { state: 'failed', retryable: true, error: refused })));
+      const { shown, stop } = toasts();
+      // The oldest first: still under the unlike, which may land, so it waits for it.
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(like1, { state: 'unconfirmed' }))));
+      expect(order).toEqual(['like2']);
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(unlike, { state: 'unconfirmed' }))));
+      stop();
+      expect(order).toEqual(['like2', 'unlike', 'like1']);
+      expect(shown).toEqual([]);
+    });
+  });
+
   it('acts on a status that overtook the call’s answer', async () => {
     const pending = ticket();
     fakeEngine.method('engage.like').mockImplementationOnce(async () => {
