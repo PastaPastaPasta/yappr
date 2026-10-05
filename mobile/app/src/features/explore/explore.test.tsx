@@ -131,6 +131,34 @@ beforeEach(() => {
 
 
 describe('SearchField', () => {
+  it('hands the focus on at the first Clear after it opened, before its focus was reported (QA rc12 c9)', () => {
+    function Search() {
+      const [text, setText] = useState('');
+      return (
+        <>
+          <SearchField value={text} onChangeText={setText} autoFocus />
+          <Text testID="held">{text}</Text>
+        </>
+      );
+    }
+    render(<Search />);
+    const input = () => screen.getByTestId('search-input');
+    // Typed straight away, fast: abc, three deletes, abc, rendered once; no focus event yet.
+    const late = input().props.onChangeText as (text: string) => void;
+    act(() => {
+      for (const text of ['a', 'ab', 'abc', 'ab', 'a', '', 'a', 'ab', 'abc']) fireEvent.changeText(input(), text);
+    });
+    fireEvent.press(screen.getByTestId('search-clear'));
+    // A fresh input (the old one's text can't survive a native clear it drops), taking the focus.
+    expect(input()).toHaveDisplayValue('');
+    expect(input().props.autoFocus).toBe(true);
+    expect(screen.queryByTestId('search-clear')).toBeNull();
+    act(() => late('abcz'));
+    expect(screen.getByTestId('held')).toHaveTextContent('');
+    fireEvent.changeText(input(), 'z');
+    expect(screen.getByTestId('held')).toHaveTextContent('z');
+  });
+
   it('ignores a late event of the input Clear replaced, and keeps what is typed or pasted after (QA rc7 review)', () => {
     function Search() {
       const [text, setText] = useState('');

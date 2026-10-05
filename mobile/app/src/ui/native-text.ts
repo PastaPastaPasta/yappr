@@ -74,9 +74,15 @@ export interface ClearableInput {
 export const RENDER_LAG_MS = 10_000;
 
 /** The native field's text as JS hears of it, and the input it renders. */
-function createField(value: string | undefined) {
+function createField(value: string | undefined, autoFocus: boolean) {
   let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false, retiring: null };
   let input: ClearableInput | null = null;
+  /**
+   * The first input was mounted to take the focus and has not said either way
+   * yet: a reset this early (typing straight after a search opens) hands the
+   * focus on as if it had (QA rc12 c9).
+   */
+  let focusExpected = autoFocus;
   /** The text the native field holds. */
   let text = value;
   /**
@@ -136,8 +142,10 @@ function createField(value: string | undefined) {
       text = next;
       behind = [];
       const generation = mount.generation + 1;
-      const retiring = mount.focused ? { generation: mount.generation, initial: mount.initial } : null;
-      publish({ initial: next, generation, refocus: mount.focused, focused: false, retiring });
+      const hadFocus = mount.focused || focusExpected;
+      focusExpected = false;
+      const retiring = hadFocus ? { generation: mount.generation, initial: mount.initial } : null;
+      publish({ initial: next, generation, refocus: hadFocus, focused: false, retiring });
       // The new input may never say it took the focus (the app went to the background).
       if (retiring) {
         setTimeout(() => {
@@ -148,6 +156,7 @@ function createField(value: string | undefined) {
     /** The input of mount `generation` took or lost the focus; false when it has since been replaced. */
     focus: (focused: boolean, generation: number): boolean => {
       if (generation !== mount.generation) return false;
+      focusExpected = false;
       // The new input has the focus: the one it replaced can go now, without the keyboard closing.
       if (focused && mount.retiring) publish({ ...mount, focused, retiring: null });
       else if (mount.focused !== focused) publish({ ...mount, focused });
@@ -225,7 +234,7 @@ export type NativeTextOptions = Pick<
 >;
 
 export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable }: NativeTextOptions): NativeText {
-  const [field] = useState(() => createField(value));
+  const [field] = useState(() => createField(value, autoFocus === true));
   const mount = useSyncExternalStore(field.subscribe, field.mount);
   const locked = editable === false;
 
