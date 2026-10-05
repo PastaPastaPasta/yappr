@@ -331,6 +331,45 @@ describe('submitWrite', () => {
       expect(shown).toEqual(["Couldn't like this post. Try again."]);
     });
 
+    it('takes nothing back when the newer one is refused before a ticket, after the older one was proved absent', async () => {
+      // The newer write's own undo would put back the older one's change, which never landed.
+      const first = await submitPending();
+      const maybe = advance(first, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      let refuse: (error: Error) => void = () => undefined;
+      fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise<WriteTicket>((_, reject) => (refuse = reject)));
+      const sending = submitWrite(spec, target);
+      undo.mockClear();
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      invalidate.mockClear();
+
+      await act(async () => {
+        refuse(Object.assign(new Error('Not allowed'), { code: 'BAD_REQUEST' }));
+        await sending;
+      });
+      stop();
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      // Nothing may land any more: a later failure is undone plainly again.
+      const next = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(next, { state: 'failed', retryable: true, error: refused })));
+      expect(undo).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes nothing back when the newer one’s Retry is refused while the older one may still land', async () => {
+      const { second } = await overlapping();
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: refused })));
+      const retry = currentToast()?.action;
+      undo.mockClear();
+      invalidate.mockClear();
+      fakeEngine.method('writes.retry').mockRejectedValueOnce(Object.assign(new Error('No'), { code: 'NOT_RETRYABLE' }));
+      await act(async () => retry?.onPress());
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+    });
+
     it('undoes none of a like, unlike, like run when the last fails, with one toast', async () => {
       const writes: WriteTicket[] = [];
       for (let i = 0; i < 3; i += 1) {

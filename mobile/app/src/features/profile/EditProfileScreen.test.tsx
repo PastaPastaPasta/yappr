@@ -477,6 +477,29 @@ describe('EditProfileScreen', () => {
       expect(shown).toEqual(['Your last change is still saving. Try again in a few minutes.']);
     });
 
+    it('shows what the chain says when the later save is refused before a ticket, after the earlier one was proved absent', async () => {
+      // The later save's own undo would put back the earlier save's name, which never landed.
+      const unconfirmed = await firstSaveUnconfirmed(undefined, [['edit-name', 'Jana A']]);
+      expect(cachedProfile()?.displayName).toBe('Jana A');
+      let refuse: (error: Error) => void = () => undefined;
+      fakeEngine.method('profiles.update').mockImplementationOnce(() => new Promise<WriteTicket>((_, reject) => (refuse = reject)));
+      renderScreen(<EditProfileScreen />);
+      await flush();
+      fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana B');
+      act(() => fireEvent.press(screen.getByTestId('edit-save')));
+      const { shown, stop } = toasts();
+
+      act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+      // The chain is read again while the later save is still being sent, which keeps its change on.
+      await flush();
+      expect(cachedProfile()?.displayName).toBe('Jana B');
+      await act(async () => refuse(Object.assign(new Error('Display name is too long'), { code: 'BAD_REQUEST' })));
+      await flush();
+      stop();
+      expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+      expect(shown).toEqual(["Couldn't save your profile. Try again."]);
+    });
+
     it('never writes an older partial save over a newer one: the profile is the chain’s', async () => {
       // QA rc7 review finding 3: two dev saves each wrote the DashPay profile, then lost the Yappr profile.
       const half = { done: 1, total: 2 };

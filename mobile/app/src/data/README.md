@@ -160,7 +160,9 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     behind, and a read that lands while a write's call still runs gets that
     write's change back, `reapply`). Only the user's latest action for the
     key says anything, with its Retry, which applies its change again over
-    what the chain shows. The key goes back to plain undo once none of its
+    what the chain shows. The same goes for a change taken back with no
+    ticket to settle: a call refused before a ticket, a refused Retry, a
+    queued write dropped. The key goes back to plain undo once none of its
     writes may still land.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest

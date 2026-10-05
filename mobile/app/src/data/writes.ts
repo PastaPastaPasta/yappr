@@ -420,6 +420,22 @@ function endContest(key: string): void {
 const isContested = (entry: Tracked) => entry.key !== undefined && contested.has(entry.key);
 
 /**
+ * A write's own change is to be taken back with no ticket to settle: its
+ * call was refused, its Retry was refused, or it was queued and dropped.
+ * When the key's writes overlap, its undo is taken against a state another
+ * may have changed (a write proved absent while this one was being sent):
+ * every engine query is read again instead, and true says so. Called once
+ * the write's own call is no longer marked, so the key can stop being
+ * contested.
+ */
+function readsChain(key: string | undefined): boolean {
+  if (key === undefined || !contested.has(key)) return false;
+  queryClient.invalidateQueries({ queryKey: queryKeys.all }).catch(() => undefined);
+  endContest(key);
+  return true;
+}
+
+/**
  * A write whose key's writes overlapped failed, or was proved absent. No
  * undo of any of them runs (nor `onFailed`): each was taken against a state
  * another may have changed. Every query is read again instead, so the screen
@@ -495,7 +511,7 @@ function dropQueued(key: string | undefined): void {
   const next = key === undefined ? undefined : queued.get(key);
   if (!next || key === undefined) return;
   queued.delete(key);
-  next.undo?.();
+  if (!readsChain(key)) next.undo?.();
   fail(failureSentence(next.spec, next.vars));
 }
 
@@ -687,9 +703,9 @@ async function send(waiting: Waiting): Promise<WriteResult> {
       dropQueued(key);
       return { status: 'unknown', error };
     }
-    revert?.();
     done();
     release(key, false);
+    if (!readsChain(key)) revert?.();
     if (errorCode(error) === 'NOT_SIGNED_IN') {
       promptSignIn();
     } else if (errorCode(error) === 'KEY_REVOKED') {
@@ -780,7 +796,9 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
     return receive(await engine.api.writes.retry(ticketId), 'call');
   } catch (error) {
-    undo(entry);
+    done();
+    if (readsChain(key)) entry.undo = null;
+    else undo(entry);
     appendLog('warn', 'host', `Retry refused: ${errorMessage(error)}`);
     fail(failureSentence(entry.spec, entry.vars));
     return null;
