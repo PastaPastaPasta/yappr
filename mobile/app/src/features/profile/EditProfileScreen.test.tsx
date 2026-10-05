@@ -591,6 +591,51 @@ describe('EditProfileScreen', () => {
       expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
     });
 
+    it('never puts a Retry’s change back over the chain once its attempt has failed, though its call still runs', async () => {
+      // QA rc7 review 5418100307: the Retry's failure arrives before its call answers, and the chain
+      // read lands in between. That read must stand, and count as the repair only because it does.
+      const unconfirmed = await firstSaveUnconfirmed(undefined, [['edit-name', 'Jana A']]);
+      const second = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+      fakeEngine.method('profiles.update').mockResolvedValueOnce(second);
+      renderScreen(<EditProfileScreen />);
+      await flush();
+      fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana B');
+      await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+      // Save 1 may still land: the key stays contested through the Retry.
+      expect(unconfirmed.state).toBe('unconfirmed');
+      const failed = advance(second, refused('UNKNOWN', 'refused'));
+      act(() => fakeEngine.emit('write.status', failed));
+      await flush();
+      expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+
+      // Retry: its call does not answer yet; its change goes back on at once.
+      let answer: (t: WriteTicket) => void = () => undefined;
+      fakeEngine.method('writes.retry').mockImplementationOnce(() => new Promise<WriteTicket>((resolve) => (answer = resolve)));
+      const retry = useToastStore.getState().current?.action;
+      act(() => {
+        retry?.onPress();
+      });
+      expect(cachedProfile()?.displayName).toBe('Jana B');
+      // The engine reports the attempt failed before it answers the call, and the chain is read back meanwhile.
+      const failedAgain = advance(failed, refused('UNKNOWN', 'refused'));
+      act(() => fakeEngine.emit('write.status', failedAgain));
+      await flush();
+      expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+      await act(async () => answer(failedAgain));
+      await flush();
+      expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+
+      // Save 1 proved absent now: the contest ends on a profile that is the chain's, so a later save
+      // rejected before a ticket puts back the chain's name, not "Jana B".
+      act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+      await flush();
+      fakeEngine.method('profiles.update').mockRejectedValueOnce(Object.assign(new Error('Too long'), { code: 'BAD_REQUEST' }));
+      fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana D');
+      await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+      await flush();
+      expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+    });
+
     it('never writes an older partial save over a newer one: the profile is the chain’s', async () => {
       // QA rc7 review finding 3: two dev saves each wrote the DashPay profile, then lost the Yappr profile.
       const half = { done: 1, total: 2 };

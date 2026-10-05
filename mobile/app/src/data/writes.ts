@@ -188,17 +188,34 @@ interface WriteOf {
  * Each call marks its key with its own token and clears only that mark: a
  * queued write released while the call settles marks the key itself.
  */
-const submitting = new Map<string, WriteOf & { token: symbol; retryOf?: string }>();
+const submitting = new Map<string, WriteOf & { token: symbol; retryOf?: string; since?: number }>();
+
+/**
+ * The call marked for `key` whose outcome is still unknown: a submit (it has
+ * no ticket yet), or a Retry whose ticket has not settled since the Retry
+ * began (or runs on, `STILL_SENDING`). A Retry whose attempt the engine has
+ * already reported settled is not on its way while its call answers: its
+ * change is not put back on reads, nothing queues behind it, and it no
+ * longer may land.
+ */
+function callOnItsWay(key: string) {
+  const call = submitting.get(key);
+  if (!call || call.retryOf === undefined) return call;
+  const ticket = useWriteTickets.getState().byId[call.retryOf];
+  if (!ticket || time(ticket.updatedAt) <= (call.since ?? 0)) return call;
+  return stillRunning(ticket) ? call : undefined;
+}
 
 /**
  * Marks `key` busy for one call; the result clears the mark if it is still
  * that call's. `retryOf` names the ticket a Retry call is for: that call is
- * the ticket's own, not a newer write.
+ * the ticket's own, not a newer write. `since` is when that ticket last
+ * changed before the Retry, to tell its new attempt's outcome from the old.
  */
-function markSubmitting(key: string | undefined, write: WriteOf, retryOf?: string): () => void {
+function markSubmitting(key: string | undefined, write: WriteOf, retryOf?: string, since?: number): () => void {
   if (key === undefined) return () => undefined;
   const token = Symbol(key);
-  submitting.set(key, { ...write, token, retryOf });
+  submitting.set(key, { ...write, token, retryOf, since });
   return () => {
     if (submitting.get(key)?.token === token) submitting.delete(key);
   };
@@ -438,7 +455,7 @@ const mayLand = (ticket: WriteTicket | undefined) =>
  * would capture.
  */
 function landingFor(key: string, except?: string): boolean {
-  if (submitting.has(key) || repairing.has(key) || orphans.some((orphan) => orphan.key === key)) return true;
+  if (callOnItsWay(key) || repairing.has(key) || orphans.some((orphan) => orphan.key === key)) return true;
   const byId = useWriteTickets.getState().byId;
   for (const [id, entry] of tracked) {
     if (id !== except && entry.key === key && mayLand(byId[id])) return true;
@@ -498,12 +515,17 @@ function repairFromChain(key: string | undefined): void {
   );
   let over = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const stopWatching = cache.subscribe((event) => {
-    const read = event.type === 'updated' && event.action.type === 'success' && !event.action.manual;
-    if (!read && event.type !== 'removed') return;
-    outstanding.delete(event.query.queryHash);
+  // A read a write on its way put its change back over is not the chain's: still to repair.
+  const listener = (queryHash: string, news: RepairNews) => {
+    if (news === 'reapplied') return;
+    outstanding.delete(queryHash);
     if (outstanding.size === 0) finish();
-  });
+  };
+  startWriteTracking();
+  repairListeners.add(listener);
+  const stopWatching = () => {
+    repairListeners.delete(listener);
+  };
   /** Stops this repair; `release` also lets the key's contest end (not on an account reset). */
   const stop = (release: boolean) => {
     if (over) return;
@@ -580,7 +602,7 @@ function readChain(ticket: WriteTicket, entry: Tracked, say: () => void): void {
   logFailure(ticket);
   repairFromChain(entry.key);
   // A newer write's call still runs (not this ticket's own Retry): that one is the latest action.
-  const call = entry.key === undefined ? undefined : submitting.get(entry.key);
+  const call = entry.key === undefined ? undefined : callOnItsWay(entry.key);
   const latestAction = isLatest(ticket.id, entry) && (call === undefined || call.retryOf === ticket.id);
   if (!latestAction) return;
   say();
@@ -704,7 +726,7 @@ function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
  * call still runs.
  */
 function onItsWay(key: string): WriteOf | undefined {
-  const waiting = queued.get(key) ?? submitting.get(key);
+  const waiting = queued.get(key) ?? callOnItsWay(key);
   if (waiting) return waiting;
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
@@ -718,14 +740,26 @@ function onItsWay(key: string): WriteOf | undefined {
  * behind it, would otherwise read as followed again when the profile is
  * reopened, until a read after both.
  */
-function keepChangesOverRead(hash: string): void {
+function keepChangesOverRead(hash: string): boolean {
   const keys = new Set([...queued.keys(), ...submitting.keys(), ...latestByKey.keys()]);
   const only = new Set([hash]);
+  const read = () => queryClient.getQueryCache().get(hash)?.state.data;
+  const before = read();
   for (const key of keys) {
     const write = onItsWay(key);
     if (write?.spec.reapply) touching(key, () => write.spec.reapply?.(write.vars, only));
   }
+  return read() !== before;
 }
+
+/**
+ * What each chain repair (`repairFromChain`) hears of a query, from the one
+ * listener that also puts changes back over reads: `read` when a fetch
+ * landed as the chain says, `reapplied` when a write on its way put its
+ * change back over it (that read repaired nothing), `removed`.
+ */
+type RepairNews = 'read' | 'reapplied' | 'removed';
+const repairListeners = new Set<(queryHash: string, news: RepairNews) => void>();
 
 let stopTracking: (() => void) | null = null;
 
@@ -738,9 +772,15 @@ export function startWriteTracking(): () => void {
   if (!stopTracking) {
     const stopTickets = onEngineEvent('write.status', (ticket) => receive(ticket, 'event'));
     const stopReads = queryClient.getQueryCache().subscribe((event) => {
+      const hash = event.query.queryHash;
+      if (event.type === 'removed') {
+        repairListeners.forEach((listener) => listener(hash, 'removed'));
+        return;
+      }
       // A fetch's result; `setQueryData` (an optimistic change itself) is `manual`.
       if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
-      keepChangesOverRead(event.query.queryHash);
+      const news: RepairNews = keepChangesOverRead(hash) ? 'reapplied' : 'read';
+      repairListeners.forEach((listener) => listener(hash, news));
     });
     stopTracking = () => {
       stopTickets();
@@ -778,7 +818,7 @@ const NO_INTENT = Symbol('no intent');
 
 /** What the write pending for `key` asks for, `NO_INTENT` when none is pending. */
 function pendingIntent(key: string): unknown {
-  const marked = submitting.get(key);
+  const marked = callOnItsWay(key);
   if (marked) return marked.spec.intent?.(marked.vars);
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
@@ -934,7 +974,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     return null;
   }
   contest(key, ticketId);
-  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars }, ticketId);
+  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars }, ticketId, time(writeTicketOf(ticketId)?.updatedAt));
   try {
     const { optimistic } = entry.spec;
     if (!entry.undo && optimistic) entry.undo = touching(key, () => optimistic(entry.vars));

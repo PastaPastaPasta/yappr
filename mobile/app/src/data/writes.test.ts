@@ -471,6 +471,60 @@ describe('submitWrite', () => {
       }
     });
 
+    it('does not count a chain read a write still on its way put its change back over as the repair', async () => {
+      jest.useFakeTimers();
+      const read = jest.fn(async () => 'chain');
+      const observer = new QueryObserver(queryClient, { queryKey: queryKeys.post.detail('shown'), queryFn: read, retry: false });
+      const unsubscribe = observer.subscribe(() => undefined);
+      // This write keeps its change on reads while its call runs (as follow and profile edits do).
+      const keeping: WriteSpec<TargetRef> = {
+        ...spec,
+        reapply: (_vars, queries) => {
+          for (const hash of queries) {
+            const query = queryClient.getQueryCache().get(hash);
+            if (query) queryClient.setQueryData(query.queryKey, 'mine');
+          }
+        },
+      };
+      try {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        const first = ticket();
+        fakeEngine.method('engage.like').mockResolvedValueOnce(first);
+        await act(async () => {
+          await runWrite(keeping, target);
+        });
+        const maybe = advance(first, { state: 'unconfirmed' });
+        act(() => fakeEngine.emit('write.status', maybe));
+        // The second write's call runs on while the first is proved absent and the chain read back.
+        const second = ticket();
+        let answerSend: (t: WriteTicket) => void = () => undefined;
+        fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise<WriteTicket>((resolve) => (answerSend = resolve)));
+        const sending = runWrite(keeping, target);
+        act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        expect(read).toHaveBeenCalled();
+        expect(observer.getCurrentResult().data).toBe('mine');
+
+        // The second confirms: nothing may land, but the read the repair saw was not the chain's.
+        await act(async () => {
+          answerSend(second);
+          await sending;
+        });
+        act(() => fakeEngine.emit('write.status', advance(second, { state: 'confirmed' })));
+        undo.mockClear();
+        const third = await submitPending();
+        act(() => fakeEngine.emit('write.status', advance(third, { state: 'failed', retryable: true, error: refused })));
+        expect(undo).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+        jest.useRealTimers();
+      }
+    });
+
     it('goes back to undoing a failed write once none of the overlapping ones may still land', async () => {
       const { maybe, second } = await overlapping();
       act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
