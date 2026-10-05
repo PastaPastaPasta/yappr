@@ -147,9 +147,12 @@ const latestByKey = new Map<string, string>();
  * may still have landed. Their optimistic changes are stacked on each other,
  * so undoing one can put back another that never landed, or take away one
  * that did: a failure among them reads the chain instead (`readChain`).
- * Cleared once no write for the key may still land.
+ * Cleared once no write for the key may still land, and the chain has been
+ * read back into the cache (`repairFromChain`).
  */
 const contested = new Set<string>();
+/** Keys whose chain read (`repairFromChain`) is still on its way, with how many. */
+const repairing = new Map<string, number>();
 
 /** A write, as the queue and the tracker hold it. */
 interface WriteOf {
@@ -398,9 +401,14 @@ const absentText = (ticket: WriteTicket, entry: Tracked) =>
 const mayLand = (ticket: WriteTicket | undefined) =>
   ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && !ticket.retryable);
 
-/** Whether a write for `key` other than ticket `except` may still land (or is on its way). */
+/**
+ * Whether a write for `key` other than ticket `except` may still land (or is
+ * on its way), or the cache is still being read back from the chain for it:
+ * until then it may show a change no write made, which a new write's undo
+ * would capture.
+ */
 function landingFor(key: string, except?: string): boolean {
-  if (submitting.has(key) || orphans.some((orphan) => orphan.key === key)) return true;
+  if (submitting.has(key) || repairing.has(key) || orphans.some((orphan) => orphan.key === key)) return true;
   const byId = useWriteTickets.getState().byId;
   for (const [id, entry] of tracked) {
     if (id !== except && entry.key === key && mayLand(byId[id])) return true;
@@ -419,19 +427,61 @@ function endContest(key: string): void {
 
 const isContested = (entry: Tracked) => entry.key !== undefined && contested.has(entry.key);
 
+/** Rounds of reading again a query whose read was cancelled (an optimistic change) before it ends. */
+const REPAIR_ROUNDS = 3;
+
+/**
+ * Reads every engine query again, for a contested key, and keeps the key
+ * contested until each query on screen has been read (or failed to): a read
+ * that an optimistic change cancelled (`updateCache`) is read again, a few
+ * rounds at most. Manual `setQueryData` updates don't count as a read.
+ */
+function repairFromChain(key: string | undefined): void {
+  if (key !== undefined) repairing.set(key, (repairing.get(key) ?? 0) + 1);
+  const cache = queryClient.getQueryCache();
+  const outstanding = new Set(
+    cache
+      .findAll({ queryKey: queryKeys.all })
+      .filter((query) => query.getObserversCount() > 0)
+      .map((query) => query.queryHash),
+  );
+  const stop = cache.subscribe((event) => {
+    const read = event.type === 'updated' && ((event.action.type === 'success' && !event.action.manual) || event.action.type === 'error');
+    if (read || event.type === 'removed') outstanding.delete(event.query.queryHash);
+  });
+  const again = (round: number): Promise<void> =>
+    outstanding.size === 0 || round >= REPAIR_ROUNDS
+      ? Promise.resolve()
+      : queryClient
+          .refetchQueries({ queryKey: queryKeys.all, predicate: (query) => outstanding.has(query.queryHash) })
+          .then(() => again(round + 1));
+  queryClient
+    .invalidateQueries({ queryKey: queryKeys.all })
+    .then(() => again(1))
+    .catch(() => undefined)
+    .finally(() => {
+      stop();
+      if (key === undefined) return;
+      const left = (repairing.get(key) ?? 1) - 1;
+      if (left > 0) repairing.set(key, left);
+      else repairing.delete(key);
+      endContest(key);
+    })
+    .catch(() => undefined);
+}
+
 /**
  * A write's own change is to be taken back with no ticket to settle: its
  * call was refused, its Retry was refused, or it was queued and dropped.
  * When the key's writes overlap, its undo is taken against a state another
  * may have changed (a write proved absent while this one was being sent):
- * every engine query is read again instead, and true says so. Called once
- * the write's own call is no longer marked, so the key can stop being
- * contested.
+ * every engine query is read again instead (`repairFromChain`), and true
+ * says so. Called once the write's own call is no longer marked, so the key
+ * can stop being contested once that read is done.
  */
 function readsChain(key: string | undefined): boolean {
   if (key === undefined || !contested.has(key)) return false;
-  queryClient.invalidateQueries({ queryKey: queryKeys.all }).catch(() => undefined);
-  endContest(key);
+  repairFromChain(key);
   return true;
 }
 
@@ -451,7 +501,7 @@ function readChain(ticket: WriteTicket, entry: Tracked, say: () => void): void {
   }
   entry.undo = null;
   logFailure(ticket);
-  queryClient.invalidateQueries({ queryKey: queryKeys.all }).catch(() => undefined);
+  repairFromChain(entry.key);
   const latestAction = isLatest(ticket.id, entry) && !(entry.key !== undefined && submitting.has(entry.key));
   if (!latestAction) return;
   say();
@@ -623,6 +673,7 @@ export function resetWriteTracking(): void {
   followed.clear();
   latestByKey.clear();
   contested.clear();
+  repairing.clear();
   // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
   submitting.clear();
   queued.clear();

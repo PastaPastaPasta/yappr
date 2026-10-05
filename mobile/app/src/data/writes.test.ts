@@ -391,6 +391,8 @@ describe('submitWrite', () => {
       const { maybe, second } = await overlapping();
       act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
       act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      // And the chain has been read back.
+      await act(async () => {});
       undo.mockClear();
       const third = await submitPending();
       act(() => fakeEngine.emit('write.status', advance(third, { state: 'failed', retryable: true, error: refused })));
