@@ -52,6 +52,7 @@ const m = vi.hoisted(() => ({
   election: { getSeatedTeam: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
+  settleReplaces: vi.fn(async () => 0),
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
   notificationService: { getInitialNotifications: vi.fn(), pollNewNotifications: vi.fn() },
 }))
@@ -107,6 +108,7 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => {
     },
   }
 })
+vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settleSupersededReplaces: m.settleReplaces }))
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
 const { ABSENCE_AFTER_MS, createTicketStore } = await import('../../src/writes/tickets')
@@ -121,6 +123,7 @@ const { useSettingsStore } = await import('@/lib/store')
 const { useNotificationStore } = await import('@/lib/stores/notification-store')
 const { ListLimitError } = await import('@/lib/typed-array-codecs')
 const { YAPPR_CONTRACT_ID } = await import('@/lib/constants')
+const { profileSources } = await import('@/lib/profile/v10-profile')
 const { validate, page, postDTO, notificationDTO, blockedUserDTO } = await import('../../src/dto/validate')
 type WriteTicket = import('../../src/writes/types').WriteTicket
 type DraftDTO = import('../../src/writes/publish').DraftDTO
@@ -538,6 +541,52 @@ describe('profiles.update', () => {
     expect(ticket.state).toBe('unconfirmed')
     m.profileService.getProfile.mockResolvedValue({ bio: 'new bio', displayName: 'Ann' })
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
+  describe('an earlier save whose wait timed out (QA rc7 D-1)', () => {
+    const contracts = () => [...new Set(profileSources().map(({ source }) => source.contractId))]
+
+    beforeEach(() => {
+      m.settleReplaces.mockReset()
+      m.settleReplaces.mockResolvedValue(0)
+      m.profileService.updateProfile.mockReset()
+      m.profileService.getProfile.mockReset()
+    })
+
+    it('stops holding the next save back once Platform shows it landed, before that save is sent', async () => {
+      // lib keeps an unconfirmed replace pending for 15 minutes; every save in between failed PENDING_WRITE.
+      const { tickets, profiles } = engine()
+      m.profileService.updateProfile.mockResolvedValue({})
+      const ticket = await profiles.update({ pronouns: '' })
+      expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
+      for (const contractId of contracts()) expect(m.settleReplaces).toHaveBeenCalledWith(VIEWER, contractId)
+      expect(m.settleReplaces.mock.invocationCallOrder[0]).toBeLessThan(m.profileService.updateProfile.mock.invocationCallOrder[0])
+    })
+
+    it('still saves when the earlier save cannot be read: lib then decides, and refuses if it may still land', async () => {
+      const { tickets, profiles } = engine()
+      m.settleReplaces.mockRejectedValue(new Error('transport error: Failed to fetch'))
+      m.profileService.updateProfile.mockResolvedValue({})
+      const ticket = await profiles.update({ bio: 'b' })
+      expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
+      expect(m.profileService.updateProfile).toHaveBeenCalledTimes(1)
+    })
+
+    it('settles it as soon as a check proves the edit landed, so other writes are not held back until the next save', async () => {
+      const { tickets, outcome, profiles } = engine()
+      m.profileService.updateProfile.mockRejectedValue(new Error('Request timeout'))
+      const ticket = await outcome(profiles.update({ bio: 'new bio' }))
+      expect(ticket.state).toBe('unconfirmed')
+      m.settleReplaces.mockClear()
+
+      m.profileService.getProfile.mockResolvedValue({ bio: 'old bio', displayName: 'Ann' })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed' })
+      expect(m.settleReplaces).not.toHaveBeenCalled()
+
+      m.profileService.getProfile.mockResolvedValue({ bio: 'new bio', displayName: 'Ann' })
+      expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+      for (const contractId of contracts()) expect(m.settleReplaces).toHaveBeenCalledWith(VIEWER, contractId)
+    })
   })
 })
 

@@ -3,6 +3,7 @@ import { TtlMap } from '@/lib/caches/ttl-map'
 import { likesAreIndexOnly, repostsAreQuotes } from '@/lib/contract-topology'
 import { fetchReplyParents } from '@/lib/feed/resolve-reply-parents'
 import { byNewestActivity, resolveUserReposts } from '@/lib/feed/resolve-user-reposts'
+import { logger } from '@/lib/logger'
 import { generateAvatarSvg } from '@/lib/services/avatar-generator'
 import { avatarStylesReady } from '../avatar-styles'
 import { blockService, type BlockProvenance } from '@/lib/services/block-service'
@@ -15,7 +16,8 @@ import { topLikedPostsHydrated } from '@/lib/services/ranked-likes'
 import { replyService } from '@/lib/services/reply-service'
 import { repostService } from '@/lib/services/repost-service'
 import { loadUserStats } from '@/lib/services/social-stats-service'
-import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
+import { avatarSeedMaxLength, profileSources, profileTextLimits } from '@/lib/profile/v10-profile'
+import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { DICEBEAR_STYLES, unifiedProfileService, type DiceBearStyle, type UpdateUnifiedProfileData } from '@/lib/services/unified-profile-service'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
@@ -317,6 +319,27 @@ async function profileShows(ownerId: string, update: UpdateUnifiedProfileData): 
 }
 
 /**
+ * An earlier profile save of `ownerId` whose answer was lost (its wait timed
+ * out) but which has since landed stops holding writes back. lib keeps such
+ * an SDK-signed replace pending for 15 minutes (`PENDING_LIFETIME_MS`): until
+ * then the next save, and on v10 every write to the social contract that holds
+ * `yapprProfile`, fails PENDING_WRITE. `settleSupersededReplaces` releases it
+ * only once Platform shows the document at the revision it wrote and its
+ * nonce consumed, so a save that has not landed yet still holds them back
+ * (as does one this could not read: a failure proves nothing).
+ */
+function settleLandedProfileSaves(ownerId: string): Promise<number[]> {
+  const contracts = [...new Set(profileSources().map(({ source }) => source.contractId))]
+  return Promise.all(contracts.map(contractId => settleSupersededReplaces(ownerId, contractId)))
+}
+
+/** Whether the stored profile shows the edit (`profileShows`), proved twice for an absence. */
+const proveEdit = relationProbe<UpdateUnifiedProfileData>(async ({ viewer, args }) => {
+  if (!args) throw new Error('This edit can no longer be checked')
+  return profileShows(viewer, args)
+}, true)
+
+/**
  * `profiles.update`: the viewer's profile through `updateProfile` (v10: the
  * DashPay `profile`, then `yapprProfile`; v2: one `profile` document, which
  * the first save creates). On v10 an image avatar is fingerprinted from its
@@ -326,8 +349,11 @@ export function createProfileWrites(tickets: TicketStore) {
   tickets.register<UpdateUnifiedProfileData>('profile.update', {
     persistArgs: true,
     async run(update, ctx) {
+      const owner = signer(ctx)
+      await settleLandedProfileSaves(owner)
+        .catch(error => logger.debug('Profile: could not settle an earlier save:', error))
       try {
-        await unifiedProfileService.updateProfile(signer(ctx), update, {
+        await unifiedProfileService.updateProfile(owner, update, {
           // "Saving… (1 of 2)" (UX_SPEC edit.saving): v10 writes the DashPay profile, then yapprProfile.
           onProgress: ({ step, total }) => {
             try {
@@ -345,10 +371,17 @@ export function createProfileWrites(tickets: TicketStore) {
       // updateProfile throws on a failure and does not say whether the wait confirmed, as on web.
       return { state: 'confirmed' }
     },
-    probe: relationProbe(async ({ viewer, args }) => {
-      if (!args) throw new Error('This edit can no longer be checked')
-      return profileShows(viewer, args)
-    }, true),
+    async probe(ticket, args, kit) {
+      const proved = await proveEdit(ticket, args, kit)
+      // A save that landed after its wait timed out stops holding the account's other writes back now,
+      // not at its next save. Not awaited: the settle waits for the write lock, which a call still
+      // running past its deadline holds.
+      if (proved.state === 'applied' && ticket.identityId) {
+        settleLandedProfileSaves(ticket.identityId)
+          .catch(error => logger.debug('Profile: could not settle a landed save:', error))
+      }
+      return proved
+    },
   })
 
   return {
