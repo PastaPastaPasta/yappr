@@ -22,6 +22,7 @@ import { resetWriteTracking } from '~/data/writes';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
+import { SENT_ECHO_MS } from '~/ui/native-text';
 import { useToastStore } from '~/ui/toast';
 
 import { ConversationScreen } from './ConversationScreen';
@@ -534,6 +535,90 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(composer()).toHaveDisplayValue('and');
     expect(composer().props.defaultValue).toBe('');
     expect(screen.getByTestId('dm-send')).toBeEnabled();
+  });
+
+  describe('typing right after Send (QA rc9 c2)', () => {
+    /** The conversation's draft as the store holds it ('' when none). */
+    const draftNow = () => Object.values(useDrafts.getState().byKey).join('|');
+    const composer = () => screen.getByTestId('dm-composer');
+    async function sendHello() {
+      await openConversation();
+      fakeEngine.method('dm.send').mockResolvedValue(ticket({ op: 'dm.send', target: { conversationKey: KEY } }));
+      fireEvent(composer(), 'focus');
+      fireEvent.changeText(composer(), 'hello');
+    }
+    const sentTexts = () => fakeEngine.method('dm.send').mock.calls.map((call) => call[1]);
+
+    it('keeps a keystroke reported with the sent text in front of it as the keystroke alone', async () => {
+      // The field still held "hello" when "x" went in (Android dropped the clear: its event count was
+      // behind the keystroke), and reported "hellox" after the send had emptied the draft.
+      await sendHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      fireEvent.changeText(composer(), 'hellox');
+      await act(async () => {});
+      expect(composer()).toHaveDisplayValue('x');
+      expect(draftNow()).toBe('x');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(sentTexts()).toEqual(['hello', 'x']);
+    });
+
+    it('does the same when the keystroke reaches the app before the emptied draft renders', async () => {
+      await sendHello();
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('dm-send'));
+        fireEvent.changeText(composer(), 'hellox');
+      });
+      expect(composer()).toHaveDisplayValue('x');
+      expect(draftNow()).toBe('x');
+      expect(sentTexts()).toEqual(['hello']);
+    });
+
+    it('takes several such reports, then lets the field hold its own text again', async () => {
+      await sendHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      for (const late of ['hellox', 'helloxy', 'helloxyz']) fireEvent.changeText(composer(), late);
+      expect(composer()).toHaveDisplayValue('xyz');
+      expect(draftNow()).toBe('xyz');
+      // The field now reports text of its own: uncontrolled again, nothing taken off.
+      fireEvent.changeText(composer(), 'xyzw');
+      expect(composer().props.value).toBeUndefined();
+      expect(draftNow()).toBe('xyzw');
+    });
+
+    it('never takes anything off a message typed afresh that starts like the one sent', async () => {
+      await sendHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      for (const text of ['h', 'he', 'hel', 'hell', 'hello', 'hello ', 'hello again']) fireEvent.changeText(composer(), text);
+      expect(draftNow()).toBe('hello again');
+      expect(composer()).toHaveDisplayValue('hello again');
+    });
+
+    it('never takes anything off a failed message put back in the box', async () => {
+      await openConversation();
+      fakeEngine
+        .method('dm.send')
+        .mockRejectedValue(Object.assign(new Error('Unblock this person to message them.'), { code: 'BAD_REQUEST' }));
+      fireEvent.changeText(composer(), 'hello?');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(composer()).toHaveDisplayValue('hello?');
+      fireEvent.changeText(composer(), 'hello?!');
+      expect(draftNow()).toBe('hello?!');
+      expect(composer()).toHaveDisplayValue('hello?!');
+    });
+
+    it('stops after a moment: a later report is the field’s own text', async () => {
+      // renderRouter runs on Jest's fake timers, whose clock is performance.now's too.
+      await sendHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      act(() => {
+        jest.advanceTimersByTime(SENT_ECHO_MS + 1);
+      });
+      fireEvent.changeText(composer(), 'hellox');
+      expect(draftNow()).toBe('hellox');
+    });
   });
 
   it('sends: a "Sending…" bubble at once, then the engine’s own message with "Sent"', async () => {

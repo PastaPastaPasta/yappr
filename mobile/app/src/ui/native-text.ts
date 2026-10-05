@@ -37,6 +37,11 @@ interface Mount {
   /** Whether the input it replaced had focus, so the new one takes it. */
   refocus: boolean;
   focused: boolean;
+  /**
+   * Set only just after `clear()`, while a change event the field sent before
+   * it may still come in: the text the field must show (`sentEcho`).
+   */
+  value?: string;
 }
 
 /** The mounted input, as far as this needs it: `TextInput.clear()` (a wrapper may not pass it on). */
@@ -50,6 +55,13 @@ export interface ClearableInput {
  * recognise such renders is dropped.
  */
 export const RENDER_LAG_MS = 10_000;
+
+/**
+ * How long after `clear()` a change event may still be one the field sent
+ * before it: a keystroke typed right after Send, reported with the sent text
+ * still in front of it (QA rc9 c2).
+ */
+export const SENT_ECHO_MS = 1_500;
 
 /** The native field's text as JS hears of it, and the input it renders. */
 function createField(value: string | undefined) {
@@ -70,6 +82,13 @@ function createField(value: string | undefined) {
    * exactly that text right after typing it is taken for a late render.
    */
   let behind: { text: string; at: number }[] = [];
+  /**
+   * The text `clear()` took out, while a change event sent before the clear
+   * may still arrive with it in front of the new keystrokes. One event that
+   * does not start with it (the field was cleared), a programmatic value, or
+   * `SENT_ECHO_MS` ends it.
+   */
+  let sent: { text: string; at: number } | null = null;
   const listeners = new Set<() => void>();
   const publish = (next: Mount) => {
     mount = next;
@@ -92,12 +111,41 @@ function createField(value: string | undefined) {
     attach: (next: ClearableInput | null | undefined) => {
       input = next ?? null;
     },
-    typed: (next: string) => {
-      if (next === text) return;
+    /**
+     * The field reported `next`; returns the text the caller hears. Just after
+     * `clear()`, a report of the cleared text with keystrokes after it was sent
+     * before the clear landed (or Android dropped the clear: its event count
+     * was behind the keystroke): the keystrokes alone are the text, and the
+     * field is held to them until it reports text of its own.
+     */
+    typed: (next: string): string => {
       const now = performance.now();
+      if (sent && now - sent.at > SENT_ECHO_MS) sent = null;
+      let heard = next;
+      if (sent && next.length > sent.text.length && next.startsWith(sent.text)) {
+        heard = next.slice(sent.text.length);
+        publish({ ...mount, value: heard });
+      } else if (sent || mount.value !== undefined) {
+        sent = null;
+        if (mount.value !== undefined) publish({ ...mount, value: undefined });
+      }
+      if (heard === text) return heard;
       dropExpired(now);
       if (text !== undefined) behind.push({ text, at: now });
-      text = next;
+      text = heard;
+      return heard;
+    },
+    /** Empties the field now (a message sent), from the event that empties the caller's text. */
+    clear: () => {
+      sent = text ? { text, at: performance.now() } : null;
+      text = '';
+      behind = [];
+      if (input?.clear) {
+        input.clear();
+        if (mount.value !== undefined) publish({ ...mount, value: undefined });
+      } else {
+        publish({ initial: '', generation: mount.generation + 1, refocus: mount.focused, focused: false });
+      }
     },
     focus: (focused: boolean) => {
       if (mount.focused !== focused) publish({ ...mount, focused });
@@ -119,9 +167,13 @@ function createField(value: string | undefined) {
         input.clear();
         text = '';
         behind = [];
+        sent = null;
+        if (mount.value !== undefined) publish({ ...mount, value: undefined });
       } else {
         text = value;
         behind = [];
+        // A text put back (a failed message) is the user's: nothing is taken off its front.
+        sent = null;
         // The input that had the focus is gone; the new one says so itself when it takes it.
         publish({ initial: value, generation: mount.generation + 1, refocus: mount.focused && editable, focused: false });
       }
@@ -134,8 +186,17 @@ export interface NativeText {
   key: number;
   /** Pass as the TextInput's `ref`, so an emptied value clears it in place. */
   attach: (input: ClearableInput | null | undefined) => void;
-  /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
-  inputProps: Pick<TextInputProps, 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
+  /**
+   * Empties the field at once, from the handler that empties the caller's
+   * text (Send), and takes a change event sent before it for the keystrokes
+   * after the cleared text only.
+   */
+  clear: () => void;
+  /**
+   * Spread on the TextInput, in place of the caller's `value` (it holds a `value` of its own only
+   * briefly after `clear()`). Its own `onChangeText`, `onFocus` and `onBlur` are these.
+   */
+  inputProps: Pick<TextInputProps, 'value' | 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
   focused: boolean;
 }
 
@@ -156,13 +217,14 @@ export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus,
   return {
     key: mount.generation,
     attach: field.attach,
+    clear: field.clear,
     focused: mount.focused,
     inputProps: {
+      value: mount.value,
       defaultValue: mount.initial,
       autoFocus: mount.generation === 0 ? autoFocus : mount.refocus,
       onChangeText: (text) => {
-        field.typed(text);
-        onChangeText?.(text);
+        onChangeText?.(field.typed(text));
       },
       onFocus: (event) => {
         field.focus(true);

@@ -210,18 +210,20 @@ export function ConversationScreen() {
   }, [scrollToNewest]);
 
   const offline = useNetInfo().isConnected === false;
-  const send = () => {
-    if (!viewerId || !draft.trim()) return;
+  /** True when it took the draft: the composer then empties itself at once. */
+  const send = (): boolean => {
+    if (!viewerId || !draft.trim()) return false;
     if (offline) {
       // PRD G-1: nothing is sent, and the text stays in the composer.
       toast(OFFLINE_MESSAGE);
-      return;
+      return false;
     }
     // Taken from the store, not this render: a second tap before the re-render finds it empty.
     const text = takeDraft(viewerId, key);
-    if (!text.trim()) return;
+    if (!text.trim()) return false;
     sendInBackground(viewerId, key, text);
     scrollToNewest();
+    return true;
   };
 
   const openInfo = useCallback(() => {

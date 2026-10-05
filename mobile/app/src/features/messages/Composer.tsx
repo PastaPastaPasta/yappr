@@ -14,7 +14,8 @@ const MAX_LINES = 5;
 export interface ComposerProps {
   value: string;
   onChangeText: (text: string) => void;
-  onSend: () => void;
+  /** Sends the text; true when it took it (the box is then emptied at once). */
+  onSend: () => boolean;
   disabled?: boolean;
 }
 
@@ -24,12 +25,17 @@ export interface ComposerProps {
  * there is visible text. The screen pads it above the keyboard or the
  * home indicator. The input is uncontrolled (`useNativeText`), so no
  * keystroke is lost; the draft clearing after a send, or coming back into the
- * box, is put in.
+ * box, is put in. A send empties the box from the tap itself, and a keystroke
+ * typed just after it is kept alone, never behind the sent text (QA rc9 c2:
+ * a second Send would have sent the first message again).
  */
 export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
   const c = useColors();
   const scale = useWindowDimensions().fontScale;
-  const { key: inputKey, attach, inputProps, focused } = useNativeText({ value, onChangeText, editable: !disabled });
+  const { key: inputKey, attach, clear, inputProps, focused } = useNativeText({ value, onChangeText, editable: !disabled });
+  const send = () => {
+    if (onSend()) clear();
+  };
   const canSend = !disabled && value.trim().length > 0;
 
   const sendRipple = useRipple('fill');
@@ -74,7 +80,7 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
         accessibilityLabel="Send message"
         accessibilityState={{ disabled: !canSend }}
         disabled={!canSend}
-        onPress={onSend}
+        onPress={send}
         hitSlop={hitSlopFor(40)}
         className={cn(
           'mb-0.5 h-10 w-10 items-center justify-center rounded-full android:overflow-hidden',
