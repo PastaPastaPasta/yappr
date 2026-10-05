@@ -28,6 +28,9 @@ export const copy = {
     blockedTitle: (handle: string) => `You blocked ${handle}`,
     blockedBody: "You won't see their posts in your feeds. Unblocking shows them again.",
     unblock: 'Unblock',
+    /** The control while a block or unblock may still land: busy, and the opposite action waits. */
+    blocking: 'Blocking…',
+    unblocking: 'Unblocking…',
     self: 'You cannot block yourself',
     signIn: 'Sign in to block accounts',
     loadFailed: "Couldn't load this account. Try again in a moment.",
@@ -35,6 +38,8 @@ export const copy = {
   toast: {
     blocked: (handle: string) => `Blocked ${handle}`,
     unblocked: (handle: string) => `Unblocked ${handle}`,
+    stillBlocking: (handle: string | null) => `Still blocking ${handle ?? 'this account'}. Try again in a moment.`,
+    stillUnblocking: (handle: string | null) => `Still unblocking ${handle ?? 'this account'}. Try again in a moment.`,
     stillBlocked: 'Unblocked, but a block list you follow still hides them.',
     blockFailed: (block: boolean, handle: string | null) =>
       `Couldn't ${block ? 'block' : 'unblock'} ${handle ?? 'this account'}. Try again.`,

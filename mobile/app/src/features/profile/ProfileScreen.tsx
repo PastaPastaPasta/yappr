@@ -21,7 +21,7 @@ import { sendWrite } from '~/data/writes';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copyText } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
-import { blockWrite, useAuthorBlocked } from '~/features/safety/block-state';
+import { blockWrite, useAuthorBlocked, useBlockBusy } from '~/features/safety/block-state';
 import { copy as safetyCopy } from '~/features/safety/copy';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
@@ -286,6 +286,8 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   // A block or unblock made on this device counts at once (features/safety); while the session restores, the engine's word.
   const blockedHere = useAuthorBlocked(profile?.id, profile?.viewer?.blocks);
   const blocked = !isSelf && (viewerId ? blockedHere : profile?.viewer?.blocks === true);
+  // A block or unblock of them still on its way: shown as such, and the opposite action waits for it.
+  const blockBusy = useBlockBusy(isSelf ? undefined : profile?.id);
   // Blocked only through a followed block list (PROF-11): managed on web, so no Unblock here.
   const blockedByList = blocked && profile?.viewer?.blockedBy === 'list';
   const following = profile?.viewer?.follows === true;
@@ -321,9 +323,16 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
     ...(blockedByList
       ? []
       : [
-          blocked
-            ? { id: 'unblock', title: `Unblock ${handle}`, systemImage: 'checkmark.circle' }
-            : { id: 'block', title: `Block ${handle}`, systemImage: 'nosign', destructive: true },
+          blockBusy
+            ? {
+                id: 'block-busy',
+                title: blockBusy === 'blocking' ? safetyCopy.block.blocking : safetyCopy.block.unblocking,
+                systemImage: blockBusy === 'blocking' ? 'nosign' : 'checkmark.circle',
+                disabled: true,
+              }
+            : blocked
+              ? { id: 'unblock', title: `Unblock ${handle}`, systemImage: 'checkmark.circle' }
+              : { id: 'block', title: `Block ${handle}`, systemImage: 'nosign', destructive: true },
         ]),
   ];
   // The shared unblock: it also brings back the author's posts hidden elsewhere (SAFE-02).
@@ -497,7 +506,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
                 title="You blocked this user"
                 description="You won't see their posts in your feeds."
                 icon={NoSymbolIcon}
-                action={{ label: 'Unblock', onPress: unblock }}
+                action={blockBusy ? undefined : { label: 'Unblock', onPress: unblock }}
                 testID="profile-blocked"
               />
             )

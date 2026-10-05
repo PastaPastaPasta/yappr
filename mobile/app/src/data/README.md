@@ -157,9 +157,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     a failure or a proved absence of any of them runs no undo and no
     `onFailed`: each discarded write's `reconcile` puts right what its
     optimistic change did outside the query cache, from the authoritative
-    source (a block drops this device's block decision and brings Messages
-    back in line with the account's own block; a delete shows the post
-    again), and every engine query is read again, and the screen shows what
+    source (a delete shows the post again), and every engine query is read
+    again, and the screen shows what
     the chain says (lib keeps a confirmed own write over a read from a node
     behind, and a read that lands while a write's call still runs gets that
     write's change back, `reapply`). Only the user's latest action for the
@@ -176,6 +175,16 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     write it; when the chain is read, the ones no screen shows are dropped
     from the cache (read afresh when next shown), so none can hand a later
     write's undo a change that never landed.
+- **`serial` writes never overlap.** A spec with `serial` (block and
+  unblock) sends one write for its key at a time and never queues: while
+  one may still land (its call runs, or it is unconfirmed with no check
+  proving it absent), the same ask is dropped and the opposite one is
+  refused with the spec's sentence. Its key can never be contested.
+  `useLandingIntent(key)` says what the write that may still land asks for,
+  so screens show it as busy ("Blocking…", `useBlockBusy`) and hold the
+  opposite action back. That lasts until it is confirmed, refused or
+  checked: normally within about two minutes, longer only while Dash
+  Platform can't be read.
 - **A spec with `optimistic` must declare `reconcile`** (the type requires
   it): a function for a change that reaches outside the query cache (a
   store, a write elsewhere), or `null` when the cache is all it touches.

@@ -23,7 +23,7 @@ import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { monoFont, tw, useColors, useLargeText } from '~/ui/tokens';
 
-import { blockWrite, useBlockedList } from './block-state';
+import { blockWrite, useBlockBusy, useBlockedList } from './block-state';
 import { copy } from './copy';
 
 /** Where web manages block lists (Settings → Privacy & Security). */
@@ -33,13 +33,18 @@ const BLOCK_LISTS_URL = `https://yap.pr${config.webBasePath}/settings?section=pr
 const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedUserDTO; viewerId: string }) {
   const largeText = useLargeText();
   const handle = handleOf(user);
-  const unblock = () => sendWrite(blockWrite, { viewerId, userId: user.id, block: false }, copy.toast.unblocked(handle));
+  // Their block or unblock still on its way: the button says so, and waits for it.
+  const busy = useBlockBusy(user.id);
+  const unblock = () => {
+    if (!busy) sendWrite(blockWrite, { viewerId, userId: user.id, block: false }, copy.toast.unblocked(handle));
+  };
   const button = (
     <Button
-      label={copy.block.unblock}
+      label={busy === 'blocking' ? copy.block.blocking : busy === 'unblocking' ? copy.block.unblocking : copy.block.unblock}
       variant="outline"
       size="sm"
-      accessibilityLabel={`Unblock ${handle}`}
+      accessibilityLabel={busy ? undefined : `Unblock ${handle}`}
+      disabled={busy !== null}
       onPress={unblock}
       testID={`unblock-${user.id}`}
     />

@@ -31,6 +31,15 @@ interface WriteSpecBase<V> {
    */
   key?: (vars: V) => string;
   /**
+   * One write for the key at a time, never queued: while one may still land
+   * (its call runs, or it is unconfirmed with no check proving it absent),
+   * another that asks for something else is refused with this neutral
+   * sentence, and one that asks for the same is dropped (`intent`). The key
+   * can then never be contested. The screens show the write as busy
+   * (`useLandingIntent`); this is the tracker's own guard.
+   */
+  serial?: (vars: V) => string;
+  /**
    * Apply the change again, to the queries named only (by hash): a read that
    * landed while the write was on its way (queued, or its call still running)
    * may predate it, and would otherwise put the old state back over the
@@ -153,6 +162,7 @@ const followed = new Set<string>();
 function track(id: string, entry: Tracked): void {
   tracked.set(id, entry);
   followed.add(id);
+  noteActivity();
 }
 
 /** Whether a write of this session follows, or followed, ticket `id`. */
@@ -234,8 +244,11 @@ function markSubmitting(key: string | undefined, write: WriteOf, retryOf?: strin
   if (key === undefined) return () => undefined;
   const token = Symbol(key);
   submitting.set(key, { ...write, token, retryOf, since });
+  noteActivity();
   return () => {
-    if (submitting.get(key)?.token === token) submitting.delete(key);
+    if (submitting.get(key)?.token !== token) return;
+    submitting.delete(key);
+    noteActivity();
   };
 }
 
@@ -258,7 +271,10 @@ const ORPHAN_SKEW_MS = 5_000;
 const OUTCOME_UNKNOWN = new Set(['ENGINE_RESTARTED', 'ENGINE_DISCONNECTED', 'ENGINE_TIMEOUT', 'RPC_TIMEOUT']);
 
 /** Every ticket this app has seen, by id. */
-const useWriteTickets = create<{ byId: Record<string, WriteTicket> }>()(() => ({ byId: {} }));
+const useWriteTickets = create<{ byId: Record<string, WriteTicket>; activity: number }>()(() => ({ byId: {}, activity: 0 }));
+
+/** A write's call started or ended, or it was tracked: what `useLandingIntent` reads may have changed. */
+const noteActivity = () => useWriteTickets.setState(({ activity }) => ({ activity: activity + 1 }));
 
 const MAX_TICKETS = 200;
 
@@ -479,6 +495,31 @@ function landingFor(key: string, except?: string): boolean {
     if (id !== except && entry.key === key && mayLand(byId[id])) return true;
   }
   return false;
+}
+
+/** The write for `key` that may still land: its call runs, it was cut short, or it is unconfirmed with no check proving it absent. */
+function landingWrite(key: string): WriteOf | undefined {
+  const call = callOnItsWay(key);
+  if (call) return call;
+  const orphan = orphans.find((o) => o.key === key);
+  if (orphan) return orphan;
+  const byId = useWriteTickets.getState().byId;
+  for (const [id, entry] of tracked) {
+    if (entry.key === key && mayLand(byId[id])) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * What the write that may still land for `key` asks for (its spec's
+ * `intent`), live; undefined when none may. For a screen that shows such a
+ * write as busy ("Blocking…") and holds back the opposite action.
+ */
+export function useLandingIntent(key: string | undefined): unknown {
+  return useWriteTickets(() => {
+    const write = key === undefined ? undefined : landingWrite(key);
+    return write ? (write.spec.intent?.(write.vars) ?? true) : undefined;
+  });
 }
 
 /** A write for `key` is about to be sent: if another may still land, the key's writes overlap. */
@@ -854,7 +895,7 @@ export function resetWriteTracking(): void {
   submitting.clear();
   queued.clear();
   orphans = [];
-  useWriteTickets.setState({ byId: {} });
+  useWriteTickets.setState(({ activity }) => ({ byId: {}, activity: activity + 1 }));
   resetReconciler();
 }
 
@@ -885,6 +926,13 @@ export async function runWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteRes
     return { status: 'refused', error: Object.assign(new Error(OFFLINE_MESSAGE), { code: 'OFFLINE' }) };
   }
   const key = spec.key?.(vars);
+  const landing = key !== undefined && spec.serial ? landingWrite(key) : undefined;
+  if (landing && spec.serial) {
+    // One at a time, never queued (`serial`): the same ask is already on its way, anything else waits for it.
+    if (spec.intent && landing.spec.intent?.(landing.vars) === spec.intent(vars)) return { status: 'queued' };
+    toast(spec.serial(vars));
+    return { status: 'refused', error: Object.assign(new Error('An earlier change is still on its way'), { code: 'BUSY' }) };
+  }
   if (key !== undefined) {
     const pending = pendingIntent(key);
     if (pending !== NO_INTENT) {
@@ -1013,6 +1061,11 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   const { key } = entry;
   // A stale Retry (a newer write for its key decides the state, or one is on its way): nothing to do.
   if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) return null;
+  const landing = key !== undefined && entry.spec.serial ? landingWrite(key) : undefined;
+  if (landing && landing !== entry && entry.spec.serial) {
+    toast(entry.spec.serial(entry.vars));
+    return null;
+  }
   if (isOffline()) {
     toast(OFFLINE_MESSAGE);
     return null;

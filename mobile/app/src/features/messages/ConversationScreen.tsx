@@ -10,7 +10,8 @@ import { ChatBubbleOvalLeftEllipsisIcon, EllipsisHorizontalIcon, LockClosedIcon 
 
 import { errorCode, OFFLINE_MESSAGE } from '~/data/writes';
 import { openUser } from '~/features/post/post-navigation';
-import { blockFromConversation, unblockFromConversation } from '~/features/safety/block-state';
+import { blockFromConversation, unblockFromConversation, useBlockBusy } from '~/features/safety/block-state';
+import { copy as safetyCopy } from '~/features/safety/copy';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
@@ -94,7 +95,7 @@ function HeaderTitle({ conversation, onPress }: { conversation: ConversationDTO;
   );
 }
 
-function menuItems(conversation: ConversationDTO, v5: boolean): MenuItem[] {
+function menuItems(conversation: ConversationDTO, v5: boolean, blockBusy: 'blocking' | 'unblocking' | null): MenuItem[] {
   if (conversation.kind === 'group') {
     return [
       { id: 'info', title: 'Group info', systemImage: 'info.circle' },
@@ -103,9 +104,17 @@ function menuItems(conversation: ConversationDTO, v5: boolean): MenuItem[] {
   }
   const items: MenuItem[] = [
     { id: 'profile', title: 'View profile', systemImage: 'person.crop.circle' },
-    conversation.flags.blocked
-      ? { id: 'unblock', title: 'Unblock', systemImage: 'hand.raised.slash' }
-      : { id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true },
+    // A block or unblock of them still on its way: shown as such, and the opposite action waits for it.
+    blockBusy
+      ? {
+          id: 'block-busy',
+          title: blockBusy === 'blocking' ? safetyCopy.block.blocking : safetyCopy.block.unblocking,
+          systemImage: 'hand.raised',
+          disabled: true,
+        }
+      : conversation.flags.blocked
+        ? { id: 'unblock', title: 'Unblock', systemImage: 'hand.raised.slash' }
+        : { id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true },
   ];
   if (v5) items.push({ id: 'archive', title: 'Archive conversation', systemImage: 'archivebox' });
   return items;
@@ -231,6 +240,7 @@ export function ConversationScreen() {
     router.push({ pathname: '/messages/[conversationId]/info', params: { conversationId: key } });
   }, [key]);
   const peerId = conversation?.peer?.id ?? '';
+  const blockBusy = useBlockBusy(conversation?.kind === 'direct' ? peerId || undefined : undefined);
   const onMenu = (id: string) => {
     if (!conversation) return;
     if (id === 'info') openInfo();
@@ -271,7 +281,7 @@ export function ConversationScreen() {
           : undefined,
         headerRight: conversation
           ? () => (
-              <ContextMenu items={menuItems(conversation, v5)} onSelect={onMenu} testID="dm-conversation-menu">
+              <ContextMenu items={menuItems(conversation, v5, blockBusy)} onSelect={onMenu} testID="dm-conversation-menu">
                 <IconButton icon={EllipsisHorizontalIcon} accessibilityLabel="Conversation options" />
               </ContextMenu>
             )
