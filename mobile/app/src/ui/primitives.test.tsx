@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
@@ -188,6 +189,73 @@ describe('TextField', () => {
   it('hides the counter far from the limit', () => {
     render(<TextField label="Bio" value="short" maxLength={160} onChangeText={jest.fn()} />);
     expect(screen.queryByText(/\/ 160/)).toBeNull();
+  });
+
+  describe('typing (QA rc7 D-2)', () => {
+    /** A form field as screens use it: the parent holds the text, and can reset or replace it. */
+    function Form({ initial = '' }: { initial?: string }) {
+      const [name, setName] = useState(initial);
+      return (
+        <>
+          <TextField label="Name" value={name} onChangeText={setName} />
+          <Button label="Clear" onPress={() => setName('')} />
+          <Button label="Randomize" onPress={() => setName('k3x9')} />
+          <Text testID="held">{name}</Text>
+        </>
+      );
+    }
+    const input = () => screen.getByLabelText('Name');
+
+    it('leaves the text to the native input, which JS never writes back while typing', () => {
+      // A `value` input has JS push each keystroke's text back; landing late, that echo dropped
+      // the keystrokes typed meanwhile ('notalink' saved as 'nota').
+      render(<Form initial="Taipei" />);
+      for (const text of ['Taipei ', 'Taipei T', 'Taipei Ta', 'Taipei Tai']) fireEvent.changeText(input(), text);
+      expect(screen.getByTestId('held')).toHaveTextContent('Taipei Tai');
+      expect(input().props.value).toBeUndefined();
+      expect(input().props.defaultValue).toBe('Taipei');
+    });
+
+    it('ignores a render from before the latest keystrokes reached the parent', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="rc" onChangeText={onChangeText} />);
+      fireEvent.changeText(input(), 'rc7');
+      fireEvent.changeText(input(), 'rc7i');
+      // The parent re-renders with a text the input has typed past.
+      rerender(<TextField label="Name" value="rc7" onChangeText={onChangeText} />);
+      expect(input().props.value).toBeUndefined();
+      expect(input().props.defaultValue).toBe('rc');
+      rerender(<TextField label="Name" value="rc7i" onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('rc');
+      expect(onChangeText).toHaveBeenLastCalledWith('rc7i');
+    });
+
+    it('puts a value the parent sets in, keeping the focus', () => {
+      render(<Form />);
+      fireEvent(input(), 'focus');
+      fireEvent.changeText(input(), 'luc');
+      fireEvent.press(screen.getByRole('button', { name: 'Clear' }));
+      expect(input().props.defaultValue).toBe('');
+      expect(input().props.autoFocus).toBe(true);
+      expect(screen.getByLabelText('Name')).toHaveDisplayValue('');
+
+      fireEvent.changeText(input(), 'l');
+      fireEvent.press(screen.getByRole('button', { name: 'Randomize' }));
+      expect(input()).toHaveDisplayValue('k3x9');
+      // The same reset again after more typing still lands.
+      fireEvent.changeText(input(), 'k3x9z');
+      fireEvent.press(screen.getByRole('button', { name: 'Randomize' }));
+      expect(input()).toHaveDisplayValue('k3x9');
+      expect(screen.getByTestId('held')).toHaveTextContent('k3x9');
+    });
+
+    it('does not hand the focus back to a locked field it resets (a sign-in going through)', () => {
+      const { rerender } = render(<TextField label="Name" value="key" onChangeText={jest.fn()} />);
+      fireEvent(input(), 'focus');
+      rerender(<TextField label="Name" value="" editable={false} onChangeText={jest.fn()} />);
+      expect(input()).toHaveDisplayValue('');
+      expect(input().props.autoFocus).toBe(false);
+    });
   });
 
   it('hides a secret until asked, with autofill off', () => {

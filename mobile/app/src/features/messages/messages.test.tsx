@@ -1077,7 +1077,7 @@ describe('New message (DM-05)', () => {
     expect(fakeEngine.method('dm.startDirect')).toHaveBeenCalledTimes(1);
     expect(useToastStore.getState().current?.message).toBe('No user found with this identity ID');
     expect(screen.queryByTestId('new-message-opening')).toBeNull();
-    expect(screen.getByTestId('picker-search').props.value).toBe(BOB_ID);
+    expect(screen.getByTestId('picker-search')).toHaveDisplayValue(BOB_ID);
   });
 
   it('says why when the person has no encryption key, not that nobody was found (SR-40)', async () => {
@@ -1096,6 +1096,17 @@ describe('New message (DM-05)', () => {
     expect(screen.getByTestId('picker-invalid')).toHaveTextContent('Invalid identity ID');
     expect(screen.queryByText(/Check your connection/)).toBeNull();
     expect(fakeEngine.method('profiles.get')).not.toHaveBeenCalled();
+  });
+
+  it('leaves the search text to the input while typing, and Clear still empties it (QA rc7 D-2)', async () => {
+    // A `value` search pushed each keystroke's text back, and under the searches' renders that
+    // echo dropped the keys typed meanwhile ('lucia' searched as 'luc').
+    await renderAt('/messages/new');
+    for (const text of ['l', 'lu', 'luc', 'luci', 'lucia']) fireEvent.changeText(screen.getByTestId('picker-search'), text);
+    expect(screen.getByTestId('picker-search').props.value).toBeUndefined();
+    fireEvent.press(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByTestId('picker-search')).toHaveDisplayValue('');
+    expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull();
   });
 
   it("refuses to message yourself without asking the engine", async () => {

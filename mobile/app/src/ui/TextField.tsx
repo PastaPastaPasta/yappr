@@ -5,6 +5,7 @@ import { EyeIcon, EyeSlashIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
+import { useNativeText } from './native-text';
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
 
@@ -36,6 +37,11 @@ export interface TextFieldProps extends Omit<TextInputProps, 'multiline' | 'secu
  * Text field and text area (components/ui/input.tsx, textarea.tsx): a
  * `border.strong` outline that turns into a 2 pt `accent` ring on focus (the
  * web's purple ring is not used, ADR E3), `error` border and message below.
+ *
+ * `value` and `onChangeText` work as on a TextInput, but the native input is
+ * uncontrolled so no keystroke is lost (`useNativeText`): a `value` other
+ * than the typed text (a reset) is put in, while `value` echoing the typing
+ * never is. Keeping the old `value` does not refuse a keystroke.
  */
 export function TextField({
   label,
@@ -45,14 +51,17 @@ export function TextField({
   alwaysCount = false,
   maxLength,
   value,
+  onChangeText,
   editable = true,
   className,
   onFocus,
   onBlur,
+  autoFocus,
   ...props
 }: TextFieldProps) {
   const c = useColors();
-  const [focused, setFocused] = useState(false);
+  const text = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable });
+  const { focused } = text;
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
@@ -79,9 +88,9 @@ export function TextField({
         )}
       >
         <TextInput
+          key={text.key}
           accessibilityLabel={label}
           accessibilityHint={error}
-          value={value}
           maxLength={maxLength}
           editable={editable}
           multiline={multiline}
@@ -89,16 +98,9 @@ export function TextField({
           placeholderTextColor={c.textPlaceholder}
           cursorColor={c.accent}
           selectionColor={c.accent}
-          onFocus={(e) => {
-            setFocused(true);
-            onFocus?.(e);
-          }}
-          onBlur={(e) => {
-            setFocused(false);
-            onBlur?.(e);
-          }}
           {...(secure ? SECURE_INPUT : null)}
           {...props}
+          {...text.inputProps}
           // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
           className="flex-1 text-gray-900 dark:text-gray-100"
           style={

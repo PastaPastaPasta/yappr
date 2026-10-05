@@ -9,6 +9,7 @@ import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { handleOf } from '~/ui/handle';
+import { useNativeText } from '~/ui/native-text';
 import { RowSkeleton } from '~/ui/Skeleton';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, monoFont, tw, useColors } from '~/ui/tokens';
@@ -244,6 +245,8 @@ export function UserPicker({
   const c = useColors();
   const focusHandlers = useRevealOnFocus(onSearchFocus, onSearchBlur);
   const [query, setQuery] = useState(initialQuery);
+  // Uncontrolled, so a busy render (each key searches) never drops a keystroke (QA rc7 D-2).
+  const input = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
   const byId = isIdentityIdText(text);
@@ -322,16 +325,14 @@ export function UserPicker({
         <View className={cn('min-h-10 flex-row items-center gap-2 rounded-[10px] px-3', tw.bgMuted)}>
           <MagnifyingGlassIcon size={16} color={c.textSecondary} />
           <TextInput
-            value={query}
-            onChangeText={setQuery}
+            key={input.key}
+            {...input.inputProps}
             placeholder="Search by username..."
             placeholderTextColor={c.textPlaceholder}
             accessibilityLabel="Search by username"
             autoCapitalize="none"
             autoCorrect={false}
             autoComplete="off"
-            autoFocus={autoFocus}
-            {...focusHandlers}
             returnKeyType="search"
             cursorColor={c.accent}
             selectionColor={c.accent}
