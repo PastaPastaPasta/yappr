@@ -439,6 +439,60 @@ describe('blocking', () => {
       ]);
     });
 
+    describe('a block and an unblock that overlap, the second refused (QA rc7 review)', () => {
+      const unconfirmed = { state: 'unconfirmed' as const };
+      /** Bob's posts as a read brings them, with the block status the chain holds. */
+      const read = (authorBlocked: boolean) =>
+        queryClient.setQueryData(
+          queryKeys.feed.home({ tab: 'forYou' }),
+          bobPosts().map((post) => ({ ...post, viewer: { ...post.viewer!, authorBlocked } })),
+        );
+      const settle = () =>
+        act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+      it('keeps Bob blocked, on screen and in Messages, when an unblock after an unconfirmed block is refused', async () => {
+        renderPosts(bobPosts());
+        const blocking = ticket({ op: 'block', target: { identityId: BOB.id } });
+        fakeEngine.method('safety.block').mockResolvedValue(blocking);
+        await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+        act(() => fakeEngine.emit('write.status', advance(blocking, unconfirmed)));
+        const unblocking = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+        fakeEngine.method('safety.unblock').mockResolvedValue(unblocking);
+        await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false }));
+        expect(screen.getByTestId('post-card-b1')).toBeTruthy();
+
+        // The block landed; the unblock is refused, changing nothing on the chain.
+        fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB.id]: 'self' });
+        await act(async () => fakeEngine.emit('write.status', advance(unblocking, failed)));
+        await settle();
+        act(() => read(true));
+        expect(screen.queryByTestId('post-card-b1')).toBeNull();
+        expect(fakeEngine.method('dm.setBlocked').mock.calls.at(-1)).toEqual([BOB.id, true]);
+      });
+
+      it('keeps Bob unblocked, on screen and in Messages, when a block after an unconfirmed unblock is refused', async () => {
+        renderPosts(bobPosts().map((post) => ({ ...post, viewer: { ...post.viewer!, authorBlocked: true } })));
+        const unblocking = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+        fakeEngine.method('safety.unblock').mockResolvedValue(unblocking);
+        await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false }));
+        act(() => fakeEngine.emit('write.status', advance(unblocking, unconfirmed)));
+        const blocking = ticket({ op: 'block', target: { identityId: BOB.id } });
+        fakeEngine.method('safety.block').mockResolvedValue(blocking);
+        await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+        expect(screen.queryByTestId('post-card-b1')).toBeNull();
+
+        // The unblock landed; the block is refused.
+        fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB.id]: null });
+        await act(async () => fakeEngine.emit('write.status', advance(blocking, failed)));
+        await settle();
+        act(() => read(false));
+        expect(screen.getByTestId('post-card-b1')).toBeTruthy();
+        expect(fakeEngine.method('dm.setBlocked').mock.calls.at(-1)).toEqual([BOB.id, false]);
+      });
+    });
+
     it('keeps a block in Messages made before (on web) when a profile block fails', async () => {
       const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
       fakeEngine.method('safety.block').mockResolvedValue(pending);

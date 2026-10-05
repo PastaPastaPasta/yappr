@@ -219,6 +219,9 @@ export interface BlockVars {
 /** Per user, the latest change made in Messages: an older change's undo never overrides a newer one. */
 const messagesChanges = new Map<string, symbol>();
 
+/** Per block write (its vars), the change it made in Messages: whether it changed anything, and its token. */
+const messagesChangeOf = new WeakMap<BlockVars, { change: symbol; changed: Promise<boolean> }>();
+
 /**
  * DM v5 keeps its own block list (DM-10): a Block also blocks them there,
  * and an Unblock lifts it (PRD SAFE-01, SAFE-02), so one Block covers
@@ -226,11 +229,12 @@ const messagesChanges = new Map<string, symbol>();
  * Returns the undo, which reverts only what this call changed (a block in
  * Messages made before, on web, stays) and only while it is the latest.
  */
-function blockInMessages(userId: string, block: boolean): () => void {
+function blockInMessages(userId: string, block: boolean, write?: BlockVars): () => void {
   if (getCapabilities()?.dm !== 'v5') return () => undefined;
   const change = Symbol(userId);
   messagesChanges.set(userId, change);
   const changed = syncMessagesBlock(userId, block);
+  if (write) messagesChangeOf.set(write, { change, changed });
   return () => {
     changed
       .then((did) => {
@@ -240,7 +244,8 @@ function blockInMessages(userId: string, block: boolean): () => void {
   };
 }
 
-function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () => void {
+function applyBlock(vars: BlockVars): () => void {
+  const { viewerId, userId, block, message, user } = vars;
   const before = useBlockDecisions.getState().byKey[decisionKey(viewerId, userId)];
   const row: BlockedUserDTO | undefined =
     block && user ? { ...user, id: userId, resolved: true, message: message ?? null } : undefined;
@@ -248,7 +253,7 @@ function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () =
   const undoProfiles = patchProfiles(userId, block);
   // The decision lives in memory; the cached posts carry it across a relaunch (SR-25).
   const undoPosts = setAuthorBlocked(userId, block);
-  const undoMessages = blockInMessages(userId, block);
+  const undoMessages = blockInMessages(userId, block, vars);
   return () => {
     decide(viewerId, userId, before);
     undoProfiles();
@@ -256,6 +261,31 @@ function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () =
     undoMessages();
     refetch(queryKeys.profile.detail(userId));
   };
+}
+
+/**
+ * A block write whose key's writes overlapped failed: no undo runs, and the
+ * query cache is read back from the chain (`WriteSpec.reconcile`). What it
+ * did outside the cache is put right from the authoritative source too:
+ * this device's decision goes, since it outranks every read
+ * (`useAuthorBlocked`, `useBlockedList`), so the block status read back
+ * decides; and the change it made in Messages, which mirror the account's
+ * own block (not a followed list's), is reverted only if that own block, as
+ * read now, disagrees with it, and only while it is the latest change made
+ * there.
+ */
+function reconcileBlock(vars: BlockVars): void {
+  const { viewerId, userId, block } = vars;
+  decide(viewerId, userId, undefined);
+  refetch(queryKeys.blocked);
+  const made = messagesChangeOf.get(vars);
+  if (!made) return;
+  Promise.all([made.changed, engine.api.safety.blockedBy([userId])])
+    .then(([changed, sources]) => {
+      const ownBlock = sources[userId] === 'self';
+      if (changed && ownBlock !== block && messagesChanges.get(userId) === made.change) blockInMessages(userId, ownBlock);
+    })
+    .catch((error: unknown) => appendLog('warn', 'host', `Putting Messages right after a block failed: ${errorMessage(error)}`));
 }
 
 const targetIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?: string } | null)?.identityId;
@@ -280,6 +310,7 @@ export const blockWrite: WriteSpec<BlockVars> = {
   submit: (api, { userId, block, message }) =>
     block ? api.safety.block(userId, message ? { message } : null) : api.safety.unblock(userId),
   optimistic: applyBlock,
+  reconcile: reconcileBlock,
   intent: ({ block }) => block,
   matches: (ticket, { userId, block }) => ticket.op === (block ? 'block' : 'unblock') && targetIdentity(ticket) === userId,
   onConfirmed: (_ticket, { block }) => refetchFiltered(block),

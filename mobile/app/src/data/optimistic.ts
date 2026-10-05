@@ -421,6 +421,16 @@ interface RemovedPosts {
 export const useRemovedPosts = create<RemovedPosts>()(() => ({ ids: new Set<string>() }));
 
 /** Hides a post everywhere `PostItem` renders it. Returns the undo. */
+/** A post hidden on this device (`hidePost`) shows again, wherever its cached copies are. */
+export function showPost(postId: string): void {
+  useRemovedPosts.setState(({ ids }) => {
+    if (!ids.has(postId)) return { ids };
+    const next = new Set(ids);
+    next.delete(postId);
+    return { ids: next };
+  });
+}
+
 export function hidePost(postId: string): () => void {
   const update = (add: boolean) =>
     useRemovedPosts.setState(({ ids }) => {

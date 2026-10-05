@@ -35,6 +35,7 @@ const spec: WriteSpec<TargetRef> = {
   key: (t) => `like:${t.id}`,
   submit: (api, t) => api.engage.like(t),
   optimistic: apply,
+  reconcile: null,
   failureMessage: "Couldn't like this post. Try again.",
   onConfirmed: confirmed,
 };
@@ -555,6 +556,7 @@ describe('submitWrite', () => {
       key: ({ target: t }) => `like:${t.id}`,
       submit: (api, { target: t, on }) => (on ? api.engage.like(t) : api.engage.unlike(t)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: "Couldn't like this post. Try again.",
     };
@@ -604,6 +606,7 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: 'x',
     };
@@ -635,6 +638,7 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: 'x',
     };
@@ -856,6 +860,7 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: 'x',
     };

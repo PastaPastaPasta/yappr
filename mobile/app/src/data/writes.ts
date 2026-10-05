@@ -21,7 +21,7 @@ import { SESSION_EXPIRED_MESSAGE, failedForSession, markSessionExpired, signInAg
 
 /** Writes: tickets, rollback and toasts. The rules are in src/data/README.md ("Writes"). */
 
-export interface WriteSpec<V> {
+interface WriteSpecBase<V> {
   /** Submit the write and resolve with its ticket: `(api, target) => api.engage.like(target)`. */
   submit: (api: EngineRemote, vars: V) => Promise<WriteTicket>;
   /**
@@ -30,8 +30,6 @@ export interface WriteSpec<V> {
    * latest write for a key.
    */
   key?: (vars: V) => string;
-  /** Apply the optimistic change and return its undo (`setViewerState` and friends). */
-  optimistic?: (vars: V) => () => void;
   /**
    * Apply the change again, to the queries named only (by hash): a read that
    * landed while the write was on its way (queued, or its call still running)
@@ -97,6 +95,26 @@ export interface WriteSpec<V> {
    */
   onRejected?: (error: unknown, vars: V) => boolean;
 }
+
+/**
+ * A write's optimistic change, and what replaces its undo when the key's
+ * writes overlapped (`readChain`). Then no undo runs and every engine query
+ * is read back from the chain, which repairs what the change did in the
+ * query cache. `reconcile` repairs what it did outside it (a store of its
+ * own, a write it made elsewhere) from the authoritative source, never from
+ * what the change found: a spec with an optimistic change must say, `null`
+ * when the change touches nothing but the query cache.
+ */
+type OptimisticSpec<V> =
+  | { optimistic?: undefined; reconcile?: undefined }
+  | {
+      /** Apply the optimistic change and return its undo (`setViewerState` and friends). */
+      optimistic: (vars: V) => () => void;
+      /** Repair what `optimistic` changed outside the query cache, from the authoritative source; `null` if nothing. */
+      reconcile: ((vars: V) => void) | null;
+    };
+
+export type WriteSpec<V> = WriteSpecBase<V> & OptimisticSpec<V>;
 
 interface Tracked {
   spec: WriteSpec<unknown>;
@@ -578,10 +596,35 @@ function repairFromChain(key: string | undefined): void {
  * says so. Called once the write's own call is no longer marked, so the key
  * can stop being contested once that read is done.
  */
-function readsChain(key: string | undefined): boolean {
+function readsChain(key: string | undefined, write: WriteOf): boolean {
   if (key === undefined || !contested.has(key)) return false;
+  discardUndos(key);
+  reconcileOutsideCache(write);
   repairFromChain(key);
   return true;
+}
+
+/**
+ * Every tracked write for `key` loses its undo, and has what its change did
+ * outside the query cache repaired (`reconcile`): the chain read that
+ * follows repairs the cache.
+ */
+function discardUndos(key: string | undefined): void {
+  if (key === undefined) return;
+  for (const other of tracked.values()) {
+    if (other.key !== key) continue;
+    other.undo = null;
+    reconcileOutsideCache(other);
+  }
+}
+
+/** A write's `reconcile`: what its optimistic change did outside the query cache, put right from the authoritative source. */
+function reconcileOutsideCache({ spec, vars }: WriteOf): void {
+  try {
+    spec.reconcile?.(vars);
+  } catch (error) {
+    appendLog('warn', 'host', `Reconciling a write failed: ${errorMessage(error)}`);
+  }
 }
 
 /**
@@ -595,10 +638,9 @@ function readsChain(key: string | undefined): boolean {
  * top of what the chain shows.
  */
 function readChain(ticket: WriteTicket, entry: Tracked, say: () => void): void {
-  for (const other of tracked.values()) {
-    if (other.key === entry.key) other.undo = null;
-  }
+  discardUndos(entry.key);
   entry.undo = null;
+  reconcileOutsideCache(entry);
   logFailure(ticket);
   repairFromChain(entry.key);
   // A newer write's call still runs (not this ticket's own Retry): that one is the latest action.
@@ -659,6 +701,8 @@ function release(key: string | undefined, send: boolean): void {
     runQueued(next).catch(() => undefined);
   } else if (next.undo) {
     contested.add(key);
+    discardUndos(key);
+    reconcileOutsideCache(next);
     repairFromChain(key);
   }
 }
@@ -673,7 +717,7 @@ function dropQueued(key: string | undefined): void {
   const next = key === undefined ? undefined : queued.get(key);
   if (!next || key === undefined) return;
   queued.delete(key);
-  if (!readsChain(key)) next.undo?.();
+  if (!readsChain(key, next)) next.undo?.();
   fail(failureSentence(next.spec, next.vars));
 }
 
@@ -888,7 +932,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
     }
     done();
     release(key, false);
-    if (!readsChain(key)) revert?.();
+    if (!readsChain(key, { spec, vars })) revert?.();
     if (errorCode(error) === 'NOT_SIGNED_IN') {
       promptSignIn();
     } else if (errorCode(error) === 'KEY_REVOKED') {
@@ -981,7 +1025,7 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
     return receive(await engine.api.writes.retry(ticketId), 'call');
   } catch (error) {
     done();
-    if (readsChain(key)) entry.undo = null;
+    if (readsChain(key, entry)) entry.undo = null;
     else undo(entry);
     appendLog('warn', 'host', `Retry refused: ${errorMessage(error)}`);
     fail(failureSentence(entry.spec, entry.vars));

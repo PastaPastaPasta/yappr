@@ -79,6 +79,8 @@ const stillSaving = (ticket: WriteTicket) => ticket.error?.code === 'PENDING_WRI
 export const profileUpdateWrite: WriteSpec<ProfileUpdateVars> = {
   key: ({ viewerId }) => `profile:${viewerId}`,
   submit: (api, { patch }) => api.profiles.update(patch),
+  // Its change is the query cache's alone, which the chain read repairs (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: (vars) => setProfileChange(vars.viewerId, profileChangeOf(vars)),
   reapply: (vars, queries) => {
     applyProfileChange(vars.viewerId, profileChangeOf(vars), queries);

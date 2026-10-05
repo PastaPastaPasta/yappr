@@ -155,7 +155,11 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     its optimistic change on that one's, so undoing either could put back a
     change that never landed or take away one that did. Once that happens,
     a failure or a proved absence of any of them runs no undo and no
-    `onFailed`: every engine query is read again, and the screen shows what
+    `onFailed`: each discarded write's `reconcile` puts right what its
+    optimistic change did outside the query cache, from the authoritative
+    source (a block drops this device's block decision and brings Messages
+    back in line with the account's own block; a delete shows the post
+    again), and every engine query is read again, and the screen shows what
     the chain says (lib keeps a confirmed own write over a read from a node
     behind, and a read that lands while a write's call still runs gets that
     write's change back, `reapply`). Only the user's latest action for the
@@ -172,6 +176,9 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     write it; when the chain is read, the ones no screen shows are dropped
     from the cache (read afresh when next shown), so none can hand a later
     write's undo a change that never landed.
+- **A spec with `optimistic` must declare `reconcile`** (the type requires
+  it): a function for a change that reaches outside the query cache (a
+  store, a write elsewhere), or `null` when the cache is all it touches.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
