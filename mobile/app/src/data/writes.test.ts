@@ -1,5 +1,5 @@
 import type { ProfileDTO, SessionDTO, TargetRef, WriteTicket } from '@engine/api';
-import { defaultScheduler, notifyManager } from '@tanstack/react-query';
+import { defaultScheduler, notifyManager, QueryObserver } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react-native';
 
 import * as WebBrowser from 'expo-web-browser';
@@ -17,7 +17,7 @@ import { queryKeys } from './keys';
 import { isExhausted, ticketJob } from './reconcile';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { useSessionStore } from './session';
-import { adoptRestoredWrites, OFFLINE_MESSAGE, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { adoptRestoredWrites, OFFLINE_MESSAGE, REPAIR_RETRY_MS, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 let mockOffline = false;
@@ -385,6 +385,48 @@ describe('submitWrite', () => {
       stop();
       expect(undo).not.toHaveBeenCalled();
       expect(shown).toEqual(["Couldn't like this post. Try again."]);
+    });
+
+    it('stays contested while the chain read fails, and ends once a retried read succeeds', async () => {
+      // A failed read leaves the optimistic data in place: it repairs nothing.
+      jest.useFakeTimers();
+      const fails = { current: true };
+      const read = jest.fn(async () => {
+        if (fails.current) throw new Error('offline');
+        return 'chain';
+      });
+      const observer = new QueryObserver(queryClient, { queryKey: queryKeys.post.detail('shown'), queryFn: read, retry: false });
+      const unsubscribe = observer.subscribe(() => undefined);
+      try {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        const { maybe, second } = await overlapping();
+        act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
+        act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        expect(read).toHaveBeenCalled();
+
+        // Nothing may land any more, but the read failed: a new write's failure still reads the chain.
+        const third = await submitPending();
+        act(() => fakeEngine.emit('write.status', advance(third, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
+        expect(undo).not.toHaveBeenCalled();
+
+        // The retried read succeeds: the contest ends, and the next failure is undone plainly.
+        fails.current = false;
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(REPAIR_RETRY_MS[0]);
+        });
+        expect(observer.getCurrentResult().data).toBe('chain');
+        const fourth = await submitPending();
+        act(() => fakeEngine.emit('write.status', advance(fourth, { state: 'failed', retryable: true, error: refused })));
+        expect(undo).toHaveBeenCalledTimes(1);
+      } finally {
+        unsubscribe();
+        jest.useRealTimers();
+      }
     });
 
     it('goes back to undoing a failed write once none of the overlapping ones may still land', async () => {

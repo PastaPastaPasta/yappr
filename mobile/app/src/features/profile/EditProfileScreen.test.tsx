@@ -532,6 +532,38 @@ describe('EditProfileScreen', () => {
       expect(useToastStore.getState().current?.message).toBe("Couldn't save your profile. Try again.");
     });
 
+    it('never ends at a name no save wrote when the chain read fails, and takes the chain’s once a read succeeds', async () => {
+      // A failed read repairs nothing: save 3, rejected before a ticket, must not roll back to save 2's name.
+      const unconfirmed = await firstSaveUnconfirmed(undefined, [['edit-name', 'Jana A']]);
+      const second = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+      fakeEngine.method('profiles.update').mockResolvedValueOnce(second);
+      renderScreen(<EditProfileScreen />);
+      await flush();
+      fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana B');
+      await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+      act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+      await flush();
+
+      // Dash Platform stops answering: the chain read save 2's refusal starts fails.
+      fakeEngine.method('profiles.get').mockRejectedValue(new Error('Dash Platform is unavailable'));
+      act(() => fakeEngine.emit('write.status', advance(second, refused('UNKNOWN', 'refused'))));
+      await flush();
+      fakeEngine.method('profiles.update').mockRejectedValueOnce(Object.assign(new Error('Too long'), { code: 'BAD_REQUEST' }));
+      fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana C');
+      await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+      await flush();
+      // Not rolled back to save 2's name.
+      expect(cachedProfile()?.displayName).not.toBe('Jana B');
+
+      // A read succeeds (the app's next refetch, or the repair's own retry): the chain's name.
+      fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: queryKeys.profile.detail(VIEWER) });
+      });
+      await flush();
+      expect(cachedProfile()?.displayName).toBe(PROFILE.displayName);
+    });
+
     it('never writes an older partial save over a newer one: the profile is the chain’s', async () => {
       // QA rc7 review finding 3: two dev saves each wrote the DashPay profile, then lost the Yappr profile.
       const half = { done: 1, total: 2 };

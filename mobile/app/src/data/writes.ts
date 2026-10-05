@@ -427,14 +427,25 @@ function endContest(key: string): void {
 
 const isContested = (entry: Tracked) => entry.key !== undefined && contested.has(entry.key);
 
-/** Rounds of reading again a query whose read was cancelled (an optimistic change) before it ends. */
-const REPAIR_ROUNDS = 3;
+/**
+ * When a chain read that did not succeed (it failed, or an optimistic change
+ * cancelled it) is tried again; after these, the app's own next read of it
+ * (focus, reconnect, NET-03's retry, the screen shown again) still counts.
+ */
+export const REPAIR_RETRY_MS: readonly number[] = [2_000, 5_000, 15_000];
+
+/** What `resetWriteTracking` stops: every chain read still waited for. */
+const repairs = new Set<() => void>();
 
 /**
- * Reads every engine query again, for a contested key, and keeps the key
- * contested until each query on screen has been read (or failed to): a read
- * that an optimistic change cancelled (`updateCache`) is read again, a few
- * rounds at most. Manual `setQueryData` updates don't count as a read.
+ * Reads every engine query again for a contested key, and keeps the key
+ * contested until each query on screen has been read successfully since: a
+ * failed read leaves the optimistic data in place, so it repairs nothing,
+ * and neither does a read an optimistic change cancelled (`updateCache`) or
+ * a manual `setQueryData`. Such reads are tried again (`REPAIR_RETRY_MS`,
+ * not while offline); meanwhile a write on the key is reconciled by reading
+ * the chain, never by its captured snapshot. A query dropped from the cache
+ * needs no repair.
  */
 function repairFromChain(key: string | undefined): void {
   if (key !== undefined) repairing.set(key, (repairing.get(key) ?? 0) + 1);
@@ -445,28 +456,54 @@ function repairFromChain(key: string | undefined): void {
       .filter((query) => query.getObserversCount() > 0)
       .map((query) => query.queryHash),
   );
-  const stop = cache.subscribe((event) => {
-    const read = event.type === 'updated' && ((event.action.type === 'success' && !event.action.manual) || event.action.type === 'error');
-    if (read || event.type === 'removed') outstanding.delete(event.query.queryHash);
+  let over = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stopWatching = cache.subscribe((event) => {
+    const read = event.type === 'updated' && event.action.type === 'success' && !event.action.manual;
+    if (!read && event.type !== 'removed') return;
+    outstanding.delete(event.query.queryHash);
+    if (outstanding.size === 0) finish();
   });
-  const again = (round: number): Promise<void> =>
-    outstanding.size === 0 || round >= REPAIR_ROUNDS
-      ? Promise.resolve()
-      : queryClient
-          .refetchQueries({ queryKey: queryKeys.all, predicate: (query) => outstanding.has(query.queryHash) })
-          .then(() => again(round + 1));
+  /** Stops this repair; `release` also lets the key's contest end (not on an account reset). */
+  const stop = (release: boolean) => {
+    if (over) return;
+    over = true;
+    clearTimeout(timer);
+    stopWatching();
+    repairs.delete(abandon);
+    if (!release || key === undefined) return;
+    const left = (repairing.get(key) ?? 1) - 1;
+    if (left > 0) repairing.set(key, left);
+    else repairing.delete(key);
+    endContest(key);
+  };
+  function finish() {
+    stop(true);
+  }
+  function abandon() {
+    stop(false);
+  }
+  repairs.add(abandon);
+  const retry = (attempt: number) => {
+    if (over) return;
+    if (outstanding.size === 0) {
+      finish();
+      return;
+    }
+    const delay = REPAIR_RETRY_MS[attempt];
+    if (delay === undefined) return;
+    timer = setTimeout(() => {
+      if (over) return;
+      const read = isOffline()
+        ? Promise.resolve()
+        : queryClient.refetchQueries({ queryKey: queryKeys.all, predicate: (query) => outstanding.has(query.queryHash) });
+      read.catch(() => undefined).then(() => retry(attempt + 1)).catch(() => undefined);
+    }, delay);
+  };
   queryClient
     .invalidateQueries({ queryKey: queryKeys.all })
-    .then(() => again(1))
     .catch(() => undefined)
-    .finally(() => {
-      stop();
-      if (key === undefined) return;
-      const left = (repairing.get(key) ?? 1) - 1;
-      if (left > 0) repairing.set(key, left);
-      else repairing.delete(key);
-      endContest(key);
-    })
+    .then(() => retry(0))
     .catch(() => undefined);
 }
 
@@ -673,6 +710,7 @@ export function resetWriteTracking(): void {
   followed.clear();
   latestByKey.clear();
   contested.clear();
+  for (const abandon of [...repairs]) abandon();
   repairing.clear();
   // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
   submitting.clear();

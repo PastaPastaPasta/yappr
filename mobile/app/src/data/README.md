@@ -163,7 +163,10 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     what the chain shows. The same goes for a change taken back with no
     ticket to settle: a call refused before a ticket, a refused Retry, a
     queued write dropped. The key goes back to plain undo once none of its
-    writes may still land.
+    writes may still land and every query on screen has been read
+    successfully since (a failed or cancelled read repairs nothing: it is
+    tried again 2, 5 and 15 s on, not while offline, and after that the
+    app's own next read counts). An account change ends it too.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
