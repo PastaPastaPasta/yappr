@@ -386,6 +386,84 @@ describe('EditProfileScreen', () => {
     expect(screen.getByTestId('edit-save')).toBeEnabled();
   });
 
+  /** A check that proved a save absent (the reconciler's, 2 minutes on): retryable again. */
+  const provedAbsent = (t: WriteTicket) =>
+    advance(t, {
+      state: 'unconfirmed',
+      retryable: true,
+      error: {
+        code: 'NOT_RECORDED',
+        consensusCode: null,
+        outcome: 'not-recorded',
+        retryable: true,
+        userMessage: 'Checked: this write did not land.',
+      },
+    });
+
+  it('keeps what a dev save did write when a check later proves the rest absent', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    // The DashPay profile is confirmed; the Yappr profile's wait times out.
+    const halfway = advance(pending, { progress: { done: 1, total: 2 } });
+    act(() => fakeEngine.emit('write.status', halfway));
+    const unconfirmed = advance(halfway, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(useToastStore.getState().current?.message).toBe('Profile updated!');
+
+    act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'error', message: "Couldn't save pronouns. Try again." });
+    expect(useToastStore.getState().current?.action?.label).toBe('Retry');
+    expect(cachedProfile()).toMatchObject({ bio: 'Film and food.' });
+    expect(cachedProfile()).not.toHaveProperty('pronouns');
+  });
+
+  it('still undoes a save it called done, and says so, when a save after it was held back unsent', async () => {
+    // Save 1 goes unconfirmed ("Profile updated!"); save 2 is refused before anything is sent.
+    // Save 1 proved absent must not be ignored as an older write for the key.
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const first = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValueOnce(first);
+    const view = renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    const unconfirmed = advance(first, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(cachedProfile()?.pronouns).toBe('she/her');
+    view.unmount();
+
+    const second = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValueOnce(second);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-location'), 'Taipei');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(second, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'PENDING_WRITE', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Held back.' },
+        }),
+      ),
+    );
+    expect(useToastStore.getState().current?.message).toBe('Your last change is still saving. Try again in a few minutes.');
+    expect(cachedProfile()).toMatchObject({ pronouns: 'she/her' });
+    expect(cachedProfile()).not.toHaveProperty('location');
+
+    act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'error', message: "Couldn't save your profile. Try again." });
+    expect(useToastStore.getState().current?.action?.label).toBe('Retry');
+    expect(cachedProfile()).not.toHaveProperty('pronouns');
+  });
+
   it('blocks saving an over-long name', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     renderScreen(<EditProfileScreen />);

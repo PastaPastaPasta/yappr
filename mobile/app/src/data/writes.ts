@@ -104,6 +104,10 @@ interface Tracked {
   undo: (() => void) | null;
   /** The last ticket state acted on, so a repeated event doesn't toast twice. */
   handled: string;
+  /** The latest write for its key when this one was sent (`handBack`). */
+  previous?: string;
+  /** Refused before anything went out, it gave the key back to `previous`; its Retry takes it again. */
+  handedBack?: boolean;
 }
 
 /**
@@ -342,6 +346,7 @@ function settle(ticket: WriteTicket): void {
       }
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
+      if (ticket.error?.outcome === 'not-sent') handBack(entry);
       return;
     }
     case 'unconfirmed':
@@ -350,6 +355,7 @@ function settle(ticket: WriteTicket): void {
         // A check proved it did not land: the same sentence as a refusal.
         logFailure(ticket);
         undo(entry);
+        spec.onFailed?.(ticket, entry.vars);
         fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
         release(entry.key, false);
       } else if (!stillRunning(ticket)) {
@@ -393,6 +399,22 @@ function watch(ticket: WriteTicket): void {
     canExhaust: !running,
     episode: running ? 'running' : 'settled',
   });
+}
+
+/**
+ * A write refused before anything went out (`not-sent`) changed nothing, and
+ * its undo put back the change of the write before it for its key. When that
+ * one may still land, it decides the key again: a check that proves it absent
+ * undoes it and says so (with Retry), instead of finding a newer write there
+ * and saying nothing. The refused write's own Retry takes the key back.
+ */
+function handBack(entry: Tracked): void {
+  const { key, previous } = entry;
+  if (key === undefined || previous === undefined || !tracked.has(previous)) return;
+  const before = useWriteTickets.getState().byId[previous];
+  if (!before || !(before.state === 'pending' || (before.state === 'unconfirmed' && !before.retryable))) return;
+  latestByKey.set(key, previous);
+  entry.handedBack = true;
 }
 
 /** The pending write for `key` settled: send the write queued behind it, or drop it. */
@@ -590,7 +612,8 @@ async function send(waiting: Waiting): Promise<WriteResult> {
   try {
     revert ??= spec.optimistic?.(vars) ?? null;
     const ticket = await spec.submit(engine.api, vars);
-    track(ticket.id, { spec, vars, key, undo: revert, handled: '' });
+    const previous = key === undefined ? undefined : latestByKey.get(key);
+    track(ticket.id, { spec, vars, key, undo: revert, handled: '', previous });
     if (key !== undefined) latestByKey.set(key, ticket.id);
     done();
     // `write.status` may have overtaken the call's answer: settle on the newest copy.
@@ -685,11 +708,17 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   const entry = tracked.get(ticketId);
   if (!entry) return null;
   const { key } = entry;
+  // Given back to the write before it when it was refused unsent (`handBack`), and nothing newer since.
+  const reclaims = entry.handedBack === true && key !== undefined && latestByKey.get(key) === entry.previous;
   // A stale Retry (a newer write for its key decides the state, or one is on its way): nothing to do.
-  if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) return null;
+  if (!(isLatest(ticketId, entry) || reclaims) || (key !== undefined && inFlight(key))) return null;
   if (isOffline()) {
     toast(OFFLINE_MESSAGE);
     return null;
+  }
+  if (reclaims) {
+    latestByKey.set(key, ticketId);
+    entry.handedBack = false;
   }
   const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
   try {

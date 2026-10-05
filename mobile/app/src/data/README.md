@@ -125,7 +125,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     (**Get YAPP** when YAPP is short), unless the spec's `failureAction`
     has a better action for it. `failureNeutral` makes the toast neutral
     (no haptic, no action) for a failure that needs no fix. `onFailed` runs
-    after the undo, for a failure that changed state anyway. A `failed`
+    after the undo, for a failure that changed state anyway (also when a
+    check proves an unconfirmed write absent). A `failed`
     ticket whose outcome is `unknown` (it may have landed) is treated as
     unconfirmed: kept, and nothing said.
   - `unconfirmed`: the write may have landed, so the change stays and
@@ -148,7 +149,11 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     reports them.) Retry applies only to the latest write for a key, and
     never while another is in flight: a stale Retry does nothing, quietly.
     A failure of an older write for a key says nothing: the newer write
-    decides the state.
+    decides the state. A newer write refused before anything went out
+    (outcome `not-sent`) changed nothing, so it gives the key back to the
+    write before it while that one may still land: a check proving that one
+    absent still undoes it and says so. The refused write's Retry takes the
+    key again.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might

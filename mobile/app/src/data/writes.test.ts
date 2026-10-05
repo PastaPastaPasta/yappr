@@ -242,6 +242,38 @@ describe('submitWrite', () => {
     expect(currentToast()).toBeNull();
   });
 
+  it('gives the key back to a write that may land when the one after it is refused unsent, and its Retry takes it again', async () => {
+    const first = await submitPending();
+    const maybe = advance(first, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', maybe));
+    const second = await submitPending();
+    const notSent = { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Network error.' } as const;
+    act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: notSent })));
+    const retrySecond = currentToast()?.action;
+    expect(retrySecond?.label).toBe('Retry');
+
+    // The first proved absent still decides: undone, with its own failure and Retry.
+    undo.mockClear();
+    act(() => useToastStore.setState({ current: null }));
+    const absent = advance(maybe, {
+      state: 'unconfirmed',
+      retryable: true,
+      error: { code: 'NOT_RECORDED', consensusCode: null, outcome: 'not-recorded', retryable: true, userMessage: 'Checked.' },
+    });
+    act(() => fakeEngine.emit('write.status', absent));
+    expect(undo).toHaveBeenCalledTimes(1);
+    expect(currentToast()).toMatchObject({ kind: 'error', message: "Couldn't like this post. Try again." });
+
+    // The refused write's Retry still sends it, and makes it the latest again.
+    answer('writes.retry', advance(second, { state: 'pending', retryable: false, error: null }));
+    await act(async () => retrySecond?.onPress());
+    expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(second.id);
+    const firstRetry = currentToast()?.action;
+    act(() => useToastStore.setState({ current: null }));
+    await act(async () => firstRetry?.onPress());
+    expect(fakeEngine.method('writes.retry')).toHaveBeenCalledTimes(1);
+  });
+
   it('acts on a status that overtook the call’s answer', async () => {
     const pending = ticket();
     fakeEngine.method('engage.like').mockImplementationOnce(async () => {
