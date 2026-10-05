@@ -246,7 +246,7 @@ export function UserPicker({
   const focusHandlers = useRevealOnFocus(onSearchFocus, onSearchBlur);
   const [query, setQuery] = useState(initialQuery);
   // Uncontrolled, so a busy render (each key searches) never drops a keystroke (QA rc7 D-2).
-  const input = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
+  const { key: inputKey, attach, inputProps } = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
   const byId = isIdentityIdText(text);
@@ -325,8 +325,9 @@ export function UserPicker({
         <View className={cn('min-h-10 flex-row items-center gap-2 rounded-[10px] px-3', tw.bgMuted)}>
           <MagnifyingGlassIcon size={16} color={c.textSecondary} />
           <TextInput
-            key={input.key}
-            {...input.inputProps}
+            key={inputKey}
+            ref={attach}
+            {...inputProps}
             placeholder="Search by username..."
             placeholderTextColor={c.textPlaceholder}
             accessibilityLabel="Search by username"

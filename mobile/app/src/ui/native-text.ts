@@ -14,9 +14,10 @@ import type { TextInputProps } from 'react-native';
  * So the native field owns the text, and JS only listens. The caller keeps
  * its `value` and `onChangeText`: a `value` that is not what the field last
  * reported (a reset, a cleared search, "Randomize", a message sent) is a
- * programmatic change, put in by mounting a fresh input with it as
- * `defaultValue` (it takes the focus the old one had, unless the field is
- * locked). A `value` the field has since typed past is a render from before
+ * programmatic change: an empty one clears the input in place
+ * (`TextInput.clear()`), any other is put in by mounting a fresh input with
+ * it as `defaultValue` (it takes the focus the old one had, unless the field
+ * is locked). A `value` the field has since typed past is a render from before
  * the latest keystrokes reached the caller, and changes nothing. So a caller
  * cannot refuse a keystroke by keeping its old `value` (no caller does):
  * limit the input with its own props (`maxLength`) instead.
@@ -38,17 +39,31 @@ interface Mount {
   focused: boolean;
 }
 
+/** The mounted input, as far as this needs it: `TextInput.clear()` (a wrapper may not pass it on). */
+export interface ClearableInput {
+  clear?: () => void;
+}
+
 /** The native field's text as JS hears of it, and the input it renders. */
 function createField(value: string | undefined) {
   let mount: Mount = { initial: value, generation: 0, refocus: false, focused: false };
+  let input: ClearableInput | null = null;
   /** The text the native field holds. */
   let text = value;
-  /** Texts the field held before `text` that the caller's `value` may still show. */
+  /**
+   * Texts the field held before `text`, oldest first, that the caller's
+   * `value` may still show: its renders come in the order of the keystrokes,
+   * so one showing an entry has shown every entry before it.
+   */
   let behind: string[] = [];
   const listeners = new Set<() => void>();
   const publish = (next: Mount) => {
     mount = next;
     listeners.forEach((listener) => listener());
+  };
+  /** Drops what a render showing `shown` has already shown. */
+  const pastShown = (shown: string) => {
+    behind = behind.slice(behind.lastIndexOf(shown) + 1);
   };
   return {
     subscribe: (listener: () => void) => {
@@ -58,6 +73,9 @@ function createField(value: string | undefined) {
       };
     },
     mount: () => mount,
+    attach: (next: ClearableInput | null | undefined) => {
+      input = next ?? null;
+    },
     typed: (next: string) => {
       if (next === text) return;
       if (text !== undefined) behind.push(text);
@@ -70,8 +88,19 @@ function createField(value: string | undefined) {
     shown: (value: string | undefined, editable: boolean) => {
       if (value === undefined) return;
       if (value === text) {
+        // Caught up; a text typed earlier and again since may still show from later renders.
+        if (behind.includes(value)) pastShown(value);
+        else behind = [];
+      } else if (behind.includes(value)) {
+        // A render from before the latest keystrokes.
+        pastShown(value);
+      } else if (value === '' && input?.clear) {
+        // Emptied (a message sent, a search cleared): in place, so the input keeps its focus and
+        // keyboard, and the caller hears no blur and focus.
+        input.clear();
+        text = '';
         behind = [];
-      } else if (!behind.includes(value)) {
+      } else {
         text = value;
         behind = [];
         // The input that had the focus is gone; the new one says so itself when it takes it.
@@ -84,6 +113,8 @@ function createField(value: string | undefined) {
 export interface NativeText {
   /** The TextInput's `key`. */
   key: number;
+  /** Pass as the TextInput's `ref`, so an emptied value clears it in place. */
+  attach: (input: ClearableInput | null | undefined) => void;
   /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
   inputProps: Pick<TextInputProps, 'defaultValue' | 'autoFocus' | 'onChangeText' | 'onFocus' | 'onBlur'>;
   focused: boolean;
@@ -105,6 +136,7 @@ export function useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus,
 
   return {
     key: mount.generation,
+    attach: field.attach,
     focused: mount.focused,
     inputProps: {
       defaultValue: mount.initial,

@@ -137,11 +137,12 @@ function TargetUnread({ onRetry, inset = true }: { onRetry: () => void; inset?: 
  */
 function MediaLinkField({ value, onChangeText, valid }: { value: string; onChangeText: (text: string) => void; valid: boolean }) {
   const c = useColors();
-  const input = useNativeText({ value, onChangeText });
+  const { key: inputKey, attach, inputProps } = useNativeText({ value, onChangeText });
   return (
     <TextInput
-      key={input.key}
-      {...input.inputProps}
+      key={inputKey}
+      ref={attach}
+      {...inputProps}
       placeholder="Paste an image link"
       placeholderTextColor={c.textPlaceholder}
       autoCapitalize="none"

@@ -29,8 +29,7 @@ export interface ComposerProps {
 export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
   const c = useColors();
   const scale = useWindowDimensions().fontScale;
-  const input = useNativeText({ value, onChangeText, editable: !disabled });
-  const { focused } = input;
+  const { key: inputKey, attach, inputProps, focused } = useNativeText({ value, onChangeText, editable: !disabled });
   const canSend = !disabled && value.trim().length > 0;
 
   const sendRipple = useRipple('fill');
@@ -46,8 +45,9 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
         )}
       >
         <TextInput
-          key={input.key}
-          {...input.inputProps}
+          key={inputKey}
+          ref={attach}
+          {...inputProps}
           placeholder="Type a message..."
           placeholderTextColor={c.textPlaceholder}
           accessibilityLabel="Message"

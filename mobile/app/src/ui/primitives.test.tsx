@@ -230,18 +230,42 @@ describe('TextField', () => {
       expect(onChangeText).toHaveBeenLastCalledWith('rc7i');
     });
 
-    it('puts a value the parent sets in, keeping the focus', () => {
-      render(<Form />);
+    it('empties the input in place when the parent clears it: no remount, no blur or focus', () => {
+      const onFocus = jest.fn();
+      const onBlur = jest.fn();
+      function Cleared() {
+        const [name, setName] = useState('');
+        return (
+          <>
+            <TextField label="Name" value={name} onChangeText={setName} onFocus={onFocus} onBlur={onBlur} />
+            <Button label="Clear" onPress={() => setName('')} />
+          </>
+        );
+      }
+      render(<Cleared />);
       fireEvent(input(), 'focus');
       fireEvent.changeText(input(), 'luc');
+      const before = input();
       fireEvent.press(screen.getByRole('button', { name: 'Clear' }));
+      expect(input()).toHaveDisplayValue('');
+      // The same input: its text was cleared, it was not mounted afresh.
+      expect(input()).toBe(before);
       expect(input().props.defaultValue).toBe('');
-      expect(input().props.autoFocus).toBe(true);
-      expect(screen.getByLabelText('Name')).toHaveDisplayValue('');
+      expect(input().props.autoFocus).toBeUndefined();
+      expect(onFocus).toHaveBeenCalledTimes(1);
+      expect(onBlur).not.toHaveBeenCalled();
+      // Typing goes on in it.
+      fireEvent.changeText(input(), 'l');
+      expect(input()).toHaveDisplayValue('l');
+    });
 
+    it('puts any other value the parent sets in, keeping the focus', () => {
+      render(<Form />);
+      fireEvent(input(), 'focus');
       fireEvent.changeText(input(), 'l');
       fireEvent.press(screen.getByRole('button', { name: 'Randomize' }));
       expect(input()).toHaveDisplayValue('k3x9');
+      expect(input().props.autoFocus).toBe(true);
       // The same reset again after more typing still lands.
       fireEvent.changeText(input(), 'k3x9z');
       fireEvent.press(screen.getByRole('button', { name: 'Randomize' }));
@@ -249,11 +273,21 @@ describe('TextField', () => {
       expect(screen.getByTestId('held')).toHaveTextContent('k3x9');
     });
 
+    it('does not remount for late renders that bring back a text typed twice (a, ab, a)', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+      for (const text of ['a', 'ab', 'a']) fireEvent.changeText(input(), text);
+      // The parent's renders for each keystroke arrive only now, in order.
+      for (const value of ['a', 'ab', 'a']) rerender(<TextField label="Name" value={value} onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('');
+      expect(input()).toHaveDisplayValue('a');
+    });
+
     it('does not hand the focus back to a locked field it resets (a sign-in going through)', () => {
       const { rerender } = render(<TextField label="Name" value="key" onChangeText={jest.fn()} />);
       fireEvent(input(), 'focus');
-      rerender(<TextField label="Name" value="" editable={false} onChangeText={jest.fn()} />);
-      expect(input()).toHaveDisplayValue('');
+      rerender(<TextField label="Name" value="other" editable={false} onChangeText={jest.fn()} />);
+      expect(input()).toHaveDisplayValue('other');
       expect(input().props.autoFocus).toBe(false);
     });
   });

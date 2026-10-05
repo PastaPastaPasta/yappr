@@ -12,6 +12,19 @@ require('react-native-reanimated/mock').cubicBezier = (x1, y1, x2, y2) => ({
   normalize: () => ({ x1, y1, x2, y2 }),
 });
 jest.mock('@gorhom/bottom-sheet', () => require('@gorhom/bottom-sheet/mock'));
+// React Native's TextInput mock stubs clear(). The app empties its uncontrolled inputs in place
+// (src/ui/native-text.ts), so the stub empties the text Testing Library shows for that input, as the
+// native field empties (a typed text lives in Testing Library's simulated native state).
+{
+  const { TextInput } = require('react-native');
+  const { nativeState } = require('@testing-library/react-native/build/native-state');
+  TextInput.prototype.clear = jest.fn(function clear() {
+    const { screen } = require('@testing-library/react-native');
+    const [own] = screen.UNSAFE_root.findAll((node) => node.instance === this);
+    const host = own?.children.find((child) => typeof child !== 'string' && child.type === 'TextInput');
+    if (host) nativeState.valueForElement.set(host, '');
+  });
+}
 // react-native-mmkv swaps in an in-memory store under Jest, but still imports
 // Nitro, which looks up its native TurboModule at import time.
 jest.mock('react-native-nitro-modules', () => ({ NitroModules: {} }));

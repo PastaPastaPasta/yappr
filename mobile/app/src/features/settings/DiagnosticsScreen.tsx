@@ -203,7 +203,7 @@ function confirm(title: string, message: string, action: string, run: () => void
 function DevSignIn() {
   const [key, setKey] = useState('');
   // Uncontrolled (`useNativeText`); the field cleared after each call is put in.
-  const keyInput = useNativeText({ value: key, onChangeText: setKey });
+  const { key: inputKey, attach, inputProps } = useNativeText({ value: key, onChangeText: setKey });
   const [session, setSession] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -231,8 +231,9 @@ function DevSignIn() {
       <View className="gap-3 p-4">
         <Row label="Signed in as" value={session ?? 'nobody'} />
         <TextInput
-          key={keyInput.key}
-          {...keyInput.inputProps}
+          key={inputKey}
+          ref={attach}
+          {...inputProps}
           placeholder="Private key (WIF or hex)"
           secureTextEntry
           autoCapitalize="none"

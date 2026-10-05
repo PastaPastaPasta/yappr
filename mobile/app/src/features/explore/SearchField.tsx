@@ -1,4 +1,3 @@
-import type { Ref } from 'react';
 import { Platform, Pressable, TextInput, View, type TextInputProps } from 'react-native';
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
@@ -38,7 +37,6 @@ export function SearchLauncher({ onPress }: { onPress: () => void }) {
 export interface SearchFieldProps extends Omit<TextInputProps, 'value' | 'onChangeText'> {
   value: string;
   onChangeText: (text: string) => void;
-  ref?: Ref<TextInput>;
 }
 
 /**
@@ -46,15 +44,15 @@ export interface SearchFieldProps extends Omit<TextInputProps, 'value' | 'onChan
  * Uncontrolled (`useNativeText`), so no keystroke is lost while results
  * load; Clear and a recent search tapped are put in.
  */
-export function SearchField({ value, onChangeText, ref, onFocus, onBlur, autoFocus, ...props }: SearchFieldProps) {
+export function SearchField({ value, onChangeText, onFocus, onBlur, autoFocus, ...props }: SearchFieldProps) {
   const c = useColors();
-  const input = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
+  const { key: inputKey, attach, inputProps } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
   return (
     <View className={cn(FIELD, 'flex-1')}>
       <MagnifyingGlassIcon size={16} color={c.textSecondary} />
       <TextInput
-        key={input.key}
-        ref={ref}
+        key={inputKey}
+        ref={attach}
         placeholder={SEARCH_PLACEHOLDER}
         placeholderTextColor={c.textPlaceholder}
         accessibilityLabel={SEARCH_PLACEHOLDER}
@@ -71,7 +69,7 @@ export function SearchField({ value, onChangeText, ref, onFocus, onBlur, autoFoc
         style={{ fontSize: 16, minHeight: 36, paddingVertical: 0 }}
         testID="search-input"
         {...props}
-        {...input.inputProps}
+        {...inputProps}
       />
       {value.length > 0 ? (
         <Pressable

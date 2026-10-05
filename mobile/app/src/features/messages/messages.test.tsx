@@ -526,9 +526,9 @@ describe('Conversation (DM-03, DM-04)', () => {
     fireEvent.press(screen.getByTestId('dm-send'));
     await act(async () => {});
     expect(fakeEngine.method('dm.send')).toHaveBeenCalledWith(KEY, 'see you');
-    // The draft emptied by the send is put in, and the box keeps the keyboard for the next message.
+    // The draft emptied by the send clears the box in place: the same input, keyboard and focus.
     expect(composer()).toHaveDisplayValue('');
-    expect(composer().props.autoFocus).toBe(true);
+    expect(composer().props.autoFocus).toBeUndefined();
     // The next message's typing is the input's own again: nothing is put in over it.
     fireEvent.changeText(composer(), 'and');
     expect(composer()).toHaveDisplayValue('and');

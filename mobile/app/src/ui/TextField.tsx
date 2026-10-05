@@ -60,8 +60,7 @@ export function TextField({
   ...props
 }: TextFieldProps) {
   const c = useColors();
-  const text = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable });
-  const { focused } = text;
+  const { key: inputKey, attach, inputProps, focused } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus, editable });
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
@@ -88,7 +87,8 @@ export function TextField({
         )}
       >
         <TextInput
-          key={text.key}
+          key={inputKey}
+          ref={attach}
           accessibilityLabel={label}
           accessibilityHint={error}
           maxLength={maxLength}
@@ -100,7 +100,7 @@ export function TextField({
           selectionColor={c.accent}
           {...(secure ? SECURE_INPUT : null)}
           {...props}
-          {...text.inputProps}
+          {...inputProps}
           // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
           className="flex-1 text-gray-900 dark:text-gray-100"
           style={
