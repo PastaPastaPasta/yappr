@@ -12,6 +12,7 @@ import { toast, type ToastAction } from '~/ui/toast';
 
 import { isOffline } from './connectivity';
 import { onEngineEvent } from './events';
+import { queryKeys } from './keys';
 import type { EngineRemote } from './queries';
 import { recheck, reconcile, resetReconciler, stopReconciling, ticketJob } from './reconcile';
 import { promptSignIn } from './require-auth';
@@ -104,16 +105,6 @@ interface Tracked {
   undo: (() => void) | null;
   /** The last ticket state acted on, so a repeated event doesn't toast twice. */
   handled: string;
-  /** The latest write for its key when this one was sent (`handBack`). */
-  previous?: string;
-  /** Refused before anything went out, it gave the key back to `previous`; its Retry takes it again. */
-  handedBack?: boolean;
-  /**
-   * A check proved it absent while a newer write held its key: kept, so that
-   * if the newer one is refused unsent this one's failure is still reported
-   * (`handBack`).
-   */
-  absentWhileSuperseded?: WriteTicket;
 }
 
 /**
@@ -152,11 +143,13 @@ export function isFollowedWrite(id: string): boolean {
 }
 const latestByKey = new Map<string, string>();
 /**
- * The latest write for its key when each write was sent, by ticket id: kept
- * after a write stops being tracked, so a key's writes can be walked back
- * from the latest (`visibleUnder`).
+ * Keys with writes that overlapped: one was sent while another for the key
+ * may still have landed. Their optimistic changes are stacked on each other,
+ * so undoing one can put back another that never landed, or take away one
+ * that did: a failure among them reads the chain instead (`readChain`).
+ * Cleared once no write for the key may still land.
  */
-const previousById = new Map<string, string>();
+const contested = new Set<string>();
 
 /** A write, as the queue and the tracker hold it. */
 interface WriteOf {
@@ -307,6 +300,12 @@ function fail(message: string, action?: ToastAction): void {
 
 /** Acts on a ticket's state once per change. */
 function settle(ticket: WriteTicket): void {
+  const key = tracked.get(ticket.id)?.key;
+  settleTicket(ticket);
+  if (key !== undefined && ticket.state !== 'pending') endContest(key);
+}
+
+function settleTicket(ticket: WriteTicket): void {
   const entry = tracked.get(ticket.id);
   if (!entry) return;
   const signature = `${ticket.state}:${ticket.retryable}:${time(ticket.updatedAt)}:${time(ticket.lastCheckedAt)}`;
@@ -344,43 +343,42 @@ function settle(ticket: WriteTicket): void {
       }
       // Final unless the engine allows a retry.
       if (!ticket.retryable || sessionFailed) tracked.delete(ticket.id);
+      const say = () => {
+        if (sessionFailed) {
+          failSessionExpired(signerOf(ticket));
+          return;
+        }
+        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
+        if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
+        else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
+      };
+      if (isContested(entry)) {
+        readChain(ticket, entry, say);
+        return;
+      }
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
       if (!latest) return;
       undo(entry);
       spec.onFailed?.(ticket, entry.vars);
-      const unsent = ticket.error?.outcome === 'not-sent';
-      const earlier = supersededAbsence(entry);
-      if (unsent && earlier && !sessionFailed) {
-        // It changed nothing: the earlier write's absence is the news, said by `handBack` with its Retry.
-        logFailure(ticket);
-      } else {
-        // The earlier write is undone too, quietly: this failure's toast and Retry say it.
-        if (earlier) retireAbsence(earlier);
-        if (sessionFailed) {
-          failSessionExpired(signerOf(ticket));
-        } else {
-          logFailure(ticket);
-          const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
-          if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
-          else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
-        }
-      }
+      if (!sessionFailed) logFailure(ticket);
+      say();
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
-      if (unsent) handBack(entry);
       return;
     }
     case 'unconfirmed':
-      if (!latest) {
-        if (!ticket.retryable) return;
-        // Proved absent under a newer write. Kept: if the newer one fails for good, this one's change
-        // is back on screen (`supersededAbsence`). If every newer write already has, it is now.
-        entry.absentWhileSuperseded = ticket;
-        if (visibleUnder(ticket.id, entry.key)) retireAbsence({ id: ticket.id, entry, ticket });
+      if (ticket.retryable && isContested(entry)) {
+        readChain(ticket, entry, () => fail(absentText(ticket, entry), retryOf(ticket)));
         return;
       }
+      if (!latest) return;
       if (ticket.retryable) {
-        reportAbsent(ticket, entry);
+        // A check proved it did not land: the same sentence as a refusal.
+        logFailure(ticket);
+        undo(entry);
+        spec.onFailed?.(ticket, entry.vars);
+        fail(absentText(ticket, entry), retryOf(ticket));
+        release(entry.key, false);
       } else if (!stillRunning(ticket)) {
         // It may have landed (PRD G-3): nothing to say, the reconciler checks it (`watch`). Send the
         // newer intent, which is harmless if it did not. Not while its call still runs: the newer one
@@ -390,81 +388,58 @@ function settle(ticket: WriteTicket): void {
   }
 }
 
-/**
- * A check proved the latest write for its key did not land: undone, and the
- * same sentence as a refusal, with Retry.
- */
-function reportAbsent(ticket: WriteTicket, entry: Tracked): void {
-  const { spec } = entry;
-  entry.absentWhileSuperseded = undefined;
-  logFailure(ticket);
-  undo(entry);
-  spec.onFailed?.(ticket, entry.vars);
-  // A write before it proved absent too is undone quietly: this toast and its Retry say it.
-  const earlier = supersededAbsence(entry);
-  if (earlier) retireAbsence(earlier);
-  const retry = { label: 'Retry', onPress: () => retryWrite(ticket.id) };
-  fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
-  release(entry.key, false);
-}
+const retryOf = (ticket: WriteTicket): ToastAction => ({ label: 'Retry', onPress: () => retryWrite(ticket.id) });
 
-interface SupersededAbsence {
-  id: string;
-  entry: Tracked;
-  ticket: WriteTicket;
-}
+/** A write a check proved absent: the same sentence as a refusal. */
+const absentText = (ticket: WriteTicket, entry: Tracked) =>
+  entry.spec.failureText?.(ticket, entry.vars) ?? failureSentence(entry.spec, entry.vars);
 
-/**
- * The write before `entry` for its key, when a check proved it absent while
- * `entry` held the key (and nothing has changed that since): its change is
- * still on screen, under `entry`'s.
- */
-function supersededAbsence(entry: Tracked): SupersededAbsence | undefined {
-  const id = entry.previous;
-  const earlier = id === undefined ? undefined : tracked.get(id);
-  const kept = earlier?.absentWhileSuperseded;
-  const now = id === undefined ? undefined : useWriteTickets.getState().byId[id];
-  if (id === undefined || !earlier || !kept || now?.state !== 'unconfirmed' || !now.retryable) return undefined;
-  return { id, entry: earlier, ticket: kept };
-}
+/** A write that may still land: on its way, or unconfirmed with no check proving it absent. */
+const mayLand = (ticket: WriteTicket | undefined) =>
+  ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && !ticket.retryable);
 
-/** A write that ended without changing anything: failed with a verdict, or proved absent. */
-const endedWithoutEffect = (ticket: WriteTicket | undefined) =>
-  (ticket?.state === 'failed' && ticket.error?.outcome !== 'unknown') ||
-  (ticket?.state === 'unconfirmed' && ticket.retryable);
-
-/**
- * Whether write `id`'s change is what its key shows: every write for the key
- * after it ended without effect (each one's undo put back the change before
- * it). False when the chain cannot be followed back to it.
- */
-function visibleUnder(id: string, key: string | undefined): boolean {
-  if (key === undefined) return false;
+/** Whether a write for `key` other than ticket `except` may still land (or is on its way). */
+function landingFor(key: string, except?: string): boolean {
+  if (submitting.has(key) || orphans.some((orphan) => orphan.key === key)) return true;
   const byId = useWriteTickets.getState().byId;
-  let newer = latestByKey.get(key);
-  while (newer !== undefined && newer !== id) {
-    if (!endedWithoutEffect(byId[newer])) return false;
-    newer = previousById.get(newer);
+  for (const [id, entry] of tracked) {
+    if (id !== except && entry.key === key && mayLand(byId[id])) return true;
   }
-  return newer === id;
+  return false;
 }
 
+/** A write for `key` is about to be sent: if another may still land, the key's writes overlap. */
+function contest(key: string | undefined, except?: string): void {
+  if (key !== undefined && landingFor(key, except)) contested.add(key);
+}
+
+function endContest(key: string): void {
+  if (!landingFor(key)) contested.delete(key);
+}
+
+const isContested = (entry: Tracked) => entry.key !== undefined && contested.has(entry.key);
+
 /**
- * A superseded write proved absent, undone once the newer writes that held
- * its key have failed too (after their undos, which put this one's change
- * back), and then the one before it, when that was proved absent too (newer
- * first, so each undo puts back the state before its own write). The newer
- * write's failure says it: no toast of its own, and no Retry (the newer
- * one's re-sends its own change; a like, unlike run asked for the unlike).
+ * A write whose key's writes overlapped failed, or was proved absent. No
+ * undo of any of them runs (nor `onFailed`): each was taken against a state
+ * another may have changed. Every query is read again instead, so the screen
+ * shows the chain (lib keeps a confirmed own write over a read from a node
+ * behind; a read landing while a write's call still runs gets that write's
+ * change back, `reapply`). Only the user's latest action for the key says
+ * anything: its failure, with its Retry, which applies its change again on
+ * top of what the chain shows.
  */
-function retireAbsence({ id, entry, ticket }: SupersededAbsence): void {
-  entry.absentWhileSuperseded = undefined;
+function readChain(ticket: WriteTicket, entry: Tracked, say: () => void): void {
+  for (const other of tracked.values()) {
+    if (other.key === entry.key) other.undo = null;
+  }
+  entry.undo = null;
   logFailure(ticket);
-  undo(entry);
-  entry.spec.onFailed?.(ticket, entry.vars);
-  tracked.delete(id);
-  const older = supersededAbsence(entry);
-  if (older) retireAbsence(older);
+  queryClient.invalidateQueries({ queryKey: queryKeys.all }).catch(() => undefined);
+  const latestAction = isLatest(ticket.id, entry) && !(entry.key !== undefined && submitting.has(entry.key));
+  if (!latestAction) return;
+  say();
+  release(entry.key, false);
 }
 
 /**
@@ -499,29 +474,6 @@ function watch(ticket: WriteTicket): void {
     canExhaust: !running,
     episode: running ? 'running' : 'settled',
   });
-}
-
-/**
- * A write refused before anything went out (`not-sent`) changed nothing, and
- * its undo put back the change of the write before it for its key. When that
- * one may still land, it decides the key again: a check that proves it absent
- * undoes it and says so (with Retry), instead of finding a newer write there
- * and saying nothing. The refused write's own Retry takes the key back.
- */
-function handBack(entry: Tracked): void {
-  const { key, previous } = entry;
-  const earlier = previous === undefined ? undefined : tracked.get(previous);
-  if (key === undefined || previous === undefined || !earlier) return;
-  const before = useWriteTickets.getState().byId[previous];
-  if (!before) return;
-  const mayLand = before.state === 'pending' || (before.state === 'unconfirmed' && !before.retryable);
-  // Proved absent while this one held the key: its event was handled (and its checks stopped) then,
-  // with nothing undone or said, so it is reported now, once, with its own Retry.
-  const provedAbsent = supersededAbsence(entry);
-  if (!mayLand && !provedAbsent) return;
-  latestByKey.set(key, previous);
-  entry.handedBack = true;
-  if (provedAbsent) reportAbsent(provedAbsent.ticket, earlier);
 }
 
 /** The pending write for `key` settled: send the write queued behind it, or drop it. */
@@ -654,7 +606,7 @@ export function resetWriteTracking(): void {
   tracked.clear();
   followed.clear();
   latestByKey.clear();
-  previousById.clear();
+  contested.clear();
   // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
   submitting.clear();
   queued.clear();
@@ -715,14 +667,13 @@ async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
   // A ticket the call made is no older than the call (a timeout answers long after the engine made it).
   const calledAt = Date.now();
+  contest(key);
   const done = markSubmitting(key, { spec, vars });
   let revert = waiting.undo;
   try {
     revert ??= spec.optimistic?.(vars) ?? null;
     const ticket = await spec.submit(engine.api, vars);
-    const previous = key === undefined ? undefined : latestByKey.get(key);
-    track(ticket.id, { spec, vars, key, undo: revert, handled: '', previous });
-    if (previous !== undefined) previousById.set(ticket.id, previous);
+    track(ticket.id, { spec, vars, key, undo: revert, handled: '' });
     if (key !== undefined) latestByKey.set(key, ticket.id);
     done();
     // `write.status` may have overtaken the call's answer: settle on the newest copy.
@@ -817,18 +768,13 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   const entry = tracked.get(ticketId);
   if (!entry) return null;
   const { key } = entry;
-  // Given back to the write before it when it was refused unsent (`handBack`), and nothing newer since.
-  const reclaims = entry.handedBack === true && key !== undefined && latestByKey.get(key) === entry.previous;
   // A stale Retry (a newer write for its key decides the state, or one is on its way): nothing to do.
-  if (!(isLatest(ticketId, entry) || reclaims) || (key !== undefined && inFlight(key))) return null;
+  if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) return null;
   if (isOffline()) {
     toast(OFFLINE_MESSAGE);
     return null;
   }
-  if (reclaims) {
-    latestByKey.set(key, ticketId);
-    entry.handedBack = false;
-  }
+  contest(key, ticketId);
   const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
   try {
     if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);

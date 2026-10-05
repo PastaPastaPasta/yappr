@@ -149,21 +149,19 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     reports them.) Retry applies only to the latest write for a key, and
     never while another is in flight: a stale Retry does nothing, quietly.
     A failure of an older write for a key says nothing: the newer write
-    decides the state. A newer write refused before anything went out
-    (outcome `not-sent`) changed nothing, so it gives the key back to the
-    write before it while that one may still land: a check proving that one
-    absent still undoes it and says so. The refused write's Retry takes the
-    key again. A check that proved the write before it absent while the
-    newer one held the key is kept: once the newer one fails for good (sent
-    and refused, or proved absent too), the earlier one is undone as well,
-    after the newer one's undo, and the newer one's toast and Retry say it
-    (one toast). If the newer one was refused unsent, the earlier one's
-    failure is the toast, with its own Retry. When the newer writes have
-    already failed for good by the time the check proves an earlier one
-    absent (the usual order: an absence is proved only 2 minutes on), the
-    earlier one is undone then, quietly: the newer one's toast already
-    said its action failed. Several earlier writes proved absent are undone
-    newest first.
+    decides the state.
+  - **Writes that overlap read the chain.** A write sent for a key while
+    another for it may still land (unconfirmed, or a call cut short) stacks
+    its optimistic change on that one's, so undoing either could put back a
+    change that never landed or take away one that did. Once that happens,
+    a failure or a proved absence of any of them runs no undo and no
+    `onFailed`: every engine query is read again, and the screen shows what
+    the chain says (lib keeps a confirmed own write over a read from a node
+    behind, and a read that lands while a write's call still runs gets that
+    write's change back, `reapply`). Only the user's latest action for the
+    key says anything, with its Retry, which applies its change again over
+    what the chain shows. The key goes back to plain undo once none of its
+    writes may still land.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
