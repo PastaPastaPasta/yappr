@@ -65,7 +65,8 @@ function createField(value: string | undefined) {
    * come again later ("a", "ab", "a", "ac"). React may batch keystrokes into
    * one render, so an entry can be skipped by every render. It goes once a
    * render shows the field's own text and no entry has it (caught up), or
-   * once it is older than `RENDER_LAG_MS`: until then a programmatic set to
+   * once it is older than `RENDER_LAG_MS` (on the monotonic clock, so a
+ * clock change cannot drop it early): until then a programmatic set to
    * exactly that text right after typing it is taken for a late render.
    */
   let behind: { text: string; at: number }[] = [];
@@ -93,7 +94,7 @@ function createField(value: string | undefined) {
     },
     typed: (next: string) => {
       if (next === text) return;
-      const now = Date.now();
+      const now = performance.now();
       dropExpired(now);
       if (text !== undefined) behind.push({ text, at: now });
       text = next;
@@ -104,7 +105,7 @@ function createField(value: string | undefined) {
     /** The caller's `value` as a committed render shows it. */
     shown: (value: string | undefined, editable: boolean) => {
       if (value === undefined) return;
-      dropExpired(Date.now());
+      dropExpired(performance.now());
       const index = pending(value);
       if (index >= 0) {
         // A render from before the latest keystrokes (or, the same text typed again, the latest).

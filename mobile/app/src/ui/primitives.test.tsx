@@ -308,7 +308,7 @@ describe('TextField', () => {
     });
 
     it('keeps the history only as long as a render can lag', () => {
-      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      const now = jest.spyOn(performance, 'now').mockReturnValue(1_000_000);
       try {
         const onChangeText = jest.fn();
         const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
