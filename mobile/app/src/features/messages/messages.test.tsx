@@ -633,6 +633,36 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(composer()).toHaveDisplayValue('');
     });
 
+    it('grows the box a line at a time up to 5 lines on iOS, then back to one after Send (QA rc13 c6)', async () => {
+      // iOS sizes an uncontrolled input that mounted empty by its empty text: the height comes from a mirror.
+      await typeHello();
+      const style = () => StyleSheet.flatten(composer().props.style);
+      const mirror = () => screen.getByTestId('dm-composer-mirror', { includeHiddenElements: true });
+      fireEvent.changeText(composer(), 'line one\nline two\nline three');
+      expect(mirror().props.children).toBe('line one\nline two\nline three');
+      const lineHeight = StyleSheet.flatten(mirror().props.style).lineHeight as number;
+      fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight * 3 } } });
+      expect(style().height).toBe(Math.ceil(lineHeight * 3) + 18);
+      // Past 5 lines it stays at its maximum, and scrolls.
+      fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight * 9 } } });
+      expect(style().height).toBe(style().maxHeight);
+
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(mirror().props.children).toBe('\u200b');
+      fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight } } });
+      // One line (40 at the default text size).
+      expect(style().height).toBe(Math.max(40, Math.ceil(lineHeight) + 18));
+    });
+
+    it('leaves the box to measure itself on Android', async () => {
+      await onAndroid(async () => {
+        await typeHello();
+        expect(screen.queryByTestId('dm-composer-mirror', { includeHiddenElements: true })).toBeNull();
+        expect(StyleSheet.flatten(composer().props.style).height).toBeUndefined();
+      });
+    });
+
     it('keeps a paste right after Send whole, even one that starts with the message sent', async () => {
       // One change event for the whole paste (or an IME's whole-text insert): nothing is taken off it.
       await typeHello();

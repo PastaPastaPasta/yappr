@@ -5,6 +5,7 @@ import { EyeIcon, EyeSlashIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
+import { GrowMirror, useGrowHeight } from './grow';
 import { INPUT_SLOT, InputSlot } from './InputSlot';
 import { useNativeText, type TextResetHandle } from './native-text';
 import { Text } from './Text';
@@ -12,6 +13,8 @@ import { tw, useColors } from './tokens';
 
 /** The counter shows once the text is this close to `maxLength` (UX_SPEC §2.11). */
 const COUNTER_WITHIN = 20;
+/** The multi-line input's text, as its `GrowMirror` lays it out. */
+const MIRROR_TEXT = { fontSize: 16 };
 const BODY_LINE_HEIGHT = 24;
 /** Secrets never reach autofill, the keyboard's dictionary or autocorrect. */
 const SECURE_INPUT: TextInputProps = {
@@ -77,11 +80,14 @@ export function TextField({
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
   const showCounter = maxLength !== undefined && (alwaysCount || maxLength - length <= COUNTER_WITHIN);
+  // Multi-line: min 3 lines, grows to 8, then scrolls; iOS needs the measured height (`useGrowHeight`).
+  const grow = useGrowHeight({ min: line * 3 + 20, max: line * 8 + 20, padding: 20 });
   const inputStyle = multiline
     ? {
         fontSize: 16,
         minHeight: line * 3 + 20,
         maxHeight: line * 8 + 20,
+        height: grow.height,
         paddingVertical: 10,
         textAlignVertical: 'top' as const,
       }
@@ -137,6 +143,7 @@ export function TextField({
         ) : null}
         <InputSlot key={inputKey} style={INPUT_SLOT}>
           {field(inputProps, true)}
+          {multiline ? <GrowMirror text={value ?? ''} style={MIRROR_TEXT} onLayout={grow.onMirrorLayout} /> : null}
         </InputSlot>
         {secure ? (
           <IconButton

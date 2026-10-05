@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { createRef, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
+import { AccessibilityInfo, Alert, StyleSheet, Text as RNText } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { FullWindowOverlay } from 'react-native-screens';
 
@@ -188,6 +188,20 @@ describe('TextField', () => {
     rerender(<TextField label="Name" value="Jana" onChangeText={jest.fn()} />);
     expect(box()?.props.className).not.toContain('opacity-50');
     expect(box()?.props.collapsable).toBe(false);
+  });
+
+  it('grows a multi-line field with its text on iOS, between 3 and 8 lines (QA rc13 c6)', () => {
+    render(<TextField label="Bio" multiline value={'one\ntwo\nthree\nfour'} onChangeText={jest.fn()} />);
+    const input = screen.getByLabelText('Bio');
+    const style = () => StyleSheet.flatten(screen.getByLabelText('Bio').props.style);
+    const mirror = screen.UNSAFE_getAllByType(RNText).find((node) => node.props.accessibilityElementsHidden === true);
+    expect(mirror).toBeTruthy();
+    expect(style().height).toBeUndefined();
+    fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: 100 } } });
+    expect(style().height).toBe(Math.min(style().maxHeight as number, Math.max(style().minHeight as number, 120)));
+    fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: 1 } } });
+    expect(style().height).toBe(style().minHeight);
+    expect(input).toBeTruthy();
   });
 
   it('hides the counter far from the limit', () => {

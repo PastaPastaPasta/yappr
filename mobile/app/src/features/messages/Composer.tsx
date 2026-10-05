@@ -3,6 +3,7 @@ import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
 import { ScalePressable } from '~/ui/ScalePressable';
+import { GrowMirror, useGrowHeight } from '~/ui/grow';
 import { InputSlot } from '~/ui/InputSlot';
 import { useNativeText } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
@@ -53,11 +54,15 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
       testID={testID}
     />
   );
+  const textStyle = { fontSize: 16, lineHeight: LINE * scale };
+  const maxHeight = LINE * scale * MAX_LINES + 16;
+  // Grows a line at a time up to 5, then scrolls (UX_SPEC §4.20); iOS needs the measured height (`useGrowHeight`).
+  const grow = useGrowHeight({ min: 40, max: maxHeight, padding: 18 });
   const inputStyle = {
-    fontSize: 16,
-    lineHeight: LINE * scale,
+    ...textStyle,
     minHeight: 40,
-    maxHeight: LINE * scale * MAX_LINES + 16,
+    maxHeight,
+    height: grow.height,
     paddingTop: 9,
     paddingBottom: 9,
     textAlignVertical: 'center' as const,
@@ -86,7 +91,10 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
             {field(retiring.inputProps, 'dm-composer-retiring')}
           </InputSlot>
         ) : null}
-        <InputSlot key={inputKey}>{field(inputProps, 'dm-composer', attach)}</InputSlot>
+        <InputSlot key={inputKey}>
+          {field(inputProps, 'dm-composer', attach)}
+          <GrowMirror text={value} style={textStyle} onLayout={grow.onMirrorLayout} testID="dm-composer-mirror" />
+        </InputSlot>
       </View>
       <ScalePressable
         android_ripple={sendRipple}
