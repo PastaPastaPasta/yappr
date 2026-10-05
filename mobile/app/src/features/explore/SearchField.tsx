@@ -3,7 +3,8 @@ import { Platform, Pressable, TextInput, View, type TextInputProps } from 'react
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
-import { RETIRING_INPUT, RETIRING_STYLE, useNativeText, type TextResetHandle } from '~/ui/native-text';
+import { INPUT_SLOT, InputSlot } from '~/ui/InputSlot';
+import { useNativeText, type TextResetHandle } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 
@@ -53,34 +54,41 @@ export function SearchField({ value, onChangeText, ref, onFocus, onBlur, autoFoc
   const c = useColors();
   const { key: inputKey, attach, reset, inputProps, retiring } = useNativeText({ value, onChangeText, onFocus, onBlur, autoFocus });
   useImperativeHandle(ref, () => ({ reset }), [reset]);
+  /** The live input and the one a reset replaced: the same input, but for its handlers, text and test id. */
+  const field = (fieldProps: TextInputProps, live: boolean) => (
+    <TextInput
+      ref={live ? attach : undefined}
+      placeholder={SEARCH_PLACEHOLDER}
+      placeholderTextColor={c.textPlaceholder}
+      accessibilityLabel={SEARCH_PLACEHOLDER}
+      accessibilityRole="search"
+      autoCapitalize="none"
+      autoCorrect={false}
+      autoComplete="off"
+      returnKeyType="search"
+      enablesReturnKeyAutomatically
+      cursorColor={c.accent}
+      selectionColor={c.accent}
+      className="text-gray-900 dark:text-gray-100"
+      // fontSize without a lineHeight: iOS mis-lays out single-line inputs with one.
+      style={SEARCH_TEXT}
+      testID={live ? 'search-input' : undefined}
+      {...props}
+      {...fieldProps}
+    />
+  );
   return (
     <View className={cn(FIELD, 'flex-1')}>
       <MagnifyingGlassIcon size={16} color={c.textSecondary} />
       {retiring ? (
-        // The input a Clear or a recent search replaced, until the fresh one has the focus.
-        <TextInput key={retiring.key} {...retiring.inputProps} {...RETIRING_INPUT} style={[SEARCH_TEXT, RETIRING_STYLE]} />
+        // The input a reset replaced, until the fresh one has the focus: hidden by its slot alone.
+        <InputSlot key={retiring.key} retired>
+          {field(retiring.inputProps, false)}
+        </InputSlot>
       ) : null}
-      <TextInput
-        key={inputKey}
-        ref={attach}
-        placeholder={SEARCH_PLACEHOLDER}
-        placeholderTextColor={c.textPlaceholder}
-        accessibilityLabel={SEARCH_PLACEHOLDER}
-        accessibilityRole="search"
-        autoCapitalize="none"
-        autoCorrect={false}
-        autoComplete="off"
-        returnKeyType="search"
-        enablesReturnKeyAutomatically
-        cursorColor={c.accent}
-        selectionColor={c.accent}
-        className="flex-1 text-gray-900 dark:text-gray-100"
-        // fontSize without a lineHeight: iOS mis-lays out single-line inputs with one.
-        style={SEARCH_TEXT}
-        testID="search-input"
-        {...props}
-        {...inputProps}
-      />
+      <InputSlot key={inputKey} style={INPUT_SLOT}>
+        {field(inputProps, true)}
+      </InputSlot>
       {value.length > 0 ? (
         <Pressable
           accessibilityRole="button"

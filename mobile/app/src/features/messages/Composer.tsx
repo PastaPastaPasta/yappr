@@ -1,8 +1,9 @@
-import { TextInput, View, useWindowDimensions } from 'react-native';
+import { TextInput, View, useWindowDimensions, type TextInputProps } from 'react-native';
 import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
 import { ScalePressable } from '~/ui/ScalePressable';
+import { InputSlot } from '~/ui/InputSlot';
 import { useNativeText } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
 import { useRipple } from '~/ui/ripple';
@@ -28,13 +29,30 @@ export interface ComposerProps {
  * box, is put in. A send empties the box from the tap itself, with a fresh
  * input: the old one's late keystroke events would bring the sent text back
  * with them (QA rc9 c2: a second Send sent the first message again). The old
- * input stays, hidden, until the new one has the focus, so the keyboard
- * stays up (QA rc11 c3).
+ * input stays, hidden by its slot (`InputSlot`), until the new one has the
+ * focus, so the keyboard stays up (QA rc11 c3, rc12 c1).
  */
 export function Composer({ value, onChangeText, onSend, disabled = false }: ComposerProps) {
   const c = useColors();
   const scale = useWindowDimensions().fontScale;
   const { key: inputKey, attach, clear, inputProps, retiring, focused } = useNativeText({ value, onChangeText, editable: !disabled });
+  /** The same input for the live box and the one it replaced: only its handlers, text and test id differ. */
+  const field = (props: TextInputProps, testID: string, ref?: (input: TextInput | null) => void) => (
+    <TextInput
+      ref={ref}
+      {...props}
+      placeholder="Type a message..."
+      placeholderTextColor={c.textPlaceholder}
+      accessibilityLabel="Message"
+      multiline
+      editable={!disabled}
+      cursorColor={c.accent}
+      selectionColor={c.accent}
+      className="text-gray-900 dark:text-gray-100"
+      style={inputStyle}
+      testID={testID}
+    />
+  );
   const inputStyle = {
     fontSize: 16,
     lineHeight: LINE * scale,
@@ -62,35 +80,13 @@ export function Composer({ value, onChangeText, onSend, disabled = false }: Comp
         )}
       >
         {retiring ? (
-          // The input that held the sent text, until the fresh one below has the focus: out of the
-          // layout (the box takes the empty input's height at once), invisible, and out of reach.
-          <TextInput
-            key={retiring.key}
-            {...retiring.inputProps}
-            multiline
-            editable={!disabled}
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={[inputStyle, { position: 'absolute', left: 16, right: 16, top: 0, opacity: 0 }]}
-            testID="dm-composer-retiring"
-          />
+          // The input that held the sent text, until the fresh one below has the focus. Hidden by its
+          // slot only: its own props stay as they were, so it keeps the keyboard until then.
+          <InputSlot key={retiring.key} retired>
+            {field(retiring.inputProps, 'dm-composer-retiring')}
+          </InputSlot>
         ) : null}
-        <TextInput
-          key={inputKey}
-          ref={attach}
-          {...inputProps}
-          placeholder="Type a message..."
-          placeholderTextColor={c.textPlaceholder}
-          accessibilityLabel="Message"
-          multiline
-          editable={!disabled}
-          cursorColor={c.accent}
-          selectionColor={c.accent}
-          className="text-gray-900 dark:text-gray-100"
-          style={inputStyle}
-          testID="dm-composer"
-        />
+        <InputSlot key={inputKey}>{field(inputProps, 'dm-composer', attach)}</InputSlot>
       </View>
       <ScalePressable
         android_ripple={sendRipple}

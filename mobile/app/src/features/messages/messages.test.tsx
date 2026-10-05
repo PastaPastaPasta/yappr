@@ -23,6 +23,7 @@ import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
 import { RETIRE_MS } from '~/ui/native-text';
+import { hostViewAbove } from '~/ui/testing/native-parent';
 import { useToastStore } from '~/ui/toast';
 
 import { ConversationScreen } from './ConversationScreen';
@@ -585,13 +586,21 @@ describe('Conversation (DM-03, DM-04)', () => {
 
     it('keeps the old input, hidden, until the fresh one has the focus, so the keyboard stays up (QA rc11 c3)', async () => {
       await typeHello();
+      const live = composer();
+      const liveProps = { style: live.props.style, editable: live.props.editable, multiline: live.props.multiline };
       fireEvent.press(screen.getByTestId('dm-send'));
       await act(async () => {});
       // Both mounted: the fresh box, taking the focus, and the one that held "hello", out of sight.
       const retiring = screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true });
-      expect(retiring.props.pointerEvents).toBe('none');
-      expect(retiring.props.importantForAccessibility).toBe('no-hide-descendants');
-      expect(StyleSheet.flatten(retiring.props.style)).toMatchObject({ position: 'absolute', opacity: 0 });
+      // The same input (never a new native view), and nothing on it that would make iOS resign it
+      // (QA rc12 c1): no pointerEvents, no change to its style or editability. Its slot hides it.
+      expect(retiring).toBe(live);
+      expect(retiring.props.pointerEvents).toBeUndefined();
+      expect({ style: retiring.props.style, editable: retiring.props.editable, multiline: retiring.props.multiline }).toEqual(liveProps);
+      const slot = hostViewAbove(retiring);
+      expect(slot?.props.collapsable).toBe(false);
+      expect(slot?.props.accessibilityElementsHidden).toBe(true);
+      expect(StyleSheet.flatten(slot?.props.style)).toMatchObject({ position: 'absolute', height: 0, overflow: 'hidden', opacity: 0 });
       expect(composer().props.autoFocus).toBe(true);
       expect(composer()).toHaveDisplayValue('');
       // Its late events, and its blur as the focus moves, change nothing.

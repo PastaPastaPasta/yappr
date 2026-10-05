@@ -5,7 +5,8 @@ import { EyeIcon, EyeSlashIcon } from 'react-native-heroicons/outline';
 import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
-import { RETIRING_INPUT, RETIRING_STYLE, useNativeText, type TextResetHandle } from './native-text';
+import { INPUT_SLOT, InputSlot } from './InputSlot';
+import { useNativeText, type TextResetHandle } from './native-text';
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
 
@@ -89,6 +90,28 @@ export function TextField({
   if (error) borderColor = 'border-red-600 dark:border-red-400';
   else if (focused) borderColor = 'border-yappr-500';
 
+  /** The live input and the one a reset replaced: the same input, but for its handlers, text and test id. */
+  const field = (fieldProps: TextInputProps, live: boolean) => (
+    <TextInput
+      ref={live ? attach : undefined}
+      accessibilityLabel={label}
+      accessibilityHint={error}
+      maxLength={maxLength}
+      editable={editable}
+      multiline={multiline}
+      secureTextEntry={secure && !revealed}
+      placeholderTextColor={c.textPlaceholder}
+      cursorColor={c.accent}
+      selectionColor={c.accent}
+      {...(secure ? SECURE_INPUT : null)}
+      {...props}
+      testID={live ? props.testID : undefined}
+      {...fieldProps}
+      // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
+      className="text-gray-900 dark:text-gray-100"
+      style={inputStyle}
+    />
+  );
   return (
     <View className={cn('gap-1.5', className)}>
       {label ? <Text variant="subheadStrong">{label}</Text> : null}
@@ -107,35 +130,14 @@ export function TextField({
         )}
       >
         {retiring ? (
-          // The input a reset replaced, until the fresh one has the focus (`useNativeText`).
-          <TextInput
-            key={retiring.key}
-            {...retiring.inputProps}
-            {...RETIRING_INPUT}
-            multiline={multiline}
-            secureTextEntry={secure}
-            style={[inputStyle, RETIRING_STYLE]}
-          />
+          // The input a reset replaced, until the fresh one has the focus: hidden by its slot alone.
+          <InputSlot key={retiring.key} retired>
+            {field(retiring.inputProps, false)}
+          </InputSlot>
         ) : null}
-        <TextInput
-          key={inputKey}
-          ref={attach}
-          accessibilityLabel={label}
-          accessibilityHint={error}
-          maxLength={maxLength}
-          editable={editable}
-          multiline={multiline}
-          secureTextEntry={secure && !revealed}
-          placeholderTextColor={c.textPlaceholder}
-          cursorColor={c.accent}
-          selectionColor={c.accent}
-          {...(secure ? SECURE_INPUT : null)}
-          {...props}
-          {...inputProps}
-          // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
-          className="flex-1 text-gray-900 dark:text-gray-100"
-          style={inputStyle}
-        />
+        <InputSlot key={inputKey} style={INPUT_SLOT}>
+          {field(inputProps, true)}
+        </InputSlot>
         {secure ? (
           <IconButton
             icon={revealed ? EyeSlashIcon : EyeIcon}

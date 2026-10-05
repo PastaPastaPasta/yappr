@@ -179,7 +179,10 @@ describe('TextField', () => {
     // The box dims while a form saves. Were it flattenable, the input would move out of it when
     // the save ends, and on Android that move crashed the app inside a closing modal.
     const { rerender } = render(<TextField label="Name" value="Jana" editable={false} onChangeText={jest.fn()} />);
-    const box = () => hostViewAbove(screen.getByLabelText('Name'));
+    // The input's own slot (`InputSlot`, never flattened), then the box.
+    const slot = () => hostViewAbove(screen.getByLabelText('Name'));
+    const box = () => hostViewAbove(slot()!);
+    expect(slot()?.props.collapsable).toBe(false);
     expect(box()?.props.className).toContain('opacity-50');
     expect(box()?.props.collapsable).toBe(false);
     rerender(<TextField label="Name" value="Jana" onChangeText={jest.fn()} />);

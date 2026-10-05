@@ -61,18 +61,6 @@ interface Mount {
 /** How long a replaced input waits for the new one to take the focus before it goes anyway. */
 export const RETIRE_MS = 500;
 
-/**
- * Spread on the `retiring` input, with `RETIRING_STYLE` over its own style:
- * out of sight, reach, accessibility and layout (absolute in the box that
- * holds the live input, which sizes it).
- */
-export const RETIRING_INPUT = {
-  pointerEvents: 'none',
-  accessibilityElementsHidden: true,
-  importantForAccessibility: 'no-hide-descendants',
-} as const;
-export const RETIRING_STYLE = { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 } as const;
-
 /** The mounted input, as far as this needs it: `TextInput.clear()` (a wrapper may not pass it on). */
 export interface ClearableInput {
   clear?: () => void;
@@ -222,9 +210,10 @@ export interface NativeText {
   /** Spread on the TextInput (in place of `value`). Its own `onChangeText`, `onFocus` and `onBlur` are these. */
   inputProps: InputProps;
   /**
-   * The input `clear()` replaced, while the new one has not taken the focus
-   * yet: render it as well, hidden and out of the layout, before the new
-   * one, with its own `key` and no `ref`. Only a caller of `clear()` gets one.
+   * The input a reset replaced, while the new one has not taken the focus
+   * yet: render it as well, before the new one, with its own `key`, no `ref`
+   * and its props as they were, in a retired `InputSlot` (each input sits in
+   * its own slot, keyed by its mount).
    */
   retiring: { key: number; inputProps: InputProps } | null;
   focused: boolean;
