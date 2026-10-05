@@ -238,9 +238,12 @@ covered without registering it.
   author's cached posts and quotes, so a block survives a relaunch.
 - `setProfileChange(identityId, change)` edits every cached copy of a
   profile (`ProfileDTO`, not user rows); `applyProfileChange` is the same
-  without an undo, optionally to some queries only. The undo marks what it
-  put back stale without refetching it (a refetch under an open Edit profile
-  form could swap the form for its loading state).
+  without an undo, optionally to some queries only. Copies (by identity, by
+  name) can be at different versions: the undo puts each query's copy back
+  to what it had itself, and marks it stale without refetching it (a refetch
+  under an open Edit profile form could swap the form for its loading
+  state); a copy with no snapshot of its own (read or cached since) is read
+  again, never given another copy's values.
 - `hidePost(id)` removes a post from every `PostItem` at once.
   `markPostDeleted(id)` turns every cached copy into the "deleted" line, and
   `dropFromLists(id)` takes it out of cached lists (not threads).
@@ -250,7 +253,7 @@ covered without registering it.
   change touched and to copies cached after it (a detail screen seeded from
   a patched card); `setViewerState`'s leaves a copy that already read that
   way alone (by object, so even one in a query it changed) and puts back the
-  slot a changed copy had. It also refetches the post's (or the author's profile's)
+  slot each query's changed copy had itself. It also refetches the post's (or the author's profile's)
   detail family, so a copy that was already right comes back right.
 - **Patches don't disturb queries.** Untouched objects keep their identity,
   so memoized cells don't re-render. A patched query keeps its age, so stale

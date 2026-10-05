@@ -64,12 +64,12 @@ function mapObjects(value: unknown, visit: (object: Json) => Json): unknown {
  * The cancel reverts the query to its state before that fetch (so it stays
  * `success`, never a `CancelledError`), and the patch then applies on top.
  */
-function updateCache(visit: (object: Json) => Json, only?: ReadonlySet<string>): Set<string> {
+function updateCache(visit: (object: Json, queryHash: string) => Json, only?: ReadonlySet<string>): Set<string> {
   const changed = new Set<string>();
   for (const query of queryClient.getQueryCache().findAll({ queryKey: queryKeys.all })) {
     const data = query.state.data;
     if (data === undefined || (only && !only.has(query.queryHash))) continue;
-    const next = mapObjects(data, visit);
+    const next = mapObjects(data, (object) => visit(object, query.queryHash));
     if (next === data) continue;
     changed.add(query.queryHash);
     if (query.state.fetchStatus === 'fetching') {
@@ -83,13 +83,36 @@ function updateCache(visit: (object: Json) => Json, only?: ReadonlySet<string>):
 /** Every cached copy of a post; returns the hashes of the queries it changed. */
 export function updateCachedPosts(
   postId: string,
-  update: (post: CachedPost) => CachedPost,
+  update: (post: CachedPost, queryHash: string) => CachedPost,
   only?: ReadonlySet<string>,
 ): Set<string> {
   return updateCache(
-    (object) => (isCachedPost(object) && object.id === postId ? (update(object) as Json & CachedPost) : object),
+    (object, queryHash) => (isCachedPost(object) && object.id === postId ? (update(object, queryHash) as Json & CachedPost) : object),
     only,
   );
+}
+
+/**
+ * What a change found in each query it changed, kept with the time that
+ * query's data was read: a copy is restored from its own query's snapshot
+ * only while the query has not been read again since (an optimistic patch
+ * keeps that time). Copies in different queries can be at different
+ * versions; copies in one query were read together.
+ */
+function snapshots<T>() {
+  const byQuery = new Map<string, { at: number; value: T }>();
+  const readAt = (hash: string) => queryClient.getQueryCache().get(hash)?.state.dataUpdatedAt;
+  return {
+    keep: (hash: string, value: T) => {
+      const at = readAt(hash);
+      if (at !== undefined && !byQuery.has(hash)) byQuery.set(hash, { at, value });
+    },
+    /** The query's own snapshot, if it still holds what the change patched. */
+    own: (hash: string): { value: T } | undefined => {
+      const kept = byQuery.get(hash);
+      return kept && kept.at === readAt(hash) ? { value: kept.value } : undefined;
+    },
+  };
 }
 
 /** A signed-in viewer's marks before anything is known: nothing liked, followed or blocked. */
@@ -165,31 +188,44 @@ const cachedQueries = () =>
  * cached since (a detail screen seeded from a patched card), never on a copy
  * that already read that way (a stale card would gain a repost), even one in
  * a query it changed. It puts back the slot (`ownQuoteId`, `ownQuoteBare`)
- * a changed copy had, preferring one that knew the slot was held, and
- * refetches the post's detail family so a copy that was already right comes
- * back right.
+ * each query's changed copy had itself (copies of a post can be at different
+ * versions); a copy cached or read since gets the one a changed copy had,
+ * preferring one that knew the slot was held. It refetches the post's detail family so
+ * a copy that was already right comes back right.
  */
 export function setViewerState(postId: string, patch: ViewerPatch): () => void {
   const before = cachedQueries();
   // By identity: a copy left alone keeps its object through the patch (and the query's
   // structural sharing), while a patched copy's object is replaced.
   const leftAlone = new WeakSet<CachedPost>();
+  // The slot each query's patched copy had itself.
+  const slots = snapshots<Partial<ViewerStateDTO> | undefined>();
   let previous: Partial<ViewerStateDTO> | undefined;
-  const changed = updateCachedPosts(postId, (post) => {
+  const changed = updateCachedPosts(postId, (post, queryHash) => {
     const next = applyViewerPatch(post, patch);
     if (next === post) leftAlone.add(post);
-    else if (previous === undefined || (!previous.ownQuoteId && post.viewer?.ownQuoteId)) previous = post.viewer;
+    else {
+      slots.keep(queryHash, post.viewer);
+      if (previous === undefined || (!previous.ownQuoteId && post.viewer?.ownQuoteId)) previous = post.viewer;
+    }
     return next;
   });
-  const undo: ViewerPatch = {};
-  for (const flag of FLAGS) {
-    if (patch[flag] !== undefined) undo[flag] = !patch[flag];
-  }
-  if (patch.ownQuoteId !== undefined) undo.ownQuoteId = previous?.ownQuoteId ?? null;
-  if (patch.ownQuoteBare !== undefined) undo.ownQuoteBare = previous?.ownQuoteBare ?? false;
+  const undoFrom = (slot: Partial<ViewerStateDTO> | undefined): ViewerPatch => {
+    const undo: ViewerPatch = {};
+    for (const flag of FLAGS) {
+      if (patch[flag] !== undefined) undo[flag] = !patch[flag];
+    }
+    if (patch.ownQuoteId !== undefined) undo.ownQuoteId = slot?.ownQuoteId ?? null;
+    if (patch.ownQuoteBare !== undefined) undo.ownQuoteBare = slot?.ownQuoteBare ?? false;
+    return undo;
+  };
   return () => {
     const touched = new Set([...cachedQueries()].filter((hash) => changed.has(hash) || !before.has(hash)));
-    updateCachedPosts(postId, (post) => (leftAlone.has(post) ? post : applyViewerPatch(post, undo)), touched);
+    updateCachedPosts(
+      postId,
+      (post, queryHash) => (leftAlone.has(post) ? post : applyViewerPatch(post, undoFrom((slots.own(queryHash) ?? { value: previous }).value))),
+      touched,
+    );
     queryClient.invalidateQueries({ queryKey: queryKeys.post.detail(postId) }).catch(() => undefined);
   };
 }
@@ -284,28 +320,40 @@ export function applyProfileChange(identityId: string, change: ProfileChange, on
 }
 
 /**
- * {@link applyProfileChange} everywhere; returns the undo. The undo puts the
- * changed fields back as the first copy it changed had them, on every copy that
- * still reads as the edit left them (one `reapply` put back too; a read that
- * differs stands), and marks those queries stale without refetching them: a refetch under an open
- * Edit profile form that is past its freshness would swap the form for its
- * loading state, and lose what was typed.
+ * {@link applyProfileChange} everywhere; returns the undo. Copies of a
+ * profile (by identity, by name) are read separately and can be at different
+ * versions, so each query's copy keeps what it had itself (`snapshots`). The
+ * undo puts that back on each copy that still reads as the edit left it (a
+ * read that differs stands), and marks those queries stale
+ * without refetching them: a refetch under an open Edit profile form that is
+ * past its freshness would swap the form for its loading state, and lose what
+ * was typed. A copy that reads as the edit in a query read since (a `reapply`
+ * over a read), or cached since, has nothing of its own to go back to: that
+ * query is read again.
  */
 export function setProfileChange(identityId: string, change: ProfileChange): () => void {
   const fields = Object.keys(change);
-  const before: { change?: ProfileChange } = {};
-  updateCache((object) => {
+  const before = snapshots<ProfileChange>();
+  updateCache((object, queryHash) => {
     if (!isCachedProfile(object) || object.id !== identityId || readsAs(object, change)) return object;
-    before.change ??= Object.fromEntries(fields.map((field) => [field, object[field]])) as ProfileChange;
+    before.keep(queryHash, Object.fromEntries(fields.map((field) => [field, object[field]])) as ProfileChange);
     return withChange(object, change);
   });
   return () => {
-    const previous = before.change;
-    if (!previous) return;
-    const undone = updateCache((object) =>
-      isCachedProfile(object) && object.id === identityId && readsAs(object, change) ? withChange(object, previous) : object,
-    );
-    for (const hash of undone) queryClient.getQueryCache().get(hash)?.invalidate();
+    const unknown = new Set<string>();
+    const undone = updateCache((object, queryHash) => {
+      if (!isCachedProfile(object) || object.id !== identityId || !readsAs(object, change)) return object;
+      const own = before.own(queryHash);
+      if (own) return withChange(object, own.value);
+      unknown.add(queryHash);
+      return object;
+    });
+    const cache = queryClient.getQueryCache();
+    for (const hash of undone) cache.get(hash)?.invalidate();
+    for (const hash of unknown) {
+      const query = cache.get(hash);
+      if (query) queryClient.invalidateQueries({ queryKey: query.queryKey, exact: true }).catch(() => undefined);
+    }
   };
 }
 

@@ -689,6 +689,19 @@ describe('EditProfileScreen', () => {
     expect(fakeEngine.method('profiles.update')).toHaveBeenCalledTimes(1);
   });
 
+  it('puts each copy of the profile back to its own name when a save is rejected (QA rc7 review)', async () => {
+    // The copy by name was read before another device renamed the profile; the screen's after.
+    queryClient.setQueryData(queryKeys.profile.detail('jana'), { ...PROFILE, displayName: 'Jana A' });
+    fakeEngine.method('profiles.get').mockResolvedValue({ ...PROFILE, displayName: 'Jana B' });
+    fakeEngine.method('profiles.update').mockRejectedValueOnce(Object.assign(new Error('Too long'), { code: 'BAD_REQUEST' }));
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana C');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    expect(cachedProfile()?.displayName).toBe('Jana B');
+    expect(queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail('jana'))?.displayName).toBe('Jana A');
+  });
+
   it('blocks saving an over-long name', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     renderScreen(<EditProfileScreen />);
