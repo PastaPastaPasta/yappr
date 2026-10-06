@@ -59,16 +59,39 @@ The whole diff against v11:
 
 ## Measured costs
 
-Live fees (balance diffs, `scripts/measure-social-fees.mjs`) for v12 against a v11 copy registered on the same 5.0.0-beta.2 chain are being recorded in a follow-up; `documentCreateCost` estimates (new / known index values):
+**Live fees** (`scripts/measure-social-fees.mjs`, 2026-10-06). Each figure is the mean credits the signer's balance lost per confirmed write, from balance diffs, since the SDK returns no fee. Both cuts were measured on sakura (5.0.0-beta.2) by the same identities in one run:
+- v12 used throwaway copy `8FR8jGXugrwmFgvrcvgouPs6dq7328AJCtTYqaKqKEvY`;
+- v11 used throwaway copy `A275d9FBf6bFQTNUUcguhMosHsDFsMaLY5VWJRysuvcT`, so v11 was re-measured on beta.2, not quoted from beta.1.
 
-| Write | v11 | v12 |
-| --- | ---: | ---: |
-| like | 148.2M / 56.9M | 126.8M / 41.2M |
-| reply like | 48.2M / 19.3M | 39.3M / 11.8M |
-| post | 456.2M / 304.1M | 452.4M / 299.5M |
-| reply | 223.0M / 140.4M | 222.4M / 139.8M |
+Each copy holds post, reply, like and likeReply as the file declares them, without YAPP costs or action fees. On the real contract a post also pays an 80M moderators fee and a reply 16M, plus YAPP. Cents are at $60/DASH, where 1M credits = 0.06¢. *n* is the number of samples for v12 / v11.
 
-The estimator overstates steady likes (SOCIAL_V11.md), so quote the live table once it lands.
+| Write | v11 live | **v12 live** | v12 vs v11 | n | Estimator on v12 (new / known) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| first like, untagged | 22.9M (1.38¢) | **14.7M (0.88¢)** | −8.2M (−36%) | 3/3 | 74.4M / 22.5M |
+| later like, untagged | 24.0M (1.44¢) | **15.9M (0.95¢)** | −8.1M (−34%) | 6/6 | 74.4M / 22.5M |
+| first like, tagged | 36.4M (2.19¢) | **20.2M (1.21¢)** | −16.3M (−45%) | 3/3 | 126.8M / 41.2M |
+| later like, tagged | 35.9M (2.15¢) | **19.7M (1.18¢)** | −16.2M (−45%) | 6/6 | 126.8M / 41.2M |
+| first reply like | 17.2M (1.03¢) | **9.7M (0.58¢)** | −7.4M (−43%) | 3/3 | 39.3M / 11.8M |
+| later reply like | 17.4M (1.04¢) | **9.8M (0.59¢)** | −7.6M (−44%) | 6/6 | 39.3M / 11.8M |
+| unlike (refund) | −11.5M | **−4.1M** | +7.4M | 3/3 | — |
+| unlike, tagged (refund) | −18.3M | **−3.6M** | +14.8M | 3/3 | — |
+| reply unlike (refund) | −12.6M | **−5.7M** | +6.9M | 3/3 | — |
+| post, plain | 96.8M (5.81¢) | **94.6M (5.67¢)** | −2.2M (−2%) | 3/3 | 127.2M / 74.5M |
+| post, tagged | 126.4M (7.58¢) | **121.8M (7.31¢)** | −4.6M (−4%) | 3/3 | 190.2M / 103.1M |
+| quote | 144.6M (8.68¢) | **142.3M (8.54¢)** | −2.3M (−2%) | 3/3 | 176.0M / 99.6M |
+| repost | 144.7M (8.68¢) | **142.2M (8.53¢)** | −2.5M (−2%) | 3/3 | 171.3M / 94.9M |
+| reply | 103.7M (6.22¢) | **102.7M (6.16¢)** | −1.1M (−1%) | 3/3 | 120.8M / 57.6M |
+| tombstone (140-character post) | −0.2M | **−0.3M** | ≈0 | 3/3 | — |
+
+What the live fees show:
+- **A like costs a third to almost half less.**
+  - About 16M untagged, 20M tagged and 10M on a reply, against v11's 24M, 36M and 17.5M.
+  - The two (one for a reply like) entries a v11 like wrote into the author and hashtag indexes are gone. A like now rewrites fixed-size counters in place, which adds no storage.
+  - The saving is about 8M per index dropped, which matches #5250's ~7.8M per removed entry.
+- **The first like still costs no more than a later one.** The counters are preallocated with the post, as v11's trees were.
+- **An unlike refunds less, because the like stored less.** Like plus unlike nets 11.8M on v12 against 12.5M on v11 (untagged). The total cost of a short-lived like barely moves; a like that stays is what gets cheaper.
+- **Posts get slightly cheaper (1–4%).** A post preallocates one zero counter per counter index instead of the trees an entry index needed under it.
+- **The estimator still overstates.** On v12, `documentCreateCost` with known values is 22.5M for a later like (live: 15.9M) and 41.2M for a tagged one (live: 19.7M). Quote the live figures.
 
 ## Live proof on sakura (5.0.0-beta.2)
 
@@ -98,4 +121,4 @@ Social v12 is live on sakura as `78osKsoZq4X5AyRSn9C9fb92oHQ172qEUFw8Q1v6hS5G` (
 
 ## Publishing
 
-Published 2026-10-06 by the maker at nonce 1 with the rest of the set (the full redeploy record follows in a later document). E1 is filed on it (charter `6kiTPiturzSefwfV5fpwth5juakNpc64txMbBWQ6RFP3`): leader tess1999, members alice7-sept and battery bot 1, both elected through join requests, so #5260 counts them for every post.
+Published 2026-10-06 by the maker at nonce 1 with the rest of the set (the redeploy record is [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE.md)). E1 is seated on it (charter `6kiTPiturzSefwfV5fpwth5juakNpc64txMbBWQ6RFP3`): leader tess1999, members alice7-sept and battery bot 1, both elected through join requests, so #5260 counts them for every post.
