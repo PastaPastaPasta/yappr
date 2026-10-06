@@ -561,3 +561,111 @@ describe('v11 timeless like notification reads', () => {
     expect(mocks.composite).not.toHaveBeenCalled()
   })
 })
+
+describe('v12 timeless like notification reads (counter author index)', () => {
+  const ME = AUTHOR
+  const [P1, P2, P3] = [id(70), id(71), id(72)]
+  const likeOf = (owner: string, target: string, docType = 'like'): Row => docType === 'like'
+    ? { $id: `${owner}-${target}`, $ownerId: owner, postId: target }
+    : { $id: `${owner}-${target}`, $ownerId: owner, replyId: target }
+
+  // byPost / byReply in key order. The counter indexes hold no documents, so
+  // any read naming the author field is a bug here, not an empty answer.
+  const targetIndex = (field: string, author: string) => async (query: Query) => {
+    if (query.startAfter) throw new Error(REFUSED)
+    if (query.where.some(([property]) => property === author)) throw new Error(`${author} names a counter index: it holds no like documents`)
+    return (chain.rows[query.documentTypeName] ?? []).filter((row) => query.where.every(([property, op, value]) => {
+      if (op === '==') return row[property] === value
+      if (op === '>') return String(row[property]) > String(value)
+      throw new Error(`unexpected operator ${op}`)
+    })).sort((a, b) => String(a.$ownerId).localeCompare(String(b.$ownerId))).slice(0, query.limit)
+  }
+
+  it.each([
+    ['post', 'like', 'postId', 'postAuthor'],
+    ['reply', 'likeReply', 'replyId', 'replyAuthor'],
+  ] as const)('reads each moved %s\'s likers on its own on the target index, never on the counter', async (kind, docType, field, author) => {
+    chain.rows = { [docType]: [likeOf(VIEWER, P1, docType), likeOf(OTHER, P1, docType), likeOf(OTHER, P2, docType)] }
+    mocks.query.mockImplementation(targetIndex(field, author))
+    const likeService = await likeServiceOn('v12')
+
+    const likers = await likeService.getLikersOf(ME, [P1, P2, P3], kind)
+
+    // One read per target: `target == T` ordered [target, $ownerId], one page each.
+    expect(queriesOf(docType)).toEqual([P1, P2, P3].map((target) => ({
+      dataContractId: expect.any(String),
+      documentTypeName: docType,
+      where: [[field, '==', target]],
+      orderBy: [[field, 'asc'], ['$ownerId', 'asc']],
+      limit: 100,
+    })))
+    expect(likers.get(P1)).toEqual({ likers: [VIEWER, OTHER].sort(), complete: true })
+    expect(likers.get(P2)).toEqual({ likers: [OTHER], complete: true })
+    // A moved target whose likes were all withdrawn reads as no likers.
+    expect(likers.get(P3)).toEqual({ likers: [], complete: true })
+  })
+
+  it('pages a crowded target on an `$ownerId >` keyset, capped at three pages', async () => {
+    const crowd = Array.from({ length: 650 }, (_, i) => likeOf(`liker-${String(i).padStart(4, '0')}`, P2))
+    chain.rows = { like: [likeOf(VIEWER, P1), ...crowd] }
+    mocks.query.mockImplementation(targetIndex('postId', 'postAuthor'))
+    const likeService = await likeServiceOn('v12')
+
+    const likers = await likeService.getLikersOf(ME, [P1, P2], 'post')
+
+    expect(likers.get(P1)).toEqual({ likers: [VIEWER], complete: true })
+    expect(likers.get(P2)?.complete).toBe(false)
+    expect(likers.get(P2)?.likers).toHaveLength(300)
+    expect(queriesOf('like').filter((query) => query.where[0][2] === P2).map((query) => query.where)).toEqual([
+      [['postId', '==', P2]],
+      [['postId', '==', P2], ['$ownerId', '>', 'liker-0099']],
+      [['postId', '==', P2], ['$ownerId', '>', 'liker-0199']],
+    ])
+    for (const query of queriesOf('like')) expect(query).not.toHaveProperty('startAfter')
+  })
+
+  it('rejects when one target\'s read fails, so the poll retries the kind', async () => {
+    chain.rows = { like: [likeOf(OTHER, P1)] }
+    const read = targetIndex('postId', 'postAuthor')
+    mocks.query.mockImplementation(async (query: Query) => {
+      if (query.where[0][2] === P2) throw new Error('DAPI unavailable')
+      return read(query)
+    })
+    const likeService = await likeServiceOn('v12')
+
+    await expect(likeService.getLikersOf(ME, [P1, P2], 'post')).rejects.toThrow('DAPI unavailable')
+  })
+
+  it.each([
+    ['post', 'like', 'postId'],
+    ['reply', 'likeReply', 'replyId'],
+  ] as const)('reads the %s like counts with the v11 composite on the target index, zero counts included', async (kind, docType, field) => {
+    const mine = [P1, P2, P3].map((target, i) => ({ $id: target, $ownerId: ME, $createdAt: 1_790_000_000_000 - i }))
+    // Preallocated: a never-liked target comes back with a zero count.
+    mocks.composite.mockResolvedValue({ pageDocuments: mine, subResults: [{ kind: 'counts', counts: new Map([[P1, 2n], [P2, 0n]]) }] })
+    const likeService = await likeServiceOn('v12')
+
+    const recent = await likeService.getRecentTargetLikeCounts(ME, kind)
+
+    expect(mocks.composite).toHaveBeenCalledTimes(1)
+    expect(mocks.composite.mock.calls[0][0]).toEqual({
+      dataContractId: expect.any(String),
+      documentType: kind,
+      where: [['$ownerId', '==', ME], ['$createdAt', '>', 0]],
+      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      limit: 50,
+      subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
+    })
+    expect([...recent].map(([target, { count }]) => [target, count])).toEqual([[P1, 2], [P2, 0], [P3, 0]])
+    expect(mocks.query).not.toHaveBeenCalled()
+  })
+
+  it('never asks for likes since a time', async () => {
+    const likeService = await likeServiceOn('v12')
+
+    expect(await likeService.getLikesOnMyPosts(ME, new Date(1_000), 'reply')).toEqual([])
+
+    expect(mocks.query).not.toHaveBeenCalled()
+    expect(mocks.composite).not.toHaveBeenCalled()
+  })
+})

@@ -705,7 +705,8 @@ export function tombstonesAreHidden(): boolean {
 /**
  * True when the like trees of a post or reply are built when it is created,
  * paid by its creator (`preallocated` on like.byPost/byAuthorPost/
- * byHashtagPost and likeReply.byReply/byAuthorReply, v11). Every like then
+ * byHashtagPost and likeReply.byReply/byAuthorReply, v11 and v12, where the
+ * author and hashtag indexes hold a zero counter). Every like then
  * costs the same, and a post with no likes still sits in its trees with a
  * count of zero: ranked reads and grouped counts can return ZERO-count
  * groups, which a leaderboard must drop.
@@ -768,8 +769,8 @@ export function likeNotificationsPinTarget(): boolean {
 }
 
 /**
- * True when no like index keeps the time of a like (v11): like notifications
- * are found by diffing a recent target's likers (`byPost`/`byReply`) against
+ * True when no like index keeps the time of a like (v11, v12): like
+ * notifications are found by diffing a recent target's likers against
  * what this device saw last, and are dated when the app first noticed them.
  * A new device starts from a baseline (no backlog), and an unlike is a
  * delete-by-values without `$createdAt`.

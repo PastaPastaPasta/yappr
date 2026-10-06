@@ -391,3 +391,109 @@ describe('v11 timeless like notifications', () => {
     expect((await notificationService.getLikeNotifications('me', 0)).map(({ fromUserId }) => fromUserId)).toEqual(['erin'])
   })
 })
+
+describe('v12 timeless like notifications, through the like service (counter author index)', () => {
+  const store = new Map<string, string>()
+  /** Per kind, my recent targets (newest first) and who likes each. */
+  const chain: Record<'post' | 'reply', Map<string, string[]>> = { post: new Map(), reply: new Map() }
+  const sdk = { documents: { composite: vi.fn(), query: vi.fn() } }
+  type Query = { documentTypeName: string; where: [string, string, unknown][]; orderBy?: unknown[]; limit: number }
+
+  beforeEach(async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v12')
+    store.clear()
+    chain.post = new Map()
+    chain.reply = new Map()
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    vi.stubGlobal('localStorage', { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => store.set(key, value) })
+    vi.doMock('./state-transition-service', () => ({ stateTransitionService: {} }))
+    sdk.documents.composite.mockReset().mockImplementation(async ({ documentType }: { documentType: 'post' | 'reply' }) => {
+      const targets = [...chain[documentType]]
+      return {
+        pageDocuments: targets.map(([target], i) => ({ $id: target, $ownerId: 'me', $createdAt: 10_000 - i })),
+        // Preallocated: every target has a counter, zero when unliked.
+        subResults: [{ kind: 'counts', counts: new Map(targets.map(([target, likers]) => [target, BigInt(likers.length)])) }],
+      }
+    })
+    sdk.documents.query.mockReset().mockImplementation(async ({ documentTypeName, where, limit }: Query) => {
+      const [[field, , target], after] = where
+      if (field !== 'postId' && field !== 'replyId') throw new Error(`unexpected like read on ${field}`)
+      const kind = documentTypeName === 'like' ? 'post' : 'reply'
+      return (chain[kind].get(target as string) ?? [])
+        .filter((liker) => !after || liker > String(after[2]))
+        .sort()
+        .slice(0, limit)
+        .map((liker) => ({ $id: `${liker}-${String(target)}`, $ownerId: liker, [field]: target }))
+    })
+    // The like service imports the SDK module lazily, once per read, and a
+    // poll reads both kinds at once. Observed here (vitest 3): with the module
+    // mocked, one of the two concurrent `import()`s of it got the real module
+    // anyway, even after a warm-up import. Stubbing the real singleton holds
+    // whichever instance a read gets.
+    vi.doUnmock('./evo-sdk-service')
+    const { evoSdkService } = await import('./evo-sdk-service')
+    vi.spyOn(evoSdkService, 'getSdk').mockResolvedValue(sdk as unknown as Awaited<ReturnType<typeof evoSdkService.getSdk>>)
+  })
+  afterEach(() => {
+    vi.doUnmock('./state-transition-service')
+    // Restore the file's module mock for anything that runs after this block.
+    vi.doMock('./evo-sdk-service', () => ({ getEvoSdk: vi.fn() }))
+  })
+
+  const likerReads = () => sdk.documents.query.mock.calls.map(([query]) => query as Query)
+  const poll = async (nowMs: number) => {
+    sdk.documents.query.mockClear()
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs)
+    const { notificationService } = await import('./notification-service')
+    return (await notificationService.getLikeNotifications('me', 0)).map(({ id, fromUserId, likerCount }) => ({ id, fromUserId, likerCount }))
+  }
+
+  it('reads only the moved targets on byPost/byReply, announces new likers, stays silent on a fall, and misses a swap until the count moves', async () => {
+    chain.post = new Map([['P1', ['alice']], ['P2', ['bob']], ['P3', []]])
+    chain.reply = new Map([['R1', ['bob']]])
+
+    // First poll: a silent baseline, one target read per liked target, the zero-count P3 never read.
+    expect(await poll(1_000)).toEqual([])
+    expect(likerReads()).toEqual([
+      { dataContractId: expect.any(String), documentTypeName: 'like', where: [['postId', '==', 'P1']], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 },
+      { dataContractId: expect.any(String), documentTypeName: 'like', where: [['postId', '==', 'P2']], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 },
+      { dataContractId: expect.any(String), documentTypeName: 'likeReply', where: [['replyId', '==', 'R1']], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 100 },
+    ])
+    expect(sdk.documents.composite).toHaveBeenCalledTimes(2)
+
+    // P1 and R1 gain likers: only those are re-read.
+    chain.post.set('P1', ['alice', 'carol'])
+    chain.reply.set('R1', ['bob', 'dave'])
+    expect(await poll(2_000)).toEqual(expect.arrayContaining([
+      { id: 'like:post:P1:2000', fromUserId: 'carol', likerCount: 1 },
+      { id: 'like:reply:R1:2000', fromUserId: 'dave', likerCount: 1 },
+    ]))
+    expect(likerReads().map(({ where }) => where[0][2])).toEqual(['P1', 'R1'])
+
+    // An unlike: the fall is re-read, and nothing is announced.
+    chain.post.set('P1', ['alice'])
+    const afterFall = await poll(3_000)
+    expect(afterFall.map(({ id }) => id).sort()).toEqual(['like:post:P1:2000', 'like:reply:R1:2000'])
+    expect(likerReads().map(({ where }) => where[0][2])).toEqual(['P1'])
+
+    // A swap between polls (bob unlikes, erin likes): the count holds, nothing is read, erin is not announced yet.
+    chain.post.set('P2', ['erin'])
+    await poll(4_000)
+    expect(likerReads()).toEqual([])
+
+    // The count moves again: erin is announced late, with frank.
+    chain.post.set('P2', ['erin', 'frank'])
+    expect(await poll(5_000)).toContainEqual({ id: 'like:post:P2:5000', fromUserId: 'erin', likerCount: 2 })
+    expect(likerReads().map(({ where }) => where[0][2])).toEqual(['P2'])
+  })
+
+  it('carries a snapshot stored on v11 over without a fresh baseline', async () => {
+    store.set('yappr_like_notifications:me', JSON.stringify({
+      v: 1, baselined: ['post', 'reply'], horizons: { post: 9_000, reply: 9_000 },
+      targets: { 'post:P1': { count: 1, likers: ['alice'] } }, batches: [],
+    }))
+    chain.post = new Map([['P1', ['alice', 'carol']]])
+
+    expect(await poll(1_000)).toEqual([{ id: 'like:post:P1:1000', fromUserId: 'carol', likerCount: 1 }])
+  })
+})

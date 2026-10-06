@@ -44,6 +44,17 @@ describe('later polls', () => {
     expect(targetsToRead(baselined(), 'post', counts({ P1: 1 }))).toEqual(['P1'])
   })
 
+  it('misses a like swapped in for an unlike between two polls, and names it once the count moves again', () => {
+    // bob unliked and erin liked P1 between polls: the count holds at 2, so nothing is read.
+    const swapped = applyLikeObservations(baselined(), [observe('post', { P1: 2, P2: 0 })], { selfId: ME, nowMs: NOW })
+    expect(targetsToRead(baselined(), 'post', counts({ P1: 2, P2: 0 }))).toEqual([])
+    expect(swapped.fresh).toEqual([])
+
+    // frank likes it too: the count moves, the re-read is merged, and erin is named late with frank.
+    const { fresh } = applyLikeObservations(swapped.snapshot, [observe('post', { P1: 3 }, { P1: ['alice', 'erin', 'frank'] })], { selfId: ME, nowMs: NOW + 1 })
+    expect(fresh.map(({ likers }) => likers)).toEqual([['erin', 'frank']])
+  })
+
   it('aggregates the new likers of one target into one batch with a stable id, leaving out the user', () => {
     const { fresh, snapshot } = applyLikeObservations(baselined(), [
       observe('post', { P1: 5, P2: 0 }, { P1: ['alice', 'bob', 'carol', ME, 'dave'] }),

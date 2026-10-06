@@ -385,8 +385,10 @@ class PostService extends BaseDocumentService<Post> {
    * one-quote-per-target slot (`ownerAndQuotedPost`), so reposting again is a
    * new bare repost.
    *
-   * Throws the refusal when the author is banned or suspended (41107/41108,
-   * {@link tombstoneDocument}); false for any other failure.
+   * Throws the refusal when a banned or suspended author's tombstone is
+   * refused (41107/41108 on v9/v11; v12 accepts it,
+   * `barredAuthorsCanTombstone()`, {@link tombstoneDocument}); false for
+   * any other failure.
    */
   async deleteOwnPost(postId: string, ownerId: string): Promise<boolean> {
     return deletesAreTombstones() ? this.tombstonePost(postId, ownerId) : this.deletePost(postId, ownerId);
