@@ -1494,6 +1494,7 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   SETTLED_DELETION_NOT_RESTORABLE: 'The seated team removed this together, and a team removal can never be undone',
   TEAM_ACTION_COMPLETED: 'That team action already ran',
   TEAM_ACTION_DOCUMENT_CHANGED: 'The document changed since the removal was proposed, so it can no longer be approved: propose it again',
+  TEAM_MEMBER_ADDED_AFTER_DOCUMENT: 'You joined the team after this was posted, so your approval does not count toward removing it: the leader or an elected member must act',
   ALREADY_BANNED: 'That identity is already banned',
   NOT_BANNED: 'That identity is not banned',
   NOT_SUSPENDED: 'That identity is not suspended (a suspension that ran out is cleared by its next write)',
