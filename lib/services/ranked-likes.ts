@@ -14,6 +14,13 @@
  * Server-side `SELECT count(*) GROUP BY postId ORDER BY count DESC LIMIT n`,
  * O(log n + k) with a proof — no scan, no client-side sorting.
  *
+ * v12: `byAuthorPost` and `byHashtagPost` are `summableOffCountIndex`
+ * counters of `byPost` (one counter per post, no like entries). A ranked
+ * `count(*)` reads their sums, and their `rankedCountable {at: …}` is merged
+ * into that sum ranking, so every query here keeps its shape: grouped at
+ * `postId` under a pin, or at `postAuthor` / `hashtag` with none. Nothing
+ * here reads like documents, which the counters no longer hold.
+ *
  * Zero-count groups are filtered here, on every topology: a ranked page on a
  * PREALLOCATED index carries one for every post or author (v11's like trees,
  * `likeTreesArePreallocated()`), and a fully drained group reports 0 too.

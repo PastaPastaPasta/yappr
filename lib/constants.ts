@@ -341,6 +341,12 @@ export function keyNetwork(): KeyNetwork {
 // week is deleted only by the seated team's leader plus two members
 // (`deleteWithin` + `deleteSettled`).
 //
+// `v12` — the 5.0.0-beta.2 devnet (sakura after its 2026-10-06 wipe),
+// `contracts/yappr-social-contract-v12.json` (docs/SOCIAL_V12.md). v11 with
+// the like and reply-like author indexes (and the hashtag index) kept as one
+// counter per post (`summableOffCountIndex`), and `retractedWhen` on post and
+// reply so a banned or suspended author can still tombstone its own writing.
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -348,7 +354,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

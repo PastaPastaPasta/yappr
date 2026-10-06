@@ -85,10 +85,14 @@ function tombstoneBase(): Record<string, unknown> {
  * contract does not let go, is reported rather than guessed at.
  *
  * THROWS the refusal when the author is banned or suspended from the contract
- * (41107/41108): Drive lets a barred identity delete but refuses it every
- * replace, a tombstone included, so on a `canBeDeleted: false` type a barred
- * author cannot take its own post down at all. The caller says so (with the
- * moderators' reason, `reportBarredWrite`) instead of a silent "failed".
+ * (41107/41108). On v9 and v11 Drive lets a barred identity delete but
+ * refuses it every replace, a tombstone included, so on a
+ * `canBeDeleted: false` type a barred author cannot take its own post down at
+ * all. The caller says so (with the moderators' reason, `reportBarredWrite`)
+ * instead of a silent "failed". On v12 post and reply declare
+ * `retractedWhen: { present: "deleted" }` (`barredAuthorsCanTombstone()`):
+ * a barred author's replace that writes `deleted` (this tombstone) is
+ * accepted, and only a refusal of something else would still land here.
  */
 export async function tombstoneDocument(params: TombstoneParams): Promise<boolean> {
   const { contractId, documentType, documentId, ownerId } = params;

@@ -188,7 +188,8 @@ function BareRepostCard({ post, enrichment, onDelete }: PostCardProps) {
       onDelete?.(post.id)
     } catch (error) {
       logger.error('Remove repost failed:', error)
-      // A banned or suspended author is refused the tombstone (41107/41108): say why.
+      // v11 refuses a banned or suspended author the tombstone (41107/41108): say why.
+      // v12 accepts it (retractedWhen), so there this only fires on another refusal.
       if (!reportBarredWrite(error, viewerId)) toast.error('Failed to remove the repost. Please try again.')
     } finally {
       setRemoving(false)
@@ -473,6 +474,8 @@ function PostCardView({
         // v9/v11 delete by tombstone, a replace: a banned or suspended author
         // is refused it (41107/41108), so say that, with the moderators' reason,
         // and close the dialog: every retry would be another paid refusal.
+        // v12 lets a barred author's tombstone through (retractedWhen), so
+        // there the delete just succeeds.
         if (reportBarredWrite(error, authedUser.identityId)) return
         toast.error(categorizeError(error))
         throw error

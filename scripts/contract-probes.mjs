@@ -3,8 +3,9 @@
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1 with
- * `DataContract.fromJSON(json, true, latest)`:
+ * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1 and
+ * 5.0.0-beta.2 with `DataContract.fromJSON(json, true, latest)` (and a fourth
+ * for contract updates, below):
  *
  *   - **wasm-sdk** (`@dashevo/evo-sdk`): the structural parser (findBy/where,
  *     distinctFrom targets, moderatorAbilities, skipIfAbsent, ttl, …). It is
@@ -29,6 +30,13 @@
  *     (40126). It also re-checks the index shapes wasm-dpp2 checks
  *     (`auditIndexShapes`, ported from the v10 study's index-audit.py), so the
  *     rules Yappr relies on do not depend on one package alone.
+ *   - **update** (an `update` probe): version 2 of a committed cut parses
+ *     under both, and wasm-dpp2's `DataContract.validateUpdate` (the code a
+ *     data contract update transition runs, no state read) refuses it.
+ *
+ * The 5.0.0-beta.2 keywords (`summableOffCountIndex`, `retractedWhen`,
+ * `deleteSettled.approversPredateDocument`) are all refused by the wasm-sdk
+ * parse itself (10231): the structural rules run with full validation there.
  *
  * The rs-dpp sources are at v4.2.0-beta.7: config/moderation/{mod,elected}.rs,
  * try_from_schema/common/mod.rs (validate_index_properties,
@@ -436,6 +444,7 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
 
 const SOCIAL_V10 = 'contracts/yappr-social-contract-v10.json';
 const SOCIAL_V11 = 'contracts/yappr-social-contract-v11.json';
+const SOCIAL_V12 = 'contracts/yappr-social-contract-v12.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
@@ -443,6 +452,23 @@ const BLOG = 'contracts/yappr-blog-contract.json';
 
 const elected = (source) => source.config.moderation.moderators;
 const types = (source) => source.documentSchemas;
+let v12Json;
+/** The committed v12 file, read once (the v11 → v12 update probe copies its types). */
+const v12Source = () => (v12Json ??= JSON.parse(readFileSync(SOCIAL_V12, 'utf8')));
+const namedIndex = (source, type, name) => types(source)[type].indices.find((i) => i.name === name);
+/** v12 keeping warnings only: no banlist, no suspensions, and no ban/suspend ability they back. */
+function withoutBars(source) {
+  Object.assign(source.config.moderation, { banlist: false, suspensions: false });
+  const moderated = elected(source).moderatedDocumentTypes;
+  for (const [type, abilities] of Object.entries(moderated)) moderated[type] = abilities.filter((a) => a !== 'ban' && a !== 'suspend');
+}
+/** yapprProfile with a week's delete window and post's settled rule, $createdAt no longer required; answers the rule. */
+function settledWithoutCreatedAt(source) {
+  const profile = types(source).yapprProfile;
+  profile.required = profile.required.filter((p) => p !== '$createdAt');
+  profile.moderatorAbilities = { delete: true, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } };
+  return profile.moderatorAbilities.deleteSettled;
+}
 const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position, ...(refersTo ? { refersTo } : {}) });
 
 /**
@@ -452,6 +478,10 @@ const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, mi
  * parse and only `auditNodeRules` (or the size cap) refuses it — the node
  * does, and the SDK signs it — or `accepted` for a control. `auditToo` also
  * requires the audit to flag a `dpp2` probe, pinning the ported index checks.
+ * An `update` probe (in place of `mutate`) edits version 2 of the cut, and
+ * `update` is its refusal by the update rules; its first refusal must carry the
+ * probe's `node` code. `why` must match the refusal's text: a probe refused by
+ * some other rule first proves nothing about its own.
  */
 const PROBES = [
   { label: 'control: social v10 as committed', file: SOCIAL_V10, mutate: () => {}, expect: 'accepted' },
@@ -519,6 +549,83 @@ const PROBES = [
   { label: 'v11 M: a derived root-owner index on a reply (rootPostId frozen): legal, not adopted (SOCIAL_V11.md)', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => { types(s).reply.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { 'rootPostId.$ownerId': 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } }); } },
   { label: 'v11 M: a derived post-owner index on the indexOnly like', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).like.indices.push({ name: 'probe', properties: [{ 'postId.$ownerId': 'asc' }, { postId: 'asc' }], terminal: '$ownerId' }); } },
   { label: 'v11: deleteKeepsFields beside deleteKeepsRecord false', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsRecord = false; } },
+
+  // Social v12 (5.0.0-beta.2): counter indexes (`summableOffCountIndex`, #5250; index-only.md
+  // "summableOffCountIndex"), `retractedWhen` (#5253; deletion.md) and the dated settled
+  // deletion (`approversPredateDocument`, #5260). `why` pins the rule a refusal names, so a
+  // probe refused for some other reason first does not pass as this one.
+  { label: 'control: social v12 as committed', file: SOCIAL_V12, mutate: () => {}, expect: 'accepted' },
+  { label: 'v12 counter: byAuthorPost without rangeSummable (the counters sit in the last property\'s sum tree)', file: SOCIAL_V12, expect: 'wasm', why: /needs rangeSummable/i, mutate: (s) => { delete namedIndex(s, 'like', 'byAuthorPost').rangeSummable; } },
+  { label: 'v12 counter: byAuthorPost with a terminal', file: SOCIAL_V12, expect: 'wasm', why: /takes no terminal/i, mutate: (s) => { namedIndex(s, 'like', 'byAuthorPost').terminal = '$ownerId'; } },
+  { label: 'v12 counter: byAuthorPost also `summable` (one summed value per type)', file: SOCIAL_V12, expect: 'wasm', why: /no summable or averageable/i, mutate: (s) => { namedIndex(s, 'like', 'byAuthorPost').summable = 'postId'; } },
+  // A source that skips: byPost holds only the required postId, so `skipIfAbsent` there is refused
+  // by the skip rules too; `why` reports which rule spoke first.
+  { label: 'v12 counter: its source byPost skips (skipIfAbsent)', file: SOCIAL_V12, expect: 'wasm', why: /sums the count of "byPost", which must/i, mutate: (s) => { namedIndex(s, 'like', 'byPost').skipIfAbsent = true; } },
+  // A source that outlives deletes is a window (outlivesDelete needs a timeRange, which needs
+  // $createdAt): every counter names byTrendPost, which breaks both source rules.
+  { label: 'v12 counter: both like counters count off byTrendPost (a window that outlives deletes and involves $createdAt)', file: SOCIAL_V12, expect: 'wasm', why: /sums the count of "byTrendPost", which must/i, mutate: (s) => {
+    for (const name of ['byAuthorPost', 'byHashtagPost']) namedIndex(s, 'like', name).summableOffCountIndex = 'byTrendPost';
+  } },
+  // Lossless: postAuthor is fixed only by the postId reference's `"$ownerId": "postAuthor"`.
+  // Without it the preallocation rule speaks first (the counter's path is no longer named by
+  // the post); without preallocation too, the counter's own rule does.
+  { label: 'v12 counter: the like.postId where loses "$ownerId": "postAuthor" (preallocated byAuthorPost loses its path first)', file: SOCIAL_V12, expect: 'wasm', why: /preallocated/i, mutate: (s) => { delete types(s).like.properties.postId.refersTo.where.$ownerId; } },
+  { label: 'v12 counter: the same on an unpreallocated byAuthorPost (postAuthor is neither in the source nor fixed by it)', file: SOCIAL_V12, expect: 'wasm', why: /postAuthor.{0,40}neither a property of its source/i, mutate: (s) => {
+    delete types(s).like.properties.postId.refersTo.where.$ownerId;
+    delete namedIndex(s, 'like', 'byAuthorPost').preallocated;
+  } },
+  { label: 'v12 counter: byAuthorPost with a timeRange', file: SOCIAL_V12, expect: 'wasm', why: /cannot declare timeRange/i, mutate: (s) => {
+    const counter = namedIndex(s, 'like', 'byAuthorPost');
+    counter.properties = [{ $createdAt: 'asc' }, ...counter.properties];
+    counter.timeRange = { on: '$createdAt', range: 86_400, step: 86_400, ttl: 172_800 };
+    delete counter.preallocated;
+    delete counter.rankedCountable;
+  } },
+  { label: 'v12 counter: another index continues below byAuthorPost\'s last property ([postAuthor, postId, hashtag] → $ownerId)', file: SOCIAL_V12, expect: 'wasm', why: /is continued by index "probe"/i, mutate: (s) => {
+    types(s).like.indices.push({ name: 'probe', properties: [{ postAuthor: 'asc' }, { postId: 'asc' }, { hashtag: 'asc' }], terminal: '$ownerId', skipIfAbsent: true });
+  } },
+  // A second entries index over the post, [postId, $ownerId], is a legal source on its own;
+  // byHashtagPost naming it while byAuthorPost names byPost is two summed values.
+  { label: 'v12 counter: two like counters naming different sources (byPost, and a second [postId, $ownerId] index)', file: SOCIAL_V12, expect: 'wasm', why: /sums the count of "byPost", but index "byHashtagPost"/i, mutate: (s) => {
+    types(s).like.indices.push({ name: 'byPostOwner', properties: [{ postId: 'asc' }, { $ownerId: 'asc' }] });
+    namedIndex(s, 'like', 'byHashtagPost').summableOffCountIndex = 'byPostOwner';
+  } },
+  { label: 'v12 counter: likeReply byAuthorReply counting off itself', file: SOCIAL_V12, expect: 'wasm', mutate: (s) => { namedIndex(s, 'likeReply', 'byAuthorReply').summableOffCountIndex = 'byAuthorReply'; } },
+  { label: 'v12: rankedSummable { at } on a stored type\'s index (post.ownerAndTime), which is no counter', file: SOCIAL_V12, expect: 'wasm', why: /`at` form is only allowed on a summableOffCountIndex index/i, mutate: (s) => { namedIndex(s, 'post', 'ownerAndTime').rankedSummable = { at: ['$ownerId'] }; } },
+  { label: 'v12: rankedSummable { at } on like.byTrendPost (keeps entries, no counter)', file: SOCIAL_V12, expect: 'wasm', why: /`at` form is only allowed on a summableOffCountIndex index/i, mutate: (s) => { namedIndex(s, 'like', 'byTrendPost').rankedSummable = { at: ['postId'] }; } },
+  { label: 'v12 counter: byAuthorReply ranked at [replyAuthor] (rankedCountable merges into the sum ranking; legal, not adopted)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { namedIndex(s, 'likeReply', 'byAuthorReply').rankedCountable = { at: ['replyAuthor'] }; } },
+  { label: 'v12: retractedWhen on like, whose documents are not mutable', file: SOCIAL_V12, expect: 'wasm', why: /retractedWhen.{0,40}not mutable/i, mutate: (s) => { types(s).like.retractedWhen = { present: 'hashtag' }; } },
+  { label: 'v12: retractedWhen on follow, whose documents are not mutable', file: SOCIAL_V12, expect: 'wasm', why: /retractedWhen.{0,40}not mutable/i, mutate: (s) => { types(s).follow.retractedWhen = { present: 'followingId' }; } },
+  // Only a banlist or a suspension list bars anyone: the control drops both lists (and the
+  // abilities they back) and keeps the warnings, so the probe differs by retractedWhen alone.
+  { label: 'v12: a warnings-only contract without retractedWhen (control for the next probe)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { withoutBars(s); for (const type of ['post', 'reply']) delete types(s)[type].retractedWhen; } },
+  { label: 'v12: retractedWhen on a contract that keeps neither a banlist nor a suspension list', file: SOCIAL_V12, expect: 'wasm', why: /retractedWhen.{0,200}(banlist|suspension)/i, mutate: (s) => { withoutBars(s); } },
+  { label: 'v12: retractedWhen reading a property post does not have', file: SOCIAL_V12, expect: 'wasm', mutate: (s) => { types(s).post.retractedWhen = { present: 'nope' }; } },
+  // #5260: a settled deletion needing several approvals dates the leader's added members by
+  // $createdAt. yapprProfile (mutable, moderator-deletable, deleteDocuments in the elected set)
+  // takes a deleteSettled here; `$updatedAt` stays required as deleteWithin's clock.
+  { label: 'v12: deleteSettled approvals 3 on a type that does not require $createdAt (#5260)', file: SOCIAL_V12, expect: 'wasm', why: /createdAt|approversPredateDocument/i, mutate: (s) => { settledWithoutCreatedAt(s); } },
+  { label: 'v12: the same with approversPredateDocument false (members count whenever added)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { settledWithoutCreatedAt(s).approversPredateDocument = false; } },
+  { label: 'v12: the same with one approval (the leader alone; nobody is dated by default)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { const rule = settledWithoutCreatedAt(s); rule.approvals = 1; } },
+
+  // Contract updates (wasm-dpp2 `validateUpdate`, the code a data contract update runs): the
+  // committed file is version 1, `update` builds version 2. `retractedWhen`, the counter and
+  // `deleteSettled` are fixed once a type exists (40212 / 10217).
+  { label: 'v12 update: version 2 changing nothing (control)', file: SOCIAL_V12, expect: 'accepted', update: () => {} },
+  { label: 'v12 update: retractedWhen changed on post', file: SOCIAL_V12, expect: 'update', node: '40212', why: /retractedWhen/i, update: (s) => { types(s).post.retractedWhen = { anyOf: [{ present: 'deleted' }, { absent: 'content' }] }; } },
+  { label: 'v12 update: retractedWhen removed from reply', file: SOCIAL_V12, expect: 'update', node: '40212', why: /retractedWhen/i, update: (s) => { delete types(s).reply.retractedWhen; } },
+  { label: 'v11 update: retractedWhen added to a stored post', file: SOCIAL_V11, expect: 'update', node: '40212', why: /retractedWhen/i, update: (s) => { types(s).post.retractedWhen = { present: 'deleted' }; } },
+  { label: 'v12 update: approversPredateDocument turned off on post', file: SOCIAL_V12, expect: 'update', node: '40212', why: /who must approve/i, update: (s) => { types(s).post.moderatorAbilities.deleteSettled.approversPredateDocument = false; } },
+  // A counter's source can only be byPost (every source property must be the counter's, and a
+  // second [postId] index is a duplicate), so the update probes turn entries into counters and
+  // back: the index is frozen whole.
+  { label: 'v12 update: byHashtagPost back to v11\'s entries index (terminal $ownerId, no counter)', file: SOCIAL_V12, expect: 'update', node: '10217', why: /changed index 'byHashtagPost'/i, update: (s) => {
+    const tags = namedIndex(s, 'like', 'byHashtagPost');
+    delete tags.summableOffCountIndex; delete tags.rangeSummable; tags.terminal = '$ownerId';
+  } },
+  { label: 'v11 update: v11 updated in place to v12\'s like, likeReply, post and reply (counters and retractedWhen)', file: SOCIAL_V11, expect: 'update', node: '10217', why: /changed index 'byAuthor(Post|Reply)'|changed index 'byHashtagPost'/i, update: (s) => {
+    for (const type of ['like', 'likeReply', 'post', 'reply']) types(s)[type] = structuredClone(types(v12Source())[type]);
+  } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only
@@ -651,12 +758,18 @@ const PROBES = [
  * one. `parseContract` is the wasm-sdk parse, `parseWithNodeRules` the
  * wasm-dpp2 one.
  */
-export function runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf }) {
+export function runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf, updateRefusals }) {
   let failures = 0;
-  console.log('\nnegative probes (wasm = refused by the wasm-sdk parse; dpp2 = only by the wasm-dpp2 parse; audit = both parse, the node refuses):');
+  console.log('\nnegative probes (wasm = refused by the wasm-sdk parse; dpp2 = only by the wasm-dpp2 parse; audit = both parse, the node refuses; update = version 2 parses, the update rules refuse it):');
   for (const probe of PROBES) {
-    const source = structuredClone(loadContractSource(probe.file));
-    probe.mutate(source);
+    const stored = loadContractSource(probe.file);
+    const source = structuredClone(stored);
+    if (probe.update) {
+      source.version = (stored.version ?? 1) + 1;
+      probe.update(source);
+    } else {
+      probe.mutate(source);
+    }
     const refusal = (parse) => { try { parse(source); return null; } catch (e) { return String(e?.message ?? e); } };
     const wasmError = refusal(parseContract);
     const dpp2Error = wasmError ? null : refusal(parseWithNodeRules);
@@ -666,13 +779,18 @@ export function runContractProbes({ loadContractSource, parseContract, parseWith
       const size = sizeOf(parseContract(source));
       if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the ${STATE_TRANSITION_CAP} B cap`);
     }
-    const outcome = wasmError ? 'wasm' : dpp2Error ? 'dpp2' : audit.length > 0 ? 'audit' : 'accepted';
+    const updateErrors = probe.update && !wasmError && !dpp2Error ? updateRefusals(stored, source) : [];
+    const outcome = wasmError ? 'wasm' : dpp2Error ? 'dpp2' : audit.length > 0 ? 'audit' : updateErrors.length > 0 ? 'update' : 'accepted';
     const auditMissed = probe.auditToo && audit.length === 0;
-    const ok = outcome === probe.expect && !auditMissed;
+    const detail = wasmError ?? dpp2Error ?? audit[0] ?? updateErrors[0] ?? '';
+    // A refusal for some other reason than the probed rule is no proof of that rule.
+    const wrongReason = probe.why !== undefined && outcome !== 'accepted' && !probe.why.test(detail);
+    // An update refusal reads "<code> <message>": it must be the code the node refuses with.
+    const wrongCode = outcome === 'update' && probe.node !== undefined && !detail.startsWith(`${probe.node} `);
+    const ok = outcome === probe.expect && !auditMissed && !wrongReason && !wrongCode;
     if (!ok) failures += 1;
-    const detail = wasmError ?? dpp2Error ?? audit[0] ?? '';
-    const where = outcome === 'audit' || outcome === 'dpp2' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
-    const note = auditMissed ? ' (auditNodeRules did not flag it)' : '';
+    const where = outcome === 'audit' || outcome === 'dpp2' || outcome === 'update' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
+    const note = `${auditMissed ? ' (auditNodeRules did not flag it)' : ''}${wrongReason ? ` (refused, but not for ${probe.why})` : ''}${wrongCode ? ` (refused, but not with ${probe.node})` : ''}`;
     console.log(`${ok ? 'PASS' : 'FAIL'}  [${outcome.padEnd(8)}] ${probe.label}${where}${detail ? ` — ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}${note}${outcome === probe.expect ? '' : ` (expected ${probe.expect})`}`);
   }
   return failures;
