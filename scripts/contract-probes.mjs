@@ -71,7 +71,10 @@ const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v5.0.0-beta.1 (5.0 added conditional
+ * rs-dpp's document meta-schema v3 at v5.0.0-beta.2 (beta.2 added
+ * `summableOffCountIndex` with the `{ "at": ... }` form of `rankedSummable` /
+ * `rankedAverageable`, `retractedWhen` and `deleteSettled.approversPredateDocument`;
+ * 5.0.0-beta.1 added conditional
  * `immutable` entries in place of the refused `immutableAllowSetting`, the
  * `moderatedDocument` reference kind, derived index properties,
  * `outlivesDelete`, `deleteKeepsFields` and `deleteSettled`; beta.7 replaced
@@ -84,7 +87,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * ajv pass names the failing path more precisely.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = 'eb8d94b78752998dbe76f7fd32c551e170e23fc560b6ece70f302f4ac62b8b52';
+const META_SCHEMA_SHA256 = 'e32abaed5811374727d6e3404eec2d2871e905b81c45a033b702e2f37be2dbf9';
 
 let metaValidator;
 /**
@@ -97,7 +100,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.1 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.2 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;

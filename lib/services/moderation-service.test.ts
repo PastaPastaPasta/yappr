@@ -749,6 +749,7 @@ describe('the team\'s settled-deletion writes and reads', () => {
   it.each([
     [41206, 'NOT_SETTLED'],
     [41205, 'TEAM_NOT_SEATED'],
+    [41212, 'TEAM_MEMBER_ADDED_AFTER_DOCUMENT'],
   ])('maps a proposal refused %s to %s', async (code, errorCode) => {
     sdk.contracts.moderatorDeleteSettledDocument.mockRejectedValue({ code, message: 'refused' })
     expect(await moderationService.proposeSettledDeletion(MEMBER, 'post', 'P1', { text: 'x', reasonDocumentId: 'RD1' })).toMatchObject({ success: false, errorCode })
@@ -764,6 +765,7 @@ describe('the team\'s settled-deletion writes and reads', () => {
     [41208, 'TEAM_ACTION_ALREADY_SIGNED'],
     [41210, 'TEAM_ACTION_COMPLETED'],
     [41211, 'TEAM_ACTION_DOCUMENT_CHANGED'],
+    [41212, 'TEAM_MEMBER_ADDED_AFTER_DOCUMENT'],
   ])('maps an approval refused %s to %s', async (code, errorCode) => {
     sdk.contracts.moderatorApproveTeamAction.mockRejectedValue({ code, message: 'refused' })
     expect(await moderationService.approveTeamAction(LEADER, 'A1')).toMatchObject({ success: false, errorCode })
