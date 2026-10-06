@@ -479,8 +479,9 @@ const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, mi
  * does, and the SDK signs it — or `accepted` for a control. `auditToo` also
  * requires the audit to flag a `dpp2` probe, pinning the ported index checks.
  * An `update` probe (in place of `mutate`) edits version 2 of the cut, and
- * `update` is its refusal by the update rules. `why` must match the refusal's
- * text: a probe refused by some other rule first proves nothing about its own.
+ * `update` is its refusal by the update rules; its first refusal must carry the
+ * probe's `node` code. `why` must match the refusal's text: a probe refused by
+ * some other rule first proves nothing about its own.
  */
 const PROBES = [
   { label: 'control: social v10 as committed', file: SOCIAL_V10, mutate: () => {}, expect: 'accepted' },
@@ -618,11 +619,11 @@ const PROBES = [
   // A counter's source can only be byPost (every source property must be the counter's, and a
   // second [postId] index is a duplicate), so the update probes turn entries into counters and
   // back: the index is frozen whole.
-  { label: 'v12 update: byHashtagPost back to v11\'s entries index (terminal $ownerId, no counter)', file: SOCIAL_V12, expect: 'update', node: '10217', update: (s) => {
+  { label: 'v12 update: byHashtagPost back to v11\'s entries index (terminal $ownerId, no counter)', file: SOCIAL_V12, expect: 'update', node: '10217', why: /changed index 'byHashtagPost'/i, update: (s) => {
     const tags = namedIndex(s, 'like', 'byHashtagPost');
     delete tags.summableOffCountIndex; delete tags.rangeSummable; tags.terminal = '$ownerId';
   } },
-  { label: 'v11 update: v11 updated in place to v12\'s like, likeReply, post and reply (counters and retractedWhen)', file: SOCIAL_V11, expect: 'update', node: '10217', update: (s) => {
+  { label: 'v11 update: v11 updated in place to v12\'s like, likeReply, post and reply (counters and retractedWhen)', file: SOCIAL_V11, expect: 'update', node: '10217', why: /changed index 'byAuthor(Post|Reply)'|changed index 'byHashtagPost'/i, update: (s) => {
     for (const type of ['like', 'likeReply', 'post', 'reply']) types(s)[type] = structuredClone(types(v12Source())[type]);
   } },
 
@@ -784,10 +785,12 @@ export function runContractProbes({ loadContractSource, parseContract, parseWith
     const detail = wasmError ?? dpp2Error ?? audit[0] ?? updateErrors[0] ?? '';
     // A refusal for some other reason than the probed rule is no proof of that rule.
     const wrongReason = probe.why !== undefined && outcome !== 'accepted' && !probe.why.test(detail);
-    const ok = outcome === probe.expect && !auditMissed && !wrongReason;
+    // An update refusal reads "<code> <message>": it must be the code the node refuses with.
+    const wrongCode = outcome === 'update' && probe.node !== undefined && !detail.startsWith(`${probe.node} `);
+    const ok = outcome === probe.expect && !auditMissed && !wrongReason && !wrongCode;
     if (!ok) failures += 1;
     const where = outcome === 'audit' || outcome === 'dpp2' || outcome === 'update' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
-    const note = `${auditMissed ? ' (auditNodeRules did not flag it)' : ''}${wrongReason ? ` (refused, but not for ${probe.why})` : ''}`;
+    const note = `${auditMissed ? ' (auditNodeRules did not flag it)' : ''}${wrongReason ? ` (refused, but not for ${probe.why})` : ''}${wrongCode ? ` (refused, but not with ${probe.node})` : ''}`;
     console.log(`${ok ? 'PASS' : 'FAIL'}  [${outcome.padEnd(8)}] ${probe.label}${where}${detail ? ` — ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}${note}${outcome === probe.expect ? '' : ` (expected ${probe.expect})`}`);
   }
   return failures;

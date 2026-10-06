@@ -487,6 +487,31 @@ describe('v12 timeless like notifications, through the like service (counter aut
     expect(likerReads().map(({ where }) => where[0][2])).toEqual(['P2'])
   })
 
+  it('announces the targets that read, and a target whose read failed once on the next poll, never twice', async () => {
+    chain.post = new Map([['P1', ['alice']], ['P2', ['bob']]])
+    expect(await poll(1_000)).toEqual([])
+
+    chain.post.set('P1', ['alice', 'carol'])
+    chain.post.set('P2', ['bob', 'dave'])
+    const read = sdk.documents.query.getMockImplementation()
+    sdk.documents.query.mockImplementation(async (query: Query) => {
+      if (query.where[0][2] === 'P2') throw new Error('DAPI unavailable')
+      return read?.(query)
+    })
+    // P2's read failed: P1 is still announced, P2 waits.
+    expect(await poll(2_000)).toEqual([{ id: 'like:post:P1:2000', fromUserId: 'carol', likerCount: 1 }])
+
+    if (read) sdk.documents.query.mockImplementation(read)
+    // P2 kept its known likers and count, so it is read again and dave announced once.
+    expect(await poll(3_000)).toEqual([
+      { id: 'like:post:P1:2000', fromUserId: 'carol', likerCount: 1 },
+      { id: 'like:post:P2:3000', fromUserId: 'dave', likerCount: 1 },
+    ])
+    expect(likerReads().map(({ where }) => where[0][2])).toEqual(['P2'])
+    expect((await poll(4_000)).map(({ id }) => id)).toEqual(['like:post:P1:2000', 'like:post:P2:3000'])
+    expect(likerReads()).toEqual([])
+  })
+
   it('carries a snapshot stored on v11 over without a fresh baseline', async () => {
     store.set('yappr_like_notifications:me', JSON.stringify({
       v: 1, baselined: ['post', 'reply'], horizons: { post: 9_000, reply: 9_000 },

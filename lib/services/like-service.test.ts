@@ -624,13 +624,25 @@ describe('v12 timeless like notification reads (counter author index)', () => {
     for (const query of queriesOf('like')) expect(query).not.toHaveProperty('startAfter')
   })
 
-  it('rejects when one target\'s read fails, so the poll retries the kind', async () => {
-    chain.rows = { like: [likeOf(OTHER, P1)] }
+  it('leaves a target whose read fails out of the answer (re-read next poll) and still answers the others', async () => {
+    chain.rows = { like: [likeOf(OTHER, P1), likeOf(VIEWER, P3)] }
     const read = targetIndex('postId', 'postAuthor')
     mocks.query.mockImplementation(async (query: Query) => {
       if (query.where[0][2] === P2) throw new Error('DAPI unavailable')
       return read(query)
     })
+    const likeService = await likeServiceOn('v12')
+
+    const likers = await likeService.getLikersOf(ME, [P1, P2, P3], 'post')
+
+    // Absent, not `complete: false`: the snapshot keeps P2's known likers and count, so it is read again.
+    expect([...likers.keys()]).toEqual([P1, P3])
+    expect(likers.get(P1)).toEqual({ likers: [OTHER], complete: true })
+    expect(likers.get(P3)).toEqual({ likers: [VIEWER], complete: true })
+  })
+
+  it('rejects when every target\'s read fails, so the poll retries the kind', async () => {
+    mocks.query.mockRejectedValue(new Error('DAPI unavailable'))
     const likeService = await likeServiceOn('v12')
 
     await expect(likeService.getLikersOf(ME, [P1, P2], 'post')).rejects.toThrow('DAPI unavailable')

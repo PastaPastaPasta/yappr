@@ -97,7 +97,7 @@
  *   ol-e4/ol-e6  the author-pinned liker reads are refused (ol-e4x, ol-e6x);
  *          the same targets' counters are read instead (grouped counts)
  *   ol-f4  the grouped per-post count reads the counters' sums
- *   cn-*   counters (D's fresh posts and replies): zero from creation (cn-0);
+ *   cn-*   counters (D's fresh posts and replies): zero from creation (cn-0 totals, cn-0r range walks);
  *          point counts at the post, author and hashtag levels, each equal to
  *          sum(byPost) (cn-a); grouped per-post counts per `in` value and over
  *          a range grouped by postId, zero groups included (cn-b); a range
@@ -164,6 +164,7 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { devnetConfig, devnetSdk, envValue } from './sdk-env.mjs';
 import { REPO_ROOT, createdId, findRecentByValues } from './seed/seed-lib.mjs';
 import { buildDocument, randomIdBytes } from './verify-lib.mjs';
+import { liftBar } from './social-battery-lib.mjs';
 
 const SOCIAL_V10 = join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json');
 /** v11 stand-ins for week-long values, so settling and expiry happen within one run (see the header). */
@@ -341,6 +342,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * as verify-lib's battery handle does.
  */
 const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
+/** A timeout or a gateway error: the read never reached a verdict, so it is no refusal. */
+const TRANSIENT = /timed? ?out|timeout|deadline exceeded|bad gateway|gateway time|\b50[234]\b/i;
+/** The node's refusal of a documents read through an index that holds no documents (a counter). */
+const NON_INDEXED = /where clause on non indexed property/i;
 const session = { sdk: null, config: null, contracts: new Set() };
 const sdk = new Proxy({}, {
   get(_, property) {
@@ -436,6 +441,8 @@ const toBase58 = (value) => {
 /** A count answer as `{ key → number }`, keys base58 (the total is keyed ''). */
 const countEntries = (map) => Object.fromEntries([...map.entries()].map(([key, value]) => [key === '' ? '' : toBase58(key), Number(value)]));
 const total = (map) => Number(map.get('') ?? 0n);
+/** Where `keys` stand in grouped `entries`: a per-`in` read's zero groups are reported, not required (the book promises them for range walks only). */
+const zeroGroups = (entries, keys) => keys.map((key) => `${key.slice(0, 6)}… ${key in entries ? `present at ${entries[key]}` : 'absent'}`).join(', ');
 const docsOf = (result) => (result instanceof Map ? [...result.values()] : Object.values(result ?? {})).filter(Boolean);
 const idOf = (doc) => toBase58(doc.id ?? doc.$id ?? doc.toObject?.().$id);
 const createdAtOf = (doc) => Number(doc.createdAt ?? doc.$createdAt ?? doc.toObject?.().$createdAt ?? 0);
@@ -715,12 +722,18 @@ async function main() {
   // Mentions stay permanent: the mentioning post's own [mentionedUserId, $createdAt].
   const mentionsOfB = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
   await attempt('n3', () => sdk.documents.query(q('post', mentionsOfB)), (r) => check('n3 mentions of B (permanent mentionedUserAndTime, `$createdAt >`, newest first): m1', same(ids(r), [m1]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
-  const expectRefusal = async (label, run) => {
+  /**
+   * A read the node must refuse: a collapsed transport is retried, and a timeout or a gateway
+   * error is a FAIL rather than a refusal. With `pattern`, the refusal must also say why.
+   */
+  const expectRefusal = async (label, run, pattern) => {
     try {
-      await run();
+      await withReconnect(run);
       check(label, false, 'accepted');
     } catch (e) {
-      check(label, true, describeErr(e).slice(0, 160));
+      const reason = describeErr(e);
+      const refused = !TRANSPORT_COLLAPSE.test(reason) && !TRANSIENT.test(reason) && (pattern === undefined || pattern.test(reason));
+      check(label, refused, reason.slice(0, 200));
     }
   };
   // A windowed source cannot ride the notification bundle: composites take no
@@ -1066,7 +1079,7 @@ async function main() {
     if (counters) {
       // v12: byAuthorPost / byAuthorReply are counters of byPost / byReply. They hold no like
       // documents, so the author-pinned liker read is gone; what they answer is the count.
-      await expectRefusal('ol-e4x (v12) the liker read off byAuthorPost (`postAuthor ==`, `postId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })));
+      await expectRefusal('ol-e4x (v12) the liker read off byAuthorPost (`postAuthor ==`, `postId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })), NON_INDEXED);
       await attempt('ol-e4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], ['postId']),
         (m) => check('ol-e4 (v12) the same targets\' counters off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId: the counters\' sums): T1 2, T2 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1 }), JSON.stringify(countEntries(m))));
     } else {
@@ -1075,9 +1088,9 @@ async function main() {
     }
     await expectRefusal('ol-e5x the same across replies on byReply (`replyId in`, no `$ownerId ==`) is refused', () => sdk.documents.query(q('likeReply', { where: [['replyId', 'in', [r1, r5]]], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
     if (counters) {
-      await expectRefusal('ol-e6x (v12) the liker read off byAuthorReply (`replyAuthor ==`, `replyId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })));
+      await expectRefusal('ol-e6x (v12) the liker read off byAuthorReply (`replyAuthor ==`, `replyId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })), NON_INDEXED);
       await attempt('ol-e6', () => count('likeReply', [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], ['replyId']),
-        (m) => check('ol-e6 (v12) the replies\' counters off byAuthorReply (`replyAuthor ==`, `replyId in`, groupBy replyId): r1 1, r5 0', sameCounts(countEntries(m), { [r1]: 1 }), JSON.stringify(countEntries(m))));
+        (m) => check('ol-e6 (v12) the replies\' counters off byAuthorReply (`replyAuthor ==`, `replyId in`, groupBy replyId): r1 1, r5 0 or absent', sameCounts(countEntries(m), { [r1]: 1 }), `${JSON.stringify(countEntries(m))}; zero group r5 ${zeroGroups(countEntries(m), [r5])}`));
     } else {
       await attempt('ol-e6', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })),
         (r) => check('ol-e6 the same off byAuthorReply (`replyAuthor ==`, `replyId in`): A→r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
@@ -1089,7 +1102,7 @@ async function main() {
     }, (m) => check('dc-f1 A\'s latest 20 posts, liked ones by one grouped byPost count: T1 2, T2 1, Th 1', sameCounts(m, { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(m)));
     await attempt('ol-f4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2, T3, Th]]], ['postId']), (m) => (counters
       // v12: the counters' sums per `in` value; T3, liked and unliked, keeps its preallocated counter at 0.
-      ? check('ol-f4 (v12) the same off the byAuthorPost counters (`postAuthor ==`, `postId in`, groupBy postId reads each counter\'s sum): T1 2, T2 1, Th 1, T3 0 (liked and unliked)', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m)))
+      ? check('ol-f4 (v12) the same off the byAuthorPost counters (`postAuthor ==`, `postId in`, groupBy postId reads each counter\'s sum): T1 2, T2 1, Th 1, T3 (liked and unliked) 0 or absent', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), `${JSON.stringify(countEntries(m))}; zero group T3 ${zeroGroups(countEntries(m), [T3])}`)
       : check('ol-f4 the same off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId): T1 2, T2 1, Th 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m)))));
     await attempt('dc-f2', () => sdk.documents.composite({
       dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
@@ -1230,16 +1243,7 @@ async function main() {
     const counts = (m) => Object.fromEntries(Object.entries(countEntries(m)).filter(([key]) => key !== ''));
     /** Exactly these groups, zero groups included: a range walk over a preallocated counter keeps them (index-only.md). */
     const exactly = (m, expected) => same(Object.entries(counts(m)).sort(), Object.entries(expected).sort());
-    /** A per-`in` read's zero groups: reported, not required (the book promises them for range walks only). */
-    const zeros = (m, keys) => keys.map((key) => `${key.slice(0, 6)}… ${key in counts(m) ? `present at ${counts(m)[key]}` : 'absent'}`).join(', ');
-    const expectRefusalMatching = async (label, pattern, run) => {
-      try {
-        await withReconnect(run);
-        check(label, false, 'accepted');
-      } catch (e) {
-        check(label, pattern.test(describeErr(e)), describeErr(e).slice(0, 200));
-      }
-    };
+    const zeros = (m, keys) => zeroGroups(counts(m), keys);
     const postLike = (target, extra = {}) => ({ postId: id(target), postAuthor: id(D.ownerId), ...extra });
     const replyLike = (target) => ({ replyId: id(target), replyAuthor: id(D.ownerId) });
 
@@ -1250,8 +1254,12 @@ async function main() {
     const R1 = await mustCreate('R1 (D replies to C1)', D, 'reply', { content: 'counter reply one', rootPostId: id(C1), parentOwnerId: id(D.ownerId) });
     const R2 = await mustCreate('R2 (D replies to C1, never liked)', D, 'reply', { content: 'counter reply two', rootPostId: id(C1), parentOwnerId: id(D.ownerId) });
     await sleep(SETTLE_MS);
+    // An empty answer also totals 0, so the totals alone cannot tell a preallocated counter from
+    // none; the range walks can: they list a preallocated counter's zero group.
     await attempt('cn-0', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['hashtag', '==', tag]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
-      (all) => check('cn-0 before any like, D\'s counters read 0 (preallocated with each post and reply): author, C1, #cnproof, D\'s replies', all.every((m) => total(m) === 0), JSON.stringify(all.map(counts))));
+      (all) => check('cn-0 before any like, D\'s totals read 0 (or answer empty): author, C1, #cnproof, D\'s replies', all.every((m) => total(m) === 0), JSON.stringify(all.map(counts))));
+    await attempt('cn-0r', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId'])]),
+      ([posts, replies]) => check('cn-0r …and the range walks list every counter at 0 before any like (preallocated with each post and reply): C1..C4 0, R1 0, R2 0', exactly(posts, { [C1]: 0, [C2]: 0, [C3]: 0, [C4]: 0 }) && exactly(replies, { [R1]: 0, [R2]: 0 }), `posts ${JSON.stringify(counts(posts))} replies ${JSON.stringify(counts(replies))}`));
 
     // C1: A, B, C. C2 (#cnproof): A, B. C3: none. C4 (#cnproof): C. R1: A, B. → D 6, #cnproof 3, D's replies 2.
     for (const who of [A, B, C]) await likeWrite(who, 'like', postLike(C1));
@@ -1285,8 +1293,8 @@ async function main() {
 
     // (c) a range TOTAL through a ranked level is refused (grovedb proves totals only through
     // unranked trees), with the hint to group by the last property. byPost is ranked at postId.
-    await expectRefusalMatching('cn-c1 a range total on byAuthorPost (`postAuthor ==`, `postId >`, no groupBy) is refused, naming the grouping instead', /group/i, () => count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]]));
-    await expectRefusalMatching('cn-c2 a range total on byPost (`postId >`, no groupBy) is refused the same way (byPost ranks its last property)', /group|rank/i, () => count('like', [['postId', '>', MIN_ID]]));
+    await expectRefusal('cn-c1 a range total on byAuthorPost (`postAuthor ==`, `postId >`, no groupBy) is refused, naming the grouping instead', () => count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]]), /group/i);
+    await expectRefusal('cn-c2 a range total on byPost (`postId >`, no groupBy) is refused the same way (byPost ranks its last property)', () => count('like', [['postId', '>', MIN_ID]]), /group|rank/i);
 
     // (d) rankings: creators and hashtags by likes (no pins), an author's and a tag's posts (pinned).
     await attempt('cn-d1', () => ranked(null, 'postAuthor'), (r) => check('cn-d1 top creators (ranked count(*) GROUP BY postAuthor, read off the sum ranking): D 6 first, then A 4', same(nonZero(r).slice(0, 2), [[D.ownerId, 6], [A.ownerId, 4]]), JSON.stringify(nonZero(r))));
@@ -1301,8 +1309,8 @@ async function main() {
     await attempt('cn-d4', () => ranked([['hashtag', '==', tag]], 'postId'), (r) => check(`cn-d4 #${tag}'s top posts (\`hashtag ==\` GROUP BY postId): C2 2, C4 1`, same(nonZero(r), [[C2, 2], [C4, 1]]), JSON.stringify(entriesOf(r))));
 
     // (e) the counters hold no documents: likers are read per target on byPost.
-    await expectRefusal('cn-e1 a documents read through byAuthorPost (`postAuthor ==`, `postId in`) is refused', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })));
-    await expectRefusal('cn-e2 a documents read through byHashtagPost (`hashtag ==`) is refused', () => sdk.documents.query(q('like', { where: [['hashtag', '==', tag]], orderBy: [['hashtag', 'asc'], ['postId', 'asc']], limit: 100 })));
+    await expectRefusal('cn-e1 a documents read through byAuthorPost (`postAuthor ==`, `postId in`) is refused', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })), NON_INDEXED);
+    await expectRefusal('cn-e2 a documents read through byHashtagPost (`hashtag ==`) is refused', () => sdk.documents.query(q('like', { where: [['hashtag', '==', tag]], orderBy: [['hashtag', 'asc'], ['postId', 'asc']], limit: 100 })), NON_INDEXED);
     await attempt('cn-e3', () => sdk.documents.query(q('like', { where: [['postId', '==', C1]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })),
       (r) => check('cn-e3 C1\'s likers on byPost (`postId ==`, the app\'s per-target read once a counter moved): A, B, C', sameSet(docsOf(r).map((d) => toBase58((d.toObject?.() ?? d).$ownerId)), [A.ownerId, B.ownerId, C.ownerId]), `${docsOf(r).length} row(s)`));
 
@@ -1314,7 +1322,7 @@ async function main() {
       (m) => check('cn-f2 `replyAuthor ==`, `replyId in` [R1, R2], groupBy replyId: R1 2, R2 0', sameCounts(counts(m), { [R1]: 2 }), `${JSON.stringify(counts(m))}; zero group R2 ${zeros(m, [R2])}`));
     await attempt('cn-f2r', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId']),
       (m) => check('cn-f2r the same over a range on replyId, groupBy replyId: R1 2, R2 present at 0 (preallocated)', exactly(m, { [R1]: 2, [R2]: 0 }), JSON.stringify(counts(m))));
-    await expectRefusal('cn-f3 a ranking on byAuthorReply (declared unranked) is refused', () => sdk.documents.ranked(q('likeReply', { where: [['replyAuthor', '==', D.ownerId]], groupBy: 'replyId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })));
+    await expectRefusal('cn-f3 a ranking on byAuthorReply (declared unranked) is refused', () => sdk.documents.ranked(q('likeReply', { where: [['replyAuthor', '==', D.ownerId]], groupBy: 'replyId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), /no ranked index covers/i);
 
     // (g) an unlike takes the counters down; a drained counter stays at 0 (preallocated); a fresh post starts at 0.
     const unlikeNow = async (who, docType, data) => {
@@ -1364,8 +1372,8 @@ async function main() {
       const fresh = await create(D, 'post', { content: `${prefix} new while barred` });
       check(`${prefix}7 a new post by D is still refused (${code})`, !fresh.ok && refusal.test(fresh.error ?? ''), (fresh.error ?? 'ACCEPTED').slice(0, 200));
     };
-    // Whether a bar stands is read from the chain, so a ban that threw after landing is still
-    // lifted, and one that never landed is not "lifted" into a false failure.
+    // Once a bar was attempted it is always lifted (liftBar): a ban that threw after landing is
+    // still live, and a "not barred" refusal only counts once repeated standing reads agree.
     const standing = () => withReconnect(() => sdk.contracts.moderationStatus({ contractId, identityId: D.ownerId, lists: ['banlist', 'suspensions'] }));
     const suspendedUntil = Date.now() + 10 * 60_000;
     try {
@@ -1375,10 +1383,9 @@ async function main() {
     } catch (e) {
       check('rw-b the ban and the banned writes ran', false, describeErr(e).slice(0, 200));
     } finally {
-      if ((await standing().catch(() => ({ banned: true }))).banned) {
-        const error = await sdk.contracts.unbanUser({ ...(await moderatorA()), contractId, identityId: D.ownerId }).then(() => null, (e) => describeErr(e));
-        check('rw-b8 the interim owner unbans D', error === null, error ? `${error.slice(0, 160)} — D MAY STILL BE BANNED` : '');
-      }
+      const { lifted, detail } = await liftBar({ kind: 'ban', identityId: D.ownerId, contractId, standing,
+        lift: async () => sdk.contracts.unbanUser({ ...(await moderatorA()), contractId, identityId: D.ownerId }) });
+      check('rw-b8 the interim owner unbans D (the banlist reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 160)} — D MAY STILL BE BANNED`);
     }
     await sleep(SETTLE_MS);
     try {
@@ -1388,10 +1395,9 @@ async function main() {
     } catch (e) {
       check('rw-s the suspension and the suspended writes ran', false, describeErr(e).slice(0, 200));
     } finally {
-      if ((await standing().catch(() => ({ suspendedUntil: suspendedUntil }))).suspendedUntil !== undefined) {
-        const error = await sdk.contracts.unsuspendUser({ ...(await moderatorA()), contractId, identityId: D.ownerId }).then(() => null, (e) => describeErr(e));
-        check('rw-s8 the interim owner lifts D\'s suspension', error === null, error ? error.slice(0, 160) : '');
-      }
+      const { lifted, detail } = await liftBar({ kind: 'suspension', identityId: D.ownerId, contractId, standing,
+        lift: async () => sdk.contracts.unsuspendUser({ ...(await moderatorA()), contractId, identityId: D.ownerId }) });
+      check('rw-s8 the interim owner lifts D\'s suspension (the suspensions list reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 160)} — D MAY STILL BE SUSPENDED until ${new Date(suspendedUntil).toISOString()}`);
     }
     await sleep(SETTLE_MS);
     let after = await create(D, 'post', { content: 'rw after the bars' });

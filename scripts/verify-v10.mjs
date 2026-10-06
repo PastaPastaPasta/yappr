@@ -218,6 +218,7 @@ import {
   errorOf,
   feeAgreement,
   idOf,
+  liftBar,
   manualCreate,
   resolveModerator,
   settle,
@@ -305,6 +306,8 @@ const MODERATOR_FIELD = /\bcode"?\s*[=:]\s*41124\b|only the moderators of contra
 const FIELD_NOT_CHANGEABLE = /\bcode"?\s*[=:]\s*41123\b|can not be changed by moderators/i;
 /** A change that changes nothing, or names no field (10905). */
 const FIELDS_INVALID = /\bcode"?\s*[=:]\s*10905\b|the fields a moderator's document change sets are invalid/i;
+/** A documents read through an index that keeps no documents (a v12 counter) is refused with this. */
+const NON_INDEXED = /where clause on non indexed property/i;
 const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed/i;
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
@@ -637,19 +640,19 @@ async function caseM2InterimBan(ctx) {
   console.log('\n--- m2. the interim owner bans and unbans (v8 authority before any seat) ---');
   if (interimOnly(ctx, 'm2')) return;
   const probe = () => attemptCreate(sdk, botB, { contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) });
+  // A ban that threw may still have landed (its wait timed out), so it is lifted either way.
   try {
-    await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v10 battery ban' }, signer: moderator.signer });
-    check('m2a the interim owner bans B', true);
-  } catch (e) {
-    check('m2a the interim owner bans B', false, describeErr(e).slice(0, 220));
-    return;
-  }
-  try {
-    await settle();
-    expectRejected('m2b B\'s create while banned is refused (41107)', await probe(), BANNED);
+    const ban = await errorOf(() => sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v10 battery ban' }, signer: moderator.signer }));
+    check('m2a the interim owner bans B', ban === null, (ban ?? '').slice(0, 220));
+    if (ban === null) {
+      await settle();
+      expectRejected('m2b B\'s create while banned is refused (41107)', await probe(), BANNED);
+    }
   } finally {
-    const unban = await errorOf(() => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
-    check('m2c the owner unbans B', unban === null, unban ? `${unban.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand` : '');
+    const { lifted, detail } = await liftBar({ kind: 'ban', identityId: botB.ownerId, contractId,
+      lift: () => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }),
+      standing: () => standingOf(ctx, botB.ownerId, ['banlist']) });
+    check('m2c the owner unbans B (the banlist reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand`);
   }
   await settle();
   const after = await standingOf(ctx, botB.ownerId, ['banlist']);
@@ -1436,7 +1439,9 @@ async function counterNotification(ctx, { docType, targetId, data, what, cases: 
       where: [[author, '==', botB.ownerId], [field, 'in', [targetId]]], orderBy: [[author, 'asc'], [field, 'asc']], limit: 100 });
     check(`${notifyCase}x a liker read through the ${authorIndex} counter is refused (it keeps no like documents)`, false, `ACCEPTED, ${[...rows.values()].filter(Boolean).length} row(s)`);
   } catch (e) {
-    check(`${notifyCase}x a liker read through the ${authorIndex} counter is refused (it keeps no like documents)`, true, describeErr(e).slice(0, 160));
+    // Only the node's verdict on the index counts: a timeout or a dropped transport is no refusal.
+    const reason = describeErr(e);
+    check(`${notifyCase}x a liker read through the ${authorIndex} counter is refused as a read on no documents index ("where clause on non indexed property")`, NON_INDEXED.test(reason), reason.slice(0, 200));
   }
   const likers = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
     where: [[field, '==', targetId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 100 }));
@@ -1498,8 +1503,8 @@ async function caseX4BarredRetraction(ctx) {
     await expectFeedRefused(ctx, `${prefix}g a new post by B is still refused (${code}: the bar holds for everything else)`, botB, 'post', postData({ content: 'x4 new post while barred' }), refusal);
   };
 
-  // Whether a bar stands is read back from the chain: a ban or suspension that threw after it
-  // landed is still lifted, and one that never landed is not "lifted" into a false failure.
+  // Once a bar was attempted it is always lifted (liftBar): a ban or suspension that threw after it
+  // landed is still live, and a "not barred" refusal only counts once repeated reads agree.
   try {
     const ban = await errorOf(() => sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v12 battery x4 ban' }, signer: moderator.signer }));
     check('x4 the interim owner bans B', ban === null, (ban ?? '').slice(0, 220));
@@ -1508,10 +1513,10 @@ async function caseX4BarredRetraction(ctx) {
       await underBar('x4', banned, BANNED, '41107');
     }
   } finally {
-    if ((await standingOf(ctx, botB.ownerId, ['banlist']).catch(() => ({ banned: true }))).banned) {
-      const unban = await errorOf(() => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
-      check('x4 the owner unbans B', unban === null, unban ? `${unban.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand` : '');
-    }
+    const { lifted, detail } = await liftBar({ kind: 'ban', identityId: botB.ownerId, contractId,
+      lift: () => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }),
+      standing: () => standingOf(ctx, botB.ownerId, ['banlist']) });
+    check('x4 the owner unbans B (the banlist reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand`);
   }
   await settle();
 
@@ -1524,10 +1529,10 @@ async function caseX4BarredRetraction(ctx) {
       await underBar('x4s', suspended, SUSPENDED, '41108');
     }
   } finally {
-    if ((await standingOf(ctx, botB.ownerId, ['suspensions']).catch(() => ({ suspendedUntil: until }))).suspendedUntil !== undefined) {
-      const lifted = await errorOf(() => sdk.contracts.unsuspendUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
-      check('x4s the owner lifts B\'s suspension', lifted === null, lifted ? `${lifted.slice(0, 200)} — B MAY STILL BE SUSPENDED until ${new Date(until).toISOString()}` : '');
-    }
+    const { lifted, detail } = await liftBar({ kind: 'suspension', identityId: botB.ownerId, contractId,
+      lift: () => sdk.contracts.unsuspendUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }),
+      standing: () => standingOf(ctx, botB.ownerId, ['suspensions']) });
+    check('x4s the owner lifts B\'s suspension (the suspensions list reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 200)} — B MAY STILL BE SUSPENDED until ${new Date(until).toISOString()}`);
   }
 }
 

@@ -187,7 +187,12 @@ if (LIKES_KEEP_TIME) {
   }))));
 }
 
-/** v12: the author counter of each of the owner's recent targets equals the target index's own count. */
+/**
+ * v12: the author counter of each of the owner's recent targets equals the target index's own
+ * count. Both answers must be keyed by the targets asked for, and either some target has a like
+ * or the counters list every target: two empty (or differently keyed) answers would otherwise
+ * agree at 0 everywhere.
+ */
 async function verifyCounters(documentTypeName, author, target, docs) {
   const name = `${documentTypeName} author counters agree with the target index`;
   try {
@@ -196,12 +201,20 @@ async function verifyCounters(documentTypeName, author, target, docs) {
       sdk.documents.count({ dataContractId: social, documentTypeName, where: [[author, '==', owner], [target, 'in', ids]], groupBy: [target] }),
       sdk.documents.count({ dataContractId: social, documentTypeName, where: [[target, 'in', ids]], groupBy: [target] }),
     ]);
-    for (const targetId of ids) {
-      const hex = Buffer.from(bs58.decode(targetId)).toString('hex');
-      assert.equal(Number(counters.get(hex) ?? 0), Number(sources.get(hex) ?? 0), `${targetId}`);
+    const asked = new Set(ids.map(targetId => Buffer.from(bs58.decode(targetId)).toString('hex')));
+    // A zero group may be listed (a preallocated counter) or left out (the target index), so the
+    // non-zero groups are what must match; every listed group must be one of the asked targets.
+    const nonZero = (map) => [...map.entries()].filter(([key]) => key !== '').map(([key, n]) => [key, Number(n)]).filter(([, n]) => n !== 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    for (const [label, map] of [['counter', counters], ['target index', sources]]) {
+      const stray = [...map.keys()].filter(key => key !== '' && !asked.has(key));
+      assert.equal(stray.length, 0, `the ${label} answer is keyed by something other than the asked targets: ${stray.slice(0, 3).join(', ')}`);
     }
+    // Something must be compared: a like on some target, or every target's (preallocated) counter listed.
+    const listed = [...asked].filter(key => counters.has(key)).length;
+    assert.ok(nonZero(sources).length > 0 || listed === asked.size, `none of the owner's ${ids.length} recent ${target} targets has a like and the counter answer lists only ${listed} of them, so a match would prove nothing`);
+    assert.deepEqual(nonZero(counters), nonZero(sources), 'the non-zero groups differ');
     reports.push({ name, before: 2, after: 2, rows: ids.length, equivalent: true });
-    console.log(`PASS ${name}: ${ids.length} targets`);
+    console.log(`PASS ${name}: ${ids.length} targets, ${nonZero(sources).length} liked`);
   } catch (error) {
     const message = String(error.message || error.reason || error.toJSON?.() || JSON.stringify(error));
     reports.push({ name, equivalent: false, error: message });

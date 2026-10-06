@@ -1102,7 +1102,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * `byPost`/`byReply` instead: one request per target (the caller only asks
    * for the targets whose count moved, at most 10 per kind per poll), plus a
    * page per further 100 likers, {@link LIKER_READ_CONCURRENCY} at a time.
-   * Throws on a failed read.
+   * A target whose read fails is left out of the answer, which the like
+   * snapshot takes as "not re-read": it keeps that target's known likers and
+   * count, so the next poll reads it again while the others proceed. (A
+   * `complete: false` entry would store the new count without likers, and
+   * that target's next likers would then be taken silently.) Throws when
+   * every read failed, and on v11 on a failed read.
    */
   async getLikersOf(userId: string, targetIds: string[], kind: TargetKind): Promise<Map<string, { likers: string[]; complete: boolean }>> {
     const shape = indexOnlyLikeShapeFor(kind);
@@ -1111,8 +1116,20 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const { docType, field } = likeIndexFor(kind);
 
     if (shape.authorIndexIsCounter) {
-      const read = await mapLimit(targetIds, LIKER_READ_CONCURRENCY, (targetId) => this.readTargetLikers(sdk, targetId, kind));
-      return new Map(targetIds.map((targetId, index) => [targetId, read[index]]));
+      type LikerRead = { likers: string[]; complete: boolean };
+      const read = await mapLimit(targetIds, LIKER_READ_CONCURRENCY, (targetId) => this.readTargetLikers(sdk, targetId, kind).then(
+        (value): PromiseSettledResult<LikerRead> => ({ status: 'fulfilled', value }),
+        (reason: unknown): PromiseSettledResult<LikerRead> => ({ status: 'rejected', reason })
+      ));
+      const failed = read.flatMap((outcome) => (outcome.status === 'rejected' ? [outcome.reason] : []));
+      if (failed.length > 0 && failed.length === targetIds.length) {
+        throw failed[0] instanceof Error ? failed[0] : new Error(String(failed[0]));
+      }
+      if (failed.length > 0) logger.warn(`Like notifications: ${failed.length} of ${targetIds.length} ${kind} liker reads failed; they are re-read next poll:`, failed[0]);
+      return new Map(targetIds.flatMap((targetId, index): [string, LikerRead][] => {
+        const outcome = read[index];
+        return outcome.status === 'fulfilled' ? [[targetId, outcome.value]] : [];
+      }));
     }
 
     const rows = normalizeSDKResponse(await sdk.documents.query({
