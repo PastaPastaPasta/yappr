@@ -38,7 +38,7 @@ import { expectedSocialContractId, expectedTopology } from '../fixtures/contract
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
 import { CONTRACT_TOPOLOGIES } from '../../lib/constants'
-import { deletesAreTombstones, repostsAreQuotes, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
+import { deletesAreTombstones, tombstonesAreHidden, repostsAreQuotes, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -108,7 +108,7 @@ function topologyFacts(topology: string) {
       hashtags: windowedRankingFor('hashtags'),
       creators: windowedRankingFor('creators'),
     }
-    return { deletesAreTombstones: deletesAreTombstones(), repostsAreQuotes: repostsAreQuotes(), windows }
+    return { deletesAreTombstones: deletesAreTombstones(), tombstonesAreHidden: tombstonesAreHidden(), repostsAreQuotes: repostsAreQuotes(), windows }
   } finally {
     if (saved === undefined) delete process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
     else process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY = saved
@@ -116,6 +116,12 @@ function topologyFacts(topology: string) {
 }
 const FACTS = topologyFacts(SPEC_TOPOLOGY)
 const DELETES_ARE_REAL = FACTS?.deletesAreTombstones === false
+/**
+ * v11/v12: an author's tombstone is hidden, and a tombstoned reply with no live
+ * replies under it is dropped from the thread (one with live replies stays as a
+ * "deleted by its author" stub). v9 keeps a deleted card in place.
+ */
+const TOMBSTONES_ARE_HIDDEN = FACTS?.tombstonesAreHidden === true
 /** v10: a repost is a bare quote post, so a reply can be reposted too. */
 const REPOSTS_ARE_QUOTES = FACTS?.repostsAreQuotes === true
 const WINDOWS = FACTS?.windows
@@ -375,9 +381,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     )
   })
 
-  test(DELETES_ARE_REAL ? 'deleting the nested reply removes it' : 'deleting the nested reply leaves a tombstone card', async ({ page }) => {
-    // v9: reply is canBeDeleted:false, so this is a replace that blanks the
-    // content and sets deleted:true; the document and every reference to it
+  test(DELETES_ARE_REAL ? 'deleting the nested reply removes it'
+    : TOMBSTONES_ARE_HIDDEN ? 'deleting the nested reply tombstones it out of the thread'
+    : 'deleting the nested reply leaves a tombstone card', async ({ page }) => {
+    // v9/v11/v12: reply is canBeDeleted:false, so this is a replace that blanks
+    // the content and sets deleted:true; the document and every reference to it
     // survive. v10: reply is owner-deletable, so the document is removed.
     test.setTimeout(300_000)
 
@@ -395,9 +403,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(confirm).toBeHidden({ timeout: COMPOSE_TIMEOUT })
 
-    if (DELETES_ARE_REAL) {
-      // The document is gone: once the thread re-reads, its text is nowhere,
-      // while the reply it answered (and the root) are still there.
+    if (DELETES_ARE_REAL || TOMBSTONES_ARE_HIDDEN) {
+      // v10: the document is gone. v11/v12: it is a tombstone, and a tombstoned
+      // leaf reply (nothing live under it) is dropped from the thread. Either
+      // way, once the thread re-reads, its text is nowhere, while the reply it
+      // answered (and the root) are still there.
       await expect.poll(async () => {
         await page.goto(appUrl(`/post?id=${rootPostId}`))
         await expect(page.getByTestId(`post-card-${firstReplyId}`)).toBeVisible({ timeout: 60_000 })

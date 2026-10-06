@@ -661,7 +661,7 @@ export function referencesAreEnforced(): boolean {
 /**
  * True when post and reply documents are permanent (`canBeDeleted: false`) and a
  * "delete" is therefore an edit that blanks the content and sets `deleted: true`
- * rather than a document removal (v9, v11). On v10 a delete removes the document.
+ * rather than a document removal (v9, v11, v12). On v10 a delete removes the document.
  */
 export function deletesAreTombstones(): boolean {
   const { topology } = topologyDescriptor()
@@ -1303,9 +1303,12 @@ type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | t
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
-  if (topologyDescriptor().topology === 'v12') return socialContractV12
-  if (isV11()) return socialContractV11
-  return isV10() ? socialContractV10 : socialContractV9
+  switch (topologyDescriptor().topology) {
+    case 'v12': return socialContractV12
+    case 'v11': return socialContractV11
+    case 'v10': return socialContractV10
+    default: return socialContractV9
+  }
 }
 
 function devnetSchemas(): Record<string, SocialDocumentSchema> {

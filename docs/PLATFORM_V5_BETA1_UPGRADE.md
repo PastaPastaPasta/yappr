@@ -185,6 +185,8 @@ document, since the SDK still emits `//`.
 
 ### Contracts on sakura
 
+> **Superseded 2026-10-06.** Sakura's Platform chain was wiped for 5.0.0-beta.2, so every identity and contract id below is dead. The live set is in [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE.md).
+
 Published 2026-10-01 by the maker `HduDV8Ru5ABpSssDaAiJeEGa7L4JanbvHGBz7Q16MucE` (index 9 of the privately retained deployment seed, not the CI seed),
 nonces 1-10, all in contract group `7ZXmLYbq614VzFMpiPFCRhRYKAJhCg3zfGvEGy9RQVEY` (registered on the social create).
 
