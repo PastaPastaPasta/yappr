@@ -84,6 +84,8 @@ const LIKE_NOTIFICATION_PAGE_SIZE = 100;
 const LIKER_READ_MAX_PAGES = 3;
 /** v12: per-target liker reads in flight at once (one request each, the targets whose count moved). */
 const LIKER_READ_CONCURRENCY = 4;
+/** One target's likers (identity ids), and whether the read reached the last of them. */
+type TargetLikers = { likers: string[]; complete: boolean };
 /** Keyset pages per target when the one `in` read comes back full (1,000 likes of one target since the last poll). */
 const LIKE_NOTIFICATION_MAX_PAGES = 10;
 
@@ -1109,27 +1111,28 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * that target's next likers would then be taken silently.) Throws when
    * every read failed, and on v11 on a failed read.
    */
-  async getLikersOf(userId: string, targetIds: string[], kind: TargetKind): Promise<Map<string, { likers: string[]; complete: boolean }>> {
+  async getLikersOf(userId: string, targetIds: string[], kind: TargetKind): Promise<Map<string, TargetLikers>> {
     const shape = indexOnlyLikeShapeFor(kind);
     if (!shape) throw new Error('Liker reads need an indexOnly like doctype');
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const { docType, field } = likeIndexFor(kind);
 
     if (shape.authorIndexIsCounter) {
-      type LikerRead = { likers: string[]; complete: boolean };
-      const read = await mapLimit(targetIds, LIKER_READ_CONCURRENCY, (targetId) => this.readTargetLikers(sdk, targetId, kind).then(
-        (value): PromiseSettledResult<LikerRead> => ({ status: 'fulfilled', value }),
-        (reason: unknown): PromiseSettledResult<LikerRead> => ({ status: 'rejected', reason })
+      const reads = await mapLimit(targetIds, LIKER_READ_CONCURRENCY, (targetId) => this.readTargetLikers(sdk, targetId, kind).then(
+        (value): PromiseSettledResult<TargetLikers> => ({ status: 'fulfilled', value }),
+        (reason: unknown): PromiseSettledResult<TargetLikers> => ({ status: 'rejected', reason })
       ));
-      const failed = read.flatMap((outcome) => (outcome.status === 'rejected' ? [outcome.reason] : []));
+      const likers = new Map<string, TargetLikers>();
+      const failed: unknown[] = [];
+      reads.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') likers.set(targetIds[index], outcome.value);
+        else failed.push(outcome.reason);
+      });
       if (failed.length > 0 && failed.length === targetIds.length) {
         throw failed[0] instanceof Error ? failed[0] : new Error(String(failed[0]));
       }
       if (failed.length > 0) logger.warn(`Like notifications: ${failed.length} of ${targetIds.length} ${kind} liker reads failed; they are re-read next poll:`, failed[0]);
-      return new Map(targetIds.flatMap((targetId, index): [string, LikerRead][] => {
-        const outcome = read[index];
-        return outcome.status === 'fulfilled' ? [[targetId, outcome.value]] : [];
-      }));
+      return likers;
     }
 
     const rows = normalizeSDKResponse(await sdk.documents.query({
@@ -1165,7 +1168,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     sdk: Awaited<ReturnType<typeof getEvoSdk>>,
     targetId: string,
     kind: TargetKind
-  ): Promise<{ likers: string[]; complete: boolean }> {
+  ): Promise<TargetLikers> {
     const { likes, complete } = await this.pageTargetLikes(sdk, targetId, kind, LIKER_READ_MAX_PAGES, { targetThenOwner: true });
     return { likers: likes.map((like) => like.$ownerId), complete };
   }

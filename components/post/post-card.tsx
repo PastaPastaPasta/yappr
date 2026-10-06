@@ -474,8 +474,7 @@ function PostCardView({
         // v9/v11 delete by tombstone, a replace: a banned or suspended author
         // is refused it (41107/41108), so say that, with the moderators' reason,
         // and close the dialog: every retry would be another paid refusal.
-        // v12 lets a barred author's tombstone through (retractedWhen), so
-        // there the delete just succeeds.
+        // v12 accepts a barred author's tombstone (retractedWhen).
         if (reportBarredWrite(error, authedUser.identityId)) return
         toast.error(categorizeError(error))
         throw error

@@ -379,16 +379,15 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * The author's delete, whatever it means on this topology: a tombstone where
-   * posts are permanent ({@link deletesAreTombstones}: v9, v11), a document
+   * posts are permanent ({@link deletesAreTombstones}: v9, v11, v12), a document
    * delete elsewhere. On v11 this is also how a repost is undone: the
    * tombstone clears the bare repost's quote, which frees the author's
    * one-quote-per-target slot (`ownerAndQuotedPost`), so reposting again is a
    * new bare repost.
    *
-   * Throws the refusal when a banned or suspended author's tombstone is
-   * refused (41107/41108 on v9/v11; v12 accepts it,
-   * `barredAuthorsCanTombstone()`, {@link tombstoneDocument}); false for
-   * any other failure.
+   * Throws the refusal of a banned or suspended author's tombstone
+   * (41107/41108, v9/v11 only, {@link tombstoneDocument}); false for any
+   * other failure.
    */
   async deleteOwnPost(postId: string, ownerId: string): Promise<boolean> {
     return deletesAreTombstones() ? this.tombstonePost(postId, ownerId) : this.deletePost(postId, ownerId);
