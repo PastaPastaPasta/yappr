@@ -29,6 +29,7 @@ import { DASHPAY_CONTRACT_ID, getContractTopology, type ContractTopology } from 
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
+import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -126,6 +127,15 @@ export interface IndexOnlyLikeShape {
    * window expires (up to 72 h for posts, 24 h for tags).
    */
   deleteNamesCreatedAt: boolean
+  /**
+   * True when the author index (`like.byAuthorPost [postAuthor, postId]`,
+   * `likeReply.byAuthorReply [replyAuthor, replyId]`) keeps one counter per
+   * target instead of an entry per like (v12: `summableOffCountIndex` on
+   * `byPost` / `byReply`, platform#5250). Counts, sums and rankings read the
+   * same through it, but it returns no like documents: who liked a target is
+   * only ever read through the target index (`byPost` / `byReply`).
+   */
+  authorIndexIsCounter: boolean
 }
 
 /** The doctypes and fields one target kind's engagements live in. */
@@ -280,13 +290,13 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 const V9_POST_INTERACTIONS: InteractionSurface = {
   ...V2_INTERACTIONS,
   like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
-  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false, deleteNamesCreatedAt: true },
+  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
   replyCountField: 'rootPostId',
 }
 
 const V9_REPLY_INTERACTIONS: InteractionSurface = {
   like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false, deleteNamesCreatedAt: true },
+  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
   repost: null,
   bookmark: null,
   quoteField: 'quotedReplyId',
@@ -353,13 +363,13 @@ const V10_DESCRIPTOR: ContractTopologyDescriptor = {
     post: {
       ...V9_POST_INTERACTIONS,
       like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postAuthor', ownerIsTerminal: true },
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
       repost: null,
     },
     reply: {
       ...V9_REPLY_INTERACTIONS,
       like: { docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: 'replyAuthor', ownerIsTerminal: true },
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
     },
   },
 }
@@ -397,11 +407,40 @@ const V11_DESCRIPTOR: ContractTopologyDescriptor = {
   interactions: {
     post: {
       ...V10_DESCRIPTOR.interactions.post,
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: false },
     },
     reply: {
       ...V10_DESCRIPTOR.interactions.reply,
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: false },
+    },
+  },
+}
+
+/**
+ * v12 — `contracts/yappr-social-contract-v12.json`, the 5.0.0-beta.2 devnet
+ * (docs/SOCIAL_V12.md). v11 with two beta.2 keywords:
+ *
+ * - **Counter author indexes** (`summableOffCountIndex`, platform#5250).
+ *   `like.byAuthorPost`, `like.byHashtagPost` and `likeReply.byAuthorReply`
+ *   keep one counter per post (reply) of how many entries `byPost` (`byReply`)
+ *   holds for it, instead of an entry per like. Counts and rankings read the
+ *   same; documents do not exist there any more, so likers are read through
+ *   the target index only ({@link IndexOnlyLikeShape.authorIndexIsCounter}).
+ * - **`retractedWhen: { present: "deleted" }`** (platform#5253) on post and
+ *   reply: a banned or suspended author can still tombstone its own post or
+ *   reply ({@link barredAuthorsCanTombstone}), and nothing else.
+ */
+const V12_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V11_DESCRIPTOR,
+  topology: 'v12',
+  interactions: {
+    post: {
+      ...V11_DESCRIPTOR.interactions.post,
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: true },
+    },
+    reply: {
+      ...V11_DESCRIPTOR.interactions.reply,
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: true },
     },
   },
 }
@@ -420,6 +459,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v9: V9_DESCRIPTOR,
   v10: V10_DESCRIPTOR,
   v11: V11_DESCRIPTOR,
+  v12: V12_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -441,24 +481,38 @@ function isDevnetCut(): boolean {
 }
 
 /**
- * True on the 4.2.0-beta.7 cut (v10) and on its 5.0.0-beta.1 successor (v11),
- * which keeps every v10 surface: real deletes, no `beat`, no
+ * True on the 4.2.0-beta.7 cut (v10) and on its 5.0 successors (v11, v12),
+ * which keep every v10 surface: real deletes, no `beat`, no
  * `post.language`, `keyGeneration` for the private feed, media hashes,
  * moderator-resolved reports, the DashPay-based profile and a paused,
  * unpriced YAPP. What v11 changes on top asks {@link isV11}.
  */
 export function isV10(): boolean {
   const { topology } = topologyDescriptor()
-  return topology === 'v10' || topology === 'v11'
+  return topology === 'v10' || topology === 'v11' || topology === 'v12'
 }
 
 /**
- * True on the 5.0.0-beta.1 cut (v11): v10 plus timeless likes
- * (`outlivesDelete`), removal records that keep fields, and settled posts and
- * replies only the seated team deletes together.
+ * True on the 5.0.0-beta.1 cut (v11) and on its 5.0.0-beta.2 successor (v12),
+ * which keeps every v11 rule: v10 plus timeless likes (`outlivesDelete`),
+ * removal records that keep fields, and settled posts and replies only the
+ * seated team deletes together. What v12 changes on top asks
+ * {@link IndexOnlyLikeShape.authorIndexIsCounter} and
+ * {@link barredAuthorsCanTombstone}.
  */
 export function isV11(): boolean {
-  return topologyDescriptor().topology === 'v11'
+  const { topology } = topologyDescriptor()
+  return topology === 'v11' || topology === 'v12'
+}
+
+/**
+ * True when a banned or suspended author may still tombstone its own post or
+ * reply (v12: `retractedWhen: { present: "deleted" }`, platform#5253). On v11
+ * Drive refuses a barred identity every replace, so a barred author cannot
+ * take its own post down at all (41107/41108).
+ */
+export function barredAuthorsCanTombstone(): boolean {
+  return topologyDescriptor().topology === 'v12'
 }
 
 /** How reply documents name their parents on this topology. */
@@ -611,7 +665,7 @@ export function referencesAreEnforced(): boolean {
  */
 export function deletesAreTombstones(): boolean {
   const { topology } = topologyDescriptor()
-  return topology === 'v9' || topology === 'v11'
+  return topology === 'v9' || topology === 'v11' || topology === 'v12'
 }
 
 /**
@@ -1244,10 +1298,11 @@ interface SocialDocumentSchema {
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
+  if (topologyDescriptor().topology === 'v12') return socialContractV12
   if (isV11()) return socialContractV11
   return isV10() ? socialContractV10 : socialContractV9
 }

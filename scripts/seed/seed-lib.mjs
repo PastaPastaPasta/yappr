@@ -56,11 +56,13 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 export const YAPP_TOKEN_POSITION = 0;
 
 /**
- * The social topologies the seeder writes: v10 and v11. v11 (docs/SOCIAL_V11.md) keeps every
+ * The social topologies the seeder writes: v10, v11 and v12. v11 (docs/SOCIAL_V11.md) keeps every
  * create shape the seeder writes; it differs in deletes (tombstones), unlikes and moderation,
- * which the seeder never does. Both take their profiles from DashPay plus `yapprProfile`.
+ * which the seeder never does. v12 (docs/SOCIAL_V12.md) changes only how the like author and
+ * hashtag indexes store (counters) and who may tombstone, not what a create carries. All take
+ * their profiles from DashPay plus `yapprProfile`.
  */
-export const SEEDED_TOPOLOGIES = ['v10', 'v11'];
+export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
   `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));

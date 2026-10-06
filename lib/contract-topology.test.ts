@@ -58,7 +58,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
