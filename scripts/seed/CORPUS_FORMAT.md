@@ -89,7 +89,8 @@ the executor cannot deadlock.
   entirely** on the post AND on every like of it (a `where` entry treats
   both-absent as agreement; writing `''` is consensus error 40127; the like's
   `byHashtagPost` and `byTrendHashtagPost` indexes are `skipIfAbsent`, so absence
-  writes no entry). Tags match `^[a-z0-9_]{1,61}$`, enforced at parse time.
+  writes no entry; on v12 `byHashtagPost` is a counter of `byPost`, one per
+  tagged post, and an untagged post has none). Tags match `^[a-z0-9_]{1,61}$`, enforced at parse time.
 - `content`: may contain `{{link:REF}}` placeholders, where `REF` must be an
   **earlier post/quote ref**; the executor replaces each with
   `https://yap.pr/devnet/post/?id=<realPostId>`. The validator budgets 44

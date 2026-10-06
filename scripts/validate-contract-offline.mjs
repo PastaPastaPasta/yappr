@@ -44,7 +44,7 @@
  *   node scripts/validate-contract-offline.mjs <file> --immutable post,reply
  *   node scripts/validate-contract-offline.mjs <file> --network mainnet   # mainnet's one-day election-window floor (default devnet: 0)
  *   node scripts/validate-contract-offline.mjs <file> --cost              # documentCreateCost per type (new / known index values)
- *   node scripts/validate-contract-offline.mjs --probes
+ *   node scripts/validate-contract-offline.mjs --probes        # negative probes, update probes through wasm-dpp2 validateUpdate
  *   node scripts/validate-contract-offline.mjs --constraints   # propertyConstraints accept/refuse cases (wasm-sdk checkDocumentPropertyConstraints)
  */
 import { readFileSync } from 'node:fs';
@@ -122,6 +122,18 @@ function parseContract(source, platformVersion = PlatformVersion.latest()) {
 /** The wasm-dpp2 parse: the same parser with rs-dpp's `validation` (meta-schema, index shapes). */
 function parseWithNodeRules(source) {
   return NodeRulesDataContract.fromJSON(contractJson(source), true, NodeRulesPlatformVersion.latest());
+}
+
+/**
+ * Why a data contract update from `stored` to `updated` would be refused, as
+ * `<code> <message>` lines ([] = accepted): wasm-dpp2's `validateUpdate`, the
+ * code consensus runs on an update transition. No state is read.
+ */
+function updateRefusals(stored, updated) {
+  const platformVersion = NodeRulesPlatformVersion.latest();
+  const before = NodeRulesDataContract.fromJSON(contractJson(stored), true, platformVersion);
+  const after = NodeRulesDataContract.fromJSON(contractJson(updated), true, platformVersion);
+  return before.validateUpdate(after, undefined, platformVersion).map((error) => `${error.code} ${error.message}`);
 }
 
 const describeReference = (reference) => {
@@ -222,7 +234,7 @@ async function main() {
   if (probes) {
     const platformVersion = PlatformVersion.latest();
     const sizeOf = (contract) => createTransitionSize(contract, { DataContractCreateTransition, platformVersion });
-    const failed = runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf });
+    const failed = runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf, updateRefusals });
     if (failed > 0) throw new Error(`${failed} probe(s) did not behave as recorded`);
   }
   if (constraints) {

@@ -86,6 +86,41 @@
  *          from documentRemovals
  *   tm-0*  before a team is seated: past the window even the interim owner's
  *          delete is refused (41116), and a team proposal is 41205
+ *
+ * ## Social v12 (`--contract-file contracts/yappr-social-contract-v12.json`)
+ *
+ * v12 (docs/SOCIAL_V12.md) is v11 whose like author and hashtag indexes are
+ * `summableOffCountIndex` counters of byPost / byReply (one SumItem per post,
+ * no like documents; platform#5250) and whose post and reply declare
+ * `retractedWhen` (#5253). Every v11 phase runs; what the file declares
+ * switches:
+ *   ol-e4/ol-e6  the author-pinned liker reads are refused (ol-e4x, ol-e6x);
+ *          the same targets' counters are read instead (grouped counts)
+ *   ol-f4  the grouped per-post count reads the counters' sums
+ *   cn-*   counters (D's fresh posts and replies): zero from creation (cn-0);
+ *          point counts at the post, author and hashtag levels, each equal to
+ *          sum(byPost) (cn-a); grouped per-post counts per `in` value and over
+ *          a range grouped by postId, zero groups included (cn-b); a range
+ *          TOTAL through a ranked level refused with the grouping hint, on
+ *          byAuthorPost and on byPost (cn-c); ranked creators (count and
+ *          sum(byPost)), hashtags, an author's and a tag's posts (cn-d);
+ *          documents reads through the counters refused, likers per target on
+ *          byPost (cn-e); likeReply counters off byReply, unranked (cn-f);
+ *          unlikes take the counters down, a drained or fresh post stays at 0
+ *          (cn-g). Drive's refusal of a batch moving one type's counters for
+ *          two documents is not reachable through a state transition (cn-h).
+ *   rw-*   the interim owner bans, then suspends D: D's edits are refused
+ *          (41107 / 41108), a tombstone keeping text is 10422, its tombstones
+ *          of its own post and reply land, a take-back and a new post are
+ *          refused; both bars are lifted again
+ *   tm-15–tm-22 (`--team-proof … --added-member <n>`, optional, any cut whose
+ *          deleteSettled needs several approvals; platform#5260) the leader
+ *          adds E after D wrote S5 and before S6: E's proposal and approval of
+ *          S5 are 41212 while the elected members and the leader complete it;
+ *          E's proposal of S6 counts; the leader takes E off again. E must have
+ *          filed a join request for the seated team's submitted charter (an
+ *          `addedModerator` names one); without it the phase skips.
+ *
  * Then seat a team on the throwaway contract (the ops election tooling: a
  * charter by the leader, join requests, the apply; the windows are
  * PROOF_ELECTION_WINDOW s) and run the second phase:
@@ -107,6 +142,10 @@
  *        --bot 0 --bot 1 --bot 2 --identity-id <D> --key-wif-file <file> [--state-file <json>]
  *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v11.json \
  *        --team-proof <contractId> --reason-doc <reasonId> --bot 0 --bot 1 --bot 2 --identity-id <D> --key-wif-file <file>
+ *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v12.json \
+ *        --bot 0 --bot 1 --bot 2 --bot 3            # v12: as v11, plus cn-* and rw-*
+ *   node scripts/prove-merged-counts.mjs --contract-file contracts/yappr-social-contract-v12.json \
+ *        --team-proof <contractId> --reason-doc <reasonId> --bot 0 --bot 1 --bot 2 --bot 3 [--added-member 4]
  *
  * The first identity (A) registers the throwaway contract, which costs about
  * 40 × 10⁹ credits; B and C need only a few document writes' worth.
@@ -133,6 +172,8 @@ const PROOF_ELECTION_WINDOW = 60;
 /** The trend grids at the real contract's ratios: posts 3 windows of 3 steps (72h/24h), tags 4 (24h/6h). */
 const PROOF_TREND_GRIDS = { byTrendPost: { range: 360, step: 120 }, byTrendHashtagPost: { range: 240, step: 60 } };
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
+/** The moderation charters system contract: the seated team's `addedModerator` and `joinRequest` documents (tm-15). */
+const MODERATION_CHARTERS_CONTRACT_ID = 'EG7RGfV8fDTayC2FyVr8HwdpJh3fXDbVztcfE94UmN88';
 const SETTLE_MS = 3000;
 const DUPLICATE_UNIQUE = /\bcode"?\s*[=:]\s*40105\b|duplicate unique properties/i;
 const RULE_BROKEN = /\bcode"?\s*[=:]\s*10422\b|does not hold/i;
@@ -191,6 +232,16 @@ function likesOutliveDelete(social) {
   return social.documentSchemas.like.indices.some((index) => index.outlivesDelete === true);
 }
 
+/** True for a cut whose like author indexes are `summableOffCountIndex` counters (v12): one counter per post, no like documents. */
+function authorIndexesAreCounters(social) {
+  return social.documentSchemas.like.indices.some((index) => index.summableOffCountIndex !== undefined);
+}
+
+/** True for a cut whose post and reply declare `retractedWhen` (v12): a barred author may still tombstone. */
+function barredAuthorsRetract(social) {
+  return ['post', 'reply'].every((type) => social.documentSchemas[type].retractedWhen !== undefined);
+}
+
 function contractJson(source, { id, ownerId }) {
   return { ...source, id, ownerId };
 }
@@ -198,13 +249,18 @@ function contractJson(source, { id, ownerId }) {
 // ---- Arguments --------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { actors: [], dryRun: false, contractFile: SOCIAL_V10, teamProof: null, reasonDoc: null, stateFile: null };
+  const args = { actors: [], dryRun: false, contractFile: SOCIAL_V10, teamProof: null, reasonDoc: null, stateFile: null, addedMember: null };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--contract-file': args.contractFile = isAbsolute(argv[i + 1]) ? argv[++i] : join(REPO_ROOT, argv[++i]); break;
       case '--team-proof': args.teamProof = argv[++i]; break;
       case '--reason-doc': args.reasonDoc = argv[++i]; break;
       case '--state-file': args.stateFile = argv[++i]; break;
+      case '--added-member': {
+        const [index, id] = argv[++i].split(':');
+        args.addedMember = { kind: 'bot', index: Number(index), id: id || null };
+        break;
+      }
       case '--bot': {
         const [index, id] = argv[++i].split(':');
         args.actors.push({ kind: 'bot', index: Number(index), id: id || null });
@@ -225,7 +281,8 @@ function parseArgs(argv) {
   if (!args.dryRun && args.actors.length !== (v11 ? 4 : 3)) {
     throw new Error(`name exactly ${v11 ? 'four' : 'three'} identities (--bot <n> or --identity-id <id> --key-wif-file <file>), in the order A B C${v11 ? ' D (D never on the team)' : ''}`);
   }
-  if (args.teamProof && (!v11 || !args.reasonDoc)) throw new Error('--team-proof needs a v11 --contract-file and the charter\'s --reason-doc');
+  if (args.teamProof && (!v11 || !args.reasonDoc)) throw new Error('--team-proof needs a v11 or v12 --contract-file and the charter\'s --reason-doc');
+  if (args.addedMember && (!args.teamProof || !Number.isInteger(args.addedMember.index))) throw new Error('--added-member <n[:id]> (a seed bot) goes with --team-proof');
   for (const actor of args.actors) {
     if (actor.kind === 'bot' && !Number.isInteger(actor.index)) throw new Error('--bot takes a seed index (optionally <n>:<identityId>)');
     if (actor.kind === 'wif' && !actor.wifFile) throw new Error(`--identity-id ${actor.id} needs its --key-wif-file`);
@@ -396,12 +453,15 @@ async function main() {
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
   const source = proofContractSource(args.contractFile);
   const v11 = likesOutliveDelete(source);
+  const counters = authorIndexesAreCounters(source);
+  const retracts = barredAuthorsRetract(source);
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
   DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
   NodeRulesDataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, NodeRulesPlatformVersion.latest());
   const indexes = Object.fromEntries(Object.entries(source.documentSchemas).map(([type, schema]) => [type, schema.indices.map((index) => index.name)]));
   console.log(`throwaway contract parses (wasm-sdk + wasm-dpp2): ${JSON.stringify(indexes)}`);
+  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? ', cn (v12 counters)' : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}`);
   if (args.dryRun) {
     const id = bs58.encode(randomIdBytes());
     for (const [docType, data] of [['post', { content: 'x' }], ['post', { quotedPostId: bs58.decode(id), quotedPostOwnerId: bs58.decode(id) }], ['reply', { rootPostId: bs58.decode(id), parentOwnerId: bs58.decode(id), content: 'x' }], ['follow', { followingId: bs58.decode(id) }]]) {
@@ -759,6 +819,28 @@ async function main() {
     check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3, m1', got.size === 4 && [q1, q2, q3, m1].every((x) => got.has(x)), JSON.stringify([...got]));
   });
 
+  // ---- shared by the v11/v12 phases: an author's replace, judged by the chain ----
+  /** `who`'s replace of `docId` with `data` at the next revision: `{ ok }`, or the consensus refusal. */
+  const replaceDoc = async (who, docType, docId, data) => {
+    const stored = await withReconnect(() => sdk.documents.get(contractId, docType, docId));
+    const revision = BigInt(stored?.revision ?? stored?.toObject?.().$revision ?? 1) + 1n;
+    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, revision, id: bs58.decode(docId) });
+    try {
+      await sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer });
+    } catch (e) {
+      const error = describeErr(e);
+      if (CONSENSUS_CODE.test(error)) return { ok: false, error };
+    }
+    await sleep(SETTLE_MS);
+    const after = await sdk.documents.get(contractId, docType, docId);
+    const landed = BigInt(after?.revision ?? after?.toObject?.().$revision ?? 0) >= revision;
+    return landed ? { ok: true } : { ok: false, error: 'the replace did not land' };
+  };
+  const refusedWith = (label, outcome, pattern) => check(label, !outcome.ok && pattern.test(outcome.error ?? ''), (outcome.error ?? 'ACCEPTED').slice(0, 200));
+  const IMMUTABLE = /\bcode"?\s*[=:]\s*40128\b|immutable/i;
+  const BLANK = /\bcode"?\s*[=:]\s*10422\b.{0,400}tombstoneIsBlank|tombstoneIsBlank/i;
+  const plain = (doc) => doc?.toJSON?.() ?? doc?.toObject?.() ?? {};
+
   // ---- dc: like design C (no byLiker; byAuthorPostTime / byAuthorReplyTime) ----
   async function proveDesignC() {
     console.log('\n--- dc. like design C: heart state on byPost/byReply, rankings, per-post notifications, unlike ---');
@@ -980,19 +1062,35 @@ async function main() {
     }, (got) => check('ol-e2 keyset paging 1 at a time on the terminal (`$ownerId >` the last seen, no id cursor) walks both likers of T1 once', sameSet(got, [B.ownerId, C.ownerId]), JSON.stringify(got)));
     // Several targets in one read need the author pinned (ol-e4): on byPost the `in` sits on the
     // only property while the terminal ranges, which the node refuses.
-    await expectRefusal('ol-e3x ONE liker read across posts on byPost (`postId in`, no `$ownerId ==`) is refused; the author-pinned byAuthorPost form serves it', () => sdk.documents.query(q('like', { where: [['postId', 'in', [T1, T2]]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
-    await attempt('ol-e4', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })),
-      (r) => check('ol-e4 the same off byAuthorPost (`postAuthor ==`, `postId in`): B→T1, C→T1, B→T2', sameSet(pairsOf(r, 'postId'), [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairsOf(r, 'postId'))));
+    await expectRefusal(`ol-e3x ONE liker read across posts on byPost (\`postId in\`, no \`$ownerId ==\`) is refused; ${counters ? 'v12 reads each target on its own (ol-e1)' : 'the author-pinned byAuthorPost form serves it'}`, () => sdk.documents.query(q('like', { where: [['postId', 'in', [T1, T2]]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
+    if (counters) {
+      // v12: byAuthorPost / byAuthorReply are counters of byPost / byReply. They hold no like
+      // documents, so the author-pinned liker read is gone; what they answer is the count.
+      await expectRefusal('ol-e4x (v12) the liker read off byAuthorPost (`postAuthor ==`, `postId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })));
+      await attempt('ol-e4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], ['postId']),
+        (m) => check('ol-e4 (v12) the same targets\' counters off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId: the counters\' sums): T1 2, T2 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1 }), JSON.stringify(countEntries(m))));
+    } else {
+      await attempt('ol-e4', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })),
+        (r) => check('ol-e4 the same off byAuthorPost (`postAuthor ==`, `postId in`): B→T1, C→T1, B→T2', sameSet(pairsOf(r, 'postId'), [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairsOf(r, 'postId'))));
+    }
     await expectRefusal('ol-e5x the same across replies on byReply (`replyId in`, no `$ownerId ==`) is refused', () => sdk.documents.query(q('likeReply', { where: [['replyId', 'in', [r1, r5]]], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
-    await attempt('ol-e6', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })),
-      (r) => check('ol-e6 the same off byAuthorReply (`replyAuthor ==`, `replyId in`): A→r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
+    if (counters) {
+      await expectRefusal('ol-e6x (v12) the liker read off byAuthorReply (`replyAuthor ==`, `replyId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })));
+      await attempt('ol-e6', () => count('likeReply', [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], ['replyId']),
+        (m) => check('ol-e6 (v12) the replies\' counters off byAuthorReply (`replyAuthor ==`, `replyId in`, groupBy replyId): r1 1, r5 0', sameCounts(countEntries(m), { [r1]: 1 }), JSON.stringify(countEntries(m))));
+    } else {
+      await attempt('ol-e6', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })),
+        (r) => check('ol-e6 the same off byAuthorReply (`replyAuthor ==`, `replyId in`): A→r1', same(pairsOf(r, 'replyId'), [`${A.ownerId}>${r1}`]), JSON.stringify(pairsOf(r, 'replyId'))));
+    }
     // (f) which recent posts gained likes, (g) batched counts: unchanged from v10, plus the byAuthorPost form.
     await attempt('dc-f1', async () => {
       const posts = ids(await sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })));
       return countEntries(await count('like', [['postId', 'in', posts]], ['postId']));
     }, (m) => check('dc-f1 A\'s latest 20 posts, liked ones by one grouped byPost count: T1 2, T2 1, Th 1', sameCounts(m, { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(m)));
-    await attempt('ol-f4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2, T3, Th]]], ['postId']),
-      (m) => check('ol-f4 the same off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId): T1 2, T2 1, Th 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m))));
+    await attempt('ol-f4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2, T3, Th]]], ['postId']), (m) => (counters
+      // v12: the counters' sums per `in` value; T3, liked and unliked, keeps its preallocated counter at 0.
+      ? check('ol-f4 (v12) the same off the byAuthorPost counters (`postAuthor ==`, `postId in`, groupBy postId reads each counter\'s sum): T1 2, T2 1, Th 1, T3 0 (liked and unliked)', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m)))
+      : check('ol-f4 the same off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId): T1 2, T2 1, Th 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m)))));
     await attempt('dc-f2', () => sdk.documents.composite({
       dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
       subQueries: [{ documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') }],
@@ -1113,8 +1211,204 @@ async function main() {
     return { contractId, D: D.ownerId, S1, S2, SR, S3 };
   }
 
+  // ---- cn: v12 counters (summableOffCountIndex, platform#5250) ----
+  // D authors fresh posts and replies (D has written nothing yet), so every total is exact.
+  // byAuthorPost [postAuthor, postId] and byHashtagPost [hashtag, postId] keep one SumItem per
+  // post holding its byPost entries, ranked at both levels; byAuthorReply [replyAuthor, replyId]
+  // the same off byReply, unranked. All three are preallocated: a counter exists, at 0, from
+  // the post's (reply's) creation.
+  async function proveCounters() {
+    console.log('\n--- cn. v12 counters: per post, author and hashtag; rankings; grouped per-post counts; zero groups; unlike; refused range totals; reply counters ---');
+    const tag = 'cnproof';
+    const MIN_ID = '11111111111111111111111111111111';
+    const sum = (documentTypeName, where, sourceIndex, groupBy) => sdk.documents.sum(q(documentTypeName, { where, ...(groupBy ? { groupBy } : {}) }), sourceIndex);
+    const ranked = (where, groupBy, aggregate = { type: 'count' }) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate, direction: 'desc', limit: 100 }));
+    const entriesOf = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]);
+    const nonZero = (r) => entriesOf(r).filter(([, value]) => value !== 0);
+    const tagEntries = (r) => r.entries.map((e) => [typeof e.groupValue === 'string' ? e.groupValue : Buffer.from(e.groupValue).toString('utf8'), Number(e.value)]).filter(([, value]) => value !== 0);
+    /** The groups of a grouped count, without the '' total. */
+    const counts = (m) => Object.fromEntries(Object.entries(countEntries(m)).filter(([key]) => key !== ''));
+    /** Exactly these groups, zero groups included: a range walk over a preallocated counter keeps them (index-only.md). */
+    const exactly = (m, expected) => same(Object.entries(counts(m)).sort(), Object.entries(expected).sort());
+    /** A per-`in` read's zero groups: reported, not required (the book promises them for range walks only). */
+    const zeros = (m, keys) => keys.map((key) => `${key.slice(0, 6)}… ${key in counts(m) ? `present at ${counts(m)[key]}` : 'absent'}`).join(', ');
+    const expectRefusalMatching = async (label, pattern, run) => {
+      try {
+        await withReconnect(run);
+        check(label, false, 'accepted');
+      } catch (e) {
+        check(label, pattern.test(describeErr(e)), describeErr(e).slice(0, 200));
+      }
+    };
+    const postLike = (target, extra = {}) => ({ postId: id(target), postAuthor: id(D.ownerId), ...extra });
+    const replyLike = (target) => ({ replyId: id(target), replyAuthor: id(D.ownerId) });
+
+    const C1 = await mustCreate('C1 (D, untagged)', D, 'post', { content: 'counter one' });
+    const C2 = await mustCreate('C2 (D, #cnproof)', D, 'post', { content: 'counter two', hashtag: tag });
+    const C3 = await mustCreate('C3 (D, never liked)', D, 'post', { content: 'counter three' });
+    const C4 = await mustCreate('C4 (D, #cnproof)', D, 'post', { content: 'counter four', hashtag: tag });
+    const R1 = await mustCreate('R1 (D replies to C1)', D, 'reply', { content: 'counter reply one', rootPostId: id(C1), parentOwnerId: id(D.ownerId) });
+    const R2 = await mustCreate('R2 (D replies to C1, never liked)', D, 'reply', { content: 'counter reply two', rootPostId: id(C1), parentOwnerId: id(D.ownerId) });
+    await sleep(SETTLE_MS);
+    await attempt('cn-0', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['hashtag', '==', tag]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
+      (all) => check('cn-0 before any like, D\'s counters read 0 (preallocated with each post and reply): author, C1, #cnproof, D\'s replies', all.every((m) => total(m) === 0), JSON.stringify(all.map(counts))));
+
+    // C1: A, B, C. C2 (#cnproof): A, B. C3: none. C4 (#cnproof): C. R1: A, B. → D 6, #cnproof 3, D's replies 2.
+    for (const who of [A, B, C]) await likeWrite(who, 'like', postLike(C1));
+    for (const who of [A, B]) await likeWrite(who, 'like', postLike(C2, { hashtag: tag }));
+    await likeWrite(C, 'like', postLike(C4, { hashtag: tag }));
+    for (const who of [A, B]) await likeWrite(who, 'likeReply', replyLike(R1));
+    await sleep(SETTLE_MS);
+
+    // (a) point counts at every level: count(*) reads the counters' sums; sum(byPost) agrees.
+    await attempt('cn-a1', () => Promise.all([count('like', [['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]])]),
+      ([source, counter]) => check('cn-a1 one post: byPost `postId ==` 3, the byAuthorPost counter (`postAuthor ==`, `postId ==`) 3', total(source) === 3 && total(counter) === 3, `byPost ${total(source)} counter ${total(counter)}`));
+    await attempt('cn-a2', () => count('like', [['postAuthor', '==', D.ownerId]]),
+      (m) => check('cn-a2 one author (`postAuthor ==`, the shallowest ranked level): count(*) 6', total(m) === 6, `count ${total(m)}`));
+    await attempt('cn-a3', () => Promise.all([count('like', [['hashtag', '==', tag]]), count('like', [['hashtag', '==', tag], ['postId', '==', C2]])]),
+      ([counted, post]) => check(`cn-a3 one hashtag (byHashtagPost \`hashtag ==\`): count(*) 3; #${tag} C2 alone 2`, total(counted) === 3 && total(post) === 2, `count ${total(counted)} C2 ${total(post)}`));
+    // sum(byPost), named by the source index, reads the same sums (one attempt each: a refusal of one form loses no other).
+    for (const [label, where, expected] of [['cn-a1s at C1\'s counter', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]], 3], ['cn-a2s at D', [['postAuthor', '==', D.ownerId]], 6], [`cn-a3s at #${tag}`, [['hashtag', '==', tag]], 3]]) {
+      await attempt(label, () => sum('like', where, 'byPost'), (m) => check(`${label}: sum(byPost) ${expected}, as count(*)`, total(m) === expected, `sum ${total(m)}`));
+    }
+
+    // (b) grouped per-post counts over an author's posts: per `in` value, and over a range grouped by the last property.
+    const perPost = { [C1]: 3, [C2]: 2, [C3]: 0, [C4]: 1 };
+    await attempt('cn-b1', () => count('like', [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1, C2, C3, C4]]], ['postId']),
+      (m) => check('cn-b1 `postAuthor ==`, `postId in` [C1..C4], groupBy postId (one counter per `in` value): C1 3, C2 2, C4 1, C3 0', sameCounts(counts(m), perPost), `${JSON.stringify(counts(m))}; zero group C3 ${zeros(m, [C3])}`));
+    await attempt('cn-b2', () => count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']),
+      (m) => check('cn-b2 `postAuthor ==`, a range on postId, groupBy postId: every one of D\'s posts with its likes, C3 at 0', exactly(m, perPost), JSON.stringify(counts(m))));
+    await attempt('cn-b3', () => sum('like', [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1, C2, C3, C4]]], 'byPost', ['postId']),
+      (m) => check('cn-b3 the same as a grouped sum(byPost): C1 3, C2 2, C3 0, C4 1', sameCounts(counts(m), perPost), JSON.stringify(counts(m))));
+    await attempt('cn-b4', () => count('like', [['hashtag', '==', tag], ['postId', '>', MIN_ID]], ['postId']),
+      (m) => check(`cn-b4 #${tag}'s posts over a range, groupBy postId: C2 2, C4 1`, exactly(m, { [C2]: 2, [C4]: 1 }), JSON.stringify(counts(m))));
+
+    // (c) a range TOTAL through a ranked level is refused (grovedb proves totals only through
+    // unranked trees), with the hint to group by the last property. byPost is ranked at postId.
+    await expectRefusalMatching('cn-c1 a range total on byAuthorPost (`postAuthor ==`, `postId >`, no groupBy) is refused, naming the grouping instead', /group/i, () => count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]]));
+    await expectRefusalMatching('cn-c2 a range total on byPost (`postId >`, no groupBy) is refused the same way (byPost ranks its last property)', /group|rank/i, () => count('like', [['postId', '>', MIN_ID]]));
+
+    // (d) rankings: creators and hashtags by likes (no pins), an author's and a tag's posts (pinned).
+    await attempt('cn-d1', () => ranked(null, 'postAuthor'), (r) => check('cn-d1 top creators (ranked count(*) GROUP BY postAuthor, read off the sum ranking): D 6 first, then A 4', same(nonZero(r).slice(0, 2), [[D.ownerId, 6], [A.ownerId, 4]]), JSON.stringify(nonZero(r))));
+    // rankedCountable on a counter declares the sum ranking (index-only.md), so a ranked sum(byPost) reads the same one.
+    await attempt('cn-d1s', () => ranked(null, 'postAuthor', { type: 'sum', property: 'byPost' }), (r) => check('cn-d1s the same ranked by sum(byPost): D 6, then A 4', same(nonZero(r).slice(0, 2), [[D.ownerId, 6], [A.ownerId, 4]]), JSON.stringify(nonZero(r))));
+    await attempt('cn-d2', () => ranked(null, 'hashtag'), (r) => {
+      const got = tagEntries(r);
+      const ordered = got.every(([, value], i) => i === 0 || got[i - 1][1] >= value);
+      check(`cn-d2 trending hashtags all time (ranked GROUP BY hashtag on byHashtagPost): ${tag} 3 first, ordered`, ordered && same(got[0], [tag, 3]), JSON.stringify(got));
+    });
+    await attempt('cn-d3', () => ranked([['postAuthor', '==', D.ownerId]], 'postId'), (r) => check('cn-d3 D\'s top posts (`postAuthor ==` GROUP BY postId): C1 3, C2 2, C4 1, and C3 listed at 0 after them', same(nonZero(r), [[C1, 3], [C2, 2], [C4, 1]]) && entriesOf(r).some(([k, v]) => k === C3 && v === 0), JSON.stringify(entriesOf(r))));
+    await attempt('cn-d4', () => ranked([['hashtag', '==', tag]], 'postId'), (r) => check(`cn-d4 #${tag}'s top posts (\`hashtag ==\` GROUP BY postId): C2 2, C4 1`, same(nonZero(r), [[C2, 2], [C4, 1]]), JSON.stringify(entriesOf(r))));
+
+    // (e) the counters hold no documents: likers are read per target on byPost.
+    await expectRefusal('cn-e1 a documents read through byAuthorPost (`postAuthor ==`, `postId in`) is refused', () => sdk.documents.query(q('like', { where: [['postAuthor', '==', D.ownerId], ['postId', 'in', [C1]]], orderBy: [['postAuthor', 'asc'], ['postId', 'asc']], limit: 100 })));
+    await expectRefusal('cn-e2 a documents read through byHashtagPost (`hashtag ==`) is refused', () => sdk.documents.query(q('like', { where: [['hashtag', '==', tag]], orderBy: [['hashtag', 'asc'], ['postId', 'asc']], limit: 100 })));
+    await attempt('cn-e3', () => sdk.documents.query(q('like', { where: [['postId', '==', C1]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })),
+      (r) => check('cn-e3 C1\'s likers on byPost (`postId ==`, the app\'s per-target read once a counter moved): A, B, C', sameSet(docsOf(r).map((d) => toBase58((d.toObject?.() ?? d).$ownerId)), [A.ownerId, B.ownerId, C.ownerId]), `${docsOf(r).length} row(s)`));
+
+    // (f) reply counters: byAuthorReply off byReply, unranked.
+    await attempt('cn-f1', () => Promise.all([count('likeReply', [['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
+      ([source, counter, author]) => check('cn-f1 reply counters: byReply R1 2, the byAuthorReply counter of R1 2, D\'s replies 2', [source, counter, author].every((m) => total(m) === 2), JSON.stringify([source, counter, author].map(total))));
+    await attempt('cn-f1s', () => sum('likeReply', [['replyAuthor', '==', D.ownerId]], 'byReply'), (m) => check('cn-f1s D\'s replies as sum(byReply): 2', total(m) === 2, `sum ${total(m)}`));
+    await attempt('cn-f2', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', 'in', [R1, R2]]], ['replyId']),
+      (m) => check('cn-f2 `replyAuthor ==`, `replyId in` [R1, R2], groupBy replyId: R1 2, R2 0', sameCounts(counts(m), { [R1]: 2 }), `${JSON.stringify(counts(m))}; zero group R2 ${zeros(m, [R2])}`));
+    await attempt('cn-f2r', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId']),
+      (m) => check('cn-f2r the same over a range on replyId, groupBy replyId: R1 2, R2 present at 0 (preallocated)', exactly(m, { [R1]: 2, [R2]: 0 }), JSON.stringify(counts(m))));
+    await expectRefusal('cn-f3 a ranking on byAuthorReply (declared unranked) is refused', () => sdk.documents.ranked(q('likeReply', { where: [['replyAuthor', '==', D.ownerId]], groupBy: 'replyId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })));
+
+    // (g) an unlike takes the counters down; a drained counter stays at 0 (preallocated); a fresh post starts at 0.
+    const unlikeNow = async (who, docType, data) => {
+      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data });
+      await sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
+    };
+    await unlikeNow(C, 'like', postLike(C1));
+    await unlikeNow(C, 'like', postLike(C4, { hashtag: tag }));
+    await unlikeNow(A, 'likeReply', replyLike(R1));
+    const C5 = await mustCreate('C5 (D, fresh after the unlikes)', D, 'post', { content: 'counter five' });
+    await sleep(SETTLE_MS);
+    await attempt('cn-g1', () => Promise.all([count('like', [['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['hashtag', '==', tag]])]),
+      ([source, counter, author, hashtag]) => check('cn-g1 C unlikes C1 and C4: byPost C1 2, its counter 2, D 4, #cnproof 2', total(source) === 2 && total(counter) === 2 && total(author) === 4 && total(hashtag) === 2, JSON.stringify([source, counter, author, hashtag].map(total))));
+    await attempt('cn-g2', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C5]])]),
+      ([m, fresh]) => check('cn-g2 per post after the unlikes (range, groupBy postId): C1 2, C2 2, C3 0, C4 0 (drained, kept at zero), C5 0 (fresh: its counter exists from creation); C5\'s point count 0', exactly(m, { [C1]: 2, [C2]: 2, [C3]: 0, [C4]: 0, [C5]: 0 }) && total(fresh) === 0, `${JSON.stringify(counts(m))} C5 point ${total(fresh)}`));
+    await attempt('cn-g3', () => Promise.all([ranked(null, 'postAuthor'), ranked([['hashtag', '==', tag]], 'postId')]), ([creators, tagged]) => check('cn-g3 the rankings follow: D 4 among the creators; #cnproof top posts C2 2 alone above zero', nonZero(creators).some(([k, v]) => k === D.ownerId && v === 4) && same(nonZero(tagged), [[C2, 2]]), `creators ${JSON.stringify(nonZero(creators))} tag ${JSON.stringify(entriesOf(tagged))}`));
+    await attempt('cn-g4', () => Promise.all([count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
+      ([reply, author]) => check('cn-g4 A unlikes R1: its counter 1, D\'s replies 1', total(reply) === 1 && total(author) === 1, JSON.stringify([total(reply), total(author)])));
+    // (h) Drive refuses a batch moving one type's counters for two documents, but a consensus
+    // batch carries one transition, so no SDK write can build one: not provable here.
+    console.log('INFO  cn-h a batch moving one type\'s counters for two documents is refused by Drive; no state transition can carry one (one transition per documents batch), so it is not proved here');
+  }
+
+  // ---- rw: v12 retractedWhen (platform#5253): a barred author tombstones, and nothing else ----
+  async function proveRetraction() {
+    console.log('\n--- rw. v12 retractedWhen: banned and suspended, D tombstones its own post and reply; edits and take-backs are refused ---');
+    const moderatorA = async () => ({ identity: await sdk.identities.fetch(A.ownerId), signer: A.signer });
+    const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;
+    const SUSPENDED = /\bcode"?\s*[=:]\s*41108\b|contractusersuspended|is suspended/i;
+    const fixtures = async (label) => {
+      const post = await mustCreate(`${label} post (D)`, D, 'post', { content: `${label} post`, hashtag: 'rwproof' });
+      const reply = await mustCreate(`${label} reply (D)`, D, 'reply', { content: `${label} reply`, rootPostId: id(post), parentOwnerId: id(D.ownerId) });
+      return { post, reply };
+    };
+    const banned = await fixtures('rw banned');
+    const suspended = await fixtures('rw suspended');
+    const tombstoneOf = async (docType, docId) => { const stored = plain(await sdk.documents.get(contractId, docType, docId)); return stored.deleted === true && stored.content === undefined; };
+    const underBar = async (prefix, { post, reply }, refusal, code) => {
+      refusedWith(`${prefix}1 D's edit of its post while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'edited', hashtag: 'rwproof' }), refusal);
+      refusedWith(`${prefix}2 a tombstone keeping the text passes the bar and is refused by tombstoneIsBlank (10422)`, await replaceDoc(D, 'post', post, { deleted: true, content: 'kept', hashtag: 'rwproof' }), BLANK);
+      const tomb = await replaceDoc(D, 'post', post, { deleted: true, hashtag: 'rwproof' });
+      check(`${prefix}3 D's tombstone of its own post is ACCEPTED while barred`, tomb.ok && (await tombstoneOf('post', post)), tomb.error ?? '');
+      refusedWith(`${prefix}4 taking the tombstone back while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'back', hashtag: 'rwproof' }), refusal);
+      refusedWith(`${prefix}5 D's edit of its reply while barred is refused (${code})`, await replaceDoc(D, 'reply', reply, { content: 'edited', rootPostId: id(post), parentOwnerId: id(D.ownerId) }), refusal);
+      const replyTomb = await replaceDoc(D, 'reply', reply, { deleted: true, rootPostId: id(post), parentOwnerId: id(D.ownerId) });
+      check(`${prefix}6 D's tombstone of its own reply is ACCEPTED while barred`, replyTomb.ok && (await tombstoneOf('reply', reply)), replyTomb.error ?? '');
+      const fresh = await create(D, 'post', { content: `${prefix} new while barred` });
+      check(`${prefix}7 a new post by D is still refused (${code})`, !fresh.ok && refusal.test(fresh.error ?? ''), (fresh.error ?? 'ACCEPTED').slice(0, 200));
+    };
+    // Whether a bar stands is read from the chain, so a ban that threw after landing is still
+    // lifted, and one that never landed is not "lifted" into a false failure.
+    const standing = () => withReconnect(() => sdk.contracts.moderationStatus({ contractId, identityId: D.ownerId, lists: ['banlist', 'suspensions'] }));
+    const suspendedUntil = Date.now() + 10 * 60_000;
+    try {
+      await sdk.contracts.banUser({ ...(await moderatorA()), contractId, identityId: D.ownerId, reason: { text: 'rw proof ban' } });
+      await sleep(SETTLE_MS);
+      await underBar('rw-b', banned, BANNED, '41107');
+    } catch (e) {
+      check('rw-b the ban and the banned writes ran', false, describeErr(e).slice(0, 200));
+    } finally {
+      if ((await standing().catch(() => ({ banned: true }))).banned) {
+        const error = await sdk.contracts.unbanUser({ ...(await moderatorA()), contractId, identityId: D.ownerId }).then(() => null, (e) => describeErr(e));
+        check('rw-b8 the interim owner unbans D', error === null, error ? `${error.slice(0, 160)} — D MAY STILL BE BANNED` : '');
+      }
+    }
+    await sleep(SETTLE_MS);
+    try {
+      await sdk.contracts.suspendUser({ ...(await moderatorA()), contractId, identityId: D.ownerId, until: BigInt(suspendedUntil), reason: { text: 'rw proof suspension' } });
+      await sleep(SETTLE_MS);
+      await underBar('rw-s', suspended, SUSPENDED, '41108');
+    } catch (e) {
+      check('rw-s the suspension and the suspended writes ran', false, describeErr(e).slice(0, 200));
+    } finally {
+      if ((await standing().catch(() => ({ suspendedUntil: suspendedUntil }))).suspendedUntil !== undefined) {
+        const error = await sdk.contracts.unsuspendUser({ ...(await moderatorA()), contractId, identityId: D.ownerId }).then(() => null, (e) => describeErr(e));
+        check('rw-s8 the interim owner lifts D\'s suspension', error === null, error ? error.slice(0, 160) : '');
+      }
+    }
+    await sleep(SETTLE_MS);
+    let after = await create(D, 'post', { content: 'rw after the bars' });
+    if (!after.ok && SUSPENDED.test(after.error ?? '') && suspendedUntil > Date.now()) {
+      // The lift failed: the later phases need D, so wait the suspension out rather than abort them.
+      console.log(`     D is still suspended; waiting ${Math.ceil((suspendedUntil - Date.now()) / 1000) + 30} s for it to lapse`);
+      await sleep(suspendedUntil - Date.now() + 30_000);
+      after = await create(D, 'post', { content: 'rw after the bars' });
+    }
+    if (!after.ok && BANNED.test(after.error ?? '')) throw new Error(`D is still banned on ${contractId}: unban it by hand (the interim owner is A); the later phases write as D`);
+    check('rw-9 with both bars lifted D writes again (the later phases need it)', after.ok, (after.error ?? '').slice(0, 200));
+  }
+
   if (v11) await proveOutlives();
   else await proveDesignC();
+  if (counters) await proveCounters();
+  if (retracts) await proveRetraction();
 
   // ---- M: design M (moderated posts and replies, tombstones, preallocated like trees) ----
   async function proveDesignM() {
@@ -1122,25 +1416,6 @@ async function main() {
     const balanceOf = async (who) => BigInt((await sdk.identities.fetch(who.ownerId))?.balance ?? 0);
     const rankedRaw = (where, groupBy) => sdk.documents.ranked(q('like', { ...(where ? { where } : {}), groupBy, aggregate: { type: 'count' }, direction: 'desc', limit: 100 }));
     const entriesOf = (r) => r.entries.map((e) => [toBase58(e.groupValue), Number(e.value)]);
-    const replaceDoc = async (who, docType, docId, data) => {
-      const stored = await withReconnect(() => sdk.documents.get(contractId, docType, docId));
-      const revision = BigInt(stored?.revision ?? stored?.toObject?.().$revision ?? 1) + 1n;
-      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, revision, id: bs58.decode(docId) });
-      try {
-        await sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer });
-      } catch (e) {
-        const error = describeErr(e);
-        if (CONSENSUS_CODE.test(error)) return { ok: false, error };
-      }
-      await sleep(SETTLE_MS);
-      const after = await sdk.documents.get(contractId, docType, docId);
-      const landed = BigInt(after?.revision ?? after?.toObject?.().$revision ?? 0) >= revision;
-      return landed ? { ok: true } : { ok: false, error: 'the replace did not land' };
-    };
-    const refusedWith = (label, outcome, pattern) => check(label, !outcome.ok && pattern.test(outcome.error ?? ''), (outcome.error ?? 'ACCEPTED').slice(0, 200));
-    const IMMUTABLE = /\bcode"?\s*[=:]\s*40128\b|immutable/i;
-    const BLANK = /\bcode"?\s*[=:]\s*10422\b.{0,400}tombstoneIsBlank|tombstoneIsBlank/i;
-    const plain = (doc) => doc?.toJSON?.() ?? doc?.toObject?.() ?? {};
 
     // (pa) preallocated: a fresh post sits in its trees with zero likes; the first like costs what a later one does.
     const createdBefore = await balanceOf(D);
@@ -1351,6 +1626,107 @@ async function proveTeam(sdk, args, actors, source) {
   await attempt('tm-13', countDeltas, (delta) => check('tm-13 the counts since this phase began: the leader +2, the first member +2, the second member +3 (two approvals and a lone delete)',
     delta[L.label] === 2 && delta[M1.label] === 2 && delta[M2.label] === 3, JSON.stringify(delta)));
   await expectCode('tm-14 approving a closed action is refused', '41210', async () => sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(M2)), contractId, actionId }));
+
+  await proveAddedMember({ sdk, args, contractId, team, actors: { L, M1, M2, D }, rule, reason, asModerator, fixture, windowSeconds, settled });
+}
+
+/**
+ * tm-15–tm-22 (platform#5260, optional): with `deleteSettled` needing more than one approval
+ * and `approversPredateDocument` on (its default then), a member the LEADER added
+ * (`addedModerator`) counts only for documents created after its addition; the leader and the
+ * elected members always count. Needs `--added-member`, an identity that filed a join request
+ * for the seated team's submitted charter (in the charter window, with the election tooling:
+ * an `addedModerator` names a join request, and a join request needs bound encryption keys).
+ * The leader adds it, and takes it off again at the end, so the phase can run again.
+ */
+async function proveAddedMember({ sdk, args, contractId, team, actors: { L, M1, M2, D }, rule, reason, asModerator, fixture, windowSeconds, settled }) {
+  console.log('\n--- tm-15. #5260: a member the leader added counts only for documents created after its addition ---');
+  if (!args.addedMember) {
+    console.log('SKIP  tm-15–tm-22: pass --added-member <n[:id]>, an identity with a join request for this team\'s submitted charter, to prove a late-added member is refused (41212)');
+    return;
+  }
+  // The checks below count three approvals with the leader's among them (v11/v12's rule).
+  if (!(rule.approvals === 3 && rule.leader === true && rule.approversPredateDocument !== false)) {
+    console.log(`SKIP  tm-15–tm-22: they assume post's deleteSettled { leader: true, approvals: 3 } dating added members; this cut declares ${JSON.stringify(rule)}`);
+    return;
+  }
+  const E = await resolveActor(sdk, args.addedMember, 'E');
+  if ([L, M1, M2, D].some((who) => who.ownerId === E.ownerId)) throw new Error('--added-member must be an identity other than A, B, C and D');
+  session.contracts.add(MODERATION_CHARTERS_CONTRACT_ID);
+  await sdk.contracts.fetch(MODERATION_CHARTERS_CONTRACT_ID);
+  const charters = (documentTypeName, where) => sdk.documents.query({ dataContractId: MODERATION_CHARTERS_CONTRACT_ID, documentTypeName, where, limit: 1 });
+  const [electedCharterId, submittedCharterId] = [team.electedCharterId, team.submittedCharterId].map(toBase58);
+  const joined = docsOf(await withReconnect(() => charters('joinRequest', [['submittedCharterId', '==', submittedCharterId], ['$ownerId', '==', E.ownerId]])));
+  if (joined.length === 0) {
+    console.log(`SKIP  tm-15–tm-22: ${E.ownerId} filed no join request for the submitted charter ${submittedCharterId}; the leader can only add an identity that did`);
+    return;
+  }
+  const additionOf = async () => docsOf(await withReconnect(() => charters('addedModerator', [['electedCharterId', '==', electedCharterId], ['memberId', '==', E.ownerId]])))[0] ?? null;
+  const takeOff = (addition) => sdk.documents.delete({ document: { id: idOf(addition), ownerId: L.ownerId, dataContractId: MODERATION_CHARTERS_CONTRACT_ID, documentTypeName: 'addedModerator' }, identityKey: L.identityKey, signer: L.signer });
+  // A previous run's addition predates this run's documents, which would let E count: take it off first.
+  const stale = await additionOf();
+  if (stale) {
+    const error = await takeOff(stale).then(() => null, (e) => describeErr(e));
+    if (error) { check('tm-15 a previous run\'s addition of E is taken off first', false, error.slice(0, 200)); return; }
+    await sleep(SETTLE_MS);
+  }
+
+  const before = await fixture('S5 (D, before E is added)', 'post', { content: 'written before the addition' });
+  await sleep(SETTLE_MS);
+  const approve = async (who, actionId) => sdk.contracts.moderatorApproveTeamAction({ ...(await asModerator(who)), contractId, actionId });
+  const propose = async (who, documentId, text) => sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(who)), contractId, documentTypeName: 'post', documentId, reason: reason(text) });
+  const exists = async (documentId) => Boolean(await withReconnect(() => sdk.documents.get(contractId, 'post', documentId)));
+  try {
+    // Inside the try: a create whose confirmation faulted may still have landed (its readback
+    // looks by $ownerId, which addedModerator does not index), and the finally takes it off.
+    const added = await createDocument(MODERATION_CHARTERS_CONTRACT_ID, L, 'addedModerator', { electedCharterId: bs58.decode(electedCharterId), submittedCharterId: bs58.decode(submittedCharterId), memberId: bs58.decode(E.ownerId) });
+    if (!added.ok) { check('tm-15 the leader adds E (addedModerator)', false, (added.error ?? '').slice(0, 200)); return; }
+    await sleep(SETTLE_MS);
+    const after = await fixture('S6 (D, after E was added)', 'post', { content: 'written after the addition' });
+    const createdAt = async (dataContractId, docType, docId) => createdAtOf(await withReconnect(() => sdk.documents.get(dataContractId, docType, docId)));
+    const [beforeAt, additionAt, afterAt] = [await createdAt(contractId, 'post', before), await createdAt(MODERATION_CHARTERS_CONTRACT_ID, 'addedModerator', added.id), await createdAt(contractId, 'post', after)];
+    const seated = await withReconnect(() => sdk.moderationCharters.team(contractId));
+    check('tm-15 the leader adds E: E is on the team but not elected; S5 predates the addition and S6 follows it (strictly, in block time)',
+      seated?.contains(E.ownerId) && !seated.electedMembers.map(toBase58).includes(E.ownerId) && beforeAt < additionAt && additionAt < afterAt, `S5 ${beforeAt} addition ${additionAt} S6 ${afterAt}`);
+    const settledAt = afterAt + (windowSeconds + 30) * 1000;
+    console.log(`     waiting ${Math.max(0, Math.ceil((settledAt - Date.now()) / 1000))} s for S5 and S6 to settle (deleteWithin ${windowSeconds} s)`);
+    await sleep(Math.max(0, settledAt - Date.now()));
+
+    await expectCode('tm-16 E proposing the settled deletion of S5, written before E was added, is refused', '41212', () => propose(E, before, 'tm-16'));
+    let action = null;
+    await attempt('tm-17', () => propose(M1, before, 'tm-17 proof: settled before the addition'), (result) => {
+      action = toBase58(result.actionId);
+      check(`tm-17 ${M1.label} (elected) proposes S5 instead: an active action`, result.status === 'active', `${action} ${result.status}`);
+    }, { idempotent: false });
+    if (action) {
+      await expectCode('tm-18 E approving that proposal is refused too', '41212', () => approve(E, action));
+      await attempt('tm-19', async () => {
+        const statuses = [(await approve(M2, action)).status, (await approve(L, action)).status];
+        await sleep(SETTLE_MS);
+        return { statuses, gone: !(await exists(before)) };
+      }, ({ statuses, gone }) => check(`tm-19 ${M2.label} (elected) and the leader complete it (active, closed): the rule is not lowered for E, and the elected members count for S5`, same(statuses, ['active', 'closed']) && gone, `${JSON.stringify(statuses)} S5 ${gone ? 'deleted' : 'still there'}`), { idempotent: false });
+    }
+    let late = null;
+    await attempt('tm-20', () => propose(E, after, 'tm-20 proof: settled after the addition'), (result) => {
+      late = toBase58(result.actionId);
+      check('tm-20 E proposes S6, written after its addition: accepted, its own approval counted (active)', result.status === 'active', `${late} ${result.status}`);
+    }, { idempotent: false });
+    if (late) {
+      await attempt('tm-21', async () => {
+        const statuses = [(await approve(L, late)).status, (await approve(M1, late)).status];
+        await sleep(SETTLE_MS);
+        const closed = await settled(async () => (await sdk.contracts.teamActions({ contractId, status: 'closed', limit: 100 })).actions.find((a) => a.actionId === late) ?? null, (a) => a !== null);
+        return { statuses, closed, gone: !(await exists(after)) };
+      }, ({ statuses, closed, gone }) => check('tm-21 the leader and a member complete it: closed with 3 approvals, E\'s among them, and S6 is deleted', same(statuses, ['active', 'closed']) && closed?.approvalCount === 3 && gone, `${JSON.stringify(statuses)} approvals ${closed?.approvalCount} S6 ${gone ? 'deleted' : 'still there'}`), { idempotent: false });
+    }
+  } finally {
+    const addition = await additionOf().catch(() => null);
+    const removed = addition ? await takeOff(addition).then(() => null, (e) => describeErr(e)) : null;
+    if (removed) console.log(`     E MAY STILL BE ON THE TEAM: the leader's delete of its addedModerator ${idOf(addition)} failed; tm-1 of a later run fails until it is deleted`);
+    await sleep(SETTLE_MS);
+    const teamAfter = await withReconnect(() => sdk.moderationCharters.team(contractId)).catch(() => null);
+    check('tm-22 the leader takes E off again (deletes the addition): the team no longer contains E', removed === null && teamAfter !== null && !teamAfter.contains(E.ownerId), removed ?? '');
+  }
 }
 
 function defaultStateFile(contractId) {

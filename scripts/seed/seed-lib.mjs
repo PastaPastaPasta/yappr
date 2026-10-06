@@ -120,11 +120,11 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Document shapes (social v10/v11) -----------------------------------------
+// ---- Document shapes (social v10/v11/v12) -------------------------------------
 //
 // The seeder writes to the devnet social contract, v10
-// (contracts/yappr-social-contract-v10.json) or v11 (-v11.json, the same create
-// shapes); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// (contracts/yappr-social-contract-v10.json), v11 or v12 (-v11.json, -v12.json,
+// the same create shapes); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
 // that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
 // it OMITS `like.hashtag` too — a `where` entry treats both-absent as
 // agreement, while sending `''` is consensus mismatch 40127. The like's

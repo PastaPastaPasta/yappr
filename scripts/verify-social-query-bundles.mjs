@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social v10 id> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10, v11 or v12)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -16,18 +16,25 @@
  * week, read through the `timeRange` option (the current window, `newest`, and
  * the previous one by its start, `byStart`), which a composite refuses, so each
  * window stays one plain query.
- * Likes are permanent but keyed by target: byAuthorPostTime /
+ * Likes are permanent but keyed by target: on v10 byAuthorPostTime /
  * byAuthorReplyTime put the liked post or reply before `$createdAt`, so "who
- * liked it since" is one `target in [recent]` read per kind. There is no
- * postMention: a post or reply names at most one mentionedUserId. */
+ * liked it since" is one `target in [recent]` read per kind. v11's author
+ * indexes keep no time: one author-pinned `target in [recent]` liker read per
+ * kind. On v12 they are counters (`summableOffCountIndex` of byPost /
+ * byReply) holding no like documents: the counters must agree with byPost /
+ * byReply per target, and the likers are read one target at a time on byPost /
+ * byReply. What the contract under test declares (fetched by id, not the
+ * environment's topology) picks the like reads and the notification grids.
+ * There is no postMention: a post or reply names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
+import { PlatformVersion } from '@dashevo/evo-sdk';
 import { connectSdk, devnetName, envValue } from './sdk-env.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social v10 contract under test (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10, v11 or v12 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -111,7 +118,12 @@ await verify('permanent notification sources', [['follow', 'followingId'], ['pos
   orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
 
-const V10 = JSON.parse(readFileSync(new URL('../contracts/yappr-social-contract-v10.json', import.meta.url), 'utf8'));
+/** The social contract under test as published (v10, v11 or v12): its declarations pick the reads below. */
+const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
+/** v10: the author index carries `$createdAt` after the target (byAuthorPostTime). */
+const LIKES_KEEP_TIME = V10.documentSchemas.like.indices.some(index => index.name === 'byAuthorPostTime');
+/** v12: the author indexes are counters of byPost / byReply (no like documents through them). */
+const LIKE_COUNTERS = V10.documentSchemas.like.indices.some(index => index.summableOffCountIndex !== undefined);
 /**
  * The current and the previous window of `documentTypeName`'s windowed
  * notification index, the grid named (like and post bucket $createdAt on
@@ -156,10 +168,46 @@ const likesSince = (documentTypeName, author, target, docs) => ({
   orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: 100,
 });
 const [ownPosts, ownReplies] = [await recentOwn('post'), await recentOwn('reply')];
-await verifyAlone('like notifications (one target-in read per kind)', [
-  ...(ownPosts.length ? [likesSince('like', 'postAuthor', 'postId', ownPosts)] : []),
-  ...(ownReplies.length ? [likesSince('likeReply', 'replyAuthor', 'replyId', ownReplies)] : []),
-]);
+const likeKinds = [['like', 'postAuthor', 'postId', ownPosts], ['likeReply', 'replyAuthor', 'replyId', ownReplies]].filter(([, , , docs]) => docs.length);
+if (LIKES_KEEP_TIME) {
+  await verifyAlone('like notifications (one target-in read per kind)', likeKinds.map(([type, author, target, docs]) => likesSince(type, author, target, docs)));
+} else if (!LIKE_COUNTERS) {
+  // v11: the author index keeps no time; one author-pinned liker read per kind, diffed on the device.
+  await verifyAlone('like notifications (one author-pinned target-in liker read per kind, no time)', likeKinds.map(([documentTypeName, author, target, docs]) => ({
+    dataContractId: social, documentTypeName,
+    where: [[author, '==', owner], [target, 'in', docs.map(doc => id(doc.$id))]],
+    orderBy: [[author, 'asc'], [target, 'asc']], limit: 100,
+  })));
+} else {
+  // v12: the counters answer "did my likes move" per target; the likers come off byPost / byReply.
+  for (const [documentTypeName, author, target, docs] of likeKinds) await verifyCounters(documentTypeName, author, target, docs);
+  await verifyAlone('like notifications (the likers of each target on byPost / byReply, one read per target)', likeKinds.flatMap(([documentTypeName, , target, docs]) => docs.slice(0, 5).map(doc => ({
+    dataContractId: social, documentTypeName,
+    where: [[target, '==', id(doc.$id)]], orderBy: [[target, 'asc'], ['$ownerId', 'asc']], limit: 100,
+  }))));
+}
+
+/** v12: the author counter of each of the owner's recent targets equals the target index's own count. */
+async function verifyCounters(documentTypeName, author, target, docs) {
+  const name = `${documentTypeName} author counters agree with the target index`;
+  try {
+    const ids = docs.map(doc => id(doc.$id));
+    const [counters, sources] = await Promise.all([
+      sdk.documents.count({ dataContractId: social, documentTypeName, where: [[author, '==', owner], [target, 'in', ids]], groupBy: [target] }),
+      sdk.documents.count({ dataContractId: social, documentTypeName, where: [[target, 'in', ids]], groupBy: [target] }),
+    ]);
+    for (const targetId of ids) {
+      const hex = Buffer.from(bs58.decode(targetId)).toString('hex');
+      assert.equal(Number(counters.get(hex) ?? 0), Number(sources.get(hex) ?? 0), `${targetId}`);
+    }
+    reports.push({ name, before: 2, after: 2, rows: ids.length, equivalent: true });
+    console.log(`PASS ${name}: ${ids.length} targets`);
+  } catch (error) {
+    const message = String(error.message || error.reason || error.toJSON?.() || JSON.stringify(error));
+    reports.push({ name, equivalent: false, error: message });
+    console.error(`FAIL ${name}: ${message}`);
+  }
+}
 // A followed author's reposts are posts: their own post pages carry them.
 await verify('following post pages (reposts included)', owners.map(ownerId => ({
   dataContractId: social, documentTypeName: 'post',
