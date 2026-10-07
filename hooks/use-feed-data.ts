@@ -8,7 +8,7 @@ import { useProgressiveEnrichment, type PreloadedEnrichment } from '@/hooks/use-
 import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
-import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
+import { getFeedItemTimestamp, mergeFeedItems, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts';
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones';
 import { markAfterCheck, newPostsCheckFrom, type NewPostsMark } from '@/lib/feed/new-posts-mark';
@@ -470,7 +470,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
       if (uniqueNewPosts.length > 0) {
         logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
-        setPendingNewPosts((prev) => generation === loadGenerationRef.current ? [...uniqueNewPosts, ...prev] : prev);
+        setPendingNewPosts((prev) => generation === loadGenerationRef.current ? mergeFeedItems(uniqueNewPosts, prev) : prev);
       }
     } catch (error) {
       logger.error('Feed: Error checking for new posts:', error);
@@ -482,14 +482,13 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
     const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getFeedItemTimestamp));
 
-    setData((currentItems) => {
-      const existing = currentItems || [];
-      return [...pendingNewPosts, ...existing];
-    });
+    // Placed by time: a recovered post can be older than ones already shown.
+    setData((currentItems) => mergeFeedItems(pendingNewPosts, currentItems || []));
 
     enrichProgressively(pendingNewPosts);
     applyRepostAndQuoteEnrichment(pendingNewPosts);
-    setNewestPostTimestamp(newestPendingTimestamp);
+    // The newest shown post only moves forward; an older recovered batch does not pull it back.
+    setNewestPostTimestamp((prev) => Math.max(prev ?? 0, newestPendingTimestamp));
     setPendingNewPosts([]);
   }, [applyRepostAndQuoteEnrichment, enrichProgressively, pendingNewPosts, setData]);
 

@@ -16,7 +16,7 @@ import { cursorInt, decodeCursor } from '../dto/cursor'
 import { listToDTOs, notSupported, requireViewer, viewerId, visibleDTOs } from '../dto/hydrate'
 import { nextPage, onePage, pageAfter, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
-import { NewPostsRetry } from './new-posts-retry'
+import { NewPostsRetry, selectNewPosts } from './new-posts-retry'
 import type { Page, PostDTO, RankingWindow } from './dto'
 
 /**
@@ -207,9 +207,10 @@ export const feed = {
    * without them, posts at or before `since` are left out.
    *
    * `complete` is false when the Following scan stopped early and may have
-   * missed posts older than its newest. Until a later check is complete, the
-   * engine keeps reading from where that scan started, even after `since`
-   * moves past it, and hands back the missed posts it finds there.
+   * missed posts older than its newest. The engine then keeps reading from
+   * where that scan started, even after `since` moves past it, and offers
+   * the missed posts it finds there on every check until they come back in
+   * `knownIds` (inserted) and a check is complete.
    */
   async checkNew(query: { tab: FeedTab; since: Date; knownIds?: string[] }): Promise<{ count: number; posts: PostDTO[]; complete: boolean }> {
     const sinceTime = query.since.getTime()
@@ -228,16 +229,14 @@ export const feed = {
     } else {
       raw = await queryPostsSince(sinceMs, NEW_POSTS_LIMIT, feedLanguage() || 'en')
     }
-    const known = query.knownIds ? new Set(query.knownIds) : null
-    const fresh = sortFeedByTimestamp(raw.map(transformRawPost)).filter(post => {
-      if (known?.has(post.id)) return false
-      const at = getFeedItemTimestamp(post)
-      if (at > sinceTime || (known && at > sinceMs)) return true
-      // Older than the overlap: only read again because an earlier scan was incomplete.
-      return retryKey !== null && newPostsRetry.owes(retryKey, post.id)
+    const { offered, recovered } = selectNewPosts(sortFeedByTimestamp(raw.map(transformRawPost)), getFeedItemTimestamp, {
+      since: sinceTime,
+      overlapFrom: sinceMs,
+      known: query.knownIds ? new Set(query.knownIds) : null,
     })
-    if (retryKey !== null) newPostsRetry.settle(retryKey, fromMs, complete, fresh.map(post => post.id))
-    const posts = await listToDTOs(await enrichPostsWithRepostsAndQuotes(fresh))
+    const posts = await listToDTOs(await enrichPostsWithRepostsAndQuotes(offered))
+    // Only once the answer is built: a failed one leaves the retry state as it was.
+    if (retryKey !== null) newPostsRetry.settle(retryKey, fromMs, complete, recovered)
     return { count: posts.length, posts, complete }
   },
 
