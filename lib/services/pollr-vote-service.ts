@@ -407,9 +407,11 @@ class PollrVoteService {
     let closed = false;
     let stale = false;
     let firstError: string | undefined;
+    let attempted = 0;
 
     for (const write of planBallotWrites(poll.multiChoice, ballots, choices)) {
       const outcome = await this.writeBallot(poll, ownerId, write);
+      attempted += 1;
       if (outcome.status === 'ok') continue;
       if (outcome.status === 'unconfirmed') {
         this.invalidateTally(poll.id);
@@ -426,14 +428,32 @@ class PollrVoteService {
         break;
       }
       // Nothing was sent: an earlier transition may still execute, and every
-      // later write would wait on it and be held back the same way.
-      if (extractErrorMessage(error) === PENDING_WRITE_ERROR) break;
+      // later write would wait on it and be held back the same way. On the
+      // first write that transition belongs to another poll (this poll's were
+      // checked above) and this vote changed nothing, so it is held back.
+      if (extractErrorMessage(error) === PENDING_WRITE_ERROR) {
+        if (attempted === 1) {
+          return { success: false, heldBack: true, closed: false, stale: false, error: extractErrorMessage(error) };
+        }
+        break;
+      }
     }
 
     this.invalidateTally(poll.id);
     if (firstError === undefined) {
       return { success: true, choices, closed: false, stale: false };
     }
+
+    // A write refused without a verdict (a transport or proof failure) can
+    // still execute, and its reservation says so: report the ballots pending
+    // rather than settled.
+    let pendingAfter: boolean;
+    try {
+      pendingAfter = await pollrWriteMayStillExecute(ownerId, poll.id);
+    } catch {
+      pendingAfter = true;
+    }
+    if (pendingAfter) return { success: false, unconfirmed: true, closed, stale, error: firstError };
 
     let recorded: number[] | null = null;
     try {
@@ -458,6 +478,11 @@ class PollrVoteService {
    */
   async getBallotState(poll: Poll, userId: string): Promise<BallotState> {
     if (!pollrIsV5()) return { choices: await this.getMyVotes(poll, userId), pending: false };
+    // Past the close (and the margin for this clock against block time) no
+    // ballot write can land, whatever is still reserved.
+    if (pollIsClosed(poll, Date.now() - FINAL_TALLY_GRACE_MS)) {
+      return { choices: await this.getMyVotes(poll, userId), pending: false };
+    }
     await settlePendingPollrReplaces(userId);
     let pending: boolean;
     try {

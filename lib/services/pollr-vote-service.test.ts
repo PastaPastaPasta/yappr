@@ -354,6 +354,38 @@ describe('v5 ballots', () => {
     expect(mocks.createDocument.mock.calls[0][4]).toEqual({ reservationScope: scope });
   });
 
+  it('reports a replace refused without a verdict as pending, not as settled', async () => {
+    const service = await loadService('v5');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 2)));
+    // A transport failure: withSdkSignedWrite keeps its reservation pending.
+    mocks.updateDocument.mockImplementation(async () => {
+      mocks.loadReservation.mockReturnValue({ mark: BigInt(0), pending: [{ id: 'r', nonce: null, expiresAt: Date.now() + HOUR, scope: `pollr-vote:${id(9)}` }] });
+      return { success: false, error: 'fetch failed' };
+    });
+
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, unconfirmed: true, error: 'fetch failed' });
+  });
+
+  it('holds back a vote whose first write waits on another poll’s pending write', async () => {
+    const service = await loadService('v5');
+    const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 2)));
+    mocks.updateDocument.mockResolvedValue({ success: false, error: PENDING_WRITE_ERROR });
+
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+  });
+
+  it('getBallotState is never pending once the poll is past its close', async () => {
+    const service = await loadService('v5');
+    mocks.loadReservation.mockReturnValue({ mark: BigInt(6), pending: [{ id: 'c', nonce: BigInt(6), expiresAt: null }] });
+    mocks.contractNonce.mockResolvedValue(BigInt(5));
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
+
+    expect(await service.getBallotState(poll({ endsAt: Date.now() - HOUR }), VOTER)).toEqual({ choices: [0], pending: false });
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
   it('reports an unconfirmed create as unconfirmed, not as counted', async () => {
     const service = await loadService('v5');
     mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
@@ -362,13 +394,16 @@ describe('v5 ballots', () => {
     expect(mocks.createDocument).toHaveBeenCalledTimes(1);
   });
 
-  it('stops at a write held back for a pending transition, then re-reads', async () => {
+  it('stops at a later write held back for a pending transition, then re-reads', async () => {
     const service = await loadService('v5');
     const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils');
-    mocks.createDocument.mockResolvedValue({ success: false, error: PENDING_WRITE_ERROR });
+    mocks.createDocument
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValue({ success: false, error: PENDING_WRITE_ERROR });
+    mocks.query.mockResolvedValueOnce(new Map()).mockResolvedValue(ballots(ballotDoc(0, 0)));
 
-    expect(await service.setVote(open({ multiChoice: true }), [0, 1], VOTER)).toMatchObject({ success: false, choices: [] });
-    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
+    expect(await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER)).toMatchObject({ success: false, choices: [0] });
+    expect(mocks.createDocument).toHaveBeenCalledTimes(2);
     expect(mocks.query).toHaveBeenCalledTimes(2);
   });
 

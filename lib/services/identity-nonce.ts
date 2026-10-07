@@ -311,9 +311,10 @@ export async function withSdkSignedWrite<T>(
  * pending (an absence may be a node that is behind the document's creation).
  *
  * Runs under the write lock, so no write is in flight while it reads, and
- * resolves to the number of entries it released. Nothing in lib calls it: a
- * caller that saw such a write land (the mobile engine, before its next DM
- * write) uses it instead of waiting out {@link PENDING_LIFETIME_MS}.
+ * resolves to the number of entries it released. Callers that may have such a
+ * write outstanding (the mobile engine before its next DM write, Pollr before
+ * any ballot or poll write) use it instead of waiting out
+ * {@link PENDING_LIFETIME_MS}.
  */
 export async function settleSupersededReplaces(ownerId: string, contractId: string): Promise<number> {
   return withIdentityWriteLock(ownerId, contractId, async () => {
