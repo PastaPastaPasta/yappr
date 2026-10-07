@@ -31,9 +31,9 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Locator, Page } from '@playwright/test'
+import type { Browser, Locator, Page } from '@playwright/test'
 import { appUrl } from '../fixtures/app'
-import { expect, hasSeedPhrase, NO_SEED_REASON, seedContext, test } from '../fixtures/auth'
+import { expect, hasSeedPhrase, NO_SEED_REASON, otherBotIdentity, seedContext, test, type BotIdentity } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
@@ -686,6 +686,43 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
   let runTag = ''
   let hashtag = ''
   let taggedPostId = ''
+  /** A second pool identity whose like lifts the run's target to 2 (null on a one-identity pool). */
+  let secondLiker: BotIdentity | null = null
+
+  /**
+   * The target's like button in a LOADED state: `pressed` for the viewer and
+   * exactly `count` likes. The detail page renders the post unenriched first
+   * (0 likes, not pressed), so a count of 1 or more can only come from the
+   * chain-backed enrichment, which carries the viewer's own like state with it.
+   */
+  const likeState = (p: Page, pressed: boolean, count: number) =>
+    p.getByTestId(`like-btn-${taggedPostId}`)
+      .and(p.locator(`[aria-pressed="${pressed}"][aria-label="Like, ${count} like${count === 1 ? '' : 's'}"]`))
+
+  /**
+   * `who` (the second liker) adds (`pressed`) or takes back its like on the run's
+   * target, whose only other like is the run's bot's: 1 like without it, 2 with.
+   * It waits for the loaded state before deciding, clicks only from the loaded
+   * opposite state, and accepts only the loaded target state with its count.
+   */
+  const setLike = async (browser: Browser, who: BotIdentity, pressed: boolean) => {
+    const [from, to] = pressed ? [1, 2] : [2, 1]
+    const context = await browser.newContext()
+    try {
+      await seedContext(context, who)
+      const page = await context.newPage()
+      await page.goto(appUrl(`/post?id=${taggedPostId}`))
+      const before = likeState(page, !pressed, from)
+      await expect(before.or(likeState(page, pressed, to))).toBeVisible({ timeout: 60_000 })
+      if (await before.isVisible()) {
+        await before.click()
+        await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeEnabled({ timeout: 60_000 })
+      }
+      await reloadUntilVisible(page, appUrl(`/post?id=${taggedPostId}`), (p) => likeState(p, pressed, to))
+    } finally {
+      await context.close()
+    }
+  }
 
   test.beforeAll(async ({ browser, bot }) => {
     test.setTimeout(420_000)
@@ -722,6 +759,25 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     } finally {
       await context.close()
     }
+    // A second like from another pool identity. Every earlier run leaves its own
+    // target on the bot's profile at one like, so with two this run's target
+    // outranks all of them on the bot's capped Top list, however many there are
+    // and however ties order (afterAll takes the second like back).
+    secondLiker = await otherBotIdentity()
+    if (secondLiker) await setLike(browser, secondLiker, true)
+  })
+
+  test.afterAll(async ({ browser }) => {
+    // Best effort: leave the target at one like like every earlier run's, so the
+    // next run's two-like target still outranks it. A failure here only leaves one
+    // target at two likes, which does not fail a later run.
+    if (!secondLiker || !taggedPostId) return
+    test.setTimeout(300_000)
+    try {
+      await setLike(browser, secondLiker, false)
+    } catch (error) {
+      console.warn(`windowed rankings: the second like on ${taggedPostId} was not taken back: ${String(error).slice(0, 200)}`)
+    }
   })
 
   test(`the tag page's Top → recent window lists the liked post (${windowIndex('hashtags')}, tag + window pinned)`, async ({ page }) => {
@@ -744,9 +800,12 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     await expect(topFilter).toBeVisible({ timeout: 60_000 })
     await topFilter.click()
     if (!WINDOWS?.creators) {
+      // The Top list is capped (10) and earlier runs' targets sit at one like each;
+      // this run's target carries two (beforeAll), so it must rank in, with its count.
       await expect(
         page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
       ).toBeVisible({ timeout: 60_000 })
+      if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toContainText('2')
       await expect(page.getByTestId('profile-top-window')).toHaveCount(0)
       return
     }
