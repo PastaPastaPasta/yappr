@@ -17,7 +17,7 @@ import type { BlockSourceDTO, Page, UserSummaryDTO } from './dto'
 
 /** `block.message` (`blockService.blockUser` keeps the first 280). */
 const BLOCK_MESSAGE_MAX = 280
-/** `components/settings/blocked-users.tsx` reads the list whole (up to 100); the engine pages it. */
+/** `components/settings/blocked-users.tsx` reads the list whole; the engine pages it. */
 const BLOCKED_PAGE = 30
 
 /** `use-block.ts`: an unblock that leaves the user blocked by a followed block list. */
@@ -57,11 +57,10 @@ interface WithdrawReportArgs {
 
 const blockLists = new TtlMap<string, { blockedId: string; message?: string }[]>(60_000)
 
-/** The viewer's own blocks (`getUserBlocks`' query), rejecting when the read fails: lib's answers a failure with `[]`. */
+/** Every one of the viewer's own blocks (`getUserBlocks`), rejecting when the read fails. */
 async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?: string }[]> {
   try {
-    const { documents } = await blockService.query({ where: [['$ownerId', '==', viewer]], limit: 100 })
-    return documents.filter(block => block.blockedId)
+    return (await blockService.getUserBlocks(viewer)).filter(block => block.blockedId)
   } catch (error) {
     throw readFailure(error)
   }
@@ -154,7 +153,7 @@ export function createSafetyModule(tickets: TicketStore) {
     unblock: async (targetId: string): Promise<WriteTicket> => submitBlock('unblock', targetId),
 
     /**
-     * The accounts the viewer blocked (up to 100, as the web settings page),
+     * Every account the viewer blocked, as the web settings page lists them,
      * 30 a page, each with the message given. Rejects when the list cannot be
      * read (never an empty list). A block or unblock that settles drops the
      * list held for paging, so no page is stale.

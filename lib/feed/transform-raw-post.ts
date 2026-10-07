@@ -75,6 +75,17 @@ export function sortFeedByTimestamp(posts: Post[]): Post[] {
   return posts.sort((a, b) => getFeedItemTimestamp(b) - getFeedItemTimestamp(a));
 }
 
+/**
+ * `incoming` merged into `current`, newest first by feed time, each id once
+ * (the copy in `incoming` wins). New posts recovered from an earlier
+ * partial check can be older than ones already shown or waiting, so they
+ * are placed by time, not stacked on top.
+ */
+export function mergeFeedItems(incoming: readonly Post[], current: readonly Post[]): Post[] {
+  const ids = new Set(incoming.map((post) => post.id));
+  return sortFeedByTimestamp([...incoming, ...current.filter((post) => !ids.has(post.id))]);
+}
+
 export function transformRawPost(doc: Record<string, unknown>): Post {
   const data = (doc.data || doc) as Record<string, unknown>;
   const existingAuthor = (doc.author || {}) as Record<string, unknown>;
