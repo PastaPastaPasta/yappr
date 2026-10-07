@@ -1,3 +1,5 @@
+import type { PollrTopology } from '@/lib/pollr-rules'
+
 /**
  * Application constants
  */
@@ -264,19 +266,22 @@ export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (lea
 // Testnet pollr v3: count trees plus a per-mode ballot doctype, maker-owned
 // (Yappr only reads/writes documents).
 export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
-// Pollr contract topology. `v3` is the testnet contract: stored ballots whose
-// single-choice rule is a `unique` index, and no reference integrity — a vote
-// may name a poll that does not exist. `v4` (contracts/pollr-contract.json,
-// docs/NON_SOCIAL_CONTRACTS.md) makes both ballot doctypes indexOnly (the entries ARE the
-// ballot), binds `pollId` to a real poll with a `pollOwnerId` agreement against
-// the poll's own `$ownerId`, and adds the ranked winner query. The two BALLOT
-// shapes are incompatible — a v4 ballot carries no `$createdAt`, which v3
-// requires, and its `pollOwnerId` is consensus-bound where v3's is unchecked —
-// so the switch must match the deployed contract. (A v4 POLL is written exactly
-// like a v3 one.)
-export const POLLR_TOPOLOGY: 'v3' | 'v4' =
-  process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+// Pollr contract topology. `v3` is the testnet contract: stored, immutable
+// ballots whose single-choice rule is a `unique` index, and no reference
+// integrity — a vote may name a poll that does not exist. `v4` (the beta.7 cut
+// still registered on the sakura devnet) made both ballot doctypes indexOnly;
+// it is READ-ONLY here, since its write path needed indexOnly confirmation the
+// client no longer carries. `v5` (contracts/pollr-contract.json,
+// docs/NON_SOCIAL_CONTRACTS.md) stores `options[]`, requires a close time
+// within 31 days, and keeps one mutable `vote` doctype whose ballots stay
+// editable until the poll closes and are final after. The ballot shapes are
+// incompatible, so the switch must match the deployed contract.
+const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v5']
+export const POLLR_TOPOLOGY: PollrTopology =
+  POLLR_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_POLLR_TOPOLOGY) ?? 'v3'
+export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
+export const pollrIsV5 = () => POLLR_TOPOLOGY === 'v5'
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
@@ -289,12 +294,10 @@ export const POLLR_APP_CONTRACT_ID = 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr
 // ---- end pollr block ----
 
 /**
- * `VOTE` and `MULTI_VOTE` are the two ballot doctypes. A poll's immutable
- * `multiChoice` flag picks which one holds its ballots, and each carries the
- * uniqueness rule that mode needs: `vote` is unique per (poll, voter), so
- * Platform rejects a second single-choice selection; `multiVote` is unique per
- * (poll, voter, choice). Documents written to the doctype a poll doesn't use
- * are never read, so they can't reach a tally.
+ * Ballot doctypes. On v3/v4 a poll's immutable `multiChoice` flag picks which
+ * of `vote` and `multiVote` holds its ballots, and each carries the uniqueness
+ * rule that mode needs: `vote` is unique per (poll, voter), `multiVote` per
+ * (poll, voter, choice). v5 has only `vote`, unique per (poll, voter, slot).
  */
 export const POLLR_DOCUMENT_TYPES = {
   POLL: 'poll',
@@ -302,16 +305,10 @@ export const POLLR_DOCUMENT_TYPES = {
   MULTI_VOTE: 'multiVote',
 } as const
 
-/** The doctype holding a poll's ballots, chosen by its `multiChoice` flag. */
+/** The doctype holding a poll's ballots: by its `multiChoice` flag before v5, always `vote` on v5. */
 export function pollrVoteDocType(multiChoice: boolean): string {
-  return multiChoice ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
+  return multiChoice && !pollrIsV5() ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
 }
-
-// Poll limits — mirror the pollr v3 contract schema (option0..option9, 1-100 chars each).
-export const POLL_MIN_OPTIONS = 2
-export const POLL_MAX_OPTIONS = 10
-export const POLL_QUESTION_MAX_LENGTH = 512
-export const POLL_OPTION_MAX_LENGTH = 100
 
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'

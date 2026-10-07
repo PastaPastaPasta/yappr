@@ -58,6 +58,17 @@ async function runSdkWrite(write: () => Promise<string>) {
   return outcome
 }
 
+describe('reservation scope', () => {
+  it('stores and reads back what a transition writes, and leaves it absent when unnamed', () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100), undefined, 'pollr-vote:p1')
+    reserveNonce(OWNER, CONTRACT, n(102), n(100))
+
+    const [scoped, unscoped] = loadReservation(OWNER, CONTRACT)?.pending ?? []
+    expect(scoped).toMatchObject({ nonce: n(101), scope: 'pollr-vote:p1' })
+    expect(unscoped).not.toHaveProperty('scope')
+  })
+})
+
 describe('withSdkSignedWrite', () => {
   it('does not run the write while a nonce this browser signed is still ahead of Platform, however long it waits', async () => {
     // A create signed 101 and came back unconfirmed; Platform stays at 100.

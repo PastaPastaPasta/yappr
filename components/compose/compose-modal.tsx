@@ -19,6 +19,7 @@ import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
+import { pollrIsV4 } from '@/lib/constants'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
 import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
@@ -42,7 +43,7 @@ import {
 import { ThreadPostEditor } from './thread-post-editor'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
 import { ImageAttachment } from './image-attachment'
-import { PollEditor, isPollDraftValid, pollDraftEndsAt, pollDraftOptions } from './poll-editor'
+import { PollEditor, pollDraftEndsAt, pollDraftOptions, pollDraftProblem } from './poll-editor'
 import { StorageProviderModal } from './storage-provider-modal'
 
 const TOGGLE = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors'
@@ -112,7 +113,8 @@ export function ComposeModal() {
   const willBeEncrypted = isPrivateVisibility || inherited.source !== null
   // A poll post is a single, public, top-level post: the question lives on the
   // public Pollr contract and replies/threads have nowhere to carry the embed.
-  const canAttachPoll = !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
+  // A v4 deployment is read-only for polls (nobody can vote on a new one), so it creates none.
+  const canAttachPoll = !pollrIsV4() && !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
   const poll = useComposePoll(canAttachPoll)
 
   // Seed the sensitive toggle from the author's own NSFW profile flag on open.
@@ -151,6 +153,8 @@ export function ComposeModal() {
   // Encrypted posts keep the URL inside the content, so only they pay for it.
   const imageUrlExtraLength = imageUrl && willBeEncrypted ? imageUrl.length + 2 : 0
   const firstUnposted = unpostedWithContent[0]
+  // A poll takes the first unposted text as its question.
+  const pollQuestion = firstUnposted?.content ?? ''
   const hasTeaserOverLimit = visibility === 'private-with-teaser' && !!firstPost?.teaser && characterCount(firstPost.teaser) > TEASER_LIMIT
   // Characters, and on v10 UTF-8 bytes too: the contract refuses either overage.
   const hasOverLimit = unpostedWithContent.some((p, i) => isOverContentLimit(p.content, i === 0 ? imageUrlExtraLength : 0)) || hasTeaserOverLimit
@@ -168,7 +172,9 @@ export function ComposeModal() {
     !image.isUploading &&
     isValidEncryptedPost &&
     isInheritedEncryptionReady &&
-    (!poll.draft || isPollDraftValid(poll.draft))
+    // The post text is the poll's question, so it must fit the poll's limits too
+    // — unless the poll already landed, when the question is fixed.
+    (!poll.draft || !!poll.createdPollId || pollDraftProblem(poll.draft, pollQuestion) === null)
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !poll.draft
 
   const handleClose = () => {
@@ -547,7 +553,7 @@ export function ComposeModal() {
                             ))}
                           </AnimatePresence>
 
-                          {poll.draft && <PollEditor draft={poll.draft} onChange={poll.setDraft} onRemove={poll.clear} disabled={isPosting} locked={!!poll.createdPollId} />}
+                          {poll.draft && <PollEditor draft={poll.draft} question={pollQuestion} onChange={poll.setDraft} onRemove={poll.clear} disabled={isPosting} locked={!!poll.createdPollId} />}
 
                           {/* Modal-level so the attach button works from any thread post's toolbar. */}
                           <input ref={image.fileInputRef} type="file" accept="image/*" onChange={image.onFileSelect} className="hidden" />

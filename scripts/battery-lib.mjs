@@ -374,7 +374,8 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
    * `attemptCreate` guards against for stored types, which it cannot do here
    * because an index entry carries no id to compare. A case asserting that a
    * duplicate is refused MUST pass its own `accepted` that measures a CHANGE,
-   * e.g. a count delta across the write (see `probeRecast` in verify-pollr.mjs).
+   * e.g. a count delta across the write (the pollr v4 battery's `probeRecast`
+   * did this; it is in git history since pollr v5 made ballots stored documents).
    */
   function attemptCreateByValues(who, docType, data, where, options = {}) {
     const contract = options.contract ?? contractId;
