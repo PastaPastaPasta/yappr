@@ -7,9 +7,10 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6 } from '../constants';
 import { parseJsonArray } from '../utils/json-parsing';
 import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
+import { storeStatsService } from './store-stats-service';
 import type {
   Store,
   StoreDocument,
@@ -95,7 +96,8 @@ class StoreService extends BaseDocumentService<Store> {
       defaultCurrency: data.defaultCurrency,
       policies: data.policies,
       location: data.location,
-      contactMethods: parseContactMethods(data.contactMethods)
+      contactMethods: parseContactMethods(data.contactMethods),
+      category: data.category
     };
   }
 
@@ -147,6 +149,8 @@ class StoreService extends BaseDocumentService<Store> {
       policies?: string;
       location?: string;
       contactMethods?: SocialLink[];
+      /** Required on v6 (a slug, see `normalizeStoreCategory`); no earlier cut has the property. */
+      category?: string;
     }
   ): Promise<Store> {
     const documentData: Record<string, unknown> = {
@@ -162,8 +166,12 @@ class StoreService extends BaseDocumentService<Store> {
     if (data.policies) documentData.policies = data.policies;
     if (data.location) documentData.location = data.location;
     if (data.contactMethods) documentData.contactMethods = JSON.stringify(data.contactMethods);
+    if (data.category) documentData.category = data.category;
 
-    return this.create(ownerId, documentData);
+    const created = await this.create(ownerId, documentData);
+    // A new store can change the category ranking.
+    storeStatsService.invalidateStore(created.id);
+    return created;
   }
 
   /**
@@ -183,6 +191,7 @@ class StoreService extends BaseDocumentService<Store> {
       policies: string;
       location: string;
       contactMethods: SocialLink[];
+      category: string;
     }>
   ): Promise<Store> {
     const documentData: Record<string, unknown> = {};
@@ -198,21 +207,44 @@ class StoreService extends BaseDocumentService<Store> {
     if ('policies' in data) documentData.policies = data.policies;
     if ('location' in data) documentData.location = data.location;
     if ('contactMethods' in data) documentData.contactMethods = data.contactMethods && JSON.stringify(data.contactMethods);
+    if (data.category !== undefined) documentData.category = data.category;
 
-    return this.update(storeId, ownerId, documentData);
+    const updated = await this.update(storeId, ownerId, documentData);
+    // A status or category change can move the category ranking.
+    storeStatsService.invalidateStore(storeId);
+    return updated;
   }
 
   /**
-   * The newest active stores for discovery, `limit` at most. A store is only
-   * indexed on `$ownerId`, so neither status nor creation time can be
-   * queried: this reads every store in owner order (up to
+   * The newest active stores for discovery, `limit` at most. On v6 that is one
+   * page of the `byStatus [status, $createdAt]` index, always complete. Before
+   * v6 a store is only indexed on `$ownerId`, so neither status nor creation
+   * time can be queried: this reads every store in owner order (up to
    * {@link DISCOVERY_SCAN_LIMIT}), keeps the active ones and sorts them by
    * creation time. `complete` is false when that cap cut the read short, so
    * the order only covers the stores read; the page says so.
    */
   async getNewestActiveStores(limit = 50): Promise<{ stores: Store[]; complete: boolean }> {
+    if (storefrontIsV6()) {
+      const { documents } = await this.query({
+        where: [['status', '==', 'active']],
+        orderBy: [['status', 'asc'], ['$createdAt', 'desc']],
+        limit,
+      });
+      return { stores: documents, complete: true };
+    }
     const { stores, complete } = await this.scanNewestActiveStores();
     return { stores: stores.slice(0, limit), complete };
+  }
+
+  /** The newest active stores in one category (v6 `byCategory [status, category, $createdAt]`), `limit` at most. */
+  async getNewestActiveStoresInCategory(category: string, limit = 50): Promise<Store[]> {
+    const { documents } = await this.query({
+      where: [['status', '==', 'active'], ['category', '==', category]],
+      orderBy: [['status', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']],
+      limit,
+    });
+    return documents;
   }
 
   /** A full clear (a create runs one) drops the discovery scan too, so a new one is listed. */
@@ -268,6 +300,7 @@ class StoreService extends BaseDocumentService<Store> {
       policies: string;
       location: string;
       contactMethods: SocialLink[];
+      category: string;
     }>
   ): Promise<Store> {
     const existing = await this.getById(storeId);
@@ -286,7 +319,8 @@ class StoreService extends BaseDocumentService<Store> {
       defaultCurrency: changes.defaultCurrency ?? existing.defaultCurrency,
       policies: changes.policies ?? existing.policies,
       location: changes.location ?? existing.location,
-      contactMethods: changes.contactMethods ?? existing.contactMethods
+      contactMethods: changes.contactMethods ?? existing.contactMethods,
+      category: changes.category ?? existing.category
     };
 
     return this.updateStore(storeId, ownerId, merged);

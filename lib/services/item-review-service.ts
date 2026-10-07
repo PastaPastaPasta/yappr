@@ -4,7 +4,8 @@
  * One review per (order, item). Consensus enforces that the item belongs to
  * the review's store, that the order's store agrees with the review, and that
  * the signer OWNS the order (the `{$ownerId: $ownerId}` writer gate) — so every
- * item review on chain is a verified purchase. Costs 1 YAPP.
+ * item review on chain comes from someone who placed an order there. Costs 1
+ * YAPP on v2–v5 and an action fee on v6.
  */
 
 import { BaseDocumentService } from './document-service';
@@ -27,7 +28,7 @@ class ItemReviewService extends BaseDocumentService<ItemReview> {
       itemId: identifierToBase58(data.itemId) || '',
       orderId: identifierToBase58(data.orderId) || '',
       // The writer gate on `orderId` admits only the order's owner.
-      verifiedPurchase: true,
+      ordered: true,
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       rating: data.rating,
       content: data.content,

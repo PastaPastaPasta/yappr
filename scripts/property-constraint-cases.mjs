@@ -154,6 +154,13 @@ export const CONSTRAINT_CASES = {
     ['storeOrder: at an active store', 'storeOrder', baseOrder(), null],
     ['storeOrder: at a paused store', 'storeOrder', { ...baseOrder(), storeStatus: 'paused' }, 'storeIsOpen'],
     ['storeOrder: at a closed store', 'storeOrder', { ...baseOrder(), storeStatus: 'closed' }, 'storeIsOpen'],
+    // Storefront v6 (the mainnet re-cut) keeps these three rules as they were; its new shapes
+    // must still pass them: a digital product, variants and an order payload at the 5,120 B caps.
+    ['storeItem: a digital product priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD', fulfillment: 'digital' }, null],
+    ['storeItem: a digital product priced with no currency', 'storeItem', { ...baseItem(), basePrice: 1000, fulfillment: 'digital' }, 'pricedHasCurrency'],
+    ['storeItem: variants at the 5,120 B cap with a currency', 'storeItem', { ...baseItem(), variants: '{"axes":[]}'.padEnd(5120, ' '), currency: 'DASH' }, null],
+    ['storeItem: a price at 2^53-1 with a currency', 'storeItem', { ...baseItem(), basePrice: Number.MAX_SAFE_INTEGER, currency: 'DASH' }, null],
+    ['storeOrder: a 5,120 B payload at an active store', 'storeOrder', { ...baseOrder(), encryptedPayload: bytes(5120) }, null],
   ],
   // Pollr v5 (docs/NON_SOCIAL_CONTRACTS.md). The offline check judges system
   // times by what the case says, so "after close" is a pollEndsAt in the past.

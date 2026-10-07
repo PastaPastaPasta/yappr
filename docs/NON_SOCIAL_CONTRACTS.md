@@ -64,20 +64,93 @@ contract id is an input to every registration.
 ## Storefront
 
 `contracts/yappr-storefront-contract.json` — `store`, `storeItem`,
-`shippingZone`, `storeOrder`, `orderStatusUpdate`, `storeReview`, `itemReview`,
-`savedAddress`. Client gate: `NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v2`.
+`shippingZone`, `itemDeliverable`, `storeOrder`, `orderStatusUpdate`,
+`orderDelivery`, `storeReview`, `itemReview`, `savedAddress`. Client gate:
+`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v6`, resolved in `lib/constants.ts`).
+**The file is storefront v6**, the 5.0.0-beta.2 mainnet-ready cut that also
+carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638). It is
+registered on sakura as `EDr9McRVsuRZ1J52crVkiESrJ2uKTasj2WNGuZvPZ6w8`;
+`/devnet` stays on v5 until it is cut over.
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `store` | `canBeDeleted: false` (`closed` is the tombstone) | permanentDocument target |
-| `storeItem` | `canBeDeleted: false`; `storeId`→store **writer-gated**; `immutable [storeId]` | item reviews, ghost-store rejection, seller-only listings |
-| `shippingZone` | `storeId`→store **writer-gated**; `immutable [storeId]` | seller-only zones |
-| `storeOrder` | permanent; `storeId`→store `{sellerId: $ownerId}`; countable buyer/seller indexes; ranked `storeOrderCount` | order badges, "most ordered stores", consensus-true seller |
-| `orderStatusUpdate` | `orderId`→storeOrder **writer-gated to the seller**; `buyerId` bound to the order's `$ownerId` | buyer status feed carrying only the seller's updates |
-| `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg+count ranked; `sellerRating` avg ranked; `storeRatingDistribution` grouped count; 3 YAPP | averages, distribution, top rated |
-| `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `itemRating`, `storeItemRating` avg ranked; 1 YAPP | item averages, top items |
-| `itemDeliverable` (v6) | one per item; `itemId`→storeItem **writer-gated**; `immutable [itemId]`; seller-encrypted kit | digital products (docs/DIGITAL_PRODUCTS.md) |
-| `orderDelivery` (v6) | `orderId`→storeOrder **writer-gated to the seller**, `buyerId` bound; permanent, append-only | encrypted digital delivery, buyer library |
+| `store` | `canBeDeleted: false` (`closed` is the tombstone), `moderatorAbilities.delete`; required `category` slug; `byStatus [status, $createdAt]`; `byCategory [status, category, $createdAt]` rangeCountable, ranked at `category`; 1000M action fee | "newest stores", per-category newest, "top categories"; moderatedDocument target |
+| `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); 50M action fee | item reviews, ghost-store rejection, seller-only listings |
+| `shippingZone` | `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]` | seller-only zones |
+| `itemDeliverable` | one per item; `itemId`→storeItem (moderatedDocument) **writer-gated**; `immutable [itemId]`; seller-encrypted kit (≤ 5,120 B) | digital products |
+| `storeOrder` | permanent; `storeId`→store `{$ownerId: sellerId, status: storeStatus}`; `sellerId` distinctFrom `$ownerId`; `buyerOrders [$ownerId, $createdAt]` rangeCountable; `storeOrders [storeId, $createdAt]` rangeCountable, ranked at `storeId`; payload ≤ 5,120 B | buyer and seller order lists and counts, "most ordered stores" |
+| `orderStatusUpdate` | `orderId`→storeOrder **writer-gated to the seller**; neither deletable nor mutable; `buyerFeed [orderId.$ownerId, $createdAt]` (derived) | the order's history; buyer notifications carrying only the seller's updates |
+| `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller**; permanent, append-only; `buyerDeliveries [orderId.$ownerId, $createdAt]` (derived); payload ≤ 5,120 B | encrypted digital delivery, buyer library |
+| `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg ranked; `storeRatingDistribution` grouped count; 16M action fee | averages, distribution, top rated |
+| `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `storeItemRating [storeId, itemId]` avg+count, avg ranked; 8M action fee | item averages and counts within a store, top items in a store |
+
+### What v6 changed (from v5)
+
+- **Moderation is elected** per contract, exactly as blog v7 and social v13:
+  `seatContestable`, a 30-day `challengeCoolDown`, a 7-day join window and a
+  3-day vote window, `maxAddedModerators: 10`, `ownerProtected`. The file's
+  interim team is the contract owner; registration picks the network's interim
+  (`withInterim` in `scripts/register-lib.mjs`): devnet keeps the owner,
+  mainnet registers `notYetUsable`, and `--interim <kind>` overrides it.
+- **Stores and items are moderator-deletable** (`moderatorAbilities.delete`;
+  their owners still cannot delete them), so every reference at them is a
+  `moderatedDocument` reference, #638's `itemDeliverable.itemId` included.
+  After a takedown the reference resolves to the removal record.
+- **No YAPP.** The review `tokenCost` is gone (so is the `SOCIAL_CONTRACT_ID`
+  placeholder). Creates of `store` (1000M credits, about 60¢ at $60/DASH),
+  `storeItem` (50M), `storeReview` (16M) and `itemReview` (8M) pay a
+  `feeMultiplier` moderators fee and must carry an `$actionFeeAgreement`
+  naming exactly that (40132 without one, 40133 for another amount). The
+  client reads the amounts off the committed JSON
+  (`lib/storefront/storefront-contract.ts`) and the write path attaches the
+  agreement (`declaredActionFeeFor` in `lib/transition-agreements.ts`). Orders,
+  status updates, deliveries, kits, shipping zones, saved addresses and every
+  edit are unpriced.
+- **No self-orders.** `storeOrder.sellerId` is distinctFrom `$ownerId`
+  (10419), so a seller cannot pad their order counts or reach the review step
+  on their own store. The client never offers it (cart, item page and
+  checkout say why).
+- **No stored buyer.** `orderStatusUpdate.buyerId` and `orderDelivery.buyerId`
+  are gone; `buyerFeed` and `buyerDeliveries` index `orderId.$ownerId`, read
+  through the order (a cursor walk must pin it with `==`). Status updates are
+  now undeletable as well as immutable: an order's updates ARE its history.
+- **Store categories.** `store.category` is required: a free-form lowercase
+  slug (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 20 characters; the form normalises
+  "Vintage Clothing" to `vintage-clothing`). `byStatus` lists the newest
+  active stores in one query (replacing the owner-order scan the app sorted
+  client-side), `byCategory` the newest in one category, and its ranked count
+  at `category` with `status` pinned is "top categories" in one proved query.
+- **Seller lists and counts ride `storeId`** (one store per owner):
+  `sellerOrders`, `sellerOrderCount` and `storeOrderCount` are gone, and
+  `storeOrders` is rangeCountable and ranked at `storeId`. `buyerOrderCount`
+  folds into `buyerOrders` (rangeCountable).
+- **Item ratings only per store.** `itemRating [itemId]` is gone; an item's
+  average and count read `storeItemRating` with its store pinned. There is no
+  global "top items" ranking any more.
+- **Dropped:** `storeItem.ownerAndTime`/`statusAndTime`/`categoryAndTime`,
+  `orderStatusUpdate.sellerStatusUpdates`, `storeReview.sellerReviews`/
+  `buyerReviews`/`sellerRating`, `itemReview.buyerItemReviews`, and the
+  ranked count on `storeRating` ("most reviewed stores").
+- **Bounds.** Encrypted payloads (order, kit, delivery) cap at 5,120 B, and
+  `variants` at 5,120 characters and bytes; the client refuses either before
+  signing (checkout, add-item, CSV import). Logo and banner URLs must be
+  https:// or ipfs://; currencies are free text of at most 10 characters;
+  prices may reach 2^53−1 and weight and stock are u32; `fulfillment` is at
+  most 7 characters.
+- **Label.** A review on chain proves its author placed the order, not that
+  it was paid or delivered, so the badge reads "Ordered", not "Verified
+  purchase".
+
+### Earlier cuts
+
+v5 (beta.7) added `storeOrder.storeStatus` (QA D-25: only an active store
+takes orders, `storeIsOpen`); v4 (beta.4) a warning list, typed
+`tags`/`imageUrls` arrays and `storeReview.sellerId` distinct from the
+reviewer; v3 (beta.3) moderator-deletable reviews; v2 (beta.2) the rating
+trees and writer gates below. v2–v5 priced reviews in YAPP from the social
+contract (3 for a store review, 1 for an item review), copied `buyerId` into
+status updates, kept per-seller indexes beside the store ones, and had no
+category: discovery scanned stores in owner order.
 
 **Writer gates.** beta.2 lets the *referring* side of a `propertyAgreement` be
 `$ownerId`, which turns a reference into a gate: only the identity the
@@ -91,8 +164,8 @@ sellerId}` (only the seller posts a status), `storeReview.orderId`/
 `storeOrder.storeId` → `{sellerId: $ownerId}` (`sellerId` is the store's real
 owner).
 
-Consequences the client no longer enforces: every review on chain is a verified
-purchase; a stranger cannot burn an order's single review slot; `getLatestStatus`
+Consequences the client no longer enforces: every review on chain comes from
+the order's buyer; a stranger cannot burn an order's single review slot; `getLatestStatus`
 is one row rather than a walk through pages of spoofable updates; and the
 attested copies `storeOrder.buyerId`, `orderStatusUpdate.sellerId` and
 `storeReview.buyerId`/`itemReview.buyerId` are gone.
@@ -109,6 +182,18 @@ sdk.documents.count({ dataContractId, documentTypeName: 'storeReview',
 // with groupBy 'itemId' + where storeId = top items in one store.
 sdk.documents.ranked({ dataContractId, documentTypeName: 'storeReview',
   groupBy: 'storeId', aggregate: { type: 'avg', property: 'rating' }, limit: 20 })
+// v6: top categories among active stores, and the newest in one category.
+sdk.documents.ranked({ dataContractId, documentTypeName: 'store',
+  where: [['status', '==', 'active']], groupBy: 'category', aggregate: { type: 'count' }, limit: 20 })
+sdk.documents.query({ dataContractId, documentTypeName: 'store',
+  where: [['status', '==', 'active'], ['category', '==', 'books']],
+  orderBy: [['status', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']], limit: 50 })
+// v6: an item's average and the per-item counts pin the store (storeItemRating).
+sdk.documents.average({ dataContractId, documentTypeName: 'itemReview',
+  where: [['storeId', '==', S], ['itemId', '==', I]] }, 'rating')
+// v6: the buyer's library (and status feed) through the order's owner.
+sdk.documents.query({ dataContractId, documentTypeName: 'orderDelivery',
+  where: [['orderId.$ownerId', '==', me]], orderBy: [['orderId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 })
 // documents.having takes the same shape plus having:{operator:'>=',value:3}.
 // Buyer orders page in one proof: orders + store join + review-exists + status.
 sdk.documents.composite({ dataContractId, documentType: 'storeOrder',
@@ -121,8 +206,10 @@ sdk.documents.composite({ dataContractId, documentType: 'storeOrder',
 ```
 
 Cold-load DAPI budgets: `/store` directory 1 + 50 review scans → 1 + 50 averages
-(6 at a time); `/store/view` ≥ 7 + ⌈reviews/100⌉ → 7 fixed; `/orders` 1 + 4N →
-1 composite + N decrypts; `/orders/seller` 1 + 2N → 1 + ⌈N/100⌉ + 1 DPNS batch;
+(6 at a time; v6 replaces the up-to-10-query owner scan with one `byStatus`
+page, plus one ranked read for the category picker); `/store/view` ≥ 7 +
+⌈reviews/100⌉ → 7 fixed; `/orders` 1 + 4N → 1 composite + N decrypts;
+`/orders/seller` 1 + 2N → 1 + ⌈N/100⌉ + 1 DPNS batch (v6: + 1 store lookup);
 manage badge 1 capped (wrong) page → 1 count.
 
 Not adopted: sums of order amounts (orders are encrypted to the seller, so there

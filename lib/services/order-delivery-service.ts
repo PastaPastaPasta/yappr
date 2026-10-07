@@ -2,8 +2,9 @@
  * Order Delivery Service (storefront v6)
  *
  * Digital goods a seller delivered for an order. Only the order's seller can
- * write one (writer gate) and `buyerId` is bound to the order's owner, so a
- * delivery on chain is always the real seller's. The payload is encrypted
+ * write one (writer gate), so a delivery on chain is always the real
+ * seller's, and the buyer's library reads it through the order (the derived
+ * `buyerDeliveries [orderId.$ownerId, $createdAt]` index). The payload is encrypted
  * under a key both parties derive from the order's own ECDH secret
  * (lib/crypto/digital-delivery.ts).
  */
@@ -46,7 +47,6 @@ class OrderDeliveryService extends BaseDocumentService<OrderDelivery> {
       id: (doc.$id || doc.id) as string,
       sellerId: (doc.$ownerId || doc.ownerId) as string,
       orderId: identifierToBase58(data.orderId) || '',
-      buyerId: identifierToBase58(data.buyerId) || '',
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       encryptedPayload: normalizeBytes(data.encryptedPayload) || new Uint8Array(),
       nonce: normalizeBytes(data.nonce) || new Uint8Array(),
@@ -83,15 +83,17 @@ class OrderDeliveryService extends BaseDocumentService<OrderDelivery> {
   /**
    * Every delivery to this buyer (the `buyerDeliveries` index), grouped by
    * order, oldest first. Walked page by page: a buyer's library must not end
-   * where their loaded order history does.
+   * where their loaded order history does. The index files a delivery under
+   * its order's owner (`orderId.$ownerId`, derived through the order; no
+   * buyer id is stored), which a cursor walk must pin with `==`, as this does.
    */
   async getForBuyer(buyerId: string): Promise<Map<string, OrderDelivery[]>> {
     const byOrder = new Map<string, OrderDelivery[]>();
     let startAfter: string | undefined;
     for (;;) {
       const { documents } = await this.query({
-        where: [['buyerId', '==', buyerId]],
-        orderBy: [['$createdAt', 'asc']],
+        where: [['orderId.$ownerId', '==', buyerId]],
+        orderBy: [['orderId.$ownerId', 'asc'], ['$createdAt', 'asc']],
         limit: DELIVERY_PAGE_SIZE,
         startAfter,
       });
@@ -149,14 +151,13 @@ class OrderDeliveryService extends BaseDocumentService<OrderDelivery> {
    */
   async publish(
     sellerId: string,
-    order: Pick<StoreOrder, 'id' | 'buyerId'>,
+    order: Pick<StoreOrder, 'id'>,
     sealed: SealedDelivery,
     payload: OrderDeliveryPayload
   ): Promise<{ delivery: OrderDelivery; confirmed: boolean }> {
+    // No buyer id: the buyer's library indexes the order's own $ownerId.
     const created = await this.create(sellerId, {
       orderId: identifierStringToDocumentBytes(order.id),
-      // Bound by consensus to the order's $ownerId; indexed for the buyer's library.
-      buyerId: identifierStringToDocumentBytes(order.buyerId),
       encryptedPayload: sealed.encryptedPayload,
       nonce: sealed.nonce,
     });
