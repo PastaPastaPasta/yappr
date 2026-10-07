@@ -189,7 +189,27 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `moderatedDocument` references (after a takedown they resolve to the removal
 // record), and `publishedAt` is frozen by a conditional `immutable` entry
 // instead of `immutableAllowSetting`, which 5.0 refuses.
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'] as const
+//
+// `v7` (5.0.0-beta.2, the mainnet-ready cut; docs/NON_SOCIAL_CONTRACTS.md) is
+// v6 with ELECTED moderation and these client-visible changes:
+//   - no YAPP on comments: `blog`, `blogPost` and `blogComment` creates carry
+//     an action fee agreement instead (40132 without it), read off the
+//     committed contract JSON (lib/blog/blog-contract.ts);
+//   - `blog.timeline` / `blogPost.timeline [$createdAt]` list new blogs and
+//     the latest posts everywhere, newest first, with no client-side sort;
+//   - the count twins are merged: comment counts read `postAndTime`, follower
+//     counts and "most followed" read `followers` (same query shapes);
+//   - `followersByDay` (a daily grid) is `followersTrend` (72h, a new window
+//     every 24h), and `discussedRecent` ranks posts by comments over the same
+//     window; there is no all-time comment ranking;
+//   - `blogPost.ownerAndTime`, `blogComment.ownerAndTime` and
+//     `blogFollow.following` are gone (a reader's follows ride `ownerAndBlog`);
+//   - an author deletes a post by writing a TOMBSTONE (`deleted`, comments
+//     off, every content field absent; slug, blogId and publishedAt kept),
+//     which a banned or suspended author may still write (`retractedWhen`);
+//   - `publishedAt` may not run more than 10 minutes past `$updatedAt`, and
+//     image URLs must be https:// or ipfs://.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
@@ -202,6 +222,15 @@ export const blogLabelsAreTyped = () => blogTopologyAtLeast('v4')
 export const blogCommentsCopyPostFlag = () => blogTopologyAtLeast('v5')
 /** True on v6 and later: a comment's post owner is derived through `blogPostId`, not copied into `blogPostOwnerId`. */
 export const blogCommentsDerivePostOwner = () => blogTopologyAtLeast('v6')
+/**
+ * True on v7 and later: the action-fee cut. Creates carry an action fee
+ * agreement and comments cost no YAPP; posts list on `timeline`, blogs on
+ * `blog.timeline`; the trend windows are 72h rolling; an author's delete is a
+ * tombstone.
+ */
+export const blogIsV7 = () => blogTopologyAtLeast('v7')
+/** True on v2–v6: a comment costs {@link BLOG_YAPP_TOKEN_COSTS} YAPP (v7 charges an action fee instead). */
+export const blogCommentsCostYapp = () => blogIsV2() && !blogIsV7()
 // ---- profile topology ----
 // `v1` is the unified profile contract live on testnet/production:
 // `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,
@@ -214,9 +243,10 @@ export const profileTopology = (): ProfileTopology =>
   PROFILE_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_PROFILE_TOPOLOGY) ?? 'v1'
 /** True on v2: profile `paymentUris`/`socialLinks` are written as lists. */
 export const profileArraysAreTyped = () => profileTopology() === 'v2'
-// Blog comments are priced in YAPP, charged from the SOCIAL contract's token
-// through `tokenCost.create.contractId` (a cross-contract token cost), so their
-// payment agreement must name that contract — see resolveTokenPayment.
+// Blog comments on v2–v6 are priced in YAPP, charged from the SOCIAL contract's
+// token through `tokenCost.create.contractId` (a cross-contract token cost), so
+// their payment agreement must name that contract — see resolveTokenPayment.
+// v7 drops the token cost for an action fee (blogCommentsCostYapp()).
 export const BLOG_YAPP_TOKEN_COSTS = {
   blogComment: 1,
 } as const

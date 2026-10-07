@@ -26,6 +26,11 @@ import { network } from './sdk-env.mjs';
 import { buildDocument, fetchDocument, randomIdBytes, readback } from './verify-lib.mjs';
 
 const SETTLE_MS = 3000;
+
+/** A priced create carrying no `$actionFeeAgreement` (40132); it may arrive as prose (measured live on beta.3). */
+export const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
+/** An agreement naming other amounts than the declared ones (40133). */
+export const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
 export const settle = (ms = SETTLE_MS) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**

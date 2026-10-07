@@ -136,59 +136,108 @@ gated the other way rather than a loosened gate; `immutable` on
 ## Blog
 
 `contracts/yappr-blog-contract.json` — `blog`, `blogPost`, `blogComment`,
-`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY=v2` (`blogIsV2()` reads
-`process.env` at call time so unit tests can stub it).
+`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v7`, resolved
+in `lib/constants.ts` at call time so unit tests can stub it). **The file is
+blog v7**, the 5.0.0-beta.2 mainnet-ready cut; it is not registered anywhere
+yet, and `/devnet` stays on v6 until it is.
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `blog` | `canBeDeleted: false`, `moderatorAbilities.delete` | moderatedDocument target (its owner can never delete it; a moderator can, keeping a removal record) |
-| `blogPost` | `blogId`→blog (moderatedDocument); `immutable [blogId, {publishedAt when present: $old.publishedAt}]`; `moderatorAbilities.delete` | ghost-blog rejection; a post cannot change blogs or be re-dated |
-| `blogComment` | `blogPostId`→blogPost (moderatedDocument); ranked `commentCount [blogPostId]`; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]` (derived through the reference); 1 YAPP; `moderatorAbilities.delete` | exact counts, "most discussed", unforgeable "comments on my posts" |
-| `blogFollow` | `blogId`→blog (moderatedDocument); ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
+| `blog` | `canBeDeleted: false`, `moderatorAbilities.delete`; `timeline [$createdAt]`; 80M action fee | "new blogs" newest first; moderatedDocument target |
+| `blogPost` | `blogId`→blog (moderatedDocument, only the blog's owner posts); `timeline [$createdAt]`; `immutable [blogId, {publishedAt when present}, {deleted when present}]`; the tombstone rules; `retractedWhen {present: deleted}`; 80M action fee | "latest posts" across blogs; an author's delete (a tombstone) |
+| `blogComment` | `blogPostId`→blogPost (moderatedDocument, copies `commentsEnabled`); `postAndTime [blogPostId, $createdAt]` rangeCountable; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]`; ranked `discussedRecent [$createdAt, blogPostId]` (72h window, a new one every 24h, 7-day ttl); 16M action fee | comment lists and exact counts, "most discussed (3 days)", unforgeable "comments on my posts" |
+| `blogFollow` | `blogId`→blog (moderatedDocument); unique `ownerAndBlog`; `followers [blogId, $createdAt]` rangeCountable, ranked at `blogId`; ranked `followersTrend [$createdAt, blogId]` (72h / 24h / 7-day ttl) | a reader's follows, exact follower counts, "most followed", "trending (3 days)" |
 
-The table is the 5.0.0-beta.1 re-cut (blog v6, topology v6): until beta.7 the
-references were `deletableDocument`, `publishedAt` sat under
-`immutableAllowSetting`, and a comment copied its post's owner into
-`blogPostOwnerId` (bound by `where {$ownerId: blogPostOwnerId}`);
-see [PLATFORM_V5_BETA1_UPGRADE.md](./PLATFORM_V5_BETA1_UPGRADE.md).
+### What v7 changed (from v6)
 
-**v3 (4.2.0-beta.3) is the moderated cut.** The contract config declares
-`moderation: { banlist, suspensions, moderators }` (see `docs/SOCIAL_V8.md`
-for the grammar), and `blog`, `blogPost` and `blogComment` carry
-`canBeDeletedByModerators`, so the moderation team can take an abusive blog,
-post or comment down. Two consequences: every reference at those types is a
-`deletableDocument` reference (a moderator-deletable type counts as deletable;
-`permanentDocument` at it is refused with 40122), so a reader must expect
-`blogPost.blogId`/`blogComment.blogPostId`/`blogFollow.blogId` to resolve to
-nothing after a takedown; and **the edit-history feature is gone** —
-`documentsKeepHistory` was dropped from `blog` and `blogPost`, because Drive
-refuses moderator deletes on a history-keeping type. `blogPost.$revision > 1`
-still marks an edited post, but the previous revisions are no longer stored
-and `documents.history` has nothing to return.
+- **Moderation is elected** per contract: `seatContestable`, a 30-day
+  `challengeCoolDown`, a 7-day join window and a 3-day vote window,
+  `maxAddedModerators: 10` and `ownerProtected`. The file declares the
+  contract owner as the interim team, and registration picks the network's
+  interim the way social v13 does (`withInterim` in `scripts/register-lib.mjs`):
+  devnet keeps the owner, mainnet registers `notYetUsable` (nobody moderates
+  and the moderated types stay closed until a team is seated), and
+  `--interim <kind>` overrides it.
+- **No YAPP.** The comment `tokenCost` is gone (so is the `SOCIAL_CONTRACT_ID`
+  placeholder). Creates of `blog` (80M), `blogPost` (80M) and `blogComment`
+  (16M) pay a `feeMultiplier` moderators fee and must carry an
+  `$actionFeeAgreement` naming exactly that (40132 without one, 40133 for
+  another amount). The client reads the amounts off the committed JSON
+  (`lib/blog/blog-contract.ts`) and the write path attaches the agreement
+  like it does for social posts (`declaredActionFeeFor` in
+  `lib/transition-agreements.ts`). Follows, edits and deletes are unpriced.
+- **Timelines.** `blog.timeline` and `blogPost.timeline [$createdAt]` list new
+  blogs and the latest posts everywhere in one query per page, replacing the
+  owner-order scan the app sorted client-side.
+- **Merged count twins.** `commentCount` folds into `postAndTime`
+  (rangeCountable) and `followerCount` into `followers` (rangeCountable,
+  ranked at `blogId`). The app's count queries do not change: a `blogPostId ==`
+  or `blogId ==` pin is the index's prefix total, and the grouped `in` count
+  serves a post list as before.
+- **Windows.** `followersByDay` (a daily grid) becomes `followersTrend`, and
+  `discussedRecent` ranks posts by comments, both on a 72h window stepping
+  every 24h, read with `selector: 'oldest'` so a page covers ~48–72h. There is
+  no all-time comment ranking any more.
+- **Dropped:** `blogPost.ownerAndTime`, `blogComment.ownerAndTime`,
+  `blogFollow.following` (a reader's follows ride `ownerAndBlog`).
+- **Post tombstone.** An author deletes a post by replacing it with
+  `{ deleted: true, commentsEnabled: false }` plus `blogId`, `slug` and
+  `publishedAt` (`tombstoneIsBlank` requires `commentsEnabled` present and
+  false and every content field absent; `hasBody` requires a live post to
+  carry a title and a body). `deleted` is frozen once set, so a tombstone
+  cannot be undone or refilled. `retractedWhen` lets a banned or suspended
+  author still write it, and nothing else. The slug stays taken and the link
+  resolves to "this post was deleted"; a comment on it is refused
+  (`commentsOpen`, or 40127 for a lying copy).
+- **Bounds.** `publishedAt` may run at most 10 minutes past `$updatedAt`
+  (`publishedNotAhead`; `$updatedAt` is required), so a backdated import is
+  fine and a post dated into the future is refused. The slug pattern is
+  `lib/utils/slug.ts`'s, and avatar, header and cover URLs must be https://
+  or ipfs://.
 
-`blogPost` carries no `author`: the author IS `$ownerId`, which `ownerAndTime`
-already indexes. Up to v5 a comment copied it into `blogPostOwnerId`, bound to
-the referenced post's `$ownerId` (40127); v6 indexes `blogPostId.$ownerId`, read
-from the post itself. Either way `postOwnerAndTime` is safe to read as a
-notification source — nobody can inject
-a row into someone else's feed — and a comment on a post that does not exist is
-impossible (40120). `blog-comment-service.ts` still fetches the post before
-commenting, not to decide whom to trust: up to v5 the write must carry the owner
-id verbatim and the caller's copy may be stale, and on every topology it copies
-the post's `commentsEnabled` into `postCommentsEnabled`. There is deliberately **no writer
-gate** here: anyone may comment on anyone's post — that is the feature.
+### Earlier cuts
+
+v6 (5.0.0-beta.1) was v5 in the 5.0 grammar: `moderatedDocument` references,
+a conditional `immutable` entry for `publishedAt`, and no copied
+`blogPostOwnerId` (`postOwnerAndTime` derives the post's owner through
+`blogPostId`); see [PLATFORM_V5_BETA1_UPGRADE.md](./PLATFORM_V5_BETA1_UPGRADE.md).
+v5 (beta.6) copied `commentsEnabled` into comments and gated posting to the
+blog's owner; v4 (beta.4) added a warning list and typed `labels` arrays; v3
+(beta.3) was the moderated cut, which dropped `documentsKeepHistory` (Drive
+refuses moderator deletes on a history-keeping type), so `$revision > 1`
+still marks an edited post but no earlier revision is stored. v2–v6 priced a
+comment at 1 YAPP from the social contract, kept count-only twins
+(`commentCount`, `followerCount`) and a daily `followersByDay`, and had no
+timeline: discovery paged blogs in owner order and sorted them client-side.
+
+`blogPost` carries no `author`: the author IS `$ownerId`. Up to v5 a comment
+copied it into `blogPostOwnerId`, bound to the referenced post's `$ownerId`
+(40127); from v6 `postOwnerAndTime` indexes `blogPostId.$ownerId`, read from
+the post itself. Either way that index is safe to read as a notification
+source, and a comment on a post that does not exist is impossible (40120).
+`blog-comment-service.ts` still reads the post before commenting, to copy its
+`commentsEnabled` and to refuse a closed or deleted post before signing. There
+is deliberately **no writer gate** on comments: anyone may comment on anyone's
+post.
 
 ```js
-// Comment count for one post, and for a whole post list in one request.
+// Comment count for one post, and for a whole post list in one request
+// (v7: the postAndTime prefix total; v2–v6: commentCount).
 sdk.documents.count({ dataContractId, documentTypeName: 'blogComment',
   where: [['blogPostId', '==', P]] })
 sdk.documents.count({ dataContractId, documentTypeName: 'blogComment',
   where: [['blogPostId', 'in', [P1, P2]]], groupBy: ['blogPostId'] })
-// Most followed blogs, and trending today (drop the timeRange for all-time;
-// the same shape on blogComment/blogPostId gives most discussed posts).
+// Most followed blogs (all time), and trending (3 days) on v7.
 sdk.documents.ranked({ dataContractId, documentTypeName: 'blogFollow',
   groupBy: 'blogId', aggregate: { type: 'count' }, direction: 'desc', limit: 20,
-  timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] })
+  timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } }] })
+// Most discussed posts (3 days): the same shape on blogComment / blogPostId.
+// The latest posts everywhere, and the newest blogs (v7 timelines).
+sdk.documents.query({ dataContractId, documentTypeName: 'blogPost',
+  where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 })
+// The blogs a reader follows (v7: ownerAndBlog; v2–v6: following).
+sdk.documents.query({ dataContractId, documentTypeName: 'blogFollow',
+  where: [['$ownerId', '==', me]], orderBy: [['$ownerId', 'asc'], ['blogId', 'asc']] })
 // Comments on my posts since last seen (notification source; v2-v5 name the
 // copied 'blogPostOwnerId' instead of the derived 'blogPostId.$ownerId').
 sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
@@ -196,12 +245,24 @@ sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
   orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 })
 ```
 
-Cold-load budgets: blog home goes from 1 posts page + a full cursor scan per
-100+-comment post to 1 posts page + 1 grouped count per 100 posts; the follower
-badge from ⌈followers/100⌉ to 1 count; `/blog` discovery rankings were not
-affordable at all before. `blogStatsService.mostDiscussedPosts()` is proved and
-exposed but has no page — the ranked axis is global, so it cannot be pinned to
-one blog, and the app has no cross-blog post feed yet.
+Client surfaces on v7: `/blog` discovery gains a Blogs / Posts switch. Blogs
+lists Newest (paged on `blog.timeline`), Most followed and Trending (3 days);
+Posts lists Latest posts (paged on `blogPost.timeline`) and Most discussed
+(3 days). Explore's blog tab reads the post timeline directly. An author's
+dashboard has a Delete action on each post (the tombstone); readers see a
+deleted post's link as "this post was deleted", with no comments.
+
+Validation: `node scripts/validate-contract-offline.mjs
+contracts/yappr-blog-contract.json --network mainnet --cost` (create size
+~7,010 B signed; documentCreateCost blog 248.5M, blogPost 492.6M, blogComment
+90.6M, blogFollow 72.6M credits for new index values), `--constraints` for the
+tombstone and `publishedNotAhead` cases (`scripts/property-constraint-cases.mjs`),
+and `node scripts/verify-blog.mjs --self-test`. The live battery adds b9 (a
+wrong fee amount), b22 (the tombstone), b23 (a banned author's retraction) and
+b24 (a comment on a tombstone); it has not been run, since v7 is not
+registered. `scripts/seed/non-social/blog.mjs` still seeds the v6 shape (YAPP
+comments, `commentCount`), and needs the same agreement plumbing before it can
+seed a v7 contract.
 
 ---
 

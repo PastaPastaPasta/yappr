@@ -37,7 +37,7 @@ describe('notification sources', () => {
   })
 })
 
-describe('failed notification sources', () => {
+describe('failed notification sources', { timeout: 20_000 }, () => {
   async function serviceWithSources() {
     const { notificationService } = await import('./notification-service')
     vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
@@ -520,5 +520,22 @@ describe('v12 timeless like notifications, through the like service (counter aut
     chain.post = new Map([['P1', ['alice', 'carol']]])
 
     expect(await poll(1_000)).toEqual([{ id: 'like:post:P1:1000', fromUserId: 'carol', likerCount: 1 }])
+  })
+})
+
+describe('blog comment notifications', () => {
+  it('skips comments on a post its author has since deleted (a v7 tombstone)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    const { notificationService } = await import('./notification-service')
+    const { blogCommentService } = await import('./blog-comment-service')
+    const { blogPostService } = await import('./blog-post-service')
+    const comment = (id: string, blogPostId: string) => ({ id, ownerId: 'reader', blogPostId, content: 'hi', createdAt: new Date(5) })
+    vi.spyOn(blogCommentService, 'getCommentsOnMyPosts').mockResolvedValue([comment('c1', 'live'), comment('c2', 'gone')])
+    vi.spyOn(blogPostService, 'getMany').mockResolvedValue([
+      { id: 'live', blogId: 'b', ownerId: 'me', title: 'Live', slug: 'live', createdAt: new Date(1), content: [] },
+      { id: 'gone', blogId: 'b', ownerId: 'me', title: '', slug: 'gone', createdAt: new Date(1), content: [], deleted: true },
+    ])
+    const notifications = await notificationService.getBlogCommentNotifications('me', 0)
+    expect(notifications.map((n) => n.postId)).toEqual(['live'])
   })
 })

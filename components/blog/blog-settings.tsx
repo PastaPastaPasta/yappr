@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { blogService } from '@/lib/services'
-import { LABEL_LIMITS, blogCommentsDefault, labelProblem } from '@/lib/blog/content-utils'
+import { BlogFieldError, LABEL_LIMITS, blogCommentsDefault, labelProblem } from '@/lib/blog/content-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
@@ -47,7 +47,7 @@ export function BlogSettings({ blog, ownerId, onUpdated }: BlogSettingsProps) {
       toast.success('Blog updated')
       onUpdated?.(updated)
     } catch (err) {
-      toast.error(err instanceof ListLimitError ? err.message : 'Failed to update blog')
+      toast.error(err instanceof ListLimitError || err instanceof BlogFieldError ? err.message : 'Failed to update blog')
     } finally {
       setIsSaving(false)
     }

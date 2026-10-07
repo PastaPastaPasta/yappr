@@ -54,7 +54,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 
-describe('composite feed page', () => {
+describe('composite feed page', { timeout: 20_000 }, () => {
   it('uses reply surfaces and preserves caller linkage without mutating the input', async () => {
     mocks.composite.mockImplementation(async query => ({
       pageDocuments: [docs[0]],

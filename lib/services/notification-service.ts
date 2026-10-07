@@ -6,7 +6,7 @@ import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk
 import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
-import { isPublishedBlogPost } from '../blog/content-utils';
+import { isBlogPostTombstone, isPublishedBlogPost } from '../blog/content-utils';
 import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
@@ -574,8 +574,9 @@ class NotificationService {
       // `blogPostOwnerId` up to v5, derived through `blogPostId` from v6),
       // so a row on this index is by construction a comment on this user's
       // post — this drops only rows whose post did not come back (a read
-      // failure), since there is no title or link to render without it.
-      if (!post) return [];
+      // failure), since there is no title or link to render without it, and
+      // rows on a post its author has since deleted (a v7 tombstone).
+      if (!post || isBlogPostTombstone(post)) return [];
       return [{
         id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
         postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,

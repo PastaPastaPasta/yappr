@@ -888,11 +888,14 @@ export function tokenCostFor(docType) {
 
 /**
  * The action fee `docType`'s create charges, or null when it charges none
- * (everything but `post` and `reply`, and `report` from v13). Read off the committed contract JSON so
- * no amount is ever transcribed: a mismatch is a paid 40133.
+ * (everything but `post` and `reply` on the social contract, and `report`
+ * from v13). Read off the committed contract JSON so no amount is ever
+ * transcribed: a mismatch is a paid 40133. `schemas` names another contract's
+ * document schemas (blog v7). One reading for every contract:
+ * `actionFeeOf` in scripts/social-shapes.mjs.
  */
-export function actionFeeFor(docType) {
-  return actionFeeOf(SOCIAL_DOCUMENT_SCHEMAS, docType);
+export function actionFeeFor(docType, schemas = SOCIAL_DOCUMENT_SCHEMAS) {
+  return actionFeeOf(schemas, docType);
 }
 
 /**
@@ -942,10 +945,11 @@ export function forgetFeeMultiplier() {
 
 /**
  * The agreement a create of `docType` must carry, or undefined when the action
- * is unpriced. Reads the epoch multiplier on first use.
+ * is unpriced. Reads the epoch multiplier on first use. `schemas` as for
+ * {@link actionFeeFor}.
  */
-export async function feeAgreementFor(sdk, docType) {
-  const fee = actionFeeFor(docType);
+export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SCHEMAS) {
+  const fee = actionFeeFor(docType, schemas);
   if (!fee) return undefined;
   return new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await feeMultiplierPermille(sdk)));
 }
@@ -962,11 +966,18 @@ export async function feeAgreementFor(sdk, docType) {
  * (`deriveDocumentIdBytes`); the id is therefore known BEFORE the broadcast,
  * unlike the facade path. Returns `{ id }` — the same shape `createdId` reads
  * off a facade-created Document — so callers' acceptance logic is unchanged.
+ *
+ * `onDerivedId(id)` receives that id before anything is signed or sent: a
+ * broadcast that lands while its wait throws (the DAPI 504 quirk) returns
+ * nothing, and a caller reconciling by id needs it then. Looking the document
+ * up by value instead needs an owner index, which not every doctype keeps
+ * (blog v7 drops them from `blogPost` and `blogComment`).
  */
-export async function createWithAgreement(sdk, { contractId, docType, ownerId, wif, identityKey, data, entropy, agreement, payment = {} }) {
+export async function createWithAgreement(sdk, { contractId, docType, ownerId, wif, identityKey, data, entropy, agreement, payment = {}, onDerivedId }) {
   const rawNonce = (await sdk.wasm.getIdentityContractNonce(ownerId, contractId)) ?? 0n;
   const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
   const { document, id } = buildDocument({ contractId, docType, ownerId, data, entropy, nonce });
+  onDerivedId?.(id);
   const transition = new DocumentCreateTransition({
     document,
     identityContractNonce: nonce,
@@ -1000,13 +1011,13 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
  * which path ran. `actor` is a seeder actor: `{ ownerId, identityKey, signer,
  * wif }`.
  */
-export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {} }) {
+export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {}, onDerivedId }) {
   if (!agreement) {
     return sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
   }
   return createWithAgreement(sdk, {
     contractId, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
-    data, entropy, agreement, payment,
+    data, entropy, agreement, payment, onDerivedId,
   });
 }
 

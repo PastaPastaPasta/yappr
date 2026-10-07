@@ -21,7 +21,9 @@ import { RankingWindowToggle } from '@/components/explore/ranking-window-toggle'
 import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { TopCreators } from '@/components/explore/top-creators'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
-import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
+import Link from 'next/link'
+import { BLOG_POSTS_DISCOVERY_URL, boundedPostListState, enrichBlogPostsWithAuthors, enrichBlogPostsWithBlogNames, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { blogIsV7 } from '@/lib/constants'
 
 type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
@@ -39,6 +41,8 @@ export default function ExplorePage() {
   const [isLoadingTrends, setIsLoadingTrends] = useState(true)
   const [recentBlogPosts, setRecentBlogPosts] = useState<BlogPostWithAuthor[]>([])
   const [isLoadingBlogs, setIsLoadingBlogs] = useState(true)
+  // v7: the bounded timeline read stopped with more posts after it (see boundedPostListState).
+  const [moreBlogPostsAfter, setMoreBlogPostsAfter] = useState<string | undefined>()
   const [topPosts, setTopPosts] = useState<Post[]>([])
   const [isLoadingTop, setIsLoadingTop] = useState(false)
   // Each ranked tab keeps its own window: the axes' windows differ (v10: 24h
@@ -110,6 +114,16 @@ export default function ExplorePage() {
       try {
         setIsLoadingBlogs(true)
         const { blogService, blogPostService } = await import('@/lib/services')
+
+        // v7 lists the latest posts across every blog off the post timeline
+        // (reading on past drafts and tombstones), then names their blogs;
+        // earlier cuts read every blog's newest posts.
+        if (blogIsV7()) {
+          const { posts, nextCursor } = await blogPostService.getLatestPublishedPosts({ want: 10, maxPages: 5 })
+          setRecentBlogPosts((await enrichBlogPostsWithBlogNames(posts)).slice(0, 10))
+          setMoreBlogPostsAfter(nextCursor)
+          return
+        }
 
         const { blogs: allBlogs } = await blogService.getNewestBlogs()
         if (allBlogs.length === 0) {
@@ -518,6 +532,14 @@ export default function ExplorePage() {
                           <Spinner size="md" className="mx-auto mb-4" />
                           <p className="text-gray-500">Loading blog posts...</p>
                         </div>
+                      ) : boundedPostListState(recentBlogPosts.length, moreBlogPostsAfter) === 'filtered' ? (
+                        <div className="p-8 text-center">
+                          <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
+                          <p className="text-gray-500">No published posts among the newest ones read</p>
+                          <Link href={BLOG_POSTS_DISCOVERY_URL} className="mt-2 inline-block text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400">
+                            Browse all posts
+                          </Link>
+                        </div>
                       ) : recentBlogPosts.length === 0 ? (
                         <div className="p-8 text-center">
                           <DocumentTextIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
@@ -534,6 +556,13 @@ export default function ExplorePage() {
                               index={index}
                             />
                           ))}
+                          {moreBlogPostsAfter && (
+                            <div className="p-4 text-center">
+                              <Link href={BLOG_POSTS_DISCOVERY_URL} className="text-sm font-medium text-yappr-600 hover:text-yappr-700 dark:text-yappr-400">
+                                Browse all posts
+                              </Link>
+                            </div>
+                          )}
                         </div>
                       )}
                     </motion.div>
