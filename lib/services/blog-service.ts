@@ -6,8 +6,7 @@ import { YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
 import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
-
-const newestFirst = (blogs: Blog[]) => [...blogs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils'
 
 export interface CreateBlogData {
   name: string
@@ -152,27 +151,57 @@ class BlogService extends BaseDocumentService<Blog> {
     return { blogs: documents, nextCursor }
   }
 
-  /**
-   * The newest `limit` blogs on the platform (for discovery). On v7 that is
-   * the head of `blog.timeline`. Earlier cuts index blogs only by
-   * `[$ownerId, $createdAt]`, so they page in owner order and sort
-   * client-side by createdAt desc, which only orders the blogs read.
-   */
-  async getAllBlogs(limit = 100): Promise<Blog[]> {
-    if (!this.isConfigured()) return []
-    const timeline = blogIsV7()
+  /** The newest `limit` blogs on v7's `blog.timeline`, page by page. */
+  private async timelineHead(limit: number): Promise<Blog[]> {
     const blogs: Blog[] = []
     let startAfter: string | undefined
     while (blogs.length < limit) {
-      const pageLimit = Math.min(BLOG_PAGE_SIZE, limit - blogs.length)
-      const page = timeline
-        ? await this.newestFirstPage(pageLimit, startAfter)
-        : await this.cursorPage({ orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: pageLimit, startAfter })
+      const page = await this.newestFirstPage(Math.min(BLOG_PAGE_SIZE, limit - blogs.length), startAfter)
       blogs.push(...page.documents)
       startAfter = page.nextCursor
       if (!startAfter) break
     }
-    return timeline ? blogs : newestFirst(blogs)
+    return blogs
+  }
+
+  /**
+   * The newest blogs for discovery, `limit` at most. On v7 that is the head
+   * of `blog.timeline`, read newest first, so it is always `complete`. Earlier
+   * cuts only index `[$ownerId, $createdAt]`, so there is no newest-first
+   * query: this reads every blog in owner order (up to
+   * {@link DISCOVERY_SCAN_LIMIT}) and sorts by creation time. `complete` is
+   * false when that cap cut the read short, so the newest order only covers
+   * the blogs read; callers say so.
+   */
+  async getNewestBlogs(limit = 100): Promise<{ blogs: Blog[]; complete: boolean }> {
+    if (!this.isConfigured()) return { blogs: [], complete: true }
+    if (blogIsV7()) return { blogs: await this.timelineHead(limit), complete: true }
+    const { blogs, complete } = await this.scanNewestBlogs()
+    return { blogs: blogs.slice(0, limit), complete }
+  }
+
+  /** A full clear (a create runs one) drops the discovery scan too, so a new one is listed. */
+  clearCache(documentId?: string): void {
+    super.clearCache(documentId)
+    if (!documentId) this.newestScan = null
+  }
+
+  /** The full discovery scan, newest first, held for two minutes (it is up to 10 queries). */
+  private newestScan: { at: number; result: Promise<{ blogs: Blog[]; complete: boolean }> } | null = null
+
+  private scanNewestBlogs(): Promise<{ blogs: Blog[]; complete: boolean }> {
+    if (this.newestScan && Date.now() - this.newestScan.at < DISCOVERY_SCAN_TTL_MS) return this.newestScan.result
+    const result = this.queryAll(
+      { orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] },
+      DISCOVERY_SCAN_LIMIT
+    ).then(({ documents, reachedLimit }) => ({ blogs: newestFirst(documents), complete: !reachedLimit }))
+    const scan = { at: Date.now(), result }
+    this.newestScan = scan
+    // A failed scan is not held.
+    result.catch(() => {
+      if (this.newestScan === scan) this.newestScan = null
+    })
+    return result
   }
 }
 

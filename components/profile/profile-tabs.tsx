@@ -50,7 +50,13 @@ interface ProfileTabsProps {
     onRetry: () => void
   }
   top: PostListState & { window: RankingWindow; onWindowChange: (w: RankingWindow) => void }
-  mentions: PostListState
+  mentions: PostListState & {
+    hasMore: boolean
+    loadingMore: boolean
+    isSuspended: boolean
+    sentinelRef: React.ComponentProps<typeof InfiniteScrollSentinel>['sentinelRef']
+    onLoadMore: () => void
+  }
   blogs: { blogs: ProfileBlog[]; loading: boolean }
   pagination: {
     hasMore: boolean
@@ -144,7 +150,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
 
   const renderMentions = () => {
     if (mentions.loading) return <Loading text="Loading mentions..." />
-    if (mentions.posts.length === 0) {
+    if (mentions.posts.length === 0 && !mentions.hasMore) {
       return (
         <div className="p-8 text-center text-gray-500">
           <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
@@ -158,6 +164,16 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
         {filterHiddenSensitive(mentions.posts, sensitiveContentMode, viewerId).map((post) => (
           <PostCard key={post.id} post={post} />
         ))}
+        {mentions.hasMore && (
+          <InfiniteScrollSentinel
+            sentinelRef={mentions.sentinelRef}
+            isLoading={mentions.loadingMore}
+            isSuspended={mentions.isSuspended}
+            onLoadMore={mentions.onLoadMore}
+            label="Load more mentions"
+            className="border-t border-gray-200 dark:border-gray-800"
+          />
+        )}
       </div>
     )
   }

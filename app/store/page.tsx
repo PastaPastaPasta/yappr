@@ -19,6 +19,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
+import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
 import { storefrontIsV2 } from '@/lib/constants'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
@@ -38,6 +39,8 @@ export default function StoreBrowsePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [hasStore, setHasStore] = useState(false)
   const [sort, setSort] = useState<StoreSort>('newest')
+  // `newest` sorted only the first DISCOVERY_SCAN_LIMIT stores read.
+  const [scanIncomplete, setScanIncomplete] = useState(false)
 
   // Check if user has a store
   useEffect(() => {
@@ -61,8 +64,9 @@ export default function StoreBrowsePage() {
       try {
         setIsLoading(true)
         let activeStores: Store[]
+        let complete = true
         if (sort === 'newest') {
-          activeStores = (await storeService.getActiveStores({ limit: 50 })).stores
+          ({ stores: activeStores, complete } = await storeService.getNewestActiveStores(50))
         } else {
           // One proved ranked page (top rated by average, or most ordered),
           // then the stores by id.
@@ -81,6 +85,7 @@ export default function StoreBrowsePage() {
         if (!active) return
         setStores(activeStores)
         setStoreRatings(ratings)
+        setScanIncomplete(!complete)
       } catch (error) {
         logger.error('Failed to load stores:', error)
       } finally {
@@ -247,7 +252,13 @@ export default function StoreBrowsePage() {
                 )}
               </div>
             ) : (
-              filteredStores.map((store, index) => {
+              <>
+              {scanIncomplete && sort === 'newest' && (
+                <p className="px-4 py-2 text-center text-xs text-gray-500">
+                  Newest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} stores found; there are more.
+                </p>
+              )}
+              {filteredStores.map((store, index) => {
                 const rating = storeRatings.get(store.id)
                 return (
                   <motion.div
@@ -312,7 +323,8 @@ export default function StoreBrowsePage() {
                     </div>
                   </motion.div>
                 )
-              })
+              })}
+              </>
             )}
           </div>
     </PageShell>

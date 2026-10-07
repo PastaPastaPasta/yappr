@@ -17,6 +17,7 @@ import { useCursorList, type CursorPage } from '@/hooks/use-cursor-list'
 import { Button } from '@/components/ui/button'
 import { BlogPostDiscovery } from './blog-post-discovery'
 import { PillTabs } from './pill-tabs'
+import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
 
 interface BlogWithUsername extends Blog {
   username: string | null
@@ -24,10 +25,10 @@ interface BlogWithUsername extends Blog {
 
 /**
  * Discovery orderings. `newest` is v7's `blog.timeline`, paged newest first;
- * before v7 it pages every blog and sorts client-side (the only shape v1 can
- * serve). The other two are v2 proved rankings, one request each, hydrated
- * with a single by-id fetch; `trending` covers today up to v6 and the last ~3
- * days on v7.
+ * before v7 it pages every blog (up to DISCOVERY_SCAN_LIMIT) and sorts
+ * client-side (the only shape v1 can serve). The other two are v2 proved
+ * rankings, one request each, hydrated with a single by-id fetch; `trending`
+ * covers today up to v6 and the last ~3 days on v7.
  */
 const SORTS = [
   { key: 'newest', label: 'Newest' },
@@ -40,11 +41,15 @@ type BlogSort = (typeof SORTS)[number]['key']
 /** Blogs per `newest` page on v7. */
 const NEWEST_PAGE_SIZE = 50
 
-/** One load of blogs for `sort`; `nextCursor` is set when v7's newest list has more. */
-async function loadBlogs(sort: BlogSort, startAfter?: string): Promise<{ blogs: Blog[]; nextCursor?: string }> {
+/**
+ * One load of blogs for `sort`. `nextCursor` is set when v7's newest list has
+ * more; `incomplete` when an older cut's newest scan stopped at its cap.
+ */
+async function loadBlogs(sort: BlogSort, startAfter?: string): Promise<{ blogs: Blog[]; nextCursor?: string; incomplete?: boolean }> {
   if (sort !== 'newest') return { blogs: await rankedBlogs(sort) }
   if (blogIsV7()) return blogService.getBlogTimelinePage({ limit: NEWEST_PAGE_SIZE, startAfter })
-  return { blogs: await blogService.getAllBlogs(100) }
+  const { blogs, complete } = await blogService.getNewestBlogs(100)
+  return { blogs, incomplete: !complete }
 }
 
 /** The blogs a ranked page names, in the proved order; absent ids are dropped. */
@@ -129,9 +134,10 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
   const sorts = useMemo(() => SORTS.map((option) => (option.key === 'trending' ? { ...option, label: trending.label } : option)), [trending.label])
   const loadPage = useCallback(async (cursor?: string): Promise<CursorPage<BlogWithUsername>> => {
     const page = await loadBlogs(sort, cursor)
-    return { items: await hydrateBlogs(page.blogs, viewerId), nextCursor: page.nextCursor }
+    return { items: await hydrateBlogs(page.blogs, viewerId), nextCursor: page.nextCursor, incomplete: page.incomplete }
   }, [sort, viewerId])
-  const { items: blogs, cursor, loading, loadingMore, error, loadMore } = useCursorList(loadPage, {
+  // `incomplete`: before v7, `newest` sorted only the first DISCOVERY_SCAN_LIMIT blogs read.
+  const { items: blogs, cursor, loading, loadingMore, error, incomplete, loadMore } = useCursorList(loadPage, {
     enabled: sdkReady, loadError: 'Failed to load blogs', moreError: 'Failed to load more blogs',
   })
 
@@ -186,6 +192,11 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
         </p>
       ) : (
         <div className="space-y-2">
+          {incomplete && sort === 'newest' && (
+            <p className="text-center text-xs text-gray-500">
+              Newest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} blogs found; there are more.
+            </p>
+          )}
           {filtered.map((blog) => (
             <BlogCard key={blog.id} blog={blog} currentUserId={viewerId} />
           ))}

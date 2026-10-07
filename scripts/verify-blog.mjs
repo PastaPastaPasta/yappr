@@ -39,8 +39,9 @@
  *     (`retractedWhen`, b23); a tombstone takes no comment (b24);
  *   - `publishedAt` may not run 10 minutes past `$updatedAt` (b19, from the
  *     shared constraint cases).
- * The moderation is ELECTED (interim: the contract owner, which the
- * `--moderator` flag must name for b13-b17 and b23).
+ * The moderation is ELECTED. On a devnet the interim is the contract owner,
+ * which the `--moderator` flag must name for b13-b17 and b23 (mainnet
+ * registers `notYetUsable`, where nobody can moderate before an election).
  *   node scripts/verify-blog.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { readFileSync } from 'node:fs';

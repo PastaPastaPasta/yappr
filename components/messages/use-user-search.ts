@@ -142,12 +142,9 @@ export function useFollowerSuggestions(active: boolean, viewerId: string | undef
 
     const load = async () => {
       try {
-        const follows = await followService.getFollowers(viewerId)
-        // getFollowers returns oldest first; suggest the most recent followers
-        // and cap the list so the DPNS/profile lookups stay a single batch.
-        const followerIds = Array.from(new Set(follows.map(f => f.$ownerId).filter(id => id && id !== viewerId)))
-          .reverse()
-          .slice(0, MAX_FOLLOWER_SUGGESTIONS)
+        // The most recent followers, capped so the DPNS/profile lookups stay a single batch.
+        const follows = await followService.getRecentFollowers(viewerId, MAX_FOLLOWER_SUGGESTIONS)
+        const followerIds = follows.map(f => f.$ownerId).filter(id => id && id !== viewerId)
         if (cancelled) return
         if (followerIds.length === 0) {
           setFollowers([])

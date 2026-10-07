@@ -7,6 +7,8 @@ import toast from 'react-hot-toast'
 export interface CursorPage<T> {
   items: T[]
   nextCursor?: string
+  /** The first page read only part of the data it orders (a capped scan); callers say so. */
+  incomplete?: boolean
 }
 
 interface CursorListOptions {
@@ -34,6 +36,7 @@ export function useCursorList<T extends { id: string }>(
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [incomplete, setIncomplete] = useState(false)
   const currentLoad = useRef(loadPage)
 
   useEffect(() => {
@@ -46,11 +49,13 @@ export function useCursorList<T extends { id: string }>(
       setError(null)
       setItems([])
       setCursor(undefined)
+      setIncomplete(false)
       try {
         const page = await loadPage()
         if (cancelled) return
         setItems(page.items)
         setCursor(page.nextCursor)
+        setIncomplete(page.incomplete === true)
       } catch {
         if (!cancelled) setError(loadError)
       } finally {
@@ -88,5 +93,5 @@ export function useCursorList<T extends { id: string }>(
     }
   }, [cursor, loadingMore, loadPage, moreError])
 
-  return { items, cursor, loading, loadingMore, error, loadMore }
+  return { items, cursor, loading, loadingMore, error, incomplete, loadMore }
 }

@@ -8,9 +8,10 @@ import { useProgressiveEnrichment, type PreloadedEnrichment } from '@/hooks/use-
 import { enrichPostsWithRepostsAndQuotes } from '@/lib/feed/enrich-posts';
 import { loadFollowingFeed, type FollowingFeedWindow } from '@/lib/feed/load-following-feed';
 import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
-import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
+import { getFeedItemTimestamp, mergeFeedItems, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts';
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones';
+import { markAfterCheck, newPostsCheckFrom, type NewPostsMark } from '@/lib/feed/new-posts-mark';
 import { followService, postService } from '@/lib/services';
 import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service';
 
@@ -56,32 +57,6 @@ interface UseFeedDataResult {
   getPostEnrichment: ReturnType<typeof useProgressiveEnrichment>['getPostEnrichment'];
 }
 
-function normalizeRelationId(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? trimmed : null;
-  }
-  if (typeof value === 'number' || typeof value === 'bigint') {
-    return String(value);
-  }
-  return null;
-}
-
-function extractFollowedIds(following: Array<Record<string, unknown>>): string[] {
-  const ids = following
-    .map((followed) =>
-      normalizeRelationId(
-        followed.followingId ??
-          followed.followedId ??
-          followed.following ??
-          followed.$id
-      )
-    )
-    .filter((id): id is string => Boolean(id));
-
-  return Array.from(new Set(ids));
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value && typeof value === 'object') {
     return value as Record<string, unknown>;
@@ -117,6 +92,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null);
   // Late page/background results belong to the feed view that requested them.
   const loadGenerationRef = useRef(0);
+  // How far the new-posts checks of this feed view have read without a gap.
+  const newPostsMarkRef = useRef<NewPostsMark | null>(null);
   const invalidateFeedLoads = useCallback(() => { loadGenerationRef.current++; }, []);
   const reconcilingPostIdsRef = useRef<Set<string>>(new Set());
 
@@ -451,24 +428,32 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     const generation = loadGenerationRef.current;
 
     try {
-      logger.debug('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
+      // Read from where this view's checks have read without a gap (the
+      // newest post on screen before the first check), so each check reads
+      // only what is newer and a partial one is read again.
+      const scannedThrough = newPostsCheckFrom(newestPostTimestamp, newPostsMarkRef.current, generation);
+      logger.debug('Feed: Checking for new posts since', new Date(scannedThrough).toISOString());
       const OVERLAP_MS = 2000;
-      const sinceTimestamp = Math.max(0, newestPostTimestamp - OVERLAP_MS);
+      const sinceTimestamp = Math.max(0, scannedThrough - OVERLAP_MS);
 
       let newPosts: Array<Record<string, unknown>> = [];
+      let complete = true;
 
       if (activeTab === 'following' && user?.identityId) {
-        const following = await followService.getFollowing(user.identityId);
-        const followingIds = extractFollowedIds(following as unknown as Array<Record<string, unknown>>);
+        // Held a minute: the whole following list is not re-read every 15 s.
+        const followingIds = await followService.getFollowingIdsCached(user.identityId);
 
         if (followingIds.length > 0) {
-          newPosts = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50);
+          ({ posts: newPosts, complete } = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50));
         }
       } else {
         newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
       }
 
-      if (generation !== loadGenerationRef.current || newPosts.length === 0) return;
+      if (generation !== loadGenerationRef.current) return;
+      // A partial scan may have missed posts older than its newest: the mark stays at its start.
+      newPostsMarkRef.current = markAfterCheck(generation, scannedThrough, { posts: newPosts, complete });
+      if (newPosts.length === 0) return;
 
       logger.debug(`Feed: Found ${newPosts.length} new posts`);
 
@@ -485,7 +470,7 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
       if (uniqueNewPosts.length > 0) {
         logger.debug(`Feed: ${uniqueNewPosts.length} unique new posts to show`);
-        setPendingNewPosts((prev) => generation === loadGenerationRef.current ? [...uniqueNewPosts, ...prev] : prev);
+        setPendingNewPosts((prev) => generation === loadGenerationRef.current ? mergeFeedItems(uniqueNewPosts, prev) : prev);
       }
     } catch (error) {
       logger.error('Feed: Error checking for new posts:', error);
@@ -497,14 +482,13 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
 
     const newestPendingTimestamp = Math.max(...pendingNewPosts.map(getFeedItemTimestamp));
 
-    setData((currentItems) => {
-      const existing = currentItems || [];
-      return [...pendingNewPosts, ...existing];
-    });
+    // Placed by time: a recovered post can be older than ones already shown.
+    setData((currentItems) => mergeFeedItems(pendingNewPosts, currentItems || []));
 
     enrichProgressively(pendingNewPosts);
     applyRepostAndQuoteEnrichment(pendingNewPosts);
-    setNewestPostTimestamp(newestPendingTimestamp);
+    // The newest shown post only moves forward; an older recovered batch does not pull it back.
+    setNewestPostTimestamp((prev) => Math.max(prev ?? 0, newestPendingTimestamp));
     setPendingNewPosts([]);
   }, [applyRepostAndQuoteEnrichment, enrichProgressively, pendingNewPosts, setData]);
 

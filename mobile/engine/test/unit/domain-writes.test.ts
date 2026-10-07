@@ -44,7 +44,7 @@ const m = vi.hoisted(() => ({
   replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn(), getUserReplies: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
-    blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
+    blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
     getBlockFollow: vi.fn(),
   },
   /** `electedModeration()`: null off an elected contract. */
@@ -354,11 +354,11 @@ describe('graph and safety writes', () => {
     expect(await outcome(safety.block(AUTHOR, { message: '  spam  ' }))).toMatchObject({ state: 'confirmed' })
     expect(m.blockService.blockUser).toHaveBeenCalledWith(VIEWER, AUTHOR, 'spam')
 
-    m.blockService.query.mockResolvedValue({ documents: [{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }] })
+    m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }])
     const blocked = await safety.blocked()
     expect(validate(page(blockedUserDTO), blocked)).toEqual([])
     expect(blocked.items.map(item => [item.id, item.message])).toEqual([[AUTHOR, 'spam'], [id('Other'), null]])
-    expect(m.blockService.query).toHaveBeenCalledWith({ where: [['$ownerId', '==', VIEWER]], limit: 100 })
+    expect(m.blockService.getUserBlocks).toHaveBeenCalledWith(VIEWER)
 
     // check reads the block document itself, never lib's optimistic block cache.
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block'), confirmed: false })
@@ -377,34 +377,34 @@ describe('graph and safety writes', () => {
   it('re-reads the blocked list after a block or unblock lands, on every page, and rejects an unreadable list', async () => {
     const { outcome, safety } = engine()
     const many = (count: number) => Array.from({ length: count }, (_, n) => ({ blockedId: id(`B${n + 1}`) }))
-    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(40))
     const first = await safety.blocked()
     // A continuation reads from the list held for paging...
-    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(31))
     expect((await safety.blocked(first.cursor)).items).toHaveLength(10)
     // ...until a block lands: then even a continuation re-reads.
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
     expect(await outcome(safety.block(AUTHOR))).toMatchObject({ state: 'confirmed' })
     expect((await safety.blocked(first.cursor)).items).toHaveLength(1)
 
-    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(40))
     const again = await safety.blocked()
     m.blockService.unblockUser.mockResolvedValue({ success: true, confirmed: false })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
     expect(await outcome(safety.unblock(id('B1')))).toMatchObject({ state: 'unconfirmed' })
-    m.blockService.query.mockResolvedValue({ documents: many(30) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(30))
     expect((await safety.blocked(again.cursor)).items).toEqual([])
 
     // An unblock a followed list overrides still deleted the own block: the held list drops too.
-    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(40))
     const held = await safety.blocked()
     m.blockService.unblockUser.mockResolvedValue({ success: true })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
     expect(await outcome(safety.unblock(id('B2')))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
-    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(31))
     expect((await safety.blocked(held.cursor)).items).toHaveLength(1)
 
-    m.blockService.query.mockRejectedValue(new Error('no available addresses to retry'))
+    m.blockService.getUserBlocks.mockRejectedValue(new Error('no available addresses to retry'))
     await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
   })
 

@@ -58,17 +58,25 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
         return true;
       }
 
-      // Use state transition service for deletion
+      return await this.deleteBookmark(bookmark.$id, ownerId);
+    } catch (error) {
+      logger.error('Error removing bookmark:', error);
+      return false;
+    }
+  }
+
+  /** Delete one of the owner's bookmark documents by its id (no lookup first). */
+  async deleteBookmark(bookmarkId: string, ownerId: string): Promise<boolean> {
+    try {
       const result = await stateTransitionService.deleteDocument(
         this.contractId,
         this.documentType,
-        bookmark.$id,
+        bookmarkId,
         ownerId
       );
-
       return result.success;
     } catch (error) {
-      logger.error('Error removing bookmark:', error);
+      logger.error('Error deleting bookmark:', error);
       return false;
     }
   }
@@ -103,14 +111,15 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
   }
 
   /**
-   * Get user's bookmarks.
-   * Paginates through all results to return complete list.
+   * Every bookmark a user made, newest first, read to the end (no cap): the
+   * bookmarks page searches, sorts and clears the whole set, and pages only
+   * the hydration of the posts. Rejects when the read fails, so a failure
+   * never passes for "no bookmarks".
    */
   async getUserBookmarks(userId: string): Promise<BookmarkDocument[]> {
-    try {
-      const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
+    const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
 
-      const { documents } = await paginateFetchAll(
+    const { documents } = await paginateFetchAll(
         sdk,
         () => ({
           dataContractId: this.contractId,
@@ -121,14 +130,11 @@ class BookmarkService extends BaseDocumentService<BookmarkDocument> {
           ],
           orderBy: [['$createdAt', 'desc']]
         }),
-        (doc) => this.transformDocument(doc)
+        (doc) => this.transformDocument(doc),
+        { maxResults: Infinity }
       );
 
-      return documents;
-    } catch (error) {
-      logger.error('Error getting user bookmarks:', error);
-      return [];
-    }
+    return documents;
   }
 
   /**

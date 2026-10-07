@@ -120,7 +120,7 @@ export default function ExplorePage() {
           return
         }
 
-        const allBlogs = await blogService.getAllBlogs()
+        const { blogs: allBlogs } = await blogService.getNewestBlogs()
         if (allBlogs.length === 0) {
           setRecentBlogPosts([])
           return
@@ -193,7 +193,7 @@ export default function ExplorePage() {
         let cached = blogCacheRef.current
         if (!cached) {
           const { blogService } = await import('@/lib/services')
-          const allBlogs = await blogService.getAllBlogs()
+          const { blogs: allBlogs } = await blogService.getNewestBlogs()
           const blogMap = new Map(allBlogs.map(b => [b.id, b]))
           const blogIds = allBlogs.map(b => b.id)
           cached = { blogIds, blogMap }

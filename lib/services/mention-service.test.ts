@@ -72,3 +72,22 @@ describe('v10 mentions (post and reply mentionedUserId)', () => {
     expect(createDocument).not.toHaveBeenCalled()
   })
 })
+
+describe('v2 mentions (postMention documents)', () => {
+  it('lists them newest first, read to the end', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v2')
+    // The index walks oldest first; 150 records take two pages.
+    query.mockImplementation(async ({ limit, startAfter }: { limit: number; startAfter?: string }) => {
+      const first = startAfter ? Number(startAfter.slice(1)) + 1 : 0
+      return Array.from({ length: Math.max(0, Math.min(limit, 150 - first)) }, (_, i) => ({
+        $id: `m${first + i}`, $ownerId: 'alice', $createdAt: first + i, postId: `p${first + i}`, mentionedUserId: 'me',
+      }))
+    })
+    const { mentionService } = await import('./mention-service')
+    const mentions = await mentionService.getPostsMentioningUser('me')
+    expect(mentions).toHaveLength(150)
+    expect(mentions[0].$createdAt).toBe(149)
+    expect(mentions.at(-1)?.$createdAt).toBe(0)
+    expect(query.mock.calls.every(([q]) => q.documentTypeName === 'postMention')).toBe(true)
+  })
+})

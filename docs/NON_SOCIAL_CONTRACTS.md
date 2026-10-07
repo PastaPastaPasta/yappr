@@ -150,10 +150,12 @@ yet, and `/devnet` stays on v6 until it is.
 
 - **Moderation is elected** per contract: `seatContestable`, a 30-day
   `challengeCoolDown`, a 7-day join window and a 3-day vote window,
-  `maxAddedModerators: 10`, `ownerProtected`, and the contract owner as the
-  interim team. (The mainnet interim should follow the registration-option
-  approach the social v13 cut adds; that is not on staging yet, so the file
-  keeps `interim: contractOwner`.)
+  `maxAddedModerators: 10` and `ownerProtected`. The file declares the
+  contract owner as the interim team, and registration picks the network's
+  interim the way social v13 does (`withInterim` in `scripts/register-lib.mjs`):
+  devnet keeps the owner, mainnet registers `notYetUsable` (nobody moderates
+  and the moderated types stay closed until a team is seated), and
+  `--interim <kind>` overrides it.
 - **No YAPP.** The comment `tokenCost` is gone (so is the `SOCIAL_CONTRACT_ID`
   placeholder). Creates of `blog` (80M), `blogPost` (80M) and `blogComment`
   (16M) pay a `feeMultiplier` moderators fee and must carry an

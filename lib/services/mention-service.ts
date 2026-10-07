@@ -247,8 +247,8 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
   }
 
   /**
-   * Get posts that mention a specific user.
-   * Paginates through all results to return complete list.
+   * Every post that mentions a specific user, newest first, read to the end
+   * (no cap; the mention surfaces page the hydration of this list).
    * Returns mention documents - caller should fetch actual posts and filter by
    * ownership ({@link loadMentioningPosts}).
    *
@@ -275,10 +275,11 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
           ],
           orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'asc']]
         }),
-        (doc) => inline ? this.mentionFromDocument(doc, userId, documentTypeName === 'reply' ? 'reply' : 'post') : this.transformDocument(doc)
+        (doc) => inline ? this.mentionFromDocument(doc, userId, documentTypeName === 'reply' ? 'reply' : 'post') : this.transformDocument(doc),
+        { maxResults: Infinity }
       )).documents));
 
-      return perType.length === 1 ? perType[0] : perType.flat().sort((a, b) => b.$createdAt - a.$createdAt);
+      return perType.flat().sort((a, b) => b.$createdAt - a.$createdAt);
     } catch (error) {
       logger.error('Error getting posts mentioning user:', error);
       return [];

@@ -144,7 +144,7 @@ export function createTransitionSize(contract, { DataContractCreateTransition, p
   return { bytes, fits: bytes <= CREATE_TRANSITION_BUDGET, overCap: bytes > STATE_TRANSITION_CAP };
 }
 const ABILITY_LIST = { ban: 'banlist', suspend: 'suspensions', warn: 'warnings' };
-const INTERIM_KINDS = ['contractOwner', 'appointedModerators', 'notYetUsable', 'noModeration'];
+export const INTERIM_KINDS = ['contractOwner', 'appointedModerators', 'notYetUsable', 'noModeration'];
 
 const within = (value, [min, max]) => Number.isInteger(value) && value >= min && value <= max;
 
@@ -445,6 +445,8 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
 const SOCIAL_V10 = 'contracts/yappr-social-contract-v10.json';
 const SOCIAL_V11 = 'contracts/yappr-social-contract-v11.json';
 const SOCIAL_V12 = 'contracts/yappr-social-contract-v12.json';
+const SOCIAL_V13 = 'contracts/yappr-social-contract-v13.json';
+const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
@@ -470,6 +472,8 @@ function settledWithoutCreatedAt(source) {
   return profile.moderatorAbilities.deleteSettled;
 }
 const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position, ...(refersTo ? { refersTo } : {}) });
+/** Every same-contract document type a source's references name. */
+const referencedTypes = (source) => Object.values(types(source)).flatMap((schema) => referenceDeclarations(schema).map(([, ref]) => ref.documentType)).filter(Boolean);
 
 /**
  * Each probe mutates a committed cut and records the first layer that refuses
@@ -627,6 +631,50 @@ const PROBES = [
     for (const type of ['like', 'likeReply', 'post', 'reply']) types(s)[type] = structuredClone(types(v12Source())[type]);
   } },
 
+  // Social v13 (the mainnet candidate) and the blocks contract split out of it. `network`
+  // renders the file as that network registers it (`withInterim`): mainnet's interim is
+  // notYetUsable. `holds` is a statement about the loaded source that must be true.
+  { label: 'control: social v13 as committed (devnet: interim contractOwner)', file: SOCIAL_V13, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v13 as mainnet registers it (interim notYetUsable, one-day window floor)', file: SOCIAL_V13, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'control: the blocks contract as committed (bare schemas, unmoderated)', file: BLOCKS, mutate: () => {}, expect: 'accepted', holds: (s) => !s.config.moderation && types(s).block.indices.every((i) => i.name !== 'ownerBlocks') },
+  { label: 'v13: no block type is left in social, and nothing in it refers to one', file: SOCIAL_V13, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const blockTypes = ['block', 'blockFilter', 'blockFollow'];
+    return blockTypes.every((t) => !types(s)[t]) && !referencedTypes(s).some((t) => blockTypes.includes(t)) && !JSON.stringify(s.config).includes('block');
+  } },
+  // `live` is const true, optional, and frozen while the post is not a tombstone: read back off
+  // the PARSED contract, so a keyword the parser dropped would fail here.
+  { label: 'v13: the parsed post keeps `live` const true and frozen unless tombstoned (immutableWhen)', file: SOCIAL_V13, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => {
+    const live = parsed.schemas.post?.properties?.live;
+    const frozen = parsed.documentTypeImmutableProperties('post').immutableWhen ?? {};
+    return live?.const === true && JSON.stringify(frozen.live) === JSON.stringify({ absent: 'deleted' });
+  } },
+  { label: 'v13 on mainnet with v12\'s 3600 s election windows', file: SOCIAL_V13, network: 'mainnet', expect: 'audit', node: '10900', mutate: (s) => { elected(s).joinWindow = 3600; elected(s).voteWindow = 3600; } },
+  { label: 'v13: a contestable seat with a 13-day challenge cool-down (two weeks minimum)', file: SOCIAL_V13, expect: 'audit', node: '10900', mutate: (s) => { elected(s).challengeCoolDown = 1_123_200; } },
+  // The report target rule cannot be arithmetic: `count` reads arrays and byte arrays, not identifiers.
+  { label: 'v13: report oneTarget as arithmetic over the identifiers (count of postId)', file: SOCIAL_V13, expect: 'wasm', why: /counts the items of "postId"/i, mutate: (s) => {
+    types(s).report.propertyConstraints.oneTarget = { in: [{ add: [{ count: 'postId' }, { count: 'replyId' }, 'about'] }, [1, 32]] };
+  } },
+  { label: 'v13: the media rule measuring mediaUrls with `length` (a typed array is counted, not measured)', file: SOCIAL_V13, expect: 'wasm', why: /measures the length of "mediaUrls"/i, mutate: (s) => {
+    types(s).post.propertyConstraints.media.allOf[1] = { equal: [{ length: 'mediaUrls' }, { count: 'mediaKinds' }] };
+  } },
+  { label: 'v13: parentIsRoot comparing parentOwnerId with itself', file: SOCIAL_V13, expect: 'wasm', why: /compares "parentOwnerId" with itself/i, mutate: (s) => {
+    types(s).reply.propertyConstraints.parentIsRoot = { ifThen: [{ absent: 'replyToReplyId' }, { equal: ['parentOwnerId', 'parentOwnerId'] }] };
+  } },
+  // `live` is optional so that ownerAndTime can skip a tombstone; required, the index could never skip.
+  { label: 'v13: live required (ownerAndTime\'s skipIfAbsent could never skip a tombstone)', file: SOCIAL_V13, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).post.required.push('live'); } },
+  { label: 'v13: the reply\'s rootPostId where naming a rootOwnerId the post does not have', file: SOCIAL_V13, expect: 'audit', node: '40126', mutate: (s) => { types(s).reply.properties.rootPostId.refersTo.where = { rootOwnerId: 'rootOwnerId' }; } },
+  { label: 'v13: the nested reply\'s where comparing the parent\'s rootPostId with a string', file: SOCIAL_V13, expect: 'audit', node: '40126', mutate: (s) => { types(s).reply.properties.replyToReplyId.refersTo.where.rootPostId = 'content'; } },
+  // Updates: what can follow v13 without a new contract. An elected declaration, its interim
+  // included, is frozen (40002), so mainnet must register notYetUsable from the start.
+  { label: 'v13 update: the interim swapped to notYetUsable after registration', file: SOCIAL_V13, expect: 'update', node: '40002', why: /elected moderation declaration/i, update: (s) => { elected(s).interim = { $type: 'notYetUsable' }; } },
+  { label: 'v13 update: a second report kind (report.about maximum 2): accepted, so profile is not the last identity target', file: SOCIAL_V13, expect: 'accepted', update: (s) => { types(s).report.properties.about.maximum = 2; } },
+  { label: 'v13 update: a new optional report property: accepted', file: SOCIAL_V13, expect: 'accepted', update: (s) => { types(s).report.properties.probe = { type: 'integer', minimum: 1, maximum: 3, position: 9 }; } },
+  { label: 'v13 update: post.ownerAndTime back to v12\'s [$ownerId, $createdAt]', file: SOCIAL_V13, expect: 'update', node: '10217', why: /changed index 'ownerAndTime'/i, update: (s) => {
+    const index = namedIndex(s, 'post', 'ownerAndTime');
+    index.properties = index.properties.slice(1); delete index.skipIfAbsent;
+  } },
+  { label: 'v13 update: the media rule relaxed (rules are fixed)', file: SOCIAL_V13, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).post.propertyConstraints.media = { equal: [{ count: 'mediaUrls' }, { count: 'mediaKinds' }] }; } },
+
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only
   // (#5108), so v10's 3600 s windows are legal on a devnet.
@@ -754,15 +802,60 @@ const PROBES = [
 ];
 
 /**
- * Runs every probe; returns the number whose outcome differs from the recorded
- * one. `parseContract` is the wasm-sdk parse, `parseWithNodeRules` the
- * wasm-dpp2 one.
+ * The `where` agreements of the reply and report references, judged off the
+ * PARSED contract (`documentTypeReferences`), so a declaration the parser
+ * dropped fails here. No package checks a `where` offline: consensus fetches
+ * the referenced document and refuses a disagreement with 40127. This models
+ * that equality on hand-written documents (owners as names), so each case pins
+ * what the cut binds; `verify-v10.mjs` broadcasts the refused ones.
+ * [label, file, referring type, reference path, the referring document's
+ * values, the referenced document's values, '40127' or null for agreement]
+ */
+const WHERE_CASES = [
+  ['v13: a top-level reply naming its root post\'s owner', SOCIAL_V13, 'reply', 'rootPostId', { rootOwnerId: 'alice' }, { $ownerId: 'alice' }, null],
+  // With parentIsRoot (parentOwnerId = rootOwnerId on a top-level reply), this closes the
+  // forged "replied to you": the notification index keys on parentOwnerId.
+  ['v13: reply forgery, a rootOwnerId that does not own the root post', SOCIAL_V13, 'reply', 'rootPostId', { rootOwnerId: 'mallory' }, { $ownerId: 'alice' }, '40127'],
+  ['v13: a nested reply in its parent\'s thread', SOCIAL_V13, 'reply', 'replyToReplyId', { parentOwnerId: 'bob', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, null],
+  ['v13: a nested reply crossing threads (its parent is in another thread)', SOCIAL_V13, 'reply', 'replyToReplyId', { parentOwnerId: 'bob', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, '40127'],
+  ['v13: a nested reply naming someone else as its parent\'s owner', SOCIAL_V13, 'reply', 'replyToReplyId', { parentOwnerId: 'carol', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, '40127'],
+  // The holes v13 closes, still open on v12.
+  ['v12 (the hole): a top-level reply binds no owner to its root post', SOCIAL_V12, 'reply', 'rootPostId', { parentOwnerId: 'mallory' }, { $ownerId: 'alice' }, null],
+  ['v12 (the hole): a nested reply crossing threads agrees', SOCIAL_V12, 'reply', 'replyToReplyId', { parentOwnerId: 'bob', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, null],
+  ['v13: a post report naming the post\'s author', SOCIAL_V13, 'report', 'postId', { targetOwnerId: 'alice' }, { $ownerId: 'alice' }, null],
+  ['v13: a post report naming someone else as the author', SOCIAL_V13, 'report', 'postId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+  ['v13: a reply report naming someone else as the author', SOCIAL_V13, 'report', 'replyId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+];
+
+function runWhereCases({ loadContractSource, parseContract }) {
+  let failures = 0;
+  const parsed = new Map();
+  console.log('\nreference `where` agreements (read off the parsed contract; the node refuses a disagreement with 40127):');
+  for (const [label, file, type, path, referring, referenced, expected] of WHERE_CASES) {
+    if (!parsed.has(file)) parsed.set(file, parseContract(loadContractSource(file)));
+    const reference = parsed.get(file).documentTypeReferences(type).find((r) => r.path === path);
+    // A value left out on both sides agrees, as consensus judges it.
+    const disagreement = Object.entries(reference?.where ?? {}).find(([theirs, mine]) => referring[mine] !== referenced[theirs]);
+    const outcome = reference && disagreement ? '40127' : null;
+    const ok = reference !== undefined && outcome === expected;
+    if (!ok) failures += 1;
+    const detail = disagreement ? `${type}.${path} where ${disagreement[0]} = ${disagreement[1]}: ${referenced[disagreement[0]]} ≠ ${referring[disagreement[1]]}` : `where ${JSON.stringify(reference?.where ?? null)} agrees`;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  [${(outcome ?? 'agrees').padEnd(8)}] ${label} — ${detail}${ok ? '' : ` (expected ${expected ?? 'agreement'})`}`);
+  }
+  return failures;
+}
+
+/**
+ * Runs every probe and `where` case; returns the number whose outcome differs
+ * from the recorded one. `parseContract` is the wasm-sdk parse,
+ * `parseWithNodeRules` the wasm-dpp2 one.
  */
 export function runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf, updateRefusals }) {
   let failures = 0;
   console.log('\nnegative probes (wasm = refused by the wasm-sdk parse; dpp2 = only by the wasm-dpp2 parse; audit = both parse, the node refuses; update = version 2 parses, the update rules refuse it):');
   for (const probe of PROBES) {
-    const stored = loadContractSource(probe.file);
+    // As the probe's network registers the file (mainnet: an elected interim becomes notYetUsable).
+    const stored = loadContractSource(probe.file, { network: probe.network });
     const source = structuredClone(stored);
     if (probe.update) {
       source.version = (stored.version ?? 1) + 1;
@@ -787,11 +880,12 @@ export function runContractProbes({ loadContractSource, parseContract, parseWith
     const wrongReason = probe.why !== undefined && outcome !== 'accepted' && !probe.why.test(detail);
     // An update refusal reads "<code> <message>": it must be the code the node refuses with.
     const wrongCode = outcome === 'update' && probe.node !== undefined && !detail.startsWith(`${probe.node} `);
-    const ok = outcome === probe.expect && !auditMissed && !wrongReason && !wrongCode;
+    const statementFails = probe.holds !== undefined && !probe.holds(source, wasmError ? null : parseContract(source));
+    const ok = outcome === probe.expect && !auditMissed && !wrongReason && !wrongCode && !statementFails;
     if (!ok) failures += 1;
     const where = outcome === 'audit' || outcome === 'dpp2' || outcome === 'update' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
-    const note = `${auditMissed ? ' (auditNodeRules did not flag it)' : ''}${wrongReason ? ` (refused, but not for ${probe.why})` : ''}${wrongCode ? ` (refused, but not with ${probe.node})` : ''}`;
+    const note = `${auditMissed ? ' (auditNodeRules did not flag it)' : ''}${wrongReason ? ` (refused, but not for ${probe.why})` : ''}${wrongCode ? ` (refused, but not with ${probe.node})` : ''}${statementFails ? ' (its `holds` statement is false)' : ''}`;
     console.log(`${ok ? 'PASS' : 'FAIL'}  [${outcome.padEnd(8)}] ${probe.label}${where}${detail ? ` — ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}${note}${outcome === probe.expect ? '' : ` (expected ${probe.expect})`}`);
   }
-  return failures;
+  return failures + runWhereCases({ loadContractSource, parseContract });
 }

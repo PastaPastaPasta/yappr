@@ -119,6 +119,17 @@ export function getOwnBlocksFromCache(userId: string): string[] | null {
   return ownBlocks.blockedIds
 }
 
+/**
+ * Every own block this session recorded, complete or not and however old,
+ * including blocks just broadcast (`addOwnBlock`) that a fresh read may not
+ * show yet. Only for writers that must not lose a block (the bloom filter
+ * rebuild); an extra id there costs a confirmation query, a missing one hides
+ * nothing.
+ */
+export function getRecordedOwnBlocks(userId: string): string[] {
+  return loadBlockCache(userId)?.ownBlocks.blockedIds ?? []
+}
+
 export function setOwnBlocks(userId: string, blockedIds: string[]): void {
   const cache = loadBlockCache(userId) || getEmptyCache()
   cache.ownBlocks = { blockedIds, timestamp: Date.now(), complete: true }
