@@ -56,9 +56,19 @@ describe('DPNS composite cache seeds', () => {
   it('caches a proven absence but not a failed reverse lookup', async () => {
     query.mockRejectedValueOnce(new Error('offline'));
     expect(await dpnsService.resolveUsername('111111111')).toBeNull();
-    expect(dpnsService.hasCachedUsername('111111111')).toBe(false);
+    expect(dpnsService.hasCachedAbsence('111111111')).toBe(false);
+    expect(await dpnsService.resolveUsername('111111111')).toBeNull();
+    expect(dpnsService.hasCachedAbsence('111111111')).toBe(true);
+  });
+
+  it('does not report an absence when a failed lookup races a name seeded elsewhere', async () => {
+    query.mockImplementationOnce(async () => {
+      dpnsService.seedUsernames(new Map([['111111111', 'real.dash']]));
+      throw new Error('offline');
+    });
     expect(await dpnsService.resolveUsername('111111111')).toBeNull();
     expect(dpnsService.hasCachedUsername('111111111')).toBe(true);
+    expect(dpnsService.hasCachedAbsence('111111111')).toBe(false);
   });
 
   it('resolves all aliases for a connection page with one in-query', async () => {

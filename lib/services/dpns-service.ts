@@ -130,6 +130,11 @@ class DpnsService {
     return this.reverseCache.has(identityId) || this.reverseMissCache.has(identityId);
   }
 
+  /** True only when a complete DPNS read proved the identity has no name. */
+  hasCachedAbsence(identityId: string): boolean {
+    return this.reverseMissCache.has(identityId);
+  }
+
   seedUsernames(usernames: ReadonlyMap<string, string | null>): void {
     usernames.forEach((username, identityId) => {
       if (username) {
