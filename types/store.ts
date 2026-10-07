@@ -47,6 +47,7 @@ export interface StoreDocument {
   policies?: string
   location?: string
   contactMethods?: string // JSON string of SocialLink[] (or legacy StoreContactMethods object)
+  category?: string // v6: required lowercase slug (e.g. vintage-clothing)
 }
 
 // Parsed store for UI display
@@ -65,6 +66,8 @@ export interface Store {
   policies?: string
   location?: string
   contactMethods?: SocialLink[]
+  /** v6: the seller's category slug (every v6 store has one; no earlier cut does). */
+  category?: string
   // Enriched fields
   ownerUsername?: string
   ownerDisplayName?: string
@@ -348,8 +351,8 @@ export interface StoreReview {
   storeId: string
   orderId: string
   sellerId: string
-  /** v2: always true — only the order's owner can write a review of it. */
-  verifiedPurchase: boolean
+  /** v2+: always true. Only the order's owner can review it, which proves an order was placed (not paid or delivered). */
+  ordered: boolean
   createdAt: Date
   rating: number
   title?: string
@@ -379,8 +382,8 @@ export interface ItemReview {
   storeId: string
   itemId: string
   orderId: string
-  /** v2-only doctype, and the writer gate makes every review a real purchase. */
-  verifiedPurchase: boolean
+  /** v2-only doctype, and the writer gate admits only the order's owner: an order was placed. */
+  ordered: boolean
   createdAt: Date
   rating: number
   content?: string
@@ -545,7 +548,6 @@ export interface OrderDeliveryDocument {
   $ownerId: string // seller — the writer gate makes it the order's seller
   $createdAt: number
   orderId: Uint8Array | string
-  buyerId: Uint8Array | string
   encryptedPayload: Uint8Array
   nonce: Uint8Array
 }
@@ -555,7 +557,6 @@ export interface OrderDelivery {
   id: string
   sellerId: string
   orderId: string
-  buyerId: string
   createdAt: Date
   encryptedPayload: Uint8Array
   nonce: Uint8Array

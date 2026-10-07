@@ -6,7 +6,7 @@
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2 } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV2, storefrontIsV6 } from '../constants';
 import { chunk, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import type {
@@ -112,16 +112,17 @@ class OrderStatusService extends BaseDocumentService<OrderStatusUpdate> {
       trackingNumber?: string;
       trackingCarrier?: string;
       message?: string;
-      /** The order's buyer (v2 propertyAgreement against the order's $ownerId; required). */
+      /** The order's buyer (v2–v5 propertyAgreement against the order's $ownerId; v6 stores none). */
       buyerId: string;
     }
   ): Promise<OrderStatusUpdate> {
     const documentData: Record<string, unknown> = {
       orderId: identifierStringToDocumentBytes(orderId),
       // No sellerId copy: v2 gates the writer to the order's seller, so the
-      // signer IS the seller. buyerId stays because `buyerStatusUpdates`
-      // indexes it for the buyer's own feed.
-      ...(storefrontIsV2() ? { buyerId: identifierStringToDocumentBytes(data.buyerId) } : {}),
+      // signer IS the seller. v2–v5 copy buyerId because `buyerStatusUpdates`
+      // indexes it for the buyer's own feed; v6 derives that feed through the
+      // order (`buyerFeed [orderId.$ownerId, $createdAt]`) and refuses the copy.
+      ...(storefrontIsV2() && !storefrontIsV6() ? { buyerId: identifierStringToDocumentBytes(data.buyerId) } : {}),
       status: data.status
     };
 

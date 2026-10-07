@@ -108,3 +108,45 @@ describe('buyer orders composite', () => {
     expect(result?.statuses).toHaveLength(2);
   });
 });
+
+describe('storefront v6 indexes', () => {
+  /** The service under `topology` (STOREFRONT_TOPOLOGY is read at load). */
+  const load = async (topology: string) => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
+    const { storeStatsService: service } = await import('./store-stats-service');
+    vi.unstubAllEnvs();
+    return service;
+  };
+  const itemId = '22222222222222222222222222222222';
+
+  it('reads an item rating with its store pinned on v6 (storeItemRating), by itemId alone before', async () => {
+    sdk.documents.average.mockResolvedValue(new Map([['', { count: 2n, sum: 9n }]]));
+    expect(await (await load('v6')).getItemRatingSummary(itemId, storeId)).toEqual({ averageRating: 4.5, reviewCount: 2 });
+    expect(sdk.documents.average.mock.calls[0][0].where).toEqual([['storeId', '==', storeId], ['itemId', '==', itemId]]);
+    await (await load('v5')).getItemRatingSummary(itemId, storeId);
+    expect(sdk.documents.average.mock.calls[1][0].where).toEqual([['itemId', '==', itemId]]);
+  });
+
+  it('pins the store ahead of the grouped itemId count on v6', async () => {
+    sdk.documents.count.mockResolvedValue(new Map());
+    await (await load('v6')).getItemReviewCounts([itemId], storeId);
+    expect(sdk.documents.count.mock.calls[0][0]).toMatchObject({ where: [['storeId', '==', storeId], ['itemId', 'in', [itemId]]], groupBy: ['itemId'] });
+  });
+
+  it("counts a seller's orders on their store on v6, on sellerId before", async () => {
+    sdk.documents.count.mockResolvedValue(new Map([['', 7n]]));
+    expect(await (await load('v6')).countSellerOrders('seller', storeId)).toBe(7);
+    expect(sdk.documents.count.mock.calls[0][0].where).toEqual([['storeId', '==', storeId]]);
+    await (await load('v5')).countSellerOrders('seller', storeId);
+    expect(sdk.documents.count.mock.calls[1][0].where).toEqual([['sellerId', '==', 'seller']]);
+  });
+
+  it('ranks categories by active store count in one ranked read (byCategory)', async () => {
+    sdk.documents.ranked.mockResolvedValue({ entries: [{ groupValue: 'books', value: 5n }, { groupValue: 'vintage-clothing', value: 2n }] });
+    expect(await (await load('v6')).topStoreCategories(10)).toEqual([{ id: 'books', value: 5 }, { id: 'vintage-clothing', value: 2 }]);
+    expect(sdk.documents.ranked).toHaveBeenCalledWith(expect.objectContaining({
+      documentTypeName: 'store', groupBy: 'category', aggregate: { type: 'count' }, where: [['status', '==', 'active']], direction: 'desc', limit: 10,
+    }));
+  });
+});

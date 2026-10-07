@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The topology constant is read at module load, so the env must be set before
 // the hoisted import evaluates.
@@ -22,6 +22,7 @@ const update = (status: string, createdAt: number) => ({
 });
 
 beforeEach(() => query.mockReset());
+afterEach(() => vi.unstubAllEnvs());
 
 describe('latest status', () => {
   it('reads the newest update in ONE row — the writer gate leaves nothing to skip past', async () => {
@@ -45,5 +46,22 @@ describe('latest status', () => {
       orderStatusService.fromDocument(update('shipped', 2000)),
     ]);
     expect(latest.get(orderId)?.status).toBe('delivered');
+  });
+});
+
+describe('the buyer is derived on storefront v6', () => {
+  const write = async (topology: string) => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
+    const { orderStatusService: service } = await import('./order-status-service');
+    const create = vi.spyOn(service, 'create' as never).mockResolvedValue({} as never);
+    await service.createStatusUpdate(seller, orderId, { status: 'shipped', buyerId: buyer });
+    return (create.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
+  };
+
+  it('copies buyerId on v2–v5 and not on v6 (buyerFeed indexes orderId.$ownerId)', async () => {
+    expect(await write('v5')).toHaveProperty('buyerId');
+    expect(await write('v6')).not.toHaveProperty('buyerId');
+    expect(await write('v1')).not.toHaveProperty('buyerId');
   });
 });
