@@ -67,8 +67,8 @@ describe('contract topology', () => {
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
     const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
     expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
-    // /devnet runs sakura, the v12 cut (5.0.0-beta.2).
-    expect(devnetTopology).toBe('v12')
+    // /devnet runs sakura, the v13 cut (5.0.0-beta.2, 2026-10-07).
+    expect(devnetTopology).toBe('v13')
   })
 
   it('resolves every declared topology to its own descriptor, and v2 when unset', async () => {
