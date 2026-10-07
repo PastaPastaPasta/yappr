@@ -61,6 +61,45 @@ async function fetchWithResponseTimeout(url: string): Promise<Response> {
   }
 }
 
+/** The most ciphertext a delivered file can be: the largest file a seller may attach, sealed. */
+const MAX_DOWNLOAD_BYTES = MAX_DIGITAL_FILE_BYTES + FILE_CIPHERTEXT_OVERHEAD;
+
+const tooLarge = () => new Error(`The file is larger than ${formatFileSize(MAX_DIGITAL_FILE_BYTES)}, so it was not downloaded`);
+
+/**
+ * A response body, read only up to `maxBytes`. The URL is seller-written and
+ * the server answering it untrusted: neither an advertised size nor
+ * Content-Length bounds what it sends, so the stream is counted as it
+ * arrives and cancelled once it passes the cap, before it can exhaust memory.
+ */
+async function readBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
+  if (Number(response.headers.get('content-length')) > maxBytes) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  if (!response.body) return new Uint8Array(await response.arrayBuffer());
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.length;
+    if (received > maxBytes) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
 /**
  * Download and decrypt a delivered file, trying each IPFS gateway in turn.
  * A gateway that answers with the wrong bytes fails authentication and the
@@ -77,7 +116,7 @@ export async function fetchDecryptedFile(asset: DigitalFileAsset): Promise<Blob>
     try {
       const response = await fetchWithResponseTimeout(url);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const plaintext = decryptDigitalFile(new Uint8Array(await response.arrayBuffer()), key);
+      const plaintext = decryptDigitalFile(await readBounded(response, MAX_DOWNLOAD_BYTES), key);
       // Never the seller's MIME type: an html/svg blob on this origin must not render if `download` is ignored.
       return new Blob([plaintext], { type: 'application/octet-stream' });
     } catch (error) {
