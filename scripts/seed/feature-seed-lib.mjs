@@ -153,8 +153,9 @@ const MAX_ATTEMPTS = 4;
 /**
  * Creates one document and decides the outcome by READING THE CHAIN. `accepted(id)` is the per-doctype probe:
  * `documents.get` for a stored type, an index-entry query for an indexOnly one (which has no row under its `$id`).
- * `duplicateIsSuccess` accepts a 40105 only when the exact entry is on chain — on a single-choice poll an earlier
- * ballot for a DIFFERENT choice raises the same code, and recording it would corrupt the tally.
+ * `duplicateIsSuccess` accepts a 40105 only when the `accepted` probe then finds the document on chain — the probe,
+ * not the code, decides what counts as this write's document (pollr's ballot probe accepts any ballot in the voter's
+ * slot, because the seeder replaces it to the planned choice next).
  */
 export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
