@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { query, dpns, identities, epoch } = vi.hoisted(() => ({
   query: vi.fn(),
-  dpns: { isValidUsername: vi.fn(), isContestedUsername: vi.fn(), isNameAvailable: vi.fn(), registerName: vi.fn() },
+  dpns: { isValidUsername: vi.fn(), isContestedUsername: vi.fn(), isNameAvailable: vi.fn(), registerName: vi.fn(), convertToHomographSafe: vi.fn(), resolveName: vi.fn() },
   identities: { fetch: vi.fn() },
   epoch: { current: vi.fn() },
 }));
@@ -47,16 +47,16 @@ describe('DPNS composite cache seeds', () => {
   it('does not cache a failed alias chunk as an absence', async () => {
     query.mockRejectedValueOnce(new Error('offline'));
     expect((await dpnsService.getAllUsernamesSortedBatch(['111111111'])).has('111111111')).toBe(false);
-    query.mockResolvedValueOnce([{ records: { identity: '111111111' }, label: 'recovered' }]);
+    query.mockResolvedValueOnce([{ $ownerId: '111111111', records: { identity: '111111111' }, label: 'recovered' }]);
     expect(await dpnsService.resolveUsername('111111111')).toBe('recovered.dash');
     expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('resolves all aliases for a connection page with one in-query', async () => {
     query.mockResolvedValue([
-      { records: { identity: '111111111' }, label: 'zeta' },
-      { records: { identity: '111111111' }, label: 'alpha' },
-      { records: { identity: '222222222' }, label: 'bravo' },
+      { $ownerId: '111111111', records: { identity: '111111111' }, label: 'zeta' },
+      { $ownerId: '111111111', records: { identity: '111111111' }, label: 'alpha' },
+      { $ownerId: '222222222', records: { identity: '222222222' }, label: 'bravo' },
     ]);
 
     const names = await dpnsService.getAllUsernamesSortedBatch(['111111111', '222222222']);
@@ -88,12 +88,12 @@ describe('DPNS composite cache seeds', () => {
   it('should retry crowded batches per identity and paginate aliases before choosing primary names', async () => {
     const aliases = Array.from({ length: 100 }, (_, i) => ({
       $id: String(i + 1).replace(/0/g, '1'),
-      records: { identity: '111111111' }, label: `longalias${i}`,
+      $ownerId: '111111111', records: { identity: '111111111' }, label: `longalias${i}`,
     }));
     query.mockResolvedValueOnce(aliases.slice(0, 99))
       .mockResolvedValueOnce(aliases)
-      .mockResolvedValueOnce([{ records: { identity: '111111111' }, label: 'abc' }])
-      .mockResolvedValueOnce([{ records: { identity: '222222222' }, label: 'def' }]);
+      .mockResolvedValueOnce([{ $ownerId: '111111111', records: { identity: '111111111' }, label: 'abc' }])
+      .mockResolvedValueOnce([{ $ownerId: '222222222', records: { identity: '222222222' }, label: 'def' }]);
     const names = await dpnsService.resolveUsernamesBatch(['111111111', '222222222']);
     expect(names.get('111111111')).toBe('abc.dash');
     expect(names.get('222222222')).toBe('def.dash');
@@ -109,6 +109,57 @@ describe('DPNS composite cache seeds', () => {
     dpnsService.seedUsernames(new Map([['111111111', 'new.dash']]));
     expect(await dpnsService.resolveUsername('111111111')).toBe('new.dash');
     expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe('DPNS names registered for another identity', () => {
+  // Platform does not check `records.identity` against the owner, so the
+  // attacker can register a name that points at the victim.
+  const victim = '111111111';
+  const attacker = '222222222';
+  const forged = { $ownerId: attacker, records: { identity: victim }, label: 'aa', normalizedParentDomainName: 'dash' };
+  const own = { $ownerId: victim, records: { identity: victim }, label: 'victim', normalizedParentDomainName: 'dash' };
+
+  beforeEach(() => {
+    dpns.convertToHomographSafe.mockReset().mockImplementation(async (label: string) => label.replace(/[oO]/g, '0').replace(/[ilIL]/g, '1'));
+    dpns.resolveName.mockReset().mockResolvedValue(victim);
+  });
+
+  it('leaves a forged name out of the victim\'s aliases and primary name', async () => {
+    query.mockResolvedValue([forged, own]);
+    expect((await dpnsService.getAllUsernamesSortedBatch([victim])).get(victim)).toEqual(['victim.dash']);
+    expect(await dpnsService.resolveUsername(victim)).toBe('victim.dash');
+    // Nor is the forged name cached as resolving to the victim.
+    query.mockResolvedValue([forged]);
+    expect(await dpnsService.resolveIdentity('aa')).toBeNull();
+  });
+
+  it('proves a victim named only by forgeries unnamed', async () => {
+    query.mockResolvedValue([forged]);
+    expect(await dpnsService.resolveUsername(victim)).toBeNull();
+  });
+
+  it('resolves a forged name to nobody, not the victim the SDK resolver names', async () => {
+    query.mockResolvedValue([forged]);
+    expect(await dpnsService.resolveIdentity('aa.dash')).toBeNull();
+    expect(dpns.resolveName).not.toHaveBeenCalled();
+  });
+
+  it('resolves an owned name by its homograph-safe label', async () => {
+    query.mockResolvedValue([{ ...own, label: 'Alice' }]);
+    expect(await dpnsService.resolveIdentity('Alice.dash')).toBe(victim);
+    expect(query.mock.calls[0][0].where).toEqual([['normalizedLabel', '==', 'a11ce'], ['normalizedParentDomainName', '==', 'dash']]);
+  });
+
+  it('still reports a forged name as taken', async () => {
+    dpns.isNameAvailable.mockRejectedValueOnce(new Error('offline'));
+    query.mockResolvedValue([forged]);
+    expect(await dpnsService.isUsernameAvailable('aa')).toBe(false);
+  });
+
+  it('drops forged names from search results', async () => {
+    query.mockResolvedValue([forged, own]);
+    expect(await dpnsService.searchUsernamesWithDetails('a')).toEqual([{ username: 'victim.dash', ownerId: victim }]);
   });
 });
 

@@ -12,6 +12,7 @@ import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-s
 import { likesAreIndexOnly } from '@/lib/contract-topology';
 import { profileSources } from '@/lib/profile/v10-profile';
 import { getPrimaryUsername, sortUsernames } from '@/lib/utils/username';
+import { dpnsRecordOwner } from '@/lib/utils/dpns-record-owner';
 import {
   contestFundNeededFromError,
   extractErrorMessage,
@@ -213,8 +214,8 @@ class DpnsService {
         const names = new Map<string, string[]>(batch.map(id => [id, []]));
         for (const doc of documents) {
           const data = (doc.data || doc) as Record<string, unknown>;
-          const records = data.records as Record<string, unknown> | undefined;
-          const id = identifierToBase58(records?.identity || records?.dashUniqueIdentityId);
+          // Only names an identity registered itself; the cursor above still pages past forgeries.
+          const id = dpnsRecordOwner(doc);
           const label = data.label || data.normalizedLabel;
           if (id && typeof label === 'string') {
             names.get(id)?.push(`${label}.${data.normalizedParentDomainName || 'dash'}`);
@@ -277,8 +278,28 @@ class DpnsService {
     }
   }
 
+  /** The `domain` document for a lower-cased name (`alice` or `alice.dash`), or null when none is registered. */
+  private async findDomain(normalizedUsername: string): Promise<Record<string, unknown> | null> {
+    const sdk = await getEvoSdk();
+    const [label, ...parent] = normalizedUsername.split('.');
+    const documents = extractDocuments(await sdk.documents.query({
+      dataContractId: DPNS_CONTRACT_ID,
+      documentTypeName: DPNS_DOCUMENT_TYPE,
+      where: [
+        // DPNS stores the homograph-safe label (alice -> a11ce).
+        ['normalizedLabel', '==', await sdk.dpns.convertToHomographSafe(label)],
+        ['normalizedParentDomainName', '==', parent.join('.') || 'dash'],
+      ],
+      limit: 1,
+    }));
+    return documents[0] ?? null;
+  }
+
   /**
-   * Resolve an identity ID from a username
+   * Resolve an identity ID from a username. A name resolves only to the
+   * identity that registered it (`dpnsRecordOwner`); a name whose record
+   * points at someone else resolves to nobody. The SDK's `dpns.resolveName`
+   * returns `records.identity` unchecked, so it is not used.
    */
   async resolveIdentity(username: string): Promise<string | null> {
     try {
@@ -289,52 +310,10 @@ class DpnsService {
       const cached = this.cache.get(normalizedUsername);
       if (cached !== undefined) return cached;
 
-      const sdk = await getEvoSdk();
-
-      // Try native resolution first using EvoSDK facade (v3 SDK returns string directly)
-      try {
-        if (sdk.dpns?.resolveName) {
-          const identityId = await sdk.dpns.resolveName(normalizedUsername);
-
-          if (identityId) {
-            this._cacheEntry(normalizedUsername, identityId);
-            return identityId;
-          }
-        }
-      } catch (error) {
-        logger.warn('DPNS: Native resolver failed, falling back to document query:', error);
-      }
-
-      // Fallback: Query DPNS documents directly
-      const parts = normalizedUsername.split('.');
-      const label = parts[0];
-      const parentDomain = parts.slice(1).join('.') || 'dash';
-
-      const response = await sdk.documents.query({
-        dataContractId: DPNS_CONTRACT_ID,
-        documentTypeName: DPNS_DOCUMENT_TYPE,
-        where: [
-          ['normalizedLabel', '==', label.toLowerCase()],
-          ['normalizedParentDomainName', '==', parentDomain.toLowerCase()]
-        ],
-        limit: 1
-      });
-
-      const documents = extractDocuments(response);
-      if (documents.length > 0) {
-        const doc = documents[0];
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const records = data.records as Record<string, unknown> | undefined;
-        const rawId = records?.identity || records?.dashUniqueIdentityId || records?.dashAliasIdentityId;
-        const identityId = identifierToBase58(rawId);
-
-        if (identityId) {
-          this._cacheEntry(normalizedUsername, identityId);
-          return identityId;
-        }
-      }
-
-      return null;
+      const doc = await this.findDomain(normalizedUsername);
+      const identityId = doc ? dpnsRecordOwner(doc) : null;
+      if (identityId) this._cacheEntry(normalizedUsername, identityId);
+      return identityId;
     } catch (error) {
       logger.error('DPNS: Error resolving identity:', error);
       return null;
@@ -353,12 +332,11 @@ class DpnsService {
         const sdk = await getEvoSdk();
         return await sdk.dpns.isNameAvailable(normalizedUsername);
       } catch {
-        // Fallback to identity resolution
+        // Fallback to the document query
       }
 
-      // Fallback: Check by trying to resolve identity
-      const identity = await this.resolveIdentity(normalizedUsername);
-      return identity === null;
+      // Not resolveIdentity: a forged name resolves to nobody but is still taken.
+      return (await this.findDomain(normalizedUsername)) === null;
     } catch (error) {
       logger.error('DPNS: Error checking username availability:', error);
       // If error, assume not available to be safe
@@ -416,16 +394,14 @@ class DpnsService {
         }
       }
       documents ??= extractDocuments(await sdk.documents.query(query));
-      return documents.map((doc) => {
+      // A name whose record points at another identity resolves to nobody, so it is no search hit either.
+      return documents.flatMap((doc) => {
+        const ownerId = dpnsRecordOwner(doc);
+        if (!ownerId) return [];
         const data = (doc.data || doc) as Record<string, unknown>;
         const label = (data.label || data.normalizedLabel || 'unknown') as string;
         const parentDomain = (data.normalizedParentDomainName || 'dash') as string;
-        const ownerId = (doc.ownerId || doc.$ownerId || '') as string;
-
-        return {
-          username: `${label}.${parentDomain}`,
-          ownerId: ownerId
-        };
+        return [{ username: `${label}.${parentDomain}`, ownerId }];
       });
     } catch (error) {
       logger.error('DPNS: Error searching usernames with details:', error);
