@@ -337,9 +337,11 @@ The service is the one source of truth for a voter's ballots:
 `getBallotState(poll, me)` returns `{ choices, pending }`. `pending` is true
 while an earlier write to this voter's ballots on this poll could still execute
 (`pollrWriteMayStillExecute`): an unconfirmed create until Platform shows its
-nonce consumed (it landed, or cannot) or it is 15 minutes old, an SDK-signed
-replace until it is settled or expires, and anything when the reservation
-store or the nonce cannot be read. Ballot writes are reserved with their poll's
+nonce consumed (it landed, another transition took it, or it fell out of the
+window behind the tip; a signed transition has no deadline, so no clock ends
+it), an SDK-signed replace until it is settled or its reservation expires, and
+anything when the reservation store or the nonce cannot be read. The ballots
+are read only after that check, so a write landing during it is in the read. Ballot writes are reserved with their poll's
 scope (`pollr-vote:<pollId>`, an optional field on the nonce reservation), so a
 pending write on one poll does not hold back another; an entry with no scope (a
 poll create, or one stored before scopes) counts for every poll. Before

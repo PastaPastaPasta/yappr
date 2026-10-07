@@ -66,7 +66,6 @@ describe('reservation scope', () => {
     const [scoped, unscoped] = loadReservation(OWNER, CONTRACT)?.pending ?? []
     expect(scoped).toMatchObject({ nonce: n(101), scope: 'pollr-vote:p1' })
     expect(unscoped).not.toHaveProperty('scope')
-    expect(typeof unscoped.reservedAt).toBe('number')
   })
 })
 

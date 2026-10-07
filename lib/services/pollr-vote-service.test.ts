@@ -245,7 +245,7 @@ describe('v5 ballots', () => {
     // That create is still reserved at its nonce (6) and Platform has not consumed it.
     mocks.loadReservation.mockReturnValue({
       mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now(), scope: `pollr-vote:${id(9)}` }],
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
     });
     mocks.contractNonce.mockResolvedValue(BigInt(5));
     // The chain shows only slot 0, so [0] plans no writes, yet slot 1 can still land.
@@ -259,6 +259,39 @@ describe('v5 ballots', () => {
     // Once its nonce is consumed (it landed or never will), the same selection goes through.
     mocks.contractNonce.mockResolvedValue(BigInt(6));
     expect(await service.setVote(target, [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
+  });
+
+  it('still holds back a zero-write selection behind an aged, unconsumed create', async () => {
+    const service = await loadService('v5');
+    mocks.loadReservation.mockReturnValue({
+      mark: BigInt(6),
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
+    });
+    mocks.contractNonce.mockResolvedValue(BigInt(5));
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
+    // An hour later its nonce is still unconsumed, so it can still land.
+    vi.setSystemTime(Date.now() + HOUR);
+
+    expect(await service.setVote(open({ multiChoice: true }), [0], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(mocks.updateDocument).not.toHaveBeenCalled();
+  });
+
+  it('getBallotState reads the ballots only after the settle and the pending check', async () => {
+    const service = await loadService('v5');
+    const order: string[] = [];
+    mocks.settle.mockImplementation(async () => { order.push('settle'); return 0; });
+    mocks.loadReservation.mockImplementation(() => {
+      order.push('pending check');
+      return { mark: BigInt(6), pending: [{ id: 'c', nonce: BigInt(6), expiresAt: null }] };
+    });
+    // The create lands during the check: the nonce it reads is consumed.
+    mocks.contractNonce.mockResolvedValue(BigInt(6));
+    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 0), ballotDoc(1, 1)); });
+
+    // The read comes after, so it shows the landed slot 1 rather than a snapshot from before it.
+    expect(await service.getBallotState(open({ multiChoice: true }), VOTER)).toEqual({ choices: [0, 1], pending: false });
+    expect(order).toEqual(['settle', 'pending check', 'read']);
   });
 
   it('refuses a reduced selection that plans no writes when the reservation store is unreadable', async () => {
@@ -286,7 +319,7 @@ describe('v5 ballots', () => {
     // A create to this poll's ballots is still out, unconsumed.
     mocks.loadReservation.mockReturnValue({
       mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now(), scope: `pollr-vote:${id(9)}` }],
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
     });
     mocks.contractNonce.mockResolvedValue(BigInt(5));
     expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });

@@ -297,11 +297,16 @@ async function run({ args, handle, battery, socialId, contractId }) {
       // A create that landed behind a 504 comes back without its id (or reported as
       // failed); the (poll, voter, slot) key finds it either way.
       const id = created ?? await existing();
-      if (!id || initial === choice) return;
+      if (!id) return;
+      // Writes stop at the close. Only a planned change is then a failure; any
+      // other drift can no longer be corrected, and the tally check reports it.
       if (closed()) {
-        recorder.fail(key, 'vote', `the poll closed at ${new Date(refs.pollEndsAt).toISOString()} before this ballot's change`);
+        if (initial !== choice) recorder.fail(key, 'vote', `the poll closed at ${new Date(refs.pollEndsAt).toISOString()} before this ballot's change`);
         return;
       }
+      // Every ballot, not only those with a planned change: a checkpointed or
+      // adopted ballot may have been edited since (ballots are editable until
+      // the close), and reconcileDoc writes only when it differs from the plan.
       try {
         if (await writer.reconcileDoc(actor, 'vote', id, ballot(choice))) console.log(`  ${choice === undefined ? 'withdrew' : 'changed'} ${key}`);
       } catch (error) {

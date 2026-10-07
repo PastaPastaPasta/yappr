@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { POLLR_CONTRACT_ID } from '@/lib/constants';
 import { extractErrorMessage } from '@/lib/error-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { PENDING_LIFETIME_MS, loadReservation, settleSupersededReplaces, stillPending } from './identity-nonce';
+import { loadReservation, settleSupersededReplaces, stillPending } from './identity-nonce';
 
 /**
  * Run before any Pollr write (a ballot, a poll). A v5 ballot replace whose
@@ -39,14 +39,15 @@ export function pollrBallotScope(pollId: string): string {
  * stored before scopes were recorded) may touch anything, so it counts for
  * every poll.
  *
- * A create is reserved with its nonce, so it stops counting once Platform
- * shows that nonce consumed, whether by it or by another transition — or, as
- * the store already assumes for SDK-signed ones, once it is older than
- * PENDING_LIFETIME_MS: a valid transition executes within a block or two, so
- * one that old was dropped (otherwise a dropped create would hold the poll
- * back for good, its nonce never consumed). A replace the SDK signed has no
- * known nonce; it counts until it is settled (see
- * {@link settlePendingPollrReplaces}, which callers run first) or expires.
+ * A create is reserved with its nonce, and a signed transition has no protocol
+ * deadline, so it counts until Platform shows that nonce consumed — by the
+ * create landing, by another transition taking it, or by it falling out of the
+ * window behind the tip — and on no clock. A create that was dropped therefore
+ * holds back this one poll's ballots until then (or until the poll closes,
+ * which ends voting anyway); nothing else proves it cannot still execute. A
+ * replace the SDK signed has no known nonce; it counts until it is settled
+ * (see {@link settlePendingPollrReplaces}, which callers run first) or its
+ * reservation expires.
  * True when the nonce cannot be read while something relevant is pending,
  * since nothing then proves it cannot execute.
  *
@@ -63,9 +64,7 @@ export async function pollrWriteMayStillExecute(ownerId: string, pollId: string)
   try {
     const sdk = await getEvoSdk();
     const current = await sdk.identities.contractNonce(ownerId, POLLR_CONTRACT_ID);
-    const now = Date.now();
-    return stillPending(current, { ...reservation, pending: relevant }, now)
-      .some((p) => p.reservedAt === undefined || now - p.reservedAt < PENDING_LIFETIME_MS);
+    return stillPending(current, { ...reservation, pending: relevant }).length > 0;
   } catch (error) {
     logger.warn('Pollr: could not check for pending writes', { error: extractErrorMessage(error) });
     return true;
