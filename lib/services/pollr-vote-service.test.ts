@@ -5,10 +5,11 @@ import type { Poll } from './pollr-poll-service';
 // Exercises the v3/v4/v5 branch points of the ballot service at an in-memory
 // SDK boundary: what gets written, what query shape reads it back, and how a
 // refused or uncertain write is resolved. No network.
-const mocks = vi.hoisted(() => ({ query: vi.fn(), count: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn() }));
+const mocks = vi.hoisted(() => ({ query: vi.fn(), count: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), settle: vi.fn() }));
 vi.mock('./evo-sdk-service', () => ({
   getEvoSdk: async () => ({ documents: { query: mocks.query, count: mocks.count } }),
 }));
+vi.mock('./identity-nonce', () => ({ settleSupersededReplaces: mocks.settle }));
 vi.mock('./state-transition-service', () => ({
   stateTransitionService: { createDocument: mocks.createDocument, updateDocument: mocks.updateDocument },
 }));
@@ -62,6 +63,7 @@ beforeEach(() => {
   mocks.createDocument.mockResolvedValue({ success: true, confirmed: true });
   mocks.updateDocument.mockResolvedValue({ success: true });
   mocks.query.mockResolvedValue(new Map());
+  mocks.settle.mockResolvedValue(0);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -184,6 +186,39 @@ describe('v5 ballots', () => {
     expect(mocks.query).toHaveBeenCalledTimes(1);
     expect(mocks.updateDocument).toHaveBeenCalledTimes(1);
     expect(mocks.createDocument).not.toHaveBeenCalled();
+  });
+
+  it('settles a timed-out replace that landed before the next edit writes', async () => {
+    const service = await loadService('v5');
+    const order: string[] = [];
+    mocks.settle.mockImplementation(async () => { order.push('settle'); return 0; });
+    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 1)); });
+    mocks.updateDocument.mockImplementation(async () => {
+      order.push('replace');
+      return { success: false, error: 'wait for state transition result timed out' };
+    });
+
+    // The first edit times out: it reports unconfirmed and leaves the reservation.
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ unconfirmed: true });
+
+    // It landed. The next edit releases that reservation first, then plans
+    // against the ballot at its new revision and writes.
+    mocks.settle.mockImplementation(async () => { order.push('settle'); return 1; });
+    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 2, 2)); });
+    mocks.updateDocument.mockImplementation(async () => { order.push('replace'); return { success: true }; });
+    expect(await service.setVote(open(), [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
+
+    expect(order).toEqual(['settle', 'read', 'replace', 'settle', 'read', 'replace']);
+    expect(mocks.settle).toHaveBeenCalledWith(VOTER, expect.any(String));
+    expect(mocks.updateDocument.mock.calls[1][5]).toBe(2);
+  });
+
+  it('still votes when settling pending replaces fails', async () => {
+    const service = await loadService('v5');
+    mocks.settle.mockRejectedValue(new Error('down'));
+
+    expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
   });
 
   it('reports an unconfirmed create as unconfirmed, not as counted', async () => {

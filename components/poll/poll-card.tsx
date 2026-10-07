@@ -70,6 +70,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // Platform refused a write because the poll has closed, though this device's
   // clock says it is still open: trust the chain, or every retry is refused.
   const [closedOnChain, setClosedOnChain] = useState(false)
+  // v5: the selection a submission was asked for when one of its writes went
+  // unconfirmed. The run stopped there, so later picks were never sent; the
+  // ballot stays open on this selection until a re-read shows it recorded.
+  const [pendingWanted, setPendingWanted] = useState<number[] | null>(null)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
@@ -141,6 +145,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   const stopEditing = useCallback(() => {
     setSelected([])
     setEditing(false)
+    setPendingWanted(null)
   }, [])
 
   // Reset any pending selection when switching polls or signing in/out.
@@ -151,6 +156,15 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   useEffect(() => {
     setClosedOnChain(false)
   }, [pollId])
+
+  // An unconfirmed submission is settled once a fresh read shows the voter's
+  // ballots selecting what was asked for. Until then the ballot stays open on
+  // it, so "Update vote" sends whatever part has not landed.
+  useEffect(() => {
+    if (loading || !pendingWanted || !sameChoices(myVotes, pendingWanted)) return
+    stopEditing()
+    toast.success('Vote confirmed')
+  }, [loading, myVotes, pendingWanted, stopEditing])
 
   const isClosed = closedOnChain || (poll ? pollIsClosed(poll) : false)
   const hasVoted = myVotes.length > 0
@@ -197,8 +211,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     if (result.unconfirmed) {
       // Sent, but not seen yet. Leave the vote and tally as they were rather
       // than replace them with a read that likely predates the write.
-      toast('Your vote was sent but is not confirmed yet. Check again in a moment.', { icon: '⏳', duration: 6000 })
-      stopEditing()
+      toast('Your vote was sent but is not confirmed yet.', { icon: '⏳', duration: 6000 })
+      setPendingWanted(wanted)
+      setSelected(wanted)
+      setEditing(true)
       return
     }
 
@@ -496,6 +512,19 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
               </Button>
             )}
           </div>
+
+          {pendingWanted && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Not confirmed yet.{' '}
+              <button
+                onClick={() => setReloadToken((token) => token + 1)}
+                disabled={submitting}
+                className="font-medium text-yappr-500 hover:underline"
+              >
+                Check again
+              </button>
+            </p>
+          )}
         </div>
       )}
 

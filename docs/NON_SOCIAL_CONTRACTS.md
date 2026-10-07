@@ -340,7 +340,11 @@ closed"; a stale revision (40106) or a ballot another tab created first (40105)
 as `stale`, and the card reloads. After a refused write it re-reads the
 ballots and reports what the chain shows. A write whose confirmation timed out
 stops the run and comes back `unconfirmed`, with no re-read (one this soon
-would likely predate the write), and the card says so. The ballots copy the
+would likely predate the write); the card keeps the ballot open on the wanted
+selection with a "Check again" re-read, so whatever did not land can be sent
+again. Before writing, `setVote` releases the nonce reservations of earlier
+replaces Platform shows landed (`settleSupersededReplaces`), so a timed-out
+edit does not hold back the next one until it expires. The ballots copy the
 poll's stored `optionCount`. Optimistic tallies move down as well as up. `tallyIsFinal` is true
 only for a tally read off the chain after `endsAt` (plus a 30 s margin for the
 device clock against block time); the card says "Final results" only then.
