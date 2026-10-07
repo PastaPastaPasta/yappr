@@ -77,7 +77,7 @@ export function ReportPostModal() {
   const resolving = reportsAreResolved()
   const feeDash = reportFeeDash()
   // Mainnet v13 (`notYetUsable`): reports wait for the first seated team (41200, paid).
-  const reportsOpen = useModeratedTypeOpen('report')
+  const reportsOpen = useModeratedTypeOpen('report', isOpen)
   const targetKind = target?.kind
   const targetId = target?.targetId
 

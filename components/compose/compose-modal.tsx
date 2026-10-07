@@ -169,7 +169,7 @@ export function ComposeModal() {
   const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
   // Mainnet v13 (`notYetUsable`): nothing posts until the first team is seated.
-  const postingOpen = useModeratedTypeOpen(replyingTo ? 'reply' : 'post')
+  const postingOpen = useModeratedTypeOpen(replyingTo ? 'reply' : 'post', isComposeOpen)
   const canPost =
     postingOpen &&
     unpostedWithContent.length > 0 &&
