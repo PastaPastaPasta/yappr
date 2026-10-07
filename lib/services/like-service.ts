@@ -7,7 +7,7 @@ import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryO
 import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
-import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -1071,11 +1071,13 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const { docType, field } = likeIndexFor(kind);
 
+    // A post's `ownerAndTime` starts at `live` on v13 (a reply's never does).
+    const live = kind === 'post' ? { where: postOwnerIndexPrefix(), orderBy: postOwnerIndexOrderPrefix() } : { where: [], orderBy: [] };
     const result = await sdk.documents.composite({
       dataContractId: this.contractId,
       documentType: kind,
-      where: [['$ownerId', '==', userId], ['$createdAt', '>', 0]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      where: [...live.where, ['$ownerId', '==', userId], ['$createdAt', '>', 0]],
+      orderBy: [...live.orderBy, ['$ownerId', 'asc'], ['$createdAt', 'desc']],
       limit: LIKE_NOTIFICATION_RECENT_SCAN,
       subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
     });

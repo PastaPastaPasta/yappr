@@ -8,7 +8,7 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { firstIndexedTag, firstMention } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
@@ -511,6 +511,9 @@ class PostService extends BaseDocumentService<Post> {
       data.embedDocType = options.embed.docType;
       data.embedId = identifierStringToDocumentBytes(options.embed.id);
     }
+    // v13: a post is in its author's `ownerAndTime` while it carries `live`;
+    // the tombstone leaves it out (the `live` rule refuses anything else).
+    if (postsCarryLiveMarker()) data.live = true;
 
     return this.create(ownerId, data);
   }
@@ -591,12 +594,14 @@ class PostService extends BaseDocumentService<Post> {
    * Get posts by user
    */
   async getUserPosts(userId: string, options: QueryOptions & { forDisplay?: boolean } = {}): Promise<DocumentResult<Post> & { preloaded?: PreloadedEnrichment }> {
+    // v13 pins `live == true` first: tombstones are not on the author's timeline.
     const queryOptions: QueryOptions = {
       where: [
+        ...postOwnerIndexPrefix(),
         ['$ownerId', '==', userId],
         ['$createdAt', '>', 0]
       ],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      orderBy: [...postOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'desc']],
       limit: 20,
       ...options
     };
@@ -640,7 +645,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Count posts by user via the `byOwner` count tree (O(1)); on v10
    * `$ownerId ==` is served by the rangeCountable `ownerAndTime`. v10 counts
-   * the author's bare reposts too: they are posts.
+   * the author's bare reposts too: they are posts. v13 counts live posts only
+   * (`live == true` first; a tombstone leaves the index).
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -652,7 +658,7 @@ class PostService extends BaseDocumentService<Post> {
         return await documentCount(sdk, {
           dataContractId: this.contractId,
           documentTypeName: 'post',
-          where: [['$ownerId', '==', userId]],
+          where: [...postOwnerIndexPrefix(), ['$ownerId', '==', userId]],
         });
       } catch (error) {
         logger.error('Error counting user posts:', error);

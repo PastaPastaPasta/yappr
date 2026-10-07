@@ -6,7 +6,7 @@ import type { PostStats } from './post-service';
 import { identifierToHex, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { authorPostCountsAreRanked, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
+import { authorPostCountsAreRanked, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -73,14 +73,16 @@ export async function fetchFollowingFeed(
       const pages = await mapLimit(ownerBatches, 2, ids => queryRawDocuments({
         dataContractId: contractId, documentTypeName: 'post',
         where: whereClause.map(clause => clause[0] === '$ownerId' ? ['$ownerId', 'in', ids] : clause),
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100,
+        orderBy: [...postOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100,
       }));
       const documents = pages.flat().slice(0, 100);
       return documents.map((doc) => transformDocument(doc));
     };
 
     const buildWhere = (startMs: number, endMs?: number): DocumentWhereClause[] => {
+      // v13: `live == true` first, so tombstones never reach the feed.
       const where: DocumentWhereClause[] = [
+        ...postOwnerIndexPrefix(),
         ['$ownerId', 'in', followingIds],
         ['$createdAt', '>=', startMs],
       ];
