@@ -14,8 +14,12 @@ import type { DigitalAsset } from '../../types';
 
 export type DigitalFileAsset = Extract<DigitalAsset, { kind: 'file' }>;
 
-/** How long one gateway may take to start answering before the next is tried. */
-const GATEWAY_RESPONSE_TIMEOUT_MS = 30_000;
+/**
+ * How long one gateway may go without sending anything (its headers, or the
+ * next part of the file) before the next is tried. An idle deadline, not a
+ * total one: a large download that keeps arriving is never cut off.
+ */
+const GATEWAY_IDLE_TIMEOUT_MS = 30_000;
 
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -51,16 +55,6 @@ export async function uploadEncryptedFile(
   };
 }
 
-async function fetchWithResponseTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GATEWAY_RESPONSE_TIMEOUT_MS);
-  try {
-    return await fetch(url, { signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 /** The most ciphertext a delivered file can be: the largest file a seller may attach, sealed. */
 const MAX_DOWNLOAD_BYTES = MAX_DIGITAL_FILE_BYTES + FILE_CIPHERTEXT_OVERHEAD;
 
@@ -71,8 +65,9 @@ const tooLarge = () => new Error(`The file is larger than ${formatFileSize(MAX_D
  * the server answering it untrusted: neither an advertised size nor
  * Content-Length bounds what it sends, so the stream is counted as it
  * arrives and cancelled once it passes the cap, before it can exhaust memory.
+ * `onChunk` is called as each part arrives.
  */
-async function readBounded(response: Response, maxBytes: number): Promise<Uint8Array> {
+async function readBounded(response: Response, maxBytes: number, onChunk: () => void): Promise<Uint8Array> {
   if (Number(response.headers.get('content-length')) > maxBytes) {
     await response.body?.cancel();
     throw tooLarge();
@@ -84,6 +79,7 @@ async function readBounded(response: Response, maxBytes: number): Promise<Uint8A
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
+    onChunk();
     received += value.length;
     if (received > maxBytes) {
       await reader.cancel();
@@ -101,6 +97,31 @@ async function readBounded(response: Response, maxBytes: number): Promise<Uint8A
 }
 
 /**
+ * One gateway's copy of the ciphertext. The attempt is aborted whenever the
+ * gateway goes GATEWAY_IDLE_TIMEOUT_MS without sending anything, whether it
+ * never answers or answers and then stalls mid-file, so the next gateway
+ * gets its turn.
+ */
+async function downloadCiphertext(url: string): Promise<Uint8Array> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const extendDeadline = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), GATEWAY_IDLE_TIMEOUT_MS);
+  };
+  extendDeadline();
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await readBounded(response, MAX_DOWNLOAD_BYTES, extendDeadline);
+  } finally {
+    clearTimeout(timer);
+    // Release whatever this attempt left open (an unread error body); a no-op once the body was read.
+    controller.abort();
+  }
+}
+
+/**
  * Download and decrypt a delivered file, trying each IPFS gateway in turn.
  * A gateway that answers with the wrong bytes fails authentication and the
  * next one is tried, so a bad gateway can never hand the buyer a tampered file.
@@ -114,9 +135,7 @@ export async function fetchDecryptedFile(asset: DigitalFileAsset): Promise<Blob>
   let lastError: Error | null = null;
   for (const [attempt, url] of urls.entries()) {
     try {
-      const response = await fetchWithResponseTimeout(url);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const plaintext = decryptDigitalFile(await readBounded(response, MAX_DOWNLOAD_BYTES), key);
+      const plaintext = decryptDigitalFile(await downloadCiphertext(url), key);
       // Never the seller's MIME type: an html/svg blob on this origin must not render if `download` is ignored.
       return new Blob([plaintext], { type: 'application/octet-stream' });
     } catch (error) {

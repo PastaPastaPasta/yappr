@@ -11,6 +11,7 @@ import { encryptDigitalFile, FILE_CIPHERTEXT_OVERHEAD } from '../crypto/digital-
 import { MAX_DIGITAL_FILE_BYTES } from './digital-delivery-plan'
 import { fetchDecryptedFile, type DigitalFileAsset } from './digital-file-service'
 
+const CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
 const asset = (key: Uint8Array): DigitalFileAsset =>
   ({ kind: 'file', name: 'book.pdf', size: 3, url: 'https://files.example/book.pdf.enc', key: bytesToBase64(key) })
 
@@ -31,6 +32,7 @@ function streamOf(chunks: number, size: number) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -50,6 +52,33 @@ describe('fetchDecryptedFile', () => {
     await expect(fetchDecryptedFile(asset(new Uint8Array(32)))).rejects.toThrow()
     expect(state.cancelled).toBe(true)
     expect(state.pulled).toBeLessThan(chunks)
+  })
+
+  it('gives up on a gateway that sends its headers and then stalls, and tries the next', async () => {
+    vi.useFakeTimers()
+    const { ciphertext, key } = encryptDigitalFile(new Uint8Array([4, 5, 6]))
+    let stalled = false
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (fetchMock.mock.calls.length > 1) return new Response(ciphertext)
+      // Headers now, one part of the body, then nothing: errored once the attempt is aborted, as fetch does.
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(4))
+          init?.signal?.addEventListener('abort', () => {
+            stalled = true
+            controller.error(new DOMException('The operation was aborted.', 'AbortError'))
+          })
+        },
+      })
+      return new Response(body)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const download = fetchDecryptedFile({ ...asset(key), url: `ipfs://${CID}` })
+    await vi.advanceTimersByTimeAsync(31_000)
+    const blob = await download
+    expect(stalled).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(new Uint8Array([4, 5, 6]))
   })
 
   it('refuses a response whose Content-Length is already too large, without reading it', async () => {
