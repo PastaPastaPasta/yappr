@@ -89,3 +89,13 @@ describe('storefront v6 (the mainnet re-cut)', () => {
     expect(create).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('the encrypted order size the checkout budget assumes', () => {
+  it('is the payload JSON plus ORDER_CIPHERTEXT_OVERHEAD (ephemeral key + Poly1305 tag)', async () => {
+    const [{ getPublicKey }, { ORDER_CIPHERTEXT_OVERHEAD }] = await Promise.all([import('@/lib/crypto/keys'), import('@/lib/storefront/storefront-contract')]);
+    const key = (byte: number) => new Uint8Array(32).fill(byte);
+    const payload = storeOrderService.buildOrderPayload([], undefined, { email: 'ann@example.com' }, 0, 'dash:X', 'USD', 'leave at the door – thanks');
+    const encrypted = await storeOrderService.encryptOrderPayload(payload, key(1), getPublicKey(key(2)), new Uint8Array(24), seller);
+    expect(encrypted.length).toBe(new TextEncoder().encode(JSON.stringify(payload)).length + ORDER_CIPHERTEXT_OVERHEAD);
+  });
+});

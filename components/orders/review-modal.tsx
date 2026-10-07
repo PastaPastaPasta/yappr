@@ -16,6 +16,7 @@ import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import toast from 'react-hot-toast'
 import type { StoreOrder, Store, OrderPayload } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface ReviewModalProps {
   isOpen: boolean
@@ -152,7 +153,7 @@ export function ReviewModal({
                       <div className="flex items-center gap-3 pb-4 border-b border-gray-100 dark:border-gray-800">
                         <div className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
                           {store.logoUrl ? (
-                            <img
+                            <IpfsImage
                               src={store.logoUrl}
                               alt={store.name}
                               className="w-full h-full rounded-lg object-cover"

@@ -42,6 +42,7 @@ import { storefrontIsV2 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 function StoreManagePage() {
   const router = useRouter()
@@ -374,7 +375,7 @@ function StoreManagePage() {
             <div className="px-4 pb-4 flex items-center gap-4">
               <div className="w-16 h-16 rounded-xl bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
                 {store.logoUrl ? (
-                  <img src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
+                  <IpfsImage src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <BuildingStorefrontIcon className="h-8 w-8 text-gray-400" />

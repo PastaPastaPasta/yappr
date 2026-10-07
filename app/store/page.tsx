@@ -24,6 +24,7 @@ import { storefrontIsV2, storefrontIsV6 } from '@/lib/constants'
 import { storeCategoryLabel } from '@/lib/storefront/storefront-contract'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 type StoreSort = 'newest' | 'topRated' | 'mostOrdered'
 const SORT_OPTIONS: ReadonlyArray<[StoreSort, string]> = [['newest', 'Newest'], ['topRated', 'Top rated'], ['mostOrdered', 'Most ordered']]
@@ -324,7 +325,7 @@ export default function StoreBrowsePage() {
                       {/* Store Logo */}
                       <div className="flex-shrink-0 w-16 h-16 rounded-lg bg-gray-200 dark:bg-gray-800 overflow-hidden">
                         {store.logoUrl ? (
-                          <img
+                          <IpfsImage
                             src={store.logoUrl}
                             alt={store.name}
                             className="w-full h-full object-cover"

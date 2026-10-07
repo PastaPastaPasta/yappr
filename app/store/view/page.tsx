@@ -32,6 +32,7 @@ import { cartService } from '@/lib/services/cart-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 function LoadingFallback() {
   return (
@@ -433,7 +434,7 @@ function StoreDetailContent() {
           <div>
             {store.bannerUrl ? (
               <div className="h-32 bg-gray-200 dark:bg-gray-800">
-                <img src={store.bannerUrl} alt="" className="w-full h-full object-cover" />
+                <IpfsImage src={store.bannerUrl} alt="" className="w-full h-full object-cover" />
               </div>
             ) : (
               <div className="h-32 bg-gradient-to-r from-yappr-400 to-yappr-600" />
@@ -443,7 +444,7 @@ function StoreDetailContent() {
               <div className="flex gap-4">
                 <div className="w-24 h-24 rounded-xl bg-white dark:bg-gray-900 border-4 border-white dark:border-gray-900 overflow-hidden flex-shrink-0">
                   {store.logoUrl ? (
-                    <img src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
+                    <IpfsImage src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
                       <BuildingStorefrontIcon className="h-10 w-10 text-gray-400" />

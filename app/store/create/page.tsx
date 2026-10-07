@@ -21,6 +21,7 @@ import { storeStatsService } from '@/lib/services/store-stats-service'
 import { STORE_CATEGORY_MAX_LENGTH, isStoreImageUrl, normalizeStoreCategory, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import type { SocialLink, ParsedPaymentUri, StorePolicy } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 const ONE_STORE_MESSAGE = 'You already have a store. Each account can have one store; manage it from Store > Manage.'
 
@@ -213,7 +214,7 @@ function CreateStorePage() {
             <div className="flex justify-center">
               <div className="w-24 h-24 rounded-xl bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
                 {logoUrl ? (
-                  <img src={logoUrl} alt="Store logo" className="w-full h-full object-cover rounded-xl" />
+                  <IpfsImage src={logoUrl} alt="Store logo" className="w-full h-full object-cover rounded-xl" />
                 ) : (
                   <BuildingStorefrontIcon className="h-12 w-12 text-gray-400" />
                 )}

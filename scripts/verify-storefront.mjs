@@ -158,7 +158,9 @@ async function caseS4Status(ctx) {
   const update = (label, expect, who, data) => battery.probeCreate(label, expect, who, 'orderStatusUpdate', statusData({ ...good, ...data }));
   await update('s4a seller status update is accepted', null, seller, { status: 'processing' });
   // v6 stores no buyerId (the feed is derived), so a copy is an unknown property.
-  await update('s4b a status update still carrying buyerId is refused (10101: v6 derives it)', SCHEMA_REFUSED, seller, { buyerId: id32(buyer.ownerId) });
+  // buyerId is added AFTER the shape helper (which only knows v6's properties), so the probe really sends it.
+  await battery.probeCreate('s4b a status update still carrying buyerId is refused (10101: v6 derives it)', SCHEMA_REFUSED, seller, 'orderStatusUpdate',
+    { ...statusData(good), buyerId: id32(buyer.ownerId) });
   await update('s4c status update on a GHOST order is rejected (40120)', REFERENCE_NOT_FOUND, seller, { orderId: randomEntropy() });
   // THE GAP THAT CLOSED: a stranger could post an update carrying the order's own
   // ids and only the client hid it. `{$ownerId: sellerId}` refuses it at write time.
@@ -516,7 +518,8 @@ async function caseS22Digital(ctx) {
   const good = { orderId: id32(ctx.orderId) };
   const deliver = (label, expect, who, data = {}) => battery.probeCreate(label, expect, who, 'orderDelivery', deliveryData({ ...good, ...data }));
   const delivery = await deliver('s22j the seller delivers the order', null, seller);
-  await deliver('s22k a delivery still carrying buyerId is refused (10101: v6 derives it)', SCHEMA_REFUSED, seller, { buyerId: id32(buyer.ownerId) });
+  await battery.probeCreate('s22k a delivery still carrying buyerId is refused (10101: v6 derives it)', SCHEMA_REFUSED, seller, 'orderDelivery',
+    { ...deliveryData(good), buyerId: id32(buyer.ownerId) });
   await deliver('s22l a delivery for a GHOST order is rejected (40120)', REFERENCE_NOT_FOUND, seller, { orderId: randomEntropy() });
   await deliver('s22m a STRANGER delivering to the buyer is rejected (writer gate, 40127)', WRITER_GATE, stranger);
   await deliver('s22n the BUYER cannot write a delivery to themselves (writer gate, 40127)', WRITER_GATE, buyer);

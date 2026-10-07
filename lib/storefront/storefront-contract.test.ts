@@ -78,6 +78,42 @@ describe('action fees (storefront v6)', () => {
   })
 })
 
+describe('the order payload budget, checked before payment (v6)', () => {
+  /** A draft order of `count` lines whose titles are `titleLength` characters. */
+  const draft = (count: number, titleLength = 40) => ({
+    items: Array.from({ length: count }, (_, i) => ({
+      itemId: '11111111111111111111111111111111', itemTitle: `${i}`.padEnd(titleLength, 't'), quantity: 1, unitPrice: 1999,
+      imageUrl: 'https://gateway.pinata.cloud/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
+    })),
+    shippingAddress: { name: 'Ann Buyer', street: '1 Main St', city: 'Portland', state: 'OR', postalCode: '97201', country: 'US' },
+    buyerContact: { email: 'ann@example.com' },
+    subtotal: 1999 * count, shippingCost: 500, total: 1999 * count + 500, currency: 'USD', paymentUri: '',
+  })
+
+  it('lets a typical order through with room left for payment details and notes', async () => {
+    const { orderPaymentBudgetError } = await load('v6')
+    expect(orderPaymentBudgetError(draft(5), ['dash:XyPaymentAddressxxxxxxxxxxxxxxxxx'])).toBeNull()
+  })
+
+  it('refuses an order that cannot fit once the typed fields are reserved at their caps', async () => {
+    const { orderPaymentBudgetError } = await load('v6')
+    expect(orderPaymentBudgetError(draft(14, 150), [])).toMatch(/too large to place .* counting room for payment details and notes/)
+  })
+
+  it('budgets for the store\'s longest payment URI, whichever one is selected', async () => {
+    const { orderPaymentBudgetError } = await load('v6')
+    // Find a cart that just fits with a short URI, then offer a very long one alongside it.
+    const lines = Array.from({ length: 30 }, (_, i) => i + 1).findLast((n) => orderPaymentBudgetError(draft(n), ['dash:X']) === null) ?? 0
+    expect(lines).toBeGreaterThan(0)
+    expect(orderPaymentBudgetError({ ...draft(lines), paymentUri: 'dash:X' }, ['dash:X', `bitcoin:${'b'.repeat(600)}`])).not.toBeNull()
+  })
+
+  it('never blocks before v6', async () => {
+    const { orderPaymentBudgetError } = await load('v5')
+    expect(orderPaymentBudgetError(draft(40, 200), [])).toBeNull()
+  })
+})
+
 describe('size guards (v6 caps)', () => {
   const variantsOf = (bytes: number) => ({ axes: [{ name: 'Size', options: ['x'.repeat(bytes)] }], combinations: [] })
 

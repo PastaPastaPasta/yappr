@@ -12,6 +12,7 @@ import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront
 import { useAuth } from '@/contexts/auth-context'
 import type { BlockSource } from '@/lib/services/block-service'
 import type { CartItem, Store } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface CartStoreSectionProps {
   storeId: string
@@ -67,7 +68,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
           className="flex items-center gap-2 hover:text-yappr-500"
         >
           {store?.logoUrl ? (
-            <img
+            <IpfsImage
               src={store.logoUrl}
               alt={store.name}
               className="w-8 h-8 rounded-lg object-cover"

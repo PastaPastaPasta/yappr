@@ -13,7 +13,7 @@
 import storefrontContract from '@/contracts/yappr-storefront-contract.json'
 import { storefrontIsV6 } from '@/lib/constants'
 import { actionFeeOf, type ActionFeeDeclaration, type DocumentAction } from '@/lib/contract-topology'
-import type { ItemVariants } from '@/lib/types'
+import type { ItemVariants, OrderPayload } from '@/lib/types'
 
 type StorefrontSchemas = Record<string, {
   actionFees?: Parameters<typeof actionFeeOf>[0]
@@ -116,6 +116,47 @@ export const ORDER_PAYLOAD_MAX_BYTES = property('storeOrder', 'encryptedPayload'
 export function orderPayloadSizeError(bytes: number): string | null {
   return storefrontIsV6() && bytes > ORDER_PAYLOAD_MAX_BYTES
     ? `This order is too large to send (${bytes.toLocaleString()} of ${ORDER_PAYLOAD_MAX_BYTES.toLocaleString()} bytes). Shorten the notes, or split it into smaller orders.`
+    : null
+}
+
+/**
+ * What ECIES adds to the order JSON: the 33-byte ephemeral public key and the
+ * 16-byte Poly1305 tag (`privateFeedCryptoService.eciesEncryptWithEphemeralKey`).
+ */
+export const ORDER_CIPHERTEXT_OVERHEAD = 33 + 16
+
+/**
+ * The longest values v6 lets a buyer type into the order fields that are
+ * filled in on the payment step, after payment has been offered. Checkout caps
+ * those inputs at these lengths, and {@link orderPaymentBudgetError} reserves
+ * room for them up front.
+ */
+export const ORDER_PAYMENT_FIELD_LIMITS = { txid: 100, refundAddress: 120, notes: 280 } as const
+
+/** UTF-8 bytes per UTF-16 unit at worst (3), which also covers JSON's two-byte escapes of quotes and newlines. */
+const WORST_BYTES_PER_CHAR = 3
+
+/**
+ * Why an order built from `draft` could outgrow v6's payload cap, or null when
+ * it always fits (always null before v6). Run BEFORE payment is offered, since
+ * a payment sent for an order that is then refused leaves the seller with no
+ * record of it: the payment URI is taken at the store's longest, and the
+ * transaction id, refund address and notes (typed afterwards) at their caps,
+ * worst-case encoded.
+ */
+export function orderPaymentBudgetError(draft: OrderPayload, paymentUris: readonly string[]): string | null {
+  if (!storefrontIsV6()) return null
+  const reserve = (chars: number) => 'x'.repeat(chars * WORST_BYTES_PER_CHAR)
+  const worst: OrderPayload = {
+    ...draft,
+    paymentUri: [draft.paymentUri, ...paymentUris].reduce((longest, uri) => (utf8Length(uri) > utf8Length(longest) ? uri : longest)),
+    txid: reserve(ORDER_PAYMENT_FIELD_LIMITS.txid),
+    refundAddress: reserve(ORDER_PAYMENT_FIELD_LIMITS.refundAddress),
+    notes: reserve(ORDER_PAYMENT_FIELD_LIMITS.notes),
+  }
+  const bytes = utf8Length(JSON.stringify(worst)) + ORDER_CIPHERTEXT_OVERHEAD
+  return bytes > ORDER_PAYLOAD_MAX_BYTES
+    ? `This order is too large to place (${bytes.toLocaleString()} of ${ORDER_PAYLOAD_MAX_BYTES.toLocaleString()} bytes, counting room for payment details and notes). Remove some items, or split it into smaller orders.`
     : null
 }
 
