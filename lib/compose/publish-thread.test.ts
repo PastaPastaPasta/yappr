@@ -67,7 +67,7 @@ describe('publishThread retry linkage', () => {
     isPrivate: false,
     inheritedEncryption: null,
     pollEmbed: undefined,
-    mediaUrlField: undefined,
+    media: [],
     markSensitive: false,
     onProgress: vi.fn(),
   })
@@ -90,7 +90,7 @@ describe('publishThread retry linkage', () => {
       rootPostId: 'original-root',
       replyToReplyId: lastPostedId === 'original-root' ? undefined : lastPostedId,
       parentOwnerId: 'author',
-    }, { encryption: undefined, sensitive: undefined, mediaUrl: undefined })
+    }, { encryption: undefined, sensitive: undefined })
     expect(result.successful).toEqual([{ index: 0, postId: 'new-reply', content: 'remaining part', threadPostId: 'draft-remaining' }])
   })
 
@@ -179,7 +179,7 @@ describe('publishThread sensitive flag', () => {
     isPrivate: false,
     inheritedEncryption: null,
     pollEmbed: undefined,
-    mediaUrlField: undefined,
+    media: [],
     markSensitive: true,
     onProgress: vi.fn(),
   }
@@ -235,7 +235,7 @@ describe('publishThread on v13: every reply names its thread root\'s owner', () 
     isPrivate: false,
     inheritedEncryption: null,
     pollEmbed: undefined,
-    mediaUrlField: undefined,
+    media: [],
     markSensitive: false,
     onProgress: vi.fn(),
   }

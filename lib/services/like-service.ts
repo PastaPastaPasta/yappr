@@ -73,7 +73,7 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 function isRawBareRepost(doc: Record<string, unknown>): boolean {
   const quotes = Boolean(doc.quotedPostId || doc.quotedReplyId);
   const content = typeof doc.content === 'string' ? doc.content.trim() : '';
-  return quotes && !content && !doc.encryptedContent && !doc.mediaUrl && !doc.embedId;
+  return quotes && !content && !doc.encryptedContent && !doc.mediaUrl && !doc.mediaUrls && !doc.embedId;
 }
 const LIKE_NOTIFICATION_PAGE_SIZE = 100;
 /**

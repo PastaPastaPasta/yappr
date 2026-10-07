@@ -48,7 +48,7 @@ export async function ownQuoteStrict(ownerId: string, targetId: string, kind: Ta
   const id = doc && identifierToBase58(doc.$id ?? doc.id)
   if (!doc || !id) return null
   const content = typeof doc.content === 'string' ? doc.content : ''
-  return { id, bare: !content.trim() && !doc.encryptedContent && !doc.mediaUrl && !doc.embedId }
+  return { id, bare: !content.trim() && !doc.encryptedContent && !doc.mediaUrl && !doc.mediaUrls && !doc.embedId }
 }
 
 /** The viewer's repost of a target: a `repost` document, or on v10 a bare quote post. */

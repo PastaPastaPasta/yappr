@@ -4,7 +4,7 @@ import type { Post } from '@/lib/types'
 import type { PostVisibility, ThreadPost } from '@/lib/store'
 import type { EncryptionOptions, EncryptionSource } from '@/lib/services/post-service'
 import type { PostEmbed } from '@/lib/poll-embed'
-import type { MediaHashes } from '@/lib/media/media-fingerprint'
+import type { MediaItemInput } from '@/lib/media/media-fields'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hasVisibleContent } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
@@ -66,9 +66,12 @@ export interface PublishInput {
   isPrivate: boolean
   inheritedEncryption: EncryptionSource | null
   pollEmbed: PostEmbed | undefined
-  mediaUrlField: string | undefined
-  /** v10: the image's sha256 and dHash, written with `mediaUrlField` (see `mediaCarriesHashes()`). */
-  mediaHashes?: MediaHashes
+  /**
+   * The media of the first part, as stored (`mediaUrlForContract`), each with
+   * its sha256 and fingerprint from v10 on (see `mediaDocumentFields`). One
+   * item before v13, up to four on v13. Empty for none.
+   */
+  media: MediaItemInput[]
   /**
    * The NSFW choice for the author's own thread. It follows the thread, so it
    * never applies when the composer is replying to someone else's post.
@@ -113,7 +116,7 @@ interface CreatedDocument {
  * is deliberately not chained to, so what follows stays public and top-level.
  */
 export async function publishThread(input: PublishInput): Promise<PublishOutcome> {
-  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, mediaHashes, markSensitive, onProgress, onCreated } = input
+  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, media, markSensitive, onProgress, onCreated } = input
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
@@ -193,8 +196,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
           const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId, rootOwnerId: threadRootOwnerId }, {
             encryption,
             sensitive,
-            mediaUrl: i === 0 ? mediaUrlField : undefined,
-            ...(i === 0 && mediaHashes ? { mediaHashes } : {}),
+            ...(i === 0 && media.length > 0 ? { media } : {}),
           })
           return { postId: reply.id, document: reply, isReply: true, confirmed: wasConfirmed(reply) }
         }
@@ -204,8 +206,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
           embed: i === 0 ? quoteEmbed ?? pollEmbed : undefined,
           encryption,
           sensitive,
-          mediaUrl: i === 0 ? mediaUrlField : undefined,
-          ...(i === 0 && mediaHashes ? { mediaHashes } : {}),
+          ...(i === 0 && media.length > 0 ? { media } : {}),
         })
         return { postId: post.id, document: post, isReply: false, confirmed: wasConfirmed(post) }
       } catch (error) {

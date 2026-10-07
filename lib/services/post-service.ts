@@ -16,8 +16,7 @@ import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPosts
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { privateFeedKeyFields } from '@/lib/contract-topology';
-import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
-import type { MediaHashes } from '@/lib/media/media-fingerprint';
+import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
 
 /**
  * Encryption options for creating private posts
@@ -408,9 +407,8 @@ class PostService extends BaseDocumentService<Post> {
     ownerId: string,
     content: string,
     options: {
-      mediaUrl?: string;
-      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
-      mediaHashes?: MediaHashes;
+      /** Stored URLs, with their hashes from v10 on (see `mediaDocumentFields`). One item before v13, up to four on v13. */
+      media?: MediaItemInput[];
       quotedPostId?: string;
       quotedPostOwnerId?: string;
       /** v9 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
@@ -498,12 +496,12 @@ class PostService extends BaseDocumentService<Post> {
     }
 
     // Add optional fields (use contract field names)
-    if (options.mediaUrl && options.encryption) {
-      // A plaintext mediaUrl on an encrypted post would leak the private media
+    if (options.media?.length && options.encryption) {
+      // A plaintext media URL on an encrypted post would leak the private media
       // reference; callers must keep it inside the encrypted content instead.
-      throw new Error('mediaUrl cannot be combined with encryption');
+      throw new Error('Media URLs cannot be combined with encryption');
     }
-    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
+    Object.assign(data, mediaDocumentFields(options.media));
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedReplyId) data.quotedReplyId = identifierStringToDocumentBytes(options.quotedReplyId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);

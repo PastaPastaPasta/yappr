@@ -22,6 +22,7 @@ import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
 import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
+import { mediaTypeOfMime } from '@/lib/media/media-fields'
 import type { UploadResult } from '@/lib/upload'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
@@ -275,10 +276,10 @@ export function ComposeModal() {
         isPrivate,
         inheritedEncryption: inherited.source,
         pollEmbed: pollId ? buildPollEmbed(pollId) : undefined,
-        mediaUrlField,
-        // v10 only (set by the upload where the contract requires them); they
-        // travel with mediaUrl and never with URL-in-content private media.
-        mediaHashes: mediaUrlField ? uploaded?.hashes : undefined,
+        // One image for now, also on v13 (which takes up to four). Its hashes
+        // are set by the upload where the contract requires them (v10 on); a
+        // private post carries its image URL inside the encrypted content.
+        media: mediaUrlField ? [{ url: mediaUrlField, hashes: uploaded?.hashes, type: mediaTypeOfMime(uploaded?.mime) }] : [],
         markSensitive,
         onProgress: setPostingProgress,
       })

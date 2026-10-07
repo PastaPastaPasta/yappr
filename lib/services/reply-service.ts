@@ -6,8 +6,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
-import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
-import type { MediaHashes } from '@/lib/media/media-fingerprint';
+import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
 import { documentCount, groupedDocumentCount, groupIdsByRoot, mapLimit } from './pagination-utils';
 import type { DocumentWhereClause } from './sdk-helpers';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
@@ -216,9 +215,8 @@ class ReplyService extends BaseDocumentService<Reply> {
     content: string,
     target: ReplyTarget,
     options: {
-      mediaUrl?: string;
-      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
-      mediaHashes?: MediaHashes;
+      /** Stored URLs, with their hashes from v10 on (see `mediaDocumentFields`). One item before v13, up to four on v13. */
+      media?: MediaItemInput[];
       sensitive?: boolean;
       encryption?: EncryptionOptions;
     } = {}
@@ -278,12 +276,12 @@ class ReplyService extends BaseDocumentService<Reply> {
       data.content = content;
     }
 
-    if (options.mediaUrl && options.encryption) {
-      // A plaintext mediaUrl on an encrypted reply would leak the private media
+    if (options.media?.length && options.encryption) {
+      // A plaintext media URL on an encrypted reply would leak the private media
       // reference; callers must keep it inside the encrypted content instead.
-      throw new Error('mediaUrl cannot be combined with encryption');
+      throw new Error('Media URLs cannot be combined with encryption');
     }
-    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
+    Object.assign(data, mediaDocumentFields(options.media));
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     // v10: the one indexed mention, by the rule posts use — the first
