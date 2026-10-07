@@ -84,6 +84,18 @@ describe('queryPostsByOwnersSince', () => {
     await expect(queryPostsByOwnersSince(owners, 5_000, 500, 'contract')).rejects.toThrow('offline')
   })
 
+  it('reports a batch capped at 1000 posts as incomplete', async () => {
+    // One owner with 1,200 posts after the cutoff.
+    const crowded = Array.from({ length: 1200 }, (_, i) => ({ $id: `c${String(i).padStart(4, '0')}`, $ownerId: owner(0), $createdAt: 10_000 + i }))
+    query.mockImplementation(async ({ limit, startAfter }: PostQuery) => {
+      const from = startAfter ? crowded.findIndex(doc => doc.$id === startAfter) + 1 : 0
+      return new Map(crowded.slice(from, from + limit).map(doc => [doc.$id, doc]))
+    })
+    const result = await queryPostsByOwnersSince([owner(0)], 5_000, 50, 'contract')
+    expect(result.complete).toBe(false)
+    expect(result.posts).toHaveLength(50)
+  })
+
   it('de-duplicates repeated owners and makes no query without any', async () => {
     expect(await queryPostsByOwnersSince([], 0)).toEqual({ posts: [], complete: true })
     expect(query).not.toHaveBeenCalled()

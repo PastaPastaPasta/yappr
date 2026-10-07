@@ -456,9 +456,10 @@ async function walkPages(
   let startAfter: string | undefined;
 
   for (;;) {
-    // Near the cap, ask for one row past it: that row only proves there is more.
+    // Near the cap, ask for a row past it: that row only proves there is more.
+    // An `in` continuation can come back a row short, so it asks for two.
     const remaining = maxResults - read;
-    const limit = Math.min(pageSize, remaining + 1);
+    const limit = Math.min(pageSize, remaining + (inClause ? 2 : 1));
     const query = queryBuilder(startAfter);
     query.limit = limit;
     if (startAfter) query.startAfter = startAfter;

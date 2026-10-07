@@ -74,6 +74,18 @@ describe('paginateFetchAll', () => {
     expect(query).toHaveBeenCalledTimes(4)
   })
 
+  it('an `in` walk with short continuations still reports the cap, and not an exact fit', async () => {
+    vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const over = await paginateFetchAll(pagedSdk(1234, { shortContinuations: true }).sdk, build, doc => doc.$id, { inClause: true })
+    expect(over.documents).toHaveLength(1000)
+    expect(new Set(over.documents).size).toBe(1000)
+    expect(over.reachedLimit).toBe(true)
+
+    const exact = await paginateFetchAll(pagedSdk(1000, { shortContinuations: true }).sdk, build, doc => doc.$id, { inClause: true })
+    expect(exact.documents).toHaveLength(1000)
+    expect(exact.reachedLimit).toBe(false)
+  })
+
   it('an empty first page of an `in` walk costs one query', async () => {
     const { sdk, query } = pagedSdk(0)
     expect((await paginateFetchAll(sdk, build, doc => doc, { inClause: true })).documents).toEqual([])

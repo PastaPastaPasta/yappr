@@ -428,8 +428,9 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     const generation = loadGenerationRef.current;
 
     try {
-      // Read from the newest post on screen, or from where the last complete
-      // check of this view got to, so each check reads only what is newer.
+      // Read from where this view's checks have read without a gap (the
+      // newest post on screen before the first check), so each check reads
+      // only what is newer and a partial one is read again.
       const scannedThrough = newPostsCheckFrom(newestPostTimestamp, newPostsMarkRef.current, generation);
       logger.debug('Feed: Checking for new posts since', new Date(scannedThrough).toISOString());
       const OVERLAP_MS = 2000;
@@ -450,8 +451,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
       }
 
       if (generation !== loadGenerationRef.current) return;
-      // A partial scan may have missed posts older than its newest: it leaves the mark.
-      newPostsMarkRef.current = markAfterCheck(newPostsMarkRef.current, generation, scannedThrough, { posts: newPosts, complete });
+      // A partial scan may have missed posts older than its newest: the mark stays at its start.
+      newPostsMarkRef.current = markAfterCheck(generation, scannedThrough, { posts: newPosts, complete });
       if (newPosts.length === 0) return;
 
       logger.debug(`Feed: Found ${newPosts.length} new posts`);

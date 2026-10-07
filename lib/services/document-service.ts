@@ -60,10 +60,11 @@ export function newestDistinctDocuments(
  * high-id owners. Instead each batch of at most 100 owners is read to the
  * end, and the limit applies after merging.
  *
- * `complete` is false when a continuation page failed and a batch kept only
- * the posts read before it: owners later in that batch may have newer posts
- * than some returned, so a caller must not treat the scan as covering
- * everything up to the newest post it got.
+ * `complete` is false when a batch stopped early (a continuation page
+ * failed, or it reached NEW_POSTS_BATCH_CAP) and kept only the posts read
+ * before that: owners later in that batch may have newer posts than some
+ * returned, so a caller must not treat the scan as covering everything up
+ * to the newest post it got.
  */
 export async function queryPostsByOwnersSince(
   ownerIds: string[],
@@ -90,10 +91,12 @@ export async function queryPostsByOwnersSince(
     // the pages already read, so the check never comes back empty for that.
     const read: Record<string, unknown>[] = [];
     try {
-      await paginateFetchAll(sdk, () => ({ ...query }), (doc) => {
+      const { reachedLimit } = await paginateFetchAll(sdk, () => ({ ...query }), (doc) => {
         read.push(doc);
         return doc;
       }, { maxResults: NEW_POSTS_BATCH_CAP, inClause: true });
+      // Owner-ordered: a capped batch may have left newer posts of later owners unread.
+      if (reachedLimit) complete = false;
     } catch (error) {
       if (read.length === 0) throw error;
       complete = false;
