@@ -84,8 +84,8 @@ async function hydrateBlogs(blogs: Blog[], viewerId: string | undefined): Promis
  * `/blog` discovery. On v7 a Blogs / Posts switch adds the cross-blog post
  * lists ({@link BlogPostDiscovery}); earlier cuts list blogs only.
  */
-export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkReady?: boolean; showHeader?: boolean }) {
-  const [view, setView] = useState<'blogs' | 'posts'>('blogs')
+export function BlogDiscovery({ sdkReady = true, showHeader = false, initialView = 'blogs' }: { sdkReady?: boolean; showHeader?: boolean; initialView?: 'blogs' | 'posts' }) {
+  const [view, setView] = useState<'blogs' | 'posts'>(initialView)
   const postsView = blogIsV7() && view === 'posts'
 
   return (

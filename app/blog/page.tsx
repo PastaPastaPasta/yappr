@@ -238,7 +238,7 @@ function BlogPageContent() {
               }}
             />
           )}
-          <BlogDiscovery sdkReady={sdkReady} showHeader={!user} />
+          <BlogDiscovery sdkReady={sdkReady} showHeader={!user} initialView={searchParams.get('view') === 'posts' ? 'posts' : 'blogs'} />
         </div>
       )
     }

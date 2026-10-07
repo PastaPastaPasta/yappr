@@ -9,6 +9,7 @@ import {
   blogAuthorHandle,
   blogCommentsDefault,
   blogPostDate,
+  boundedPostListState,
   commentsAreEnabled,
   createCommentReads,
   enrichBlogPostsWithBlogNames,
@@ -268,5 +269,15 @@ describe('posts from many blogs', () => {
     const listed = await enrichBlogPostsWithBlogNames(posts)
     expect(services.getMany).toHaveBeenCalledWith(['live', 'removed'])
     expect(listed).toEqual([{ id: 'p1', ownerId: 'o', blogId: 'live', authorUsername: 'alice', authorDisplayName: undefined, blogName: 'Live blog' }])
+  })
+})
+
+describe('a bounded read of the post timeline', () => {
+  it('tells "filtered, more exist" apart from "timeline exhausted"', () => {
+    expect(boundedPostListState(3, 'cursor')).toBe('list')
+    expect(boundedPostListState(3, undefined)).toBe('list')
+    // Only drafts and tombstones in the pages read, but the timeline goes on: never the empty state.
+    expect(boundedPostListState(0, 'cursor')).toBe('filtered')
+    expect(boundedPostListState(0, undefined)).toBe('empty')
   })
 })

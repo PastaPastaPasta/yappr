@@ -89,6 +89,20 @@ export function extractInlineText(content: unknown): string {
     .join('')
 }
 
+/** The cross-blog Posts discovery on /blog (blog v7), which pages the whole post timeline. */
+export const BLOG_POSTS_DISCOVERY_URL = '/blog?view=posts'
+
+/**
+ * What a bounded read of the post timeline has to show. `list`: posts.
+ * `filtered`: none survived the filters (drafts, tombstones, removed blogs)
+ * in the pages read, but the timeline goes on, so the reader is sent on
+ * rather than told nothing exists. `empty`: the timeline really ended.
+ */
+export function boundedPostListState(shown: number, nextCursor: string | undefined): 'list' | 'filtered' | 'empty' {
+  if (shown > 0) return 'list'
+  return nextCursor ? 'filtered' : 'empty'
+}
+
 /** A blog's home page path. */
 export function getBlogUrl(blogId: string): string {
   return `/blog?blog=${encodeURIComponent(blogId)}`
