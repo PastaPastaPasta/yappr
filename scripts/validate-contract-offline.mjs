@@ -88,7 +88,9 @@ function parseArgs(argv) {
   const network = networkEquals ? networkEquals.slice('--network='.length) : networkIndex === -1 ? 'devnet' : argv[networkIndex + 1];
   if (!['devnet', 'testnet', 'mainnet'].includes(network)) throw new Error(`--network must be devnet, testnet or mainnet (got "${network}")`);
   const interimIndex = argv.indexOf('--interim');
-  const interim = interimIndex === -1 ? undefined : argv[interimIndex + 1];
+  const interimEquals = argv.find((arg) => arg.startsWith('--interim='));
+  const interim = interimEquals ? interimEquals.slice('--interim='.length) : interimIndex === -1 ? undefined : argv[interimIndex + 1];
+  if ((interimEquals || interimIndex !== -1) && !interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)');
   // Skip each flag's value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".
   const valueIndexes = new Set([flagIndex, networkIndex, interimIndex].filter((index) => index !== -1).map((index) => index + 1));
@@ -153,14 +155,15 @@ const describeReference = (reference) => {
 };
 
 function validateFile(file, { immutable, strictSize, network, interim }) {
-  const source = loadContractSource(file, { network, interim });
+  const declared = loadContractSource(file);
+  const source = { ...declared, config: withInterim(declared.config, { network, interim }) };
   const platformVersion = PlatformVersion.latest();
   const contract = parseContract(source, platformVersion);
   console.log(`OK  ${file} parses under FULL validation (wasm-sdk)`);
   parseWithNodeRules(source);
   console.log(`OK  ${file} parses under the node rules (wasm-dpp2: meta-schema + index shapes)`);
   console.log(`    platform version: ${platformVersion.version} (${platformVersion.__type})`);
-  const declaredInterim = loadContractSource(file).config.moderation?.moderators?.interim?.$type;
+  const declaredInterim = declared.config.moderation?.moderators?.interim?.$type;
   const renderedInterim = source.config.moderation?.moderators?.interim?.$type;
   if (declaredInterim !== renderedInterim) console.log(`    interim:          ${renderedInterim} as registered on ${network} (the file declares ${declaredInterim})`);
   console.log(`    document types:   ${Object.keys(source.documentSchemas).length}`);
@@ -212,7 +215,7 @@ function validateFile(file, { immutable, strictSize, network, interim }) {
     // 5.0: `immutableWhen` conditions carry numeric literals as BigInt.
     console.log(`    ${documentType}: ${JSON.stringify(contract.documentTypeImmutableProperties(documentType), (_key, value) => (typeof value === 'bigint' ? value.toString() : value))}`);
   }
-  return contract;
+  return { contract, source };
 }
 
 /**
@@ -242,8 +245,9 @@ const CENTS_PER_CREDIT = 60 * 100 / 1e11;
 /**
  * The writes Yappr makes, one document shape each: [label, type, the optional
  * fields present, with a length for a variable-size one]. A field ending in
- * `?` is priced only where the cut declares it (`live` and `rootOwnerId` are
- * v13's); a write naming any other field the cut lacks is skipped. Every other
+ * `?` is priced only where the cut declares it (v13's `live`); a write
+ * naming any other field the cut lacks is skipped. Required fields (v13's
+ * `rootOwnerId` among them) are always priced. Every other
  * optional field is absent. A typed array's length is its element count; the
  * estimator prices each element at the middle of its bound (256 characters
  * for a media URL), so the media rows overstate an ipfs:// link.
@@ -291,8 +295,8 @@ function printWriteCosts(contract, source, platformVersion) {
     for (const [name, length] of present) if (declared.includes(name)) fields[name] = length > 0 ? { present: true, length } : { present: true };
     const cost = documentCreateCost(contract, type, { fields }, platformVersion);
     const actionFee = cost.contractCharges.filter((c) => c.kind === 'actionFee').reduce((n, c) => n + c.charged.owner + c.charged.moderators, 0);
-    const network = (scenario) => Number(cost.totalCredits[scenario]) - actionFee;
-    rows.push([label, network('newValues'), network('knownValues'), actionFee]);
+    const networkFee = (scenario) => Number(cost.totalCredits[scenario]) - actionFee;
+    rows.push([label, networkFee('newValues'), networkFee('knownValues'), actionFee]);
   }
   if (rows.length === 0) return;
   const credits = (n) => `${(n / 1e6).toFixed(1)}M (${(n * CENTS_PER_CREDIT).toFixed(2)}¢)`;
@@ -307,8 +311,8 @@ async function main() {
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
   const { file, immutable, probes, constraints, cost, strictSize, network, interim } = parseArgs(process.argv.slice(2));
   if (file) {
-    const contract = validateFile(file, { immutable, strictSize, network, interim });
-    if (cost) printCosts(contract, loadContractSource(file, { network, interim }));
+    const { contract, source } = validateFile(file, { immutable, strictSize, network, interim });
+    if (cost) printCosts(contract, source);
   }
   if (probes) {
     const platformVersion = PlatformVersion.latest();

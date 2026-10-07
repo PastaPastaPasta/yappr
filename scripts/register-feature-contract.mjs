@@ -176,7 +176,7 @@ function parseArgs(argv) {
       case '--owner': args.ownerId = argv[++i]; break;
       case '--social': args.social = argv[++i]; break;
       case '--moderators': args.moderators = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
-      case '--interim': args.interim = argv[++i]; break;
+      case '--interim': args.interim = argv[++i]; if (!args.interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)'); break;
       case '--dry-run': args.dryRun = true; break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }

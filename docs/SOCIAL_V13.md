@@ -29,7 +29,7 @@ Topology label for the follow-up: `v13`. v2, v9, v10, v11 and v12 are untouched.
 | Document types | 12: bookmark, follow, followRequest, like, likeReply, post, privateFeedGrant, privateFeedRekey, privateFeedState, reply, report, yapprProfile | 3: block, blockFilter, blockFollow |
 | Parses | wasm-sdk and wasm-dpp2 (5.0.0-beta.2) under full validation; `auditNodeRules` clean on devnet and with `--network mainnet`; meta-schema v3 clean | the same, with the default unmoderated config |
 
-What each change adds to or saves from the signed size, measured leave-one-out (v13 with that one change put back to v12's shape):
+What each change adds to or saves from the signed size, measured leave-one-out (v13 with that one change put back to v12's shape). Leave-one-out deltas do not add up exactly (the rows sum to −1,035 B, the whole diff is −988 B): the changes share serialized structure, such as the post and reply rule maps.
 
 | Change | Bytes |
 | --- | ---: |
@@ -75,7 +75,7 @@ The elected declaration is fixed once registered (40002 on any later change, the
 The user decided that mainnet registers with `interim: {"$type": "notYetUsable"}`. Testnet is undecided. One file serves every network: the committed file declares `contractOwner` (a devnet needs an owner who moderates before any team is seated), and the interim is chosen when the contract is registered:
 
 - `withInterim(config, { network, interim })` in `scripts/register-lib.mjs` swaps an elected declaration's interim: on mainnet to `notYetUsable`, elsewhere to the file's own, unless `--interim <kind>` names one (`contractOwner`, `notYetUsable` or `noModeration`; `appointedModerators` needs identities, so it can only come from a file).
-- `register-feature-contract.mjs` registers with `withInterim` for `NETWORK`, so `NETWORK=mainnet node scripts/register-feature-contract.mjs --file yappr-social-contract-v13.json` publishes `notYetUsable`. `--dry-run` prints the declaration it would publish.
+- `register-feature-contract.mjs` registers with `withInterim` for `NETWORK`, so `NETWORK=mainnet node scripts/register-feature-contract.mjs --file yappr-social-contract-v13.json (--bot <n> --owner <id> | --persona <idx>)` publishes `notYetUsable`. With `--dry-run` instead of an owner it prints the declaration it would publish, offline.
 - `validate-contract-offline.mjs --network mainnet` validates and sizes that same rendering and prints `interim: notYetUsable as registered on mainnet (the file declares contractOwner)`. `--interim` validates another.
 - `register-social-v3-draft.mjs` (devnet only) takes `--interim` too.
 
@@ -105,8 +105,8 @@ v12's `byAuthorReply` counter (one per reply, preallocated) existed for "likes o
 
 | Report | `postId` | `replyId` | `about` | `box` | `targetOwnerId` |
 | --- | --- | --- | --- | --- | --- |
-| a post | ✓ | | | if private | the post's owner (`where`) |
-| a reply | | ✓ | | if private | the reply's owner (`where`) |
+| a post | ✓ | | | allowed (the client sends one for a private post) | the post's owner (`where`) |
+| a reply | | ✓ | | allowed (the client sends one for a private reply) | the reply's owner (`where`) |
 | a profile | | | 1 | never | the reported identity |
 
 - **One target.** `oneTarget` is `ifThenElse [present postId, no replyId and no about, ifThenElse [present replyId, no about, about]]`: exactly one of the three. An arithmetic form (`count` of the targets) is refused at registration: `count` reads arrays and byte arrays, not identifiers (a `--probes` probe pins it).
@@ -148,7 +148,7 @@ On v12 a tombstone stayed in `ownerAndTime`, so it was counted in the author's p
 
 ## Costs
 
-`node scripts/validate-contract-offline.mjs <file> --cost` now prints a network fee per write: `documentCreateCost` (storage exact, processing estimated) for the first document with its index values and for a later one, with the action fee the contract adds. Cents are at $60/DASH, where 1M credits = 0.06¢. YAPP token costs are not credits and are not included. The estimator overstates the live fee: on v12 a later like was estimated at 22.5M and measured at 15.9M on sakura ([SOCIAL_V12.md](SOCIAL_V12.md#measured-costs)). v13 has not been measured live.
+`node scripts/validate-contract-offline.mjs <file> --cost` now prints a network fee per write: `documentCreateCost` (storage exact, processing estimated) for the first document with its index values and for a later one, with the action fee the contract adds. Cents are at $60/DASH, where 1M credits = 0.06¢. YAPP token costs are not credits and are not included. The estimator overstates the live fee: on v12 a later like was estimated at 22.5M and measured at 15.9M on sakura ([SOCIAL_V12.md](SOCIAL_V12.md#measured-costs)). v13 has not been measured live. A report's "later" figure above its "first" one is an estimator quirk (it was so on v12 too).
 
 | Write | v12, first / later | **v13, first / later** | Action fee |
 | --- | ---: | ---: | ---: |

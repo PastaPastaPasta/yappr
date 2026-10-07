@@ -834,7 +834,8 @@ function runWhereCases({ loadContractSource, parseContract }) {
   for (const [label, file, type, path, referring, referenced, expected] of WHERE_CASES) {
     if (!parsed.has(file)) parsed.set(file, parseContract(loadContractSource(file)));
     const reference = parsed.get(file).documentTypeReferences(type).find((r) => r.path === path);
-    const disagreement = Object.entries(reference?.where ?? {}).find(([theirs, mine]) => referenced[theirs] === undefined || referring[mine] !== referenced[theirs]);
+    // A value left out on both sides agrees, as consensus judges it.
+    const disagreement = Object.entries(reference?.where ?? {}).find(([theirs, mine]) => referring[mine] !== referenced[theirs]);
     const outcome = reference && disagreement ? '40127' : null;
     const ok = reference !== undefined && outcome === expected;
     if (!ok) failures += 1;

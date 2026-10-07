@@ -144,13 +144,14 @@ function buildDraftContract({ contractFile, ownerId, identityNonce, platformVers
   if (!file.documentSchemas || Object.keys(file.documentSchemas).length === 0) {
     throw new Error(`${contractFile} has no documentSchemas`);
   }
+  if (interim !== undefined && !file.config) throw new Error(`--interim was passed, but ${contractFile} declares no config`);
   const json = {
     $formatVersion: file.$formatVersion ?? '1',
     id: DataContract.generateId(ownerId, identityNonce).toBase58(),
     ownerId,
     version: file.version ?? 1,
     documentSchemas: file.documentSchemas,
-    ...(file.config ? { config: withModerators(withInterim(file.config, { network: 'devnet', interim }), moderators) } : {}),
+    ...(file.config ? { config: withModerators(withInterim(file.config, { interim }), moderators) } : {}),
     ...(file.tokens ? { tokens: file.tokens } : {}),
   };
   return { dataContract: DataContract.fromJSON(json, true, platformVersion), file };
@@ -279,7 +280,7 @@ function parseArgs(argv) {
       case '--owner': args.ownerId = argv[++i]; break;
       case '--contract-file': args.contractFile = argv[++i]; break;
       case '--moderators': args.moderators = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
-      case '--interim': args.interim = argv[++i]; break;
+      case '--interim': args.interim = argv[++i]; if (!args.interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)'); break;
       case '--fund': args.fund = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
       case '--fund-amount': args.fundAmount = BigInt(argv[++i]); break;
       case '--fund-only': args.fundOnly = argv[++i]; break;
