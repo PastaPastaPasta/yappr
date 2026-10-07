@@ -11,6 +11,17 @@
 
 const HEX_PATTERN = /^[0-9a-fA-F]*$/
 
+/** The parts joined end to end into one new array. */
+export function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.length
+  }
+  return out
+}
+
 /**
  * A `Uint8Array` known to sit on a plain (non-shared) `ArrayBuffer`. Web Crypto
  * and `Blob` accept only this variant, so the decoders return it and callers

@@ -4,13 +4,13 @@ import type { Post } from '@/lib/types'
 import type { PostVisibility, ThreadPost } from '@/lib/store'
 import type { EncryptionOptions, EncryptionSource } from '@/lib/services/post-service'
 import type { PostEmbed } from '@/lib/poll-embed'
-import type { MediaHashes } from '@/lib/media/media-fingerprint'
+import type { MediaItemInput } from '@/lib/media/media-fields'
 import { extractAllTags, extractMentions } from '@/lib/post-helpers'
 import { hasVisibleContent } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
-import { hashtagsAreInline, mentionsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
+import { hashtagsAreInline, mentionsAreInline, repliesNameRootOwner, replyLinkageTo, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
@@ -66,9 +66,12 @@ export interface PublishInput {
   isPrivate: boolean
   inheritedEncryption: EncryptionSource | null
   pollEmbed: PostEmbed | undefined
-  mediaUrlField: string | undefined
-  /** v10: the image's sha256 and dHash, written with `mediaUrlField` (see `mediaCarriesHashes()`). */
-  mediaHashes?: MediaHashes
+  /**
+   * The media of the first part, as stored (`mediaUrlForContract`), each with
+   * its sha256 and fingerprint from v10 on (see `mediaDocumentFields`). One
+   * item before v13, up to four on v13. Empty for none.
+   */
+  media: MediaItemInput[]
   /**
    * The NSFW choice for the author's own thread. It follows the thread, so it
    * never applies when the composer is replying to someone else's post.
@@ -113,7 +116,7 @@ interface CreatedDocument {
  * is deliberately not chained to, so what follows stays public and top-level.
  */
 export async function publishThread(input: PublishInput): Promise<PublishOutcome> {
-  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, mediaUrlField, mediaHashes, markSensitive, onProgress, onCreated } = input
+  const { authorId, posts, replyingTo, quotingPost, knownThreadRootId, isPrivate, inheritedEncryption, pollEmbed, media, markSensitive, onProgress, onCreated } = input
   const { retryPostCreation } = await import('@/lib/retry-utils')
   const outcome: PublishOutcome = { successful: [], timedOut: [], failedAtIndex: null, failureError: null, syncRequired: false }
   const { fields: quoteFields, embed: quoteEmbed } = resolveQuoteReference(quotingPost)
@@ -123,6 +126,18 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
 
   let previousPostId: string | null = null
   let threadRootId: string | null = replyingTo ? threadRootIdOf(replyingTo) : knownThreadRootId
+  // v13: every reply names its thread root's owner. The author's own thread
+  // (a standalone thread, or one resumed from an earlier attempt) is theirs.
+  let threadRootOwnerId: string | undefined
+  if (repliesNameRootOwner()) {
+    try {
+      threadRootOwnerId = replyingTo ? await threadRootOwnerOf(replyingTo) : authorId
+    } catch (error) {
+      outcome.failedAtIndex = 0
+      outcome.failureError = error instanceof Error ? error : new Error(extractErrorMessage(error))
+      return outcome
+    }
+  }
 
   for (let i = 0; i < posts.length; i++) {
     const { threadPostId, content, teaser, visibility, predecessorPostedId } = posts[i]
@@ -178,11 +193,10 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
       try {
         if (isReply && linkage && parentOwnerId) {
           const { replyService } = await import('@/lib/services/reply-service')
-          const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId }, {
+          const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId, rootOwnerId: threadRootOwnerId }, {
             encryption,
             sensitive,
-            mediaUrl: i === 0 ? mediaUrlField : undefined,
-            ...(i === 0 && mediaHashes ? { mediaHashes } : {}),
+            ...(i === 0 && media.length > 0 ? { media } : {}),
           })
           return { postId: reply.id, document: reply, isReply: true, confirmed: wasConfirmed(reply) }
         }
@@ -192,8 +206,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
           embed: i === 0 ? quoteEmbed ?? pollEmbed : undefined,
           encryption,
           sensitive,
-          mediaUrl: i === 0 ? mediaUrlField : undefined,
-          ...(i === 0 && mediaHashes ? { mediaHashes } : {}),
+          ...(i === 0 && media.length > 0 ? { media } : {}),
         })
         return { postId: post.id, document: post, isReply: false, confirmed: wasConfirmed(post) }
       } catch (error) {
@@ -260,6 +273,21 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
     }
   }
   return outcome
+}
+
+/**
+ * The owner of the thread a reply to `target` joins (v13 `rootOwnerId`): the
+ * post's own author, or a reply's root owner, read off the reply when it
+ * carries one and off the root post otherwise. Rejects when the root cannot
+ * be read: a reply naming the wrong owner is refused, paid (40127).
+ */
+async function threadRootOwnerOf(target: Post): Promise<string> {
+  if (targetKindOf(target) !== 'reply') return target.author.id
+  if (target.rootOwnerId) return target.rootOwnerId
+  const { postService } = await import('@/lib/services/post-service')
+  const root = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true })
+  if (!root) throw new Error('Could not read the post this thread starts from. Try again in a moment — nothing was posted.')
+  return root.author.id
 }
 
 function wasConfirmed(doc: unknown): boolean {

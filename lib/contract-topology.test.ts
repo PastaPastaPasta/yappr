@@ -17,6 +17,8 @@ import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
+import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
+import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
 type Schemas = Record<string, {
@@ -47,6 +49,8 @@ const V9 = socialContractV9.documentSchemas as unknown as Schemas
 const V10 = socialContractV10.documentSchemas as unknown as Schemas
 const V11 = socialContractV11.documentSchemas as unknown as Schemas
 const V12 = socialContractV12.documentSchemas as unknown as Schemas
+const V13 = socialContractV13.documentSchemas as unknown as Schemas
+const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
 /**
@@ -61,7 +65,7 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
@@ -123,7 +127,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -131,7 +135,8 @@ describe('contract topology', () => {
         if (like.ownerField) expect(schemas[like.docType].properties[like.ownerField], `${topology} ${like.ownerField}`).toBeDefined()
         const shape = m.indexOnlyLikeShapeFor(kind)
         if (shape) {
-          expect(schemas[like.docType].properties[shape.authorField]).toBeDefined()
+          if (shape.authorField) expect(schemas[like.docType].properties[shape.authorField]).toBeDefined()
+          else expect(Object.keys(schemas[like.docType].properties), `${topology} ${like.docType} names its target alone`).toEqual([like.field])
           if (shape.hashtagField) expect(schemas[like.docType].properties[shape.hashtagField]).toBeDefined()
         }
       }
@@ -220,12 +225,18 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
         if (!shape) throw new Error(`${topology} ${kind} likes must be indexOnly`)
         const { docType } = m.likeIndexFor(kind)
+        // v13 likeReply names no author and keeps no author index.
+        if (shape.authorField === null) {
+          expect(shape.authorIndexIsCounter, `${topology} ${kind}`).toBe(false)
+          expect(schemas[docType].indices?.map((index) => index.name), `${topology} ${kind}`).toEqual(['byReply'])
+          continue
+        }
         // The author index: the one keyed [author, target] (v11, v12), else the author-time one.
         const authorIndex = schemas[docType].indices?.find((index) => {
           const names = index.properties.map((entry) => Object.keys(entry)[0])
@@ -239,7 +250,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -416,6 +427,7 @@ describe('contract topology', () => {
         joinWindowSeconds: 3_600,
         voteWindowSeconds: 3_600,
         seatContestable: false,
+        challengeCoolDownSeconds: null,
         electionDelaySeconds: null,
         maxAddedModerators: 10,
         moderatedDocumentTypes: { post: abilities, reply: abilities, report: ['deleteDocuments'] },
@@ -572,6 +584,7 @@ describe('contract topology', () => {
         joinWindowSeconds: 3_600,
         voteWindowSeconds: 3_600,
         seatContestable: false,
+        challengeCoolDownSeconds: null,
         electionDelaySeconds: null,
         maxAddedModerators: 10,
         moderatedDocumentTypes: { post: abilities, reply: abilities, report: ['deleteDocuments', 'changeDocumentFields'], yapprProfile: ['deleteDocuments'] },
@@ -953,6 +966,123 @@ describe('contract topology', () => {
       }).toEqual(v11)
       expect([v2, v9, v10, v11, v12].map((m) => m.barredTombstone)).toEqual([false, false, false, false, true])
       for (const before of [v9, v10, v11]) expect(before.shapes.map((shape) => shape?.authorIndexIsCounter), 'no counter before v12').toEqual([false, false])
+    })
+  })
+
+  describe('v13 (the mainnet candidate)', () => {
+    it('binds a reply to its thread: rootOwnerId required, frozen, preserved by the tombstone', async () => {
+      const v13 = await topologyModule('v13')
+      expect(V13.reply.required).toEqual(expect.arrayContaining(['rootPostId', 'rootOwnerId', 'parentOwnerId']))
+      expect(V13.reply.properties.rootPostId.refersTo?.where).toEqual({ $ownerId: 'rootOwnerId' })
+      expect(V13.reply.properties.replyToReplyId.refersTo?.where).toEqual({ $ownerId: 'parentOwnerId', rootPostId: 'rootPostId' })
+      expect(V13.reply.propertyConstraints?.parentIsRoot).toEqual({ ifThen: [{ absent: 'replyToReplyId' }, { equal: ['parentOwnerId', 'rootOwnerId'] }] })
+      // The tombstone carries exactly the unconditionally frozen linkage over.
+      const frozen = (V13.reply.immutable as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      const { identifiers, scalars } = v13.tombstonePreservationFor('reply')
+      expect([...identifiers, ...scalars].sort()).toEqual([...frozen].sort())
+      expect(v13.repliesNameRootOwner()).toBe(true)
+      for (const before of ['v2', 'v9', 'v10', 'v11', 'v12']) expect((await topologyModule(before)).repliesNameRootOwner(), before).toBe(false)
+    })
+
+    it('refuses reply owners that parentIsRoot or the root reference would, before signing', async () => {
+      const v13 = await topologyModule('v13')
+      expect(v13.replyOwnersProblem({ parentOwnerId: 'A', rootOwnerId: 'A' })).toBeNull()
+      expect(v13.replyOwnersProblem({ replyToReplyId: 'R', parentOwnerId: 'B', rootOwnerId: 'A' })).toBeNull()
+      expect(v13.replyOwnersProblem({ parentOwnerId: 'B', rootOwnerId: 'A' })).toMatch(/thread's post/)
+      expect(v13.replyOwnersProblem({ parentOwnerId: 'A' })).toMatch(/rootOwnerId/)
+      // Before v13 nothing binds them, and nothing is written.
+      expect((await topologyModule('v12')).replyOwnersProblem({ parentOwnerId: 'B', rootOwnerId: 'A' })).toBeNull()
+    })
+
+    it('likes a reply by its id alone: no replyAuthor, no author counter', async () => {
+      const v13 = await topologyModule('v13')
+      expect(V13.likeReply.required).toEqual(['replyId'])
+      expect(v13.likeIndexFor('reply')).toEqual({ docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: null, ownerIsTerminal: true })
+      expect(v13.indexOnlyLikeShapeFor('reply')).toMatchObject({ authorField: null, hashtagField: null, deleteNamesCreatedAt: false })
+      // Post likes are v12's, counters included.
+      const v12 = await topologyModule('v12')
+      expect(v13.indexOnlyLikeShapeFor('post')).toEqual(v12.indexOnlyLikeShapeFor('post'))
+      expect(v13.likeIndexFor('post')).toEqual(v12.likeIndexFor('post'))
+    })
+
+    it('reads post timelines with live == true pinned first, where the contract keys ownerAndTime on it', async () => {
+      const index = V13.post.indices?.find((entry) => entry.name === 'ownerAndTime')
+      expect(index?.properties.map((entry) => Object.keys(entry)[0])).toEqual(['live', '$ownerId', '$createdAt'])
+      expect([index?.skipIfAbsent, index?.rangeCountable, index?.rankedCountable]).toEqual([true, true, { at: '$ownerId' }])
+      const v13 = await topologyModule('v13')
+      expect([v13.postsCarryLiveMarker(), v13.postOwnerIndexPrefix(), v13.postOwnerIndexOrderPrefix()]).toEqual([true, [['live', '==', true]], [['live', 'asc']]])
+      for (const before of ['v2', 'v9', 'v10', 'v11', 'v12']) {
+        const m = await topologyModule(before)
+        expect([m.postsCarryLiveMarker(), m.postOwnerIndexPrefix(), m.postOwnerIndexOrderPrefix()], before).toEqual([false, [], []])
+      }
+    })
+
+    it('carries up to four media items in three arrays', async () => {
+      const v13 = await topologyModule('v13')
+      for (const kind of ['post', 'reply']) {
+        expect(V13[kind].properties.mediaUrls.maxItems, kind).toBe(4)
+        expect(V13[kind].properties.mediaDigests.maxItems, kind).toBe(160)
+        expect(V13[kind].properties.mediaKinds.maxItems, kind).toBe(4)
+        expect(V13[kind].properties.mediaUrl, kind).toBeUndefined()
+      }
+      expect([v13.mediaIsArrays(), v13.mediaItemLimit(), v13.mediaCarriesHashes()]).toEqual([true, 4, true])
+      const v12 = await topologyModule('v12')
+      expect([v12.mediaIsArrays(), v12.mediaItemLimit()]).toEqual([false, 1])
+    })
+
+    it('takes profile reports and moderators\' boxes, reason 9, through target-first indexes', async () => {
+      const v13 = await topologyModule('v13')
+      expect(v13.reportShape()).toEqual({ maxReason: 9, profiles: true, boxMaxBytes: 5_120, targetFirst: true })
+      const names = V13.report.indices?.map((index) => index.name)
+      expect(names).toEqual(['byPost', 'byReply', 'byTarget', 'byStatus', 'byModerator'])
+      expect(v13.declaredActionFee('report', 'create')).toEqual({ owner: 0n, moderators: 50_000_000n, pricing: 'feeMultiplier' })
+      const v12 = await topologyModule('v12')
+      expect(v12.reportShape()).toEqual({ maxReason: 8, profiles: false, boxMaxBytes: null, targetFirst: false })
+      expect(v12.declaredActionFee('report', 'create')).toBeNull()
+    })
+
+    it('keeps block types in the blocks contract, and the social contract free of them', async () => {
+      for (const docType of ['block', 'blockFilter', 'blockFollow']) expect(V13[docType], docType).toBeUndefined()
+      expect(Object.keys(BLOCKS).sort()).toEqual(['block', 'blockFilter', 'blockFollow'])
+      vi.stubEnv('NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', '')
+      expect((await topologyModule('v13')).blocksContractId()).toBeNull()
+      vi.stubEnv('NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', 'BLOCKS')
+      const v13 = await topologyModule('v13')
+      expect(v13.blocksContractId()).toBe('BLOCKS')
+      expect(v13.ownerDistinctProperties('block')).toEqual(['blockedId'])
+      expect(v13.ownerDistinctProperties('blockFollow')).toEqual(['followedBlockers'])
+      expect((await topologyModule('v12')).blocksContractId()).not.toBe('BLOCKS')
+      vi.unstubAllEnvs()
+    })
+
+    it('declares mainnet election windows and a contestable seat', async () => {
+      const elected = (await topologyModule('v13')).electedModeration()
+      expect(elected).toMatchObject({
+        joinWindowSeconds: 604_800,
+        voteWindowSeconds: 259_200,
+        seatContestable: true,
+        challengeCoolDownSeconds: 2_592_000,
+        maxAddedModerators: 10,
+        interim: 'contractOwner',
+        ownerProtected: true,
+      })
+    })
+
+    it('keeps every v12 surface and rule but those', async () => {
+      const read = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return {
+          linkage: m.replyLinkage(),
+          post: [m.likeIndexFor('post'), m.repostIndexFor('post'), m.bookmarkIndexFor('post'), m.quoteFieldFor('post'), m.replyCountFieldFor('post'), m.tombstonePreservationFor('post')],
+          rankings: (['posts', 'hashtags', 'creators'] as const).map((axis) => m.windowedRankingFor(axis)),
+          windows: (['reply', 'quote'] as const).map((source) => m.notificationWindowFor(source)),
+          flags: [m.isV10(), m.isV11(), m.repostsAreQuotes(), m.mentionsAreInline(), m.notificationsAreWindowed(), m.reportsAreResolved(), m.yappIsLocked(), m.likesAreIndexOnly(),
+            m.deletesAreTombstones(), m.tombstoneKeepsEmptyContent(), m.likeTreesArePreallocated(), m.authorDeletesLeaveHoles(), m.repliesOutliveTheirParent(), m.tombstonesAreHidden(),
+            m.likeNotificationsPinTarget(), m.likeNotificationsAreTimeless(), m.prefixRankingsAvailable(), m.barredAuthorsCanTombstone(), m.contractTakesReports()],
+          settled: (['post', 'reply', 'report'] as const).map((docType) => [m.settledDeletionFor(docType), m.removalKeptFieldsFor(docType), m.moderatorDeleteWindowSeconds(docType)]),
+        }
+      }
+      expect(await read('v13')).toEqual(await read('v12'))
     })
   })
 })

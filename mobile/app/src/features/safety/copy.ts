@@ -59,6 +59,8 @@ export const copy = {
     title: (noun: ReportNoun) => `Report ${noun}`,
     /** The one required disclosure: a report is a public document, and its author sees who filed it. */
     disclosure: 'Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
+    /** v13: the moderators' action fee every report pays, scaled by the network's fee multiplier. */
+    fee: (dash: string) => `Reporting pays a moderation fee of about ${dash} to the moderators, plus the network fee.`,
     question: 'What is wrong with it?',
     details: (required: boolean) => (required ? 'Details (required)' : 'Details (optional)'),
     placeholder: 'Anything the moderators should know',

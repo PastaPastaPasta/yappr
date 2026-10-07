@@ -39,8 +39,9 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
+import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
+import { postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
@@ -182,7 +183,8 @@ async function rankedGroupCounts(
   groupBy: string,
   limit: number,
   windowed: WindowedRanking | null = null,
-  throwOnError = false
+  throwOnError = false,
+  pins: DocumentsIndexPin[] = []
 ): Promise<RankedGroupCount[]> {
   try {
     const sdk = await getEvoSdk();
@@ -193,6 +195,7 @@ async function rankedGroupCounts(
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
+      ...(pins.length > 0 ? { where: pins } : {}),
       ...windowClause(windowed),
     });
 
@@ -250,11 +253,12 @@ export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroup
 /**
  * The authors with the most posts — v10's ranked chain on `post.ownerAndTime
  * [$ownerId, $createdAt]` (`rankedCountable {at: $ownerId}`), which counts
- * bare reposts too (they are posts). Keys are base58 identity ids. Rejects on
- * failure so the caller can fall back to its scan.
+ * bare reposts too (they are posts). On v13 the index starts at `live`, so the
+ * ranking pins `live == true` and counts no tombstones. Keys are base58
+ * identity ids. Rejects on failure so the caller can fall back to its scan.
  */
 export async function topAuthorsByPostCount(limit: number = 100): Promise<RankedGroupCount[]> {
-  return rankedGroupCounts('post', '$ownerId', limit, null, true);
+  return rankedGroupCounts('post', '$ownerId', limit, null, true, postOwnerIndexPrefix());
 }
 
 export interface HydratedTopPostsOptions {

@@ -50,6 +50,7 @@ const m = vi.hoisted(() => ({
   /** `electedModeration()`: null off an elected contract. */
   elected: null as { interim: string; moderatedDocumentTypes: Record<string, string[]> } | null,
   election: { getSeatedTeam: vi.fn() },
+  moderation: { moderatedTypeOpen: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
@@ -94,6 +95,7 @@ vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
 vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
+vi.mock('@/lib/services/moderation-service', async (load) => ({ ...await load<object>(), moderationService: m.moderation }))
 vi.mock('@/lib/services/hashtag-service', () => ({ hashtagService: m.hashtagService }))
 vi.mock('@/lib/services/notification-service', () => ({ notificationService: m.notificationService }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
@@ -429,25 +431,24 @@ describe('graph and safety writes', () => {
     await expect(safety.followedBlockLists()).rejects.toBeInstanceOf(Error)
   })
 
-  it('says whether reports open before the form: only an unseated notYetUsable team keeps them shut', async () => {
+  it('says whether reports and posting are open, as lib reads the registered contract, and rejects an unreadable one', async () => {
     const { safety } = engine()
+    m.moderation.moderatedTypeOpen.mockResolvedValue(true)
     expect(await safety.reportsOpen()).toBe(true)
-    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { report: ['delete'] } }
-    expect(await safety.reportsOpen()).toBe(true)
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
-    expect(await safety.reportsOpen()).toBe(true)
-    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
+    expect(await safety.postingOpen()).toBe(true)
+    expect(m.moderation.moderatedTypeOpen.mock.calls.map(([docType]) => docType)).toEqual(['report', 'post'])
 
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { report: ['delete'] } }
-    m.election.getSeatedTeam.mockResolvedValue(null)
+    m.moderation.moderatedTypeOpen.mockResolvedValue(false)
     expect(await safety.reportsOpen()).toBe(false)
-    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
-    expect(await safety.reportsOpen()).toBe(true)
-    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
+    expect(await safety.postingOpen()).toBe(false)
+    m.moderation.moderatedTypeOpen.mockRejectedValue(new Error('Request timeout'))
     await expect(safety.reportsOpen()).rejects.toBeInstanceOf(Error)
+    await expect(safety.postingOpen()).rejects.toBeInstanceOf(Error)
 
     m.topology.contractTakesReports = false
+    m.moderation.moderatedTypeOpen.mockClear()
     expect(await safety.reportsOpen()).toBe(false)
+    expect(m.moderation.moderatedTypeOpen).not.toHaveBeenCalled()
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {
@@ -647,11 +648,11 @@ describe('posts.publish and posts.delete', () => {
     creating(1, FEE_CHANGED)
     const draft = { parts: [{ text: 'one' }, { text: 'two' }], mediaUrl: 'https://img.example/a.png' }
     const ticket = await outcome(posts.publish(draft))
-    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ mediaUrl: 'https://img.example/a.png' }))
+    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ media: [{ url: 'https://img.example/a.png' }] }))
     m.replyService.createReply.mockClear()
     await tickets.retry(ticket.id)
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
-    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
 
     // A silent re-send, the same.
     const silent = engine({ autoRetryDelaysMs: [0] })
@@ -659,13 +660,13 @@ describe('posts.publish and posts.delete', () => {
     m.replyService.createReply.mockClear()
     expect(await silent.outcome(silent.posts.publish(draft))).toMatchObject({ state: 'confirmed' })
     expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
-    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
 
     // The host's own resume, the same.
     creating()
     m.replyService.createReply.mockClear()
     await outcome(posts.publish({ ...draft, resume: { postedIds: [id('post0'), null] } }))
-    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
   })
 
   it('names each part on the ticket as it lands, so a restart mid-thread keeps what posted (SR-03)', async () => {
@@ -888,7 +889,7 @@ describe('posts.publish and posts.delete', () => {
     const withMedia = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' }))
     expect(withMedia.state).toBe('confirmed')
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'pic', expect.objectContaining({
-      mediaUrl: 'https://img.example/a.png', mediaHashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) },
+      media: [{ url: 'https://img.example/a.png', hashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) } }],
     }))
   })
 

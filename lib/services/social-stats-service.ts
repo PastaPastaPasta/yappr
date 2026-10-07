@@ -1,5 +1,5 @@
 import { YAPPR_CONTRACT_ID } from '@/lib/constants';
-import { likesAreIndexOnly, likeIndexFor, quoteFieldFor, repostIndexFor, type TargetKind } from '@/lib/contract-topology';
+import { likesAreIndexOnly, likeIndexFor, postOwnerIndexPrefix, quoteFieldFor, repostIndexFor, type TargetKind } from '@/lib/contract-topology';
 import { logger } from '@/lib/logger';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentToPlainObject, type DocumentWhereClause } from './sdk-helpers';
@@ -10,12 +10,13 @@ import { profileBaseSource } from '@/lib/profile/v10-profile';
  * A missing root therefore needs ordinary counts, not an assumed zero. */
 async function boundCounts(root: {
   contractId: string; documentType: string; where: DocumentWhereClause[]; sourceProperty: string;
-}, counts: Array<{ documentType: string; field: string }>) {
+}, counts: Array<{ documentType: string; field: string; where?: DocumentWhereClause[] }>) {
   const sdk = await getEvoSdk();
   const result = await sdk.documents.composite({
     dataContractId: root.contractId, documentType: root.documentType, where: root.where, limit: 1,
-    subQueries: counts.map(({ documentType, field }) => ({
+    subQueries: counts.map(({ documentType, field, where }) => ({
       dataContractId: YAPPR_CONTRACT_ID, documentType, kind: 'counts',
+      ...(where && where.length > 0 ? { where } : {}),
       bind: { source: 'page', sourceProperty: root.sourceProperty, field },
     })),
   });
@@ -38,7 +39,8 @@ export async function loadUserStats(userId: string) {
         contractId, documentType,
         where: [['$ownerId', '==', userId]], sourceProperty: '$ownerId',
       }, [
-        { documentType: 'post', field: '$ownerId' },
+        // v13: live posts only (`ownerAndTime` starts at `live`).
+        { documentType: 'post', field: '$ownerId', where: postOwnerIndexPrefix() },
         { documentType: 'follow', field: 'followingId' },
         { documentType: 'follow', field: '$ownerId' },
       ]);

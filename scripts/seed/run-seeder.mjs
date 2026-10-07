@@ -3,12 +3,15 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * The target is the v10, v11 or v12 social contract (`.env.devnet`; the run
+ * The target is the v10, v11, v12 or v13 social contract (`.env.devnet`; the run
  * refuses any other NEXT_PUBLIC_CONTRACT_TOPOLOGY, see SEEDED_TOPOLOGIES). The
  * corpus `''` convention means "untagged", and an untagged post/quote/like
  * OMITS the hashtag property (writing `''` is `where` consensus error 40127).
  * A post or reply with a `mediaUrl` carries the sha256 and dHash of the bytes at that URL
- * (media-hash.mjs), fetched once per URL before the run starts. A like is one
+ * (media-hash.mjs), fetched once per URL before the run starts; on v13 that one
+ * item is written as `mediaUrls` / `mediaDigests` / `mediaKinds` (an image), every
+ * post carries `live: true`, a reply names its root post's owner (`rootOwnerId`)
+ * and a reply like carries no `replyAuthor` (`SOCIAL_SHAPES`). A like is one
  * transition: v10 has no `beat` companion. A `repost` op is written as a post
  * quoting its target with no content (v10 has no repost type), through the
  * same path as a quote; its 40105 is success only when our bare repost is
@@ -77,6 +80,7 @@ import {
   RETRYABLE,
   TOKEN_COST,
   PREFER_CONTRACT_OWNER,
+  SOCIAL_SHAPES,
   tokenCostFor,
   TRANSPORT_COLLAPSE,
   WAIT_MAYBE_LANDED,
@@ -100,6 +104,7 @@ import {
   findRecentByValues,
   hashtagProps,
   ledgerEntry,
+  likeReplyValueTuple,
   likeValueTuple,
   loadLedger,
   loadPersonas,
@@ -341,7 +346,8 @@ async function entryExists(handle, contractId, docType, keyField, keyValue, owne
  * buildExecutor. An untagged post/quote/like OMITS the hashtag property (the
  * corpus '' convention and an absent checkpoint hashtag are equivalent).
  * `mediaFor(url)` answers the `{ mediaHash, mediaFingerprint }` of a URL,
- * computed before the run (`resolveCorpusMedia`).
+ * computed before the run (`resolveCorpusMedia`); `SOCIAL_SHAPES` writes them in
+ * the configured cut's media fields.
  */
 export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
   const bytes = (base58) => bs58.decode(base58);
@@ -353,7 +359,11 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
   if (finalContent !== undefined && (codePointLength(finalContent) > CONTENT_MAX || utf8Length(finalContent) > CONTENT_MAX_BYTES)) {
     throw new Error(`line ${op.line}: content is ${codePointLength(finalContent)} characters / ${utf8Length(finalContent)} bytes after link substitution (max ${CONTENT_MAX} / ${CONTENT_MAX_BYTES})`);
   }
-  const media = op.mediaUrl ? { mediaUrl: op.mediaUrl, ...mediaFor(op.mediaUrl) } : {};
+  const mediaItem = (url) => {
+    const { mediaHash, mediaFingerprint } = mediaFor(url);
+    return { url, sha256: mediaHash, fingerprint: mediaFingerprint };
+  };
+  const media = op.mediaUrl ? SOCIAL_SHAPES.media([mediaItem(op.mediaUrl)]) : {};
 
   switch (op.type) {
     case 'post':
@@ -362,13 +372,13 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
       return {
         docType: 'post',
         tokenCost: TOKEN_COST.post,
-        data: {
+        data: SOCIAL_SHAPES.post({
           content: finalContent ?? '',
           ...hashtagProps(op.hashtag),
           ...media,
           ...(op.sensitive !== undefined ? { sensitive: op.sensitive } : {}),
           ...(quoted ? { quotedPostId: bytes(quoted.id), quotedPostOwnerId: bytes(quoted.ownerId) } : {}),
-        },
+        }),
         refRecord: (id) => ({ kind: 'post', id, ownerId: actor.ownerId, hashtag: op.hashtag ?? '' }),
       };
     }
@@ -378,13 +388,15 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
       return {
         docType: 'reply',
         tokenCost: TOKEN_COST.reply,
-        data: {
+        // A top-level reply's parent IS the root, so both owners are the root's (v13 parentIsRoot).
+        data: SOCIAL_SHAPES.reply({
           content: finalContent ?? '',
           rootPostId: bytes(root.id),
+          rootOwnerId: bytes(root.ownerId),
           parentOwnerId: bytes(parent.ownerId),
           ...(parent.kind === 'reply' ? { replyToReplyId: bytes(parent.id) } : {}),
           ...media,
-        },
+        }),
         refRecord: (id) => ({ kind: 'reply', id, ownerId: actor.ownerId, hashtag: '' }),
       };
     }
@@ -409,7 +421,7 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
         docType: 'likeReply',
         tokenCost: TOKEN_COST.likeReply,
         indexOnly: true,
-        data: { replyId: bytes(target.id), replyAuthor: bytes(target.ownerId) },
+        data: likeReplyValueTuple(target),
         existenceKey: { keyField: 'replyId', keyValue: target.id },
       };
     }
@@ -422,7 +434,7 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
       return {
         docType: 'post',
         tokenCost: TOKEN_COST.post,
-        data: { [field]: bytes(target.id), quotedPostOwnerId: bytes(target.ownerId) },
+        data: SOCIAL_SHAPES.post({ [field]: bytes(target.id), quotedPostOwnerId: bytes(target.ownerId) }),
         repostTarget: { field, value: target.id },
       };
     }
@@ -968,11 +980,41 @@ async function selfTest() {
   check('a like is ONE document: tagged or not, no beat companion', planOp(likeOp, planCtx('dash')).companion === undefined && planOp(likeOp, planCtx('')).companion === undefined);
   const media = { mediaHash: new Uint8Array(32).fill(3), mediaFingerprint: new Uint8Array(8).fill(4) };
   const withMedia = planOp({ ...postOp, mediaUrl: 'https://example.com/a.png' }, { ...planCtx(''), mediaFor: () => media }).data;
-  check('a post with mediaUrl carries its hash and fingerprint (dependentRequired)',
-    withMedia.mediaUrl === 'https://example.com/a.png' && withMedia.mediaHash === media.mediaHash && withMedia.mediaFingerprint === media.mediaFingerprint);
   const replyWithMedia = planOp({ ...replyOp, mediaUrl: 'ipfs://bafy' }, { ...planCtx(''), mediaFor: () => media }).data;
-  check('a reply with mediaUrl carries them too', replyWithMedia.mediaHash === media.mediaHash && replyWithMedia.mediaFingerprint === media.mediaFingerprint);
-  check('a post without media carries neither', !('mediaHash' in plannedPost) && !('mediaFingerprint' in plannedPost));
+  /** The one media item as the cut writes it: the triple up to v12, one-entry arrays (an image) on v13. */
+  const carriesMedia = (data, url) => (SOCIAL_SHAPES.cut.mediaArrays
+    ? JSON.stringify(data.mediaUrls) === JSON.stringify([url]) && Buffer.from(data.mediaDigests).equals(Buffer.concat([media.mediaHash, media.mediaFingerprint]))
+      && data.mediaKinds.length === 1 && data.mediaKinds[0] === 0 && !('mediaUrl' in data)
+    : data.mediaUrl === url && data.mediaHash === media.mediaHash && data.mediaFingerprint === media.mediaFingerprint);
+  check(`a post with mediaUrl carries its hash and fingerprint (${SOCIAL_SHAPES.cut.mediaArrays ? 'v13 arrays: a 40-byte digest, kind image' : 'dependentRequired'})`,
+    carriesMedia(withMedia, 'https://example.com/a.png'));
+  check('a reply with mediaUrl carries them too', carriesMedia(replyWithMedia, 'ipfs://bafy'));
+  check('a post without media carries none of the media fields', ['mediaUrl', 'mediaHash', 'mediaFingerprint', 'mediaUrls', 'mediaDigests', 'mediaKinds'].every((field) => !(field in plannedPost)));
+  // Every write the seeder plans is a valid create of the configured cut (scripts/social-shapes.mjs's checker).
+  {
+    const reply = { kind: 'reply', id: bs58.encode(new Uint8Array(32).fill(5)), ownerId: bs58.encode(new Uint8Array(32).fill(6)), hashtag: '' };
+    const byRef = { ...planCtx(''), resolveRef: (ref) => (ref === 'r1' ? reply : { kind: 'post', id: targetId, ownerId: owner, hashtag: '' }) };
+    const nestedOp = { type: 'reply', author: 1, rootRef: 'p1', parentRef: 'r1', content: 'nested', line: 6 };
+    const likeReplyOp = { type: 'likeReply', author: 0, targetRef: 'r1', line: 7 };
+    const repostOfPost = { type: 'repost', author: 1, targetRef: 'p1', line: 8 };
+    const plans = [
+      ['post', planOp(postOp, byRef)], ['post with media', { docType: 'post', data: withMedia }], ['quote', planOp(quoteOp, byRef)],
+      ['reply', planOp(replyOp, byRef)], ['reply with media', { docType: 'reply', data: replyWithMedia }], ['nested reply', planOp(nestedOp, byRef)],
+      ['like', planOp(likeOp, byRef)], ['likeReply', planOp(likeReplyOp, byRef)], ['repost', planOp(repostOfPost, byRef)],
+      ['follow', planOp({ type: 'follow', author: 0, target: 1, line: 9 }, byRef)], ['bookmark', planOp({ type: 'bookmark', author: 1, targetRef: 'p1', line: 10 }, byRef)],
+    ];
+    const problems = plans.flatMap(([label, plan]) => SOCIAL_SHAPES.check(plan.docType, plan.data).map((problem) => `${label}: ${problem}`));
+    check(`every planned write is a valid create of the configured cut ${JSON.stringify(SOCIAL_SHAPES.cut)}`, problems.length === 0, problems.join('; '));
+    const nested = planOp(nestedOp, byRef).data;
+    const top = planOp(replyOp, byRef).data;
+    check(`a nested reply names its parent reply and that reply's owner${SOCIAL_SHAPES.cut.rootOwner ? ', and (v13) both replies the root post\'s owner' : ''}`,
+      bs58.encode(nested.replyToReplyId) === reply.id && bs58.encode(nested.parentOwnerId) === reply.ownerId
+        && (SOCIAL_SHAPES.cut.rootOwner ? bs58.encode(nested.rootOwnerId) === owner && bs58.encode(top.rootOwnerId) === owner : !('rootOwnerId' in nested)));
+    check(`a reply like is ${SOCIAL_SHAPES.cut.replyAuthor ? '{ replyId, replyAuthor }' : '{ replyId } (v13)'}`,
+      JSON.stringify(Object.keys(planOp(likeReplyOp, byRef).data)) === JSON.stringify(SOCIAL_SHAPES.cut.replyAuthor ? ['replyId', 'replyAuthor'] : ['replyId']));
+    check(`posts, quotes and reposts ${SOCIAL_SHAPES.cut.liveMarker ? 'carry live: true (v13)' : 'carry no live marker'}`,
+      [plannedPost, planOp(quoteOp, byRef).data, planOp(repostOfPost, byRef).data].every((data) => (SOCIAL_SHAPES.cut.liveMarker ? data.live === true : !('live' in data))));
+  }
   check('an unresolved media URL fails the plan instead of writing a 10101', (() => {
     try { planOp({ ...postOp, mediaUrl: 'https://example.com/b.png' }, planCtx('')); return false; } catch (e) { return /not resolved/.test(e.message); }
   })());
@@ -1013,15 +1055,16 @@ async function selfTest() {
   check('tagged post keeps its hashtag', planOp({ ...postOp, hashtag: 'dash' }, planCtx('')).data.hashtag === 'dash');
   const repostOp = { type: 'repost', author: 1, targetRef: 'p1', line: 5 };
   const plannedRepost = planOp(repostOp, planCtx('dash'));
+  const liveKey = SOCIAL_SHAPES.cut.liveMarker ? ['live'] : [];
   check('a repost is a POST quoting its target with no content (no hashtag), at the post price',
     plannedRepost.docType === 'post' && plannedRepost.tokenCost === TOKEN_COST.post && plannedRepost.refRecord === undefined &&
-      JSON.stringify(Object.keys(plannedRepost.data)) === JSON.stringify(['quotedPostId', 'quotedPostOwnerId']) &&
+      JSON.stringify(Object.keys(plannedRepost.data)) === JSON.stringify(['quotedPostId', 'quotedPostOwnerId', ...liveKey]) &&
       bs58.encode(plannedRepost.data.quotedPostId) === targetId && bs58.encode(plannedRepost.data.quotedPostOwnerId) === owner &&
       plannedRepost.repostTarget.field === 'quotedPostId' && plannedRepost.repostTarget.value === targetId,
     JSON.stringify(Object.keys(plannedRepost.data)));
   const replyRepost = planOp(repostOp, { ...planCtx(''), resolveRef: () => ({ kind: 'reply', id: targetId, ownerId: owner }) });
   check('a repost of a reply quotes it through quotedReplyId',
-    JSON.stringify(Object.keys(replyRepost.data)) === JSON.stringify(['quotedReplyId', 'quotedPostOwnerId']) && replyRepost.repostTarget.field === 'quotedReplyId');
+    JSON.stringify(Object.keys(replyRepost.data)) === JSON.stringify(['quotedReplyId', 'quotedPostOwnerId', ...liveKey]) && replyRepost.repostTarget.field === 'quotedReplyId');
   // A repost's 40105 counts as done only when the post holding the entry is our bare repost.
   const holding = (stored) => ({ sdk: { documents: { query: async () => new Map([['x', { toObject: () => stored }]]) } } });
   const ours = { $ownerId: bs58.decode(owner), quotedPostId: bs58.decode(targetId), quotedPostOwnerId: bs58.decode(owner) };

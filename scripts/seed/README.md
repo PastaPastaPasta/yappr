@@ -13,7 +13,7 @@ scripts/seed/
   asset-lock-lib.mjs             split tx + DIP-2 type-8 asset-lock construction, Insight API
   provision-seed-identities.mjs  treasury → funded/registered/profiled/named/YAPP'd identities
   run-seeder.mjs                 corpus executor (checkpointed, per-author sequential, parallel across authors)
-  media-hash.mjs                 sha256 + pinned 9x8 dHash of a mediaUrl's bytes (v10 mediaHash/mediaFingerprint)
+  media-hash.mjs                 sha256 + pinned 9x8 dHash of a mediaUrl's bytes (v10–v12 mediaHash/mediaFingerprint, one v13 mediaDigests item)
 ```
 
 Everything state-bearing lives in gitignored, chmod-600 files at the repo root.
@@ -128,17 +128,20 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).
-- The seeder writes v10/v11/v12 documents only (v11 and v12 keep every create
+- The seeder writes v10/v11/v12/v13 documents only (v11 and v12 keep every create
   shape it writes: v12 changes only how the like author and hashtag indexes
-  store, as counters, and who may tombstone), and refuses to run unless
-  `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is `v10`, `v11` or
-  `v12`. The corpus
+  store, as counters, and who may tombstone; v13 adds `live: true` to posts and
+  `rootOwnerId` to replies, drops `likeReply.replyAuthor` and writes media as
+  one-item arrays, all built by `SOCIAL_SHAPES` off the configured file), and
+  refuses to run unless `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is
+  `v10`, `v11`, `v12` or `v13`. The corpus
   `"hashtag": ""` convention means "untagged", and the seeder **omits the
   hashtag property** on untagged posts and on their likes (a `where` entry's
   both-absent; `''` is consensus error 40127). Tags longer than 61 characters
   are rejected at parse time. A like is one transition (no `beat`), a post
   carries no `language`, and every `mediaUrl` is fetched once before the run
-  so its post or reply can carry `mediaHash`/`mediaFingerprint`.
+  so its post or reply can carry `mediaHash`/`mediaFingerprint` (v13: one
+  `mediaDigests` item, sha256 then dHash).
 - Per-author ops are strictly sequential (identity contract nonce); different
   authors run in parallel behind a global in-flight cap (`--concurrency`).
 - `--max-ops N` executes at most N new ops then stops cleanly (useful as a
@@ -187,5 +190,7 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 
 ```bash
 node scripts/seed/provision-seed-identities.mjs --self-test   # split/asset-lock construction, validation, ledger states
-node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, v10 document shapes
+node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, document shapes
+NEXT_PUBLIC_CONTRACT_TOPOLOGY=v13 node scripts/seed/run-seeder.mjs --self-test   # the same against another cut's shapes
+node scripts/social-shapes.mjs --self-test                    # every social write built for v10–v13, judged by rs-dpp's rules offline
 ```

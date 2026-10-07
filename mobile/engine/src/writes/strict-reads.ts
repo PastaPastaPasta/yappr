@@ -1,6 +1,6 @@
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import {
-  likeIndexFor, ownQuoteIndexFor, repostIndexFor, repostsAreQuotes, type OwnedTargetIndex, type TargetKind,
+  blocksContractId, likeIndexFor, ownQuoteIndexFor, repostIndexFor, repostsAreQuotes, type OwnedTargetIndex, type TargetKind,
 } from '@/lib/contract-topology'
 import { queryRawDocuments } from '@/lib/services/document-service'
 import { identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from '@/lib/services/sdk-helpers'
@@ -18,12 +18,12 @@ import { identifierToBase58, type DocumentOrderByClause, type DocumentWhereClaus
 const BLOCK_INDEX: OwnedTargetIndex = { docType: 'block', field: 'blockedId', ownerFirst: true, ownerField: null }
 
 /** The owner's document naming `targetId` on `index` (like-service `queryLike`'s clause order), or null. */
-async function ownedDocument(index: OwnedTargetIndex, ownerId: string, targetId: string): Promise<Record<string, unknown> | null> {
+async function ownedDocument(index: OwnedTargetIndex, ownerId: string, targetId: string, contractId = YAPPR_CONTRACT_ID): Promise<Record<string, unknown> | null> {
   const target: DocumentWhereClause = [index.field, '==', targetId]
   const owner: DocumentWhereClause = ['$ownerId', '==', ownerId]
   const where = index.ownerFirst ? [owner, target] : [target, owner]
   const documents = await queryRawDocuments({
-    dataContractId: YAPPR_CONTRACT_ID,
+    dataContractId: contractId,
     documentTypeName: index.docType,
     where,
     // v10's indexOnly likes pin owner and target with equalities alone (like-service).
@@ -48,7 +48,7 @@ export async function ownQuoteStrict(ownerId: string, targetId: string, kind: Ta
   const id = doc && identifierToBase58(doc.$id ?? doc.id)
   if (!doc || !id) return null
   const content = typeof doc.content === 'string' ? doc.content : ''
-  return { id, bare: !content.trim() && !doc.encryptedContent && !doc.mediaUrl && !doc.embedId }
+  return { id, bare: !content.trim() && !doc.encryptedContent && !doc.mediaUrl && !doc.mediaUrls && !doc.embedId }
 }
 
 /** The viewer's repost of a target: a `repost` document, or on v10 a bare quote post. */
@@ -58,7 +58,11 @@ export async function repostExists(ownerId: string, targetId: string, kind: Targ
   return index !== null && (await ownedDocument(index, ownerId, targetId)) !== null
 }
 
-/** The viewer's own block document on an account (never the cache, never a followed list). */
+/**
+ * The viewer's own block document on an account (never the cache, never a
+ * followed list), in the blocks contract on v13. No blocks contract there: no block.
+ */
 export async function ownBlockExists(ownerId: string, blockedId: string): Promise<boolean> {
-  return (await ownedDocument(BLOCK_INDEX, ownerId, blockedId)) !== null
+  const contractId = blocksContractId()
+  return contractId !== null && (await ownedDocument(BLOCK_INDEX, ownerId, blockedId, contractId)) !== null
 }

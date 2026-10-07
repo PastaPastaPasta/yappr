@@ -121,6 +121,22 @@
  *          filed a join request for the seated team's submitted charter (an
  *          `addedModerator` names one); without it the phase skips.
  *
+ * ## Social v13 (`--contract-file contracts/yappr-social-contract-v13.json`)
+ *
+ * v13 (docs/SOCIAL_V13.md) is v12 with new document shapes, so every v12 phase
+ * runs on it; the fixture is written in v12's shape and adapted by
+ * scripts/social-shapes.mjs (`fit`): posts carry `live: true` (tombstones
+ * leave it out), replies name `rootOwnerId` (a nested reply names it
+ * explicitly), and a reply like is `{ replyId }`. What changes in the phases:
+ *   - every read of `post.ownerAndTime` (a1–a3, c1, c3, c3x, c6, g1, dc-f1,
+ *     dc-f2) pins `live == true` first; a3 and the c3/c3x post-count slots
+ *     carry it as their `where`;
+ *   - likeReply has no author counter: ol-e6x/ol-e6, cn-0's reply total,
+ *     cn-0r's reply walk and cn-f1s–cn-f3 skip, and cn-f1/cn-f2/cn-g4 count
+ *     R1 and R2 on byReply instead;
+ *   - lv-* the live marker: D's tombstone leaves D's post count, the author
+ *     timeline and top creators, while the global timeline still lists it.
+ *
  * Then seat a team on the throwaway contract (the ops election tooling: a
  * charter by the leader, join requests, the apply; the windows are
  * PROOF_ELECTION_WINDOW s) and run the second phase:
@@ -165,6 +181,7 @@ import { devnetConfig, devnetSdk, envValue } from './sdk-env.mjs';
 import { REPO_ROOT, createdId, findRecentByValues } from './seed/seed-lib.mjs';
 import { buildDocument, randomIdBytes } from './verify-lib.mjs';
 import { liftBar } from './social-battery-lib.mjs';
+import { socialShapes } from './social-shapes.mjs';
 
 const SOCIAL_V10 = join(REPO_ROOT, 'contracts/yappr-social-contract-v10.json');
 /** v11 stand-ins for week-long values, so settling and expiry happen within one run (see the header). */
@@ -462,18 +479,39 @@ async function main() {
   const v11 = likesOutliveDelete(source);
   const counters = authorIndexesAreCounters(source);
   const retracts = barredAuthorsRetract(source);
+  /** The fixture is written in v12's shape; `shapes.fit` adapts each document to the cut (v13: live, rootOwnerId, no replyAuthor). */
+  const shapes = socialShapes(source);
+  /** A read on `post.ownerAndTime`: v13 pins `live == true` first. */
+  const ownerPosts = shapes.ownerPosts;
+  /** A post-count slot or ranking on `post.ownerAndTime` carries the same pin as its `where` (none before v13). */
+  const livePin = shapes.ownerPostsWhere();
+  const replyCounters = shapes.cut.replyAuthor;
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
-  DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
+  const parsed = DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
   NodeRulesDataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, NodeRulesPlatformVersion.latest());
   const indexes = Object.fromEntries(Object.entries(source.documentSchemas).map(([type, schema]) => [type, schema.indices.map((index) => index.name)]));
   console.log(`throwaway contract parses (wasm-sdk + wasm-dpp2): ${JSON.stringify(indexes)}`);
-  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? ', cn (v12 counters)' : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}`);
+  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? `, cn (v12 counters${replyCounters ? '' : ', post counters only'})` : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}${shapes.cut.liveMarker ? ', lv (v13 live marker)' : ''}`);
   if (args.dryRun) {
-    const id = bs58.encode(randomIdBytes());
-    for (const [docType, data] of [['post', { content: 'x' }], ['post', { quotedPostId: bs58.decode(id), quotedPostOwnerId: bs58.decode(id) }], ['reply', { rootPostId: bs58.decode(id), parentOwnerId: bs58.decode(id), content: 'x' }], ['follow', { followingId: bs58.decode(id) }]]) {
-      buildDocument({ contractId: DRY_RUN_OWNER, docType, ownerId: DRY_RUN_OWNER, data, entropy: randomIdBytes() });
+    const [x, y, z] = [randomIdBytes(), randomIdBytes(), randomIdBytes()];
+    // Every fixture shape, v12-written and fitted to the cut: it must build, serialize, and pass the cut's rules.
+    const fixtures = [
+      ['post', { content: 'x' }], ['post', { content: 'x', hashtag: 'olproof' }], ['post', { quotedPostId: x, quotedPostOwnerId: y }],
+      ['post', { content: 'hello @b', mentionedUserId: y }], ['reply', { rootPostId: x, parentOwnerId: y, content: 'x' }],
+      ['reply', { rootPostId: x, rootOwnerId: y, replyToReplyId: z, parentOwnerId: z, content: 'nested' }],
+      ['like', { postId: x, postAuthor: y }], ['likeReply', { replyId: x, replyAuthor: y }], ['follow', { followingId: x }],
+      ...(source.documentSchemas.post.properties.deleted ? [['post', { deleted: true, hashtag: 'rwproof' }], ['reply', { deleted: true, rootPostId: x, parentOwnerId: y }]] : []),
+    ];
+    for (const [docType, written] of fixtures) {
+      const data = shapes.fit(docType, written);
+      const { document } = buildDocument({ contractId: DRY_RUN_OWNER, docType, ownerId: DRY_RUN_OWNER, data, entropy: randomIdBytes(), createdAt: Date.now() });
+      const problems = shapes.check(docType, data);
+      const broken = parsed.checkDocumentPropertyConstraints(document);
+      if (problems.length > 0 || broken) throw new Error(`the ${docType} fixture ${JSON.stringify(Object.keys(data))} is not valid on this cut: ${problems.join('; ')}${broken ? ` 10422 ${broken.rule}` : ''}`);
+      console.log(`fixture ok: ${docType} ${JSON.stringify(Object.keys(data))}`);
     }
+    console.log(`author post reads: ${JSON.stringify(ownerPosts({ where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }))}`);
     const { devnetName, addresses } = devnetConfig();
     console.log(`fixture documents build; would register on devnet "${devnetName}" via ${addresses[0]} (+${addresses.length - 1} more)`);
     return 0;
@@ -502,7 +540,7 @@ async function main() {
   await sdk.contracts.fetch(contractId);
 
   const id = (value) => bs58.decode(value);
-  const create = (who, docType, data) => createDocument(contractId, who, docType, data);
+  const create = (who, docType, data) => createDocument(contractId, who, docType, shapes.fit(docType, data));
   async function mustCreate(label, who, docType, data) {
     const outcome = await create(who, docType, data);
     if (!outcome.ok) throw new Error(`fixture write ${label} failed: ${(outcome.error ?? '').slice(0, 300)}`);
@@ -520,10 +558,11 @@ async function main() {
   const r1 = await mustCreate('r1 (B → T1)', B, 'reply', { content: 'r1', rootPostId: id(T1), parentOwnerId: id(A.ownerId) });
   await sleep(1100);
   const r2 = await mustCreate('r2 (C → T1)', C, 'reply', { content: 'r2', rootPostId: id(T1), parentOwnerId: id(A.ownerId) });
-  const r3 = await mustCreate('r3 (A → r1)', A, 'reply', { content: 'r3', rootPostId: id(T1), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
+  // Nested replies name T1's owner as their root owner (v13 rootOwnerId; dropped before v13).
+  const r3 = await mustCreate('r3 (A → r1)', A, 'reply', { content: 'r3', rootPostId: id(T1), rootOwnerId: id(A.ownerId), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
   await sleep(1100);
-  const r4 = await mustCreate('r4 (C → r1)', C, 'reply', { content: 'r4', rootPostId: id(T1), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
-  const r5 = await mustCreate('r5 (B → r3)', B, 'reply', { content: 'r5', rootPostId: id(T1), replyToReplyId: id(r3), parentOwnerId: id(A.ownerId) });
+  const r4 = await mustCreate('r4 (C → r1)', C, 'reply', { content: 'r4', rootPostId: id(T1), rootOwnerId: id(A.ownerId), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
+  const r5 = await mustCreate('r5 (B → r3)', B, 'reply', { content: 'r5', rootPostId: id(T1), rootOwnerId: id(A.ownerId), replyToReplyId: id(r3), parentOwnerId: id(A.ownerId) });
   const r6 = await mustCreate('r6 (A → T2)', A, 'reply', { content: 'r6', rootPostId: id(T2), parentOwnerId: id(A.ownerId) });
   const qr = await mustCreate('qr (A reposts r1)', A, 'post', { quotedReplyId: id(r1), quotedPostOwnerId: id(B.ownerId) });
   for (const [who, whom] of [[A, B], [C, B], [A, C], [B, A]]) await mustCreate(`${who.label} follows ${whom.label}`, who, 'follow', { followingId: id(whom.ownerId) });
@@ -531,7 +570,7 @@ async function main() {
   // Likes are indexOnly: the create may report a fault after the broadcast, so
   // the like counts below decide (c5 and k check them).
   const likeWrite = (who, docType, data) => {
-    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
+    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data: shapes.fit(docType, data), entropy: randomIdBytes() });
     return sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (${docType} by ${who.label} reported: ${describeErr(e).slice(0, 120)})`));
   };
   for (const [who, target] of [[B, T1], [C, T1], [B, T2]]) await likeWrite(who, 'like', { postId: id(target), postAuthor: id(A.ownerId) });
@@ -560,9 +599,9 @@ async function main() {
 
   // ---- a: posts per author ----
   console.log('\n--- a. posts per author on ownerAndTime ---');
-  await attempt('a1', () => count('post', [['$ownerId', '==', A.ownerId]]), (m) => check('a1 A\'s posts: `$ownerId ==` = 4', total(m) === 4, JSON.stringify(countEntries(m))));
-  await attempt('a2', () => count('post', [['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]], ['$ownerId']), (m) => check('a2 batched per author: A 4, B 2, C 2 (C\'s quote and mention)', sameCounts(countEntries(m), { [A.ownerId]: 4, [B.ownerId]: 2, [C.ownerId]: 2 }), JSON.stringify(countEntries(m))));
-  await attempt('a3', () => sdk.documents.ranked(q('post', { groupBy: '$ownerId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
+  await attempt('a1', () => count('post', shapes.ownerPostsWhere([['$ownerId', '==', A.ownerId]])), (m) => check('a1 A\'s posts: `$ownerId ==` = 4', total(m) === 4, JSON.stringify(countEntries(m))));
+  await attempt('a2', () => count('post', shapes.ownerPostsWhere([['$ownerId', 'in', [A.ownerId, B.ownerId, C.ownerId]]]), ['$ownerId']), (m) => check('a2 batched per author: A 4, B 2, C 2 (C\'s quote and mention)', sameCounts(countEntries(m), { [A.ownerId]: 4, [B.ownerId]: 2, [C.ownerId]: 2 }), JSON.stringify(countEntries(m))));
+  await attempt('a3', () => sdk.documents.ranked(q('post', { ...(livePin.length ? { where: livePin } : {}), groupBy: '$ownerId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), (r) => {
     const got = r.entries.map((entry) => [toBase58(entry.groupValue), Number(entry.value)]);
     const rest = Object.fromEntries(got.slice(1));
     check('a3 ranked top authors (rankedCountable at $ownerId): A 4 first, then B and C at 2', got.length === 3 && same(got[0], [A.ownerId, 4]) && rest[B.ownerId] === 2 && rest[C.ownerId] === 2, JSON.stringify(got));
@@ -609,8 +648,7 @@ async function main() {
   await attempt('c1', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'post',
-    where: [['$ownerId', '==', A.ownerId]],
-    orderBy: [['$createdAt', 'asc']],
+    ...ownerPosts({ where: [['$ownerId', '==', A.ownerId]], orderBy: [['$createdAt', 'asc']] }),
     limit: 10,
     subQueries: [
       { documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field: 'quotedPostId' } },
@@ -645,7 +683,7 @@ async function main() {
     orderBy: [['$createdAt', 'asc']],
     limit: 1,
     subQueries: [
-      { documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } },
+      { documentType: 'post', kind: 'counts', ...(livePin.length ? { where: livePin } : {}), bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } },
       { documentType: 'follow', kind: 'counts', bind: { source: 'page', sourceProperty: '$ownerId', field: 'followingId' } },
       { documentType: 'follow', kind: 'counts', bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } },
     ],
@@ -666,8 +704,8 @@ async function main() {
     subQueries: [{ documentType: 'reply', kind: 'counts', where: [['rootPostId', '==', T1]], bind: { source: 'page', sourceProperty: '$id', field: 'replyToReplyId' } }],
   });
   await expectMergedRootRefusal('c3x a post page on $ownerId with a post slot bound to $ownerId is refused (merged root)', {
-    dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']], limit: 1,
-    subQueries: [{ documentType: 'post', kind: 'counts', bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
+    dataContractId: contractId, documentType: 'post', ...ownerPosts({ where: [['$ownerId', '==', B.ownerId]], orderBy: [['$createdAt', 'asc']] }), limit: 1,
+    subQueries: [{ documentType: 'post', kind: 'counts', ...(livePin.length ? { where: livePin } : {}), bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } }],
   });
 
   await attempt('c4', () => sdk.documents.composite({
@@ -815,8 +853,7 @@ async function main() {
   await attempt('c6', () => sdk.documents.composite({
     dataContractId: contractId,
     documentType: 'post',
-    where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]],
-    orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+    ...ownerPosts({ where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }),
     limit: 20,
     subQueries: [
       { documentType: 'post', kind: 'counts', bind: fromPage('$id', 'quotedPostId') },
@@ -827,7 +864,7 @@ async function main() {
     const quoted = new Set(result.subResults[2].documents.map(idOf));
     check('c6 B\'s profile page (ownerAndTime) with the quoted-post join: q1 and q2, quoting T1 and T2', result.pageDocuments.length === 2 && quoted.has(T1) && quoted.has(T2), `page ${result.pageDocuments.length} quoted ${JSON.stringify([...quoted])}`);
   });
-  await attempt('g1', () => sdk.documents.query(q('post', { where: [['$ownerId', 'in', [B.ownerId, C.ownerId]], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 })), (r) => {
+  await attempt('g1', () => sdk.documents.query(q('post', { ...ownerPosts({ where: [['$ownerId', 'in', [B.ownerId, C.ownerId]], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] }), limit: 100 })), (r) => {
     const got = new Set(ids(r));
     check('g1 the following feed (`$ownerId in` + `$createdAt >`, ranked ownerAndTime): q1, q2, q3, m1', got.size === 4 && [q1, q2, q3, m1].every((x) => got.has(x)), JSON.stringify([...got]));
   });
@@ -837,7 +874,8 @@ async function main() {
   const replaceDoc = async (who, docType, docId, data) => {
     const stored = await withReconnect(() => sdk.documents.get(contractId, docType, docId));
     const revision = BigInt(stored?.revision ?? stored?.toObject?.().$revision ?? 1) + 1n;
-    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, revision, id: bs58.decode(docId) });
+    // An edit of a live post stays `live` and a reply keeps its root owner (v13); a tombstone carries neither `live` nor content.
+    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data: shapes.fit(docType, data), revision, id: bs58.decode(docId) });
     try {
       await sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer });
     } catch (e) {
@@ -851,7 +889,9 @@ async function main() {
   };
   const refusedWith = (label, outcome, pattern) => check(label, !outcome.ok && pattern.test(outcome.error ?? ''), (outcome.error ?? 'ACCEPTED').slice(0, 200));
   const IMMUTABLE = /\bcode"?\s*[=:]\s*40128\b|immutable/i;
-  const BLANK = /\bcode"?\s*[=:]\s*10422\b.{0,400}tombstoneIsBlank|tombstoneIsBlank/i;
+  // v13 renamed the rule (names appear only in 10422 errors): match the one the file declares.
+  const BLANK_RULE = ['blankTombstone', 'tombstoneIsBlank'].find((rule) => source.documentSchemas.post.propertyConstraints?.[rule]) ?? 'tombstoneIsBlank';
+  const BLANK = new RegExp(`\\bcode"?\\s*[=:]\\s*10422\\b.{0,400}${BLANK_RULE}|${BLANK_RULE}`, 'i');
   const plain = (doc) => doc?.toJSON?.() ?? doc?.toObject?.() ?? {};
 
   // ---- dc: like design C (no byLiker; byAuthorPostTime / byAuthorReplyTime) ----
@@ -1028,7 +1068,7 @@ async function main() {
     const heartOf = async (docType, field, target, ownerId) => docsOf(await sdk.documents.query(q(docType, { where: [[field, 'in', [target]], ['$ownerId', '==', ownerId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 1 }))).length;
     /** An unlike by values, carrying NO `$createdAt` (the row commits to none); the id is not checked. */
     const unlike = async (who, docType, data, extra = {}) => {
-      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, ...extra });
+      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data: shapes.fit(docType, data), ...extra });
       await sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer });
     };
     const reported = (label) => (e) => console.log(`     (${label} reported: ${describeErr(e).slice(0, 140)})`);
@@ -1087,7 +1127,9 @@ async function main() {
         (r) => check('ol-e4 the same off byAuthorPost (`postAuthor ==`, `postId in`): B→T1, C→T1, B→T2', sameSet(pairsOf(r, 'postId'), [`${B.ownerId}>${T1}`, `${C.ownerId}>${T1}`, `${B.ownerId}>${T2}`]), JSON.stringify(pairsOf(r, 'postId'))));
     }
     await expectRefusal('ol-e5x the same across replies on byReply (`replyId in`, no `$ownerId ==`) is refused', () => sdk.documents.query(q('likeReply', { where: [['replyId', 'in', [r1, r5]]], orderBy: [['replyId', 'asc'], ['$ownerId', 'asc']], limit: 100 })));
-    if (counters) {
+    if (!replyCounters) {
+      console.log('SKIP  ol-e6x/ol-e6: likeReply names no replyAuthor on this cut (v13), so there is no byAuthorReply to read; a reply\'s likers are its byReply entries (dc-a3, dc-g2)');
+    } else if (counters) {
       await expectRefusal('ol-e6x (v12) the liker read off byAuthorReply (`replyAuthor ==`, `replyId in`) is refused: the counter keeps no like documents', () => sdk.documents.query(q('likeReply', { where: [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], orderBy: [['replyAuthor', 'asc'], ['replyId', 'asc']], limit: 100 })), NON_INDEXED);
       await attempt('ol-e6', () => count('likeReply', [['replyAuthor', '==', B.ownerId], ['replyId', 'in', [r1, r5]]], ['replyId']),
         (m) => check('ol-e6 (v12) the replies\' counters off byAuthorReply (`replyAuthor ==`, `replyId in`, groupBy replyId): r1 1, r5 0 or absent', sameCounts(countEntries(m), { [r1]: 1 }), `${JSON.stringify(countEntries(m))}; zero group r5 ${zeroGroups(countEntries(m), [r5])}`));
@@ -1097,7 +1139,7 @@ async function main() {
     }
     // (f) which recent posts gained likes, (g) batched counts: unchanged from v10, plus the byAuthorPost form.
     await attempt('dc-f1', async () => {
-      const posts = ids(await sdk.documents.query(q('post', { where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })));
+      const posts = ids(await sdk.documents.query(q('post', { ...ownerPosts({ where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }), limit: 20 })));
       return countEntries(await count('like', [['postId', 'in', posts]], ['postId']));
     }, (m) => check('dc-f1 A\'s latest 20 posts, liked ones by one grouped byPost count: T1 2, T2 1, Th 1', sameCounts(m, { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(m)));
     await attempt('ol-f4', () => count('like', [['postAuthor', '==', A.ownerId], ['postId', 'in', [T1, T2, T3, Th]]], ['postId']), (m) => (counters
@@ -1105,7 +1147,7 @@ async function main() {
       ? check('ol-f4 (v12) the same off the byAuthorPost counters (`postAuthor ==`, `postId in`, groupBy postId reads each counter\'s sum): T1 2, T2 1, Th 1, T3 (liked and unliked) 0 or absent', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), `${JSON.stringify(countEntries(m))}; zero group T3 ${zeroGroups(countEntries(m), [T3])}`)
       : check('ol-f4 the same off byAuthorPost (`postAuthor ==`, `postId in`, groupBy postId): T1 2, T2 1, Th 1', sameCounts(countEntries(m), { [T1]: 2, [T2]: 1, [Th]: 1 }), JSON.stringify(countEntries(m)))));
     await attempt('dc-f2', () => sdk.documents.composite({
-      dataContractId: contractId, documentType: 'post', where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
+      dataContractId: contractId, documentType: 'post', ...ownerPosts({ where: [['$ownerId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }), limit: 20,
       subQueries: [{ documentType: 'like', kind: 'counts', bind: fromPage('$id', 'postId') }],
     }), (result) => {
       const m = countEntries(result.subResults[0].counts);
@@ -1256,10 +1298,13 @@ async function main() {
     await sleep(SETTLE_MS);
     // An empty answer also totals 0, so the totals alone cannot tell a preallocated counter from
     // none; the range walks can: they list a preallocated counter's zero group.
-    await attempt('cn-0', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['hashtag', '==', tag]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
-      (all) => check('cn-0 before any like, D\'s totals read 0 (or answer empty): author, C1, #cnproof, D\'s replies', all.every((m) => total(m) === 0), JSON.stringify(all.map(counts))));
-    await attempt('cn-0r', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId'])]),
-      ([posts, replies]) => check('cn-0r …and the range walks list every counter at 0 before any like (preallocated with each post and reply): C1..C4 0, R1 0, R2 0', exactly(posts, { [C1]: 0, [C2]: 0, [C3]: 0, [C4]: 0 }) && exactly(replies, { [R1]: 0, [R2]: 0 }), `posts ${JSON.stringify(counts(posts))} replies ${JSON.stringify(counts(replies))}`));
+    // v13 keeps no reply author counter: its reply totals and walks are left out (cn-f counts byReply instead).
+    const replyTotal = replyCounters ? [count('likeReply', [['replyAuthor', '==', D.ownerId]])] : [];
+    await attempt('cn-0', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId]]), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C1]]), count('like', [['hashtag', '==', tag]]), ...replyTotal]),
+      (all) => check(`cn-0 before any like, D's totals read 0 (or answer empty): author, C1, #cnproof${replyCounters ? ', D\'s replies' : ''}`, all.every((m) => total(m) === 0), JSON.stringify(all.map(counts))));
+    const replyWalk = () => (replyCounters ? count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId']) : null);
+    await attempt('cn-0r', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), replyWalk()]),
+      ([posts, replies]) => check(`cn-0r …and the range walks list every counter at 0 before any like (preallocated with each post${replyCounters ? ' and reply' : ''}): C1..C4 0${replyCounters ? ', R1 0, R2 0' : ''}`, exactly(posts, { [C1]: 0, [C2]: 0, [C3]: 0, [C4]: 0 }) && (!replyCounters || exactly(replies, { [R1]: 0, [R2]: 0 })), `posts ${JSON.stringify(counts(posts))}${replyCounters ? ` replies ${JSON.stringify(counts(replies))}` : ''}`));
 
     // C1: A, B, C. C2 (#cnproof): A, B. C3: none. C4 (#cnproof): C. R1: A, B. → D 6, #cnproof 3, D's replies 2.
     for (const who of [A, B, C]) await likeWrite(who, 'like', postLike(C1));
@@ -1314,19 +1359,26 @@ async function main() {
     await attempt('cn-e3', () => sdk.documents.query(q('like', { where: [['postId', '==', C1]], orderBy: [['postId', 'asc'], ['$ownerId', 'asc']], limit: 100 })),
       (r) => check('cn-e3 C1\'s likers on byPost (`postId ==`, the app\'s per-target read once a counter moved): A, B, C', sameSet(docsOf(r).map((d) => toBase58((d.toObject?.() ?? d).$ownerId)), [A.ownerId, B.ownerId, C.ownerId]), `${docsOf(r).length} row(s)`));
 
-    // (f) reply counters: byAuthorReply off byReply, unranked.
-    await attempt('cn-f1', () => Promise.all([count('likeReply', [['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
-      ([source, counter, author]) => check('cn-f1 reply counters: byReply R1 2, the byAuthorReply counter of R1 2, D\'s replies 2', [source, counter, author].every((m) => total(m) === 2), JSON.stringify([source, counter, author].map(total))));
-    await attempt('cn-f1s', () => sum('likeReply', [['replyAuthor', '==', D.ownerId]], 'byReply'), (m) => check('cn-f1s D\'s replies as sum(byReply): 2', total(m) === 2, `sum ${total(m)}`));
-    await attempt('cn-f2', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', 'in', [R1, R2]]], ['replyId']),
-      (m) => check('cn-f2 `replyAuthor ==`, `replyId in` [R1, R2], groupBy replyId: R1 2, R2 0', sameCounts(counts(m), { [R1]: 2 }), `${JSON.stringify(counts(m))}; zero group R2 ${zeros(m, [R2])}`));
-    await attempt('cn-f2r', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId']),
-      (m) => check('cn-f2r the same over a range on replyId, groupBy replyId: R1 2, R2 present at 0 (preallocated)', exactly(m, { [R1]: 2, [R2]: 0 }), JSON.stringify(counts(m))));
-    await expectRefusal('cn-f3 a ranking on byAuthorReply (declared unranked) is refused', () => sdk.documents.ranked(q('likeReply', { where: [['replyAuthor', '==', D.ownerId]], groupBy: 'replyId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), /no ranked index covers/i);
+    // (f) reply counters: byAuthorReply off byReply, unranked. v13 has none: a reply's likes are its byReply entries.
+    if (!replyCounters) {
+      await attempt('cn-f1', () => count('likeReply', [['replyId', '==', R1]]), (m) => check('cn-f1 (v13, no byAuthorReply) R1\'s likes on byReply: 2', total(m) === 2, `byReply ${total(m)}`));
+      await attempt('cn-f2', () => count('likeReply', [['replyId', 'in', [R1, R2]]], ['replyId']),
+        (m) => check('cn-f2 (v13) `replyId in` [R1, R2], groupBy replyId on byReply: R1 2, R2 0 or absent', sameCounts(counts(m), { [R1]: 2 }), `${JSON.stringify(counts(m))}; zero group R2 ${zeros(m, [R2])}`));
+      console.log('SKIP  cn-f1s/cn-f2r/cn-f3: likeReply has no byAuthorReply counter on this cut (v13)');
+    } else {
+      await attempt('cn-f1', () => Promise.all([count('likeReply', [['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
+        ([source, counter, author]) => check('cn-f1 reply counters: byReply R1 2, the byAuthorReply counter of R1 2, D\'s replies 2', [source, counter, author].every((m) => total(m) === 2), JSON.stringify([source, counter, author].map(total))));
+      await attempt('cn-f1s', () => sum('likeReply', [['replyAuthor', '==', D.ownerId]], 'byReply'), (m) => check('cn-f1s D\'s replies as sum(byReply): 2', total(m) === 2, `sum ${total(m)}`));
+      await attempt('cn-f2', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', 'in', [R1, R2]]], ['replyId']),
+        (m) => check('cn-f2 `replyAuthor ==`, `replyId in` [R1, R2], groupBy replyId: R1 2, R2 0', sameCounts(counts(m), { [R1]: 2 }), `${JSON.stringify(counts(m))}; zero group R2 ${zeros(m, [R2])}`));
+      await attempt('cn-f2r', () => count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '>', MIN_ID]], ['replyId']),
+        (m) => check('cn-f2r the same over a range on replyId, groupBy replyId: R1 2, R2 present at 0 (preallocated)', exactly(m, { [R1]: 2, [R2]: 0 }), JSON.stringify(counts(m))));
+      await expectRefusal('cn-f3 a ranking on byAuthorReply (declared unranked) is refused', () => sdk.documents.ranked(q('likeReply', { where: [['replyAuthor', '==', D.ownerId]], groupBy: 'replyId', aggregate: { type: 'count' }, direction: 'desc', limit: 10 })), /no ranked index covers/i);
+    }
 
     // (g) an unlike takes the counters down; a drained counter stays at 0 (preallocated); a fresh post starts at 0.
     const unlikeNow = async (who, docType, data) => {
-      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data });
+      const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data: shapes.fit(docType, data) });
       await sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer }).catch((e) => console.log(`     (unlike reported: ${describeErr(e).slice(0, 140)})`));
     };
     await unlikeNow(C, 'like', postLike(C1));
@@ -1339,11 +1391,36 @@ async function main() {
     await attempt('cn-g2', () => Promise.all([count('like', [['postAuthor', '==', D.ownerId], ['postId', '>', MIN_ID]], ['postId']), count('like', [['postAuthor', '==', D.ownerId], ['postId', '==', C5]])]),
       ([m, fresh]) => check('cn-g2 per post after the unlikes (range, groupBy postId): C1 2, C2 2, C3 0, C4 0 (drained, kept at zero), C5 0 (fresh: its counter exists from creation); C5\'s point count 0', exactly(m, { [C1]: 2, [C2]: 2, [C3]: 0, [C4]: 0, [C5]: 0 }) && total(fresh) === 0, `${JSON.stringify(counts(m))} C5 point ${total(fresh)}`));
     await attempt('cn-g3', () => Promise.all([ranked(null, 'postAuthor'), ranked([['hashtag', '==', tag]], 'postId')]), ([creators, tagged]) => check('cn-g3 the rankings follow: D 4 among the creators; #cnproof top posts C2 2 alone above zero', nonZero(creators).some(([k, v]) => k === D.ownerId && v === 4) && same(nonZero(tagged), [[C2, 2]]), `creators ${JSON.stringify(nonZero(creators))} tag ${JSON.stringify(entriesOf(tagged))}`));
-    await attempt('cn-g4', () => Promise.all([count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
-      ([reply, author]) => check('cn-g4 A unlikes R1: its counter 1, D\'s replies 1', total(reply) === 1 && total(author) === 1, JSON.stringify([total(reply), total(author)])));
+    if (replyCounters) {
+      await attempt('cn-g4', () => Promise.all([count('likeReply', [['replyAuthor', '==', D.ownerId], ['replyId', '==', R1]]), count('likeReply', [['replyAuthor', '==', D.ownerId]])]),
+        ([reply, author]) => check('cn-g4 A unlikes R1: its counter 1, D\'s replies 1', total(reply) === 1 && total(author) === 1, JSON.stringify([total(reply), total(author)])));
+    } else {
+      await attempt('cn-g4', () => count('likeReply', [['replyId', '==', R1]]), (m) => check('cn-g4 (v13) A unlikes R1 (`{ replyId }` by values): byReply R1 1', total(m) === 1, `byReply ${total(m)}`));
+    }
     // (h) Drive refuses a batch moving one type's counters for two documents, but a consensus
     // batch carries one transition, so no SDK write can build one: not provable here.
     console.log('INFO  cn-h a batch moving one type\'s counters for two documents is refused by Drive; no state transition can carry one (one transition per documents batch), so it is not proved here');
+  }
+
+  // ---- lv: v13 live marker: a tombstone leaves ownerAndTime ([live, $ownerId, $createdAt], skipIfAbsent) ----
+  async function proveLiveMarker() {
+    console.log('\n--- lv. v13 live marker: a tombstone leaves its author\'s timeline and post count; the global timeline keeps it ---');
+    const authorPosts = () => count('post', shapes.ownerPostsWhere([['$ownerId', '==', D.ownerId]]));
+    const timelineOf = () => sdk.documents.query(q('post', { ...ownerPosts({ where: [['$ownerId', '==', D.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }), limit: 100 }));
+    const before = total(await withReconnect(authorPosts));
+    const Pl = await mustCreate('Pl (D, to tombstone)', D, 'post', { content: 'live marker proof' });
+    await sleep(SETTLE_MS);
+    check('lv-1 the post reads back with live: true', plain(await withReconnect(() => sdk.documents.get(contractId, 'post', Pl))).live === true);
+    await attempt('lv-2', authorPosts, (m) => check(`lv-2 D's post count (\`live ==\`, \`$ownerId ==\`) rose by 1: ${before} → ${total(m)}`, total(m) === before + 1));
+    await attempt('lv-3', timelineOf, (r) => check('lv-3 D\'s timeline (ownerAndTime, `live ==` first) lists it', ids(r).includes(Pl), `${ids(r).length} post(s)`));
+    const tomb = await replaceDoc(D, 'post', Pl, { deleted: true });
+    const after = plain(await withReconnect(() => sdk.documents.get(contractId, 'post', Pl)));
+    check('lv-4 D tombstones it: deleted, and `live` left out', tomb.ok && after.deleted === true && after.live === undefined, tomb.error ?? JSON.stringify({ deleted: after.deleted, live: after.live }));
+    await attempt('lv-5', authorPosts, (m) => check(`lv-5 the tombstone left D's post count: back to ${before}`, total(m) === before, `count ${total(m)}`));
+    await attempt('lv-6', timelineOf, (r) => check('lv-6 …and D\'s timeline no longer lists it', !ids(r).includes(Pl), `${ids(r).length} post(s)`));
+    await attempt('lv-7', () => sdk.documents.query(q('post', { where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 50 })),
+      (r) => check('lv-7 the global timeline still lists the tombstone (the client shows it as deleted)', ids(r).includes(Pl), `${ids(r).length} post(s)`));
+    refusedWith('lv-8 a tombstone that is live again is refused (10422 live, or 40128: frozen)', await replaceDoc(D, 'post', Pl, { deleted: true, live: true }), /\bcode"?\s*[=:]\s*(10422|40128)\b|"live"|immutable/i);
   }
 
   // ---- rw: v12 retractedWhen (platform#5253): a barred author tombstones, and nothing else ----
@@ -1362,7 +1439,7 @@ async function main() {
     const tombstoneOf = async (docType, docId) => { const stored = plain(await sdk.documents.get(contractId, docType, docId)); return stored.deleted === true && stored.content === undefined; };
     const underBar = async (prefix, { post, reply }, refusal, code) => {
       refusedWith(`${prefix}1 D's edit of its post while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'edited', hashtag: 'rwproof' }), refusal);
-      refusedWith(`${prefix}2 a tombstone keeping the text passes the bar and is refused by tombstoneIsBlank (10422)`, await replaceDoc(D, 'post', post, { deleted: true, content: 'kept', hashtag: 'rwproof' }), BLANK);
+      refusedWith(`${prefix}2 a tombstone keeping the text passes the bar and is refused by ${BLANK_RULE} (10422)`, await replaceDoc(D, 'post', post, { deleted: true, content: 'kept', hashtag: 'rwproof' }), BLANK);
       const tomb = await replaceDoc(D, 'post', post, { deleted: true, hashtag: 'rwproof' });
       check(`${prefix}3 D's tombstone of its own post is ACCEPTED while barred`, tomb.ok && (await tombstoneOf('post', post)), tomb.error ?? '');
       refusedWith(`${prefix}4 taking the tombstone back while barred is refused (${code})`, await replaceDoc(D, 'post', post, { content: 'back', hashtag: 'rwproof' }), refusal);
@@ -1415,6 +1492,7 @@ async function main() {
   else await proveDesignC();
   if (counters) await proveCounters();
   if (retracts) await proveRetraction();
+  if (shapes.cut.liveMarker) await proveLiveMarker();
 
   // ---- M: design M (moderated posts and replies, tombstones, preallocated like trees) ----
   async function proveDesignM() {
@@ -1442,7 +1520,7 @@ async function main() {
     const del = await sdk.documents.delete({ document: { id: Pt, ownerId: D.ownerId, dataContractId: contractId, documentTypeName: 'post' }, identityKey: D.identityKey, signer: D.signer }).then(() => null, (e) => describeErr(e));
     check('M-tb1 an author cannot delete its post (canBeDeleted false)', del !== null && (await sdk.documents.get(contractId, 'post', Pt)) !== null, (del ?? 'ACCEPTED').slice(0, 200));
     refusedWith('M-tb2 an edit of the text without the flag is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'edited', hashtag: 'mproof' }), IMMUTABLE);
-    refusedWith('M-tb3 a tombstone keeping the text is refused (10422 tombstoneIsBlank)', await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', hashtag: 'mproof' }), BLANK);
+    refusedWith(`M-tb3 a tombstone keeping the text is refused (10422 ${BLANK_RULE})`, await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', hashtag: 'mproof' }), BLANK);
     refusedWith('M-tb4 a tombstone changing the hashtag is refused (40128)', await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'other' }), IMMUTABLE);
     // Adding a field the post never had counts as a change too ("differs" covers a value the stored document lacked).
     refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', mentionedUserId: id(B.ownerId) }), IMMUTABLE);
@@ -1554,8 +1632,9 @@ async function proveTeam(sdk, args, actors, source) {
     memberIds.length === 2 && team.electedMembers.length === 2 && needed === 3 && rule.leader === true && !team.contains(D.ownerId), `elected ${bigintSafe(team.electedMembers.map(toBase58))}`);
 
   // Fresh targets by D, so this phase can run again: a tagged post, a thread root and a reply to it, left to settle.
+  const shapes = socialShapes(source);
   const fixture = async (label, docType, data) => {
-    const outcome = await createDocument(contractId, D, docType, data);
+    const outcome = await createDocument(contractId, D, docType, shapes.fit(docType, data));
     if (!outcome.ok) throw new Error(`fixture write ${label} failed: ${(outcome.error ?? '').slice(0, 300)}`);
     return outcome.id;
   };
@@ -1612,7 +1691,7 @@ async function proveTeam(sdk, args, actors, source) {
   await attempt('tm-10', countDeltas, (delta) => check('tm-10 moderationActionCounts: the deletion counts once for each of the three approvers (+1 each since this phase began)', delta[L.label] === 1 && delta[M1.label] === 1 && delta[M2.label] === 1, JSON.stringify(delta)));
 
   const F1 = await (async () => {
-    const { document } = buildDocument({ contractId, docType: 'post', ownerId: D.ownerId, data: { content: 'fresh', hashtag: 'fresh' }, entropy: randomIdBytes() });
+    const { document } = buildDocument({ contractId, docType: 'post', ownerId: D.ownerId, data: shapes.fit('post', { content: 'fresh', hashtag: 'fresh' }), entropy: randomIdBytes() });
     return createdId(await sdk.documents.create({ document, identityKey: D.identityKey, signer: D.signer }));
   })();
   await expectCode('tm-11a a proposal for D\'s fresh F1 (inside the window) is refused: use a lone delete', '41206', async () => sdk.contracts.moderatorDeleteSettledDocument({ ...(await asModerator(L)), contractId, documentTypeName: 'post', documentId: F1, reason: reason('tm-11a') }));

@@ -628,7 +628,7 @@ function PostCardView({
                         data-testid={`report-${post.id}`}
                         onClick={(e) => {
                           e.stopPropagation()
-                          if (requireAuth()) openReportModal(enrichedPost)
+                          if (requireAuth()) openReportModal({ kind: targetKindOf(enrichedPost), post: enrichedPost })
                         }}
                         className={cn(CARD_MENU_ITEM, 'flex items-center gap-2')}
                       >

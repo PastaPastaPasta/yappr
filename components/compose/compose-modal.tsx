@@ -23,6 +23,9 @@ import { pollrIsV4 } from '@/lib/constants'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
 import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
+import { mediaTypeOfMime } from '@/lib/media/media-fields'
+import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import type { UploadResult } from '@/lib/upload'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'
@@ -165,7 +168,10 @@ export function ComposeModal() {
 
   const isValidEncryptedPost = !willBeEncrypted || threadPosts.length <= 1
   const isInheritedEncryptionReady = !replyingTo || !isPrivatePost(replyingTo) || (!inherited.loading && !inherited.error)
+  // Mainnet v13 (`notYetUsable`): nothing posts until the first team is seated.
+  const postingOpen = useModeratedTypeOpen(replyingTo ? 'reply' : 'post', isComposeOpen)
   const canPost =
+    postingOpen &&
     unpostedWithContent.length > 0 &&
     !hasOverLimit &&
     !isPosting &&
@@ -281,10 +287,10 @@ export function ComposeModal() {
         isPrivate,
         inheritedEncryption: inherited.source,
         pollEmbed: pollId ? buildPollEmbed(pollId) : undefined,
-        mediaUrlField,
-        // v10 only (set by the upload where the contract requires them); they
-        // travel with mediaUrl and never with URL-in-content private media.
-        mediaHashes: mediaUrlField ? uploaded?.hashes : undefined,
+        // One image for now, also on v13 (which takes up to four). Its hashes
+        // are set by the upload where the contract requires them (v10 on); a
+        // private post carries its image URL inside the encrypted content.
+        media: mediaUrlField ? [{ url: mediaUrlField, hashes: uploaded?.hashes, type: mediaTypeOfMime(uploaded?.mime) }] : [],
         markSensitive,
         onProgress: setPostingProgress,
       })
@@ -438,6 +444,11 @@ export function ComposeModal() {
                         </div>
                       </div>
 
+                      {!postingOpen && (
+                        <p role="status" data-testid="posting-closed" className="px-4 sm:px-5 py-2 text-sm bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200 border-b border-amber-200 dark:border-amber-900">
+                          {POSTING_CLOSED_COPY}
+                        </p>
+                      )}
                       {isPosting && postingProgress && <PostingProgressBar progress={postingProgress} />}
                       {replyingTo && <ReplyContext author={replyingTo.author} />}
                       <div className="px-4 sm:px-5 pt-2 empty:hidden">

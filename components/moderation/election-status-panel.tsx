@@ -9,10 +9,25 @@ import { logger } from '@/lib/logger'
 import { electedModeration, isV10 } from '@/lib/contract-topology'
 import { createElectionStatusLoader } from '@/lib/election-status-loader'
 import { electionView, moderationElectionService, type ElectionStatus } from '@/lib/services/moderation-election-service'
+import { moderationService } from '@/lib/services/moderation-service'
 
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
 const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} h`
+/** Who moderates before a team is seated, as the panel says it. */
+function interimText(interim: string): string {
+  switch (interim) {
+    case 'contractOwner':
+      return 'the contract owner moderates'
+    case 'notYetUsable':
+      return 'nobody moderates, and posts, replies, reports and profile changes stay closed'
+    default:
+      return `the interim (${interim}) applies`
+  }
+}
+
+/** A window as people say it: days from a day up (mainnet's floor), hours below. */
+const duration = (seconds: number) => (seconds >= 86_400 ? `${Math.round(seconds / 86_400)} days` : hours(seconds))
 
 /**
  * The election of the contract's moderation team (v9, elected moderation):
@@ -34,6 +49,9 @@ export function ElectionStatusPanel() {
   const [status, setStatus] = useState<ElectionStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)
+  // The interim the contract was REGISTERED with: mainnet registers v13 with
+  // `notYetUsable` while the committed file declares `contractOwner`.
+  const [registeredInterim, setRegisteredInterim] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -52,6 +70,17 @@ export function ElectionStatusPanel() {
     if (elected && sdkReady) refresh().catch(() => { /* reported inside */ })
   }, [elected, sdkReady, refresh])
 
+  useEffect(() => {
+    if (!elected || !sdkReady) return
+    let cancelled = false
+    moderationService.getInterim().then((interim) => {
+      if (!cancelled) setRegisteredInterim(interim)
+    }).catch((error: unknown) => logger.warn('ElectionStatusPanel: could not read the registered interim', error))
+    return () => {
+      cancelled = true
+    }
+  }, [elected, sdkReady])
+
   if (!declaration) return null
 
   const contest = status?.contest ?? null
@@ -66,9 +95,11 @@ export function ElectionStatusPanel() {
         <CardTitle className="flex items-center gap-2"><ScaleIcon className="h-5 w-5" /> Moderation election</CardTitle>
         <CardDescription>
           Masternodes elect this contract&apos;s moderation team. Until a team is seated,{' '}
-          {declaration.interim === 'contractOwner' ? 'the contract owner moderates' : `the interim (${declaration.interim}) applies`}.
-          Join and vote windows: {hours(declaration.joinWindowSeconds)} each;{' '}
-          {declaration.seatContestable ? 'the seat can be challenged' : 'the first seated team keeps the seat'};
+          {interimText(registeredInterim ?? declaration.interim)}.
+          Applicants join for {duration(declaration.joinWindowSeconds)}, then masternodes vote for {duration(declaration.voteWindowSeconds)};{' '}
+          {declaration.seatContestable
+            ? `the seat becomes contestable once challenges ship${declaration.challengeCoolDownSeconds ? `, with ${duration(declaration.challengeCoolDownSeconds)} of protection after each seat change` : ''}`
+            : 'the first seated team keeps the seat'};
           the leader may add up to {declaration.maxAddedModerators} members.
         </CardDescription>
       </CardHeader>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
-import { CheckCircleIcon, FlagIcon, ShieldExclamationIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
+import { CheckCircleIcon, ExclamationTriangleIcon, FlagIcon, LockOpenIcon, ShieldExclamationIcon, TrashIcon, UserIcon } from '@heroicons/react/24/outline'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
@@ -24,10 +24,12 @@ import {
   withdrawFailureMessage,
   type ReportRecord,
   type ReportStatus,
+  type ReportTargetKind,
   type ReportView,
   type ReportedTarget,
 } from '@/lib/reports'
 import type { TargetKind } from '@/lib/contract-topology'
+import { openReportedContent } from '@/lib/services/report-box-service'
 import type { Post } from '@/lib/types'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { moderationService, type ModerationResult } from '@/lib/services/moderation-service'
@@ -43,11 +45,68 @@ import { CharterReasonPicker, type SeatedReasonsState } from './charter-reason-p
  * v10, where an author's delete leaves nothing behind, that includes a target
  * its author deleted).
  */
-type TargetState = { state: 'live'; post: Post } | { state: 'tombstoned'; post: Post } | { state: 'removed' } | { state: 'unknown' }
+type TargetState = { state: 'live'; post: Post } | { state: 'tombstoned'; post: Post } | { state: 'removed' } | { state: 'unknown' } | { state: 'profile' }
 
-const keyOf = (target: { kind: TargetKind; targetId: string }) => `${target.kind}:${target.targetId}`
+const keyOf = (target: { kind: ReportTargetKind; targetId: string }) => `${target.kind}:${target.targetId}`
+
+/** The reason a moderation cites for a row: the post or reply itself; a profile cites nothing. */
+const citedDocuments = (group: ReportedTarget) =>
+  group.kind === 'profile' ? [] : [{ documentTypeName: group.kind, documentId: group.targetId }]
+
 const shortId = (id: string) => `${id.slice(0, 8)}…`
 const reportsNoun = (count: number) => `${count} report${count === 1 ? '' : 's'}`
+
+/** How a row names what it reports. */
+const ROW_LABEL: Readonly<Record<ReportTargetKind, string>> = { post: 'Post by', reply: 'Reply by', profile: 'Profile of' }
+
+/**
+ * A reported private post or reply, opened read-only from a report's box
+ * (v13): the moderator's encryption key on this device opens the reporter's
+ * key to it. Nothing is decrypted until asked.
+ */
+function ReportedPrivateContent({ group, post, moderatorId }: { group: ReportedTarget; post: Post; moderatorId: string }) {
+  const [opened, setOpened] = useState<{ text: string } | { error: string } | null>(null)
+  const boxes = group.reports.flatMap((report) => (report.box ? [report.box] : []))
+  if (boxes.length === 0) {
+    return <p className="text-xs text-gray-500 dark:text-gray-400">No report carries the key to it: ask the reporters by email.</p>
+  }
+  const open = async () => {
+    try {
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      const key = getEncryptionKeyBytes(moderatorId)
+      if (!key) {
+        setOpened({ error: 'Your encryption key is not on this device. Add it in Settings, then try again.' })
+        return
+      }
+      let failure = 'The reports\' keys do not open it'
+      for (const box of boxes) {
+        const result = await openReportedContent(box, post, key)
+        if (result.kind === 'opened') {
+          setOpened({ text: result.text })
+          return
+        }
+        failure = result.reason
+      }
+      setOpened({ error: failure })
+    } catch (error) {
+      setOpened({ error: error instanceof Error ? error.message : 'Could not open it' })
+    }
+  }
+  if (!opened) {
+    return (
+      <Button variant="outline" size="sm" onClick={() => { open().catch(() => { /* reported inside */ }) }} className="gap-1">
+        <LockOpenIcon className="h-4 w-4" /> Read the private {group.kind}
+      </Button>
+    )
+  }
+  return 'text' in opened ? (
+    <p data-testid={`report-private-content-${group.targetId}`} className="text-sm p-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 whitespace-pre-wrap break-words">
+      {opened.text}
+    </p>
+  ) : (
+    <p role="alert" className="text-xs text-red-600 dark:text-red-400">{opened.error}</p>
+  )
+}
 
 /** The views a moderator can switch between where reports are resolved (v10). */
 const RESOLVED_VIEWS: ReadonlyArray<{ label: string; view: ReportView }> = [
@@ -76,8 +135,8 @@ interface Progress {
 interface ReportQueueProps {
   /** The seated team's charter reasons (read once by the panel): a seated team's dismissal must cite one (41203). */
   seatedReasons: SeatedReasonsState
-  /** Hands the author and the reported post to the panel's ban/suspend/warn form. */
-  onModerateAuthor: (authorId: string, kind: TargetKind, targetId: string) => void
+  /** Hands the author and the reported post (or profile) to the panel's ban/suspend/warn form. */
+  onModerateAuthor: (authorId: string, kind: ReportTargetKind, targetId: string) => void
 }
 
 /**
@@ -127,7 +186,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
   /** Resolves what the page's targets are now, and the usernames of their authors, reporters and moderators. */
   const hydrate = useCallback(async (page: readonly ReportRecord[]) => {
     const groups = groupReports(page)
-    const ids = (kind: TargetKind) => groups.filter((group) => group.kind === kind).map((group) => group.targetId)
+    const ids = (kind: ReportTargetKind) => groups.filter((group) => group.kind === kind).map((group) => group.targetId)
     const people = page.flatMap((report) => [report.reporterId, report.targetOwnerId, ...(report.moderatedBy ? [report.moderatedBy] : [])])
     const [posts, replies, usernames] = await Promise.all([
       postService.getPostsByIds(ids('post')),
@@ -155,6 +214,10 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
         const key = keyOf(group)
         // A removal seen here stands: a cached read may still hold the post.
         if (previous.get(key)?.state === 'removed') continue
+        if (group.kind === 'profile') {
+          next.set(key, { state: 'profile' })
+          continue
+        }
         const post = found.get(key)
         next.set(key, post ? { state: post.deleted ? 'tombstoned' : 'live', post } : removed(group) ? { state: 'removed' } : { state: 'unknown' })
       }
@@ -209,7 +272,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
   const groups = useMemo(() => groupReports(shown), [shown])
   // Live targets first: the ones still waiting on a decision.
   const ordered = useMemo(() => {
-    const pending = (group: ReportedTarget) => (targets.get(keyOf(group))?.state ?? 'live') === 'live'
+    const pending = (group: ReportedTarget) => ['live', 'profile'].includes(targets.get(keyOf(group))?.state ?? 'live')
     return [...groups.filter(pending), ...groups.filter((group) => !pending(group))]
   }, [groups, targets])
 
@@ -285,7 +348,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     const key = keyOf(group)
     const state = targets.get(key)?.state
     if (state === undefined || state === 'unknown') return
-    const noun = group.kind === 'reply' ? 'reply' : 'post'
+    const noun = group.kind
     const verb = resolving ? 'Purging' : 'Dismissing'
     const done = resolving ? 'purged' : 'dismissed'
     setDismissing({ key, verb, done: 0, total: group.reports.length })
@@ -329,7 +392,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
           : state === 'removed'
             ? `Report handled: the ${noun} was removed`
             : state === 'tombstoned' ? `Report handled: its author deleted the ${noun}` : 'Report reviewed: no action taken',
-        documents: [{ documentTypeName: group.kind, documentId: group.targetId }],
+        documents: citedDocuments(group),
         ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
       }, step)
     setDismissing(null)
@@ -366,7 +429,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }
     if (!charterReasonReady('resolutions')) return
     const key = keyOf(group)
-    const noun = group.kind === 'reply' ? 'reply' : 'post'
+    const noun = group.kind
     setDismissing({ key, verb: 'Resolving', done: 0, total: group.reports.length })
     const read = await rereadTarget(group, noun, 'resolve')
     if (!read) {
@@ -385,7 +448,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     const step = () => setDismissing((progress) => (progress ? { ...progress, done: progress.done + 1 } : progress))
     const result = await moderationService.resolveReports(user.identityId, pending, { status, note: form.note }, {
       text: `Report resolved: ${reportStatusLabel(status).toLowerCase()}`,
-      documents: [{ documentTypeName: group.kind, documentId: group.targetId }],
+      documents: citedDocuments(group),
       ...(seatedReasons.required && reasonDocumentId ? { reasonDocumentId } : {}),
     }, step)
     setDismissing(null)
@@ -487,7 +550,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
           {ordered.map((group) => {
             const key = keyOf(group)
             const target = targets.get(key)
-            const noun = group.kind === 'reply' ? 'reply' : 'post'
+            const noun = group.kind
             const busy = dismissing?.key === key
             const count = group.reports.length
             const form = resolveForm?.key === key ? resolveForm : null
@@ -496,8 +559,13 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
             return (
               <li key={key} data-testid={`report-row-${group.targetId}`} className="rounded-lg border border-gray-200 dark:border-gray-800 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <span className="font-medium">
-                    {noun === 'reply' ? 'Reply' : 'Post'} by {nameOf(group.targetOwnerId)} · {count} report{count === 1 ? '' : 's'}
+                  <span className="font-medium flex items-center gap-1">
+                    {group.urgent && (
+                      <span data-testid={`report-urgent-${group.targetId}`} className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-600 text-white">
+                        <ExclamationTriangleIcon className="h-3 w-3" /> Urgent
+                      </span>
+                    )}
+                    {ROW_LABEL[noun]} {nameOf(group.targetOwnerId)} · {count} report{count === 1 ? '' : 's'}
                     {next ? ' loaded' : ''}
                   </span>
                   <span className="text-gray-500 dark:text-gray-400">latest {new Date(group.latestAt).toLocaleString()}</span>
@@ -525,6 +593,10 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                   </p>
                 ) : target.state === 'tombstoned' ? (
                   <p className="text-sm italic text-gray-500 dark:text-gray-400">Its author deleted this {noun}.</p>
+                ) : target.state === 'profile' ? (
+                  <Link href={`/user?id=${group.targetId}`} className="block text-sm p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700">
+                    Open {nameOf(group.targetId)}&apos;s profile
+                  </Link>
                 ) : (
                   <Link href={`/post?id=${group.targetId}`} className="block text-sm p-3 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700">
                     <span className="line-clamp-4 whitespace-pre-wrap break-words">
@@ -532,6 +604,9 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                     </span>
                     {(target.post.media?.length ?? 0) > 0 && <span className="block mt-1 text-xs text-gray-500">+ media</span>}
                   </Link>
+                )}
+                {target?.state === 'live' && target.post.encryptedContent && user && (
+                  <ReportedPrivateContent group={group} post={target.post} moderatorId={user.identityId} />
                 )}
                 <details className="text-sm">
                   <summary className="cursor-pointer text-gray-600 dark:text-gray-400">What reporters said</summary>

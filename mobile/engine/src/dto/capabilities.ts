@@ -1,9 +1,10 @@
 import {
   canBookmark, canRepost, contentLimits, contractTakesReports, dashpayProfileExtension, deletesAreTombstones,
-  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, likesAreIndexOnly, postsHaveLanguage,
-  prefixRankingsAvailable, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
+  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
+  prefixRankingsAvailable, profilesAreReportable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
 import { dmIsV5 } from '@/lib/constants'
+import { reportFeeCredits } from '@/lib/reports'
 import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
 import { DICEBEAR_STYLES, DICEBEAR_STYLE_LABELS, DEFAULT_AVATAR_STYLE } from '@/lib/services/unified-profile-service'
 import { IPFS_GATEWAYS } from '@/lib/utils/ipfs-gateway'
@@ -20,6 +21,7 @@ export interface PlatformInfoDTO {
 
 export function platformInfo(): PlatformInfoDTO {
   const limits = contentLimits()
+  const reportFee = reportFeeCredits()
   return {
     capabilities: {
       rankings: likesAreIndexOnly(),
@@ -33,6 +35,10 @@ export function platformInfo(): PlatformInfoDTO {
       deletesAreTombstones: deletesAreTombstones(),
       reports: contractTakesReports(),
       reportsResolved: reportsAreResolved(),
+      reportReasonMax: reportShape().maxReason,
+      profileReports: profilesAreReportable(),
+      reportFeeCredits: reportFee === null ? null : Number(reportFee),
+      mediaItems: mediaItemLimit(),
       hashtagsInline: hashtagsAreInline(),
       postLanguage: postsHaveLanguage(),
       contentLimits: { chars: limits.maxLength, bytes: limits.maxBytes },

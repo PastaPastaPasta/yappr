@@ -3,7 +3,7 @@ import { hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaCarriesHashes, threadRootIdOf } from '@/lib/contract-topology'
 import { extractErrorMessage } from '@/lib/error-utils'
 import { imageDigestForUrl } from '@/lib/media/image-digest'
-import type { MediaHashes } from '@/lib/media/media-fingerprint'
+import type { MediaItemInput } from '@/lib/media/media-fields'
 import type { Post } from '@/lib/types'
 import { isUnconfirmed } from '@/lib/unconfirmed-writes'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
@@ -22,7 +22,7 @@ import type { TargetRef, TicketDocument, WriteStage, WriteTicket } from './types
 
 /** `compose-modal.tsx` `canAddThread`. */
 const MAX_THREAD_PARTS = 10
-/** `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), as stored (`mediaUrlForContract`). */
+/** `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), and each v13 `mediaUrls` item's, as stored (`mediaUrlForContract`). */
 const MAX_MEDIA_URL = 512
 
 export interface DraftDTO {
@@ -201,13 +201,17 @@ async function digestOf(url: string): ReturnType<typeof imageDigestForUrl> {
   }
 }
 
-/** v10 posts carry the image's sha256 and dHash beside its URL; they are computed here, once, from the URL. */
-async function mediaFields(url: string | null | undefined): Promise<{ mediaUrlField?: string; mediaHashes?: MediaHashes }> {
-  if (!url) return {}
-  const mediaUrlField = mediaUrlForContract(url)
-  if (!mediaCarriesHashes()) return { mediaUrlField }
+/**
+ * The draft's one image as publish's media list. From v10 on a post carries
+ * the image's sha256 and dHash beside its URL (v13: in `mediaDigests`); they
+ * are computed here, once, from the URL.
+ */
+async function mediaFields(url: string | null | undefined): Promise<MediaItemInput[]> {
+  if (!url) return []
+  const stored = mediaUrlForContract(url)
+  if (!mediaCarriesHashes()) return [{ url: stored }]
   const digest = await digestOf(url)
-  return { mediaUrlField, mediaHashes: { mediaHash: digest.hash, mediaFingerprint: digest.fingerprint } }
+  return [{ url: stored, hashes: { mediaHash: digest.hash, mediaFingerprint: digest.fingerprint } }]
 }
 
 /**
@@ -277,8 +281,7 @@ export function createPublishHandler(load: (id: string) => Promise<Post | null>,
       isPrivate: false,
       inheritedEncryption: null,
       pollEmbed: undefined,
-      mediaUrlField: media.mediaUrlField,
-      mediaHashes: media.mediaHashes,
+      media,
       markSensitive: draft.sensitive === true,
       onProgress: ({ current, total, status }) => {
         const next: WriteStage = status.startsWith('Waiting') ? 'waiting-parent' : 'broadcasting'

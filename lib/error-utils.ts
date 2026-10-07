@@ -681,6 +681,55 @@ export function isDocumentPropertyRuleError(error: unknown): boolean {
   )
 }
 
+/**
+ * The `propertyConstraints` rule a 10422 names ("breaks its
+ * propertyConstraints rule "<rule>""), or null.
+ */
+export function brokenPropertyRule(error: unknown): string | null {
+  return /propertyconstraints rule "([^"]+)"/i.exec(extractErrorMessage(error))?.[1] ?? null
+}
+
+/** The document type a 10422 names ('A document of type "<t>" breaks ...'), or null. */
+function ruleDocumentType(error: unknown): string | null {
+  return /document of type "([^"]+)" breaks/i.exec(extractErrorMessage(error))?.[1] ?? null
+}
+
+/** The social types {@link PROPERTY_RULE_COPY} speaks for; other contracts reuse rule names like `media`. */
+const SOCIAL_RULE_TYPES: ReadonlySet<string> = new Set(['post', 'reply', 'report'])
+
+/** The copy for a 10422 on a social post, reply or report, or null for any other rule. */
+function propertyRuleCopy(error: unknown): string | null {
+  const rule = brokenPropertyRule(error)
+  const docType = ruleDocumentType(error)
+  if (!rule || (docType !== null && !SOCIAL_RULE_TYPES.has(docType))) return null
+  return PROPERTY_RULE_COPY.get(rule) ?? null
+}
+
+/**
+ * What each social-contract rule's 10422 means to a user (v13 names, and the
+ * v9-v12 names they replaced). Each is a client bug or a stale client rather
+ * than something the user typed, so the copy says what went wrong, not how
+ * to fix the input.
+ */
+const INCOMPLETE_PRIVATE = 'The private post was incomplete. Try again.'
+const UNBLANK_TOMBSTONE = 'Deleting it failed: the network expects it emptied completely. Reload and try again.'
+const OTHER_NEEDS_NOTE = 'Say what is wrong with it in the details.'
+const PROPERTY_RULE_COPY: ReadonlyMap<string, string> = new Map([
+  ['parentIsRoot', 'This reply named the wrong post owner. Reload the thread and reply again.'],
+  ['media', 'The attached media did not match its details. Remove it, attach it again and retry.'],
+  ['privateNoMedia', 'A private post can\'t carry a public media link.'],
+  ['privateAllOrNone', INCOMPLETE_PRIVATE],
+  ['private', INCOMPLETE_PRIVATE],
+  ['notEmpty', 'A post needs some text, media, a quote or a poll.'],
+  ['blankTombstone', UNBLANK_TOMBSTONE],
+  ['tombstoneIsBlank', UNBLANK_TOMBSTONE],
+  ['live', 'This post was missing its live marker. Reload the app and try again.'],
+  ['oneTarget', 'A report names exactly one post, reply or profile.'],
+  ['boxOnContent', 'A profile report can\'t carry private content.'],
+  ['otherNote', OTHER_NEEDS_NOTE],
+  ['otherHasNote', OTHER_NEEDS_NOTE],
+])
+
 /** The 10419 (`distinctFrom`) member of {@link isDocumentPropertyRuleError}. */
 function isPropertyNotDistinctError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -753,6 +802,13 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
     hasConsensusCode(error, [40307])
   )
 }
+
+/**
+ * What a 41200 means to a user: on a `notYetUsable` contract (mainnet v13)
+ * posts, replies, reports and profile changes open once masternodes elect the
+ * first moderation team.
+ */
+export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
 
 /**
  * **41200** `ContractModeratedDocumentTypeNotYetUsableError` (elected
@@ -1081,7 +1137,7 @@ export function categorizeError(error: unknown): string {
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
   if (isModerationNotYetSeatedError(error)) {
-    return 'This isn\'t available yet. Try again later.'
+    return POSTING_CLOSED_COPY
   }
   if (isPropertyMaxBytesError(error)) {
     // maxLength counts characters and the UI enforces it; maxBytes counts
@@ -1094,7 +1150,7 @@ export function categorizeError(error: unknown): string {
     return 'The network doesn\'t allow this combination: you can\'t do this to yourself.'
   }
   if (isDocumentPropertyRuleError(error)) {
-    return 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
+    return propertyRuleCopy(error) ?? 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
