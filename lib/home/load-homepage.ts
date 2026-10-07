@@ -200,9 +200,12 @@ async function loadContributorIdentities(ids: readonly string[]): Promise<{
   }
   const profileRecords = result.pageDocuments.map((doc) => documentToPlainObject(doc));
   const profiles = unifiedProfileService.seedProfileDocuments(profileRecords, ids);
+  // Names bind to the profile page, so a contributor without a profile was never looked up:
+  // leave them out rather than seed an unproven "no name".
+  const pageOwners = new Set(profileRecords.map((record) => record.$ownerId));
   const usernames = usernamesByIdentity(
     names.documents.map((doc) => documentToPlainObject(doc)),
-    ids,
+    ids.filter((id) => pageOwners.has(id)),
     ids.length
   );
   dpnsService.seedUsernames(usernames);

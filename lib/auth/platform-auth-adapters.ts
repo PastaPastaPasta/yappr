@@ -338,7 +338,13 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
     usernames: {
       async resolveUsername(identityId) {
         await ensureSdk()
-        return dpnsService.resolveUsername(identityId)
+        const username = await dpnsService.resolveUsername(identityId)
+        // dpnsService answers null for failed reads too; only a complete read caches the miss.
+        // A name seeded by a concurrent lookup is not proof of absence either.
+        if (username === null && !dpnsService.hasCachedAbsence(identityId)) {
+          throw new Error('DPNS username lookup failed')
+        }
+        return username
       },
       async resolveIdentity(identityOrUsername) {
         await ensureSdk()
