@@ -33,7 +33,8 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { VariantAxis, VariantCombination, ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
-import { variantsSizeError } from '@/lib/storefront/storefront-contract'
+import { storefrontCreateFeeCredits, variantsSizeError } from '@/lib/storefront/storefront-contract'
+import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
@@ -63,6 +64,8 @@ function AddItemPage() {
   const { isReady: sdkReady } = useSdk()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const supportsDigital = storefrontSupportsDigital()
+  // v6 charges an action fee on each new listing (null before v6).
+  const listingFeeCredits = storefrontCreateFeeCredits('storeItem')
 
   // Digital delivery (storefront v6)
   const [fulfillment, setFulfillment] = useState<ItemFulfillment>('shipped')
@@ -955,6 +958,11 @@ function AddItemPage() {
                   ? (editingItemId || pendingItemId ? 'Saving...' : 'Creating...')
                   : (editingItemId || pendingItemId ? 'Save Changes' : 'Create Product')}
               </Button>
+              {!editingItemId && !pendingItemId && listingFeeCredits !== null && (
+                <p className="mt-2 text-center text-xs text-gray-500">
+                  Listing a product pays a moderation fee of about {formatCreditsAsDash(listingFeeCredits)} DASH, plus the network fee.
+                </p>
+              )}
             </div>
           </form>
           )}

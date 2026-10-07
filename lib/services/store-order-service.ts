@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6, storefrontOrdersCarryStoreStatus } from '../constants';
 import { storeService } from './store-service';
-import { OWN_STORE_ORDER_MESSAGE } from '../storefront/storefront-contract';
+import { OWN_STORE_ORDER_MESSAGE, orderPayloadSizeError } from '../storefront/storefront-contract';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
@@ -126,8 +126,11 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       nonce: Uint8Array;
     }
   ): Promise<StoreOrder> {
-    // v6 refuses it on chain (`sellerId` distinctFrom `$ownerId`); no cut has a use for it.
+    // v6 refuses both on chain (`sellerId` distinctFrom `$ownerId`; the 5,120 B
+    // payload cap), so refuse them here, before signing. No cut has a use for a self-order.
     if (buyerId === data.sellerId) throw new Error(OWN_STORE_ORDER_MESSAGE);
+    const tooLarge = orderPayloadSizeError(data.encryptedPayload.length);
+    if (tooLarge) throw new Error(tooLarge);
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(data.storeId),
       // v2 checks this against the store's own $ownerId, so a wrong value is

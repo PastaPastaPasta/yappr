@@ -11,7 +11,7 @@ import { StarRatingInput } from '@/components/store/star-rating-input'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { itemReviewService } from '@/lib/services/item-review-service'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
-import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2, storefrontReviewsCostYapp } from '@/lib/constants'
+import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2 } from '@/lib/constants'
 import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import toast from 'react-hot-toast'
@@ -67,8 +67,6 @@ export function ReviewModal({
     : []
   const ratedItems = Object.entries(itemRatings).filter(([, value]) => value > 0)
   const costLabel = reviewCostLabel(ratedItems.length)
-  // v2–v5 reviews are paid in YAPP; v6 charges an action fee in credits instead.
-  const paysYapp = storefrontReviewsCostYapp()
 
   const canSubmit = rating >= 1 && rating <= 5 && !isSubmitting
 
@@ -101,7 +99,7 @@ export function ReviewModal({
           })
         } catch (error) {
           logger.error(`Failed to submit item review for ${itemId}:`, error)
-          if (paysYapp && handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
+          if (handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
             // Nothing after this one was attempted either.
             failedItems.push(...ratedItems.slice(index).map(([id]) => id))
             break
@@ -119,7 +117,8 @@ export function ReviewModal({
       onSuccess()
     } catch (error) {
       logger.error('Failed to submit review:', error)
-      if (!(paysYapp && handleInsufficientYapp(error, `A review costs ${costLabel}.`))) {
+      // Only a v2–v5 review pays YAPP, so on v6 this is never an insufficient-YAPP refusal.
+      if (!handleInsufficientYapp(error, `A review costs ${costLabel}.`)) {
         toast.error('Failed to submit review. Please try again.')
       }
     } finally {

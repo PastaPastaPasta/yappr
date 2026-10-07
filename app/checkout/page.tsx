@@ -23,7 +23,7 @@ import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
-import { OWN_STORE_ORDER_MESSAGE, orderPayloadSizeError } from '@/lib/storefront/storefront-contract'
+import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
 import { identityService } from '@/lib/services/identity-service'
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { parseStorePolicies } from '@/lib/utils/policies'
@@ -215,7 +215,7 @@ function CheckoutPage() {
     }
 
     // A seller never orders from their own store (storefront v6 refuses it on chain).
-    if (storeToValidate && storeToValidate.ownerId === user?.identityId) {
+    if (isOwnStore(storeToValidate, user?.identityId)) {
       const state = blocked('own-store')
       setCheckoutReadiness(state)
       return state
@@ -774,10 +774,8 @@ function CheckoutPage() {
         nonce,
         store.id
       )
-      // v6 caps the encrypted payload; refuse here rather than after signing.
-      const tooLarge = orderPayloadSizeError(encryptedPayload.length)
-      if (tooLarge) throw new Error(tooLarge)
 
+      // Refuses an own-store order or (v6) an oversized payload before signing.
       await storeOrderService.createOrder(user.identityId, {
         storeId: store.id,
         sellerId: store.ownerId,

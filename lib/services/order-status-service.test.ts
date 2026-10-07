@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The topology constant is read at module load, so the env must be set before
 // the hoisted import evaluates.
@@ -22,6 +22,7 @@ const update = (status: string, createdAt: number) => ({
 });
 
 beforeEach(() => query.mockReset());
+afterEach(() => vi.unstubAllEnvs());
 
 describe('latest status', () => {
   it('reads the newest update in ONE row — the writer gate leaves nothing to skip past', async () => {
@@ -55,7 +56,6 @@ describe('the buyer is derived on storefront v6', () => {
     const { orderStatusService: service } = await import('./order-status-service');
     const create = vi.spyOn(service, 'create' as never).mockResolvedValue({} as never);
     await service.createStatusUpdate(seller, orderId, { status: 'shipped', buyerId: buyer });
-    vi.unstubAllEnvs();
     return (create.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
   };
 

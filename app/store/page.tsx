@@ -228,7 +228,7 @@ export default function StoreBrowsePage() {
                 </button>
               ))}
             </div>
-            {storefrontIsV6() && categories.length > 0 && (
+            {categories.length > 0 && (
               <select
                 aria-label="Category"
                 value={category}

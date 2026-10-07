@@ -104,6 +104,14 @@ describe('size guards (v6 caps)', () => {
     expect((await load('v5')).orderPayloadSizeError(9000)).toBeNull()
   })
 
+  it('treats a store as the viewer\'s own only when both are known', async () => {
+    const { isOwnStore } = await load('v5')
+    expect(isOwnStore({ ownerId: 'me' }, 'me')).toBe(true)
+    expect(isOwnStore({ ownerId: 'them' }, 'me')).toBe(false)
+    expect(isOwnStore(null, 'me')).toBe(false)
+    expect(isOwnStore({ ownerId: 'me' }, undefined)).toBe(false)
+  })
+
   it('caps both digital payloads at the contract value', async () => {
     const { DIGITAL_PAYLOAD_MAX_BYTES } = await load('v6')
     expect(DIGITAL_PAYLOAD_MAX_BYTES).toBe(5120)

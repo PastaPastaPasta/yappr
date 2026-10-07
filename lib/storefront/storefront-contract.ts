@@ -51,7 +51,7 @@ const STORE_CATEGORY_PATTERN = new RegExp(property('store', 'category').pattern 
 export function normalizeStoreCategory(input: string): string {
   return input
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
@@ -100,6 +100,11 @@ export function variantsSizeError(variants: ItemVariants | undefined): string | 
  * (`storeOrder.sellerId` distinctFrom `$ownerId`); the client refuses it on every cut.
  */
 export const OWN_STORE_ORDER_MESSAGE = 'This is your own store. You cannot place an order with yourself.'
+
+/** Whether `viewerId` owns `store` (false while either is unknown, so a missing store never reads as "yours"). */
+export function isOwnStore(store: { ownerId: string } | null | undefined, viewerId: string | undefined): boolean {
+  return Boolean(store && viewerId && store.ownerId === viewerId)
+}
 
 /** Largest encrypted order payload, in bytes (v6). */
 export const ORDER_PAYLOAD_MAX_BYTES = property('storeOrder', 'encryptedPayload').maxItems ?? 5120

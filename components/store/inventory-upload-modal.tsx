@@ -23,6 +23,8 @@ import {
   type InventoryParseError
 } from '@/lib/upload/inventory-parser'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { formatCreditsAsDash } from '@/lib/services/dpns-service'
+import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 
 interface InventoryUploadModalProps {
   isOpen: boolean
@@ -34,6 +36,9 @@ interface InventoryUploadModalProps {
 }
 
 type UploadStep = 'select' | 'preview' | 'uploading' | 'complete'
+
+/** What one new listing pays into the fee pots on storefront v6 (null before v6). */
+const listingFeeCredits = storefrontCreateFeeCredits('storeItem')
 
 export function InventoryUploadModal({
   isOpen,
@@ -446,6 +451,13 @@ export function InventoryUploadModal({
             </div>
           )}
         </div>
+
+        {/* v6 charges an action fee on every new listing. */}
+        {step === 'preview' && items.length > 0 && listingFeeCredits !== null && (
+          <p className="px-4 pb-2 text-xs text-gray-500">
+            {items.length} new listing{items.length !== 1 ? 's' : ''} pay about {formatCreditsAsDash(listingFeeCredits * BigInt(items.length))} DASH in moderation fees, plus network fees.
+          </p>
+        )}
 
         {/* Footer */}
         <div className="flex gap-3 p-4 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">

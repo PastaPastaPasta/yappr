@@ -10,6 +10,7 @@ import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6 } from '../constants';
 import { parseJsonArray } from '../utils/json-parsing';
 import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
+import { storeStatsService } from './store-stats-service';
 import type {
   Store,
   StoreDocument,
@@ -167,7 +168,10 @@ class StoreService extends BaseDocumentService<Store> {
     if (data.contactMethods) documentData.contactMethods = JSON.stringify(data.contactMethods);
     if (data.category) documentData.category = data.category;
 
-    return this.create(ownerId, documentData);
+    const created = await this.create(ownerId, documentData);
+    // A new store can change the category ranking.
+    storeStatsService.invalidateStore(created.id);
+    return created;
   }
 
   /**
@@ -205,7 +209,10 @@ class StoreService extends BaseDocumentService<Store> {
     if ('contactMethods' in data) documentData.contactMethods = data.contactMethods && JSON.stringify(data.contactMethods);
     if (data.category !== undefined) documentData.category = data.category;
 
-    return this.update(storeId, ownerId, documentData);
+    const updated = await this.update(storeId, ownerId, documentData);
+    // A status or category change can move the category ranking.
+    storeStatsService.invalidateStore(storeId);
+    return updated;
   }
 
   /**

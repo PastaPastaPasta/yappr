@@ -23,8 +23,8 @@
  * `storeItem.fulfillment`, the seller-only `itemDeliverable` kit and the
  * seller-written `orderDelivery`: s22. v6 is also the mainnet re-cut
  * (docs/NON_SOCIAL_CONTRACTS.md): no YAPP; store, item and review creates
- * carry an action-fee agreement (s5e, s12); stores and items are
- * moderator-deletable; an order's seller is never its buyer (s19); status
+ * carry an action-fee agreement (s5e, s6b2, s12); stores and items are
+ * moderator-deletable (s24); an order's seller is never its buyer (s19); status
  * updates and deliveries store no buyerId (the buyer's feeds are derived
  * `orderId.$ownerId` indexes: s4g, s22q); a store files under a category slug,
  * with proved "newest" and "top categories" reads (s23). The cases for the
@@ -75,8 +75,6 @@ const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, ite
 // Digital payloads are opaque ciphertext to consensus, so random bytes stand in.
 const deliverableData = ({ itemId }) => ({ itemId, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
 const deliveryData = ({ orderId }) => ({ orderId, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
-/** An index `docType` declares, by name (undefined when it declares none). */
-const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
 /** The buyer's feed of `docType` (v6 `buyerFeed`/`buyerDeliveries`): the derived property pinned with `==`. */
 const buyerFeedQuery = (buyerId) => ({ where: [['orderId.$ownerId', '==', buyerId]], orderBy: [['orderId.$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 });
 /** A kit's stored ciphertext, or null when it does not read back. */
@@ -217,6 +215,7 @@ async function caseS6ItemReviews(ctx) {
   const review = (label, expect, data) => battery.probeCreate(label, expect, buyer, 'itemReview', itemReviewData({ ...base, ...data }));
   await review("s6a item review of an item from ANOTHER store is rejected (40127 on the item's storeId agreement)", PROPERTY_MISMATCH, { itemId: id32(ctx.foreignItem), rating: 5 });
   await review('s6b item review of a GHOST item is rejected (40120)', REFERENCE_NOT_FOUND, { itemId: randomEntropy(), rating: 5 });
+  await battery.probeCreate('s6b2 an item review WITHOUT the action fee agreement is rejected (40132)', AGREEMENT_NOT_SET, buyer, 'itemReview', itemReviewData({ ...base, itemId: id32(ctx.item1), rating: 5 }), { noAgreement: true });
   const one = await review('s6c item one review (5 stars) accepted', null, { itemId: id32(ctx.item1), rating: 5 });
   const two = await review('s6d item two review (3 stars) accepted', null, { itemId: id32(ctx.item2), rating: 3 });
   await review('s6e duplicate (order,item) review is rejected (40105)', DUPLICATE_UNIQUE, { itemId: id32(ctx.item1), rating: 1 });
@@ -454,7 +453,10 @@ async function caseS21StoreMustBeOpen(ctx) {
   const storeId = ctx.strangerStoreId;
   if (!storeId) { battery.check('s21 fixture', false, 'no stranger store'); return; }
   const place = (label, expect, storeStatus) => battery.probeCreate(label, expect, buyer, 'storeOrder', orderData({ storeId: id32(storeId), sellerId: id32(stranger.ownerId), storeStatus }));
-  const setStatus = async (status) => battery.probeReplace(`s21 the owner sets the store ${status}`, null, stranger, 'store', storeId, storeData({ name: `Cy Store ${run}`, status }), await battery.revisionOf('store', storeId));
+  // A reused store keeps its own name and category through the status flips.
+  const current = (await battery.fetchDocument('store', storeId))?.toJSON?.() ?? {};
+  const fields = { name: current.name ?? `Cy Store ${run}`, category: current.category ?? CATEGORY };
+  const setStatus = async (status) => battery.probeReplace(`s21 the owner sets the store ${status}`, null, stranger, 'store', storeId, storeData({ ...fields, status }), await battery.revisionOf('store', storeId));
   try {
     await place('s21a an order at the active store lands', null, 'active');
     // The rule runs in the structure stage, before the `where` state read: a
@@ -530,23 +532,46 @@ async function caseS22Digital(ctx) {
   battery.workingShapes.push({ label: 'buyer library', shape: { documentTypeName: 'orderDelivery', ...buyerFeedQuery('<buyerId>') } });
 }
 
+/** The newest active stores (`byStatus`), and with `category` the newest in it (`byCategory`); `before` bounds `$createdAt` from above. */
+const newestStores = ({ category, before } = {}) => ({
+  where: [['status', '==', 'active'], ...(category ? [['category', '==', category]] : []), ...(before ? [['$createdAt', '<=', before]] : [])],
+  orderBy: [['status', 'asc'], ...(category ? [['category', 'asc']] : []), ['$createdAt', 'desc']],
+});
+
 async function caseS23Categories(ctx) {
-  const { battery, seller, run } = ctx;
+  const { battery, seller } = ctx;
   console.log('\n--- s23. store categories: a slug, newest by status and category, top categories ---');
   if (!(await ensureSellerStore(ctx))) { battery.check('s23 fixture', false, 'no seller store'); return; }
   await settle();
-  const newest = await battery.queryDocs('store', { where: [['status', '==', 'active']], orderBy: [['status', 'asc'], ['$createdAt', 'desc']], limit: 100 });
-  battery.check('s23a byStatus lists active stores newest first, ours among them', newest.some((row) => battery.b58(row.$id) === ctx.storeId) && newest.every((row) => row.status === 'active'), `rows=${newest.length}`);
-  battery.workingShapes.push({ label: 'newest active stores', shape: { documentTypeName: 'store', where: [['status', '==', 'active']], orderBy: [['status', 'asc'], ['$createdAt', 'desc']] } });
-  const inCategory = await battery.queryDocs('store', { where: [['status', '==', 'active'], ['category', '==', CATEGORY]], orderBy: [['status', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']], limit: 100 });
-  battery.check(`s23b byCategory lists the active stores filed under ${CATEGORY}, ours among them`, inCategory.some((row) => battery.b58(row.$id) === ctx.storeId) && inCategory.every((row) => row.category === CATEGORY), `rows=${inCategory.length}`);
-  const ranked = await battery.checkRanked(`s23c top categories (ranked count at category, status pinned) carries ${CATEGORY} at its proved store count`, 'store', 'category', CATEGORY,
-    await battery.countBy('store', [['status', '==', 'active'], ['category', '==', CATEGORY]]), { where: [['status', '==', 'active']] });
+  // The seller's store may be a reused one (s1), filed under whatever category it was created with.
+  const store = (await battery.fetchDocument('store', ctx.storeId))?.toJSON?.() ?? {};
+  const { category, $createdAt: createdAt } = store;
+  if (!category || store.status !== 'active') { battery.check('s23 fixture', false, `seller store category=${category} status=${store.status}`); return; }
+  const isOurs = (row) => battery.b58(row.$id) === ctx.storeId;
+  const newest = await battery.queryDocs('store', { ...newestStores(), limit: 100 });
+  const descending = newest.every((row, i) => i === 0 || Number(newest[i - 1].$createdAt) >= Number(row.$createdAt));
+  battery.check('s23a byStatus pages active stores only, newest first', newest.length > 0 && descending && newest.every((row) => row.status === 'active'), `rows=${newest.length}`);
+  // Bounded at our own $createdAt, so the store is on the first page however many are newer.
+  const fromOurs = await battery.queryDocs('store', { ...newestStores({ before: createdAt }), limit: 5 });
+  battery.check('s23a2 a byStatus page starting at our store holds it first in line', fromOurs.some(isOurs), `rows=${fromOurs.length}`);
+  battery.workingShapes.push({ label: 'newest active stores', shape: { documentTypeName: 'store', ...newestStores() } });
+  const inCategory = await battery.queryDocs('store', { ...newestStores({ category, before: createdAt }), limit: 5 });
+  battery.check(`s23b byCategory lists the active stores filed under ${category}, ours among them`, inCategory.some(isOurs) && inCategory.every((row) => row.category === category), `rows=${inCategory.length}`);
+  battery.workingShapes.push({ label: 'newest active stores in a category', shape: { documentTypeName: 'store', ...newestStores({ category: '<category>' }) } });
+  const ranked = await battery.checkRanked(`s23c top categories (ranked count at category, status pinned) carries ${category} at its proved store count`, 'store', 'category', category,
+    await battery.countBy('store', [['status', '==', 'active'], ['category', '==', category]]), { where: [['status', '==', 'active']] });
   if (ranked) battery.workingShapes.push({ label: 'top store categories', shape: { ...ranked.shape, dataContractId: '<contractId>' } });
   // The category is a slug: what the client normalises to, and nothing else.
-  const store = (await battery.fetchDocument('store', ctx.storeId))?.toJSON?.() ?? {};
   await battery.probeReplace('s23d a category that is not a lowercase slug is refused (10101 pattern)', SCHEMA_REFUSED, seller, 'store', ctx.storeId,
-    { ...storeData({ name: store.name ?? `Ann Store ${run}` }), category: 'Vintage Clothing' }, await battery.revisionOf('store', ctx.storeId));
+    storeData({ name: store.name, category: 'Vintage Clothing' }), await battery.revisionOf('store', ctx.storeId));
+}
+
+async function caseS24ModeratorDeletesItem(ctx) {
+  const { battery, seller, run } = ctx;
+  if (!(await ensureSellerStore(ctx))) { battery.check('s24 fixture', false, 'no seller store'); return; }
+  // v6: stores and items are moderator-deletable (their owners still cannot delete them).
+  const item = await battery.probeCreate('s24 fixture: a throwaway item', null, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Takedown ${run}` }));
+  await caseModeratorDelete(ctx, { prefix: 's24', docType: 'storeItem', documentId: item.ok ? item.id : null, ownerId: seller.ownerId });
 }
 
 const CASES = new Map([
@@ -555,7 +580,7 @@ const CASES = new Map([
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12ActionFees],
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
   ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfOrder], ['s20', caseS20PropertyConstraints],
-  ['s21', caseS21StoreMustBeOpen], ['s22', caseS22Digital], ['s23', caseS23Categories],
+  ['s21', caseS21StoreMustBeOpen], ['s22', caseS22Digital], ['s23', caseS23Categories], ['s24', caseS24ModeratorDeletesItem],
 ]);
 
 /** v6 shape the cases rely on beyond the per-type rules selfTestModerated checks. */
@@ -563,15 +588,18 @@ function selfTestV6() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
-  const derivedFeed = (docType, name) => JSON.stringify(index(docType, name)?.properties) === '[{"orderId.$ownerId":"asc"},{"$createdAt":"asc"}]';
+  const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
+  const indexProps = (docType, name) => JSON.stringify(index(docType, name)?.properties);
+  const byCategory = index('store', 'byCategory');
+  const derivedFeed = (docType, name) => indexProps(docType, name) === '[{"orderId.$ownerId":"asc"},{"$createdAt":"asc"}]';
   return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v6)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['store, storeItem, storeReview and itemReview creates declare 1000M / 50M / 16M / 8M moderators fees (s5e, s12)', fee('store') === 1_000_000_000n && fee('storeItem') === 50_000_000n && fee('storeReview') === 16_000_000n && fee('itemReview') === 8_000_000n],
     ['orders, status updates, deliveries, kits, zones and addresses are unpriced (s12d)', ['storeOrder', 'orderStatusUpdate', 'orderDelivery', 'itemDeliverable', 'shippingZone', 'savedAddress'].every((docType) => actionFeeFor(docType, SCHEMAS) === null)],
     ['store requires a lowercase-slug category of at most 20 characters (s23d)', SCHEMAS.store.required.includes('category') && SCHEMAS.store.properties.category.pattern === '^[a-z0-9]+(-[a-z0-9]+)*$' && SCHEMAS.store.properties.category.maxLength === 20],
-    ['store byStatus [status, $createdAt] and byCategory [status, category, $createdAt] (rangeCountable, ranked at category; s23)', JSON.stringify(index('store', 'byStatus')?.properties) === '[{"status":"asc"},{"$createdAt":"asc"}]'
-      && JSON.stringify(index('store', 'byCategory')?.properties) === '[{"status":"asc"},{"category":"asc"},{"$createdAt":"asc"}]' && index('store', 'byCategory')?.rangeCountable === true && index('store', 'byCategory')?.rankedCountable?.at === 'category'],
+    ['store byStatus [status, $createdAt] and byCategory [status, category, $createdAt] (rangeCountable, ranked at category; s23)', indexProps('store', 'byStatus') === '[{"status":"asc"},{"$createdAt":"asc"}]'
+      && indexProps('store', 'byCategory') === '[{"status":"asc"},{"category":"asc"},{"$createdAt":"asc"}]' && byCategory?.rangeCountable === true && byCategory?.rankedCountable?.at === 'category'],
     ['storeOrder.sellerId is distinctFrom $ownerId (s19)', SCHEMAS.storeOrder.properties.sellerId.distinctFrom === '$ownerId'],
     ['order counts ride buyerOrders and storeOrders (rangeCountable; storeOrders ranked at storeId; s9)', index('storeOrder', 'buyerOrders')?.rangeCountable === true && index('storeOrder', 'storeOrders')?.rangeCountable === true && index('storeOrder', 'storeOrders')?.rankedCountable?.at === 'storeId'],
     ['status updates and deliveries store no buyerId; buyerFeed and buyerDeliveries derive it (s4g, s22q)', !SCHEMAS.orderStatusUpdate.properties.buyerId && !SCHEMAS.orderDelivery.properties.buyerId && derivedFeed('orderStatusUpdate', 'buyerFeed') && derivedFeed('orderDelivery', 'buyerDeliveries')],
@@ -584,8 +612,36 @@ function selfTestV6() {
       && ['buyerItemReviews', 'itemRating'].every((name) => !indexNames('itemReview').includes(name))
       && ['ownerAndTime', 'statusAndTime', 'categoryAndTime'].every((name) => !indexNames('storeItem').includes(name))
       && !indexNames('orderStatusUpdate').includes('sellerStatusUpdates')],
-    ['item ratings ride storeItemRating [storeId, itemId] (s7e, s10c)', JSON.stringify(index('itemReview', 'storeItemRating')?.properties) === '[{"storeId":"asc"},{"itemId":"asc"}]' && index('itemReview', 'storeItemRating')?.rangeCountable === true],
+    ['item ratings ride storeItemRating [storeId, itemId] (s7e, s10c)', indexProps('itemReview', 'storeItemRating') === '[{"storeId":"asc"},{"itemId":"asc"}]' && index('itemReview', 'storeItemRating')?.rangeCountable === true],
   ]);
+}
+
+/** The per-type rules (references, gates, immutables, constraints, moderation) the cases rely on. */
+function selfTestRules() {
+  // s2d/s2e + s13: only the store owner may list under a store, and never move it.
+  const ownedByStoreOwner = { where: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
+  const constraints = DECLARED_RULES[CONTRACT_FILE];
+  return selfTestModerated(CONTRACT_FILE, {
+    // s18: tags and imageUrls are typed string arrays (beta.4 v4). s20: propertyConstraints (beta.5). s24: moderator-deletable (v6).
+    storeItem: { ...ownedByStoreOwner, moderatorDeletable: true, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } }, constraints: constraints.storeItem },
+    shippingZone: { ...ownedByStoreOwner, constraints: constraints.shippingZone },
+    // s3d: sellerId is the store's real owner, not a buyer's claim. s21 (QA D-25):
+    // storeStatus is the store's real status, and only an active store takes orders.
+    storeOrder: { where: { storeId: { $ownerId: 'sellerId', status: 'storeStatus' } }, constraints: constraints.storeOrder },
+    // s4d/s4e: only the seller posts status updates (the buyer is derived, not copied).
+    orderStatusUpdate: { where: { orderId: { sellerId: '$ownerId' } } },
+    // s5c/s6: only the identity that placed the order may review it.
+    // s15/s16: reviews are moderator-deletable; so are stores and items (v6),
+    // whose references are all moderatedDocument references.
+    // s19: the seller is never the reviewer (and, on v6, never the buyer).
+    storeReview: { where: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
+    itemReview: { where: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
+    store: { moderatorDeletable: true },
+    // s22: only an item's owner keeps its kit, which never moves; only an
+    // order's seller delivers it (the buyer is derived through the order).
+    itemDeliverable: { where: { itemId: { $ownerId: '$ownerId' } }, immutable: ['itemId'] },
+    orderDelivery: { where: { orderId: { sellerId: '$ownerId' } } },
+  }, { moderation: { banlist: true, suspensions: true, warnings: true } });
 }
 
 await runBattery({
@@ -597,32 +653,7 @@ await runBattery({
   // Every create of a priced type (store, storeItem, storeReview, itemReview) carries the declared
   // agreement, unless a case opts out (`noAgreement`, s5e/s12a) or names its own (`agreement`, s12b).
   agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
-  selfTest: () => Math.max(selfTestV6(), (() => {
-    // s2d/s2e + s13: only the store owner may list under a store, and never move it.
-    const ownedByStoreOwner = { where: { storeId: { $ownerId: '$ownerId' } }, immutable: ['storeId'] };
-    const constraints = DECLARED_RULES[CONTRACT_FILE];
-    return selfTestModerated(CONTRACT_FILE, {
-      // s18: tags and imageUrls are typed string arrays (beta.4 v4). s20: propertyConstraints (beta.5).
-      storeItem: { ...ownedByStoreOwner, moderatorDeletable: true, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } }, constraints: constraints.storeItem },
-      shippingZone: { ...ownedByStoreOwner, constraints: constraints.shippingZone },
-      // s3d: sellerId is the store's real owner, not a buyer's claim. s21 (QA D-25):
-      // storeStatus is the store's real status, and only an active store takes orders.
-      storeOrder: { where: { storeId: { $ownerId: 'sellerId', status: 'storeStatus' } }, constraints: constraints.storeOrder },
-      // s4d/s4e: only the seller posts status updates (the buyer is derived, not copied).
-      orderStatusUpdate: { where: { orderId: { sellerId: '$ownerId' } } },
-      // s5c/s6: only the identity that placed the order may review it.
-      // s15/s16: reviews are moderator-deletable; so are stores and items (v6),
-      // whose references are all moderatedDocument references.
-      // s19: the seller is never the reviewer (and, on v6, never the buyer).
-      storeReview: { where: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
-      itemReview: { where: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
-      store: { moderatorDeletable: true },
-      // s22: only an item's owner keeps its kit, which never moves; only an
-      // order's seller delivers it (the buyer is derived through the order).
-      itemDeliverable: { where: { itemId: { $ownerId: '$ownerId' } }, immutable: ['itemId'] },
-      orderDelivery: { where: { orderId: { sellerId: '$ownerId' } } },
-    }, { moderation: { banlist: true, suspensions: true, warnings: true } });
-  })()),
+  selfTest: () => Math.max(selfTestV6(), selfTestRules()),
   setup: async ({ battery, args }) => {
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);

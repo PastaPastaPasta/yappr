@@ -140,10 +140,10 @@ const storefrontTopologyAtLeast = (topology: StorefrontTopology) =>
 export const storefrontArraysAreTyped = () => storefrontTopologyAtLeast('v4')
 /** True on v5 and later: an order must copy its store's `status` into `storeStatus`, and only an active store takes orders. */
 export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5')
-/** True on v6 and later: items can be digital, and sellers deliver them on chain. */
-export const storefrontSupportsDigital = () => storefrontTopologyAtLeast('v6')
 /** True on v6 and later: the mainnet re-cut's fees, indexes and write shapes (see above). */
 export const storefrontIsV6 = () => storefrontTopologyAtLeast('v6')
+/** True on v6 and later: items can be digital, and sellers deliver them on chain. */
+export const storefrontSupportsDigital = () => storefrontIsV6()
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
 export const storefrontReviewsCostYapp = () => storefrontIsV2() && !storefrontIsV6()
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)

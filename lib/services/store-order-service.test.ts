@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const query = vi.hoisted(() => vi.fn());
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }));
@@ -12,6 +12,7 @@ const order = (index: number) => ({
 });
 
 beforeEach(() => query.mockReset());
+afterEach(() => vi.unstubAllEnvs());
 
 describe('seller orders (QA D-23)', () => {
   it('pages newest first and hands back a cursor for the next page', async () => {
@@ -41,7 +42,6 @@ describe('orders copy the store status on storefront v5 (QA D-25)', () => {
   it('writes storeStatus active on v5, and nothing new before it', async () => {
     expect((await place('v5')).storeStatus).toBe('active');
     expect(await place('v4')).not.toHaveProperty('storeStatus');
-    vi.unstubAllEnvs();
   });
 });
 
@@ -63,7 +63,6 @@ describe('storefront v6 (the mainnet re-cut)', () => {
       orderBy: [['storeId', 'asc'], ['$createdAt', 'desc']],
       startAfter: 'order-3',
     });
-    vi.unstubAllEnvs();
   });
 
   it('a seller without a store has no orders (and makes no order query)', async () => {
@@ -71,7 +70,6 @@ describe('storefront v6 (the mainnet re-cut)', () => {
     vi.spyOn(storeService, 'getByOwner').mockResolvedValue(null);
     expect(await service.getSellerOrders(seller)).toEqual({ orders: [] });
     expect(query).not.toHaveBeenCalled();
-    vi.unstubAllEnvs();
   });
 
   it('refuses an order from your own store before signing', async () => {
@@ -79,5 +77,15 @@ describe('storefront v6 (the mainnet re-cut)', () => {
     await expect(storeOrderService.createOrder(seller, { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) }))
       .rejects.toThrow(/your own store/);
     expect(create).not.toHaveBeenCalled();
+  });
+
+  it('refuses an encrypted payload past the 5,120 B cap before signing on v6', async () => {
+    const { service } = await loadV6();
+    const create = vi.spyOn(service, 'create' as never).mockResolvedValue({} as never);
+    const place = (bytes: number) => service.createOrder('33333333333333333333333333333333', { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(bytes), nonce: new Uint8Array(24) });
+    await expect(place(5121)).rejects.toThrow(/too large to send/);
+    expect(create).not.toHaveBeenCalled();
+    await place(5120);
+    expect(create).toHaveBeenCalledTimes(1);
   });
 });

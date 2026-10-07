@@ -63,7 +63,7 @@ function CreateStorePage() {
   useEffect(() => {
     if (!sdkReady || !needsCategory) return
     let active = true
-    storeStatsService.topStoreCategories(50)
+    storeStatsService.topStoreCategories(20)
       .then((ranked) => { if (active) setSuggestedCategories(ranked.map((entry) => entry.id)) })
       .catch((err) => logger.warn('Failed to load store categories:', err))
     return () => { active = false }
@@ -154,8 +154,8 @@ function CreateStorePage() {
         defaultCurrency,
         policies: serializedPolicies || undefined,
         contactMethods: contactLinks.length > 0 ? contactLinks : undefined,
-        // Only v6 has the property (and requires it); earlier cuts refuse it.
-        ...(needsCategory ? { category: categorySlug } : {})
+        // Only v6 has the property (and requires it); earlier cuts never fill it.
+        category: categorySlug || undefined
       }
 
       if (isEditMode && storeId) {
@@ -387,7 +387,7 @@ function CreateStorePage() {
             <div className="pt-4">
               <Button
                 type="submit"
-                disabled={isSubmitting || !name.trim() || (needsCategory && !categorySlug)}
+                disabled={isSubmitting || !name.trim()}
                 className="w-full"
               >
                 {isSubmitting
