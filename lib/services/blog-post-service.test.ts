@@ -249,3 +249,35 @@ describe('blog v7 posts', () => {
     expect((await blogPostService.getLatestPosts({ limit: 3 })).nextCursor).toBeUndefined();
   });
 });
+
+describe('the published head of the post timeline (v7)', () => {
+  const post = (id: string, extra: Partial<BlogPost> = {}) => ({ id, blogId, ownerId, createdAt: new Date(1), title: id, content: [], slug: id, publishedAt: 1, ...extra } as BlogPost);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reads on past a page of drafts and tombstones instead of answering "nothing published"', async () => {
+    const pages = [
+      [post('draft', { publishedAt: undefined }), post('gone', { deleted: true })],
+      [post('a'), post('b')],
+    ];
+    const query = vi.spyOn(blogPostService, 'query').mockImplementation(async () => ({ documents: pages.shift() ?? [] }) as never);
+    const head = await blogPostService.getLatestPublishedPosts({ want: 2, pageSize: 2, maxPages: 5 });
+    expect(head.posts.map((item) => item.id)).toEqual(['a', 'b']);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(query.mock.calls[1][0]).toMatchObject({ startAfter: 'gone' });
+    // Both pages came back full, so the timeline may go on after `b`.
+    expect(head.nextCursor).toBe('b');
+  });
+
+  it('stops at the end of the timeline, and after maxPages', async () => {
+    const query = vi.spyOn(blogPostService, 'query').mockResolvedValue({ documents: [post('draft', { publishedAt: undefined })] } as never);
+    expect(await blogPostService.getLatestPublishedPosts({ want: 5, pageSize: 2 })).toEqual({ posts: [], nextCursor: undefined });
+    expect(query).toHaveBeenCalledOnce();
+    query.mockResolvedValue({ documents: [post('d1', { publishedAt: undefined }), post('d2', { publishedAt: undefined })] } as never);
+    const capped = await blogPostService.getLatestPublishedPosts({ want: 5, pageSize: 2, maxPages: 3, startAfter: 'z' });
+    expect(query).toHaveBeenCalledTimes(4);
+    expect(capped.nextCursor).toBe('d2');
+  });
+});

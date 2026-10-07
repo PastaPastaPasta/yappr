@@ -330,6 +330,25 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
   }
 
   /**
+   * At least `want` published posts from the timeline after `startAfter`,
+   * reading on past pages that drafts and tombstones leave short or empty, up
+   * to `maxPages` pages of `pageSize`. `nextCursor` continues after the last
+   * post READ, so nothing the reads skipped is shown twice or lost.
+   */
+  async getLatestPublishedPosts(options: { want: number; startAfter?: string; pageSize?: number; maxPages?: number }): Promise<LatestBlogPostsPage> {
+    const { want, pageSize = 20, maxPages = 3 } = options
+    const posts: BlogPost[] = []
+    let nextCursor = options.startAfter
+    for (let pages = 0; pages < maxPages; pages++) {
+      const page = await this.getLatestPosts({ limit: pageSize, startAfter: nextCursor })
+      posts.push(...page.posts)
+      nextCursor = page.nextCursor
+      if (posts.length >= want || !nextCursor) break
+    }
+    return { posts, nextCursor }
+  }
+
+  /**
    * Get recent blog posts across all blogs for discovery.
    * Fetches latest posts per blog and merges client-side.
    */

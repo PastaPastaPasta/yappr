@@ -112,11 +112,12 @@ export default function ExplorePage() {
         setIsLoadingBlogs(true)
         const { blogService, blogPostService } = await import('@/lib/services')
 
-        // v7 lists the latest posts across every blog in one timeline read,
-        // then names their blogs; earlier cuts read every blog's newest posts.
+        // v7 lists the latest posts across every blog off the post timeline
+        // (reading on past drafts and tombstones), then names their blogs;
+        // earlier cuts read every blog's newest posts.
         if (blogIsV7()) {
-          const { posts } = await blogPostService.getLatestPosts({ limit: 20 })
-          setRecentBlogPosts(await enrichBlogPostsWithBlogNames(posts.slice(0, 10)))
+          const { posts } = await blogPostService.getLatestPublishedPosts({ want: 10, maxPages: 5 })
+          setRecentBlogPosts((await enrichBlogPostsWithBlogNames(posts)).slice(0, 10))
           return
         }
 

@@ -33,16 +33,8 @@ type RankedPost = BlogPost & { recentComments?: number }
 type ListedPost = RankedPost & BlogPostWithAuthor
 
 /** The next published posts on the timeline after `cursor`, reading on past pages that show nothing. */
-async function latestPage(cursor?: string): Promise<{ posts: RankedPost[]; nextCursor?: string }> {
-  const posts: BlogPost[] = []
-  let nextCursor = cursor
-  for (let pages = 0; pages < MAX_PAGES_PER_LOAD; pages++) {
-    const page = await blogPostService.getLatestPosts({ limit: PAGE_SIZE, startAfter: nextCursor })
-    posts.push(...page.posts)
-    nextCursor = page.nextCursor
-    if (posts.length > 0 || !nextCursor) break
-  }
-  return { posts, nextCursor }
+function latestPage(cursor?: string): Promise<{ posts: RankedPost[]; nextCursor?: string }> {
+  return blogPostService.getLatestPublishedPosts({ want: 1, startAfter: cursor, pageSize: PAGE_SIZE, maxPages: MAX_PAGES_PER_LOAD })
 }
 
 /** The ranked posts in the proved order, with their counts; drafts, tombstones and missing posts dropped. */

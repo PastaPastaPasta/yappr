@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const services = vi.hoisted(() => ({ getMany: vi.fn(), loadIdentityBatch: vi.fn() }))
+vi.mock('@/lib/services/blog-service', () => ({ blogService: { getMany: services.getMany } }))
+vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: services.loadIdentityBatch }))
 import {
   BlogFieldError,
   PUBLISHED_AT_MAX_AHEAD_MS,
@@ -7,6 +11,7 @@ import {
   blogPostDate,
   commentsAreEnabled,
   createCommentReads,
+  enrichBlogPostsWithBlogNames,
   isBlogPostTombstone,
   isPublishedBlogPost,
   labelProblem,
@@ -252,5 +257,16 @@ describe('image URLs', () => {
   it('takes any URL before v7', () => {
     vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v6')
     expect(storedImageUrl('http://example.com/a.png', 'avatar')).toBe('http://example.com/a.png')
+  })
+})
+
+describe('posts from many blogs', () => {
+  it('names each post\'s blog and drops a post whose blog a moderator removed', async () => {
+    services.getMany.mockResolvedValue([{ id: 'live', name: 'Live blog' }])
+    services.loadIdentityBatch.mockResolvedValue({ usernames: new Map([['o', 'alice']]), profiles: [] })
+    const posts = [{ id: 'p1', ownerId: 'o', blogId: 'live' }, { id: 'p2', ownerId: 'o', blogId: 'removed' }]
+    const listed = await enrichBlogPostsWithBlogNames(posts)
+    expect(services.getMany).toHaveBeenCalledWith(['live', 'removed'])
+    expect(listed).toEqual([{ id: 'p1', ownerId: 'o', blogId: 'live', authorUsername: 'alice', authorDisplayName: undefined, blogName: 'Live blog' }])
   })
 })
