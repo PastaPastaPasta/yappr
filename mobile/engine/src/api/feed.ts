@@ -16,6 +16,7 @@ import { cursorInt, decodeCursor } from '../dto/cursor'
 import { listToDTOs, notSupported, requireViewer, viewerId, visibleDTOs } from '../dto/hydrate'
 import { nextPage, onePage, pageAfter, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
+import { NewPostsRetry } from './new-posts-retry'
 import type { Page, PostDTO, RankingWindow } from './dto'
 
 /**
@@ -60,6 +61,9 @@ const NEW_POSTS_LIMIT = 50
 const feedLanguage = () => (postsHaveLanguage() ? useSettingsStore.getState().feedLanguage : undefined)
 
 /** v2 tag pages read every postHashtag document for the tag (each post with everyone who tagged it); one scroll pages that list. */
+/** Per viewer, the start of an incomplete Following new-posts scan still being read again. */
+const newPostsRetry = new NewPostsRetry()
+
 const tagEntries = new TtlMap<string, { postId: string; taggers: Set<string> }[]>(60_000)
 
 /**
@@ -201,22 +205,40 @@ export const feed = {
    * `queryPostsByOwnersSince` (Following), from 2 s before `since`, at most
    * 50. Pass the ids already on screen from that overlap in `knownIds`;
    * without them, posts at or before `since` are left out.
+   *
+   * `complete` is false when the Following scan stopped early and may have
+   * missed posts older than its newest. Until a later check is complete, the
+   * engine keeps reading from where that scan started, even after `since`
+   * moves past it, and hands back the missed posts it finds there.
    */
-  async checkNew(query: { tab: FeedTab; since: Date; knownIds?: string[] }): Promise<{ count: number; posts: PostDTO[] }> {
-    const sinceMs = Math.max(0, query.since.getTime() - NEW_POSTS_OVERLAP_MS)
+  async checkNew(query: { tab: FeedTab; since: Date; knownIds?: string[] }): Promise<{ count: number; posts: PostDTO[]; complete: boolean }> {
+    const sinceTime = query.since.getTime()
+    const sinceMs = Math.max(0, sinceTime - NEW_POSTS_OVERLAP_MS)
     let raw: Record<string, unknown>[]
+    let complete = true
+    let retryKey: string | null = null
+    let fromMs = sinceMs
     if (query.tab === 'following') {
-      const ids = await followService.getFollowingIdsCached(requireViewer('The Following feed'))
-      // The app polls from the posts it holds (`since`), so a partial scan is simply re-read next time.
-      raw = ids.length > 0 ? (await queryPostsByOwnersSince(ids, sinceMs, NEW_POSTS_LIMIT)).posts : []
+      const viewer = requireViewer('The Following feed')
+      retryKey = viewer
+      fromMs = newPostsRetry.scanFrom(viewer, sinceMs)
+      const ids = await followService.getFollowingIdsCached(viewer)
+      if (ids.length > 0) ({ posts: raw, complete } = await queryPostsByOwnersSince(ids, fromMs, NEW_POSTS_LIMIT))
+      else raw = []
     } else {
       raw = await queryPostsSince(sinceMs, NEW_POSTS_LIMIT, feedLanguage() || 'en')
     }
     const known = query.knownIds ? new Set(query.knownIds) : null
-    const fresh = sortFeedByTimestamp(raw.map(transformRawPost)).filter(post =>
-      known ? !known.has(post.id) : getFeedItemTimestamp(post) > query.since.getTime())
+    const fresh = sortFeedByTimestamp(raw.map(transformRawPost)).filter(post => {
+      if (known?.has(post.id)) return false
+      const at = getFeedItemTimestamp(post)
+      if (at > sinceTime || (known && at > sinceMs)) return true
+      // Older than the overlap: only read again because an earlier scan was incomplete.
+      return retryKey !== null && newPostsRetry.owes(retryKey, post.id)
+    })
+    if (retryKey !== null) newPostsRetry.settle(retryKey, fromMs, complete, fresh.map(post => post.id))
     const posts = await listToDTOs(await enrichPostsWithRepostsAndQuotes(fresh))
-    return { count: posts.length, posts }
+    return { count: posts.length, posts, complete }
   },
 
   /**
