@@ -239,8 +239,9 @@ export function ReportPostModal() {
           </Dialog.Description>
           {privatePost && (
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-4" data-testid="report-private-note">
-              This {noun} is private. Your report hands the current moderators the key to read it, sealed so only they can
-              open it. That key also opens the author&apos;s other private posts from the same period.
+              This {noun} is private. Your report gives the current moderators the key to read it, sealed so only they can
+              open it. That key also opens the feed owner&apos;s other private posts from this key period and all earlier ones.
+              {noun === 'reply' && ' For a reply in a private thread, that is the thread owner\'s feed.'}
             </p>
           )}
           {feeDash && (
