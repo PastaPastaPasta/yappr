@@ -1,4 +1,5 @@
 import { BaseDocumentService } from './document-service';
+import { settlePendingPollrReplaces } from './pollr-pending-writes';
 import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrIsV5 } from '@/lib/constants';
 import {
   POLL_MAX_OPTIONS,
@@ -125,6 +126,9 @@ class PollrPollService extends BaseDocumentService<Poll> {
   async createPoll(ownerId: string, data: CreatePollData): Promise<Poll> {
     const { question, options } = this.normalize(data);
     const endsAt = data.endsAt === undefined ? undefined : Math.floor(data.endsAt);
+    // A landed but unconfirmed ballot replace would otherwise hold this create
+    // back until its reservation expires. A no-op when nothing is pending.
+    await settlePendingPollrReplaces(ownerId);
 
     if (pollrIsV5()) {
       return this.create(ownerId, {

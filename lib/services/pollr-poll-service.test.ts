@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // What createPoll writes per topology and how a poll document reads back, at
 // an in-memory boundary. No network.
-const mocks = vi.hoisted(() => ({ createDocument: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createDocument: vi.fn(), settle: vi.fn() }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { createDocument: mocks.createDocument } }));
+vi.mock('./identity-nonce', () => ({ settleSupersededReplaces: mocks.settle }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({}) }));
 
 const OWNER = '11111111111111111111111111111111';
@@ -24,6 +25,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.resetAllMocks();
   mocks.createDocument.mockResolvedValue({ success: true, document: { $id: 'doc', $ownerId: OWNER } });
+  mocks.settle.mockResolvedValue(0);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -48,6 +50,32 @@ describe('createPoll', () => {
       service.createPoll(OWNER, { question: 'Best?', options: ['a', 'b'], endsAt: Date.now() + DAY, ...overrides })
     ).rejects.toThrow(message);
     expect(mocks.createDocument).not.toHaveBeenCalled();
+  });
+
+  it('settles a landed, timed-out ballot replace before creating, with no vote in between', async () => {
+    const service = await loadService('v5');
+    const order: string[] = [];
+    // The voter's last ballot replace timed out but landed: its reservation is
+    // still pending, and only the proof-based settle releases it.
+    mocks.settle.mockImplementation(async (owner: string, contract: string) => {
+      order.push(`settle ${owner === OWNER} ${typeof contract}`);
+      return 1;
+    });
+    mocks.createDocument.mockImplementation(async () => {
+      order.push('create');
+      return { success: true, document: { $id: 'doc', $ownerId: OWNER } };
+    });
+
+    await service.createPoll(OWNER, { question: 'Best?', options: ['a', 'b'], endsAt: Date.now() + DAY });
+    expect(order).toEqual(['settle true string', 'create']);
+  });
+
+  it('still creates the poll when settling pending replaces fails', async () => {
+    const service = await loadService('v5');
+    mocks.settle.mockRejectedValue(new Error('down'));
+
+    await service.createPoll(OWNER, { question: 'Best?', options: ['a', 'b'], endsAt: Date.now() + DAY });
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
   });
 
   it('v3 keeps the enumerated option fields and omits unset optionals', async () => {

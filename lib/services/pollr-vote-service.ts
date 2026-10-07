@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
-import { settleSupersededReplaces } from './identity-nonce';
+import { settlePendingPollrReplaces } from './pollr-pending-writes';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -361,17 +361,9 @@ class PollrVoteService {
     if (typeof poll.endsAt !== 'number') return refusedSet('This poll has no close time');
     if (pollIsClosed(poll)) return refusedSet('This poll has closed', true);
 
-    // A replace whose confirmation timed out leaves its nonce reservation
-    // pending, which holds back every later write on this contract (this
-    // poll's next edit, a ballot on another poll) until it expires. Release the
-    // ones Platform shows superseded — the ballot at the revision it wrote AND
-    // the nonce after it consumed — before writing again. A failure here only
-    // leaves the reservation as it was.
-    try {
-      await settleSupersededReplaces(ownerId, POLLR_CONTRACT_ID);
-    } catch (error) {
-      logger.warn('PollrVoteService: could not settle pending ballot replaces', { error: extractErrorMessage(error) });
-    }
+    // Release the reservations of earlier replaces that landed, or this write
+    // is held back behind them (see settlePendingPollrReplaces).
+    await settlePendingPollrReplaces(ownerId);
 
     let ballots: Ballot[];
     try {
