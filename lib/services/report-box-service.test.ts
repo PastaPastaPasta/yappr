@@ -8,10 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPublicKey } from '@/lib/crypto/keys'
 import { bytesToBase64 } from '@/lib/bytes'
 import { privateFeedCryptoService } from './private-feed-crypto-service'
+import { sealReportBox } from '@/lib/report-box'
 import type { Post } from '@/lib/types'
 
-const mocks = vi.hoisted(() => ({ getTeam: vi.fn(), getIdentity: vi.fn(), contentKeyFor: vi.fn(), getEncryptionSource: vi.fn() }))
-vi.mock('./reply-service', () => ({ getEncryptionSource: mocks.getEncryptionSource }))
+const mocks = vi.hoisted(() => ({ getTeam: vi.fn(), getIdentity: vi.fn(), contentKeyFor: vi.fn(), getPostById: vi.fn() }))
+vi.mock('./post-service', () => ({ postService: { getPostById: mocks.getPostById } }))
 vi.mock('./moderation-service', () => ({
   moderationService: { getTeam: mocks.getTeam },
   moderatorIdsOf: (team: { appointed: string[]; ownerModerates: boolean; ownerId: string }) =>
@@ -45,6 +46,7 @@ const privatePost: Post = {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks()
   vi.resetModules()
   vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v13')
   mocks.getTeam.mockResolvedValue({ ownerId: id(99), appointed: [LEADER, MEMBER, KEYLESS], elected: true, ownerModerates: false })
@@ -88,15 +90,52 @@ describe('the report box service', () => {
     await expect(v12.buildReportBox(REPORTER, privatePost)).resolves.toEqual({ kind: 'not-needed' })
   })
 
-  it('seals a reply with the feed that encrypted it: the private thread\'s owner, or the replier\'s own', async () => {
-    const { buildReportBox } = await import('./report-box-service')
-    const reply: Post = { ...privatePost, id: id(10), targetKind: 'reply', author: { ...privatePost.author, id: id(11) }, rootPostId: id(9), rootOwnerId: AUTHOR }
-    mocks.getEncryptionSource.mockResolvedValueOnce({ ownerId: AUTHOR, keyGeneration: 3, inherited: true })
-    await buildReportBox(REPORTER, reply)
-    expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(AUTHOR, 3, REPORTER)
-    // A private reply under a public post is encrypted to its author's own feed.
-    mocks.getEncryptionSource.mockResolvedValueOnce(null)
-    await buildReportBox(REPORTER, reply)
-    expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(id(11), 3, REPORTER)
+  describe('a reply', () => {
+    const REPLIER = id(11)
+    const reply = (owner: string): Post => {
+      const sealed = privateFeedCryptoService.encryptPostContent(chain[3], 'the private reply', bs58.decode(owner), 3)
+      return { ...privatePost, id: id(10), targetKind: 'reply', author: { ...privatePost.author, id: REPLIER }, rootPostId: id(9), rootOwnerId: AUTHOR,
+        encryptedContent: sealed.ciphertext, nonce: sealed.nonce }
+    }
+
+    it('in a private thread seals the thread owner\'s key', async () => {
+      const { buildReportBox } = await import('./report-box-service')
+      mocks.getPostById.mockResolvedValue(privatePost)
+      await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toMatchObject({ kind: 'sealed' })
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(AUTHOR, 3, REPORTER)
+    })
+
+    it('under a public post seals the replier\'s own key', async () => {
+      const { buildReportBox } = await import('./report-box-service')
+      mocks.getPostById.mockResolvedValue({ ...privatePost, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined })
+      await expect(buildReportBox(REPORTER, reply(REPLIER))).resolves.toMatchObject({ kind: 'sealed' })
+      expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(REPLIER, 3, REPORTER)
+    })
+
+    it.each([
+      ['cannot be read', null],
+      ['is a tombstone', { ...privatePost, deleted: true, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined }],
+    ])('seals nothing when its root %s, even with keys to both feeds', async (_case, root) => {
+      const { buildReportBox } = await import('./report-box-service')
+      mocks.getPostById.mockResolvedValue(root)
+      await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toEqual({ kind: 'no-key' })
+      expect(mocks.contentKeyFor).not.toHaveBeenCalled()
+    })
+
+    it('seals nothing when the chosen feed\'s key does not open it', async () => {
+      const { buildReportBox } = await import('./report-box-service')
+      // The root reads back public, but the reply was encrypted under the thread owner's feed.
+      mocks.getPostById.mockResolvedValue({ ...privatePost, encryptedContent: undefined, nonce: undefined, keyGeneration: undefined })
+      await expect(buildReportBox(REPORTER, reply(AUTHOR))).resolves.toEqual({ kind: 'no-key' })
+    })
+  })
+
+  it('refuses a box naming another key generation before deriving any key', async () => {
+    const { openReportedContent } = await import('./report-box-service')
+    const forged = sealReportBox({ feedOwnerId: AUTHOR, keyGeneration: 0xffffffff, cek: chain[3] }, [getPublicKey(MODERATOR_KEYS[LEADER])], privatePost.id)
+    const derive = vi.spyOn(privateFeedCryptoService, 'deriveCEK')
+    await expect(openReportedContent(forged, privatePost, MODERATOR_KEYS[LEADER])).resolves.toMatchObject({ kind: 'failed', reason: expect.stringMatching(/another generation/) })
+    expect(derive).not.toHaveBeenCalled()
+    derive.mockRestore()
   })
 })

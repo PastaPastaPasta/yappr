@@ -121,7 +121,7 @@ export function ReportPostModal() {
       if (outcome.kind === 'no-recipients') {
         toast(`No moderator can read private posts yet. Your report is filed without the ${noun}'s content; email ${MODERATION_EMAIL} if they need to see it.`, { duration: 10000 })
       } else if (outcome.kind === 'no-key') {
-        toast(`This device holds no key to the ${noun}, so the moderators will not be able to read it.`, { duration: 8000 })
+        toast(`This device could not confirm a key that opens the ${noun}, so the moderators will not be able to read it.`, { duration: 8000 })
       }
       return undefined
     } catch (error) {

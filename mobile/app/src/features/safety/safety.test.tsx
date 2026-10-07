@@ -801,6 +801,21 @@ describe('ReportScreen', () => {
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
   });
 
+  it('discloses the moderation fee before a report is sent, only where the contract charges one', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, reportFeeCredits: 50_000_000 } } });
+    const charged = withProviders(<ReportScreen />);
+    await settle();
+    expect(screen.getByTestId('report-fee')).toHaveTextContent(/about 0\.0005 DASH/);
+    charged.unmount();
+
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, reportFeeCredits: null } } });
+    withProviders(<ReportScreen />);
+    await settle();
+    expect(screen.getByTestId('report-sheet')).toBeTruthy();
+    expect(screen.queryByTestId('report-fee')).toBeNull();
+  });
+
   it("shows the form at once while it reads the viewer's report, and the report once it is found", async () => {
     let found: (report: OwnReportDTO | null) => void = () => undefined;
     fakeEngine.method('safety.ownReport').mockReturnValue(new Promise((resolve) => (found = resolve)));

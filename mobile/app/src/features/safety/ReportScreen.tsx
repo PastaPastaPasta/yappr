@@ -22,6 +22,7 @@ import { Button } from '~/ui/Button';
 import { confirmAlert } from '~/ui/Dialog';
 import { handleOf } from '~/ui/handle';
 import { RadioGroup } from '~/ui/RadioGroup';
+import { formatDash } from '~/features/settings/format';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { toast } from '~/ui/toast';
@@ -214,8 +215,11 @@ function ReasonFields({
 
 function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; postUrl: string }) {
   const target = useMemo(() => targetOf(post), [post]);
+  const capabilities = useCapabilities();
   // v13 accepts reason 9 (sexual content involving minors); earlier contracts stop at 8.
-  const maxReason = useCapabilities()?.reportReasonMax ?? LEGACY_REASON_MAX;
+  const maxReason = capabilities?.reportReasonMax ?? LEGACY_REASON_MAX;
+  // v13 reports pay the moderators an action fee; earlier contracts charge none.
+  const feeCredits = capabilities?.reportFeeCredits ?? null;
   // Read beside the form, never in front of it: a failed read still lets the report go (a second one is
   // refused as DUPLICATE, which then shows the report).
   const own = useEngineQuery(queryKeys.post.ownReport(post.id), (api) => api.safety.ownReport(target), {
@@ -329,6 +333,11 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
   return (
     <SheetBody testID="report-sheet">
       <SheetHeading icon={FlagIcon} body={copy.report.disclosure} />
+      {feeCredits !== null ? (
+        <Text variant="subhead" tone="secondary" testID="report-fee">
+          {copy.report.fee(formatDash(BigInt(feeCredits)))}
+        </Text>
+      ) : null}
       <ReasonFields reason={reason} onReason={setReason} note={note} onNote={setNote} busy={busy} maxReason={maxReason} />
       <Button
         label={busy ? copy.report.busy : copy.report.submit(noun)}
