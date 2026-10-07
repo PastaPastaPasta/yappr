@@ -52,6 +52,15 @@ describe('DPNS composite cache seeds', () => {
     expect(query).toHaveBeenCalledTimes(2);
   });
 
+  // The auth session adapter relies on this to tell a failed lookup from "no name".
+  it('caches a proven absence but not a failed reverse lookup', async () => {
+    query.mockRejectedValueOnce(new Error('offline'));
+    expect(await dpnsService.resolveUsername('111111111')).toBeNull();
+    expect(dpnsService.hasCachedUsername('111111111')).toBe(false);
+    expect(await dpnsService.resolveUsername('111111111')).toBeNull();
+    expect(dpnsService.hasCachedUsername('111111111')).toBe(true);
+  });
+
   it('resolves all aliases for a connection page with one in-query', async () => {
     query.mockResolvedValue([
       { $ownerId: '111111111', records: { identity: '111111111' }, label: 'zeta' },
