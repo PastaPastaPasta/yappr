@@ -11,8 +11,10 @@ import { Spinner } from '@/components/ui/spinner'
 import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
+import { pollrIsV4, pollrIsV5 } from '@/lib/constants'
+import { choiceDelta, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
-import { tallyIsFinal } from '@/lib/services/pollr-vote-service'
+import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
 interface PollCardProps {
   pollId: string
@@ -62,11 +64,15 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // Bumped to re-run the load effect without a page refresh.
   const [reloadToken, setReloadToken] = useState(0)
   const [submitting, setSubmitting] = useState(false)
-  // Multi-choice voters can come back and add more selections; this reopens the
-  // ballot over the already-recorded ones.
-  const [addingChoices, setAddingChoices] = useState(false)
+  // Reopens the ballot after voting: on v5 to change or withdraw the vote, on
+  // v3 (immutable ballots) for a multi-choice voter to add more selections.
+  const [editing, setEditing] = useState(false)
 
   const userId = user?.identityId ?? null
+  // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
+  const editable = pollrIsV5()
+  // v4 (indexOnly ballots) is shown but not voted on.
+  const votingSupported = !pollrIsV4()
 
   useEffect(() => {
     let cancelled = false
@@ -131,24 +137,36 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // Reset any pending selection when switching polls or signing in/out.
   useEffect(() => {
     setSelected([])
-    setAddingChoices(false)
+    setEditing(false)
   }, [pollId, userId])
 
-  const isClosed = Boolean(poll?.endsAt && poll.endsAt < Date.now())
+  const isClosed = poll ? pollIsClosed(poll) : false
   const hasVoted = myVotes.length > 0
-  // Stay in vote mode while choices are still selected: a multi-choice ballot
-  // that failed partway leaves its unrecorded choices selected for a retry.
+  // v3 stays in vote mode while choices are still selected: a multi-choice
+  // ballot that failed partway leaves its unrecorded choices selected for a
+  // retry. A v5 retry is a re-pick from the voter's current ballot instead.
   const showResults =
-    !user || isClosed || votesUnavailable || (hasVoted && selected.length === 0 && !addingChoices)
-  // A multi-choice voter who hasn't picked everything can still add selections.
-  const canAddChoices = Boolean(
+    !user ||
+    !votingSupported ||
+    isClosed ||
+    votesUnavailable ||
+    (hasVoted && !editing && (editable || selected.length === 0))
+  // v5: any voter may change their vote while the poll is open. v3: a
+  // multi-choice voter who hasn't picked everything can still add selections.
+  const canEdit = Boolean(
     user &&
+      votingSupported &&
       !isClosed &&
       !votesUnavailable &&
-      poll?.multiChoice &&
       hasVoted &&
-      myVotes.length < (poll?.options.length ?? 0)
+      (editable || (poll?.multiChoice && myVotes.length < (poll?.options.length ?? 0)))
   )
+  const startEditing = useCallback(() => {
+    // v5 edits the whole selection, so it starts from what is recorded; v3 only
+    // adds to it, so the recorded choices stay locked and nothing is selected.
+    setSelected(editable ? myVotes : [])
+    setEditing(true)
+  }, [editable, myVotes])
 
   const toggleChoice = useCallback((index: number, multiChoice: boolean) => {
     setSelected((current) => {
@@ -159,8 +177,47 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     })
   }, [])
 
-  const handleVote = useCallback(async () => {
-    if (!poll || selected.length === 0) return
+  /** v5: make the voter's ballots select exactly `wanted` (empty = withdraw). */
+  const submitSelection = useCallback(async (currentPoll: Poll, wanted: number[], voterId: string) => {
+    const { pollrVoteService } = await import('@/lib/services')
+    const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
+
+    if (result.choices === null) {
+      // The ballot state is unknown: close the ballot as when own votes fail to load.
+      setVotesUnavailable(true)
+    } else {
+      // Adjust the counts by what changed against the selection the tally was
+      // read with — down as well as up, since a vote can move or be withdrawn.
+      const { added, removed } = choiceDelta(myVotes, result.choices)
+      setMyVotes(result.choices)
+      if (tally && (added.length > 0 || removed.length > 0)) {
+        setTally(pollrVoteService.applyOptimisticVotes(currentPoll.id, tally, added, removed))
+      }
+    }
+
+    if (result.closed) {
+      toast.error('This poll has closed')
+    } else if (result.stale) {
+      toast('Your vote changed elsewhere — showing the latest.', { icon: 'ℹ️' })
+    } else if (!result.success) {
+      toast.error(categorizeError(result.error))
+      return
+    } else if (wanted.length === 0) {
+      toast.success('Vote withdrawn')
+    } else {
+      toast.success(myVotes.length > 0 ? 'Vote updated' : 'Vote counted')
+    }
+
+    setSelected([])
+    setEditing(false)
+    // Closed or changed elsewhere: what is on screen is out of date, so re-read
+    // the poll's tally and the voter's ballots together.
+    if (result.closed || result.stale) setReloadToken((token) => token + 1)
+  }, [myVotes, tally])
+
+  const handleVote = useCallback(async (wantedOverride?: number[]) => {
+    const wanted = wantedOverride ?? selected
+    if (!poll || (!editable && wanted.length === 0)) return
     const authedUser = user
     if (!authedUser) {
       openLoginPrompt()
@@ -169,8 +226,13 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
     setSubmitting(true)
     try {
+      if (editable) {
+        await submitSelection(poll, wanted, authedUser.identityId)
+        return
+      }
+
       const { pollrVoteService } = await import('@/lib/services')
-      const result = await pollrVoteService.castVote(poll, selected, authedUser.identityId)
+      const result = await pollrVoteService.castVote(poll, wanted, authedUser.identityId)
 
       // Duplicates mean the ballot was already on Platform — record them rather
       // than surfacing an error.
@@ -192,7 +254,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       const settled = !poll.multiChoice && (recordedList.length > 0 || result.unresolvedDuplicate)
       setSelected((current) => (settled ? [] : current.filter((choice) => !recorded.has(choice))))
       if (result.failed.length === 0) {
-        setAddingChoices(false)
+        setEditing(false)
       }
 
       // Fold the new votes in rather than re-reading: the count trees can lag a
@@ -226,7 +288,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     } finally {
       setSubmitting(false)
     }
-  }, [poll, selected, tally, user, openLoginPrompt])
+  }, [poll, selected, tally, user, editable, submitSelection, openLoginPrompt])
 
   if (loading) {
     return (
@@ -251,6 +313,13 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       </div>
     )
   }
+
+  // v5 submits the whole selection, so it needs a change (an emptied
+  // multi-choice ballot is a withdrawal); v3 submits additions, so it needs one.
+  const submitDisabled = submitting || (editable ? sameChoices(selected, myVotes) : selected.length === 0)
+  const submitLabel = editable && hasVoted ? 'Update vote' : 'Vote'
+  // Shown only once the close has passed AND the counts can no longer move.
+  const finalResults = tally !== null && tallyIsFinal(poll, tally)
 
   // No tally means the counts are unknown, not zero — see PollTallyUnavailableError.
   const tallyUnavailable = tally === null
@@ -309,12 +378,12 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             )
           })}
 
-          {canAddChoices && (
+          {canEdit && (
             <button
-              onClick={() => setAddingChoices(true)}
+              onClick={startEditing}
               className="text-xs font-medium text-yappr-500 hover:underline"
             >
-              Add choices
+              {editable ? 'Change vote' : 'Add choices'}
             </button>
           )}
 
@@ -337,15 +406,17 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       ) : (
         <div className="mt-3 space-y-2">
           {poll.options.map((option, index) => {
-            // Votes are immutable: a choice already on Platform can't be undone.
+            // v3 votes are immutable: a choice already on Platform can't be
+            // undone. v5 ones can, so every option stays live.
             const isRecorded = myVotes.includes(index)
-            const isChecked = isRecorded || selected.includes(index)
+            const isLocked = !editable && isRecorded
+            const isChecked = isLocked || selected.includes(index)
             return (
               <label
                 key={index}
                 className={cn(
                   'flex items-center gap-2.5 rounded-lg border px-3 py-2 transition-colors',
-                  isRecorded ? 'cursor-default' : 'cursor-pointer',
+                  isLocked ? 'cursor-default' : 'cursor-pointer',
                   isChecked
                     ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-950/40'
                     : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
@@ -356,12 +427,12 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
                   name={`poll-${poll.id}`}
                   checked={isChecked}
                   onChange={() => toggleChoice(index, poll.multiChoice)}
-                  disabled={submitting || isRecorded}
+                  disabled={submitting || isLocked}
                   className="accent-yappr-500"
                 />
                 <span className="text-sm text-gray-900 dark:text-gray-100 break-words">
                   {option}
-                  {isRecorded && <span className="ml-1.5 text-xs text-yappr-500">✓ recorded</span>}
+                  {isRecorded && <span className="ml-1.5 text-xs text-yappr-500">{editable ? '✓ your vote' : '✓ recorded'}</span>}
                 </span>
               </label>
             )
@@ -369,21 +440,33 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
           <div className="flex items-center gap-2">
             <Button
-              onClick={handleVote}
-              disabled={selected.length === 0 || submitting}
+              onClick={() => handleVote()}
+              disabled={submitDisabled}
               className="flex-1 h-9 text-sm font-semibold bg-yappr-500 hover:bg-yappr-600 disabled:bg-gray-300 dark:disabled:bg-gray-700"
             >
-              {submitting ? <Spinner size="sm" className="h-4 w-4 border-white" /> : 'Vote'}
+              {submitting ? <Spinner size="sm" className="h-4 w-4 border-white" /> : submitLabel}
             </Button>
-            {/* Only for the "add choices" detour. NOT when choices are still
-                selected after a partial failure — cancelling there would
-                silently discard the retry the user still needs. */}
-            {addingChoices && (
+            {/* A single-choice v5 voter withdraws by dropping the one choice;
+                a multi-choice one just unticks everything. */}
+            {editable && editing && hasVoted && !poll.multiChoice && (
+              <Button
+                variant="ghost"
+                onClick={() => handleVote([])}
+                disabled={submitting}
+                className="h-9 text-sm"
+              >
+                Withdraw
+              </Button>
+            )}
+            {/* Only for the "change vote" / "add choices" detour. NOT when v3
+                choices are still selected after a partial failure — cancelling
+                there would silently discard the retry the user still needs. */}
+            {editing && (
               <Button
                 variant="ghost"
                 onClick={() => {
                   setSelected([])
-                  setAddingChoices(false)
+                  setEditing(false)
                 }}
                 disabled={submitting}
                 className="h-9 text-sm"
@@ -401,10 +484,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
           {tallyUnavailable ? 'Vote count unavailable' : `${formatNumber(total)} vote${total === 1 ? '' : 's'}`}
           {poll.multiChoice && ' · multiple choice'}
           {/* Nor when the count wasn't bounded by the close time. */}
-          {isClosed && tally && tallyIsFinal(tally) && ' · Final results'}
-          {isClosed && !(tally && tallyIsFinal(tally)) && ' · Closed'}
+          {finalResults && ' · Final results'}
+          {isClosed && !finalResults && ' · Closed'}
+          {!isClosed && poll.endsAt !== undefined && ` · ${closesInLabel(poll.endsAt)}`}
         </span>
-        {!user && !isClosed && (
+        {!user && !isClosed && votingSupported && (
           <button
             onClick={() => openLoginPrompt()}
             className="font-medium text-yappr-500 hover:underline"
@@ -417,6 +501,15 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       <PollFooter pollId={poll.id} ownerId={foreignPollOwner} />
     </div>
   )
+}
+
+/** "Closes in 3 days" / "Closes in 5 hours" / "Closes in 12 minutes". */
+function closesInLabel(endsAt: number, now: number = Date.now()): string {
+  const minutes = Math.max(1, Math.ceil((endsAt - now) / 60_000))
+  if (minutes < 60) return `Closes in ${minutes} minute${minutes === 1 ? '' : 's'}`
+  const hours = Math.ceil(minutes / 60)
+  if (hours < 48) return `Closes in ${hours} hour${hours === 1 ? '' : 's'}`
+  return `Closes in ${Math.ceil(hours / 24)} days`
 }
 
 function PollFooter({ pollId, ownerId }: { pollId: string; ownerId?: string | null }) {

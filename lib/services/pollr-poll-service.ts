@@ -1,19 +1,20 @@
 import { BaseDocumentService } from './document-service';
+import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrIsV5 } from '@/lib/constants';
 import {
-  POLLR_CONTRACT_ID,
-  POLLR_DOCUMENT_TYPES,
   POLL_MAX_OPTIONS,
-  POLL_MIN_OPTIONS,
-  POLL_OPTION_MAX_LENGTH,
-  POLL_QUESTION_MAX_LENGTH,
-} from '@/lib/constants';
+  pollEndsAtError,
+  pollLimits,
+  pollOptionsError,
+  pollQuestionError,
+} from '@/lib/pollr-rules';
 
 /**
  * A poll on the shared Pollr contract.
  *
- * The contract models choices as enumerated `option0`..`option9` string fields
- * (option0/option1 required), which this service flattens into `options`.
- * Poll documents are immutable and contain no byte-array fields.
+ * v5 stores the choices as an `options` string array; v3/v4 as enumerated
+ * `option0`..`option9` fields (option0/option1 required). This service reads
+ * either into `options`. Poll documents are immutable and contain no
+ * byte-array fields.
  */
 export interface Poll {
   id: string;
@@ -23,7 +24,10 @@ export interface Poll {
   options: string[];
   /** True when voters may select more than one choice. */
   multiChoice: boolean;
-  /** Advisory close time in ms since epoch. Not enforced on-chain. */
+  /**
+   * Close time in ms since epoch. Required on v5, where consensus refuses a
+   * ballot written after it; advisory (and optional) on v3/v4.
+   */
   endsAt?: number;
 }
 
@@ -31,20 +35,39 @@ export interface CreatePollData {
   question: string;
   options: string[];
   multiChoice?: boolean;
-  /** Advisory close time in ms since epoch. */
+  /** Close time in ms since epoch: required on v5, within 31 days. */
   endsAt?: number;
 }
 
-/** Field name for the nth choice, matching the contract's enumerated properties. */
+/** Field name for the nth choice on v3/v4, matching the contract's enumerated properties. */
 function optionField(index: number): string {
   return `option${index}`;
 }
 
 /** Numeric contract field, or undefined when absent or unusable. */
 function toFiniteNumber(value: unknown): number | undefined {
-  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'bigint') return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * A poll's choices from its document: v5's `options` array when present, else
+ * the v3/v4 enumerated fields. Choices are contiguous by construction, so the
+ * enumerated read stops at the first gap and a malformed document can never
+ * produce holes.
+ */
+export function readPollOptions(data: Record<string, unknown>): string[] {
+  if (Array.isArray(data.options)) {
+    return data.options.filter((option): option is string => typeof option === 'string').slice(0, POLL_MAX_OPTIONS);
+  }
+  const options: string[] = [];
+  for (let i = 0; i < POLL_MAX_OPTIONS; i++) {
+    const value = data[optionField(i)];
+    if (typeof value !== 'string' || value.length === 0) break;
+    options.push(value);
+  }
+  return options;
 }
 
 class PollrPollService extends BaseDocumentService<Poll> {
@@ -53,25 +76,17 @@ class PollrPollService extends BaseDocumentService<Poll> {
   }
 
   protected transformDocument(doc: Record<string, unknown>): Poll {
-    const data = (doc.data || doc) as Record<string, unknown>;
-
-    const options: string[] = [];
-    for (let i = 0; i < POLL_MAX_OPTIONS; i++) {
-      const value = data[optionField(i)] ?? doc[optionField(i)];
-      // Choices are contiguous by construction; stop at the first gap so a
-      // malformed document can never produce holes in the options array.
-      if (typeof value !== 'string' || value.length === 0) break;
-      options.push(value);
-    }
+    // Fields may arrive nested under `data` or flat on the document.
+    const data = { ...doc, ...((doc.data as Record<string, unknown> | undefined) ?? {}) };
 
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date(Number((doc.$createdAt || doc.createdAt) ?? Date.now())),
-      question: ((data.question ?? doc.question) || '') as string,
-      options,
-      multiChoice: Boolean(data.multiChoice ?? doc.multiChoice ?? false),
-      endsAt: toFiniteNumber(data.endsAt ?? doc.endsAt),
+      question: (data.question || '') as string,
+      options: readPollOptions(data),
+      multiChoice: Boolean(data.multiChoice ?? false),
+      endsAt: toFiniteNumber(data.endsAt),
     };
   }
 
@@ -79,38 +94,39 @@ class PollrPollService extends BaseDocumentService<Poll> {
    * Validate and normalize poll input, throwing on anything the contract would reject.
    */
   private normalize(data: CreatePollData): { question: string; options: string[] } {
+    const limits = pollLimits(POLLR_TOPOLOGY);
     const question = data.question.trim();
-    if (!question) {
-      throw new Error('Poll question is required');
-    }
-    if (question.length > POLL_QUESTION_MAX_LENGTH) {
-      throw new Error(`Poll question must be ${POLL_QUESTION_MAX_LENGTH} characters or fewer`);
-    }
-
     const options = data.options.map((option) => option.trim()).filter((option) => option.length > 0);
-    if (options.length < POLL_MIN_OPTIONS || options.length > POLL_MAX_OPTIONS) {
-      throw new Error(`Polls need between ${POLL_MIN_OPTIONS} and ${POLL_MAX_OPTIONS} options`);
-    }
-    if (options.some((option) => option.length > POLL_OPTION_MAX_LENGTH)) {
-      throw new Error(`Each option must be ${POLL_OPTION_MAX_LENGTH} characters or fewer`);
-    }
-
+    const problem =
+      pollQuestionError(question, limits) ?? pollOptionsError(options, limits) ?? pollEndsAtError(data.endsAt, limits);
+    if (problem) throw new Error(problem);
     return { question, options };
   }
 
   /**
    * Create a poll on the Pollr contract.
    *
-   * Poll documents carry no token cost — only the usual credit fee.
-   * Optional properties are omitted entirely (never sent as null) so the
+   * Poll documents carry no token cost — only the usual credit fee. On v3/v4
+   * optional properties are omitted entirely (never sent as null) so the
    * contract's `additionalProperties: false` schema stays satisfied.
    *
-   * On v4 the poll is permanent, because ballots reference it; every ballot's
-   * `pollOwnerId` is bound by consensus to the poll's `$ownerId`, which the
-   * platform assigns, so the poll carries no attested creator field of its own.
+   * v5 writes `options` with its `optionCount` (rule-bound to it), and both
+   * `multiChoice` and `endsAt` always: every ballot copies all three, bound by
+   * consensus to the poll, so the poll has to carry them explicitly.
    */
   async createPoll(ownerId: string, data: CreatePollData): Promise<Poll> {
     const { question, options } = this.normalize(data);
+    const endsAt = data.endsAt === undefined ? undefined : Math.floor(data.endsAt);
+
+    if (pollrIsV5()) {
+      return this.create(ownerId, {
+        question,
+        options,
+        optionCount: options.length,
+        multiChoice: Boolean(data.multiChoice),
+        endsAt,
+      });
+    }
 
     const documentData: Record<string, unknown> = { question };
     options.forEach((option, index) => {
@@ -119,8 +135,8 @@ class PollrPollService extends BaseDocumentService<Poll> {
     if (data.multiChoice) {
       documentData.multiChoice = true;
     }
-    if (typeof data.endsAt === 'number' && Number.isFinite(data.endsAt) && data.endsAt > 0) {
-      documentData.endsAt = Math.floor(data.endsAt);
+    if (endsAt !== undefined) {
+      documentData.endsAt = endsAt;
     }
 
     return this.create(ownerId, documentData);

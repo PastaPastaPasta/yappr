@@ -4,11 +4,22 @@ import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import {
   POLLR_CONTRACT_ID,
-  POLL_MAX_OPTIONS,
+  POLLR_DOCUMENT_TYPES,
   pollrIsV4,
+  pollrIsV5,
   pollrVoteDocType,
 } from '@/lib/constants';
-import { extractErrorMessage } from '@/lib/error-utils';
+import { extractErrorMessage, hasConsensusCode, isDocumentPropertyRuleError } from '@/lib/error-utils';
+import {
+  POLL_MAX_OPTIONS,
+  applyChoiceDelta,
+  normalizeChoices,
+  planBallotWrites,
+  recordedChoices,
+  sameChoices,
+  type Ballot,
+  type BallotWrite,
+} from '@/lib/pollr-rules';
 import {
   identifierStringToDocumentBytes,
   normalizeSDKResponse,
@@ -21,7 +32,7 @@ import { documentCount, paginateFetchAll } from './pagination-utils';
 // another poll's mode. Erased at compile time, so no runtime import cycle.
 import type { Poll } from './pollr-poll-service';
 
-/** Result of casting a (possibly multi-choice) ballot. */
+/** Result of casting a (possibly multi-choice) v3 ballot. */
 export interface CastVoteResult {
   /** True when every requested choice is recorded on Platform. */
   success: boolean;
@@ -40,10 +51,31 @@ export interface CastVoteResult {
   error?: string;
 }
 
+/** Result of setting a v5 voter's selection. */
+export interface SetVoteResult {
+  /** True when the voter's ballots now select exactly the wanted choices. */
+  success: boolean;
+  /**
+   * The choices the voter's ballots select after this call, as best known: the
+   * plan's outcome when every write went through, a fresh read when one did
+   * not, and null when that read failed too (the ballot state is unknown).
+   */
+  choices: number[] | null;
+  /** Platform refused a write because the poll has closed. */
+  closed: boolean;
+  /**
+   * A write met a ballot that changed elsewhere (another tab or device): a
+   * stale revision or a ballot that already exists. Reload before retrying.
+   */
+  stale: boolean;
+  /** Message from the first failure, if any. */
+  error?: string;
+}
+
 export interface PollTally {
   /** Vote count per option index. */
   counts: number[];
-  /** Total vote documents for the poll (a multi-choice ballot contributes one per selection). */
+  /** Total selections for the poll (a multi-choice voter contributes one per choice). */
   total: number;
   /**
    * A closed v3 poll with too many ballots to bound by its close time: the
@@ -55,18 +87,24 @@ export interface PollTally {
    * a ballot missing from these counts is late, not lagging.
    */
   cutoffVerified?: boolean;
-}
-
-/** The leading option of a poll, from the v4 ranked index. */
-export interface PollWinner {
-  choice: number;
-  count: number;
+  /**
+   * When the counts were read off the chain (ms since epoch). Absent on an
+   * optimistic tally, which folds in this client's own writes.
+   */
+  readAt?: number;
 }
 
 /** Grouped count keys are hex of the platform-encoded integer byte: 0x80 + choice. */
 const CHOICE_KEY_OFFSET = 0x80;
 
 const TALLY_CACHE_TTL_MS = 30_000;
+
+/**
+ * How long after a v5 poll's close a tally must have been read to count as
+ * final. The close rule judges block time; this device's clock judges "closed",
+ * so a small margin covers the two disagreeing and a node a few blocks behind.
+ */
+const FINAL_TALLY_GRACE_MS = 30_000;
 
 type Sdk = Awaited<ReturnType<typeof getEvoSdk>>;
 
@@ -80,19 +118,36 @@ function isValidChoice(choice: number): boolean {
   return Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS;
 }
 
-/** Dedupe, drop out-of-range values, and order a ballot's choices. */
-function normalizeChoices(choices: number[]): number[] {
-  return Array.from(new Set(choices)).filter(isValidChoice).sort((a, b) => a - b);
-}
-
-/** A ballot refused before anything was written. */
+/** A v3 ballot refused before anything was written. */
 function refused(error: string, failed: number[] = []): CastVoteResult {
   return { success: false, created: [], alreadyVoted: [], unresolvedDuplicate: false, failed, error };
 }
 
-/** Read the `choice` field off a raw vote document (nested `data` or flat). */
+/** A v5 selection refused before anything was written. */
+function refusedSet(error: string, closed = false): SetVoteResult {
+  return { success: false, choices: null, closed, stale: false, error };
+}
+
+/** A field off a raw document (nested `data` or flat). */
+function readField(doc: Record<string, unknown>, field: string): unknown {
+  return (doc.data as Record<string, unknown> | undefined)?.[field] ?? doc[field];
+}
+
+/** Read the `choice` field off a raw vote document. */
 function readChoice(doc: Record<string, unknown>): number {
-  return Number((doc.data as Record<string, unknown> | undefined)?.choice ?? doc.choice);
+  return Number(readField(doc, 'choice'));
+}
+
+/** A raw v5 `vote` document as a {@link Ballot}, or null when it is malformed. */
+function toBallot(doc: Record<string, unknown>): Ballot | null {
+  const id = doc.$id ?? doc.id;
+  const revision = Number(doc.$revision ?? doc.revision);
+  const slot = Number(readField(doc, 'slot'));
+  const rawChoice = readField(doc, 'choice');
+  const choice = rawChoice === undefined || rawChoice === null ? null : Number(rawChoice);
+  if (typeof id !== 'string' || !Number.isInteger(revision) || !isValidChoice(slot)) return null;
+  if (choice !== null && !isValidChoice(choice)) return null;
+  return { id, revision, slot, choice };
 }
 
 function zeroCounts(): number[] {
@@ -114,49 +169,66 @@ export class PollTallyUnavailableError extends Error {
 }
 
 /**
- * Platform rejects a colliding ballot with a duplicate-properties violation —
- * from v3's `unique` index, or from v4's structural one-entry-per-value-tuple
- * rule, which reports the same way.
+ * Platform rejects a colliding v3 ballot with a duplicate-properties violation
+ * from its `unique` index.
  *
- * What the collision *means* depends on the doctype, and the two differ:
- * on `multiVote` it is "you already cast this choice", but on `vote` the index
- * carries no choice, so it is "you already voted" — for a choice that may not be
- * the one just attempted. `castVote` resolves the difference.
+ * What the collision *means* depends on the doctype: on `multiVote` it is "you
+ * already cast this choice", but on `vote` the index carries no choice, so it
+ * is "you already voted" — for a choice that may not be the one just
+ * attempted. `castVote` resolves the difference.
  */
 export function isDuplicateVoteError(error: unknown): boolean {
-  // Both spellings, because everything downstream of this predicate depends on
-  // it: a duplicate that reads as a fresh error would be handed to the landed
-  // probe, which finds the voter's EARLIER entry and reports the rejected write
-  // as cast. The battery asserts the live v4 text matches (case p3b).
   return /duplicate unique properties|\b40105\b/i.test(extractErrorMessage(error));
 }
 
 /**
- * Votes on the shared Pollr contract, one immutable document per selection —
- * the shape the `choiceCounts` count tree needs for O(1) per-option tallies.
+ * v5: a write refused by the close rule (`writtenBeforeClose`, 10422) — the
+ * poll closed before the write landed. A 10422 that names no rule counts too
+ * once the poll's close time has passed, since no other v5 ballot rule can
+ * break for a ballot this client built from the poll itself.
+ */
+export function isPollClosedError(error: unknown, endsAt?: number): boolean {
+  if (/writtenBeforeClose/.test(extractErrorMessage(error))) return true;
+  return isDocumentPropertyRuleError(error) && typeof endsAt === 'number' && Date.now() > endsAt;
+}
+
+/**
+ * v5: a write planned against ballots that have since changed — a stale
+ * revision (40106) or a ballot another tab created first (40105). Neither is
+ * retried blind; the caller re-reads the ballots.
+ */
+export function isStaleBallotError(error: unknown): boolean {
+  return (
+    isDuplicateVoteError(error) ||
+    /invalid revision|\b40106\b/i.test(extractErrorMessage(error)) ||
+    hasConsensusCode(error, [40105, 40106])
+  );
+}
+
+/**
+ * Votes on the shared Pollr contract.
  *
- * The poll's `multiChoice` flag selects the ballot doctype, and each carries the
- * uniqueness rule its mode needs: `vote` is unique per (poll, voter), so Platform
- * itself rejects a second single-choice selection, and `multiVote` is unique per
- * (poll, voter, choice). DPP has no cross-document validation, so no single
- * doctype could have done this — a uniqueness rule can't be conditional on a
- * field in another document. Splitting it moves the enforcement onto the wire:
- * `poll` is immutable, so the flag can't be flipped after ballots land, and
- * documents written to the doctype a poll doesn't use are never read.
+ * **v5** keeps one mutable `vote` doctype. A single-choice voter holds one
+ * ballot (slot 0) whose `choice` changes or is dropped; a multi-choice voter
+ * one ballot per option (slot = option) whose `choice` is ticked or dropped.
+ * Every create and replace must land by the poll's close (`writtenBeforeClose`
+ * reads the write's block time against the `pollEndsAt` each ballot copies from
+ * the poll), so ballots are editable while the poll is open and final after.
+ * The tally index skips ballots without a `choice`, so it counts selections.
  *
- * On v4 (docs/NON_SOCIAL_CONTRACTS.md) both doctypes are indexOnly and the same two rules
- * become STRUCTURAL rather than declared: `vote.byPoll [pollId]` terminal
- * `$ownerId` admits one entry per (poll, voter), `multiVote.byPollChoice`
- * admits one per (poll, choice, voter). indexOnly types cannot carry `unique`
- * indexes at all, so this is the only spelling available — and the tally shape
- * is unchanged, because both topologies count the same [pollId, choice] tree.
+ * **v3** (testnet) ballots are immutable, one document per selection, in the
+ * doctype the poll's mode calls for: `vote` unique per (poll, voter),
+ * `multiVote` unique per (poll, voter, choice).
+ *
+ * **v4** (indexOnly ballots) is read-only: polls, tallies and the voter's own
+ * choices still load, but nothing is written.
  */
 class PollrVoteService {
   private tallyCache = new TtlMap<string, PollTally>(TALLY_CACHE_TTL_MS);
 
   /**
-   * Cast a ballot: one immutable document per selected choice, in the doctype
-   * the poll's mode calls for.
+   * v3: cast a ballot, one immutable document per selected choice, in the
+   * doctype the poll's mode calls for.
    *
    * Platform rejects state transitions carrying more than one document
    * transition, so multi-choice ballots MUST be written sequentially — one
@@ -164,6 +236,10 @@ class PollrVoteService {
    */
   async castVote(poll: Poll, choices: number[], ownerId: string): Promise<CastVoteResult> {
     const selected = normalizeChoices(choices);
+
+    if (pollrIsV4() || pollrIsV5()) {
+      return refused(pollrIsV5() ? 'v5 ballots are written with setVote' : 'Voting is not available on this poll contract', selected);
+    }
 
     if (selected.length === 0) {
       return refused('No choice selected');
@@ -176,14 +252,12 @@ class PollrVoteService {
       return refused('This poll takes a single choice', selected);
     }
 
-    // The close time is advisory — the contract can't enforce it — so clients
+    // v3's close time is advisory — the contract can't enforce it — so clients
     // are the ones that have to refuse a late ballot.
-    const { endsAt } = poll;
-    if (typeof endsAt === 'number' && Number.isFinite(endsAt) && Date.now() > endsAt) {
+    if (pollIsClosed(poll)) {
       return refused('This poll has closed');
     }
 
-    const isV4 = pollrIsV4();
     const docType = pollrVoteDocType(poll.multiChoice);
     const created: number[] = [];
     const alreadyVoted: number[] = [];
@@ -191,19 +265,11 @@ class PollrVoteService {
     const failed: number[] = [];
     let firstError: string | undefined;
 
-    // What a write Platform refused actually means. The order is load-bearing,
-    // and the create path reports a refusal two ways (a failed result or a
-    // throw), so both go through here.
     const recordRejection = async (choice: number, error: unknown, message: string): Promise<void> => {
       if (isDuplicateVoteError(error)) {
-        // Checked BEFORE the landed probe: on a duplicate the entry is already
-        // there from an earlier ballot, so the probe would happily report this
-        // rejected write as created.
         const collided = await this.resolveDuplicate(poll, choice, ownerId);
         if (collided) alreadyVoted.push(...collided);
         else unresolvedDuplicate = true;
-      } else if (await this.ballotLanded(poll, choice, ownerId, { whenUnknown: false })) {
-        created.push(choice);
       } else {
         // Keep going: the remaining choices are independent documents, and
         // re-submitting a landed one is idempotent thanks to the unique index.
@@ -214,44 +280,15 @@ class PollrVoteService {
 
     for (const choice of selected) {
       try {
-        const result = await stateTransitionService.createDocument(
-          POLLR_CONTRACT_ID,
-          docType,
-          ownerId,
-          {
-            // Identifier-typed contract fields must reach the typed write path as raw bytes.
-            pollId: identifierStringToDocumentBytes(poll.id),
-            // v4 binds this to the poll's `$ownerId` through a system-field
-            // propertyAgreement, so the poll's real creator is the only value
-            // consensus accepts; on v3 nothing is checked and it is the same
-            // value anyway.
-            pollOwnerId: identifierStringToDocumentBytes(poll.ownerId),
-            choice,
-          },
-          // v4 ballots are indexOnly: there is no id-addressable row for the
-          // strict confirmation probes to find, and the transition proves as an
-          // affected-state snapshot rather than ExecutionProved.
-          isV4 ? { confirmation: 'affectedState' } : undefined
-        );
-
-        if (
-          result.success &&
-          (result.confirmed !== false || (await this.ballotLanded(poll, choice, ownerId, { whenUnknown: true })))
-        ) {
-          created.push(choice);
-        } else if (result.success) {
-          // v4 only: an UNCONFIRMED success that the chain does not show.
-          // `createDocument` returns optimistic success when the confirmation
-          // wait times out, and its own landed-check (`documents.get` by id)
-          // can never resolve for an indexOnly doctype, so that branch always
-          // fires on a 504 — including when the transition was then rejected.
-          // Reporting it as cast would close a single-choice ballot the voter
-          // never actually filed.
-          failed.push(choice);
-          firstError ??= 'The network did not confirm your vote — try again';
-        } else {
-          await recordRejection(choice, result.error, result.error || 'Failed to cast vote');
-        }
+        const result = await stateTransitionService.createDocument(POLLR_CONTRACT_ID, docType, ownerId, {
+          // Identifier-typed contract fields must reach the typed write path as raw bytes.
+          pollId: identifierStringToDocumentBytes(poll.id),
+          // Unchecked on v3, but the poll's real creator is the honest value.
+          pollOwnerId: identifierStringToDocumentBytes(poll.ownerId),
+          choice,
+        });
+        if (result.success) created.push(choice);
+        else await recordRejection(choice, result.error, result.error || 'Failed to cast vote');
       } catch (error) {
         await recordRejection(choice, error, extractErrorMessage(error));
       }
@@ -269,74 +306,106 @@ class PollrVoteService {
   }
 
   /**
-   * Is this voter's entry on chain? The chain, not the write path's verdict,
-   * decides whether a v4 ballot counts as cast — and it is consulted from both
-   * sides, because v4's create path can be wrong in either direction:
-   * `affectedState` reports optimistic success when the confirmation wait times
-   * out (and its own get-by-id landed-check can never resolve for an indexOnly
-   * doctype), while the js create path can fail *after* a successful broadcast
-   * without ever returning a usable Document — the same quirk `like-service`
-   * handles.
+   * v5: make the voter's ballots select exactly `wanted` — create, change,
+   * withdraw (single choice) or tick and untick (multi choice).
    *
-   * `whenUnknown` is the answer when the chain cannot be asked: on v3, where a
-   * ballot is a stored document with real confirmation and there is nothing to
-   * second-guess, and on a read that failed, since an unreachable DAPI is
-   * evidence for neither side. Each caller passes the value that leaves the
-   * write path's own verdict standing, and the next remount re-reads the real
-   * state either way.
-   *
-   * The probe is polled rather than read once: an indexOnly write is not
-   * query-visible the instant its transition settles, so a single immediate
-   * read would call a landed ballot missing (like-service polls the same way).
+   * The plan is made against a FRESH read of the voter's ballots, never a
+   * cached one: it decides create-versus-replace and carries the revision each
+   * replace builds on, and either being stale is a refused write. Writes run
+   * one at a time (one document transition per state transition, nonces in
+   * order). A refusal by the close rule or a stale ballot stops the run; any
+   * other failure moves on to the next, independent ballot. Whenever a write
+   * did not go through, the ballots are re-read so `choices` reports what the
+   * chain shows rather than what was planned — a timed-out replace may well
+   * have landed.
    */
-  private async ballotLanded(
-    poll: Poll,
-    choice: number,
-    ownerId: string,
-    { whenUnknown, attempts = 4, intervalMs = 2_500 }: { whenUnknown: boolean; attempts?: number; intervalMs?: number }
-  ): Promise<boolean> {
-    if (!pollrIsV4()) return whenUnknown;
+  async setVote(poll: Poll, wanted: number[], ownerId: string): Promise<SetVoteResult> {
+    if (!pollrIsV5()) return refusedSet('setVote is the v5 ballot path');
+
+    const choices = normalizeChoices(wanted, poll.options.length);
+    if (choices.length !== wanted.length) return refusedSet('That is not an option of this poll');
+    if (!poll.multiChoice && choices.length > 1) return refusedSet('This poll takes a single choice');
+    if (typeof poll.endsAt !== 'number') return refusedSet('This poll has no close time');
+    if (pollIsClosed(poll)) return refusedSet('This poll has closed', true);
+
+    let ballots: Ballot[];
     try {
-      for (let attempt = 0; attempt < attempts; attempt++) {
-        if (await this.ballotExists(poll, choice, ownerId)) return true;
-        if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
-      }
-      return false;
+      ballots = await this.getMyBallots(poll, ownerId);
     } catch (error) {
-      logger.warn('PollrVoteService: could not check a ballot against the chain', {
+      return refusedSet(`Couldn't read your ballot: ${extractErrorMessage(error)}`);
+    }
+
+    let closed = false;
+    let stale = false;
+    let firstError: string | undefined;
+
+    for (const write of planBallotWrites(poll.multiChoice, ballots, choices)) {
+      const error = await this.writeBallot(poll, ownerId, write);
+      if (error === null) continue;
+      firstError ??= extractErrorMessage(error) || 'Failed to record your vote';
+      if (isPollClosedError(error, poll.endsAt)) {
+        closed = true;
+        break;
+      }
+      if (isStaleBallotError(error)) {
+        stale = true;
+        break;
+      }
+    }
+
+    this.invalidateTally(poll.id);
+    if (firstError === undefined) {
+      return { success: true, choices, closed: false, stale: false };
+    }
+
+    let recorded: number[] | null = null;
+    try {
+      recorded = recordedChoices(await this.getMyBallots(poll, ownerId));
+    } catch (error) {
+      logger.warn('PollrVoteService: could not re-read ballots after a failed write', {
         pollId: poll.id,
-        choice,
-        assumedLanded: whenUnknown,
         error: extractErrorMessage(error),
       });
-      return whenUnknown;
+    }
+    const success = recorded !== null && sameChoices(recorded, choices);
+    return { success, choices: recorded, closed, stale, error: success ? undefined : firstError };
+  }
+
+  /** One v5 ballot write. Resolves to null when it went through, else the refusal. */
+  private async writeBallot(poll: Poll, ownerId: string, write: BallotWrite): Promise<unknown> {
+    const slot = write.kind === 'create' ? write.slot : write.ballot.slot;
+    // A replace rewrites the whole document, so it carries every field; leaving
+    // `choice` out is what withdraws or unticks.
+    const data: Record<string, unknown> = {
+      pollId: identifierStringToDocumentBytes(poll.id),
+      slot,
+      // Copied from the poll and bound to it by consensus (40127 on a mismatch).
+      pollOptionCount: poll.options.length,
+      pollMultiChoice: poll.multiChoice,
+      pollEndsAt: poll.endsAt,
+    };
+    if (write.choice !== null) data.choice = write.choice;
+
+    try {
+      const result =
+        write.kind === 'create'
+          ? await stateTransitionService.createDocument(POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES.VOTE, ownerId, data)
+          : await stateTransitionService.updateDocument(
+              POLLR_CONTRACT_ID,
+              POLLR_DOCUMENT_TYPES.VOTE,
+              write.ballot.id,
+              ownerId,
+              data,
+              write.ballot.revision
+            );
+      return result.success ? null : (result.error ?? 'Failed to record your vote');
+    } catch (error) {
+      return error;
     }
   }
 
   /**
-   * v4 entry probe: does this voter's entry for (poll, choice) exist?
-   *
-   * Equality on the two `byPollChoice` properties plus the terminal `$ownerId`
-   * lowers onto that index's member key. This is the only way to confirm an
-   * indexOnly write — `documents.get` has no row to find.
-   */
-  private async ballotExists(poll: Poll, choice: number, ownerId: string): Promise<boolean> {
-    const sdk = await getEvoSdk();
-    const response = await sdk.documents.query({
-      dataContractId: POLLR_CONTRACT_ID,
-      documentTypeName: pollrVoteDocType(poll.multiChoice),
-      where: [
-        ['pollId', '==', poll.id],
-        ['choice', '==', choice],
-        ['$ownerId', '==', ownerId],
-      ],
-      limit: 1,
-    });
-    return normalizeSDKResponse(response).length > 0;
-  }
-
-  /**
-   * Which choice a rejected-as-duplicate write collided with.
+   * v3: which choice a rejected-as-duplicate write collided with.
    *
    * On `multiVote` the unique index includes `choice`, so the collision is with
    * the choice just attempted. On `vote` it does not: the voter had already
@@ -361,39 +430,32 @@ class PollrVoteService {
   }
 
   /**
-   * Fold just-cast votes into the cached tally.
+   * Fold a voter's own change into the cached tally: +1 per added choice, -1
+   * per removed one (a v5 voter can change or withdraw a ballot).
    *
    * Platform's count trees can lag a few seconds behind a confirmed write, so
    * re-reading right after voting can return the pre-vote numbers — and that
-   * stale answer would then be cached for the full TTL. Incrementing the
+   * stale answer would then be cached for the full TTL. Adjusting the
    * caller's current tally instead keeps the UI honest until the next remount
-   * refetches for real.
+   * refetches for real. The result carries no `readAt`: it is not a chain read,
+   * so it can never be labelled final.
    */
-  applyOptimisticVotes(pollId: string, baseline: PollTally, createdChoices: number[]): PollTally {
-    const counts = [...baseline.counts];
-    let added = 0;
-    for (const choice of createdChoices) {
-      if (choice < 0 || choice >= counts.length) continue;
-      counts[choice] += 1;
-      added += 1;
-    }
-
-    const tally: PollTally = { counts, total: baseline.total + added };
+  applyOptimisticVotes(pollId: string, baseline: PollTally, added: number[], removed: number[] = []): PollTally {
+    const tally: PollTally = applyChoiceDelta(baseline.counts, added, removed);
     this.tallyCache.set(pollId, tally);
     return tally;
   }
 
   /**
-   * Re-read the tally after a ballot collided with one already on chain.
+   * v3: re-read the tally after a ballot collided with one already on chain.
    *
    * A duplicate means this tab's tally predates a vote the voter cast
    * elsewhere, so folding in only the new writes leaves that earlier vote
    * uncounted. The fresh read supplies it; merging keeps the votes `created`
    * in this same call, which the count tree may not show yet. Only choices
    * this call established (written or refused as duplicates) floor the
-   * counts: an older remembered choice may since have been deleted. Falls
-   * back to `optimistic` when the read fails, which is no worse than before
-   * the collision.
+   * counts. Falls back to `optimistic` when the read fails, which is no worse
+   * than before the collision.
    */
   async refreshTally(
     poll: Poll,
@@ -420,63 +482,79 @@ class PollrVoteService {
   }
 
   /**
-   * Which choices `userId` has already cast on this poll.
+   * v5: the voter's ballots on this poll, off the unique `byPollVoter`
+   * [pollId, $ownerId, slot] index — withdrawn and unticked ones included, since
+   * a later pick replaces them rather than creating a duplicate.
+   */
+  async getMyBallots(poll: Poll, userId: string): Promise<Ballot[]> {
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.query({
+      dataContractId: POLLR_CONTRACT_ID,
+      documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
+      where: [
+        ['pollId', '==', poll.id],
+        ['$ownerId', '==', userId],
+      ],
+      orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']],
+      limit: POLL_MAX_OPTIONS,
+    });
+    return normalizeSDKResponse(response)
+      .map(toBallot)
+      .filter((ballot): ballot is Ballot => ballot !== null);
+  }
+
+  /**
+   * Which choices `userId` currently selects on this poll.
    *
-   * v3 reads the unique index, which leads with [pollId, $ownerId]: one ranged
-   * read. v4 has no such index — its terminal must be `$ownerId` or a refersTo
-   * identifier, and `choice` is an integer, so no index can be keyed
-   * (poll, voter) → choice. Instead the read walks `byPollChoice`'s choice
-   * level with an `in` over every schema-valid choice and pins the terminal:
-   * `pollId ==`, `choice in [...]`, `$ownerId ==`. An `in` on an indexOnly
-   * prefix property REQUIRES the matching orderBy, or the query is refused.
+   * v5 reads the voter's ballots and keeps those holding a `choice`. v3 reads
+   * the unique index, which leads with [pollId, $ownerId]: one ranged read. v4
+   * has no such index — its terminal must be `$ownerId` — so the read walks
+   * `byPollChoice`'s choice level with an `in` over every schema-valid choice
+   * and pins the terminal, with the orderBy an `in` on an indexOnly prefix
+   * property requires.
    *
    * Throws on failure rather than reporting "no votes": an empty answer reopens
-   * the ballot, which on a single-choice poll walks the voter into a write
+   * the ballot, which on a v3 single-choice poll walks the voter into a write
    * Platform will reject outright.
    */
   async getMyVotes(poll: Poll, userId: string): Promise<number[]> {
-    // One branch per topology/mode, each spelling its whole query: the three
-    // clauses have to agree with one another and with the index being read.
-    let query: { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[]; limit: number };
-
-    if (pollrIsV4()) {
-      query = {
-        where: [
-          ['pollId', '==', poll.id],
-          // The FULL 0-9 range, not the poll's option count: `choice` is
-          // schema-valid for 0-9 whatever the poll declares, and a ballot
-          // this read cannot see reopens a ballot Platform will reject.
-          // (getTally narrows on purpose — there the out-of-range groups
-          // are noise; here they are the voter's own state.)
-          ['choice', 'in', choiceRange(POLL_MAX_OPTIONS)],
-          ['$ownerId', '==', userId],
-        ],
-        orderBy: [['choice', 'asc']],
-        limit: POLL_MAX_OPTIONS,
-      };
-    } else {
-      // `vote`'s unique index stops at $ownerId, so it neither orders by choice
-      // nor can hold more than the one ballot; `multiVote`'s continues.
-      query = {
-        where: [
-          ['pollId', '==', poll.id],
-          ['$ownerId', '==', userId],
-        ],
-        orderBy: poll.multiChoice
-          ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
-          : [['pollId', 'asc'], ['$ownerId', 'asc']],
-        limit: poll.multiChoice ? POLL_MAX_OPTIONS : 1,
-      };
-    }
-
     try {
+      if (pollrIsV5()) return recordedChoices(await this.getMyBallots(poll, userId));
+
+      // One branch per topology/mode, each spelling its whole query: the three
+      // clauses have to agree with one another and with the index being read.
+      let query: { where: DocumentWhereClause[]; orderBy: DocumentOrderByClause[]; limit: number };
+      if (pollrIsV4()) {
+        query = {
+          where: [
+            ['pollId', '==', poll.id],
+            ['choice', 'in', choiceRange(POLL_MAX_OPTIONS)],
+            ['$ownerId', '==', userId],
+          ],
+          orderBy: [['choice', 'asc']],
+          limit: POLL_MAX_OPTIONS,
+        };
+      } else {
+        // `vote`'s unique index stops at $ownerId, so it neither orders by choice
+        // nor can hold more than the one ballot; `multiVote`'s continues.
+        query = {
+          where: [
+            ['pollId', '==', poll.id],
+            ['$ownerId', '==', userId],
+          ],
+          orderBy: poll.multiChoice
+            ? [['pollId', 'asc'], ['$ownerId', 'asc'], ['choice', 'asc']]
+            : [['pollId', 'asc'], ['$ownerId', 'asc']],
+          limit: poll.multiChoice ? POLL_MAX_OPTIONS : 1,
+        };
+      }
+
       const sdk = await getEvoSdk();
       const response = await sdk.documents.query({
         dataContractId: POLLR_CONTRACT_ID,
         documentTypeName: pollrVoteDocType(poll.multiChoice),
         ...query,
       });
-
       return normalizeChoices(normalizeSDKResponse(response).map(readChoice));
     } catch (error) {
       logger.error('PollrVoteService: failed to load own votes', error);
@@ -485,43 +563,13 @@ class PollrVoteService {
   }
 
   /**
-   * The leading option, straight off v4's ranked secondary on `byPollChoice`:
-   * `groupBy choice, aggregate count, where pollId == P, limit 1` is O(log n)
-   * and proved, where v3 could only sort a full tally client-side.
-   *
-   * Returns null on v3 (no ranked index) and when the poll has no ballots.
-   */
-  async getWinner(poll: Poll): Promise<PollWinner | null> {
-    if (!pollrIsV4()) return null;
-    try {
-      const sdk = await getEvoSdk();
-      const page = await sdk.documents.ranked({
-        dataContractId: POLLR_CONTRACT_ID,
-        documentTypeName: pollrVoteDocType(poll.multiChoice),
-        groupBy: 'choice',
-        aggregate: { type: 'count' },
-        where: [['pollId', '==', poll.id]],
-        limit: 1,
-      });
-      const top = page?.entries?.[0];
-      // Ranked pages hand integer group values back decoded, unlike grouped
-      // counts (which key by the hex of 0x80 + choice).
-      const choice = Number(top?.groupValue);
-      const count = Number(top?.value ?? 0);
-      if (!isValidChoice(choice) || count <= 0) return null;
-      return { choice, count };
-    } catch (error) {
-      logger.warn('PollrVoteService: ranked winner query failed', { pollId: poll.id, error: extractErrorMessage(error) });
-      return null;
-    }
-  }
-
-  /**
    * Per-option counts plus the grand total, served from a short-TTL cache.
    *
-   * Primary path is the ballot doctype's `choiceCounts` countable index (an
-   * O(1) count tree), grouped by choice. Only the doctype this poll's mode uses
-   * is read, so ballots written to the other one can never reach the numbers.
+   * Primary path is the ballot doctype's countable `[pollId, choice]` index
+   * (an O(1) count tree), grouped by choice. Only the doctype this poll's mode
+   * uses is read, so ballots written to the other one can never reach the
+   * numbers. On v5 that index skips ballots without a `choice`, so withdrawn
+   * and unticked ballots are not counted.
    *
    * Throws {@link PollTallyUnavailableError} when no path produced counts —
    * see that class for why a zero-filled stand-in isn't an acceptable answer.
@@ -529,23 +577,27 @@ class PollrVoteService {
   async getTally(poll: Poll): Promise<PollTally> {
     const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
 
-    // The close time is advisory, so ballots can land after it and the count
+    // v3's close time is advisory, so ballots can land after it and the count
     // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
     // under `pollVotesByTime`, so a closed poll is tallied from its on-time
-    // ballots in one read, keeping "Final results" final. v4 ballots are
-    // indexOnly with no time index, so there is nothing to bound them by there.
+    // ballots in one read, keeping "Final results" final.
     const closedAt = closedCutoff(poll);
 
     // A closed v3 poll reuses only a cached tally the closed path classified;
     // one cached while it was open (or optimistic) was never bounded by the
-    // close time.
+    // close time. A closed v5 poll reuses only one read after the close.
     const cached = this.tallyCache.get(poll.id);
-    if (cached && (closedAt === null || cached.cutoffVerified || cached.lateIncluded)) {
+    const cacheUsable =
+      cached !== undefined &&
+      (closedAt === null || Boolean(cached.cutoffVerified) || Boolean(cached.lateIncluded)) &&
+      (!pollrIsV5() || !pollIsClosed(poll) || readAfterClose(poll, cached));
+    if (cached && cacheUsable) {
       return { ...cached, counts: resize(cached.counts, size) };
     }
 
     const sdk = await getEvoSdk();
     const docType = pollrVoteDocType(poll.multiChoice);
+    const readAt = Date.now();
     const onTime = closedAt === null ? null : await this.countOnTimeBallots(sdk, poll.id, docType, closedAt);
 
     // Each step falls through to the next only when it couldn't produce counts.
@@ -553,9 +605,8 @@ class PollrVoteService {
       onTime ??
       (await this.countByChoiceGrouped(sdk, poll.id, docType, size)) ??
       (await this.countByChoiceIndividually(sdk, poll.id, docType, size)) ??
-      (pollrIsV4()
-        ? await this.countByChoiceKeyset(sdk, poll.id, docType, size)
-        : await this.countByChoiceScan(sdk, poll.id, docType));
+      // Only v3 ballots carry the time index the scan pages over.
+      (pollrIsV4() || pollrIsV5() ? null : await this.countByChoiceScan(sdk, poll.id, docType));
 
     // Nothing worked. A grand-total count is deliberately NOT used as a last
     // resort: it can't allocate votes among the options, so pairing it with
@@ -565,14 +616,13 @@ class PollrVoteService {
       throw new PollTallyUnavailableError(poll.id);
     }
 
-    // The total is the sum of the poll's REAL options. `choice` is schema-valid
-    // for 0-9 whatever the poll's actual option count is, so anyone can write
-    // ballots for options that don't exist; summing the real ones ignores those
-    // and keeps percentages summing to 100. On a single-choice poll the sum is
-    // also the voter count, since `vote` is unique per (poll, voter).
+    // The total is the sum of the poll's REAL options. Before v5 `choice` is
+    // schema-valid for 0-9 whatever the poll's actual option count is, so
+    // anyone can write ballots for options that don't exist; summing the real
+    // ones ignores those and keeps percentages summing to 100.
     const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
 
-    const tally: PollTally = { counts, total };
+    const tally: PollTally = { counts, total, readAt };
     if (closedAt !== null && !onTime) tally.lateIncluded = true;
     if (onTime) tally.cutoffVerified = true;
     this.tallyCache.set(poll.id, tally);
@@ -590,7 +640,7 @@ class PollrVoteService {
   }
 
   /**
-   * One round-trip against the `choiceCounts` countable index.
+   * One round-trip against the countable `[pollId, choice]` index.
    * Returns null (so the caller can fall back) when the response can't be decoded.
    */
   private async countByChoiceGrouped(
@@ -605,9 +655,8 @@ class PollrVoteService {
         documentTypeName: docType,
         where: [
           ['pollId', '==', pollId],
-          // Only the poll's real options: `choice` is schema-valid for 0-9
-          // regardless, so a wider `in` would pull groups for options that
-          // don't exist on this poll.
+          // Only the poll's real options: a wider `in` would pull groups for
+          // options that don't exist on this poll.
           ['choice', 'in', choiceRange(optionCount)],
         ],
         groupBy: ['choice'],
@@ -664,62 +713,9 @@ class PollrVoteService {
       }
       return counts;
     } catch (error) {
-      logger.warn('PollrVoteService: per-choice counts failed, falling back to a vote scan', {
+      logger.warn('PollrVoteService: per-choice counts failed', {
         error: extractErrorMessage(error),
       });
-      return null;
-    }
-  }
-
-  /**
-   * Fallback 2 (v4): keyset-walk each option's entries and count them.
-   *
-   * This is the only path independent of the count tree, so it is worth having
-   * — but it cannot go through `paginateFetchAll`, whose cursor is the last
-   * document's `$id`: an indexOnly type's synthesized ids address nothing and
-   * the query is rejected on page two (see `like-service.getPostLikes`, which
-   * hit this first). Walk the terminal instead — prefix equality, then
-   * `$ownerId > last` with the matching orderBy. Page one must omit both, since
-   * a terminal orderBy without a terminal clause is refused.
-   */
-  private async countByChoiceKeyset(
-    sdk: Sdk,
-    pollId: string,
-    docType: string,
-    optionCount: number
-  ): Promise<number[] | null> {
-    const PAGE = 100;
-    try {
-      const counts = zeroCounts();
-      for (const choice of choiceRange(optionCount)) {
-        let lastOwner: string | null = null;
-        for (;;) {
-          const where: DocumentWhereClause[] = [['pollId', '==', pollId], ['choice', '==', choice]];
-          if (lastOwner) where.push(['$ownerId', '>', lastOwner]);
-          const response = await sdk.documents.query({
-            dataContractId: POLLR_CONTRACT_ID,
-            documentTypeName: docType,
-            where,
-            ...(lastOwner ? { orderBy: [['$ownerId', 'asc'] as DocumentOrderByClause] } : {}),
-            limit: PAGE,
-          });
-          const page = normalizeSDKResponse(response);
-          counts[choice] += page.length;
-          if (page.length < PAGE) break;
-          const owner = page[page.length - 1].$ownerId;
-          // Without a cursor the next page would repeat this one forever.
-          // Reporting a truncated tally as final would render honest-looking
-          // percentages over a number we know is wrong, so fail the whole path.
-          if (typeof owner !== 'string') {
-            logger.error('PollrVoteService: ballot page carries no $ownerId cursor; tally would truncate', { pollId });
-            return null;
-          }
-          lastOwner = owner;
-        }
-      }
-      return counts;
-    } catch (error) {
-      logger.error('PollrVoteService: unable to tally votes by keyset walk', error);
       return null;
     }
   }
@@ -815,15 +811,15 @@ class PollrVoteService {
 }
 
 /**
- * Merge a freshly read tally with the caller's optimistic one.
+ * Merge a freshly read tally with the caller's optimistic one (v3).
  *
- * The fresh counts are trusted: ballots can be deleted, so a stale count is no
- * lower bound. Only the options `created` in this call keep their optimistic
- * count, since the count tree may not show those writes yet, and every choice
- * the voter has recorded counts at least once. The total is re-summed so the
- * percentages still add up. A cutoff-verified tally is returned as read: a
- * ballot it leaves out landed after the close, so adding it back would put a
- * late vote into the final results. The fresh tally's flags are kept either way.
+ * The fresh counts are trusted: a stale count is no lower bound. Only the
+ * options `created` in this call keep their optimistic count, since the count
+ * tree may not show those writes yet, and every choice the voter has recorded
+ * counts at least once. The total is re-summed so the percentages still add
+ * up. A cutoff-verified tally is returned as read: a ballot it leaves out
+ * landed after the close, so adding it back would put a late vote into the
+ * final results. The fresh tally's flags are kept either way.
  */
 export function reconcileTally(
   fresh: PollTally,
@@ -840,19 +836,35 @@ export function reconcileTally(
   return { ...fresh, counts, total: counts.reduce((sum, count) => sum + count, 0) };
 }
 
+/** Whether the poll's close time has passed on this device's clock. */
+export function pollIsClosed(poll: Poll, now: number = Date.now()): boolean {
+  return typeof poll.endsAt === 'number' && Number.isFinite(poll.endsAt) && now > poll.endsAt;
+}
+
+/** v5: the tally was read off the chain after the close (plus its grace), so no ballot can still change it. */
+function readAfterClose(poll: Poll, tally: PollTally): boolean {
+  return typeof poll.endsAt === 'number' && tally.readAt !== undefined && tally.readAt > poll.endsAt + FINAL_TALLY_GRACE_MS;
+}
+
 /**
- * Whether a closed poll's tally may be shown as final results. On v3 that
- * takes a tally read by the close time: an optimistic or open-poll one can
- * hold a ballot written after it. v4 has no time axis to bound by, so only a
- * tally known to include late ballots is excluded there.
+ * Whether a closed poll's tally may be shown as final results.
+ *
+ * - v5: ballots are final once the poll closes, so any tally read off the
+ *   chain after the close is; an optimistic one (no `readAt`) never is.
+ * - v3: only a tally read by the close time: an optimistic or open-poll one can
+ *   hold a ballot written after it.
+ * - v4: no time axis to bound by, so only a tally known to include late
+ *   ballots is excluded.
  */
-export function tallyIsFinal(tally: PollTally): boolean {
+export function tallyIsFinal(poll: Poll, tally: PollTally): boolean {
+  if (!pollIsClosed(poll)) return false;
+  if (pollrIsV5()) return readAfterClose(poll, tally);
   return pollrIsV4() ? !tally.lateIncluded : Boolean(tally.cutoffVerified);
 }
 
 /** A closed v3 poll's close time, the cutoff its ballots are tallied by; else null. */
 function closedCutoff(poll: Poll): number | null {
-  return !pollrIsV4() && typeof poll.endsAt === 'number' && poll.endsAt < Date.now() ? poll.endsAt : null;
+  return !pollrIsV4() && !pollrIsV5() && pollIsClosed(poll) ? poll.endsAt ?? null : null;
 }
 
 /** Trim or pad a counts array to the poll's actual option count. */

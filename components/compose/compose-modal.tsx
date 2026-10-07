@@ -42,7 +42,7 @@ import {
 import { ThreadPostEditor } from './thread-post-editor'
 import { VisibilitySelector, TEASER_LIMIT } from './visibility-selector'
 import { ImageAttachment } from './image-attachment'
-import { PollEditor, isPollDraftValid, pollDraftEndsAt, pollDraftOptions } from './poll-editor'
+import { PollEditor, pollDraftEndsAt, pollDraftOptions, pollDraftProblem } from './poll-editor'
 import { StorageProviderModal } from './storage-provider-modal'
 
 const TOGGLE = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors'
@@ -168,7 +168,9 @@ export function ComposeModal() {
     !image.isUploading &&
     isValidEncryptedPost &&
     isInheritedEncryptionReady &&
-    (!poll.draft || isPollDraftValid(poll.draft))
+    // The post text is the poll's question, so it must fit the poll's limits too
+    // — unless the poll already landed, when the question is fixed.
+    (!poll.draft || !!poll.createdPollId || pollDraftProblem(poll.draft, firstUnposted?.content ?? '') === null)
   const canAddThread = threadPosts.length < 10 && !replyingTo && !quotingPost && !willBeEncrypted && !poll.draft
 
   const handleClose = () => {
@@ -547,7 +549,7 @@ export function ComposeModal() {
                             ))}
                           </AnimatePresence>
 
-                          {poll.draft && <PollEditor draft={poll.draft} onChange={poll.setDraft} onRemove={poll.clear} disabled={isPosting} locked={!!poll.createdPollId} />}
+                          {poll.draft && <PollEditor draft={poll.draft} question={firstUnposted?.content ?? ''} onChange={poll.setDraft} onRemove={poll.clear} disabled={isPosting} locked={!!poll.createdPollId} />}
 
                           {/* Modal-level so the attach button works from any thread post's toolbar. */}
                           <input ref={image.fileInputRef} type="file" accept="image/*" onChange={image.onFileSelect} className="hidden" />
