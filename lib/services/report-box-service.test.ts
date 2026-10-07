@@ -88,6 +88,32 @@ describe('the report box service', () => {
     }
   })
 
+  it('seals to a moderator\'s encryption key as it is now: a rotated-out key never opens the box', async () => {
+    const replacement = secret(55)
+    // The cached identity still holds the old key; the network has the replacement.
+    mocks.getIdentity.mockImplementation(async (identityId: string, options?: { fresh?: boolean }) => (
+      identityId === LEADER && options?.fresh
+        ? { publicKeys: [{ id: 2, type: 0, purpose: 1, securityLevel: 2, data: bytesToBase64(getPublicKey(MODERATOR_KEYS[LEADER])), disabledAt: 1 },
+          { id: 3, type: 0, purpose: 1, securityLevel: 2, data: bytesToBase64(getPublicKey(replacement)) }] }
+        : encryptionKeyOf(identityId)
+    ))
+    const { buildReportBox, openReportedContent } = await import('./report-box-service')
+    const outcome = await buildReportBox(REPORTER, privatePost)
+    if (outcome.kind !== 'sealed') throw new Error(`expected a sealed box, got ${outcome.kind}`)
+    expect(mocks.getIdentity).toHaveBeenCalledWith(LEADER, { fresh: true })
+    await expect(openReportedContent(outcome.box, privatePost, replacement)).resolves.toMatchObject({ kind: 'opened' })
+    await expect(openReportedContent(outcome.box, privatePost, MODERATOR_KEYS[LEADER])).resolves.toMatchObject({ kind: 'failed' })
+  })
+
+  it('seals nothing when any moderator\'s fresh identity read fails, never falling back to a cached one', async () => {
+    mocks.getIdentity.mockImplementation(async (identityId: string, options?: { fresh?: boolean }) => {
+      if (identityId === MEMBER && options?.fresh) throw new Error('DAPI unavailable')
+      return encryptionKeyOf(identityId)
+    })
+    const { buildReportBox } = await import('./report-box-service')
+    await expect(buildReportBox(REPORTER, privatePost)).rejects.toThrow('DAPI unavailable')
+  })
+
   it('seals nothing, and says so by throwing, when the fresh team read fails', async () => {
     mocks.getTeam.mockRejectedValue(new Error('DAPI unavailable'))
     const { buildReportBox } = await import('./report-box-service')

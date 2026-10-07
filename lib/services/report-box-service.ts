@@ -39,9 +39,14 @@ export function reportNeedsBox(target: Pick<Post, 'encryptedContent' | 'keyGener
   return reportShape().boxMaxBytes !== null && !!target.encryptedContent?.length && target.keyGeneration !== undefined
 }
 
-/** A compressed secp256k1 ENCRYPTION key of `identityId`, or null when it holds none. */
+/**
+ * The compressed secp256k1 ENCRYPTION key `identityId` holds now, or null when
+ * it holds none. Read fresh: a key disabled and replaced within the identity
+ * cache's minute (a compromised key rotated) must not receive the feed key.
+ * Throws when the read fails.
+ */
 async function encryptionKeyOf(identityId: string): Promise<Uint8Array | null> {
-  const identity = await identityService.getIdentity(identityId)
+  const identity = await identityService.getIdentity(identityId, { fresh: true })
   const key = identity ? findEncryptionKey(identity.publicKeys) : undefined
   if (!key || key.type !== KeyType.ECDSA_SECP256K1) return null
   const bytes = normalizeBytes(key.data)
@@ -49,19 +54,18 @@ async function encryptionKeyOf(identityId: string): Promise<Uint8Array | null> {
 }
 
 /**
- * The current moderators' encryption keys, and how many moderators have none,
- * from a FRESH team read: a moderator removed (or the interim owner replaced
- * by a seated team) within the cache's minute must not receive the key, and
- * one just added must. Consensus never checks who a box is sealed to. Throws
- * when the team cannot be read, and nothing is sealed.
+ * The current moderators' encryption keys, and how many moderators have none.
+ * Every input to this choice is read FRESH, in one pass: the team (a moderator
+ * removed, or the interim owner replaced by a seated team, within the cache's
+ * minute must not receive the key, and one just added must) and each member's
+ * identity (a key disabled and replaced must not be used). Consensus never
+ * checks who a box is sealed to, so this fails closed: when any read fails it
+ * throws, and nothing is sealed (the report is refused, to try again).
  */
 async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }> {
   const team = await moderationService.getTeam({ fresh: true })
   const ids = team ? moderatorIdsOf(team) : []
-  const keys = await Promise.all(ids.map((id) => encryptionKeyOf(id).catch((error: unknown) => {
-    logger.warn(`reportBox: could not read moderator ${id}'s encryption key`, error)
-    return null
-  })))
+  const keys = await Promise.all(ids.map((id) => encryptionKeyOf(id)))
   const found = keys.filter((key): key is Uint8Array => key !== null)
   return { keys: found, missing: ids.length - found.length }
 }
@@ -75,6 +79,9 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
  * longer says whether it was private, is uncertain: no key is chosen.
  */
 async function feedOwnerOf(target: Post): Promise<string | null> {
+  // The root may come from a cache, and so may the CEK below. Neither needs a
+  // fresh read: the key is sealed only after it decrypts the target itself
+  // ({@link opensTarget}), so a stale answer can only leave the box out.
   if (targetKindOf(target) !== 'reply') return target.author.id
   const rootId = target.rootPostId
   if (!rootId) return null

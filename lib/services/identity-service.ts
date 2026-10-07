@@ -83,12 +83,15 @@ class IdentityService {
   private balanceCache = new TtlMap<string, IdentityBalance>(IdentityService.CACHE_TTL_MS);
 
   /**
-   * Fetch identity information
+   * Fetch identity information. Cached for a minute; `fresh` skips the cache
+   * (and refreshes it with what it reads), for a decision that must see the
+   * keys as they are now, such as which encryption key a secret is sealed to.
+   * Throws when the read fails.
    */
-  async getIdentity(identityId: string): Promise<IdentityInfo | null> {
+  async getIdentity(identityId: string, { fresh = false }: { fresh?: boolean } = {}): Promise<IdentityInfo | null> {
     try {
       // Check cache
-      const cached = this.identityCache.get(identityId);
+      const cached = fresh ? undefined : this.identityCache.get(identityId);
       if (cached) return cached;
 
       const sdk = await getEvoSdk();
