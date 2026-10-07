@@ -26,6 +26,9 @@ export interface UploadOptions {
   onProgress?: (progress: number) => void
 }
 
+/** Options for uploading any file: a size cap is required. */
+export type FileUploadOptions = UploadOptions & { maxBytes: number }
+
 /**
  * Result of a successful upload
  */
@@ -81,6 +84,12 @@ export interface UploadProvider {
    * @returns Promise resolving to upload result with CID and URL
    */
   uploadImage(file: File, options?: UploadOptions): Promise<UploadResult>
+
+  /**
+   * Upload any file (no type check), up to `maxBytes`. Used for the encrypted
+   * files of digital products, which are opaque ciphertext.
+   */
+  uploadFile(file: File, options: FileUploadOptions): Promise<UploadResult>
 }
 
 /**

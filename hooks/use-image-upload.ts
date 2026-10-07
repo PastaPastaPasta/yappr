@@ -2,8 +2,8 @@
 
 import { useState, useCallback } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { getStorachaProvider, getPinataProvider, isUploadException, getUploadErrorMessage, cacheLocalImage } from '@/lib/upload'
-import type { UploadResult, UploadProvider } from '@/lib/upload'
+import { isUploadException, getUploadErrorMessage, cacheLocalImage, getUploadProvider } from '@/lib/upload'
+import type { UploadResult } from '@/lib/upload'
 
 export interface UseImageUploadResult {
   /** Upload a file and return the result with CID and URL */
@@ -20,58 +20,6 @@ export interface UseImageUploadResult {
   checkProvider: () => Promise<boolean>
   /** Clear any error state */
   clearError: () => void
-}
-
-/**
- * Get connected provider (Storacha or Pinata) for the given identity
- */
-function getConnectedProvider(identityId: string): UploadProvider | null {
-  // Check Storacha first
-  const storacha = getStorachaProvider()
-  storacha.setIdentityId(identityId)
-  if (storacha.isConnected()) {
-    return storacha
-  }
-
-  // Check Pinata
-  const pinata = getPinataProvider()
-  pinata.setIdentityId(identityId)
-  if (pinata.isConnected()) {
-    return pinata
-  }
-
-  return null
-}
-
-/**
- * Try to connect a provider using stored credentials
- */
-async function tryConnectProvider(identityId: string): Promise<UploadProvider | null> {
-  // Try Storacha
-  const storacha = getStorachaProvider()
-  storacha.setIdentityId(identityId)
-  if (storacha.hasStoredCredentials()) {
-    try {
-      await storacha.connect()
-      return storacha
-    } catch {
-      // Credentials invalid or expired
-    }
-  }
-
-  // Try Pinata
-  const pinata = getPinataProvider()
-  pinata.setIdentityId(identityId)
-  if (pinata.hasStoredCredentials()) {
-    try {
-      await pinata.connect()
-      return pinata
-    } catch {
-      // Credentials invalid or expired
-    }
-  }
-
-  return null
 }
 
 /**
@@ -108,22 +56,10 @@ export function useImageUpload(): UseImageUploadResult {
     }
 
     try {
-      // Check if already connected
-      const connectedProvider = getConnectedProvider(user.identityId)
-      if (connectedProvider) {
-        setIsProviderConnected(true)
-        return true
-      }
-
-      // Try to connect with stored credentials
-      const provider = await tryConnectProvider(user.identityId)
-      if (provider) {
-        setIsProviderConnected(true)
-        return true
-      }
-
-      setIsProviderConnected(false)
-      return false
+      // Already connected, or connected now from stored credentials
+      const connected = (await getUploadProvider(user.identityId)) !== null
+      setIsProviderConnected(connected)
+      return connected
     } catch {
       setIsProviderConnected(false)
       return false
@@ -146,10 +82,7 @@ export function useImageUpload(): UseImageUploadResult {
 
     try {
       // Get connected provider or try to connect
-      let provider = getConnectedProvider(user.identityId)
-      if (!provider) {
-        provider = await tryConnectProvider(user.identityId)
-      }
+      const provider = await getUploadProvider(user.identityId)
 
       if (!provider) {
         throw new Error('No storage provider connected. Please connect a provider in Settings.')

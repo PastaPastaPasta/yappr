@@ -76,6 +76,8 @@ contract id is an input to every registration.
 | `orderStatusUpdate` | `orderId`→storeOrder **writer-gated to the seller**; `buyerId` bound to the order's `$ownerId` | buyer status feed carrying only the seller's updates |
 | `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg+count ranked; `sellerRating` avg ranked; `storeRatingDistribution` grouped count; 3 YAPP | averages, distribution, top rated |
 | `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `itemRating`, `storeItemRating` avg ranked; 1 YAPP | item averages, top items |
+| `itemDeliverable` (v6) | one per item; `itemId`→storeItem **writer-gated**; `immutable [itemId]`; seller-encrypted kit | digital products (docs/DIGITAL_PRODUCTS.md) |
+| `orderDelivery` (v6) | `orderId`→storeOrder **writer-gated to the seller**, `buyerId` bound; permanent, append-only | encrypted digital delivery, buyer library |
 
 **Writer gates.** beta.2 lets the *referring* side of a `propertyAgreement` be
 `$ownerId`, which turns a reference into a gate: only the identity the

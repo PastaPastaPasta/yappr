@@ -26,7 +26,7 @@ import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Spinner } from '@/components/ui/spinner'
-import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRangeDisplay } from '@/components/store'
+import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRangeDisplay, DigitalBadge } from '@/components/store'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
 import { getStoreStatusLabel, getStoreStatusDescription } from '@/lib/utils/store-status'
@@ -568,6 +568,7 @@ function StoreManagePage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium truncate">{item.title}</h4>
+                          {item.fulfillment === 'digital' && <DigitalBadge />}
                           <PriceRangeDisplay
                             minPrice={priceRange.min}
                             maxPrice={priceRange.max}

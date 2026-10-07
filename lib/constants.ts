@@ -113,7 +113,13 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // QA D-25: an order carries `storeStatus`, consensus-bound to its store's
 // `status` and required to be `active`, so a paused or closed store cannot be
 // ordered from (10422 `storeIsOpen`; 40127 if the copy is stale).
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
+// `v6` is v5 plus digital products: `storeItem.fulfillment` (`shipped` |
+// `digital`), the seller's encrypted `itemDeliverable` kit per digital item
+// (writer-gated to the item's owner) and the seller-written, buyer-bound
+// `orderDelivery` that carries the encrypted goods (docs/DIGITAL_PRODUCTS.md).
+// Below v6 the digital UI is hidden: the doctypes do not exist and v5 refuses
+// the unknown `fulfillment` property.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -125,6 +131,8 @@ const storefrontTopologyAtLeast = (topology: StorefrontTopology) =>
 export const storefrontArraysAreTyped = () => storefrontTopologyAtLeast('v4')
 /** True on v5 and later: an order must copy its store's `status` into `storeStatus`, and only an active store takes orders. */
 export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5')
+/** True on v6 and later: items can be digital, and sellers deliver them on chain. */
+export const storefrontSupportsDigital = () => storefrontTopologyAtLeast('v6')
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -447,8 +455,10 @@ export const STOREFRONT_DOCUMENT_TYPES = {
   STORE: 'store',
   STORE_ITEM: 'storeItem',
   SHIPPING_ZONE: 'shippingZone',
+  ITEM_DELIVERABLE: 'itemDeliverable',
   STORE_ORDER: 'storeOrder',
   ORDER_STATUS_UPDATE: 'orderStatusUpdate',
+  ORDER_DELIVERY: 'orderDelivery',
   STORE_REVIEW: 'storeReview',
   ITEM_REVIEW: 'itemReview',
   SAVED_ADDRESS: 'savedAddress'
