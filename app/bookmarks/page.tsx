@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import {
   BookmarkIcon,
@@ -19,91 +19,91 @@ import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import toast from 'react-hot-toast'
 import { useSettingsStore } from '@/lib/store'
 import { isHiddenTombstone } from '@/lib/feed/hidden-tombstones'
+import type { BookmarkDocument } from '@/lib/services/bookmark-service'
+import type { Post } from '@/lib/types'
+import { useHydratedPages } from '@/hooks/use-hydrated-pages'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
+import { dropFromPages } from '@/lib/hydrated-pages'
 
-interface BookmarkedPost {
-  id: string
-  content: string
-  author: {
-    id: string
-    username: string
-    handle: string
-    displayName: string
-    avatar: string
-    followers: number
-    following: number
-    verified?: boolean
-    joinedAt: Date
-  }
-  createdAt: Date
-  timestamp: string
-  likes: number
-  replies: number
-  reposts: number
-  quotes: number
-  views: number
-  bookmarkedAt: Date
+/** Bookmarked posts fetched and enriched per page. */
+const PAGE_SIZE = 30
+
+/**
+ * One page of bookmarks as posts, in bookmark order: the referenced posts in
+ * bounded `$id in [...]` batches, enriched together.
+ */
+async function hydrateBookmarks(bookmarkDocs: BookmarkDocument[]): Promise<Post[]> {
+  const { postService } = await import('@/lib/services/post-service')
+  const page = await postService.getPostsByIdsForDisplay(bookmarkDocs.map(bookmark => bookmark.postId))
+  const postsById = new Map(page.posts.map(post => [post.id, post]))
+  const kept = bookmarkDocs.flatMap((bookmark) => {
+    const post = postsById.get(bookmark.postId)
+    // Deleted posts drop out; v11: so does a post its author tombstoned.
+    return post && !isHiddenTombstone(post) ? [post] : []
+  })
+  // enrichPostsBatch also resolves quote targets, so bookmarked quotes
+  // render their embed instead of a permanent skeleton
+  return postService.enrichPostsBatch(kept, page.preloaded)
 }
 
 function BookmarksPage() {
   const { user } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
-  const [bookmarks, setBookmarks] = useState<BookmarkedPost[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isMutating, setIsMutating] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
+  const list = useHydratedPages(hydrateBookmarks, PAGE_SIZE)
+  const { reset: resetList, setPages } = list
+  const bookmarks = list.pages?.items ?? []
+  const bookmarkCount = list.pages?.keys.length ?? 0
+  const scroll = useInfiniteScroll({
+    hasMore: list.hasMore,
+    isLoading: list.loadingMore,
+    onLoadMore: list.loadMore,
+    resetKey: sortBy,
+  })
 
+  // Every bookmark (no cap), newest first; posts load a page at a time.
   useEffect(() => {
+    if (!user) return
+    let cancelled = false
     const loadBookmarks = async () => {
-      if (!user) return
-
       setIsLoading(true)
+      setSortBy('recent')
       try {
         const { bookmarkService } = await import('@/lib/services/bookmark-service')
-        const { postService } = await import('@/lib/services/post-service')
-
-        // Get bookmark documents
-        const bookmarkDocs = await bookmarkService.getUserBookmarks(user.identityId)
-
-        // Fetch all referenced posts in bounded `$id in [...]` batches. The
-        // previous loop issued one DAPI read per bookmark before enrichment.
-        const page = await postService.getPostsByIdsForDisplay(bookmarkDocs.map(bookmark => bookmark.postId))
-        const postsById = new Map(page.posts.map(post => [post.id, post]))
-        const rawPostsWithBookmarkData = bookmarkDocs.map((bookmark) => {
-          const post = postsById.get(bookmark.postId)
-          // v11: a post its author tombstoned has nothing left to keep.
-          return post && !isHiddenTombstone(post) ? { post, bookmarkedAt: new Date(bookmark.$createdAt) } : null
-        })
-
-        // Filter out deleted posts
-        const validPostsWithData = rawPostsWithBookmarkData.filter(
-          (item): item is NonNullable<typeof item> => item !== null
-        )
-
-        // Batch enrich all posts at once (efficient DPNS resolution)
-        const postsToEnrich = validPostsWithData.map(item => item.post)
-        // enrichPostsBatch also resolves quote targets, so bookmarked quotes
-        // render their embed instead of a permanent skeleton
-        const enrichedPosts = await postService.enrichPostsBatch(postsToEnrich, page.preloaded)
-
-        // Combine enriched posts with bookmark data
-        const postsWithBookmarkData = validPostsWithData.map((item, index) => ({
-          ...enrichedPosts[index],
-          bookmarkedAt: item.bookmarkedAt
-        }))
-
-        // Filter out any remaining invalid posts and set bookmarks
-        setBookmarks(postsWithBookmarkData.filter((p): p is BookmarkedPost => p !== null))
+        const docs = await bookmarkService.getUserBookmarks(user.identityId)
+        if (!cancelled) await resetList(docs)
       } catch (error) {
         logger.error('Error loading bookmarks:', error)
         toast.error('Failed to load bookmarks')
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
-
     loadBookmarks().catch(err => logger.error('Failed to load bookmarks:', err))
-  }, [user])
+    return () => { cancelled = true }
+  }, [user, resetList])
+
+  // The sort orders the whole (current) list, so a change starts the pages over.
+  const toggleSort = () => {
+    const keys = list.pages?.keys
+    setSortBy(sortBy === 'recent' ? 'oldest' : 'recent')
+    if (!keys) return
+    setIsLoading(true)
+    resetList([...keys].reverse())
+      .catch((error) => {
+        logger.error('Error loading bookmarks:', error)
+        toast.error('Failed to load bookmarks')
+      })
+      .finally(() => setIsLoading(false))
+  }
+
+  const dropBookmarks = useCallback((postIds: Set<string>) => {
+    setPages(prev => prev && dropFromPages(prev, doc => !postIds.has(doc.postId), post => !postIds.has(post.id)))
+  }, [setPages])
 
   const removeBookmark = async (postId: string) => {
     if (!user || isMutating) return
@@ -113,7 +113,7 @@ function BookmarksPage() {
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
       const success = await bookmarkService.removeBookmark(postId, user.identityId)
       if (success) {
-        setBookmarks(current => current.filter(post => post.id !== postId))
+        dropBookmarks(new Set([postId]))
         toast.success('Removed from bookmarks')
       } else {
         toast.error('Failed to remove bookmark')
@@ -130,25 +130,18 @@ function BookmarksPage() {
     if (!user || isMutating) return
     if (!confirm('Are you sure you want to clear all bookmarks?')) return
 
-    const previousBookmarks = bookmarks
+    // Every bookmark, including those not scrolled to yet, deleted by id.
+    const docs = list.pages?.keys ?? []
     setIsMutating(true)
 
     try {
       const { bookmarkService } = await import('@/lib/services/bookmark-service')
+      const { mapLimit } = await import('@/lib/services/pagination-utils')
+      const deleted = await mapLimit(docs, 4, doc => bookmarkService.deleteBookmark(doc.$id, user.identityId))
 
-      // Remove all bookmarks
-      const results = await Promise.allSettled(
-        previousBookmarks.map(post =>
-          bookmarkService.removeBookmark(post.id, user.identityId)
-        )
-      )
-
-      const removedIds = new Set(previousBookmarks
-        .filter((_, index) => results[index].status === 'fulfilled' && results[index].value)
-        .map(post => post.id))
-      setBookmarks(current => current.filter(post => !removedIds.has(post.id)))
-      const allSucceeded = removedIds.size === previousBookmarks.length
-      if (allSucceeded) {
+      const removedIds = new Set(docs.filter((_, index) => deleted[index]).map(doc => doc.postId))
+      dropBookmarks(removedIds)
+      if (deleted.every(Boolean)) {
         toast.success('All bookmarks cleared')
       } else {
         toast.error('Some bookmarks could not be removed')
@@ -161,16 +154,12 @@ function BookmarksPage() {
     }
   }
 
-  const filteredBookmarks = bookmarks
-    .filter(post => 
-      post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      post.author.username.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-    .sort((a, b) => {
-      const timeA = a.bookmarkedAt.getTime()
-      const timeB = b.bookmarkedAt.getTime()
-      return sortBy === 'recent' ? timeB - timeA : timeA - timeB
-    })
+  // Search covers the bookmarks loaded so far; the list keeps loading as it scrolls.
+  const query = searchQuery.toLowerCase()
+  const filteredBookmarks = bookmarks.filter(post =>
+    post.content.toLowerCase().includes(query) ||
+    post.author.username.toLowerCase().includes(query)
+  )
 
   return (
     <PageShell>
@@ -178,7 +167,7 @@ function BookmarksPage() {
           <div className="flex items-center justify-between px-4 py-3">
             <div>
               <h1 className="text-xl font-bold">Bookmarks</h1>
-              <p className="text-sm text-gray-500">{bookmarks.length} saved {bookmarks.length === 1 ? 'post' : 'posts'}</p>
+              <p className="text-sm text-gray-500">{bookmarkCount} saved {bookmarkCount === 1 ? 'post' : 'posts'}</p>
             </div>
             
             <DropdownMenu.Root>
@@ -199,7 +188,7 @@ function BookmarksPage() {
                 >
                   <DropdownMenu.Item
                     className="px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-900 cursor-pointer outline-none flex items-center gap-2"
-                    onClick={() => setSortBy(sortBy === 'recent' ? 'oldest' : 'recent')}
+                    onClick={toggleSort}
                   >
                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4" />
@@ -220,7 +209,7 @@ function BookmarksPage() {
             </DropdownMenu.Root>
           </div>
           
-          {bookmarks.length > 0 && (
+          {bookmarkCount > 0 && (
             <div className="px-4 pb-3">
               <div className="relative">
                 <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500" />
@@ -241,7 +230,7 @@ function BookmarksPage() {
             <Spinner size="md" className="mx-auto mb-4" />
             <p className="text-gray-500">Loading bookmarks...</p>
           </div>
-        ) : bookmarks.length === 0 ? (
+        ) : bookmarks.length === 0 && !list.hasMore ? (
           <div className="p-8 text-center">
             <BookmarkIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <h2 className="text-xl font-semibold mb-2">Save posts for later</h2>
@@ -249,7 +238,7 @@ function BookmarksPage() {
               Don&apos;t let the good ones fly away! Bookmark posts to easily find them again.
             </p>
           </div>
-        ) : filteredBookmarks.length === 0 ? (
+        ) : filteredBookmarks.length === 0 && !list.hasMore ? (
           <div className="p-8 text-center">
             <MagnifyingGlassIcon className="h-12 w-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No bookmarks found matching &quot;{searchQuery}&quot;</p>
@@ -312,6 +301,15 @@ function BookmarksPage() {
                 </div>
               </motion.div>
             ))}
+            {list.hasMore && (
+              <InfiniteScrollSentinel
+                sentinelRef={scroll.sentinelRef}
+                isLoading={list.loadingMore}
+                isSuspended={scroll.isSuspended}
+                onLoadMore={scroll.loadMore}
+                label="Load more bookmarks"
+              />
+            )}
           </div>
         )}
     </PageShell>

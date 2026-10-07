@@ -67,3 +67,26 @@ describe('checkout reads the live store status past the cache (QA D-25)', () => 
     await expect(storeService.getCurrent('store')).rejects.toThrow('offline');
   });
 });
+
+describe('newest active stores for discovery', () => {
+  /** `total` stores in owner order, every third paused, created later as the id grows. */
+  const stores = (total: number) => async ({ limit, startAfter }: { limit: number; startAfter?: string }) => {
+    const first = startAfter ? Number(startAfter.slice(1)) + 1 : 0
+    const docs = Array.from({ length: Math.max(0, Math.min(limit, total - first)) }, (_, i) => {
+      const n = first + i
+      return [`s${n}`, { $id: `s${n}`, $ownerId: `o${n}`, $createdAt: 1_000 + n, name: `Store ${n}`, status: n % 3 === 0 ? 'paused' : 'active' }] as const
+    })
+    return new Map(docs)
+  }
+
+  it('reads every store, keeps the active ones and returns the newest, a full page', async () => {
+    query.mockReset().mockImplementation(stores(250))
+    const { stores: newest, complete } = await storeService.getNewestActiveStores(50)
+    expect(complete).toBe(true)
+    expect(newest).toHaveLength(50)
+    expect(newest.every(store => store.status === 'active')).toBe(true)
+    // s249 is paused (every third), so the newest active store is s248.
+    expect(newest[0].id).toBe('s248')
+    expect(query.mock.calls[0][0]).toMatchObject({ orderBy: [['$ownerId', 'asc']], limit: 100 })
+  })
+})

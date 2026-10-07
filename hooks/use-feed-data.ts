@@ -56,32 +56,6 @@ interface UseFeedDataResult {
   getPostEnrichment: ReturnType<typeof useProgressiveEnrichment>['getPostEnrichment'];
 }
 
-function normalizeRelationId(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed ? trimmed : null;
-  }
-  if (typeof value === 'number' || typeof value === 'bigint') {
-    return String(value);
-  }
-  return null;
-}
-
-function extractFollowedIds(following: Array<Record<string, unknown>>): string[] {
-  const ids = following
-    .map((followed) =>
-      normalizeRelationId(
-        followed.followingId ??
-          followed.followedId ??
-          followed.following ??
-          followed.$id
-      )
-    )
-    .filter((id): id is string => Boolean(id));
-
-  return Array.from(new Set(ids));
-}
-
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (value && typeof value === 'object') {
     return value as Record<string, unknown>;
@@ -451,15 +425,18 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     const generation = loadGenerationRef.current;
 
     try {
-      logger.debug('Feed: Checking for new posts since', new Date(newestPostTimestamp).toISOString());
+      // Polled through: the newest post on screen or already waiting behind
+      // the pill, so each check reads only what is newer than the last one found.
+      const polledThrough = Math.max(newestPostTimestamp, ...pendingNewPosts.map(getFeedItemTimestamp));
+      logger.debug('Feed: Checking for new posts since', new Date(polledThrough).toISOString());
       const OVERLAP_MS = 2000;
-      const sinceTimestamp = Math.max(0, newestPostTimestamp - OVERLAP_MS);
+      const sinceTimestamp = Math.max(0, polledThrough - OVERLAP_MS);
 
       let newPosts: Array<Record<string, unknown>> = [];
 
       if (activeTab === 'following' && user?.identityId) {
-        const following = await followService.getFollowing(user.identityId);
-        const followingIds = extractFollowedIds(following as unknown as Array<Record<string, unknown>>);
+        // Held a minute: the whole following list is not re-read every 15 s.
+        const followingIds = await followService.getFollowingIdsCached(user.identityId);
 
         if (followingIds.length > 0) {
           newPosts = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50);

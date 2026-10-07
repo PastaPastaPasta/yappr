@@ -15,10 +15,19 @@ import { normalizeSDKResponse, identifierToHex } from './sdk-helpers';
 import { hexToBytes } from '@/lib/bytes';
 
 export interface PaginateOptions {
-  /** Maximum results to return (safety limit). Default: 1000 */
+  /**
+   * Stop after this many results (safety limit). Default: 1000. `Infinity`
+   * reads until the documents run out. Stopping here is logged.
+   */
   maxResults?: number;
   /** Page size per query. Default: 100 */
   pageSize?: number;
+  /**
+   * The query has an `in` clause. Its continuation pages can come back a row
+   * short of `pageSize`, so only an empty page proves the end (one extra
+   * query per walk that found anything).
+   */
+  inClause?: boolean;
 }
 
 export interface PaginateCountResult {
@@ -50,6 +59,21 @@ interface SDK {
  * queries over larger id lists must be split into batches of at most this size.
  */
 export const MAX_IN_CLAUSE_VALUES = 100;
+
+/**
+ * How many documents a discovery list (blogs, stores) reads before sorting
+ * them client-side, for document types with no index to sort on. Past it the
+ * order only covers what was read, and the list says so.
+ */
+export const DISCOVERY_SCAN_LIMIT = 1000;
+
+/** How long a discovery scan is reused before it is read again. */
+export const DISCOVERY_SCAN_TTL_MS = 2 * 60 * 1000;
+
+/** `items` sorted by `createdAt`, newest first (a copy). */
+export function newestFirst<T extends { createdAt: Date }>(items: readonly T[]): T[] {
+  return [...items].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+}
 
 /** Split items into consecutive batches of at most `size` items. */
 export function chunk<T>(items: T[], size: number): T[][] {
@@ -415,6 +439,55 @@ export async function queryOwnedPostIds(
 }
 
 /**
+ * Walk a query's pages with `startAfter` (the last document's `$id`), handing
+ * each page to `onPage`, until the documents run out or `maxResults` have been
+ * read. Returns true when it stopped at the cap with more left (the last
+ * request asks for one row past the cap to know), and logs that, so a capped
+ * list never passes for the whole one unnoticed.
+ */
+async function walkPages(
+  sdk: SDK,
+  queryBuilder: (startAfter?: string) => Record<string, unknown>,
+  options: PaginateOptions,
+  onPage: (documents: Record<string, unknown>[]) => void
+): Promise<boolean> {
+  const { maxResults = 1000, pageSize = 100, inClause = false } = options;
+  let read = 0;
+  let startAfter: string | undefined;
+
+  for (;;) {
+    // Near the cap, ask for one row past it: that row only proves there is more.
+    const remaining = maxResults - read;
+    const limit = Math.min(pageSize, remaining + 1);
+    const query = queryBuilder(startAfter);
+    query.limit = limit;
+    if (startAfter) query.startAfter = startAfter;
+
+    const page = normalizeSDKResponse(await sdk.documents.query(query));
+    if (page.length > remaining) {
+      onPage(page.slice(0, remaining));
+      logger.warn('pagination: stopped at the result cap; the list is incomplete', {
+        documentTypeName: query.documentTypeName,
+        maxResults,
+      });
+      return true;
+    }
+    onPage(page);
+    read += page.length;
+
+    // A short page is the end of the list, except for an `in` query, whose
+    // continuation pages can come back a row short: only an empty page ends it.
+    if (page.length === 0 || (page.length < limit && !inClause)) return false;
+
+    const next = page[page.length - 1].$id as string | undefined;
+    if (!next || next === startAfter) {
+      throw new Error(`pagination: ${String(query.documentTypeName)} page cursor did not advance`);
+    }
+    startAfter = next;
+  }
+}
+
+/**
  * Paginate through all documents matching a query and return the count.
  * Used for count methods that need accurate totals.
  *
@@ -438,47 +511,21 @@ export async function paginateCount(
   queryBuilder: (startAfter?: string) => Record<string, unknown>,
   options: PaginateOptions = {}
 ): Promise<PaginateCountResult> {
-  const { maxResults = 1000, pageSize = 100 } = options;
-
-  let totalCount = 0;
-  let startAfter: string | undefined = undefined;
-  let reachedLimit = false;
-
-  while (totalCount < maxResults) {
-    const query = queryBuilder(startAfter);
-    query.limit = pageSize;
-    if (startAfter) {
-      query.startAfter = startAfter;
-    }
-
-    const response = await sdk.documents.query(query);
-    const documents = normalizeSDKResponse(response);
-
-    totalCount += documents.length;
-
-    // Check if we've reached the end (fewer documents than requested)
-    if (documents.length < pageSize) {
-      break;
-    }
-
-    // Check if we've hit the safety limit
-    if (totalCount >= maxResults) {
-      reachedLimit = true;
-      break;
-    }
-
-    // Get cursor for next page
-    const lastDoc = documents[documents.length - 1];
-    if (!lastDoc.$id) break;
-    startAfter = lastDoc.$id as string;
-  }
-
-  return { count: totalCount, reachedLimit };
+  let count = 0;
+  const reachedLimit = await walkPages(sdk, queryBuilder, options, (documents) => {
+    count += documents.length;
+  });
+  return { count, reachedLimit };
 }
 
 /**
  * Paginate through all documents and return them.
  * Used for list methods that need complete data.
+ *
+ * The default cap (1000) suits lists where the head is enough; a list whose
+ * completeness decides behavior (whom the viewer follows, their own blocks)
+ * passes `maxResults: Infinity` and reads until the documents run out. A walk
+ * stopped by the cap is logged and reported as `reachedLimit`.
  *
  * @param sdk - The EvoSDK instance
  * @param queryBuilder - Function that returns the query object, accepting optional startAfter cursor
@@ -506,41 +553,9 @@ export async function paginateFetchAll<T>(
   transformFn: (doc: Record<string, unknown>) => T,
   options: PaginateOptions = {}
 ): Promise<PaginateFetchResult<T>> {
-  const { maxResults = 1000, pageSize = 100 } = options;
-
-  const allDocuments: T[] = [];
-  let startAfter: string | undefined = undefined;
-  let reachedLimit = false;
-
-  while (allDocuments.length < maxResults) {
-    const query = queryBuilder(startAfter);
-    query.limit = pageSize;
-    if (startAfter) {
-      query.startAfter = startAfter;
-    }
-
-    const response = await sdk.documents.query(query);
-    const documents = normalizeSDKResponse(response);
-
-    // Transform and collect documents
-    allDocuments.push(...documents.map(transformFn));
-
-    // Check if we've reached the end (fewer documents than requested)
-    if (documents.length < pageSize) {
-      break;
-    }
-
-    // Check if we've hit the safety limit
-    if (allDocuments.length >= maxResults) {
-      reachedLimit = true;
-      break;
-    }
-
-    // Get cursor for next page
-    const lastDoc = documents[documents.length - 1];
-    if (!lastDoc.$id) break;
-    startAfter = lastDoc.$id as string;
-  }
-
-  return { documents: allDocuments, reachedLimit };
+  const documents: T[] = [];
+  const reachedLimit = await walkPages(sdk, queryBuilder, options, (page) => {
+    documents.push(...page.map(transformFn));
+  });
+  return { documents, reachedLimit };
 }

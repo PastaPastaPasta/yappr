@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import bs58 from 'bs58'
 import { addOwnBlock, getOwnBlocksFromCache, invalidateBlockCache, removeOwnBlock, setBlockFollows } from '../caches/block-cache'
 
-const { query, deleteDocument } = vi.hoisted(() => ({ query: vi.fn(), deleteDocument: vi.fn() }))
+const { query, deleteDocument, updateDocument, createDocument } = vi.hoisted(() => ({
+  query: vi.fn(), deleteDocument: vi.fn(), updateDocument: vi.fn(), createDocument: vi.fn(),
+}))
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
-vi.mock('./state-transition-service', () => ({ stateTransitionService: { deleteDocument } }))
-import { blockService } from './block-service'
+vi.mock('./state-transition-service', () => ({ stateTransitionService: { deleteDocument, updateDocument, createDocument } }))
+import { blockService, buildBloomFilter } from './block-service'
+import { BloomFilter } from '../bloom-filter'
 
 const identity = (n: number) => bs58.encode(Uint8Array.from({ length: 32 }, (_, i) => i === 0 ? n : 1))
 const viewer = identity(250)
@@ -25,6 +28,8 @@ beforeEach(() => {
   })
   query.mockReset().mockResolvedValue([])
   deleteDocument.mockReset().mockResolvedValue({ success: true })
+  updateDocument.mockReset().mockResolvedValue({ success: true })
+  createDocument.mockReset().mockResolvedValue({ success: true })
 })
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -229,5 +234,88 @@ describe('block provenance', () => {
     expect(Object.fromEntries(sources)).toEqual({ [authors[1]]: 'inherited', [authors[2]]: 'own' })
     // The own list plus one inherited check for the followed blocker.
     expect(blockQueries()).toHaveLength(2)
+  })
+})
+
+describe('the blocked-users list', () => {
+  it('reads every block on the ownerAndBlocked index, past 100', async () => {
+    query.mockImplementation(async q => q.startAfter ? [block(authors[100], 100), block(authors[101], 101)] : authors.slice(0, 100).map((id, i) => block(id, i)))
+    const blocks = await blockService.getUserBlocks(viewer)
+    expect(blocks.map(b => b.blockedId)).toEqual(authors.slice(0, 102))
+    expect(query.mock.calls[0][0]).toMatchObject({
+      where: [['$ownerId', '==', viewer]],
+      orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
+      limit: 100,
+    })
+    expect(query.mock.calls[1][0].startAfter).toBe(identity(100))
+  })
+
+  it('rejects a failed read rather than answering "no blocks"', async () => {
+    query.mockRejectedValue(new Error('offline'))
+    await expect(blockService.getUserBlocks(viewer)).rejects.toThrow('offline')
+  })
+})
+
+describe('the blockFilter on unblock', () => {
+  const filterDoc = (ids: string[]) => {
+    const filter = buildBloomFilter(ids)
+    return { $id: 'filter-doc', $ownerId: viewer, $revision: 4, filterData: filter.serialize(), itemCount: filter.itemCount }
+  }
+  /** Block docs for `remaining` (plus the one being unblocked), and the viewer's filter over all of them. */
+  const network = (remaining: string[], unblocked: string, filter = true) => async (q: { documentTypeName: string; where: unknown[][] }) => {
+    if (q.documentTypeName === 'blockFilter') return filter ? [filterDoc([...remaining, unblocked])] : []
+    if (q.documentTypeName !== 'block') return []
+    // getBlock looks up the one block; the list read still returns the deleted one (eventual).
+    if (q.where.length === 2) return [block(unblocked, 50)]
+    return [...remaining, unblocked].map((id, i) => block(id, i))
+  }
+  const written = () => {
+    const data = updateDocument.mock.calls[0][4] as { filterData: Uint8Array; itemCount: number }
+    return new BloomFilter(data.filterData, data.itemCount)
+  }
+
+  it('rebuilds the filter from the blocks left, without the unblocked user', async () => {
+    query.mockImplementation(network([authors[1], authors[2]], authors[0]))
+    expect(await blockService.unblockUser(viewer, authors[0])).toEqual({ success: true })
+
+    expect(updateDocument).toHaveBeenCalledOnce()
+    const [, type, docId, owner, data, revision] = updateDocument.mock.calls[0]
+    expect([type, docId, owner, revision]).toEqual(['blockFilter', 'filter-doc', viewer, 4])
+    expect(data).toMatchObject({ itemCount: 2, version: 1 })
+    expect(written().mightContain(authors[0])).toBe(false)
+    expect(written().mightContain(authors[1])).toBe(true)
+    expect(written().mightContain(authors[2])).toBe(true)
+  })
+
+  it('empties the filter when no blocks remain (filterData keeps its minimum length)', async () => {
+    query.mockImplementation(network([], authors[0]))
+    await blockService.unblockUser(viewer, authors[0])
+    const data = updateDocument.mock.calls[0][4] as { filterData: Uint8Array; itemCount: number }
+    expect(data.itemCount).toBe(0)
+    expect(data.filterData.length).toBeGreaterThan(0)
+    expect(data.filterData.every(byte => byte === 0)).toBe(true)
+  })
+
+  it('rebuilds from a fresh read even when this tab holds a (stale) complete list', async () => {
+    // This tab cached [authors[0]] only; another device has since blocked authors[3].
+    query.mockImplementation(async q => q.documentTypeName === 'block' && q.where.length === 1 ? [block(authors[0])] : [])
+    await blockService.isBlocked(authors[5], viewer)
+    query.mockImplementation(network([authors[3]], authors[0]))
+    await blockService.unblockUser(viewer, authors[0])
+    expect(written().mightContain(authors[3])).toBe(true)
+    expect(written().mightContain(authors[0])).toBe(false)
+  })
+
+  it('writes nothing when the user has no filter', async () => {
+    query.mockImplementation(network([authors[1]], authors[0], false))
+    expect(await blockService.unblockUser(viewer, authors[0])).toEqual({ success: true })
+    expect(updateDocument).not.toHaveBeenCalled()
+    expect(createDocument).not.toHaveBeenCalled()
+  })
+
+  it('still reports the unblock when the filter cannot be rewritten', async () => {
+    query.mockImplementation(network([authors[1]], authors[0]))
+    updateDocument.mockResolvedValue({ success: false, error: 'nonce' })
+    expect(await blockService.unblockUser(viewer, authors[0])).toEqual({ success: true })
   })
 })

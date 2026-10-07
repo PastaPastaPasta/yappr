@@ -206,7 +206,7 @@ export const feed = {
     const sinceMs = Math.max(0, query.since.getTime() - NEW_POSTS_OVERLAP_MS)
     let raw: Record<string, unknown>[]
     if (query.tab === 'following') {
-      const ids = await followService.getFollowingIds(requireViewer('The Following feed'))
+      const ids = await followService.getFollowingIdsCached(requireViewer('The Following feed'))
       raw = ids.length > 0 ? await queryPostsByOwnersSince(ids, sinceMs, NEW_POSTS_LIMIT) : []
     } else {
       raw = await queryPostsSince(sinceMs, NEW_POSTS_LIMIT, feedLanguage() || 'en')

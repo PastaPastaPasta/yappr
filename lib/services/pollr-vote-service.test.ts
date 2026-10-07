@@ -288,6 +288,11 @@ describe('tally after an already-voted refusal', () => {
 
 describe('final results on a closed poll', () => {
   const closed = () => poll({ endsAt: Date.now() - 60_000 });
+  /** Full pages of option-0 ballots that never run out, each continuing after the last. */
+  const endlessFullPages = () => mocks.query.mockImplementation(async ({ startAfter }: { startAfter?: string }) => {
+    const first = startAfter ? Number(startAfter.slice(1)) + 1 : 0;
+    return new Map(Array.from({ length: 100 }, (_, i) => [`d${first + i}`, { $id: `d${first + i}`, choice: 0 }]));
+  });
 
   it('v3 tallies only the ballots created by the close time, in one read', async () => {
     const service = await loadService('v3');
@@ -320,8 +325,7 @@ describe('final results on a closed poll', () => {
   it('v3 marks a capped on-time read’s count-tree fallback as not final', async () => {
     const service = await loadService('v3');
     // Every page comes back full, so the on-time read hits its pagination cap.
-    const fullPage = new Map(Array.from({ length: 100 }, (_, i) => [`d${i}`, { $id: `d${i}`, choice: 0 }]));
-    mocks.query.mockResolvedValue(fullPage);
+    endlessFullPages();
     mocks.count.mockResolvedValue(new Map([['80', 1001n], ['81', 1n]]));
 
     expect(await service.getTally(closed())).toEqual({ counts: [1001, 1, 0], total: 1002, lateIncluded: true });
@@ -349,8 +353,7 @@ describe('final results on a closed poll', () => {
 
   it('a refresh keeps a capped closed-poll tally marked as not final', async () => {
     const service = await loadService('v3');
-    const fullPage = new Map(Array.from({ length: 100 }, (_, i) => [`d${i}`, { $id: `d${i}`, choice: 0 }]));
-    mocks.query.mockResolvedValue(fullPage);
+    endlessFullPages();
     mocks.count.mockResolvedValue(new Map([['80', 1001n], ['81', 1n]]));
 
     const refreshed = await service.refreshTally(closed(), { counts: [1001, 1, 1], total: 1003 }, { created: [2], alreadyVoted: [] });

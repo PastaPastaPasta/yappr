@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
 import { postService } from '@/lib/services/post-service'
@@ -9,6 +9,17 @@ import type { RankingWindow } from '@/lib/services/ranked-likes'
 import type { ProfileTab } from '@/components/profile/profile-tabs'
 import { useProfileReplies } from '@/hooks/use-profile-replies'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { useHydratedPages } from '@/hooks/use-hydrated-pages'
+import type { PostMentionDocument } from '@/lib/services/mention-service'
+
+/** Mentioning posts fetched and enriched per page of the Mentions tab. */
+const MENTIONS_PAGE_SIZE = 30
+
+/** One page of mentions: the mentioning posts (and v10 replies), authentic only, newest first. */
+async function hydrateMentions(mentionDocs: PostMentionDocument[]): Promise<Post[]> {
+  const { posts, preloaded } = await mentionService.loadMentioningPosts(mentionDocs)
+  return postService.enrichPostsBatch(posts, preloaded)
+}
 
 /**
  * The lazily loaded profile tabs: replies, top posts and mentions each fetch
@@ -18,9 +29,17 @@ import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 export function useProfileTabs(userId: string | null, enrichProgressively: (posts: Post[]) => void) {
   const [activeTab, setActiveTab] = useState<ProfileTab>('posts')
 
-  const [mentions, setMentions] = useState<Post[]>([])
+  const mentions = useHydratedPages(hydrateMentions, MENTIONS_PAGE_SIZE)
+  const { reset: resetMentions, clear: clearMentions } = mentions
   const [mentionsLoading, setMentionsLoading] = useState(false)
   const [mentionsLoaded, setMentionsLoaded] = useState(false)
+  const mentionsScroll = useInfiniteScroll({
+    hasMore: mentions.hasMore,
+    isLoading: mentions.loadingMore,
+    onLoadMore: mentions.loadMore,
+    disabled: activeTab !== 'mentions',
+    resetKey: userId,
+  })
 
   const replies = useProfileReplies(userId, enrichProgressively)
   // A load failure surfaces through `replies.error` with its own retry, so the
@@ -38,26 +57,27 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
   const [topLoaded, setTopLoaded] = useState(false)
   const [rankingWindow, setRankingWindow] = useState<RankingWindow>('all')
 
+  // The profile shown now: a mentions read for the previous one must not land here.
+  const userIdRef = useRef(userId)
+  userIdRef.current = userId
   const loadMentions = useCallback(async () => {
     if (!userId || mentionsLoaded) return
+    const isCurrent = () => userIdRef.current === userId
     setMentionsLoading(true)
     try {
+      // Every mention (no cap), newest first; posts load a page at a time.
       const mentionDocs = await mentionService.getPostsMentioningUser(userId)
-      if (mentionDocs.length === 0) {
-        setMentions([])
-        return
-      }
-      // The mentioning posts (and v10 replies), authentic only, newest first.
-      const { posts, preloaded } = await mentionService.loadMentioningPosts(mentionDocs)
-      setMentions(await postService.enrichPostsBatch(posts, preloaded))
+      if (isCurrent()) await resetMentions(mentionDocs)
     } catch (error) {
       logger.error('Failed to load mentions:', error)
-      setMentions([])
+      if (isCurrent()) await resetMentions([])
     } finally {
-      setMentionsLoading(false)
-      setMentionsLoaded(true)
+      if (isCurrent()) {
+        setMentionsLoading(false)
+        setMentionsLoaded(true)
+      }
     }
-  }, [userId, mentionsLoaded])
+  }, [userId, mentionsLoaded, resetMentions])
 
   /**
    * One proved server-side ranked query on `like.byAuthorPost` (v10
@@ -93,17 +113,26 @@ export function useProfileTabs(userId: string | null, enrichProgressively: (post
 
   // A new profile starts on Posts with nothing loaded.
   useEffect(() => {
-    setMentions([])
+    clearMentions()
+    setMentionsLoading(false)
     setMentionsLoaded(false)
     setTopPosts([])
     setTopLoaded(false)
     setActiveTab('posts')
-  }, [userId])
+  }, [userId, clearMentions])
 
   return {
     activeTab,
     setActiveTab,
-    mentions: { posts: mentions, loading: mentionsLoading },
+    mentions: {
+      posts: mentions.pages?.items ?? [],
+      loading: mentionsLoading,
+      hasMore: mentions.hasMore,
+      loadingMore: mentions.loadingMore,
+      isSuspended: mentionsScroll.isSuspended,
+      sentinelRef: mentionsScroll.sentinelRef,
+      onLoadMore: mentionsScroll.loadMore,
+    },
     replies: {
       ...replies,
       isSuspended: repliesScroll.isSuspended,
