@@ -92,6 +92,8 @@ import {
 } from './verify-lib.mjs';
 import {
   describeValue,
+  AGREEMENT_MISMATCH,
+  AGREEMENT_NOT_SET,
   errorOf,
   feeAgreement,
   idOf,
@@ -129,12 +131,10 @@ const INSUFFICIENT_TOKENS = /\bcode"?\s*[=:]\s*40700\b|not have enough token|ins
 // and "…, but the transition agreed to A and B credits (C pricing)". Anchoring
 // only on the number or on the phrase "fee agreement mismatch" scored those
 // verbatim refusals as unexpected on moutai (4.2.0-beta.3, 2026-09-21).
-const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
 // The prose alternative names BOTH amounts, so it cannot be satisfied by the
 // 40134 stale-multiplier refusal, which is also prose about what the transition
 // agreed to. `expectMismatch` additionally rules 40134 out explicitly: passing
 // a2 on a stale multiplier would claim to have proved 40133 without doing so.
-const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
 const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const GRANT_ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|onceperidentity.{0,60}already|already claimed/i;
 

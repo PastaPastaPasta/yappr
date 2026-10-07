@@ -19,11 +19,27 @@ import { ComposePost } from '@/components/blog/compose-post'
 import { BlogHome } from '@/components/blog/blog-home'
 import { BlogPostView } from '@/components/blog/blog-post-view'
 import { ThemeEditor } from '@/components/blog/theme-editor'
+import { DeletedBlogPost } from '@/components/blog/deleted-blog-post'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { blogIsV7 } from '@/lib/constants'
+import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
-import { blogPostDate, formatLabels, getBlogPostUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
+import { blogPostDate, formatLabels, getBlogPostUrl, isBlogPostTombstone, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import toast from 'react-hot-toast'
+
+/** How the author's dashboard badges a post. */
+const POST_STATUS = {
+  published: { label: 'Published', className: 'bg-green-500/10 text-green-700 dark:text-green-400' },
+  draft: { label: 'Draft', className: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' },
+  deleted: { label: 'Deleted', className: 'bg-gray-500/10 text-gray-600 dark:text-gray-400' },
+} as const
+
+function postStatus(post: BlogPost): keyof typeof POST_STATUS {
+  if (isBlogPostTombstone(post)) return 'deleted'
+  return isPublishedBlogPost(post) ? 'published' : 'draft'
+}
 
 function BlogPageContent() {
   const router = useRouter()
@@ -38,6 +54,8 @@ function BlogPageContent() {
   const [ownerPosts, setOwnerPosts] = useState<BlogPost[]>([])
   const [editingPost, setEditingPost] = useState<BlogPost | null>(null)
   const [activeTab, setActiveTab] = useState<'posts' | 'compose' | 'settings' | 'theme'>('posts')
+  const [deletingPost, setDeletingPost] = useState<BlogPost | null>(null)
+  const [isDeletingPost, setIsDeletingPost] = useState(false)
 
   const [viewBlog, setViewBlog] = useState<Blog | null>(null)
   const [viewPost, setViewPost] = useState<BlogPost | null>(null)
@@ -85,7 +103,8 @@ function BlogPageContent() {
         setViewUsername(resolved ? normalizeDpnsUsername(resolved) : null)
 
         // A draft is only readable by its owner (from the dashboard, as a preview).
-        const visible = post && (isPublishedBlogPost(post) || post.ownerId === user?.identityId) ? post : null
+        // A deleted post's link still resolves, to say it was deleted.
+        const visible = post && (isPublishedBlogPost(post) || isBlogPostTombstone(post) || post.ownerId === user?.identityId) ? post : null
         if (postSlugParam && !visible) {
           setError('Post not found')
           setViewPost(null)
@@ -151,6 +170,24 @@ function BlogPageContent() {
     setOwnerPosts(posts)
   }
 
+  /** The author's delete (blog v7): the post becomes a tombstone, which cannot be undone. */
+  const confirmDeletePost = async () => {
+    if (!deletingPost || !user?.identityId) return
+    setIsDeletingPost(true)
+    try {
+      const deleted = await blogPostService.deletePost(deletingPost.id, user.identityId)
+      if (!deleted) throw new Error('The delete was not accepted')
+      toast.success('Post deleted')
+      setDeletingPost(null)
+      await refreshPosts()
+    } catch (error) {
+      logger.error('Failed to delete blog post:', error)
+      toast.error('Failed to delete the post. Please try again.')
+    } finally {
+      setIsDeletingPost(false)
+    }
+  }
+
   const handleThemeSave = async (themeConfig: BlogThemeConfig) => {
     if (!selectedBlog || !user?.identityId) return
     try {
@@ -181,6 +218,7 @@ function BlogPageContent() {
       }
 
       if (viewPost) {
+        if (isBlogPostTombstone(viewPost)) return <DeletedBlogPost blog={viewBlog} />
         return <BlogPostView blog={viewBlog} post={viewPost} username={viewUsername || ''} />
       }
 
@@ -200,7 +238,7 @@ function BlogPageContent() {
               }}
             />
           )}
-          <BlogDiscovery sdkReady={sdkReady} showHeader={!user} />
+          <BlogDiscovery sdkReady={sdkReady} showHeader={!user} initialView={searchParams.get('view') === 'posts' ? 'posts' : 'blogs'} />
         </div>
       )
     }
@@ -296,7 +334,8 @@ function BlogPageContent() {
               ) : (
                 <div className="divide-y divide-gray-200 dark:divide-gray-800/60">
                   {ownerPosts.map((post) => {
-                    const isPublished = isPublishedBlogPost(post)
+                    const status = postStatus(post)
+                    const isDeleted = status === 'deleted'
                     return (
                       <div key={post.id} className="group flex items-start gap-3 py-3.5 first:pt-0 last:pb-0">
                         <button
@@ -305,14 +344,9 @@ function BlogPageContent() {
                           onClick={() => router.push(getBlogPostUrl(post.blogId, post.slug))}
                         >
                           <div className="flex items-center gap-2">
-                            <p className="truncate font-medium text-gray-900 dark:text-gray-100 group-hover:text-black dark:group-hover:text-white transition-colors">{post.title}</p>
-                            <span className={cn(
-                              'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
-                              isPublished
-                                ? 'bg-green-500/10 text-green-700 dark:text-green-400'
-                                : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                            )}>
-                              {isPublished ? 'Published' : 'Draft'}
+                            <p className="truncate font-medium text-gray-900 dark:text-gray-100 group-hover:text-black dark:group-hover:text-white transition-colors">{isDeleted ? post.slug : post.title}</p>
+                            <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', POST_STATUS[status].className)}>
+                              {POST_STATUS[status].label}
                             </span>
                           </div>
                           <div className="mt-1 flex items-center gap-2">
@@ -322,16 +356,29 @@ function BlogPageContent() {
                             )}
                           </div>
                         </button>
-                        <button
-                          type="button"
-                          className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-100 dark:group-hover:bg-gray-800/60 group-hover:text-gray-900 dark:group-hover:text-gray-300"
-                          onClick={() => {
-                            setEditingPost(post)
-                            setActiveTab('compose')
-                          }}
-                        >
-                          Edit
-                        </button>
+                        {!isDeleted && (
+                          <>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-100 dark:group-hover:bg-gray-800/60 group-hover:text-gray-900 dark:group-hover:text-gray-300"
+                              onClick={() => {
+                                setEditingPost(post)
+                                setActiveTab('compose')
+                              }}
+                            >
+                              Edit
+                            </button>
+                            {blogIsV7() && (
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                                onClick={() => setDeletingPost(post)}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </>
+                        )}
                       </div>
                     )
                   })}
@@ -339,6 +386,17 @@ function BlogPageContent() {
               )}
             </section>
           )}
+
+          <ConfirmDialog
+            isOpen={deletingPost !== null}
+            onClose={() => { if (!isDeletingPost) setDeletingPost(null) }}
+            onConfirm={() => { confirmDeletePost().catch(() => {}) }}
+            title="Delete post"
+            message={`"${deletingPost?.title ?? ''}" will be deleted: its text is removed, its comments close, and its link will say it was deleted. This cannot be undone.`}
+            confirmText="Delete post"
+            variant="danger"
+            isLoading={isDeletingPost}
+          />
 
           {activeTab === 'compose' && (
             <ComposePost

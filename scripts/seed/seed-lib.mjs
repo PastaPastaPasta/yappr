@@ -950,11 +950,18 @@ export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SC
  * (`deriveDocumentIdBytes`); the id is therefore known BEFORE the broadcast,
  * unlike the facade path. Returns `{ id }` — the same shape `createdId` reads
  * off a facade-created Document — so callers' acceptance logic is unchanged.
+ *
+ * `onDerivedId(id)` receives that id before anything is signed or sent: a
+ * broadcast that lands while its wait throws (the DAPI 504 quirk) returns
+ * nothing, and a caller reconciling by id needs it then. Looking the document
+ * up by value instead needs an owner index, which not every doctype keeps
+ * (blog v7 drops them from `blogPost` and `blogComment`).
  */
-export async function createWithAgreement(sdk, { contractId, docType, ownerId, wif, identityKey, data, entropy, agreement, payment = {} }) {
+export async function createWithAgreement(sdk, { contractId, docType, ownerId, wif, identityKey, data, entropy, agreement, payment = {}, onDerivedId }) {
   const rawNonce = (await sdk.wasm.getIdentityContractNonce(ownerId, contractId)) ?? 0n;
   const nonce = (BigInt(rawNonce) & NONCE_SEQUENCE_MASK) + 1n;
   const { document, id } = buildDocument({ contractId, docType, ownerId, data, entropy, nonce });
+  onDerivedId?.(id);
   const transition = new DocumentCreateTransition({
     document,
     identityContractNonce: nonce,
@@ -988,13 +995,13 @@ export async function createWithAgreement(sdk, { contractId, docType, ownerId, w
  * which path ran. `actor` is a seeder actor: `{ ownerId, identityKey, signer,
  * wif }`.
  */
-export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {} }) {
+export function createDocument(sdk, { contractId, actor, docType, document, data, entropy, agreement, payment = {}, onDerivedId }) {
   if (!agreement) {
     return sdk.documents.create({ document, identityKey: actor.identityKey, signer: actor.signer, ...payment });
   }
   return createWithAgreement(sdk, {
     contractId, docType, ownerId: actor.ownerId, wif: actor.wif, identityKey: actor.identityKey,
-    data, entropy, agreement, payment,
+    data, entropy, agreement, payment, onDerivedId,
   });
 }
 

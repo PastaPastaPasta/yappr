@@ -853,14 +853,19 @@ export interface WindowedRanking {
   readonly label: string
 }
 
-type LikeIndexJson = { name: string; timeRange?: { range: number; step: number } }
+type TimeRangeIndexJson = { name: string; timeRange?: { range: number; step: number } }
+
+/** The `timeRange` grid `docType.index` declares in a contract's schemas (any contract); throws when it declares none. */
+export function timeRangeOf(schemas: unknown, docType: string, index: string): WindowedRanking['grid'] {
+  const timeRange = (schemas as Record<string, { indices?: TimeRangeIndexJson[] }>)[docType]?.indices
+    ?.find((entry) => entry.name === index)?.timeRange
+  if (!timeRange) throw new Error(`${docType}.${index} declares no timeRange`)
+  return { range: timeRange.range, step: timeRange.step }
+}
 
 /** A windowed index of `docType` in `contract`, read off the committed JSON so the grid cannot drift. */
 function windowOf(contract: SocialContractJson, docType: 'like' | 'beat', index: string, selector: WindowedRanking['selector'], label: string): WindowedRanking {
-  const schemas = contract.documentSchemas as unknown as Record<string, { indices?: LikeIndexJson[] }>
-  const timeRange = schemas[docType]?.indices?.find((entry) => entry.name === index)?.timeRange
-  if (!timeRange) throw new Error(`${docType}.${index} declares no timeRange`)
-  return { docType, index, grid: { range: timeRange.range, step: timeRange.step }, selector, label }
+  return { docType, index, grid: timeRangeOf(contract.documentSchemas, docType, index), selector, label }
 }
 
 let windowedRankings: Readonly<Record<RankingAxis, WindowedRanking | null>> | null = null
