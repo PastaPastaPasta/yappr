@@ -984,6 +984,16 @@ describe('contract topology', () => {
       for (const before of ['v2', 'v9', 'v10', 'v11', 'v12']) expect((await topologyModule(before)).repliesNameRootOwner(), before).toBe(false)
     })
 
+    it('refuses reply owners that parentIsRoot or the root reference would, before signing', async () => {
+      const v13 = await topologyModule('v13')
+      expect(v13.replyOwnersProblem({ parentOwnerId: 'A', rootOwnerId: 'A' })).toBeNull()
+      expect(v13.replyOwnersProblem({ replyToReplyId: 'R', parentOwnerId: 'B', rootOwnerId: 'A' })).toBeNull()
+      expect(v13.replyOwnersProblem({ parentOwnerId: 'B', rootOwnerId: 'A' })).toMatch(/thread's post/)
+      expect(v13.replyOwnersProblem({ parentOwnerId: 'A' })).toMatch(/rootOwnerId/)
+      // Before v13 nothing binds them, and nothing is written.
+      expect((await topologyModule('v12')).replyOwnersProblem({ parentOwnerId: 'B', rootOwnerId: 'A' })).toBeNull()
+    })
+
     it('likes a reply by its id alone: no replyAuthor, no author counter', async () => {
       const v13 = await topologyModule('v13')
       expect(V13.likeReply.required).toEqual(['replyId'])

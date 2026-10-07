@@ -1255,6 +1255,31 @@ export function replyLinkageTo(target: ThreadBearing): { rootPostId: string; rep
   }
 }
 
+/** The owners a reply names, as `createReply` writes them. */
+export interface ReplyOwners {
+  /** Set when the reply nests under another reply. */
+  replyToReplyId?: string
+  /** The direct target's owner. */
+  parentOwnerId: string
+  /** v13: the thread root's owner. */
+  rootOwnerId?: string
+}
+
+/**
+ * Why consensus would refuse a reply naming these owners, or null when it
+ * would not: on v13 every reply names its root's owner, and a top-level reply's
+ * `parentOwnerId` IS that owner (`parentIsRoot`, a paid 10422). Checked before
+ * signing, so a client bug costs nothing.
+ */
+export function replyOwnersProblem(owners: ReplyOwners): string | null {
+  if (!repliesNameRootOwner()) return null
+  if (!owners.rootOwnerId) return 'A reply must name its thread\'s owner (rootOwnerId)'
+  if (!owners.replyToReplyId && owners.parentOwnerId !== owners.rootOwnerId) {
+    return 'A reply to the thread\'s post must name that post\'s owner as its parent owner'
+  }
+  return null
+}
+
 /**
  * The kind of a Post-shaped object.
  *

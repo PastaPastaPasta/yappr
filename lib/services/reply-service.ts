@@ -22,6 +22,8 @@ import {
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
+  replyOwnersProblem,
+  repliesNameRootOwner,
   threadRootIdOf,
   tombstonePreservationFor,
   type TargetKind,
@@ -43,6 +45,12 @@ export interface ReplyTarget {
   replyToReplyId?: string;
   /** Owner of the DIRECT target — what notification queries key on. */
   parentOwnerId: string;
+  /**
+   * v13: the root post's owner, written as `rootOwnerId`. Consensus binds it
+   * to the root (40127), and a top-level reply's `parentOwnerId` must equal
+   * it (`parentIsRoot`); see {@link replyOwnersProblem}.
+   */
+  rootOwnerId?: string;
 }
 
 /**
@@ -87,6 +95,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       return identifierToBase58(value) || undefined;
     };
     const rootPostId = replyToReplyField ? toBase58(data[rootField] ?? doc[rootField]) : undefined;
+    const rootOwnerId = toBase58(data.rootOwnerId ?? doc.rootOwnerId);
     const replyToReplyId = replyToReplyField
       ? toBase58(data[replyToReplyField] ?? doc[replyToReplyField])
       : undefined;
@@ -124,6 +133,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       parentId,
       parentOwnerId,
       rootPostId,
+      rootOwnerId,
       replyToReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
@@ -214,6 +224,8 @@ class ReplyService extends BaseDocumentService<Reply> {
     } = {}
   ): Promise<Reply> {
     const PRIVATE_REPLY_PLACEHOLDER = '🔒';
+    const ownersProblem = replyOwnersProblem(target);
+    if (ownersProblem) throw new Error(ownersProblem);
     const { root: rootField, replyToReply: replyToReplyField } = replyLinkage();
     const data: Record<string, unknown> = {
       // On v2 the single `parentId` names the DIRECT parent, which is
@@ -226,6 +238,9 @@ class ReplyService extends BaseDocumentService<Reply> {
     };
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
+    }
+    if (repliesNameRootOwner() && target.rootOwnerId) {
+      data.rootOwnerId = identifierStringToDocumentBytes(target.rootOwnerId);
     }
 
     // Handle encryption if provided
@@ -426,7 +441,8 @@ class ReplyService extends BaseDocumentService<Reply> {
    * changes there.
    */
   private async withTrueParentOwner(userId: string, replies: Reply[]): Promise<Reply[]> {
-    if (!replyLinkage().replyToReply) return replies;
+    // v13 binds a direct reply's parentOwnerId to its root's owner (`parentIsRoot`).
+    if (!replyLinkage().replyToReply || repliesNameRootOwner()) return replies;
     const direct = replies.filter((reply) => !reply.replyToReplyId && reply.rootPostId);
     if (direct.length === 0) return replies;
     const { postService } = await import('./post-service');

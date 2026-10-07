@@ -81,6 +81,7 @@ export function replyToPost(reply: Reply): Post {
     parentId: reply.parentId,
     parentOwnerId: reply.parentOwnerId,
     rootPostId: reply.rootPostId,
+    rootOwnerId: reply.rootOwnerId,
     replyToReplyId: reply.replyToReplyId,
     deleted: reply.deleted,
     sensitive: reply.sensitive,

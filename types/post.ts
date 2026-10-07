@@ -79,6 +79,7 @@ export interface Post {
   parentId?: string        // ID of post or reply being replied to (only on replies)
   parentOwnerId?: string   // Owner of parent (only on replies)
   rootPostId?: string      // v9 replies: the post the whole thread hangs off
+  rootOwnerId?: string     // v13 replies: the root post's owner (consensus-bound)
   replyToReplyId?: string  // v9 replies: the reply this one is nested under
   /**
    * True on a tombstone — a v9 post/reply whose author "deleted" it. The document
@@ -134,6 +135,7 @@ export interface Reply {
   parentId: string        // ID of post or reply being replied to (v9: the direct one, derived)
   parentOwnerId: string   // Owner of parent (for notifications)
   rootPostId?: string     // v9: the post the whole thread hangs off (required on chain)
+  rootOwnerId?: string    // v13: the root post's owner (required on chain, `where`-bound to it)
   replyToReplyId?: string // v9: the reply this one is nested under, if any
   deleted?: boolean       // v9 tombstone marker (see Post.deleted)
   /** v10: a stand-in for a reply proved deleted, holding its children's place in the thread; never a real document. */

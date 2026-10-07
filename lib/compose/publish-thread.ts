@@ -10,7 +10,7 @@ import { hasVisibleContent } from '@/lib/compose/limits'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { mentionService } from '@/lib/services/mention-service'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
-import { hashtagsAreInline, mentionsAreInline, replyLinkageTo, threadRootIdOf } from '@/lib/contract-topology'
+import { hashtagsAreInline, mentionsAreInline, repliesNameRootOwner, replyLinkageTo, targetKindOf, threadRootIdOf } from '@/lib/contract-topology'
 import { resolveQuoteReference } from '@/lib/feed/resolve-quoted-posts'
 import { isUnconfirmed, markUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
 import { dispatchFieldRegistered } from '@/lib/services/post-field-validation'
@@ -123,6 +123,18 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
 
   let previousPostId: string | null = null
   let threadRootId: string | null = replyingTo ? threadRootIdOf(replyingTo) : knownThreadRootId
+  // v13: every reply names its thread root's owner. The author's own thread
+  // (a standalone thread, or one resumed from an earlier attempt) is theirs.
+  let threadRootOwnerId: string | undefined
+  if (repliesNameRootOwner()) {
+    try {
+      threadRootOwnerId = replyingTo ? await threadRootOwnerOf(replyingTo) : authorId
+    } catch (error) {
+      outcome.failedAtIndex = 0
+      outcome.failureError = error instanceof Error ? error : new Error(extractErrorMessage(error))
+      return outcome
+    }
+  }
 
   for (let i = 0; i < posts.length; i++) {
     const { threadPostId, content, teaser, visibility, predecessorPostedId } = posts[i]
@@ -178,7 +190,7 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
       try {
         if (isReply && linkage && parentOwnerId) {
           const { replyService } = await import('@/lib/services/reply-service')
-          const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId }, {
+          const reply = await replyService.createReply(authorId, content, { ...linkage, parentOwnerId, rootOwnerId: threadRootOwnerId }, {
             encryption,
             sensitive,
             mediaUrl: i === 0 ? mediaUrlField : undefined,
@@ -260,6 +272,21 @@ export async function publishThread(input: PublishInput): Promise<PublishOutcome
     }
   }
   return outcome
+}
+
+/**
+ * The owner of the thread a reply to `target` joins (v13 `rootOwnerId`): the
+ * post's own author, or a reply's root owner, read off the reply when it
+ * carries one and off the root post otherwise. Rejects when the root cannot
+ * be read: a reply naming the wrong owner is refused, paid (40127).
+ */
+async function threadRootOwnerOf(target: Post): Promise<string> {
+  if (targetKindOf(target) !== 'reply') return target.author.id
+  if (target.rootOwnerId) return target.rootOwnerId
+  const { postService } = await import('@/lib/services/post-service')
+  const root = await postService.getPostById(threadRootIdOf(target), { skipEnrichment: true })
+  if (!root) throw new Error('Could not read the post this thread starts from. Try again in a moment — nothing was posted.')
+  return root.author.id
 }
 
 function wasConfirmed(doc: unknown): boolean {
