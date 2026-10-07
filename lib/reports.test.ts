@@ -1,5 +1,5 @@
 import bs58 from 'bs58'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import {
@@ -22,8 +22,17 @@ import {
   resolutionInputProblem,
   toReportRecord,
   withdrawFailureMessage,
+  URGENT_REASON_CODE,
+  isUrgentReason,
+  reportEmailHref,
   type ReportRecord,
 } from './reports'
+import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
+
+const v13Schema = (socialContractV13.documentSchemas as unknown as Record<string, {
+  properties: Record<string, { minimum?: number; maximum?: number; maxLength?: number; maxItems?: number }>
+  propertyConstraints: Record<string, unknown>
+}>).report
 
 const schema = (socialContractV9.documentSchemas as unknown as Record<string, {
   properties: Record<string, { minimum?: number; maximum?: number; maxLength?: number }>
@@ -60,6 +69,7 @@ const record = (overrides: Partial<ReportRecord>): ReportRecord => ({
   resolution: null,
   moderatedBy: null,
   moderatedAt: null,
+  box: null,
   ...overrides,
 })
 
@@ -72,10 +82,12 @@ describe('report lifetime', () => {
 })
 
 describe('report reasons', () => {
-  it('should cover exactly the codes the v9 contract accepts', () => {
+  it('should cover exactly the codes the v9 contract accepts, and v13 adds one', () => {
     expect(REPORT_REASONS.map((reason) => reason.code)).toEqual(REPORT_REASONS.map((_, index) => index))
     expect(schema.properties.reason.minimum).toBe(0)
-    expect(schema.properties.reason.maximum).toBe(REPORT_REASONS.length - 1)
+    expect(schema.properties.reason.maximum).toBe(REPORT_REASONS.length - 2)
+    expect(v13Schema.properties.reason.maximum).toBe(REPORT_REASONS.length - 1)
+    expect(REPORT_REASONS.at(-1)?.code).toBe(URGENT_REASON_CODE)
   })
 
   it('should treat as "something else" the code the contract demands a note for', () => {
@@ -115,7 +127,7 @@ describe('toReportRecord', () => {
     }
     expect(toReportRecord(doc)).toEqual({
       id: idOf(9), reporterId: idOf(8), kind: 'post', targetId: idOf(7), targetOwnerId: idOf(6), reason: 2, note: null, createdAt: 5_000,
-      status: null, resolution: null, moderatedBy: null, moderatedAt: null,
+      status: null, resolution: null, moderatedBy: null, moderatedAt: null, box: null,
     })
   })
 
@@ -284,5 +296,58 @@ describe('report resolution (v10)', () => {
     expect(resolutionFormStart([actioned, { status: 3, resolution: null }], false)).toEqual({ status: 3, note: '', statusesDiffer: false, notesDiffer: true })
     // Differing statuses: the moderator must choose one.
     expect(resolutionFormStart([actioned, { status: 1, resolution: 'Banned for spam' }], false)).toEqual({ status: null, note: 'Banned for spam', statusesDiffer: true, notesDiffer: false })
+  })
+})
+
+describe('v13 reports', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
+  const reportsOn = async (topology: string) => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+    return import('./reports')
+  }
+
+  it('offers reason 9 only where the contract accepts it', async () => {
+    const v13 = await reportsOn('v13')
+    expect(v13.reportReasonsOffered().map((reason) => reason.code)).toContain(URGENT_REASON_CODE)
+    expect(v13.reportInputProblem(URGENT_REASON_CODE, '')).toBeNull()
+    const v12 = await reportsOn('v12')
+    expect(v12.reportReasonsOffered().map((reason) => reason.code)).not.toContain(URGENT_REASON_CODE)
+    expect(v12.reportInputProblem(URGENT_REASON_CODE, '')).toMatch(/choose/i)
+  })
+
+  it('reads a profile report (about: 1, no post or reply) with the identity as its target, and a box', () => {
+    const box = new Uint8Array([1, 2, 3])
+    expect(toReportRecord({ $id: idOf(9), $ownerId: idOf(8), targetOwnerId: idOf(6), about: 1, reason: 7 })).toMatchObject({ kind: 'profile', targetId: idOf(6), box: null })
+    expect(toReportRecord({ $id: idOf(9), $ownerId: idOf(8), postId: idOf(7), targetOwnerId: idOf(6), reason: 0, box })).toMatchObject({ kind: 'post', box })
+  })
+
+  it('puts targets with an urgent report first, whatever their age', () => {
+    const groups = groupReports([
+      record({ id: idOf(10), targetId: idOf(3), createdAt: 9_000 }),
+      record({ id: idOf(11), targetId: idOf(4), reason: URGENT_REASON_CODE, createdAt: 1_000 }),
+    ])
+    expect(groups.map((group) => [group.targetId, group.urgent])).toEqual([[idOf(4), true], [idOf(3), false]])
+    expect(isUrgentReason(URGENT_REASON_CODE)).toBe(true)
+    expect(isUrgentReason(OTHER_REASON_CODE)).toBe(false)
+  })
+
+  it('emails the team the target and reason, never the content', () => {
+    const href = reportEmailHref({ kind: 'post', id: idOf(3) }, URGENT_REASON_CODE)
+    expect(href.startsWith('mailto:support@yap.pr?')).toBe(true)
+    expect(decodeURIComponent(href)).toContain(idOf(3))
+    expect(decodeURIComponent(href)).toContain('Child sexual abuse material')
+  })
+
+  it('says a second profile report is a duplicate, and never that a profile was removed', () => {
+    expect(reportFailureMessage({ code: 40105 }, 'profile')).toBe('You have already reported this profile.')
+    expect(reportFailureMessage({ code: 40120 }, 'profile')).not.toMatch(/removed/)
+  })
+
+  it('pins the v13 report shape the client writes', () => {
+    expect(v13Schema.properties.about).toMatchObject({ minimum: 1, maximum: 1 })
+    expect(v13Schema.properties.box).toMatchObject({ maxItems: 5_120 })
+    expect(v13Schema.propertyConstraints.boxOnContent).toEqual({ ifThen: [{ present: 'box' }, { absent: 'about' }] })
   })
 })

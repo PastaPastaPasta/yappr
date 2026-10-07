@@ -205,6 +205,14 @@ export interface CapabilitiesDTO {
   deletesAreTombstones: boolean
   reports: boolean
   reportsResolved: boolean
+  /** The highest report reason code the contract accepts: 8, or 9 (sexual content involving minors) on v13. */
+  reportReasonMax: number
+  /** v13: profiles can be reported too (web only for now; the engine reports posts and replies). */
+  profileReports: boolean
+  /** The moderators' action fee a report pays, in credits (v13: 50M), or null where reports are free. */
+  reportFeeCredits: number | null
+  /** The most media items a post or reply carries: 1, or 4 on v13 (publish still attaches one). */
+  mediaItems: number
   hashtagsInline: boolean
   /** Posts carry a language and For You filters by it (`postsHaveLanguage`). */
   postLanguage: boolean

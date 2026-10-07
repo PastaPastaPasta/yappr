@@ -8,6 +8,7 @@ import {
   Cog6ToothIcon,
   CurrencyDollarIcon,
   EnvelopeIcon,
+  FlagIcon,
   LinkIcon,
   LockClosedIcon,
   MapPinIcon,
@@ -20,6 +21,8 @@ import type { ParsedPaymentUri, SocialLink, Store } from '@/lib/types'
 import { formatNumber } from '@/lib/utils'
 import { getSocialLinkUrl, isValidHttpUrl } from '@/lib/profile-links'
 import { useCopy } from '@/hooks/use-copy'
+import { useReportPostModal } from '@/hooks/use-report-post-modal'
+import { contractTakesReports, reportShape } from '@/lib/contract-topology'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { BannerImage } from '@/components/ui/banner-image'
@@ -115,6 +118,8 @@ export function ProfileHeader({
   const isOwnProfile = viewerId === userId
   const editing = isOwnProfile && edit.active
   const subject = profile?.displayName || username || 'user'
+  const { open: openReport } = useReportPostModal()
+  const profilesReportable = contractTakesReports() && reportShape().profiles
 
   return (
     <>
@@ -189,6 +194,17 @@ export function ProfileHeader({
                   {isFollowing ? 'Following' : 'Follow'}
                 </Button>
                 <PrivateFeedAccessButton ownerId={userId} currentUserId={viewerId} isFollowing={isFollowing} onRequireAuth={onRequireAuth} />
+                {/* v13: a profile can be reported to the moderators (`about: 1`). */}
+                {profilesReportable && (
+                  <TooltipButton
+                    label="Report profile"
+                    aria-label={`Report ${subject}`}
+                    onClick={() => (viewerId ? openReport({ kind: 'profile', identityId: userId, name: subject }) : onRequireAuth())}
+                    className="hover:bg-red-50 dark:hover:bg-red-950 hover:border-red-300 dark:hover:border-red-700 group"
+                  >
+                    <FlagIcon className="h-4 w-4 group-hover:text-red-500" />
+                  </TooltipButton>
+                )}
               </div>
             )}
           </div>

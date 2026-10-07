@@ -1,7 +1,7 @@
 import {
-  canBookmark, canRepost, contentLimits, contractTakesReports, dashpayProfileExtension, deletesAreTombstones,
-  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, likesAreIndexOnly, postsHaveLanguage,
-  prefixRankingsAvailable, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
+  canBookmark, canRepost, contentLimits, contractTakesReports, dashpayProfileExtension, declaredActionFee, deletesAreTombstones,
+  followRankingsAvailable, hasFlatThreads, hashtagsAreInline, likesAreIndexOnly, mediaItemLimit, postsHaveLanguage,
+  prefixRankingsAvailable, reportShape, reportsAreResolved, repostsAreQuotes, windowedRankingsAvailable, yappIsLocked,
 } from '@/lib/contract-topology'
 import { dmIsV5 } from '@/lib/constants'
 import { avatarSeedMaxLength, profileTextLimits } from '@/lib/profile/v10-profile'
@@ -20,6 +20,7 @@ export interface PlatformInfoDTO {
 
 export function platformInfo(): PlatformInfoDTO {
   const limits = contentLimits()
+  const reportFee = declaredActionFee('report', 'create')
   return {
     capabilities: {
       rankings: likesAreIndexOnly(),
@@ -33,6 +34,10 @@ export function platformInfo(): PlatformInfoDTO {
       deletesAreTombstones: deletesAreTombstones(),
       reports: contractTakesReports(),
       reportsResolved: reportsAreResolved(),
+      reportReasonMax: reportShape().maxReason,
+      profileReports: contractTakesReports() && reportShape().profiles,
+      reportFeeCredits: reportFee ? Number(reportFee.owner + reportFee.moderators) : null,
+      mediaItems: mediaItemLimit(),
       hashtagsInline: hashtagsAreInline(),
       postLanguage: postsHaveLanguage(),
       contentLimits: { chars: limits.maxLength, bytes: limits.maxBytes },

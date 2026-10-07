@@ -205,10 +205,13 @@ export function createSafetyModule(tickets: TicketStore) {
 
     /**
      * Report a post or reply to the contract's moderators. `reason` is a code
-     * from `lib/reports.ts` `REPORT_REASONS` (0–8); "something else" (8)
-     * needs a note, and a note is at most 500 characters. One report per
-     * reporter and target: a second fails `DUPLICATE`, so read `ownReport`
-     * first, as web's dialog does. Gated by `capabilities.reports`.
+     * from `lib/reports.ts` `REPORT_REASONS` up to `capabilities.reportReasonMax`
+     * (0–8, and 9 on v13); "something else" (8) needs a note, and a note is at
+     * most 500 characters. One report per reporter and target: a second fails
+     * `DUPLICATE`, so read `ownReport` first, as web's dialog does. On v13 a
+     * report pays `capabilities.reportFeeCredits` to the moderators. The engine
+     * reads no private feeds, so its reports carry no moderators' box. Gated by
+     * `capabilities.reports`.
      */
     async report(target: TargetRef, reason: number, note?: string): Promise<WriteTicket> {
       assertTarget(target)

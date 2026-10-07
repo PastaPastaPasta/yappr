@@ -416,6 +416,16 @@ export function resolveModerationTeam(
 }
 
 /**
+ * Everyone who may moderate right now, as Drive decides it: a seated team's
+ * leader and members, or the interim's appointed moderators and the owner
+ * when it moderates. Empty under a `notYetUsable` or `noModeration` interim
+ * with no team seated. A report's box is sealed to exactly these.
+ */
+export function moderatorIdsOf(team: ModerationTeam): string[] {
+  return [...new Set([...team.appointed, ...(team.ownerModerates ? [team.ownerId] : [])])];
+}
+
+/**
  * The identities no moderation may act on, mirroring Drive's
  * `ContractModerators::protects`: everyone who may moderate right now, and the
  * owner when an elected declaration says `ownerProtected`. A moderator's

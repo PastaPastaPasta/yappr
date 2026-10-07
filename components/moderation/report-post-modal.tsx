@@ -7,52 +7,81 @@ import toast from 'react-hot-toast'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
-import { useReportPostModal } from '@/hooks/use-report-post-modal'
-import { reportsAreResolved, targetKindOf } from '@/lib/contract-topology'
+import { useReportPostModal, type ReportSubject } from '@/hooks/use-report-post-modal'
+import { CREDITS_PER_DASH } from '@/lib/constants'
+import { declaredActionFee, reportsAreResolved } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import {
+  MODERATION_EMAIL,
   OTHER_REASON_CODE,
   REPORT_NOTE_MAX_LENGTH,
-  REPORT_REASONS,
   isAlreadyReportedError,
   isReportGoneError,
+  isUrgentReason,
+  reportEmailHref,
   reportFailureMessage,
   reportInputProblem,
   reportReasonLabel,
+  reportReasonsOffered,
   reportStatusLabel,
   withdrawFailureMessage,
   type ReportRecord,
+  type ReportTargetKind,
 } from '@/lib/reports'
+import { buildReportBox, reportNeedsBox } from '@/lib/services/report-box-service'
 import { reportService } from '@/lib/services/report-service'
 import { reportBarredWrite } from './barred-writer-notice'
+
+/** The report's target as the write names it. */
+function targetOf(subject: ReportSubject | null): { kind: ReportTargetKind; targetId: string; targetOwnerId: string } | null {
+  if (!subject) return null
+  if (subject.kind === 'profile') return { kind: 'profile', targetId: subject.identityId, targetOwnerId: subject.identityId }
+  return { kind: subject.kind, targetId: subject.post.id, targetOwnerId: subject.post.author.id }
+}
+
+/** The moderators' action fee a report pays (v13: 50M credits), as DASH, or null where reports are free. */
+function reportFeeDash(): string | null {
+  const fee = declaredActionFee('report', 'create')
+  if (!fee) return null
+  return (Number(fee.owner + fee.moderators) / CREDITS_PER_DASH).toFixed(4)
+}
 
 /** The reader's own report on the open target: still being read, read, or unreadable. */
 type OwnReport = { state: 'loading' } | { state: 'none' } | { state: 'filed'; report: ReportRecord } | { state: 'failed' }
 
 /**
- * Reports a post or reply to the contract's moderators, or shows the report
- * the reader already filed and lets them withdraw it. One report per reader
- * and target: the dialog reads the reader's own report first and never offers
- * a second (a paid 40105).
+ * Reports a post, a reply or (v13) a profile to the contract's moderators, or
+ * shows the report the reader already filed and lets them withdraw it. One
+ * report per reader and target: the dialog reads the reader's own report
+ * first and never offers a second (a paid 40105).
+ *
+ * A report of private content (v13) carries the moderators' box: the
+ * reader's key to it, sealed to every current moderator's encryption key.
+ * Where no moderator holds one, the report is filed without it and the reader
+ * is pointed at the team's email.
  */
 export function ReportPostModal() {
   const { user } = useAuth()
-  const { isOpen, post, close } = useReportPostModal()
+  const { isOpen, subject, close } = useReportPostModal()
   const [own, setOwn] = useState<OwnReport>({ state: 'loading' })
   const [reason, setReason] = useState<number | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const kind = post ? targetKindOf(post) : 'post'
-  const noun = kind === 'reply' ? 'reply' : 'post'
+  const target = targetOf(subject)
+  const noun: ReportTargetKind = target?.kind ?? 'post'
+  const privatePost = subject && subject.kind !== 'profile' && reportNeedsBox(subject.post) ? subject.post : null
   const identityId = user?.identityId
   /** v10: the moderators mark a report handled (and the reporter sees how) instead of deleting it. */
   const resolving = reportsAreResolved()
+  const feeDash = reportFeeDash()
+  const targetKind = target?.kind
+  const targetId = target?.targetId
 
   useEffect(() => {
-    if (!isOpen || !post || !identityId) return
+    if (!isOpen || !targetKind || !targetId || !identityId) return
     let cancelled = false
     setOwn({ state: 'loading' })
-    reportService.getOwnReport(identityId, targetKindOf(post), post.id).then((report) => {
+    reportService.getOwnReport(identityId, targetKind, targetId).then((report) => {
       if (!cancelled) setOwn(report ? { state: 'filed', report } : { state: 'none' })
     }).catch((error: unknown) => {
       logger.warn('ReportPostModal: could not read the reader\'s own report', error)
@@ -61,7 +90,7 @@ export function ReportPostModal() {
     return () => {
       cancelled = true
     }
-  }, [isOpen, post, identityId])
+  }, [isOpen, targetKind, targetId, identityId])
 
   /** Close, leaving nothing of this target behind for the next one opened. */
   const finish = () => {
@@ -75,21 +104,43 @@ export function ReportPostModal() {
     if (!busy) finish()
   }
 
+  /**
+   * The moderators' box for a private post or reply, or undefined to file
+   * without one (said why). Null when the team could not be read: filing
+   * then waits rather than send a report its moderators cannot open.
+   */
+  const sealForModerators = async (reporterId: string): Promise<Uint8Array | undefined | null> => {
+    if (!privatePost) return undefined
+    try {
+      const outcome = await buildReportBox(reporterId, privatePost)
+      if (outcome.kind === 'sealed') return outcome.box
+      if (outcome.kind === 'no-recipients') {
+        toast(`No moderator can read private posts yet. Your report is filed without the ${noun}'s content; email ${MODERATION_EMAIL} if they need to see it.`, { duration: 10000 })
+      } else if (outcome.kind === 'no-key') {
+        toast(`This device holds no key to the ${noun}, so the moderators will not be able to read it.`, { duration: 8000 })
+      }
+      return undefined
+    } catch (error) {
+      logger.warn('ReportPostModal: could not seal the report for the moderators', error)
+      toast.error('Could not read the moderation team. Try again in a moment.')
+      return null
+    }
+  }
+
   const handleReport = async () => {
-    if (!post || !identityId || busy) return
+    if (!target || !identityId || busy) return
     const problem = reportInputProblem(reason, note)
     if (problem || reason === null) {
       toast.error(problem ?? 'Choose why you are reporting this')
       return
     }
     setBusy(true)
-    const result = await reportService.fileReport(identityId, {
-      kind,
-      targetId: post.id,
-      targetOwnerId: post.author.id,
-      reason,
-      note,
-    })
+    const box = await sealForModerators(identityId)
+    if (box === null) {
+      setBusy(false)
+      return
+    }
+    const result = await reportService.fileReport(identityId, { ...target, reason, note, ...(box ? { box } : {}) })
     setBusy(false)
     if (!result.success) {
       if (isAlreadyReportedError(result.error)) {
@@ -179,13 +230,24 @@ export function ReportPostModal() {
         <div className="flex flex-col">
           <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
             Your report goes to this community&apos;s moderators. Reports are public on Dash Platform: anyone, including
-            the {noun}&apos;s author, can see that you reported it, the reason you pick and anything you write in the details.
+            the {noun === 'profile' ? 'account\'s owner' : `${noun}'s author`}, can see that you reported it, the reason you pick and anything you write in the details.
             {resolving && ' You can come back here to see how the moderators resolved it.'} A report expires after 90 days.
           </Dialog.Description>
+          {privatePost && (
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4" data-testid="report-private-note">
+              This {noun} is private. Your report hands the current moderators the key to read it, sealed so only they can
+              open it. That key also opens the author&apos;s other private posts from the same period.
+            </p>
+          )}
+          {feeDash && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4" data-testid="report-fee">
+              Filing a report pays a {feeDash} DASH moderation fee to the moderators, plus the network fee.
+            </p>
+          )}
           <fieldset className="mb-4" disabled={busy}>
             <legend className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">What is wrong with it?</legend>
             <div className="flex flex-col">
-              {REPORT_REASONS.map((option) => (
+              {reportReasonsOffered().map((option) => (
                 <label
                   key={option.code}
                   className="flex items-start gap-3 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 has-[:checked]:bg-gray-100 dark:has-[:checked]:bg-gray-800"
@@ -206,6 +268,18 @@ export function ReportPostModal() {
               ))}
             </div>
           </fieldset>
+          {reason !== null && isUrgentReason(reason) && target && (
+            <div role="alert" data-testid="report-urgent" className="mb-4 text-sm p-3 rounded-lg border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 text-red-800 dark:text-red-200 space-y-1">
+              <p className="font-medium">If a child is in danger, contact your local police now.</p>
+              <p>
+                Report it to the{' '}
+                <a href="https://report.cybertip.org/" target="_blank" rel="noopener noreferrer" className="underline">NCMEC CyberTipline</a>
+                {' '}or your country&apos;s hotline, and{' '}
+                <a href={reportEmailHref({ kind: target.kind, id: target.targetId }, reason)} className="underline">email the team</a>.
+                Do not share or describe the material: reports are public.
+              </p>
+            </div>
+          )}
           <label htmlFor="report-note" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
             Details {reason === OTHER_REASON_CODE ? '(required)' : '(optional)'}
           </label>
