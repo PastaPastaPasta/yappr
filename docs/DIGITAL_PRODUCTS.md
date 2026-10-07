@@ -35,19 +35,23 @@ new property is written, and the v5 write surface is byte-identical.
 
 ## Contract changes (`contracts/yappr-storefront-contract.json`)
 
-v6 is v5 plus one property and two doctypes. Nothing existing changes shape, so
-v5 documents and writes stay valid under v6. A new contract id is still a fresh
-start (see `docs/NON_SOCIAL_CONTRACTS.md`).
+Digital products add one property and two doctypes. v6 is also the mainnet
+re-cut (action fees instead of YAPP, elected moderation, store categories, no
+stored buyer ids, smaller payloads: see
+[NON_SOCIAL_CONTRACTS.md](./NON_SOCIAL_CONTRACTS.md#what-v6-changed-from-v5)),
+so v5 writes do not all carry over. A new contract id is a fresh start either
+way.
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
 | `storeItem.fulfillment` | optional enum `shipped` \| `digital`; absent = `shipped` | product type; checkout skips shipping for digital lines |
-| `itemDeliverable` | `itemId`→storeItem **writer-gated** `{$ownerId: $ownerId}`; `immutable [itemId]`; unique per item; mutable | the seller's private delivery kit |
-| `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller** `{$ownerId: buyerId, sellerId: $ownerId}`; `documentsMutable: false`; `canBeDeleted: false` | delivered goods; the buyer's library feed (`buyerDeliveries`) |
+| `itemDeliverable` | `itemId`→storeItem (moderatedDocument) **writer-gated** `{$ownerId: $ownerId}`; `immutable [itemId]`; unique per item; mutable | the seller's private delivery kit |
+| `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller** `{sellerId: $ownerId}`; `documentsMutable: false`; `canBeDeleted: false`; `buyerDeliveries [orderId.$ownerId, $createdAt]` | delivered goods; the buyer's library feed |
 
 `orderDelivery` uses the same gate as `orderStatusUpdate`. Only the order's
-seller can write one, and `buyerId` must be the order's real buyer. So every
-delivery a buyer sees comes from their seller, and a stranger cannot plant one.
+seller can write one, and it stores no buyer id: `buyerDeliveries` files it
+under the order's own `$ownerId`, read through `orderId`. So every delivery a
+buyer sees comes from their seller, and a stranger cannot plant one.
 A delivery is permanent and append-only, so it doubles as the buyer's receipt.
 A seller can send again (for example, to fix a broken file); every delivery
 stays in the library.
@@ -179,8 +183,8 @@ deliver a `javascript:` link.
 
 ## Limits
 
-- Each encrypted payload is at most 16,000 bytes (contract cap). That holds
-  roughly 300 unique codes in a kit, and the client refuses a larger kit before
+- Each encrypted payload is at most 5,120 bytes (contract cap, read off the
+  contract JSON). That holds roughly 100 unique codes in a kit, and the client refuses a larger kit before
   writing. It also refuses a kit that could not go out for one unit in one
   delivery, so every kit it saves is deliverable, one code per receipt if need
   be. A receipt's size depends on the kit alone: the title is budgeted at its
