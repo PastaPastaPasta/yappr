@@ -490,6 +490,24 @@ describe('v11 unlike (outlivesDelete): content values only, no $createdAt', () =
   })
 })
 
+describe('v13 reply unlike: the reply id alone', () => {
+  beforeEach(() => {
+    mocks.query.mockImplementation(async (query) => driveLike(query))
+    chain.deletes = { likeReply: { lands: true, report: 'confirmed' } }
+  })
+
+  it('deletes a reply like by { replyId } with no replyAuthor, and reads nothing to learn the author', async () => {
+    chain.rows = { likeReply: [{ $id: id(10), $ownerId: VIEWER, replyId: POST }] }
+
+    await expect(unlike('dash', { topology: 'v13', kind: 'reply' })).resolves.toBe(true)
+
+    const tuple = deleteTupleOf('likeReply')
+    expect(Object.keys(tuple?.data as Record<string, unknown>)).toEqual(['replyId'])
+    expect(queriesOf('likeReply').map((query) => query.where)).toEqual([[['replyId', '==', POST], ['$ownerId', '==', VIEWER]]])
+    expect(chain.rows.likeReply).toEqual([])
+  })
+})
+
 describe('v11 timeless like notification reads', () => {
   const ME = AUTHOR
   const [P1, P2] = [id(60), id(61)]
