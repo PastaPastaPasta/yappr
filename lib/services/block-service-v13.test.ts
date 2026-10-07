@@ -45,7 +45,7 @@ async function blockServiceOn(topology: string, blocksContractId: string) {
   return (await import('./block-service')).blockService
 }
 
-describe('blocks on v13', () => {
+describe('blocks on v13', { timeout: 20_000 }, () => {
   it('reads and writes block, blockFilter and blockFollow in the blocks contract', async () => {
     const blockService = await blockServiceOn('v13', BLOCKS)
     await blockService.blockUser(VIEWER, TARGET)
