@@ -12,7 +12,7 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsV4, pollrIsV5 } from '@/lib/constants'
-import { choiceDelta, sameChoices } from '@/lib/pollr-rules'
+import { choiceDelta, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
@@ -134,11 +134,16 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     }
   }, [pollId, userId, reloadToken])
 
-  // Reset any pending selection when switching polls or signing in/out.
-  useEffect(() => {
+  /** Leave the ballot: drop any pending selection and close the edit detour. */
+  const stopEditing = useCallback(() => {
     setSelected([])
     setEditing(false)
-  }, [pollId, userId])
+  }, [])
+
+  // Reset any pending selection when switching polls or signing in/out.
+  useEffect(() => {
+    stopEditing()
+  }, [pollId, userId, stopEditing])
 
   const isClosed = poll ? pollIsClosed(poll) : false
   const hasVoted = myVotes.length > 0
@@ -173,7 +178,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       if (!multiChoice) return [index]
       return current.includes(index)
         ? current.filter((choice) => choice !== index)
-        : [...current, index].sort((a, b) => a - b)
+        : normalizeChoices([...current, index])
     })
   }, [])
 
@@ -208,12 +213,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       toast.success(myVotes.length > 0 ? 'Vote updated' : 'Vote counted')
     }
 
-    setSelected([])
-    setEditing(false)
+    stopEditing()
     // Closed or changed elsewhere: what is on screen is out of date, so re-read
     // the poll's tally and the voter's ballots together.
     if (result.closed || result.stale) setReloadToken((token) => token + 1)
-  }, [myVotes, tally])
+  }, [myVotes, tally, stopEditing])
 
   const handleVote = useCallback(async (wantedOverride?: number[]) => {
     const wanted = wantedOverride ?? selected
@@ -239,7 +243,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       const recordedList = [...result.created, ...result.alreadyVoted]
       const recorded = new Set(recordedList)
       if (recordedList.length > 0) {
-        setMyVotes((current) => Array.from(new Set([...current, ...recordedList])).sort((a, b) => a - b))
+        setMyVotes((current) => normalizeChoices([...current, ...recordedList]))
       }
       // The voter has a ballot on chain but it couldn't be read which: close the
       // ballot as when own votes fail to load, rather than tick a guessed choice.
@@ -464,10 +468,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             {editing && (
               <Button
                 variant="ghost"
-                onClick={() => {
-                  setSelected([])
-                  setEditing(false)
-                }}
+                onClick={stopEditing}
                 disabled={submitting}
                 className="h-9 text-sm"
               >

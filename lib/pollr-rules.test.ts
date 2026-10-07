@@ -5,6 +5,7 @@ import {
   applyChoiceDelta,
   charCount,
   choiceDelta,
+  isChoiceIndex,
   normalizeChoices,
   pollEndsAt,
   pollEndsAtError,
@@ -14,6 +15,8 @@ import {
   planBallotWrites,
   recordedChoices,
   sameChoices,
+  sumCounts,
+  trimPollOptions,
   type Ballot,
 } from './pollr-rules'
 
@@ -122,6 +125,12 @@ describe('ballot plan, multi choice', () => {
 describe('choices and tallies', () => {
   it('reads the recorded choices off ballots, skipping withdrawn ones', () => {
     expect(recordedChoices([ballot(2, 2), ballot(0, null), ballot(1, 1)])).toEqual([1, 2])
+  })
+
+  it('trims options, checks choice indexes and sums counts', () => {
+    expect(trimPollOptions([' a ', '', '  ', 'b'])).toEqual(['a', 'b'])
+    expect([isChoiceIndex(9), isChoiceIndex(10), isChoiceIndex(2, 2), isChoiceIndex(-1)]).toEqual([true, false, false, false])
+    expect(sumCounts([1, 2, 3])).toBe(6)
   })
 
   it('normalizes, compares and diffs selections', () => {

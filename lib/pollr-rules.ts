@@ -39,7 +39,7 @@ export function pollEndsAt(duration: PollDuration, now: number = Date.now()): nu
   return now + entry.ms
 }
 
-export interface PollLimits {
+interface PollLimits {
   questionMaxChars: number
   /** UTF-8 cap on the question, or null where the contract sets none. */
   questionMaxBytes: number | null
@@ -70,7 +70,7 @@ export function charCount(value: string): number {
 
 const encoder = new TextEncoder()
 
-export function utf8Length(value: string): number {
+function utf8Length(value: string): number {
   return encoder.encode(value).length
 }
 
@@ -82,6 +82,11 @@ function lengthProblem(value: string, maxChars: number, maxBytes: number | null)
   if (charCount(value) > maxChars) return `${maxChars} characters or fewer`
   if (maxBytes !== null && utf8Length(value) > maxBytes) return `shorter: emoji and non-Latin letters take extra room (${maxBytes} bytes at most)`
   return null
+}
+
+/** Trimmed options with the blank ones dropped — what actually gets written to the contract. */
+export function trimPollOptions(options: readonly string[]): string[] {
+  return options.map((option) => option.trim()).filter((option) => option.length > 0)
 }
 
 /** Why the contract would refuse this (trimmed) question, or null. */
@@ -132,10 +137,15 @@ export type BallotWrite =
   | { kind: 'create'; slot: number; choice: number }
   | { kind: 'replace'; ballot: Ballot; choice: number | null }
 
+/** Whether `choice` names an option of a `size`-option poll (any schema-valid option by default). */
+export function isChoiceIndex(choice: number, size: number = POLL_MAX_OPTIONS): boolean {
+  return Number.isInteger(choice) && choice >= 0 && choice < Math.min(size, POLL_MAX_OPTIONS)
+}
+
 /** Dedupe, drop anything that is not an option of a `size`-option poll, and order. */
 export function normalizeChoices(choices: readonly number[], size: number = POLL_MAX_OPTIONS): number[] {
   return Array.from(new Set(choices))
-    .filter((choice) => Number.isInteger(choice) && choice >= 0 && choice < Math.min(size, POLL_MAX_OPTIONS))
+    .filter((choice) => isChoiceIndex(choice, size))
     .sort((a, b) => a - b)
 }
 
@@ -196,6 +206,10 @@ export function planBallotWrites(multiChoice: boolean, ballots: readonly Ballot[
 
 // ---- Tallies --------------------------------------------------------------------
 
+export function sumCounts(counts: readonly number[]): number {
+  return counts.reduce((sum, count) => sum + count, 0)
+}
+
 /**
  * Fold a voter's change into per-option counts: +1 for each added choice, -1
  * for each removed one (never below zero). The total is re-summed.
@@ -208,5 +222,5 @@ export function applyChoiceDelta(counts: readonly number[], added: readonly numb
   for (const choice of removed) {
     if (choice >= 0 && choice < next.length) next[choice] = Math.max(0, next[choice] - 1)
   }
-  return { counts: next, total: next.reduce((sum, count) => sum + count, 0) }
+  return { counts: next, total: sumCounts(next) }
 }

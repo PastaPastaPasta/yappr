@@ -225,10 +225,10 @@ export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'G
 // within 31 days, and keeps one mutable `vote` doctype whose ballots stay
 // editable until the poll closes and are final after. The ballot shapes are
 // incompatible, so the switch must match the deployed contract.
+const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v5']
 export const POLLR_TOPOLOGY: PollrTopology =
-  process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v5' ? 'v5'
-    : process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v4' ? 'v4'
-      : 'v3'
+  POLLR_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_POLLR_TOPOLOGY) ?? 'v3'
+export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
 export const pollrIsV5 = () => POLLR_TOPOLOGY === 'v5'
 // Two superseded pollr contracts were abandoned in place (v1 stored options as

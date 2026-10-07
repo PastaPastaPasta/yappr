@@ -6,6 +6,7 @@ import {
   pollLimits,
   pollOptionsError,
   pollQuestionError,
+  trimPollOptions,
 } from '@/lib/pollr-rules';
 
 /**
@@ -96,7 +97,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
   private normalize(data: CreatePollData): { question: string; options: string[] } {
     const limits = pollLimits(POLLR_TOPOLOGY);
     const question = data.question.trim();
-    const options = data.options.map((option) => option.trim()).filter((option) => option.length > 0);
+    const options = trimPollOptions(data.options);
     const problem =
       pollQuestionError(question, limits) ?? pollOptionsError(options, limits) ?? pollEndsAtError(data.endsAt, limits);
     if (problem) throw new Error(problem);

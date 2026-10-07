@@ -5,6 +5,7 @@ import { stateTransitionService } from './state-transition-service';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
+  pollrIsV3,
   pollrIsV4,
   pollrIsV5,
   pollrVoteDocType,
@@ -13,10 +14,12 @@ import { extractErrorMessage, hasConsensusCode, isDocumentPropertyRuleError } fr
 import {
   POLL_MAX_OPTIONS,
   applyChoiceDelta,
+  isChoiceIndex,
   normalizeChoices,
   planBallotWrites,
   recordedChoices,
   sameChoices,
+  sumCounts,
   type Ballot,
   type BallotWrite,
 } from '@/lib/pollr-rules';
@@ -109,13 +112,22 @@ const FINAL_TALLY_GRACE_MS = 30_000;
 type Sdk = Awaited<ReturnType<typeof getEvoSdk>>;
 
 /** `[0, 1, ... n-1]` — the choice indices to query, for a count's `in` clause. */
-function choiceRange(optionCount: number): number[] {
-  const size = Math.min(Math.max(Math.trunc(optionCount) || POLL_MAX_OPTIONS, 1), POLL_MAX_OPTIONS);
+function choiceRange(size: number): number[] {
   return Array.from({ length: size }, (_, index) => index);
 }
 
-function isValidChoice(choice: number): boolean {
-  return Number.isInteger(choice) && choice >= 0 && choice < POLL_MAX_OPTIONS;
+/** How many options a poll's tally covers: its real options, 1-10. */
+function pollSize(poll: Poll): number {
+  return Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
+}
+
+/** Per-option counts of the schema-valid choices in `choices`. */
+function countChoices(choices: number[]): number[] {
+  const counts = zeroCounts();
+  for (const choice of choices) {
+    if (isChoiceIndex(choice)) counts[choice] += 1;
+  }
+  return counts;
 }
 
 /** A v3 ballot refused before anything was written. */
@@ -145,8 +157,8 @@ function toBallot(doc: Record<string, unknown>): Ballot | null {
   const slot = Number(readField(doc, 'slot'));
   const rawChoice = readField(doc, 'choice');
   const choice = rawChoice === undefined || rawChoice === null ? null : Number(rawChoice);
-  if (typeof id !== 'string' || !Number.isInteger(revision) || !isValidChoice(slot)) return null;
-  if (choice !== null && !isValidChoice(choice)) return null;
+  if (typeof id !== 'string' || !Number.isInteger(revision) || !isChoiceIndex(slot)) return null;
+  if (choice !== null && !isChoiceIndex(choice)) return null;
   return { id, revision, slot, choice };
 }
 
@@ -187,7 +199,7 @@ export function isDuplicateVoteError(error: unknown): boolean {
  * once the poll's close time has passed, since no other v5 ballot rule can
  * break for a ballot this client built from the poll itself.
  */
-export function isPollClosedError(error: unknown, endsAt?: number): boolean {
+function isPollClosedError(error: unknown, endsAt?: number): boolean {
   if (/writtenBeforeClose/.test(extractErrorMessage(error))) return true;
   return isDocumentPropertyRuleError(error) && typeof endsAt === 'number' && Date.now() > endsAt;
 }
@@ -197,7 +209,7 @@ export function isPollClosedError(error: unknown, endsAt?: number): boolean {
  * revision (40106) or a ballot another tab created first (40105). Neither is
  * retried blind; the caller re-reads the ballots.
  */
-export function isStaleBallotError(error: unknown): boolean {
+function isStaleBallotError(error: unknown): boolean {
   return (
     isDuplicateVoteError(error) ||
     /invalid revision|\b40106\b/i.test(extractErrorMessage(error)) ||
@@ -237,9 +249,8 @@ class PollrVoteService {
   async castVote(poll: Poll, choices: number[], ownerId: string): Promise<CastVoteResult> {
     const selected = normalizeChoices(choices);
 
-    if (pollrIsV4() || pollrIsV5()) {
-      return refused(pollrIsV5() ? 'v5 ballots are written with setVote' : 'Voting is not available on this poll contract', selected);
-    }
+    if (pollrIsV5()) return refused('v5 ballots are written with setVote', selected);
+    if (pollrIsV4()) return refused('Voting is not available on this poll contract', selected);
 
     if (selected.length === 0) {
       return refused('No choice selected');
@@ -575,7 +586,7 @@ class PollrVoteService {
    * see that class for why a zero-filled stand-in isn't an acceptable answer.
    */
   async getTally(poll: Poll): Promise<PollTally> {
-    const size = Math.min(Math.max(poll.options.length, 1), POLL_MAX_OPTIONS);
+    const size = pollSize(poll);
 
     // v3's close time is advisory, so ballots can land after it and the count
     // tree has no time axis to leave them out. v3 ballots carry `$createdAt`
@@ -583,15 +594,8 @@ class PollrVoteService {
     // ballots in one read, keeping "Final results" final.
     const closedAt = closedCutoff(poll);
 
-    // A closed v3 poll reuses only a cached tally the closed path classified;
-    // one cached while it was open (or optimistic) was never bounded by the
-    // close time. A closed v5 poll reuses only one read after the close.
     const cached = this.tallyCache.get(poll.id);
-    const cacheUsable =
-      cached !== undefined &&
-      (closedAt === null || Boolean(cached.cutoffVerified) || Boolean(cached.lateIncluded)) &&
-      (!pollrIsV5() || !pollIsClosed(poll) || readAfterClose(poll, cached));
-    if (cached && cacheUsable) {
+    if (cached && cachedTallyUsable(poll, cached)) {
       return { ...cached, counts: resize(cached.counts, size) };
     }
 
@@ -606,7 +610,7 @@ class PollrVoteService {
       (await this.countByChoiceGrouped(sdk, poll.id, docType, size)) ??
       (await this.countByChoiceIndividually(sdk, poll.id, docType, size)) ??
       // Only v3 ballots carry the time index the scan pages over.
-      (pollrIsV4() || pollrIsV5() ? null : await this.countByChoiceScan(sdk, poll.id, docType));
+      (pollrIsV3() ? await this.countByChoiceScan(sdk, poll.id, docType) : null);
 
     // Nothing worked. A grand-total count is deliberately NOT used as a last
     // resort: it can't allocate votes among the options, so pairing it with
@@ -620,7 +624,7 @@ class PollrVoteService {
     // schema-valid for 0-9 whatever the poll's actual option count is, so
     // anyone can write ballots for options that don't exist; summing the real
     // ones ignores those and keeps percentages summing to 100.
-    const total = counts.slice(0, size).reduce((sum, count) => sum + count, 0);
+    const total = sumCounts(counts.slice(0, size));
 
     const tally: PollTally = { counts, total, readAt };
     if (closedAt !== null && !onTime) tally.lateIncluded = true;
@@ -673,7 +677,7 @@ class PollrVoteService {
       for (const [key, value] of entries) {
         if (key === '') continue; // aggregate-mode key; shouldn't appear with groupBy set
         const choice = parseInt(key, 16) - CHOICE_KEY_OFFSET;
-        if (!isValidChoice(choice)) continue;
+        if (!isChoiceIndex(choice)) continue;
         counts[choice] = Number(value as bigint | number);
         matched++;
       }
@@ -758,11 +762,7 @@ class PollrVoteService {
         logger.warn('PollrVoteService: too many ballots to bound by close time; tally includes late ones', { pollId });
         return null;
       }
-      const counts = zeroCounts();
-      for (const choice of choices) {
-        if (isValidChoice(choice)) counts[choice] += 1;
-      }
-      return counts;
+      return countChoices(choices);
     } catch (error) {
       logger.warn('PollrVoteService: could not read on-time ballots for a closed poll', {
         pollId,
@@ -796,13 +796,7 @@ class PollrVoteService {
         logger.warn('PollrVoteService: vote scan hit the pagination cap; tally may undercount', { pollId });
       }
 
-      const counts = zeroCounts();
-      for (const choice of choices) {
-        if (isValidChoice(choice)) {
-          counts[choice] += 1;
-        }
-      }
-      return counts;
+      return countChoices(choices);
     } catch (error) {
       logger.error('PollrVoteService: unable to tally votes', error);
       return null;
@@ -833,7 +827,7 @@ export function reconcileTally(
     const floor = myChoices.includes(index) ? 1 : 0;
     return Math.max(count, pending, floor);
   });
-  return { ...fresh, counts, total: counts.reduce((sum, count) => sum + count, 0) };
+  return { ...fresh, counts, total: sumCounts(counts) };
 }
 
 /** Whether the poll's close time has passed on this device's clock. */
@@ -864,7 +858,20 @@ export function tallyIsFinal(poll: Poll, tally: PollTally): boolean {
 
 /** A closed v3 poll's close time, the cutoff its ballots are tallied by; else null. */
 function closedCutoff(poll: Poll): number | null {
-  return !pollrIsV4() && !pollrIsV5() && pollIsClosed(poll) ? poll.endsAt ?? null : null;
+  return pollrIsV3() && pollIsClosed(poll) ? poll.endsAt ?? null : null;
+}
+
+/**
+ * Whether a cached tally may stand in for a read. A closed v3 poll reuses only
+ * one the closed path classified (one cached while it was open, or an
+ * optimistic one, was never bounded by the close time); a closed v5 poll only
+ * one read after the close. An open poll, or v4, reuses any.
+ */
+function cachedTallyUsable(poll: Poll, cached: PollTally): boolean {
+  if (!pollIsClosed(poll)) return true;
+  if (pollrIsV3()) return Boolean(cached.cutoffVerified || cached.lateIncluded);
+  if (pollrIsV5()) return readAfterClose(poll, cached);
+  return true;
 }
 
 /** Trim or pad a counts array to the poll's actual option count. */

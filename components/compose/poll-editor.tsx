@@ -14,6 +14,7 @@ import {
   pollLimits,
   pollOptionsError,
   pollQuestionError,
+  trimPollOptions,
   type PollDuration,
 } from '@/lib/pollr-rules'
 
@@ -25,6 +26,10 @@ export interface PollDraft {
 }
 
 const LIMITS = pollLimits(POLLR_TOPOLOGY)
+const LOCKED_NOTE = 'This poll is already on Platform and can no longer be edited — retrying the post re-uses it.'
+const VOTING_NOTE = pollrIsV5()
+  ? 'Polls live on the Pollr contract. Voters can change their vote until the poll closes; after that the results are final.'
+  : 'Polls live on the Pollr contract. Votes are permanent and cannot be changed.'
 
 export function createPollDraft(): PollDraft {
   return { options: ['', ''], multiChoice: false, duration: DEFAULT_POLL_DURATION }
@@ -32,7 +37,7 @@ export function createPollDraft(): PollDraft {
 
 /** Filled-in, trimmed options — what actually gets written to the contract. */
 export function pollDraftOptions(draft: PollDraft): string[] {
-  return draft.options.map((option) => option.trim()).filter((option) => option.length > 0)
+  return trimPollOptions(draft.options)
 }
 
 /**
@@ -163,11 +168,7 @@ export function PollEditor({ draft, question, onChange, onRemove, disabled = fal
         {problem && <p className="text-xs text-red-500">{problem}</p>}
 
         <p className="text-xs text-gray-400">
-          {locked
-            ? 'This poll is already on Platform and can no longer be edited — retrying the post re-uses it.'
-            : pollrIsV5()
-              ? 'Polls live on the Pollr contract. Voters can change their vote until the poll closes; after that the results are final.'
-              : 'Polls live on the Pollr contract. Votes are permanent and cannot be changed.'}
+          {locked ? LOCKED_NOTE : VOTING_NOTE}
         </p>
       </div>
     </motion.div>
