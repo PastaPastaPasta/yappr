@@ -842,7 +842,9 @@ describe('v13 propertyConstraints rules', () => {
     expect(categorizeError(broken(rule))).toMatch(copy)
   })
 
-  it('keeps the generic copy for a rule it does not know', () => {
+  it('keeps the generic copy for a rule it does not know, another contract\'s rule, or an inherited key', () => {
     expect(categorizeError(broken('minPrice <= maxPrice'))).toMatch(/combination of values/)
+    expect(categorizeError(new Error('A document of type "listing" breaks its propertyConstraints rule "media": no'))).toMatch(/combination of values/)
+    expect(categorizeError(broken('constructor'))).toMatch(/combination of values/)
   })
 })

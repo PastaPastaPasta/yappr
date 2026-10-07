@@ -61,15 +61,15 @@ async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }>
 }
 
 /**
- * The identity whose private feed encrypted `target`: a post's author, or for
- * a reply the thread root's author (a private thread's replies inherit its
- * encryption). On v13 a reply names that owner itself.
+ * The identity whose private feed encrypted `target`: a post's author; for a
+ * reply in a private thread the thread root's author (its replies inherit the
+ * root's encryption), and for a private reply under a public post its own
+ * author (encrypted to the replier's feed).
  */
-async function feedOwnerOf(target: Post): Promise<string | null> {
+async function feedOwnerOf(target: Post): Promise<string> {
   if (targetKindOf(target) !== 'reply') return target.author.id
-  if (target.rootOwnerId) return target.rootOwnerId
   const { getEncryptionSource } = await import('./reply-service')
-  return (await getEncryptionSource(target))?.ownerId ?? null
+  return (await getEncryptionSource(target))?.ownerId ?? target.author.id
 }
 
 /** This device's CEK of `feedOwnerId`'s feed for `keyGeneration`: the owner's own chain, or a follower's granted keys. */
@@ -93,8 +93,8 @@ export async function buildReportBox(reporterId: string, target: Post): Promise<
   if (maxBytes === null || !reportNeedsBox(target)) return { kind: 'not-needed' }
   const keyGeneration = target.keyGeneration as number
   const feedOwnerId = await feedOwnerOf(target)
-  const cek = feedOwnerId ? await contentKeyOf(feedOwnerId, keyGeneration, reporterId) : null
-  if (!feedOwnerId || !cek) return { kind: 'no-key' }
+  const cek = await contentKeyOf(feedOwnerId, keyGeneration, reporterId)
+  if (!cek) return { kind: 'no-key' }
   const { keys, missing } = await moderatorKeys()
   if (keys.length === 0) return { kind: 'no-recipients' }
   const room = maxReportBoxRecipients(maxBytes)

@@ -36,6 +36,11 @@
  *   backwards): the moderators get the context of the author's earlier
  *   private posts, by the product's choice.
  * - There is no re-wrap: a moderator seated after the report cannot open it.
+ * - AES-GCM does not commit to its key, so a reporter could craft wraps that
+ *   hand different moderators different keys, each passing the tag. It gains
+ *   nothing: the payload's CEK must still decrypt the post on chain (which
+ *   binds its feed owner), so a moderator given a wrong one only sees "does
+ *   not open".
  */
 import bs58 from 'bs58'
 import { gcm } from '@noble/ciphers/aes.js'

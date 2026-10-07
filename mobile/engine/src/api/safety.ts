@@ -3,7 +3,7 @@ import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
 import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
-import { moderatedTypeWaitsForTeam, moderationElectionService } from '@/lib/services/moderation-election-service'
+import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
@@ -67,14 +67,13 @@ async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?:
 }
 
 /**
- * Whether `docType` can be written now: false while a `notYetUsable` contract
- * (mainnet v13) has no seated team, as web's `useModeratedTypeOpen` reads it.
- * Every other contract answers without a read; a failed read rejects.
+ * Whether `docType` can be written now: false while the registered contract's
+ * interim is `notYetUsable` (mainnet v13) and no team is seated, as web's
+ * `useModeratedTypeOpen` reads it. A failed read rejects.
  */
 async function moderatedTypeOpen(docType: string): Promise<boolean> {
-  if (!moderatedTypeWaitsForTeam(docType)) return true
   try {
-    return (await moderationElectionService.getSeatedTeam()) !== null
+    return await moderationService.moderatedTypeOpen(docType)
   } catch (error) {
     throw readFailure(error)
   }

@@ -32,6 +32,8 @@ import {
 import { buildReportBox, reportNeedsBox } from '@/lib/services/report-box-service'
 import { reportService } from '@/lib/services/report-service'
 import { reportBarredWrite } from './barred-writer-notice'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
+import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
 
 /** The report's target as the write names it. */
 function reportTargetOf(subject: ReportSubject | null): { kind: ReportTargetKind; targetId: string; targetOwnerId: string } | null {
@@ -74,6 +76,8 @@ export function ReportPostModal() {
   /** v10: the moderators mark a report handled (and the reporter sees how) instead of deleting it. */
   const resolving = reportsAreResolved()
   const feeDash = reportFeeDash()
+  // Mainnet v13 (`notYetUsable`): reports wait for the first seated team (41200, paid).
+  const reportsOpen = useModeratedTypeOpen('report')
   const targetKind = target?.kind
   const targetId = target?.targetId
 
@@ -241,7 +245,12 @@ export function ReportPostModal() {
           )}
           {feeDash && (
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4" data-testid="report-fee">
-              Filing a report pays a {feeDash} DASH moderation fee to the moderators, plus the network fee.
+              Filing a report pays a moderation fee of about {feeDash} DASH to the moderators, plus the network fee.
+            </p>
+          )}
+          {!reportsOpen && (
+            <p role="status" data-testid="reports-closed" className="text-sm mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-200">
+              {POSTING_CLOSED_COPY} Until then, email <a href={`mailto:${MODERATION_EMAIL}`} className="underline">{MODERATION_EMAIL}</a>.
             </p>
           )}
           <fieldset className="mb-4" disabled={busy}>
@@ -297,7 +306,7 @@ export function ReportPostModal() {
           <div className="flex flex-col gap-3">
             <Button
               onClick={handleReport}
-              disabled={busy || reportInputProblem(reason, note) !== null}
+              disabled={busy || !reportsOpen || reportInputProblem(reason, note) !== null}
               className="w-full bg-red-500 hover:bg-red-600 text-white"
             >
               {busy ? 'Reporting…' : `Report ${noun}`}

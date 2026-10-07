@@ -68,7 +68,8 @@ interface GatedPostMediaProps {
 
 /**
  * A post-card media cell: the follow-gate placeholder while gated, otherwise
- * the image itself with IPFS multi-gateway failover.
+ * the image itself with IPFS multi-gateway failover, or a v13 video played in
+ * place (videos are not checked against their posted hashes).
  *
  * A v10 post names its image's sha256 and dHash. Once the image loads, the
  * served copy is checked against them, and a picture that is no longer the one

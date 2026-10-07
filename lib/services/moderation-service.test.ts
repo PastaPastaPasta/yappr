@@ -81,7 +81,7 @@ vi.stubGlobal('localStorage', {
 
 import {
   SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
-  postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
+  moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
@@ -970,5 +970,15 @@ describe('team actions that can never run (QA 2026-10-01, sakura)', () => {
     expect(v11.error).not.toMatch(/author deleted/)
     topology.authorsDelete = true
     expect((await moderationService.approveTeamAction(LEADER, 'A1')).error).toMatch(/or its author deleted it/)
+  })
+})
+
+describe('moderatedTypeOpenFor (the registered interim, not the committed file)', () => {
+  it('closes moderated writes only under a notYetUsable interim with no team seated', () => {
+    expect(moderatedTypeOpenFor('notYetUsable', null)).toBe(false)
+    expect(moderatedTypeOpenFor('notYetUsable', { leaderId: 'L', members: [] })).toBe(true)
+    for (const interim of ['contractOwner', 'appointedModerators', 'noModeration', null] as const) {
+      expect(moderatedTypeOpenFor(interim, null), String(interim)).toBe(true)
+    }
   })
 })

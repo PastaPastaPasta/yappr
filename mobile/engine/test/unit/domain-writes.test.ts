@@ -50,6 +50,7 @@ const m = vi.hoisted(() => ({
   /** `electedModeration()`: null off an elected contract. */
   elected: null as { interim: string; moderatedDocumentTypes: Record<string, string[]> } | null,
   election: { getSeatedTeam: vi.fn() },
+  moderation: { moderatedTypeOpen: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
@@ -93,7 +94,8 @@ vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
-vi.mock('@/lib/services/moderation-election-service', async (load) => ({ ...await load<object>(), moderationElectionService: m.election }))
+vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
+vi.mock('@/lib/services/moderation-service', async (load) => ({ ...await load<object>(), moderationService: m.moderation }))
 vi.mock('@/lib/services/hashtag-service', () => ({ hashtagService: m.hashtagService }))
 vi.mock('@/lib/services/notification-service', () => ({ notificationService: m.notificationService }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
@@ -429,42 +431,24 @@ describe('graph and safety writes', () => {
     await expect(safety.followedBlockLists()).rejects.toBeInstanceOf(Error)
   })
 
-  it('says whether reports open before the form: only an unseated notYetUsable team keeps them shut', async () => {
+  it('says whether reports and posting are open, as lib reads the registered contract, and rejects an unreadable one', async () => {
     const { safety } = engine()
+    m.moderation.moderatedTypeOpen.mockResolvedValue(true)
     expect(await safety.reportsOpen()).toBe(true)
-    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { report: ['delete'] } }
-    expect(await safety.reportsOpen()).toBe(true)
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
-    expect(await safety.reportsOpen()).toBe(true)
-    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
+    expect(await safety.postingOpen()).toBe(true)
+    expect(m.moderation.moderatedTypeOpen.mock.calls.map(([docType]) => docType)).toEqual(['report', 'post'])
 
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { report: ['delete'] } }
-    m.election.getSeatedTeam.mockResolvedValue(null)
+    m.moderation.moderatedTypeOpen.mockResolvedValue(false)
     expect(await safety.reportsOpen()).toBe(false)
-    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
-    expect(await safety.reportsOpen()).toBe(true)
-    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
+    expect(await safety.postingOpen()).toBe(false)
+    m.moderation.moderatedTypeOpen.mockRejectedValue(new Error('Request timeout'))
     await expect(safety.reportsOpen()).rejects.toBeInstanceOf(Error)
+    await expect(safety.postingOpen()).rejects.toBeInstanceOf(Error)
 
     m.topology.contractTakesReports = false
+    m.moderation.moderatedTypeOpen.mockClear()
     expect(await safety.reportsOpen()).toBe(false)
-  })
-
-  it('says whether posting is open: closed only while a notYetUsable contract has no seated team', async () => {
-    const { safety } = engine()
-    m.elected = null
-    expect(await safety.postingOpen()).toBe(true)
-    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { post: ['delete'] } }
-    expect(await safety.postingOpen()).toBe(true)
-    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
-
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
-    m.election.getSeatedTeam.mockResolvedValue(null)
-    expect(await safety.postingOpen()).toBe(false)
-    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
-    expect(await safety.postingOpen()).toBe(true)
-    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
-    await expect(safety.postingOpen()).rejects.toBeInstanceOf(Error)
+    expect(m.moderation.moderatedTypeOpen).not.toHaveBeenCalled()
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {

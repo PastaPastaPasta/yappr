@@ -205,18 +205,8 @@ function toContest(state: VoteState, endsAtMs: number | null): ElectionContest {
   }
 }
 
-/**
- * True when the elected contract refuses `docType` writes until a team is
- * seated: a `notYetUsable` interim (mainnet v13) and a moderated type. Every
- * other declaration answers without a read.
- */
-export function moderatedTypeWaitsForTeam(docType: string): boolean {
-  const elected = electedModeration();
-  return elected?.interim === 'notYetUsable' && elected.moderatedDocumentTypes[docType] !== undefined;
-}
-
 class ModerationElectionService {
-  /** The seated team, or null when no charter is seated (or the read failed). */
+  /** The seated team, or null when no charter is seated. Throws when the read fails. */
   async getSeatedTeam(targetContractId = YAPPR_CONTRACT_ID): Promise<SeatedTeam | null> {
     const sdk = await getEvoSdk();
     const team = await sdk.moderationCharters.team(targetContractId);

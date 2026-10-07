@@ -58,6 +58,15 @@ describe('the v13 live marker', () => {
     expect(query.orderBy).toEqual([['live', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'asc']])
   })
 
+  it('pins live == true first on the Following "new posts" check', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v13')
+    const { queryPostsByOwnersSince } = await import('./document-service')
+    await queryPostsByOwnersSince([FOLLOWED], 1_000)
+    const [query] = sdk.query.mock.calls[0]
+    expect(query.where).toEqual([['live', '==', true], ['$ownerId', 'in', [FOLLOWED]], ['$createdAt', '>', 1_000]])
+    expect(query.orderBy).toEqual([['live', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'asc']])
+  })
+
   it('ranks top posters under live == true', async () => {
     const { ranked } = await on('v13')
     await ranked.topAuthorsByPostCount(10)

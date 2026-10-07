@@ -3,7 +3,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { postsHaveLanguage } from '@/lib/contract-topology';
+import { postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage } from '@/lib/contract-topology';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
 import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES, paginateFetchAll, type PaginateFetchResult } from './pagination-utils';
 
@@ -81,11 +81,13 @@ export async function queryPostsByOwnersSince(
     const query = {
       dataContractId: contractId,
       documentTypeName: 'post',
+      // v13's `ownerAndTime` starts at `live`: pin it first (tombstones are not new posts).
       where: [
+        ...postOwnerIndexPrefix(),
         ['$ownerId', 'in', batch],
         ['$createdAt', '>', sinceTimestamp],
       ] as DocumentWhereClause[],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] as DocumentOrderByClause[],
+      orderBy: [...postOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'asc']] as DocumentOrderByClause[],
     };
     // Read to the end, collecting as it goes: a continuation that fails keeps
     // the pages already read, so the check never comes back empty for that.

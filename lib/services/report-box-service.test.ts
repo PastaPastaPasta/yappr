@@ -10,7 +10,8 @@ import { bytesToBase64 } from '@/lib/bytes'
 import { privateFeedCryptoService } from './private-feed-crypto-service'
 import type { Post } from '@/lib/types'
 
-const mocks = vi.hoisted(() => ({ getTeam: vi.fn(), getIdentity: vi.fn(), contentKeyFor: vi.fn() }))
+const mocks = vi.hoisted(() => ({ getTeam: vi.fn(), getIdentity: vi.fn(), contentKeyFor: vi.fn(), getEncryptionSource: vi.fn() }))
+vi.mock('./reply-service', () => ({ getEncryptionSource: mocks.getEncryptionSource }))
 vi.mock('./moderation-service', () => ({
   moderationService: { getTeam: mocks.getTeam },
   moderatorIdsOf: (team: { appointed: string[]; ownerModerates: boolean; ownerId: string }) =>
@@ -87,10 +88,15 @@ describe('the report box service', () => {
     await expect(v12.buildReportBox(REPORTER, privatePost)).resolves.toEqual({ kind: 'not-needed' })
   })
 
-  it('seals a reply in a private thread with the thread owner\'s feed', async () => {
+  it('seals a reply with the feed that encrypted it: the private thread\'s owner, or the replier\'s own', async () => {
     const { buildReportBox } = await import('./report-box-service')
     const reply: Post = { ...privatePost, id: id(10), targetKind: 'reply', author: { ...privatePost.author, id: id(11) }, rootPostId: id(9), rootOwnerId: AUTHOR }
+    mocks.getEncryptionSource.mockResolvedValueOnce({ ownerId: AUTHOR, keyGeneration: 3, inherited: true })
     await buildReportBox(REPORTER, reply)
-    expect(mocks.contentKeyFor).toHaveBeenCalledWith(AUTHOR, 3, REPORTER)
+    expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(AUTHOR, 3, REPORTER)
+    // A private reply under a public post is encrypted to its author's own feed.
+    mocks.getEncryptionSource.mockResolvedValueOnce(null)
+    await buildReportBox(REPORTER, reply)
+    expect(mocks.contentKeyFor).toHaveBeenLastCalledWith(id(11), 3, REPORTER)
   })
 })
