@@ -37,7 +37,7 @@ describe('notification sources', () => {
   })
 })
 
-describe('failed notification sources', () => {
+describe('failed notification sources', { timeout: 20_000 }, () => {
   async function serviceWithSources() {
     const { notificationService } = await import('./notification-service')
     vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])

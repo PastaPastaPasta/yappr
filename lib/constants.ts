@@ -7,6 +7,15 @@ import type { PollrTopology } from '@/lib/pollr-rules'
 // Contract IDs
 export const YAPPR_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID || '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9' // Testnet - v2 (protocol v12: count trees + YAPP token + tokenCost; documentsCountable + countable byOwner on post)
 
+/**
+ * The standalone blocks contract (`contracts/yappr-blocks-contract.json`):
+ * `block`, `blockFilter` and `blockFollow` moved out of social v13. Read only
+ * where the topology says so (`blocksContractId()` in lib/contract-topology);
+ * on v2 and v9-v12 the three types live in the social contract. Blank where
+ * the deployment has no blocks contract.
+ */
+export const YAPPR_BLOCKS_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID ?? ''
+
 // YAPP token (defined at position 0 of the v2 social contract)
 export const YAPP_TOKEN_POSITION = 0
 // Contract-owner / token authority identity (signs freeze/unfreeze/slash).
@@ -395,6 +404,14 @@ export function keyNetwork(): KeyNetwork {
 // counter per post (`summableOffCountIndex`), and `retractedWhen` on post and
 // reply so a banned or suspended author can still tombstone its own writing.
 //
+// `v13` — the mainnet candidate, `contracts/yappr-social-contract-v13.json`
+// (docs/SOCIAL_V13.md). v12 with replies bound to their thread (`rootOwnerId`),
+// no reply-like author counter, reports of profiles and private content (a
+// moderators' `box`) carrying a 50M action fee, media arrays (`mediaUrls`,
+// `mediaDigests`, `mediaKinds`), a `live` marker that takes tombstones out of
+// `ownerAndTime`, mainnet election windows, and `block`/`blockFilter`/
+// `blockFollow` moved to the blocks contract (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`).
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -402,7 +419,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

@@ -7,6 +7,7 @@ import { useSettingsStore } from '@/lib/store'
 import { checkServedMedia } from '@/lib/media/media-fingerprint'
 import { cn } from '@/lib/utils'
 import { IpfsImage } from '@/components/ui/ipfs-image'
+import { ipfsToGatewayUrl, isIpfsProtocol } from '@/lib/utils/ipfs-gateway'
 import type { Media } from '@/lib/types'
 import type { MediaGate } from '@/hooks/use-media-gate'
 
@@ -67,7 +68,8 @@ interface GatedPostMediaProps {
 
 /**
  * A post-card media cell: the follow-gate placeholder while gated, otherwise
- * the image itself with IPFS multi-gateway failover.
+ * the image itself with IPFS multi-gateway failover, or a v13 video played in
+ * place (videos are not checked against their posted hashes).
  *
  * A v10 post names its image's sha256 and dHash. Once the image loads, the
  * served copy is checked against them, and a picture that is no longer the one
@@ -86,6 +88,20 @@ export function GatedPostMedia({ media, gate }: GatedPostMediaProps) {
 
   if (gate.gated) {
     return <GatedMediaPlaceholder kind="image" onReveal={gate.reveal} className="h-full rounded-none border-0" />
+  }
+
+  // v13 `mediaKinds` 1: a video, played in place (a GIF is an image).
+  if (media.type === 'video') {
+    return (
+      <video
+        src={isIpfsProtocol(media.url) ? ipfsToGatewayUrl(media.url) : media.url}
+        controls
+        preload="metadata"
+        playsInline
+        className="absolute inset-0 h-full w-full bg-black object-contain"
+        onClick={(event) => event.stopPropagation()}
+      />
+    )
   }
 
   return (

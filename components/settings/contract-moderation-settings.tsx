@@ -11,7 +11,8 @@ import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/c
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 import { ReportQueue } from '@/components/moderation/report-queue'
 import { TeamActionsPanel } from '@/components/moderation/team-actions-panel'
-import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones, type TargetKind } from '@/lib/contract-topology'
+import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones } from '@/lib/contract-topology'
+import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 import {
   moderationService,
@@ -225,7 +226,7 @@ export function ContractModerationSettings() {
   }
 
   /** From a report: the author goes in the identity field and the reported post or reply is cited. */
-  const moderateAuthor = (authorId: string, kind: TargetKind, documentId: string) => {
+  const moderateAuthor = (authorId: string, kind: ReportTargetKind, documentId: string) => {
     setTargetId(authorId)
     setCitedPosts(kind === 'post' ? documentId : '')
     setCitedReplies(kind === 'reply' ? documentId : '')

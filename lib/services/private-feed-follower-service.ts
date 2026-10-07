@@ -394,49 +394,10 @@ class PrivateFeedFollowerService {
       const ownerId = post.$ownerId;
       const postKeyGeneration = post.keyGeneration;
 
-      // 1. Check if we have keys for this owner
-      if (!privateFeedKeyStore.hasPathKeys(ownerId)) {
-        return { success: false, error: 'No keys for this feed' };
-      }
-
-      // 2. Check if we need to catch up on rekeys
-      const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
-      if (cachedKeyGeneration === null) {
-        return { success: false, error: 'No cached CEK for this feed' };
-      }
-
-      // 3. If post key generation is newer than our cached key generation, catch up
-      if (postKeyGeneration > cachedKeyGeneration) {
-        const catchUpResult = await this.catchUp(ownerId, myId);
-        if (!catchUpResult.success) {
-          // BUG-017 fix: If recovery is needed (missing wrapNonceSalt), propagate special error
-          // The UI layer can detect this and prompt the user to enter their encryption key
-          // to re-recover from the grant document
-          if (catchUpResult.error?.startsWith('RECOVERY_NEEDED:')) {
-            return {
-              success: false,
-              error: 'REKEY_RECOVERY_NEEDED:Your access keys need to be refreshed. Please enter your encryption key to sync.'
-            };
-          }
-          return { success: false, error: catchUpResult.error || 'Failed to catch up on rekeys' };
-        }
-      }
-
-      // 4. Derive CEK for the post's key generation
-      const cached = privateFeedKeyStore.getCachedCEK(ownerId);
-      if (!cached) {
-        return { success: false, error: 'No cached CEK after catch-up' };
-      }
-
-      let cek: Uint8Array;
-      if (postKeyGeneration === cached.keyGeneration) {
-        cek = cached.cek;
-      } else if (postKeyGeneration < cached.keyGeneration) {
-        // Derive backwards via hash chain
-        cek = privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, postKeyGeneration);
-      } else {
-        return { success: false, error: 'Post key generation still newer than cached key generation after catch-up' };
-      }
+      // 1-4. The follower's CEK for the post's key generation.
+      const key = await this.contentKeyFor(ownerId, postKeyGeneration, myId);
+      if ('error' in key) return { success: false, error: key.error };
+      const { cek } = key;
 
       // 5. Decrypt the content
       const ownerIdBytes = identifierToBytes(ownerId);
@@ -495,6 +456,45 @@ class PrivateFeedFollowerService {
         error: error instanceof Error ? error.message : 'Decryption failed',
       };
     }
+  }
+
+  /**
+   * A follower's CEK of `ownerId`'s feed for `keyGeneration`, from the keys
+   * its grant gave this device, catching up on rekeys when the generation is
+   * newer than the cached one (SPEC §8.6 steps 1-4). The error is one
+   * {@link decryptPost} reports as is.
+   */
+  async contentKeyFor(ownerId: string, keyGeneration: number, myId?: string): Promise<{ cek: Uint8Array } | { error: string }> {
+    // 1. Check if we have keys for this owner
+    if (!privateFeedKeyStore.hasPathKeys(ownerId)) return { error: 'No keys for this feed' };
+
+    // 2. Check if we need to catch up on rekeys
+    const cachedKeyGeneration = privateFeedKeyStore.getCachedKeyGeneration(ownerId);
+    if (cachedKeyGeneration === null) return { error: 'No cached CEK for this feed' };
+
+    // 3. If the key generation is newer than our cached one, catch up
+    if (keyGeneration > cachedKeyGeneration) {
+      const catchUpResult = await this.catchUp(ownerId, myId);
+      if (!catchUpResult.success) {
+        // BUG-017 fix: If recovery is needed (missing wrapNonceSalt), propagate special error
+        // The UI layer can detect this and prompt the user to enter their encryption key
+        // to re-recover from the grant document
+        if (catchUpResult.error?.startsWith('RECOVERY_NEEDED:')) {
+          return { error: 'REKEY_RECOVERY_NEEDED:Your access keys need to be refreshed. Please enter your encryption key to sync.' };
+        }
+        return { error: catchUpResult.error || 'Failed to catch up on rekeys' };
+      }
+    }
+
+    // 4. Derive the CEK for the key generation
+    const cached = privateFeedKeyStore.getCachedCEK(ownerId);
+    if (!cached) return { error: 'No cached CEK after catch-up' };
+    if (keyGeneration === cached.keyGeneration) return { cek: cached.cek };
+    if (keyGeneration < cached.keyGeneration) {
+      // Derive backwards via hash chain
+      return { cek: privateFeedCryptoService.deriveCEK(cached.cek, cached.keyGeneration, keyGeneration) };
+    }
+    return { error: 'Post key generation still newer than cached key generation after catch-up' };
   }
 
   // ============================================================

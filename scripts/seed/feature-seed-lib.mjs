@@ -16,7 +16,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
-  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
   buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
@@ -337,11 +337,11 @@ export function createRecorder({ writer, state, file }) {
 }
 
 /**
- * A social v10 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
+ * A social v10–v13 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
  * `additionalProperties: false`, no `author`, no `language`, and `hashtag` omitted entirely rather than sent empty
- * when the post is untagged.
+ * when the post is untagged; v13 adds `live: true`.
  */
-export const socialPost = ({ content, hashtag, ...rest }) => ({ content, ...(hashtag ? { hashtag } : {}), ...rest });
+export const socialPost = ({ content, hashtag, ...rest }) => SOCIAL_SHAPES.post({ content, ...(hashtag ? { hashtag } : {}), ...rest });
 
 /**
  * Tops each persona up to the YAPP its share of the plan will spend (its starter claim, then an owner mint: v10's YAPP

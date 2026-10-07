@@ -1,9 +1,9 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
-import { contractTakesReports, electedModeration } from '@/lib/contract-topology'
+import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
 import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
-import { moderationElectionService } from '@/lib/services/moderation-election-service'
+import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
@@ -67,6 +67,19 @@ async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?:
 }
 
 /**
+ * Whether `docType` can be written now: false while the registered contract's
+ * interim is `notYetUsable` (mainnet v13) and no team is seated, as web's
+ * `useModeratedTypeOpen` reads it. A failed read rejects.
+ */
+async function moderatedTypeOpen(docType: string): Promise<boolean> {
+  try {
+    return await moderationService.moderatedTypeOpen(docType)
+  } catch (error) {
+    throw readFailure(error)
+  }
+}
+
+/**
  * Blocks and reports (`hooks/use-block.ts`, `components/settings/blocked-users.tsx`,
  * `components/moderation/report-post-modal.tsx`). The NSFW and media gates
  * run in RN; following other users' block lists is post-1.0.
@@ -88,7 +101,8 @@ export function createSafetyModule(tickets: TicketStore) {
     persistArgs: true,
     async run({ targetId, message }, ctx) {
       const result = await blockService.blockUser(signer(ctx), targetId, message)
-      return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'block'))
+      // v13: the block lands in the blocks contract (blockUser refuses when there is none).
+      return fromTransitionResult(result, createdDocument(result, blocksContractId() ?? YAPPR_CONTRACT_ID, 'block'))
     },
     probe: ownBlock(true),
   })
@@ -204,10 +218,13 @@ export function createSafetyModule(tickets: TicketStore) {
 
     /**
      * Report a post or reply to the contract's moderators. `reason` is a code
-     * from `lib/reports.ts` `REPORT_REASONS` (0–8); "something else" (8)
-     * needs a note, and a note is at most 500 characters. One report per
-     * reporter and target: a second fails `DUPLICATE`, so read `ownReport`
-     * first, as web's dialog does. Gated by `capabilities.reports`.
+     * from `lib/reports.ts` `REPORT_REASONS` up to `capabilities.reportReasonMax`
+     * (0–8, and 9 on v13); "something else" (8) needs a note, and a note is at
+     * most 500 characters. One report per reporter and target: a second fails
+     * `DUPLICATE`, so read `ownReport` first, as web's dialog does. On v13 a
+     * report pays `capabilities.reportFeeCredits` to the moderators. The engine
+     * reads no private feeds, so its reports carry no moderators' box. Gated by
+     * `capabilities.reports`.
      */
     async report(target: TargetRef, reason: number, note?: string): Promise<WriteTicket> {
       assertTarget(target)
@@ -264,13 +281,18 @@ export function createSafetyModule(tickets: TicketStore) {
      */
     async reportsOpen(): Promise<boolean> {
       if (!contractTakesReports()) return false
-      const elected = electedModeration()
-      if (elected?.interim !== 'notYetUsable' || !elected.moderatedDocumentTypes.report) return true
-      try {
-        return (await moderationElectionService.getSeatedTeam()) !== null
-      } catch (error) {
-        throw readFailure(error)
-      }
+      return moderatedTypeOpen('report')
+    },
+
+    /**
+     * Whether posts and replies can be written now: false while the contract
+     * refuses them until its first elected moderation team is seated (a
+     * `notYetUsable` interim, mainnet v13), when RN shows "posting opens when
+     * moderators are elected" instead of the composer. Every other contract
+     * answers without a read. Rejects when the team cannot be read.
+     */
+    async postingOpen(): Promise<boolean> {
+      return moderatedTypeOpen('post')
     },
 
     /** The viewer's own report on a target, or `null`. Rejects when it cannot be read, so the UI never offers a second (paid) report. */

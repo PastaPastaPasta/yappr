@@ -155,6 +155,7 @@ export interface IdentityPort {
 }
 
 export interface UsernamePort {
+  /** Resolves null only when the identity provably has no name; rejects when the lookup fails. */
   resolveUsername(identityId: string): Promise<string | null>
   resolveIdentity(identityOrUsername: string): Promise<string | null>
   clearCache?(username?: string, identityId?: string): MaybePromise<void>

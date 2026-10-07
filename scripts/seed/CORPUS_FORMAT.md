@@ -71,11 +71,11 @@ the executor cannot deadlock.
 
 | type | fields | maps to (social contract; see the topology note below for `hashtag`) |
 |---|---|---|
-| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — no `language` (v10); a `mediaUrl` brings its `mediaHash` + `mediaFingerprint` |
+| `post` | `ref`, `author`, `content`, `hashtag`, `mediaUrl?`, `sensitive?` | `post` — no `language` (v10); a `mediaUrl` brings its `mediaHash` + `mediaFingerprint` (v13: one-item `mediaUrls` / `mediaDigests` / `mediaKinds`, see `mediaUrl` below); v13 adds `live: true` |
 | `quote` | `ref`, `author`, `content`, `quotedRef`, `hashtag`, `mediaUrl?` | `post` with `quotedPostId` + `quotedPostOwnerId` resolved from the ref map |
-| `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply; media as for `post` |
+| `reply` | `ref`, `author`, `rootRef`, `parentRef`, `content`, `mediaUrl?` | `reply` — `rootPostId` from `rootRef`; `parentOwnerId` = owner of `parentRef`; `replyToReplyId` set iff `parentRef` is a reply; media as for `post`; v13 adds `rootOwnerId` = owner of `rootRef` (so a top-level reply's two owners are the same, `parentIsRoot`) |
 | `like` | `author`, `targetRef` (post) | indexOnly `like` `{postId, hashtag?, postAuthor}` — `hashtag`/`postAuthor` **copied from the target post's recorded values** (`where`: a mismatch is consensus error 40127; an untagged target means like.`hashtag` is **omitted**, exactly like the post's). One transition: the like feeds today's trending tags itself (v10 has no `beat`) |
-| `likeReply` | `author`, `targetRef` (reply) | indexOnly `likeReply` `{replyId, replyAuthor}` |
+| `likeReply` | `author`, `targetRef` (reply) | indexOnly `likeReply` `{replyId, replyAuthor}`; v13 `{replyId}` (no author counter) |
 | `repost` | `author`, `targetRef` (post or reply) | `post` with no content, `quotedPostId` (or `quotedReplyId` for a reply target) + `quotedPostOwnerId` — v10 has no repost type; it is written like a quote and pays the post's token cost and action fee |
 | `follow` | `author`, `target` (persona idx) | `follow` `{followingId}` |
 | `bookmark` | `author`, `targetRef` (post) | `bookmark` `{postId}` |
@@ -100,7 +100,10 @@ the executor cannot deadlock.
 - `mediaUrl`: optional, ≤ 512 chars, must match `^(https?|ipfs)://.+$`. The
   executor fetches each distinct URL once before the run and writes the sha256
   of its bytes as `mediaHash` and the pinned 9x8 dHash as `mediaFingerprint`
-  (`media-hash.mjs`); consensus requires both whenever the URL is set.
+  (`media-hash.mjs`); consensus requires both whenever the URL is set. On
+  v13 the same item is written as `mediaUrls: [url]`, `mediaDigests` = the
+  sha256 then the dHash (40 bytes) and `mediaKinds: [0]` (an image: the corpus
+  carries pictures only); the `media` rule needs the three lengths to agree.
 - `sensitive`: optional boolean (posts only).
 - Duplicate interactions (`like`/`likeReply`/`bookmark`/`follow` with the same
   author + target appearing twice) are rejected at parse time — on chain they

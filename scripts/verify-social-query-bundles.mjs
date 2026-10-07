@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10, v11 or v12)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10, v11, v12 or v13)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -23,7 +23,10 @@
  * kind. On v12 they are counters (`summableOffCountIndex` of byPost /
  * byReply) holding no like documents: the counters must agree with byPost /
  * byReply per target, and the likers are read one target at a time on byPost /
- * byReply. What the contract under test declares (fetched by id, not the
+ * byReply. v13 drops the reply author counter (a reply like names no author),
+ * so only the post counters are compared, and its author post pages pin
+ * `live == true` first (`post.ownerAndTime` is [live, $ownerId, $createdAt]).
+ * What the contract under test declares (fetched by id, not the
  * environment's topology) picks the like reads and the notification grids.
  * There is no postMention: a post or reply names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
@@ -31,10 +34,11 @@ import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
 import { PlatformVersion } from '@dashevo/evo-sdk';
 import { connectSdk, devnetName, envValue } from './sdk-env.mjs';
+import { socialShapes } from './social-shapes.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10, v11 or v12 cut (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10, v11, v12 or v13 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -118,8 +122,10 @@ await verify('permanent notification sources', [['follow', 'followingId'], ['pos
   orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
 
-/** The social contract under test as published (v10, v11 or v12): its declarations pick the reads below. */
+/** The social contract under test as published (v10 to v13): its declarations pick the reads below. */
 const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
+/** v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts). */
+const SOCIAL = socialShapes(V10);
 /** v10: the author index carries `$createdAt` after the target (byAuthorPostTime). */
 const LIKES_KEEP_TIME = V10.documentSchemas.like.indices.some(index => index.name === 'byAuthorPostTime');
 /** v12: the author indexes are counters of byPost / byReply (no like documents through them). */
@@ -158,17 +164,19 @@ await verifyAlone('notification windows (current and previous)', [
 }))));
 // "Liked your post / reply": the likes of the owner's twenty most recent posts
 // and replies since the start, newest first, one `target in` read per kind.
-const recentOwn = async (documentTypeName) => records(await sdk.documents.query({
-  dataContractId: social, documentTypeName, where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-  orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
-}));
+const recentOwn = async (documentTypeName) => {
+  const query = { where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] };
+  return records(await sdk.documents.query({ dataContractId: social, documentTypeName, limit: 20, ...(documentTypeName === 'post' ? SOCIAL.ownerPosts(query) : query) }));
+};
 const likesSince = (documentTypeName, author, target, docs) => ({
   dataContractId: social, documentTypeName,
   where: [[author, '==', owner], [target, 'in', docs.map(doc => id(doc.$id))], ['$createdAt', '>', 0]],
   orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: 100,
 });
 const [ownPosts, ownReplies] = [await recentOwn('post'), await recentOwn('reply')];
-const likeKinds = [['like', 'postAuthor', 'postId', ownPosts], ['likeReply', 'replyAuthor', 'replyId', ownReplies]].filter(([, , , docs]) => docs.length);
+const likeTargets = [['like', 'postAuthor', 'postId', ownPosts], ['likeReply', 'replyAuthor', 'replyId', ownReplies]].filter(([, , , docs]) => docs.length);
+/** The kinds whose like names the liked target's author (v13's reply like does not, so it has no author index). */
+const likeKinds = likeTargets.filter(([documentTypeName, author]) => V10.documentSchemas[documentTypeName].properties[author] !== undefined);
 if (LIKES_KEEP_TIME) {
   await verifyAlone('like notifications (one target-in read per kind)', likeKinds.map(([type, author, target, docs]) => likesSince(type, author, target, docs)));
 } else if (!LIKE_COUNTERS) {
@@ -181,7 +189,7 @@ if (LIKES_KEEP_TIME) {
 } else {
   // v12: the counters answer "did my likes move" per target; the likers come off byPost / byReply.
   for (const [documentTypeName, author, target, docs] of likeKinds) await verifyCounters(documentTypeName, author, target, docs);
-  await verifyAlone('like notifications (the likers of each target on byPost / byReply, one read per target)', likeKinds.flatMap(([documentTypeName, , target, docs]) => docs.slice(0, 5).map(doc => ({
+  await verifyAlone('like notifications (the likers of each target on byPost / byReply, one read per target)', likeTargets.flatMap(([documentTypeName, , target, docs]) => docs.slice(0, 5).map(doc => ({
     dataContractId: social, documentTypeName,
     where: [[target, '==', id(doc.$id)]], orderBy: [[target, 'asc'], ['$ownerId', 'asc']], limit: 100,
   }))));
@@ -222,7 +230,7 @@ async function verifyCounters(documentTypeName, author, target, docs) {
   }
 }
 // A followed author's reposts are posts: their own post pages carry them.
-await verify('following post pages (reposts included)', owners.map(ownerId => ({
+await verify('following post pages (reposts included)', owners.map(ownerId => SOCIAL.ownerPosts({
   dataContractId: social, documentTypeName: 'post',
   where: [['$ownerId', '==', ownerId], ['$createdAt', '>', 0]],
   orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100,
@@ -273,9 +281,9 @@ async function verifyEnrichment(kind) {
     // a repliesOf count slot is refused ("lands at the merged root").
     const root = kind === 'reply' ? await threadRoot() : null;
     const pageQuery = kind === 'post'
-      ? { dataContractId: social, documentTypeName: kind,
+      ? SOCIAL.ownerPosts({ dataContractId: social, documentTypeName: kind,
         where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })
       : { dataContractId: social, documentTypeName: kind,
         where: [['rootPostId', '==', root], ['replyToReplyId', '==', null]],
         orderBy: [['$createdAt', 'asc']], limit: 20 };

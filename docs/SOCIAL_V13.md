@@ -197,7 +197,7 @@ On v12 a tombstone stayed in `ownerAndTime`, so it was counted in the author's p
 - **`scripts/property-constraint-cases.mjs`** (`--constraints`), 50 v13 cases, among them: the forged top-level reply (`parentIsRoot`), media length mismatches (`media`), tombstones keeping media, digests, text or a quote (`blankTombstone`), a live post without `live` and a tombstone still `live` (`live`), the three report targets and every pair of them (`oneTarget`), a box on a profile report (`boxOnContent`), reason 9 without a note. The runner now also checks that each file's declared rule names are exactly the ones `DECLARED_RULES` pins for the live batteries.
 - **`scripts/register-feature-contract.mjs`** registers the blocks contract and social v13: it carries a file's `tokens`, `$formatVersion` and `version`, applies `withInterim` for `NETWORK`, takes `--interim`, and asks for a social contract id only when the file prices something in YAPP. Nothing was broadcast.
 
-Not updated (follow-up, with the client): the live batteries and fee tools that write social documents (`verify-v10.mjs`, `prove-merged-counts.mjs`, `measure-social-fees.mjs`, the seeder) still build v12 shapes, so v13 cannot be proven or measured live yet.
+The live batteries and fee tools that write social documents (`verify-v10.mjs --contract-file yappr-social-contract-v13.json`, `prove-merged-counts.mjs`, `measure-social-fees.mjs`, the seeder) build v13 shapes through `scripts/social-shapes.mjs` (the client follow-up); each has an offline self-test or dry run. Nothing has been broadcast: v13 is unproven live until a sakura registration.
 
 ## Client work for the follow-up PR
 

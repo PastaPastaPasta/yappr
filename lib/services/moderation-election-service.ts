@@ -206,7 +206,7 @@ function toContest(state: VoteState, endsAtMs: number | null): ElectionContest {
 }
 
 class ModerationElectionService {
-  /** The seated team, or null when no charter is seated (or the read failed). */
+  /** The seated team, or null when no charter is seated. Throws when the read fails. */
   async getSeatedTeam(targetContractId = YAPPR_CONTRACT_ID): Promise<SeatedTeam | null> {
     const sdk = await getEvoSdk();
     const team = await sdk.moderationCharters.team(targetContractId);
