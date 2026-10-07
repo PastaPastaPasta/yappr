@@ -345,7 +345,11 @@ selection with a "Check again" re-read, so whatever did not land can be sent
 again. Before writing, `setVote` and `createPoll` release the nonce
 reservations of earlier replaces Platform shows landed
 (`settlePendingPollrReplaces`, over `settleSupersededReplaces`), so a timed-out
-edit does not hold back the next ballot or poll until it expires. The ballots copy the
+edit does not hold back the next ballot or poll until it expires. `setVote`
+then refuses to plan at all (`heldBack`, nothing sent) while any earlier Pollr
+write from the account could still execute — an unconfirmed create until its
+nonce is consumed or it is 15 minutes old — since a late write would change the
+selection the plan was judged against. The ballots copy the
 poll's stored `optionCount`. Optimistic tallies move down as well as up. `tallyIsFinal` is true
 only for a tally read off the chain after `endsAt` (plus a 30 s margin for the
 device clock against block time); the card says "Final results" only then.

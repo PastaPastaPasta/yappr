@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // an in-memory boundary. No network.
 const mocks = vi.hoisted(() => ({ createDocument: vi.fn(), settle: vi.fn() }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { createDocument: mocks.createDocument } }));
-vi.mock('./identity-nonce', () => ({ settleSupersededReplaces: mocks.settle }));
+vi.mock('./identity-nonce', async (load) => ({
+  ...(await load<typeof import('./identity-nonce')>()),
+  settleSupersededReplaces: mocks.settle,
+}));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({}) }));
 
 const OWNER = '11111111111111111111111111111111';

@@ -5,11 +5,22 @@ import type { Poll } from './pollr-poll-service';
 // Exercises the v3/v4/v5 branch points of the ballot service at an in-memory
 // SDK boundary: what gets written, what query shape reads it back, and how a
 // refused or uncertain write is resolved. No network.
-const mocks = vi.hoisted(() => ({ query: vi.fn(), count: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), settle: vi.fn() }));
-vi.mock('./evo-sdk-service', () => ({
-  getEvoSdk: async () => ({ documents: { query: mocks.query, count: mocks.count } }),
+const mocks = vi.hoisted(() => ({
+  query: vi.fn(), count: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), settle: vi.fn(),
+  loadReservation: vi.fn(), contractNonce: vi.fn(),
 }));
-vi.mock('./identity-nonce', () => ({ settleSupersededReplaces: mocks.settle }));
+vi.mock('./evo-sdk-service', () => ({
+  getEvoSdk: async () => ({
+    documents: { query: mocks.query, count: mocks.count },
+    identities: { contractNonce: mocks.contractNonce },
+  }),
+}));
+// The real reservation rules (stillPending) over a mocked store.
+vi.mock('./identity-nonce', async (load) => ({
+  ...(await load<typeof import('./identity-nonce')>()),
+  settleSupersededReplaces: mocks.settle,
+  loadReservation: mocks.loadReservation,
+}));
 vi.mock('./state-transition-service', () => ({
   stateTransitionService: { createDocument: mocks.createDocument, updateDocument: mocks.updateDocument },
 }));
@@ -64,6 +75,7 @@ beforeEach(() => {
   mocks.updateDocument.mockResolvedValue({ success: true });
   mocks.query.mockResolvedValue(new Map());
   mocks.settle.mockResolvedValue(0);
+  mocks.loadReservation.mockReturnValue(null);
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -219,6 +231,34 @@ describe('v5 ballots', () => {
 
     expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
     expect(mocks.createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds back a reduced selection while the unconfirmed half of a first vote could still land', async () => {
+    const service = await loadService('v5');
+    const target = open({ multiChoice: true });
+    // First vote [0, 1]: slot 0 confirms, slot 1's create goes unconfirmed.
+    mocks.createDocument
+      .mockResolvedValueOnce({ success: true })
+      .mockResolvedValueOnce({ success: true, confirmed: false });
+    expect(await service.setVote(target, [0, 1], VOTER)).toMatchObject({ unconfirmed: true });
+
+    // That create is still reserved at its nonce (6) and Platform has not consumed it.
+    mocks.loadReservation.mockReturnValue({
+      mark: BigInt(6),
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now() }],
+    });
+    mocks.contractNonce.mockResolvedValue(BigInt(5));
+    // The chain shows only slot 0, so [0] plans no writes, yet slot 1 can still land.
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
+    mocks.createDocument.mockClear();
+
+    expect(await service.setVote(target, [0], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(mocks.updateDocument).not.toHaveBeenCalled();
+
+    // Once its nonce is consumed (it landed or never will), the same selection goes through.
+    mocks.contractNonce.mockResolvedValue(BigInt(6));
+    expect(await service.setVote(target, [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
   });
 
   it('reports an unconfirmed create as unconfirmed, not as counted', async () => {

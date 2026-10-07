@@ -217,6 +217,15 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     const { pollrVoteService } = await import('@/lib/services')
     const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
 
+    if (result.heldBack) {
+      // Nothing was sent. Keep the ballot open on what was asked for, so the
+      // voter can submit it once the earlier write has settled.
+      toast('Your earlier vote is still being confirmed. Try again in a moment.', { icon: '⏳', duration: 6000 })
+      setSelected(wanted)
+      setEditing(true)
+      return
+    }
+
     if (result.unconfirmed) {
       // Sent, but not seen yet. Leave the vote and tally as they were rather
       // than replace them with a read that likely predates the write.

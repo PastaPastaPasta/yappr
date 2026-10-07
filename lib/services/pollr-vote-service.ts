@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
-import { settlePendingPollrReplaces } from './pollr-pending-writes';
+import { pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -79,6 +79,13 @@ export interface SetVoteResult {
    * a read this soon would likely show the state before the write.
    */
   unconfirmed?: boolean;
+  /**
+   * Nothing was sent: an earlier Pollr write from this account (say the
+   * unconfirmed half of a multi-choice vote) could still execute, and a plan
+   * judged against the ballots on chain now could be undone by it. Retry once
+   * it settles.
+   */
+  heldBack?: boolean;
   /** Platform refused a write because the poll has closed. */
   closed: boolean;
   /**
@@ -362,8 +369,14 @@ class PollrVoteService {
     if (pollIsClosed(poll)) return refusedSet('This poll has closed', true);
 
     // Release the reservations of earlier replaces that landed, or this write
-    // is held back behind them (see settlePendingPollrReplaces).
+    // is held back behind them (see settlePendingPollrReplaces). Then refuse to
+    // plan while any earlier write could still execute — even a plan of no
+    // writes, which would otherwise report as recorded a selection that a late
+    // create could still change.
     await settlePendingPollrReplaces(ownerId);
+    if (await pollrWriteMayStillExecute(ownerId)) {
+      return { success: false, heldBack: true, closed: false, stale: false, error: 'An earlier vote is still being confirmed' };
+    }
 
     let ballots: Ballot[];
     try {

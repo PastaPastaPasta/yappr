@@ -42,6 +42,8 @@ export interface PendingTransition {
   replaces?: DocumentReplace;
   /** With `replaces`: the raw contract nonce Platform reported before it was signed; it carries a later one. */
   signedAfter?: bigint;
+  /** When it was reserved (ms since epoch); absent on entries stored before this was recorded. */
+  reservedAt?: number;
 }
 
 /** A document replace: `revision` is the one the transition writes. */
@@ -74,7 +76,7 @@ export interface NonceReservation {
  * so this bound is only reached by a transition that was dropped. Owning that
  * nonce (building these transitions like creates) is what removes the bound.
  */
-const PENDING_LIFETIME_MS = 15 * 60 * 1000;
+export const PENDING_LIFETIME_MS = 15 * 60 * 1000;
 
 /** The sequence part of an identity contract nonce (the upper 24 bits are its missing-revision set). */
 const NONCE_SEQUENCE_MASK = (BigInt(1) << BigInt(40)) - BigInt(1);
@@ -112,7 +114,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       mark: string;
-      pending: { id: string; nonce: string | null; expiresAt: number | null; replaces?: unknown; signedAfter?: unknown }[];
+      pending: { id: string; nonce: string | null; expiresAt: number | null; replaces?: unknown; signedAfter?: unknown; reservedAt?: unknown }[];
     };
     return {
       mark: BigInt(parsed.mark),
@@ -125,6 +127,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
           ...(isDocumentReplace(p.replaces) && typeof p.signedAfter === 'string' && /^\d+$/.test(p.signedAfter)
             ? { replaces: p.replaces, signedAfter: BigInt(p.signedAfter) }
             : {}),
+          ...(typeof p.reservedAt === 'number' ? { reservedAt: p.reservedAt } : {}),
         })),
     };
   } catch (error) {
@@ -141,6 +144,7 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
       nonce: p.nonce === null ? null : p.nonce.toString(),
       expiresAt: p.expiresAt,
       ...(p.replaces && p.signedAfter !== undefined ? { replaces: p.replaces, signedAfter: p.signedAfter.toString() } : {}),
+      ...(p.reservedAt !== undefined ? { reservedAt: p.reservedAt } : {}),
     }));
     localStorage.setItem(reservationKey(ownerId, contractId), JSON.stringify({ mark: reservation.mark.toString(), pending }));
   } catch (error) {
@@ -195,6 +199,7 @@ export function reserveNonce(
     id: crypto.randomUUID(),
     nonce,
     expiresAt: nonce === null ? Date.now() + PENDING_LIFETIME_MS : null,
+    reservedAt: Date.now(),
     ...(replaces ? { replaces, signedAfter: current ?? BigInt(0) } : {}),
   };
   const mark = previous?.mark ?? BigInt(0);
