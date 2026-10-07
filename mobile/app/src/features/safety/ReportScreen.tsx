@@ -31,10 +31,11 @@ import { useAuthorBlocked } from './block-state';
 import { findCachedPost } from './cached';
 import { copy, type ReportNoun } from './copy';
 import {
+  LEGACY_REASON_MAX,
   OTHER_REASON_CODE,
   REPORT_NOTE_MAX_LENGTH,
-  REPORT_REASONS,
   reportIsValid,
+  reportReasonsUpTo,
   reportReasonLabel,
   reportStatusLabel,
 } from './report-reasons';
@@ -53,11 +54,13 @@ import {
 } from './report-actions';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
 
-const REASON_OPTIONS = REPORT_REASONS.map((reason) => ({
-  value: String(reason.code),
-  title: reason.label,
-  description: reason.hint,
-}));
+/** The picker's options for reasons up to `max` (the contract's ceiling; every reason by email). */
+const reasonOptions = (max?: number) =>
+  reportReasonsUpTo(max).map((reason) => ({
+    value: String(reason.code),
+    title: reason.label,
+    description: reason.hint,
+  }));
 
 const shortDate = (date: Date) =>
   new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -167,13 +170,17 @@ function ReasonFields({
   note,
   onNote,
   busy = false,
+  maxReason,
 }: {
   reason: number | null;
   onReason: (reason: number) => void;
   note: string;
   onNote: (note: string) => void;
   busy?: boolean;
+  /** The highest reason the contract accepts (`capabilities.reportReasonMax`); omitted by email, which takes any. */
+  maxReason?: number;
 }) {
+  const options = useMemo(() => reasonOptions(maxReason), [maxReason]);
   return (
     <>
       <View className="gap-2">
@@ -182,7 +189,7 @@ function ReasonFields({
         </Text>
         <View className={cn('overflow-hidden rounded-xl border', tw.border)} pointerEvents={busy ? 'none' : 'auto'}>
           <RadioGroup
-            options={REASON_OPTIONS}
+            options={options}
             value={reason === null ? '' : String(reason)}
             onChange={(value) => onReason(Number(value))}
             accessibilityLabel={copy.report.question}
@@ -207,6 +214,8 @@ function ReasonFields({
 
 function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; postUrl: string }) {
   const target = useMemo(() => targetOf(post), [post]);
+  // v13 accepts reason 9 (sexual content involving minors); earlier contracts stop at 8.
+  const maxReason = useCapabilities()?.reportReasonMax ?? LEGACY_REASON_MAX;
   // Read beside the form, never in front of it: a failed read still lets the report go (a second one is
   // refused as DUPLICATE, which then shows the report).
   const own = useEngineQuery(queryKeys.post.ownReport(post.id), (api) => api.safety.ownReport(target), {
@@ -300,7 +309,7 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
   }
 
   const busy = sending || outcome === 'pending';
-  const valid = reportIsValid(reason, note);
+  const valid = reportIsValid(reason, note, maxReason);
   const submit = () => {
     if (reason === null || busy) return;
     const trimmed = note.trim();
@@ -320,7 +329,7 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
   return (
     <SheetBody testID="report-sheet">
       <SheetHeading icon={FlagIcon} body={copy.report.disclosure} />
-      <ReasonFields reason={reason} onReason={setReason} note={note} onNote={setNote} busy={busy} />
+      <ReasonFields reason={reason} onReason={setReason} note={note} onNote={setNote} busy={busy} maxReason={maxReason} />
       <Button
         label={busy ? copy.report.busy : copy.report.submit(noun)}
         size="block"
