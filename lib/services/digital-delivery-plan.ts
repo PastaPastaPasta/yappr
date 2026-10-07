@@ -10,6 +10,7 @@ import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
 import { bytesEqual } from '../bytes'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
+import { DIGITAL_PAYLOAD_MAX_BYTES } from '../storefront/storefront-contract'
 import type {
   DeliverWhen,
   OrderDelivery,
@@ -24,10 +25,9 @@ import type {
   StoreOrder,
 } from '../../types'
 
-/** Both encrypted payload properties are capped at 16000 bytes by the contract. */
-export const MAX_ENCRYPTED_PAYLOAD_BYTES = 16000
-export const MAX_KIT_PLAINTEXT_BYTES = MAX_ENCRYPTED_PAYLOAD_BYTES - KIT_CIPHERTEXT_OVERHEAD
-export const MAX_DELIVERY_PLAINTEXT_BYTES = MAX_ENCRYPTED_PAYLOAD_BYTES - DELIVERY_CIPHERTEXT_OVERHEAD
+/** Both encrypted payload properties share one cap in the contract (v6: 5,120 bytes). */
+export const MAX_KIT_PLAINTEXT_BYTES = DIGITAL_PAYLOAD_MAX_BYTES - KIT_CIPHERTEXT_OVERHEAD
+export const MAX_DELIVERY_PLAINTEXT_BYTES = DIGITAL_PAYLOAD_MAX_BYTES - DELIVERY_CIPHERTEXT_OVERHEAD
 /** Largest file a seller may attach: the whole file is encrypted in memory. */
 export const MAX_DIGITAL_FILE_BYTES = 100 * 1024 * 1024
 export const MAX_INSTRUCTIONS_LENGTH = 2000

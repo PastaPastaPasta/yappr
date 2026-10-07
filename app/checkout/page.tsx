@@ -23,6 +23,8 @@ import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
+import { ORDER_PAYMENT_FIELD_LIMITS, OWN_STORE_ORDER_MESSAGE, isOwnStore, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
+import { storefrontIsV6 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { parseStorePolicies } from '@/lib/utils/policies'
@@ -50,6 +52,7 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
 }
 
 type CheckoutReadinessBlocker =
+  | 'own-store'
   | 'store-unavailable'
   | 'store-check-failed'
   | 'no-payment-methods'
@@ -70,6 +73,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
   if (!blocker) return null
 
   const messages: Record<CheckoutReadinessBlocker, string> = {
+    'own-store': OWN_STORE_ORDER_MESSAGE,
     'store-unavailable': 'This store is not accepting orders right now.',
     'store-check-failed': 'Could not confirm this store is open. Please try again.',
     'no-payment-methods': 'This store has not configured any payment methods.',
@@ -211,6 +215,13 @@ function CheckoutPage() {
       }
     }
 
+    // A seller never orders from their own store (storefront v6 refuses it on chain).
+    if (isOwnStore(storeToValidate, user?.identityId)) {
+      const state = blocked('own-store')
+      setCheckoutReadiness(state)
+      return state
+    }
+
     // Before storefront v5 consensus cannot stop an order to a paused or closed
     // store, so the client must; on v5 it refuses one too (QA D-25), and this
     // check keeps the buyer from paying for a refusal. Re-read past the document
@@ -318,7 +329,7 @@ function CheckoutPage() {
         }
 
         const readiness = await validateCheckoutReadiness(storeData)
-        if (readiness.blocker === 'store-unavailable') setError(readiness.blockerMessage)
+        if (readiness.blocker === 'store-unavailable' || readiness.blocker === 'own-store') setError(readiness.blockerMessage)
       } catch (error) {
         logger.error('Failed to load checkout data:', error)
         router.push('/cart')
@@ -459,6 +470,24 @@ function CheckoutPage() {
   }, [subtotal, shippingCost])
 
   const currency = getCartCurrency(cartItems) ?? 'USD'
+
+  // v6 caps the encrypted order (5,120 B). Checked before payment is offered,
+  // so nobody pays for an order the chain then refuses: everything known now,
+  // plus worst-case room for what the payment step still takes (transaction id,
+  // refund address, notes), whose inputs are capped to match.
+  const paymentFieldLimits = storefrontIsV6() ? ORDER_PAYMENT_FIELD_LIMITS : undefined
+  const orderSizeError = useMemo(() => {
+    if (!store) return null
+    const draft = storeOrderService.buildOrderPayload(
+      cartItems,
+      includeShipping ? shippingAddress : undefined,
+      buyerContact,
+      shippingCost,
+      selectedPaymentUri?.uri ?? '',
+      currency
+    )
+    return orderPaymentBudgetError(draft, (store.paymentUris ?? []).map((payment) => payment.uri))
+  }, [store, cartItems, includeShipping, shippingAddress, buyerContact, shippingCost, selectedPaymentUri, currency])
 
   const handleDetailsSubmit = () => {
     if (checkoutReadiness.blocker === 'store-unavailable') {
@@ -663,8 +692,8 @@ function CheckoutPage() {
       validateCheckoutReadiness(store)
         .then(async (readiness) => {
           if (readiness.isReady && await validateCartAvailability(cartItems)) {
-            setError(null)
-            setStep('payment')
+            setError(orderSizeError)
+            if (!orderSizeError) setStep('payment')
             return
           }
           setError(readiness.blockerMessage)
@@ -674,10 +703,14 @@ function CheckoutPage() {
           setError(err instanceof Error ? err.message : 'Failed to verify checkout readiness.')
         })
     })
-  }, [openEncryptionKeyModal, validateCheckoutReadiness, validateCartAvailability, cartItems, store])
+  }, [openEncryptionKeyModal, validateCheckoutReadiness, validateCartAvailability, cartItems, store, orderSizeError])
 
   const handlePoliciesSubmit = async () => {
     setError(null)
+    if (orderSizeError) {
+      setError(orderSizeError)
+      return
+    }
     if (!await validateCartAvailability(cartItems)) return
     const readiness = await validateCheckoutReadiness(store)
     if (readiness.isReady) {
@@ -765,6 +798,7 @@ function CheckoutPage() {
         store.id
       )
 
+      // Refuses an own-store order or (v6) an oversized payload before signing.
       await storeOrderService.createOrder(user.identityId, {
         storeId: store.id,
         sellerId: store.ownerId,
@@ -982,17 +1016,17 @@ function CheckoutPage() {
           )}
 
           {/* Payment Step */}
-          {step === 'payment' && !checkoutReadiness.isReady && (
+          {step === 'payment' && (!checkoutReadiness.isReady || orderSizeError) && (
             <div className="p-4 space-y-4">
               <div className="p-4 border border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg">
                 <p className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">
                   Cannot proceed to payment yet
                 </p>
                 <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                  {checkoutReadiness.blockerMessage || 'Checkout is blocked due to missing prerequisites.'}
+                  {orderSizeError || checkoutReadiness.blockerMessage || 'Checkout is blocked due to missing prerequisites.'}
                 </p>
               </div>
-              {checkoutReadiness.blocker === 'missing-buyer-key' && (
+              {!orderSizeError && checkoutReadiness.blocker === 'missing-buyer-key' && (
                 <Button onClick={promptForEncryptionKeyThenContinue} className="w-full">
                   Add Encryption Key
                 </Button>
@@ -1006,7 +1040,7 @@ function CheckoutPage() {
               </Button>
             </div>
           )}
-          {step === 'payment' && checkoutReadiness.isReady && (
+          {step === 'payment' && checkoutReadiness.isReady && !orderSizeError && (
             <div>
               <PaymentSelector
                 paymentUris={store?.paymentUris || []}
@@ -1014,6 +1048,7 @@ function CheckoutPage() {
                 onSelect={setSelectedPaymentUri}
                 txid={txid}
                 onTxidChange={setTxid}
+                txidMaxLength={paymentFieldLimits?.txid}
                 orderTotal={total}
                 orderCurrency={currency}
               />
@@ -1028,6 +1063,7 @@ function CheckoutPage() {
                     type="text"
                     value={refundAddress}
                     onChange={(e) => setRefundAddress(e.target.value)}
+                    maxLength={paymentFieldLimits?.refundAddress}
                     placeholder={`Your ${selectedPaymentUri?.scheme || 'crypto'} address for refunds`}
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 font-mono text-sm"
                   />
@@ -1051,6 +1087,7 @@ function CheckoutPage() {
                   <textarea
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
+                    maxLength={paymentFieldLimits?.notes}
                     placeholder="Any special instructions for the seller"
                     rows={2}
                     className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"

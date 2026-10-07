@@ -12,8 +12,11 @@ import { storeReviewService } from '@/lib/services/store-review-service'
 import { itemReviewService } from '@/lib/services/item-review-service'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2 } from '@/lib/constants'
+import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
+import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import toast from 'react-hot-toast'
 import type { StoreOrder, Store, OrderPayload } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface ReviewModalProps {
   isOpen: boolean
@@ -29,6 +32,19 @@ const TITLE_LIMIT = 100
 const CONTENT_LIMIT = 1000
 /** Indexed by the star rating, 0 meaning "not rated yet". */
 const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
+
+/**
+ * What a store review plus `itemCount` item reviews cost: YAPP on v2–v5, the
+ * v6 action fees in DASH (at a 1.0x fee multiplier, so "about").
+ */
+function reviewCostLabel(itemCount: number): string {
+  const storeFee = storefrontCreateFeeCredits('storeReview')
+  if (storeFee === null) {
+    return `${STOREFRONT_YAPP_TOKEN_COSTS.storeReview + itemCount * STOREFRONT_YAPP_TOKEN_COSTS.itemReview} YAPP`
+  }
+  const itemFee = storefrontCreateFeeCredits('itemReview') ?? 0n
+  return `about ${formatCreditsAsDash(storeFee + BigInt(itemCount) * itemFee)} DASH in fees`
+}
 
 export function ReviewModal({
   isOpen,
@@ -51,7 +67,7 @@ export function ReviewModal({
     ? Array.from(new Map((payload?.items ?? []).map((line) => [line.itemId, line.itemTitle])).entries())
     : []
   const ratedItems = Object.entries(itemRatings).filter(([, value]) => value > 0)
-  const yappCost = STOREFRONT_YAPP_TOKEN_COSTS.storeReview + ratedItems.length * STOREFRONT_YAPP_TOKEN_COSTS.itemReview
+  const costLabel = reviewCostLabel(ratedItems.length)
 
   const canSubmit = rating >= 1 && rating <= 5 && !isSubmitting
 
@@ -102,7 +118,8 @@ export function ReviewModal({
       onSuccess()
     } catch (error) {
       logger.error('Failed to submit review:', error)
-      if (!handleInsufficientYapp(error, `A review costs ${yappCost} YAPP.`)) {
+      // Only a v2–v5 review pays YAPP, so on v6 this is never an insufficient-YAPP refusal.
+      if (!handleInsufficientYapp(error, `A review costs ${costLabel}.`)) {
         toast.error('Failed to submit review. Please try again.')
       }
     } finally {
@@ -136,7 +153,7 @@ export function ReviewModal({
                       <div className="flex items-center gap-3 pb-4 border-b border-gray-100 dark:border-gray-800">
                         <div className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0">
                           {store.logoUrl ? (
-                            <img
+                            <IpfsImage
                               src={store.logoUrl}
                               alt={store.name}
                               className="w-full h-full rounded-lg object-cover"
@@ -243,7 +260,7 @@ export function ReviewModal({
                             Submitting...
                           </span>
                         ) : storefrontIsV2() ? (
-                          `Submit Review (${yappCost} YAPP)`
+                          `Submit Review (${costLabel})`
                         ) : (
                           'Submit Review'
                         )}

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button'
 import { formatPrice, formatDate, formatOrderId } from '@/lib/utils/format'
 import { orderStatusService } from '@/lib/services/order-status-service'
 import type { StoreOrder, OrderPayload, OrderStatusUpdate, Store, OrderDelivery } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface OrderCardProps {
   order: StoreOrder
@@ -74,7 +75,7 @@ export function OrderCard({
               className="w-12 h-12 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center flex-shrink-0 hover:ring-2 hover:ring-yappr-500 transition-all"
             >
               {store?.logoUrl ? (
-                <img src={store.logoUrl} alt={store.name} className="w-full h-full rounded-lg object-cover" />
+                <IpfsImage src={store.logoUrl} alt={store.name} className="w-full h-full rounded-lg object-cover" />
               ) : (
                 <BuildingStorefrontIcon className="h-6 w-6 text-gray-400" />
               )}

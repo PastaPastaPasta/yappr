@@ -10,6 +10,8 @@ interface PaymentSelectorProps {
   onSelect: (uri: ParsedPaymentUri | null) => void
   txid: string
   onTxidChange: (txid: string) => void
+  /** Longest transaction id the input takes (storefront v6 budgets the order for it). */
+  txidMaxLength?: number
   orderTotal?: number
   orderCurrency?: string
 }
@@ -20,6 +22,7 @@ export function PaymentSelector({
   onSelect,
   txid,
   onTxidChange,
+  txidMaxLength,
   orderTotal,
   orderCurrency
 }: PaymentSelectorProps) {
@@ -99,6 +102,7 @@ export function PaymentSelector({
             <input
               type="text"
               value={txid}
+              maxLength={txidMaxLength}
               onChange={(e) => {
                 onTxidChange(e.target.value)
                 // If user manually edits, clear the auto-fill indicator

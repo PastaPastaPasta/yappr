@@ -10,6 +10,7 @@
 import type { ItemVariants, VariantAxis, VariantCombination } from '../types'
 import { toSmallestUnit } from '../utils/format'
 import { LIST_LIMITS } from '../typed-array-codecs'
+import { variantsSizeError } from '../storefront/storefront-contract'
 
 // CSV column mapping to internal field names
 export interface InventoryCSVColumns {
@@ -707,6 +708,14 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
 
   // Evaluate quantity formulas
   evaluateQuantityFormulas(items)
+
+  // Storefront v6 caps the stored variants JSON: a listing past it cannot be
+  // saved, so it is an error (which holds the upload) rather than a refusal
+  // after signing.
+  for (const item of items) {
+    const tooLarge = variantsSizeError(item.variants)
+    if (tooLarge) errors.push({ row: item.rows[0]?.rowNumber ?? 0, column: 'variants', message: `"${item.title}": ${tooLarge}` })
+  }
 
   return { items, errors, warnings }
 }

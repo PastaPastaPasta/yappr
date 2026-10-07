@@ -23,7 +23,20 @@ import { storeItemService } from '@/lib/services/store-item-service'
 import { cartService } from '@/lib/services/cart-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storefrontIsV2 } from '@/lib/constants'
+import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
 import type { Store, StoreItem, ItemRatingSummary } from '@/lib/types'
+
+/**
+ * Why `item` cannot be bought, or null when it can: the viewer's own store, a
+ * sold-out, paused or deleted listing, or a store that is not open.
+ */
+function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: string | undefined): string | null {
+  if (isOwnStore(store, viewerId)) return OWN_STORE_ORDER_MESSAGE
+  if (item.status === 'sold_out') return 'This item is sold out'
+  if (item.status !== 'active') return 'This item is no longer available'
+  if (store && store.status !== 'active') return `This store is ${store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders`
+  return null
+}
 
 function LoadingFallback() {
   return (
@@ -45,7 +58,7 @@ function ItemDetailContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const itemId = searchParams.get('id')
-  useAuth() // For optional auth context
+  const { user } = useAuth()
   const { isReady: sdkReady } = useSdk()
 
   const [item, setItem] = useState<StoreItem | null>(null)
@@ -96,9 +109,9 @@ function ItemDetailContent() {
         if (itemData) {
           const [storeData, ratingData] = await Promise.all([
             storeService.getById(itemData.storeId),
-            // Proved from the itemRating average tree (v2); one request.
+            // Proved from the item's average tree (v2; v6 pins its store); one request.
             storefrontIsV2()
-              ? storeStatsService.getItemRatingSummary(itemData.id).catch((error) => {
+              ? storeStatsService.getItemRatingSummary(itemData.id, itemData.storeId).catch((error) => {
                   logger.warn('Failed to load item rating:', error)
                   return null
                 })
@@ -265,14 +278,7 @@ function ItemDetailContent() {
   }
 
   const isOutOfStock = hasInventoryTracking && currentStock === 0
-  // A paused, sold-out or deleted listing, or one in a store that is not open, cannot be bought.
-  const unavailableReason = item.status === 'sold_out'
-    ? 'This item is sold out'
-    : item.status !== 'active'
-      ? 'This item is no longer available'
-      : store && store.status !== 'active'
-        ? `This store is ${store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders`
-        : null
+  const unavailableReason = unavailableReasonFor(item, store, user?.identityId)
 
   return (
     <>
