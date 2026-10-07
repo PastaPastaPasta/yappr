@@ -450,6 +450,23 @@ describe('graph and safety writes', () => {
     expect(await safety.reportsOpen()).toBe(false)
   })
 
+  it('says whether posting is open: closed only while a notYetUsable contract has no seated team', async () => {
+    const { safety } = engine()
+    m.elected = null
+    expect(await safety.postingOpen()).toBe(true)
+    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { post: ['delete'] } }
+    expect(await safety.postingOpen()).toBe(true)
+    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
+
+    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
+    m.election.getSeatedTeam.mockResolvedValue(null)
+    expect(await safety.postingOpen()).toBe(false)
+    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
+    expect(await safety.postingOpen()).toBe(true)
+    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
+    await expect(safety.postingOpen()).rejects.toBeInstanceOf(Error)
+  })
+
   it('reports with lib\'s reason rules, gated by the topology', async () => {
     const { tickets, outcome, safety } = engine()
     await expect(safety.report(TARGET, 8)).rejects.toMatchObject({ code: 'BAD_REQUEST' })
@@ -647,11 +664,11 @@ describe('posts.publish and posts.delete', () => {
     creating(1, FEE_CHANGED)
     const draft = { parts: [{ text: 'one' }, { text: 'two' }], mediaUrl: 'https://img.example/a.png' }
     const ticket = await outcome(posts.publish(draft))
-    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ mediaUrl: 'https://img.example/a.png' }))
+    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ media: [{ url: 'https://img.example/a.png' }] }))
     m.replyService.createReply.mockClear()
     await tickets.retry(ticket.id)
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
-    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
 
     // A silent re-send, the same.
     const silent = engine({ autoRetryDelaysMs: [0] })
@@ -659,13 +676,13 @@ describe('posts.publish and posts.delete', () => {
     m.replyService.createReply.mockClear()
     expect(await silent.outcome(silent.posts.publish(draft))).toMatchObject({ state: 'confirmed' })
     expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
-    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
 
     // The host's own resume, the same.
     creating()
     m.replyService.createReply.mockClear()
     await outcome(posts.publish({ ...draft, resume: { postedIds: [id('post0'), null] } }))
-    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
   })
 
   it('names each part on the ticket as it lands, so a restart mid-thread keeps what posted (SR-03)', async () => {
@@ -888,7 +905,7 @@ describe('posts.publish and posts.delete', () => {
     const withMedia = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' }))
     expect(withMedia.state).toBe('confirmed')
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'pic', expect.objectContaining({
-      mediaUrl: 'https://img.example/a.png', mediaHashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) },
+      media: [{ url: 'https://img.example/a.png', hashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) } }],
     }))
   })
 

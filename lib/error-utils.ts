@@ -681,6 +681,36 @@ export function isDocumentPropertyRuleError(error: unknown): boolean {
   )
 }
 
+/**
+ * The `propertyConstraints` rule a 10422 names ("breaks its
+ * propertyConstraints rule "<rule>""), or null.
+ */
+export function brokenPropertyRule(error: unknown): string | null {
+  return /propertyconstraints rule "([^"]+)"/i.exec(extractErrorMessage(error))?.[1] ?? null
+}
+
+/**
+ * What each social-contract rule's 10422 means to a user (v13 names, and the
+ * v9-v12 names they replaced). Each is a client bug or a stale client rather
+ * than something the user typed, so the copy says what went wrong, not how
+ * to fix the input.
+ */
+const PROPERTY_RULE_COPY: Readonly<Record<string, string>> = {
+  parentIsRoot: 'This reply named the wrong post owner. Reload the thread and reply again.',
+  media: 'The attached media did not match its details. Remove it, attach it again and retry.',
+  privateNoMedia: 'A private post can\'t carry a public media link.',
+  privateAllOrNone: 'The private post was incomplete. Try again.',
+  private: 'The private post was incomplete. Try again.',
+  notEmpty: 'A post needs some text, media, a quote or a poll.',
+  blankTombstone: 'Deleting it failed: the network expects it emptied completely. Reload and try again.',
+  tombstoneIsBlank: 'Deleting it failed: the network expects it emptied completely. Reload and try again.',
+  live: 'This post was missing its live marker. Reload the app and try again.',
+  oneTarget: 'A report names exactly one post, reply or profile.',
+  boxOnContent: 'A profile report can\'t carry private content.',
+  otherNote: 'Say what is wrong with it in the details.',
+  otherHasNote: 'Say what is wrong with it in the details.',
+}
+
 /** The 10419 (`distinctFrom`) member of {@link isDocumentPropertyRuleError}. */
 function isPropertyNotDistinctError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -763,6 +793,13 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
  * Message: "Documents of type <t> on contract <c> can not be used until a
  * moderation team is seated".
  */
+/**
+ * What a 41200 means to a user: on a `notYetUsable` contract (mainnet v13)
+ * posts, replies, reports and profile changes open once masternodes elect the
+ * first moderation team.
+ */
+export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
+
 export function isModerationNotYetSeatedError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (
@@ -1081,7 +1118,7 @@ export function categorizeError(error: unknown): string {
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
   if (isModerationNotYetSeatedError(error)) {
-    return 'This isn\'t available yet. Try again later.'
+    return POSTING_CLOSED_COPY
   }
   if (isPropertyMaxBytesError(error)) {
     // maxLength counts characters and the UI enforces it; maxBytes counts
@@ -1094,7 +1131,8 @@ export function categorizeError(error: unknown): string {
     return 'The network doesn\'t allow this combination: you can\'t do this to yourself.'
   }
   if (isDocumentPropertyRuleError(error)) {
-    return 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
+    const rule = brokenPropertyRule(error)
+    return (rule && PROPERTY_RULE_COPY[rule]) ?? 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'

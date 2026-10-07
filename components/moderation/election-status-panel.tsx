@@ -13,6 +13,8 @@ import { electionView, moderationElectionService, type ElectionStatus } from '@/
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
 const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} h`
+/** A window as people say it: days from a day up (mainnet's floor), hours below. */
+const duration = (seconds: number) => (seconds >= 86_400 ? `${Math.round(seconds / 86_400)} days` : hours(seconds))
 
 /**
  * The election of the contract's moderation team (v9, elected moderation):
@@ -66,9 +68,15 @@ export function ElectionStatusPanel() {
         <CardTitle className="flex items-center gap-2"><ScaleIcon className="h-5 w-5" /> Moderation election</CardTitle>
         <CardDescription>
           Masternodes elect this contract&apos;s moderation team. Until a team is seated,{' '}
-          {declaration.interim === 'contractOwner' ? 'the contract owner moderates' : `the interim (${declaration.interim}) applies`}.
-          Join and vote windows: {hours(declaration.joinWindowSeconds)} each;{' '}
-          {declaration.seatContestable ? 'the seat can be challenged' : 'the first seated team keeps the seat'};
+          {declaration.interim === 'contractOwner'
+            ? 'the contract owner moderates'
+            : declaration.interim === 'notYetUsable'
+              ? 'nobody moderates, and posts, replies, reports and profile changes stay closed'
+              : `the interim (${declaration.interim}) applies`}.
+          Applicants join for {duration(declaration.joinWindowSeconds)}, then masternodes vote for {duration(declaration.voteWindowSeconds)};{' '}
+          {declaration.seatContestable
+            ? `the seat becomes contestable once challenges ship${declaration.challengeCoolDownSeconds ? `, with ${duration(declaration.challengeCoolDownSeconds)} of protection after each seat change` : ''}`
+            : 'the first seated team keeps the seat'};
           the leader may add up to {declaration.maxAddedModerators} members.
         </CardDescription>
       </CardHeader>

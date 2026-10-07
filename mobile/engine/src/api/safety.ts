@@ -67,6 +67,21 @@ async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?:
 }
 
 /**
+ * Whether `docType` can be written now: false while a `notYetUsable` contract
+ * (mainnet v13) has no seated team, as web's `useModeratedTypeOpen` reads it.
+ * Every other contract answers without a read; a failed read rejects.
+ */
+async function moderatedTypeOpen(docType: string): Promise<boolean> {
+  const elected = electedModeration()
+  if (elected?.interim !== 'notYetUsable' || !elected.moderatedDocumentTypes[docType]) return true
+  try {
+    return (await moderationElectionService.getSeatedTeam()) !== null
+  } catch (error) {
+    throw readFailure(error)
+  }
+}
+
+/**
  * Blocks and reports (`hooks/use-block.ts`, `components/settings/blocked-users.tsx`,
  * `components/moderation/report-post-modal.tsx`). The NSFW and media gates
  * run in RN; following other users' block lists is post-1.0.
@@ -268,13 +283,18 @@ export function createSafetyModule(tickets: TicketStore) {
      */
     async reportsOpen(): Promise<boolean> {
       if (!contractTakesReports()) return false
-      const elected = electedModeration()
-      if (elected?.interim !== 'notYetUsable' || !elected.moderatedDocumentTypes.report) return true
-      try {
-        return (await moderationElectionService.getSeatedTeam()) !== null
-      } catch (error) {
-        throw readFailure(error)
-      }
+      return moderatedTypeOpen('report')
+    },
+
+    /**
+     * Whether posts and replies can be written now: false while the contract
+     * refuses them until its first elected moderation team is seated (a
+     * `notYetUsable` interim, mainnet v13), when RN shows "posting opens when
+     * moderators are elected" instead of the composer. Every other contract
+     * answers without a read. Rejects when the team cannot be read.
+     */
+    async postingOpen(): Promise<boolean> {
+      return moderatedTypeOpen('post')
     },
 
     /** The viewer's own report on a target, or `null`. Rejects when it cannot be read, so the UI never offers a second (paid) report. */
