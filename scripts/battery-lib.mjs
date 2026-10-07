@@ -24,6 +24,7 @@ import {
   STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
+  createDocument,
   createSdkHandle,
   createdId,
   describeErr,
@@ -117,7 +118,7 @@ const PERSONAL_PERSONA_IDX = 900;
 export const MODERATOR_FLAG = { parse: (raw) => raw };
 
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
-export function createBattery({ handle, contractId, socialId }) {
+export function createBattery({ handle, contractId, socialId, agreementFor }) {
   let failures = 0;
   const capturedErrors = [];
   const workingShapes = [];
@@ -282,9 +283,18 @@ export function createBattery({ handle, contractId, socialId }) {
    * row and is reported for the log only; `document` is the SDK's confirmed instance when the
    * create returned (it carries the consensus `$createdAt` a delete-by-values needs), else the
    * local placeholder.
+   *
+   * A create on the battery's contract carries the agreement the battery's `agreementFor(sdk,
+   * docType)` returns (a `DocumentActionFeeAgreement`, or undefined when the type is unpriced),
+   * unless the case names its own `agreement` or opts out with `noAgreement`. One is sent as a
+   * hand-built batch (seed-lib `createDocument`), the only shape that carries
+   * `$actionFeeAgreement`; the facade has no option for it, and a priced type created without
+   * one is a paid 40132.
    */
-  async function attemptCreate(who, docType, data, { tokenCost, noPayment, accepted, contract = contractId } = {}) {
-    const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy: randomEntropy() });
+  async function attemptCreate(who, docType, data, { tokenCost, noPayment, noAgreement, agreement: named, accepted, contract = contractId } = {}) {
+    const agreement = named ?? (noAgreement || contract !== contractId ? undefined : await agreementFor?.(sdk, docType));
+    const entropy = randomEntropy();
+    const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy });
     let id = null;
     const since = Date.now();
     // A value-identical document that existed BEFORE this create cannot be
@@ -306,7 +316,9 @@ export function createBattery({ handle, contractId, socialId }) {
     };
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
-      () => sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) })
+      () => (agreement
+        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment: noPayment ? {} : paymentInfo(tokenCost) })
+        : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
     return { ...outcome, id, document: outcome.result ?? document };
@@ -556,7 +568,7 @@ export async function runBattery(spec) {
     const extra = (spec.extraContracts?.(args) ?? []).filter(Boolean);
     const handle = createSdkHandle({ contractIds: [socialId, contractId, ...extra] });
     const { protocolVersion } = await handle.connect();
-    const battery = createBattery({ handle, contractId, socialId });
+    const battery = createBattery({ handle, contractId, socialId, agreementFor: spec.agreementFor });
     console.log(`connected (PV${protocolVersion}); ${spec.label} ${contractId}${spec.banner?.({ args, socialId }) ?? ''}`);
 
     const names = Object.keys(spec.actors ?? {});

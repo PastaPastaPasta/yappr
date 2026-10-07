@@ -867,11 +867,12 @@ export function tokenCostFor(docType) {
 
 /**
  * The action fee `docType`'s create charges, or null when it charges none
- * (everything but `post` and `reply`). Read off the committed contract JSON so
- * no amount is ever transcribed: a mismatch is a paid 40133.
+ * (everything but `post` and `reply` on the social contract). Read off the
+ * committed contract JSON so no amount is ever transcribed: a mismatch is a
+ * paid 40133. `schemas` names another contract's document schemas (blog v7).
  */
-export function actionFeeFor(docType) {
-  const fees = SOCIAL_DOCUMENT_SCHEMAS[docType]?.actionFees;
+export function actionFeeFor(docType, schemas = SOCIAL_DOCUMENT_SCHEMAS) {
+  const fees = schemas[docType]?.actionFees;
   const create = fees?.create;
   if (!create) return null;
   return {
@@ -928,10 +929,11 @@ export function forgetFeeMultiplier() {
 
 /**
  * The agreement a create of `docType` must carry, or undefined when the action
- * is unpriced. Reads the epoch multiplier on first use.
+ * is unpriced. Reads the epoch multiplier on first use. `schemas` as for
+ * {@link actionFeeFor}.
  */
-export async function feeAgreementFor(sdk, docType) {
-  const fee = actionFeeFor(docType);
+export async function feeAgreementFor(sdk, docType, schemas = SOCIAL_DOCUMENT_SCHEMAS) {
+  const fee = actionFeeFor(docType, schemas);
   if (!fee) return undefined;
   return new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await feeMultiplierPermille(sdk)));
 }
