@@ -184,6 +184,32 @@ export function confirmsPendingVote(pending: PendingVote | null, read: BallotRea
   return pending !== null && read !== null && read.generation > pending.afterRead && sameChoices(read.choices, pending.wanted)
 }
 
+/** How a v5 submission ended, as far as the confirmation target is concerned. */
+export type SubmitOutcome =
+  /** A write went out and its outcome is not known yet. */
+  | 'unconfirmed'
+  /** Nothing new is known to have landed: held back, or refused. */
+  | 'notSent'
+  /** Done one way or another: recorded, closed, or changed elsewhere (reloaded). */
+  | 'settled'
+
+/**
+ * The pending vote to confirm after a submission of `wanted`. The latest
+ * request is always the target: once the voter asks for something new, a read
+ * matching an OLDER request must not close their newer edit. A refusal while
+ * nothing was pending leaves nothing to confirm.
+ */
+export function pendingAfterSubmit(
+  previous: PendingVote | null,
+  wanted: number[],
+  afterRead: number,
+  outcome: SubmitOutcome
+): PendingVote | null {
+  if (outcome === 'settled') return null
+  if (outcome === 'notSent' && previous === null) return null
+  return { wanted: normalizeChoices(wanted), afterRead }
+}
+
 /** What changed between two selections: the choices `next` adds and the ones it drops. */
 export function choiceDelta(previous: readonly number[], next: readonly number[]): { added: number[]; removed: number[] } {
   const before = new Set(previous)

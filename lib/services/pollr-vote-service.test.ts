@@ -261,6 +261,37 @@ describe('v5 ballots', () => {
     expect(await service.setVote(target, [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
   });
 
+  it('refuses a reduced selection that plans no writes when the reservation store is unreadable', async () => {
+    const service = await loadService('v5');
+    const { NONCE_STORE_ERROR } = await import('@/lib/error-utils');
+    // Slot 1's create may still be out there, but nothing can say so.
+    mocks.loadReservation.mockImplementation(() => { throw new Error(NONCE_STORE_ERROR); });
+    // The chain shows only slot 0, so [0] would plan no writes and never reach a write path.
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
+
+    expect(await service.setVote(open({ multiChoice: true }), [0], VOTER)).toEqual({
+      success: false, closed: false, stale: false, error: NONCE_STORE_ERROR,
+    });
+    expect(mocks.query).not.toHaveBeenCalled();
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+  });
+
+  it('reports whether an earlier write could still change a read-confirmed vote', async () => {
+    const service = await loadService('v5');
+    expect(await service.writesMayStillExecute(VOTER)).toBe(false);
+
+    mocks.loadReservation.mockReturnValue({
+      mark: BigInt(6),
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now() }],
+    });
+    mocks.contractNonce.mockResolvedValue(BigInt(5));
+    expect(await service.writesMayStillExecute(VOTER)).toBe(true);
+    // An unreadable store cannot prove anything: not final.
+    mocks.loadReservation.mockImplementation(() => { throw new Error('blocked'); });
+    expect(await service.writesMayStillExecute(VOTER)).toBe(true);
+    expect(mocks.settle).toHaveBeenCalled();
+  });
+
   it('reports an unconfirmed create as unconfirmed, not as counted', async () => {
     const service = await loadService('v5');
     mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });

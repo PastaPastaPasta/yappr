@@ -374,7 +374,15 @@ class PollrVoteService {
     // writes, which would otherwise report as recorded a selection that a late
     // create could still change.
     await settlePendingPollrReplaces(ownerId);
-    if (await pollrWriteMayStillExecute(ownerId)) {
+    let mayStillExecute: boolean;
+    try {
+      mayStillExecute = await pollrWriteMayStillExecute(ownerId);
+    } catch (error) {
+      // The reservation store is unreadable: nothing proves an earlier write
+      // cannot land, so refuse rather than plan (nothing was sent).
+      return refusedSet(extractErrorMessage(error));
+    }
+    if (mayStillExecute) {
       return { success: false, heldBack: true, closed: false, stale: false, error: 'An earlier vote is still being confirmed' };
     }
 
@@ -427,6 +435,21 @@ class PollrVoteService {
     }
     const success = recorded !== null && sameChoices(recorded, choices);
     return { success, choices: recorded, closed, stale, error: success ? undefined : firstError };
+  }
+
+  /**
+   * Whether a Pollr write from `ownerId` could still execute, after releasing
+   * the replaces Platform shows landed. A read-based confirmation of an earlier
+   * unconfirmed vote is only final when none can: a late write would still
+   * change the ballots it read. True when that cannot be determined.
+   */
+  async writesMayStillExecute(ownerId: string): Promise<boolean> {
+    await settlePendingPollrReplaces(ownerId);
+    try {
+      return await pollrWriteMayStillExecute(ownerId);
+    } catch {
+      return true;
+    }
   }
 
   /** One v5 ballot write. */

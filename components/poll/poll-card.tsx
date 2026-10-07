@@ -12,7 +12,15 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsV4, pollrIsV5 } from '@/lib/constants'
-import { choiceDelta, confirmsPendingVote, normalizeChoices, sameChoices, type BallotRead, type PendingVote } from '@/lib/pollr-rules'
+import {
+  choiceDelta,
+  confirmsPendingVote,
+  normalizeChoices,
+  pendingAfterSubmit,
+  sameChoices,
+  type BallotRead,
+  type PendingVote,
+} from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
@@ -169,11 +177,24 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // after it went unconfirmed, shows the voter's ballots selecting what was
   // asked for. A failed or in-flight read settles nothing. Until then the
   // ballot stays open on it, so "Update vote" sends whatever has not landed.
+  // The read alone is not final while an earlier write could still land and
+  // change the ballots it showed, so that is checked too; if one could, the
+  // ballot stays open for a later "Check again".
   useEffect(() => {
-    if (!confirmsPendingVote(pendingVote, ballotRead)) return
-    stopEditing()
-    toast.success('Vote confirmed')
-  }, [pendingVote, ballotRead, stopEditing])
+    if (!userId || !confirmsPendingVote(pendingVote, ballotRead)) return
+    let cancelled = false
+    const confirm = async () => {
+      const { pollrVoteService } = await import('@/lib/services')
+      if (await pollrVoteService.writesMayStillExecute(userId)) return
+      if (cancelled) return
+      stopEditing()
+      toast.success('Vote confirmed')
+    }
+    confirm().catch((error) => logger.error('PollCard: failed to confirm a pending vote', error))
+    return () => {
+      cancelled = true
+    }
+  }, [userId, pendingVote, ballotRead, stopEditing])
 
   const isClosed = closedOnChain || (poll ? pollIsClosed(poll) : false)
   const hasVoted = myVotes.length > 0
@@ -221,6 +242,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // Nothing was sent. Keep the ballot open on what was asked for, so the
       // voter can submit it once the earlier write has settled.
       toast('Your earlier vote is still being confirmed. Try again in a moment.', { icon: '⏳', duration: 6000 })
+      setPendingVote((previous) => pendingAfterSubmit(previous, wanted, readGeneration.current, 'notSent'))
       setSelected(wanted)
       setEditing(true)
       return
@@ -230,7 +252,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // Sent, but not seen yet. Leave the vote and tally as they were rather
       // than replace them with a read that likely predates the write.
       toast('Your vote was sent but is not confirmed yet.', { icon: '⏳', duration: 6000 })
-      setPendingVote({ wanted, afterRead: readGeneration.current })
+      setPendingVote((previous) => pendingAfterSubmit(previous, wanted, readGeneration.current, 'unconfirmed'))
       setSelected(wanted)
       setEditing(true)
       return
@@ -257,7 +279,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     } else if (!result.success) {
       toast.error(categorizeError(result.error))
       // Keep the ballot open on the wanted picks for a retry — including after a
-      // partial first multi-choice vote, which now has recorded choices.
+      // partial first multi-choice vote, which now has recorded choices — and
+      // make them what a pending earlier vote is confirmed against.
+      setPendingVote((previous) => pendingAfterSubmit(previous, wanted, readGeneration.current, 'notSent'))
       setSelected(wanted)
       setEditing(true)
       return

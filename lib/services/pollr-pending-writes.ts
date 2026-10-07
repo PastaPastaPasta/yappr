@@ -39,16 +39,16 @@ export async function settlePendingPollrReplaces(ownerId: string): Promise<void>
  * {@link settlePendingPollrReplaces}, which callers run first) or expires. The
  * reservations do not record which poll they write, so any pending Pollr write
  * counts. True when the nonce cannot be read while something is pending, since
- * nothing then proves it cannot execute. An unreadable reservation store is
- * left to the write path, which refuses to sign without it (NONCE_STORE_ERROR).
+ * nothing then proves it cannot execute.
+ *
+ * Throws NONCE_STORE_ERROR when the reservation store cannot be read: nothing
+ * is then known about what may still execute, so the caller must refuse — even
+ * a plan of no writes, which never reaches the write path's own refusal. This
+ * blocks nothing that could otherwise work: no Pollr write can be signed
+ * without the store either.
  */
 export async function pollrWriteMayStillExecute(ownerId: string): Promise<boolean> {
-  let reservation: ReturnType<typeof loadReservation>;
-  try {
-    reservation = loadReservation(ownerId, POLLR_CONTRACT_ID);
-  } catch {
-    return false;
-  }
+  const reservation = loadReservation(ownerId, POLLR_CONTRACT_ID);
   if (!reservation || reservation.pending.length === 0) return false;
   try {
     const sdk = await getEvoSdk();

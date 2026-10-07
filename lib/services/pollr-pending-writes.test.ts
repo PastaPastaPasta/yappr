@@ -56,9 +56,9 @@ describe('pollrWriteMayStillExecute', () => {
     expect(await pollrWriteMayStillExecute(OWNER)).toBe(true);
   });
 
-  it('leaves an unreadable store to the write path', async () => {
+  it('fails closed when the reservation store cannot be read', async () => {
     const { pollrWriteMayStillExecute } = await import('./pollr-pending-writes');
     mocks.loadReservation.mockImplementation(() => { throw new Error('blocked'); });
-    expect(await pollrWriteMayStillExecute(OWNER)).toBe(false);
+    await expect(pollrWriteMayStillExecute(OWNER)).rejects.toThrow('blocked');
   });
 });

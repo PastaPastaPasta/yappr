@@ -349,7 +349,10 @@ edit does not hold back the next ballot or poll until it expires. `setVote`
 then refuses to plan at all (`heldBack`, nothing sent) while any earlier Pollr
 write from the account could still execute — an unconfirmed create until its
 nonce is consumed or it is 15 minutes old — since a late write would change the
-selection the plan was judged against. The ballots copy the
+selection the plan was judged against. An unreadable reservation store refuses
+the vote too (no Pollr write can be signed without it anyway). The card
+confirms a pending vote against the voter's latest request only, and only when
+no earlier write could still land. The ballots copy the
 poll's stored `optionCount`. Optimistic tallies move down as well as up. `tallyIsFinal` is true
 only for a tally read off the chain after `endsAt` (plus a 30 s margin for the
 device clock against block time); the card says "Final results" only then.
