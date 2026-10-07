@@ -13,7 +13,7 @@
  *     on a create or replace), so a rule that drifts from its cases fails
  *     before anything is registered;
  *   - the live batteries (verify-v10 c1 and r1, verify-storefront s20,
- *     verify-pollr p12, verify-blog b19) broadcast the refused create cases against the
+ *     verify-pollr p10, verify-blog b19) broadcast the refused create cases against the
  *     registered contract; their existing fixtures are the accepted side.
  *
  * `data` holds only the properties a rule reads plus what the schema requires;
@@ -36,7 +36,10 @@ export const DECLARED_RULES = {
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
     storeOrder: ['storeIsOpen'],
   },
-  'pollr-contract.json': { poll: ['optionsContiguous'] },
+  'pollr-contract.json': {
+    poll: ['endsAfterCreation', 'endsWithin31Days', 'optionCountMatches'],
+    vote: ['choiceIsAnOption', 'multiChoiceIsSlot', 'singleUsesSlotZero', 'slotIsAnOption', 'writtenBeforeClose'],
+  },
   'yappr-blog-contract.json': { blogPost: ['chunksContiguous'], blogComment: ['commentsOpen'] },
 };
 
@@ -53,7 +56,22 @@ const media = (mediaUrl) => ({ mediaUrl, mediaHash: bytes(32), mediaFingerprint:
 export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayload: bytes(64), nonce: bytes(24), storeStatus: 'active' });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
-export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', option1: 'b' });
+/**
+ * The instant every case is judged at. The pollr rules read `$createdAt` and
+ * `$updatedAt`, so a case fixes both (through its `at` option) relative to
+ * this one clock reading; cases that set no `at` are judged at it too.
+ */
+export const CASE_NOW = Date.now();
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+/** Pollr v5: a three-option single-choice poll closing in a day. */
+export const basePoll = () => ({ question: 'constraint probe?', options: ['a', 'b', 'c'], optionCount: 3, multiChoice: false, endsAt: CASE_NOW + DAY });
+/** A single-choice ballot (slot 0) for option 1, on a poll closing in an hour. */
+const singleBallot = (fields = {}) => ({ pollId: id(), slot: 0, choice: 1, pollOptionCount: 3, pollMultiChoice: false, pollEndsAt: CASE_NOW + HOUR, ...fields });
+/** A multi-choice ballot ticking option 2 (slot 2), on a poll closing in an hour. */
+const multiBallot = (fields = {}) => ({ pollId: id(), slot: 2, choice: 2, pollOptionCount: 3, pollMultiChoice: true, pollEndsAt: CASE_NOW + HOUR, ...fields });
+/** A later write of a ballot: `$revision` 2+ and its own block time. */
+const replaced = (revision = 2n, created = CASE_NOW - HOUR) => ({ replace: true, at: { createdAt: created, updatedAt: CASE_NOW, revision } });
 /** Blog v6 derives the post owner through blogPostId; there is no blogPostOwnerId to send. */
 export const baseComment = () => ({ blogPostId: id(), content: 'constraint probe' });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
@@ -61,11 +79,13 @@ export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', sl
 const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
 
 /**
- * [label, docType, data, refusedBy] — `refusedBy` is the rule the document
- * breaks, or null when it must be accepted. `replace: true` marks a shape only
- * a later write produces (a moderator's field change); the offline oracle
- * validates it the same way, because the node runs the rules against the
- * whole changed document.
+ * [label, docType, data, refusedBy, options] — `refusedBy` is the rule the
+ * document breaks, or null when it must be accepted. `options.replace` marks a
+ * shape only a later write produces (a moderator's field change, a changed
+ * ballot); the offline oracle validates it the same way, because the node runs
+ * the rules against the whole changed document. `options.at` fixes the
+ * document's `$createdAt`, `$updatedAt` and `$revision` (default: CASE_NOW,
+ * CASE_NOW, 1). `options.offlineOnly` keeps a case out of the live batteries.
  */
 export const CONSTRAINT_CASES = {
   'yappr-social-contract-v10.json': [
@@ -126,11 +146,33 @@ export const CONSTRAINT_CASES = {
     ['storeOrder: at a paused store', 'storeOrder', { ...baseOrder(), storeStatus: 'paused' }, 'storeIsOpen'],
     ['storeOrder: at a closed store', 'storeOrder', { ...baseOrder(), storeStatus: 'closed' }, 'storeIsOpen'],
   ],
+  // Pollr v5 (docs/NON_SOCIAL_CONTRACTS.md). The offline check judges system
+  // times by what the case says, so "after close" is a pollEndsAt in the past.
+  // `offlineOnly` marks a case a live create cannot reproduce: one the JSON
+  // schema refuses before any rule runs, or one whose margin is a single
+  // millisecond of block time.
   'pollr-contract.json': [
-    ['poll: two options', 'poll', basePoll(), null],
-    ['poll: ten options', 'poll', { ...basePoll(), ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`option${i + 2}`, `o${i + 2}`])) }, null],
-    ['poll: option3 with no option2', 'poll', { ...basePoll(), option3: 'gap' }, 'optionsContiguous'],
-    ['poll: option9 alone after option1', 'poll', { ...basePoll(), option9: 'gap' }, 'optionsContiguous'],
+    ['poll: closes in 1 day', 'poll', basePoll(), null],
+    ['poll: closes in exactly 31 days', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY }, null],
+    ['poll: ten options', 'poll', { ...basePoll(), options: Array.from({ length: 10 }, (_, i) => `o${i}`), optionCount: 10 }, null],
+    ['poll: closes in 31 days + 1 ms', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY + 1 }, 'endsWithin31Days', { offlineOnly: true }],
+    ['poll: no endsAt (the schema requires it; the rules alone refuse it too)', 'poll', drop(basePoll(), 'endsAt'), 'endsAfterCreation', { offlineOnly: true }],
+    ['poll: optionCount disagrees with options', 'poll', { ...basePoll(), optionCount: 2 }, 'optionCountMatches'],
+    ['poll: born closed', 'poll', { ...basePoll(), endsAt: CASE_NOW - 1000 }, 'endsAfterCreation'],
+    ['vote: single, created before close', 'vote', singleBallot(), null],
+    ['vote: single, created after close', 'vote', singleBallot({ pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose'],
+    ['vote: single, choice changed before close', 'vote', singleBallot({ choice: 2 }), null, replaced()],
+    ['vote: single, choice changed after close', 'vote', singleBallot({ choice: 2, pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose', replaced(2n, CASE_NOW - 2 * HOUR)],
+    ['vote: single, withdrawn (choice dropped) before close', 'vote', drop(singleBallot(), 'choice'), null, replaced()],
+    ['vote: single, withdrawn after close', 'vote', drop(singleBallot({ pollEndsAt: CASE_NOW - HOUR }), 'choice'), 'writtenBeforeClose', replaced()],
+    ['vote: no pollEndsAt', 'vote', drop(singleBallot(), 'pollEndsAt'), 'writtenBeforeClose', { offlineOnly: true }],
+    ['vote: single, choice past the options', 'vote', singleBallot({ choice: 3 }), 'choiceIsAnOption'],
+    ['vote: single, a second ballot (slot 2)', 'vote', singleBallot({ slot: 2, choice: 2 }), 'singleUsesSlotZero'],
+    ['vote: multi, option 2 ticked (slot 2)', 'vote', multiBallot(), null],
+    ['vote: multi, unticked (choice dropped) before close', 'vote', drop(multiBallot(), 'choice'), null, replaced()],
+    ['vote: multi, re-ticked after close', 'vote', multiBallot({ pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose', replaced(3n)],
+    ['vote: multi, slot 2 holding choice 1', 'vote', multiBallot({ choice: 1 }), 'multiChoiceIsSlot'],
+    ['vote: multi, slot past the options', 'vote', drop(multiBallot({ slot: 5 }), 'choice'), 'slotIsAnOption'],
   ],
   'yappr-blog-contract.json': [
     ['blogPost: one chunk', 'blogPost', baseBlogPost(), null],
@@ -189,7 +231,7 @@ export const constraintViolation = (rule) =>
 /** The refused CREATE cases of one contract and doctype, as [label, data, rule]. */
 export function refusedCreates(file, docType) {
   return CONSTRAINT_CASES[file]
-    .filter(([, type, , rule, options]) => type === docType && rule !== null && !options?.replace)
+    .filter(([, type, , rule, options]) => type === docType && rule !== null && !options?.replace && !options?.offlineOnly)
     .map(([label, , data, rule]) => [label, data, rule]);
 }
 
@@ -200,8 +242,9 @@ export function refusedCreates(file, docType) {
  * create or replace, offline: from 4.2.0-beta.6 (platform#5051) the wasm-sdk's
  * `DataContract.checkDocumentPropertyConstraints` evaluates a document's rules
  * with rs-dpp's own code, so no extra package is needed. It judges the rules
- * alone (not the JSON schema), and uses the device clock for system times;
- * none of Yappr's rules reads a time, a height or a total.
+ * alone (not the JSON schema). System times are the case's own (`options.at`,
+ * default CASE_NOW): the pollr rules read `$createdAt` and `$updatedAt`; no
+ * rule reads a height or a total.
  *
  * Returns the number of cases whose outcome is not the recorded one.
  */
@@ -211,12 +254,13 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
   console.log('\npropertyConstraints cases (DataContract.checkDocumentPropertyConstraints, the rules a create or replace runs):');
   for (const [file, cases] of Object.entries(CONSTRAINT_CASES)) {
     const contract = parseContract(loadContractSource(`contracts/${file}`), platformVersion);
-    for (const [label, docType, data, rule] of cases) {
+    for (const [label, docType, data, rule, options] of cases) {
+      const at = options?.at ?? {};
       let violation = null;
       try {
         const document = Document.fromObject({
           $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
-          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+          $revision: at.revision ?? 1n, $createdAt: at.createdAt ?? CASE_NOW, $updatedAt: at.updatedAt ?? CASE_NOW, ...data,
         }, platformVersion);
         violation = contract.checkDocumentPropertyConstraints(document) ?? null;
       } catch (e) {
