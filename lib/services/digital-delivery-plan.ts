@@ -237,13 +237,15 @@ export function lineCoverage(line: Pick<OrderItem, 'itemId' | 'variantKey' | 'qu
 }
 
 /**
- * An order's receipts as just read from the chain, plus any this session sent
- * that the read does not show yet (matched by nonce): a lagging read must not
- * make a pending receipt's codes look unsent.
+ * An order's receipts as just read from the chain, plus every receipt already
+ * held that the read does not show (matched by nonce): one this session sent
+ * that is still pending, or one a lagging node has not caught up with.
+ * Receipts are append-only, so a read can only add to what is held; it never
+ * makes codes that went out look unsent.
  */
-export function withPendingDeliveries<T extends Pick<OrderDelivery, 'nonce' | 'unconfirmed'>>(fresh: readonly T[], held: readonly T[]): T[] {
-  const landed = (pending: T) => fresh.some((delivery) => bytesEqual(delivery.nonce, pending.nonce))
-  return [...fresh, ...held.filter((delivery) => delivery.unconfirmed && !landed(delivery))]
+export function withHeldDeliveries<T extends Pick<OrderDelivery, 'nonce'>>(fresh: readonly T[], held: readonly T[]): T[] {
+  const read = (delivery: T) => fresh.some((candidate) => bytesEqual(candidate.nonce, delivery.nonce))
+  return [...fresh, ...held.filter((delivery) => !read(delivery))]
 }
 
 /**
@@ -329,7 +331,10 @@ export function kitsAfterDelivery(
 }
 
 /** The seller's own listing of an item, read from the chain. */
-export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status' | 'stockQuantity'>>
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status'>> & {
+  /** Required (undefined when untracked), so no listing passes the stock check by leaving it out. */
+  stockQuantity: number | undefined
+}
 
 const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantKey'>) => `${line.itemId}|${line.variantKey ?? ''}`
 const repeatedLineText = (line: Pick<OrderItem, 'itemTitle'>) => `"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`

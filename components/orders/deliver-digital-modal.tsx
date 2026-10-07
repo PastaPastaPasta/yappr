@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { coverageChanged, deliveredFor, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, withPendingDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
+import { coverageChanged, deliveredFor, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, withHeldDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -178,8 +178,8 @@ export function DeliverDigitalModal({
   const coverageStillHolds = async (): Promise<boolean> => {
     let latest: OrderDelivery[]
     try {
-      // Receipts this session sent that the read does not show yet still count.
-      latest = withPendingDeliveries(await refreshDeliveries(), basis)
+      // Receipts already held that the read does not show yet still count.
+      latest = withHeldDeliveries(await refreshDeliveries(), basis)
     } catch (error) {
       logger.error('Could not re-check the order\'s deliveries:', error)
       toast.error('Could not check what was already delivered for this order, so nothing was sent. Try again.')
@@ -191,6 +191,8 @@ export function DeliverDigitalModal({
     setBasis(latest)
     setSelected(defaultSelection(fresh, owed))
     setCodesNow(codesByLine(owed))
+    // The new selection may hold lines with warnings the seller has not checked.
+    setReviewed(false)
     setCoverageMoved(true)
     return false
   }

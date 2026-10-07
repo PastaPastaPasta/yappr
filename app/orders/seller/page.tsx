@@ -21,7 +21,7 @@ import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, loggableFulfillmentError, newerKits, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, withPendingDeliveries, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, withHeldDeliveries, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -359,13 +359,14 @@ function SellerOrdersPage() {
 
   /**
    * Re-read one order's receipts from the chain and fold them into the page,
-   * keeping any this session sent that the read does not show yet. Throws
-   * when the read fails: delivery waits for a successful one.
+   * keeping any already held that the read does not show yet (pending, or a
+   * lagging node). Throws when the read fails: delivery waits for a
+   * successful one.
    */
   const refreshOrderDeliveries = useCallback(async (order: StoreOrder, sellerPrivateKey: Uint8Array): Promise<OrderDelivery[]> => {
     const read = await orderDeliveryService.loadDecrypted([order], (delivery, owner) => orderDeliveryService.decryptAsSeller(delivery, owner, sellerPrivateKey))
     const fresh = read.get(order.id) ?? []
-    setDeliveries(prev => new Map(prev).set(order.id, withPendingDeliveries(fresh, prev.get(order.id) ?? [])))
+    setDeliveries(prev => new Map(prev).set(order.id, withHeldDeliveries(fresh, prev.get(order.id) ?? [])))
     return fresh
   }, [])
 
@@ -411,7 +412,8 @@ function SellerOrdersPage() {
    */
   const handleDeliverReady = async (sellerPrivateKey: Uint8Array) => {
     // A status write in flight could close an order this batch is about to send.
-    if (!user?.identityId || bulkProgress || isSubmitting) return
+    // Nor while a delivery form is opening: it and the batch could each miss the other's receipts.
+    if (!user?.identityId || bulkProgress || isSubmitting || openingOrderId) return
     const batch = readyOrders
     let currentKits = new Map(kits)
     let delivered = 0
@@ -571,7 +573,7 @@ function SellerOrdersPage() {
                 </p>
                 <Button
                   size="sm"
-                  disabled={bulkProgress !== null || isSubmitting}
+                  disabled={bulkProgress !== null || isSubmitting || openingOrderId !== null}
                   onClick={() => withSellerKey((key) => { handleDeliverReady(key).catch((error) => logger.error(error)) })}
                 >
                   Deliver all

@@ -24,7 +24,7 @@ import {
   planDelivery,
   variantRef,
   wholeOrderProblems,
-  withPendingDeliveries,
+  withHeldDeliveries,
   coverageChanged,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
@@ -47,7 +47,7 @@ const kit = (extra: Partial<ItemDeliverablePayload> = {}): ItemDeliverablePayloa
   ({ v: 1, assets: [], deliverWhen: 'payment_confirmed', ...extra })
 /** These items, listed as digital in store `store` (title and price as `line()` writes them). */
 const listing = (itemId: string, extra: Partial<ItemListing> = {}): ItemListing =>
-  ({ storeId: 'store', fulfillment: 'digital', title: titleOf(itemId), basePrice: 100, currency: 'USD', ...extra })
+  ({ storeId: 'store', fulfillment: 'digital', title: titleOf(itemId), basePrice: 100, currency: 'USD', stockQuantity: undefined, ...extra })
 const listed = (itemIds: string[]) => new Map(itemIds.map((itemId) => [itemId, listing(itemId)]))
 
 describe('planDelivery', () => {
@@ -260,12 +260,12 @@ describe('re-checking receipts before a delivery', () => {
   const receipt = (n: number, licenseKeys: string[], unconfirmed = false) =>
     ({ nonce: new Uint8Array([n]), unconfirmed, payload: { v: 1 as const, items: [{ itemId: GAME_ID, itemTitle: 'GAME', assets: [], licenseKeys }] } })
 
-  it('keeps a pending receipt a lagging read does not show, and drops it once it lands', () => {
+  it('keeps a held receipt a lagging read does not show, and takes the read\'s copy once it does', () => {
     const pending = receipt(2, ['k2'], true)
-    expect(withPendingDeliveries([receipt(1, ['k1'])], [receipt(1, ['k1']), pending])).toEqual([receipt(1, ['k1']), pending])
-    expect(withPendingDeliveries([receipt(1, ['k1']), receipt(2, ['k2'])], [pending])).toEqual([receipt(1, ['k1']), receipt(2, ['k2'])])
-    // A confirmed receipt the read no longer shows is the read's to decide.
-    expect(withPendingDeliveries([], [receipt(1, ['k1'])])).toEqual([])
+    expect(withHeldDeliveries([receipt(1, ['k1'])], [receipt(1, ['k1']), pending])).toEqual([receipt(1, ['k1']), pending])
+    expect(withHeldDeliveries([receipt(1, ['k1']), receipt(2, ['k2'])], [pending])).toEqual([receipt(1, ['k1']), receipt(2, ['k2'])])
+    // Receipts are append-only: a confirmed one missing from the read is a lagging node, never a removal.
+    expect(withHeldDeliveries([], [receipt(1, ['k1'])])).toEqual([receipt(1, ['k1'])])
   })
 
   it('notices a delivery made elsewhere, but not a pending one confirming', () => {
