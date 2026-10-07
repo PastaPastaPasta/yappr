@@ -173,6 +173,85 @@ CONSTRAINT_CASES['yappr-social-contract-v11.json'] = [
 DECLARED_RULES['yappr-social-contract-v12.json'] = DECLARED_RULES['yappr-social-contract-v11.json'];
 CONSTRAINT_CASES['yappr-social-contract-v12.json'] = CONSTRAINT_CASES['yappr-social-contract-v11.json'];
 
+// Social v13 (the mainnet candidate) renames every rule (names appear only in errors), and adds:
+// `media` (mediaUrls, mediaDigests at 40 B per item and mediaKinds at 1 B per item agree in
+// length), `live` (a post carries `live: true` unless it is a tombstone, and a tombstone does not),
+// `parentIsRoot` (a top-level reply's parentOwnerId is its rootOwnerId, which the rootPostId
+// reference binds to the post's owner: no forged "replied to you"), and on report `oneTarget`
+// over three targets (post, reply, or a profile: `about`) and `boxOnContent` (the moderators' key
+// box only on a post or reply report). The `where` bindings are judged by `--probes`.
+DECLARED_RULES['yappr-social-contract-v13.json'] = {
+  post: ['blankTombstone', 'embed', 'live', 'media', 'notEmpty', 'oneQuote', 'private', 'privateNoMedia', 'quoteOwner'],
+  reply: ['blankTombstone', 'media', 'parentIsRoot', 'private', 'privateNoMedia'],
+  report: ['boxOnContent', 'oneTarget', 'otherNote', 'resolvedStatus'],
+};
+/** A v13 post is `live` unless tombstoned. */
+const v13Post = () => ({ content: 'constraint probe', live: true });
+/** A v13 top-level reply: its parent is the root post, so its parentOwnerId is the root's owner. */
+const v13Reply = () => {
+  const rootOwner = id();
+  return { content: 'constraint probe', rootPostId: id(), rootOwnerId: rootOwner, parentOwnerId: Uint8Array.from(rootOwner) };
+};
+/** `n` media items: a URL, a 40-byte digest (sha256 + fingerprint) and a kind byte each. */
+const v13Media = (n, { urls = n, digests = n, kinds = n } = {}) => ({
+  mediaUrls: Array.from({ length: urls }, (_, i) => `ipfs://bafyprobe${i}`),
+  mediaDigests: bytes(40 * digests),
+  mediaKinds: new Uint8Array(kinds),
+});
+const withoutEmpty = (fields) => Object.fromEntries(Object.entries(fields).filter(([, value]) => value.length !== 0));
+CONSTRAINT_CASES['yappr-social-contract-v13.json'] = [
+  ['post: a public post', 'post', v13Post(), null],
+  ['post: no live marker on a post that is not a tombstone', 'post', drop(v13Post(), 'live'), 'live'],
+  ['post: a private post', 'post', { ...v13Post(), content: '🔒', ...privateFields() }, null],
+  ['post: ciphertext without its nonce', 'post', { ...v13Post(), ...drop(privateFields(), 'nonce') }, 'private'],
+  ['post: a private post carrying media', 'post', { ...v13Post(), ...privateFields(), ...v13Media(1) }, 'privateNoMedia'],
+  ['post: an embed missing its doc type', 'post', { ...v13Post(), ...drop(embed(), 'embedDocType') }, 'embed'],
+  ['post: a quote naming no owner', 'post', { ...v13Post(), quotedPostId: id() }, 'quoteOwner'],
+  ['post: quoting a post AND a reply', 'post', { ...v13Post(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuote'],
+  ['post: a bare repost', 'post', { live: true, quotedPostId: id(), quotedPostOwnerId: id() }, null],
+  ['post: nothing but the live marker', 'post', { live: true }, 'notEmpty'],
+  ['post: one image, no text', 'post', { live: true, ...v13Media(1) }, null],
+  ['post: four images with text', 'post', { ...v13Post(), ...v13Media(4) }, null],
+  ['post: two URLs, one digest', 'post', { ...v13Post(), ...v13Media(2, { digests: 1 }) }, 'media'],
+  ['post: two URLs and digests, one kind', 'post', { ...v13Post(), ...v13Media(2, { kinds: 1 }) }, 'media'],
+  ['post: URLs with no digests or kinds', 'post', { ...v13Post(), ...withoutEmpty(v13Media(1, { digests: 0, kinds: 0 })) }, 'media'],
+  ['post: digests and kinds with no URL', 'post', { ...v13Post(), ...withoutEmpty(v13Media(1, { urls: 0 })) }, 'media'],
+  ['post: a tombstone (deleted, live gone)', 'post', { deleted: true }, null],
+  ['post: a tombstone keeping its hashtag', 'post', { deleted: true, hashtag: 'kept' }, null],
+  ['post: a tombstone still live', 'post', { deleted: true, live: true }, 'live'],
+  ['post: a tombstone keeping its media', 'post', { deleted: true, ...v13Media(1) }, 'blankTombstone'],
+  ['post: a tombstone keeping only its media digests', 'post', { deleted: true, mediaDigests: bytes(40) }, 'blankTombstone'],
+  ['post: a tombstone keeping its text', 'post', { deleted: true, content: 'still here' }, 'blankTombstone'],
+  ['post: a tombstone keeping its quote', 'post', { deleted: true, quotedPostId: id(), quotedPostOwnerId: id() }, 'blankTombstone'],
+  ['post: `deleted: false` on a live post', 'post', { ...v13Post(), deleted: false }, 'blankTombstone'],
+  ['reply: a top-level reply to the root post\'s owner', 'reply', v13Reply(), null],
+  ['reply: forged, a top-level reply naming a parentOwnerId other than the root\'s owner', 'reply', { ...v13Reply(), parentOwnerId: id() }, 'parentIsRoot'],
+  ['reply: a nested reply to another author in the thread', 'reply', { ...v13Reply(), replyToReplyId: id(), parentOwnerId: id() }, null],
+  ['reply: a private reply', 'reply', { ...v13Reply(), content: '🔒', ...privateFields() }, null],
+  ['reply: a nonce alone', 'reply', { ...v13Reply(), nonce: bytes(24) }, 'private'],
+  ['reply: a private reply carrying media', 'reply', { ...v13Reply(), ...privateFields(), ...v13Media(1) }, 'privateNoMedia'],
+  ['reply: two images', 'reply', { ...v13Reply(), ...v13Media(2) }, null],
+  ['reply: three URLs, two digests', 'reply', { ...v13Reply(), ...v13Media(3, { digests: 2 }) }, 'media'],
+  ['reply: a tombstone (deleted, the linkage kept)', 'reply', { ...drop(v13Reply(), 'content'), deleted: true }, null],
+  ['reply: a tombstone keeping its media', 'reply', { ...drop(v13Reply(), 'content'), deleted: true, ...v13Media(1) }, 'blankTombstone'],
+  ['reply: a tombstone keeping its text', 'reply', { ...v13Reply(), deleted: true }, 'blankTombstone'],
+  ['report: a post report', 'report', baseReport(), null],
+  ['report: a reply report', 'report', { ...drop(baseReport(), 'postId'), replyId: id() }, null],
+  ['report: a profile report (about 1)', 'report', { ...drop(baseReport(), 'postId'), about: 1 }, null],
+  ['report: naming a post AND a reply', 'report', { ...baseReport(), replyId: id() }, 'oneTarget'],
+  ['report: naming a post AND the profile', 'report', { ...baseReport(), about: 1 }, 'oneTarget'],
+  ['report: naming a reply AND the profile', 'report', { ...drop(baseReport(), 'postId'), replyId: id(), about: 1 }, 'oneTarget'],
+  ['report: naming no target', 'report', drop(baseReport(), 'postId'), 'oneTarget'],
+  ['report: a private post report carrying the moderators\' key box', 'report', { ...baseReport(), box: bytes(400) }, null],
+  ['report: a private reply report carrying the box', 'report', { ...drop(baseReport(), 'postId'), replyId: id(), box: bytes(400) }, null],
+  ['report: a profile report carrying a box', 'report', { ...drop(baseReport(), 'postId'), about: 1, box: bytes(400) }, 'boxOnContent'],
+  ['report: "something else" saying what', 'report', { ...baseReport(), reason: 8, note: 'constraint probe' }, null],
+  ['report: "something else" with no note', 'report', { ...baseReport(), reason: 8 }, 'otherNote'],
+  ['report: sexual content involving minors (reason 9), no note needed', 'report', { ...baseReport(), reason: 9 }, null],
+  ['report: handled with a status and a resolution', 'report', { ...baseReport(), status: 2, resolution: 'post removed' }, null, { replace: true }],
+  ['report: a resolution with no status', 'report', { ...baseReport(), resolution: 'looked at it' }, 'resolvedStatus', { replace: true }],
+];
+
 /**
  * The rejection a live write breaking `rule` must produce: the node's 10422
  * `DocumentPropertyConstraintViolatedError` message naming exactly this rule
@@ -210,7 +289,16 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
   let failures = 0;
   console.log('\npropertyConstraints cases (DataContract.checkDocumentPropertyConstraints, the rules a create or replace runs):');
   for (const [file, cases] of Object.entries(CONSTRAINT_CASES)) {
-    const contract = parseContract(loadContractSource(`contracts/${file}`), platformVersion);
+    const source = loadContractSource(`contracts/${file}`);
+    // The rule names the live batteries pin must be exactly the ones the file declares.
+    for (const [docType, rules] of Object.entries(DECLARED_RULES[file] ?? {})) {
+      const declared = Object.keys(source.documentSchemas[docType]?.propertyConstraints ?? {}).sort();
+      if (JSON.stringify(declared) !== JSON.stringify([...rules].sort())) {
+        failures += 1;
+        console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares rules ${declared.join(', ')}, DECLARED_RULES says ${rules.join(', ')}`);
+      }
+    }
+    const contract = parseContract(source, platformVersion);
     for (const [label, docType, data, rule] of cases) {
       let violation = null;
       try {
