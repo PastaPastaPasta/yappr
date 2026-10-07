@@ -1,21 +1,41 @@
 {
   "config": {
     "$formatVersion": "2",
-    "canBeDeleted": false,
-    "readonly": false,
-    "keepsHistory": false,
-    "documentsKeepHistoryContractDefault": false,
-    "documentsMutableContractDefault": true,
-    "documentsCanBeDeletedContractDefault": true,
-    "requiresIdentityEncryptionBoundedKey": null,
-    "requiresIdentityDecryptionBoundedKey": null,
-    "sizedIntegerTypes": true,
     "moderation": {
       "banlist": true,
       "suspensions": true,
       "warnings": true,
       "moderators": {
-        "$type": "contractOwner"
+        "$type": "elected",
+        "seatContestable": true,
+        "challengeCoolDown": 2592000,
+        "joinWindow": 604800,
+        "voteWindow": 259200,
+        "maxAddedModerators": 10,
+        "moderatedDocumentTypes": {
+          "blog": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "blogPost": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ],
+          "blogComment": [
+            "deleteDocuments",
+            "ban",
+            "suspend",
+            "warn"
+          ]
+        },
+        "interim": {
+          "$type": "contractOwner"
+        },
+        "ownerProtected": true
       }
     }
   },
@@ -23,7 +43,6 @@
     "blog": {
       "type": "object",
       "canBeDeleted": false,
-      "documentsMutable": true,
       "indices": [
         {
           "name": "ownerAndTime",
@@ -31,6 +50,14 @@
             {
               "$ownerId": "asc"
             },
+            {
+              "$createdAt": "asc"
+            }
+          ]
+        },
+        {
+          "name": "timeline",
+          "properties": [
             {
               "$createdAt": "asc"
             }
@@ -59,13 +86,15 @@
           "type": "string",
           "maxLength": 256,
           "position": 2,
-          "description": "ipfs:// URI for header/banner image"
+          "description": "ipfs:// URI for header/banner image",
+          "pattern": "^(https|ipfs)://.+$"
         },
         "avatar": {
           "type": "string",
           "maxLength": 256,
           "position": 3,
-          "description": "ipfs:// URI for blog avatar"
+          "description": "ipfs:// URI for blog avatar",
+          "pattern": "^(https|ipfs)://.+$"
         },
         "themeConfig": {
           "type": "array",
@@ -95,32 +124,26 @@
         }
       },
       "additionalProperties": false,
-      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag — an abandoned blog is simply empty.",
+      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag \u2014 an abandoned blog is simply empty.",
       "moderatorAbilities": {
         "delete": true
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 80000000
+        }
       }
     },
     "blogPost": {
       "type": "object",
       "canBeDeleted": false,
-      "documentsMutable": true,
       "indices": [
         {
           "name": "blogAndTime",
           "properties": [
             {
               "blogId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
             },
             {
               "$createdAt": "asc"
@@ -138,13 +161,20 @@
               "slug": "asc"
             }
           ]
+        },
+        {
+          "name": "timeline",
+          "properties": [
+            {
+              "$createdAt": "asc"
+            }
+          ]
         }
       ],
       "required": [
         "$createdAt",
+        "$updatedAt",
         "blogId",
-        "title",
-        "data0",
         "slug"
       ],
       "properties": {
@@ -210,7 +240,8 @@
           "type": "string",
           "maxLength": 256,
           "position": 7,
-          "description": "ipfs:// URI for cover image"
+          "description": "ipfs:// URI for cover image",
+          "pattern": "^(https|ipfs)://.+$"
         },
         "labels": {
           "type": "array",
@@ -232,16 +263,20 @@
         },
         "slug": {
           "type": "string",
-          "minLength": 1,
           "maxLength": 63,
           "position": 10,
-          "description": "URL-safe slug derived from title"
+          "description": "URL-safe slug derived from title",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
         },
         "publishedAt": {
           "type": "integer",
           "minimum": 0,
           "position": 11,
           "description": "Publication timestamp (ms since epoch)"
+        },
+        "deleted": {
+          "type": "boolean",
+          "position": 12
         }
       },
       "additionalProperties": false,
@@ -252,6 +287,12 @@
           "property": "publishedAt",
           "when": {
             "present": "$old.publishedAt"
+          }
+        },
+        {
+          "property": "deleted",
+          "when": {
+            "present": "$old.deleted"
           }
         }
       ],
@@ -282,6 +323,100 @@
               ]
             }
           ]
+        },
+        "hasBody": {
+          "anyOf": [
+            {
+              "present": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "present": "title"
+                },
+                {
+                  "present": "data0"
+                }
+              ]
+            }
+          ]
+        },
+        "tombstoneIsBlank": {
+          "anyOf": [
+            {
+              "absent": "deleted"
+            },
+            {
+              "allOf": [
+                {
+                  "equal": [
+                    "deleted",
+                    1
+                  ]
+                },
+                {
+                  "present": "commentsEnabled"
+                },
+                {
+                  "equal": [
+                    "commentsEnabled",
+                    0
+                  ]
+                },
+                {
+                  "absent": "title"
+                },
+                {
+                  "absent": "subtitle"
+                },
+                {
+                  "absent": "data0"
+                },
+                {
+                  "absent": "data1"
+                },
+                {
+                  "absent": "data2"
+                },
+                {
+                  "absent": "data3"
+                },
+                {
+                  "absent": "coverImage"
+                },
+                {
+                  "absent": "labels"
+                }
+              ]
+            }
+          ]
+        },
+        "publishedNotAhead": {
+          "anyOf": [
+            {
+              "absent": "publishedAt"
+            },
+            {
+              "lessThanOrEqual": [
+                "publishedAt",
+                {
+                  "add": [
+                    "$updatedAt",
+                    600000
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "retractedWhen": {
+        "present": "deleted"
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 80000000
         }
       }
     },
@@ -298,18 +433,8 @@
             {
               "$createdAt": "asc"
             }
-          ]
-        },
-        {
-          "name": "ownerAndTime",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
+          ],
+          "rangeCountable": true
         },
         {
           "name": "postOwnerAndTime",
@@ -323,14 +448,23 @@
           ]
         },
         {
-          "name": "commentCount",
+          "name": "discussedRecent",
           "properties": [
+            {
+              "$createdAt": "asc"
+            },
             {
               "blogPostId": "asc"
             }
           ],
           "rangeCountable": true,
-          "rankedCountable": true
+          "rankedCountable": true,
+          "timeRange": {
+            "on": "$createdAt",
+            "range": 259200,
+            "step": 86400,
+            "ttl": 604800
+          }
         }
       ],
       "required": [
@@ -369,13 +503,6 @@
       },
       "additionalProperties": false,
       "description": "A comment on a post. blogPostId must name a real post, and postOwnerAndTime reads that post's $ownerId through it (blogPostId.$ownerId), so the notification key cannot be forged and comments on ghost posts are impossible.",
-      "tokenCost": {
-        "create": {
-          "contractId": "SOCIAL_CONTRACT_ID",
-          "tokenPosition": 0,
-          "amount": 1
-        }
-      },
       "moderatorAbilities": {
         "delete": true
       },
@@ -390,6 +517,12 @@
             },
             0
           ]
+        }
+      },
+      "actionFees": {
+        "pricing": "feeMultiplier",
+        "create": {
+          "moderators": 16000000
         }
       }
     },
@@ -410,17 +543,6 @@
           ]
         },
         {
-          "name": "following",
-          "properties": [
-            {
-              "$ownerId": "asc"
-            },
-            {
-              "$createdAt": "asc"
-            }
-          ]
-        },
-        {
           "name": "followers",
           "properties": [
             {
@@ -429,20 +551,14 @@
             {
               "$createdAt": "asc"
             }
-          ]
-        },
-        {
-          "name": "followerCount",
-          "properties": [
-            {
-              "blogId": "asc"
-            }
           ],
           "rangeCountable": true,
-          "rankedCountable": true
+          "rankedCountable": {
+            "at": "blogId"
+          }
         },
         {
-          "name": "followersByDay",
+          "name": "followersTrend",
           "properties": [
             {
               "$createdAt": "asc"
@@ -455,7 +571,7 @@
           "rankedCountable": true,
           "timeRange": {
             "on": "$createdAt",
-            "range": 86400,
+            "range": 259200,
             "step": 86400,
             "ttl": 604800
           }

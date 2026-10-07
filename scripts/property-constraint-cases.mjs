@@ -4,7 +4,8 @@
  * docs/CONTRACTS_BETA5.md explains the beta.5 rules, docs/CONTRACTS_BETA6.md
  * the beta.6 ones (blog `commentsOpen`) and docs/SOCIAL_V10.md the beta.7 ones
  * (social v10 drops the tombstone rule and adds report `resolvedHasStatus`;
- * storefront `storeIsOpen`, QA D-25).
+ * storefront `storeIsOpen`, QA D-25). Blog v7 (5.0.0-beta.2) adds the post
+ * tombstone (`hasBody`, `tombstoneIsBlank`) and `publishedNotAhead`.
  *
  * One table, two consumers:
  *   - `validate-contract-offline.mjs --constraints` runs every case through
@@ -37,7 +38,7 @@ export const DECLARED_RULES = {
     storeOrder: ['storeIsOpen'],
   },
   'pollr-contract.json': { poll: ['optionsContiguous'] },
-  'yappr-blog-contract.json': { blogPost: ['chunksContiguous'], blogComment: ['commentsOpen'] },
+  'yappr-blog-contract.json': { blogPost: ['chunksContiguous', 'hasBody', 'tombstoneIsBlank', 'publishedNotAhead'], blogComment: ['commentsOpen'] },
 };
 
 // ---- Base documents (valid under every rule) --------------------------------
@@ -57,6 +58,14 @@ export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', op
 /** Blog v6 derives the post owner through blogPostId; there is no blogPostOwnerId to send. */
 export const baseComment = () => ({ blogPostId: id(), content: 'constraint probe' });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
+/**
+ * Blog v7: an author's delete. `deleted` and comments off, every content field
+ * absent; `blogId` and `slug` (and `publishedAt`, when the post had one) stay.
+ * Written by a replace, so its cases are marked `replace: true`.
+ */
+export const blogTombstone = (extra = {}) => ({ blogId: id(), slug: 'constraint-probe', deleted: true, commentsEnabled: false, ...extra });
+/** `publishedNotAhead` judges `publishedAt` against `$updatedAt`, which the oracle sets to the clock. */
+const BLOG_NOW = Date.now();
 
 const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
 
@@ -142,6 +151,19 @@ export const CONSTRAINT_CASES = {
     ['blogComment: on a post that leaves commentsEnabled out (on by default)', 'blogComment', baseComment(), null],
     ['blogComment: on a post with commentsEnabled true', 'blogComment', { ...baseComment(), postCommentsEnabled: true }, null],
     ['blogComment: on a post with commentsEnabled false', 'blogComment', { ...baseComment(), postCommentsEnabled: false }, 'commentsOpen'],
+    // Blog v7 (5.0.0-beta.2): a live post carries a title and a body (`hasBody`); an author's
+    // delete is a tombstone (`tombstoneIsBlank`), which `hasBody` admits; `publishedAt` may run
+    // at most 10 minutes past `$updatedAt` (`publishedNotAhead`), so a backdated import is fine.
+    ['blogPost: a live post with comments on', 'blogPost', { ...baseBlogPost(), commentsEnabled: true }, null],
+    ['blogPost: a live post with no title', 'blogPost', drop(baseBlogPost(), 'title'), 'hasBody'],
+    ['blogPost: a tombstone (deleted, comments off, nothing else)', 'blogPost', blogTombstone({ publishedAt: BLOG_NOW }), null, { replace: true }],
+    ['blogPost: a tombstone keeping its title', 'blogPost', blogTombstone({ title: 'still here' }), 'tombstoneIsBlank', { replace: true }],
+    ['blogPost: a tombstone leaving comments on', 'blogPost', blogTombstone({ commentsEnabled: true }), 'tombstoneIsBlank', { replace: true }],
+    ['blogPost: a tombstone with commentsEnabled left out', 'blogPost', drop(blogTombstone(), 'commentsEnabled'), 'tombstoneIsBlank', { replace: true }],
+    ['blogPost: `deleted: false` on a live post', 'blogPost', { ...baseBlogPost(), commentsEnabled: true, deleted: false }, 'tombstoneIsBlank'],
+    ['blogPost: publishedAt now', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW }, null],
+    ['blogPost: publishedAt backdated (an import)', 'blogPost', { ...baseBlogPost(), publishedAt: 1e12 }, null],
+    ['blogPost: publishedAt an hour ahead', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 3_600_000 }, 'publishedNotAhead'],
   ],
 };
 
@@ -185,6 +207,13 @@ CONSTRAINT_CASES['yappr-social-contract-v12.json'] = CONSTRAINT_CASES['yappr-soc
  */
 export const constraintViolation = (rule) =>
   new RegExp(`breaks its propertyConstraints rule \\\\?"${rule}\\\\?":`, 'i');
+
+/** The refused REPLACE-only cases of one contract and doctype (a tombstone, a moderator's edit), as [label, data, rule]. */
+export function refusedReplaces(file, docType) {
+  return CONSTRAINT_CASES[file]
+    .filter(([, type, , rule, options]) => type === docType && rule !== null && options?.replace)
+    .map(([label, , data, rule]) => [label, data, rule]);
+}
 
 /** The refused CREATE cases of one contract and doctype, as [label, data, rule]. */
 export function refusedCreates(file, docType) {
