@@ -151,6 +151,16 @@ describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () =>
     expect(free).toHaveBeenCalledTimes(1)
   })
 
+  it('reads the team again on a fresh request, inside the cache\'s minute', async () => {
+    const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } }
+    sdk.contracts.fetch.mockResolvedValue(contract)
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [], seats: () => 2, free: vi.fn() })
+    expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], electedMembers: [], seats: () => 1, free: vi.fn() })
+    expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
+    expect((await moderationService.getTeam({ fresh: true }))?.appointed).toEqual([LEADER])
+  })
+
   it('re-reads the team after its TTL', async () => {
     vi.useFakeTimers()
     try {

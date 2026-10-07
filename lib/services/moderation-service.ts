@@ -598,10 +598,13 @@ class ModerationService {
   /**
    * The contract's moderation team, from the contract and, when it declares
    * elected moderation, the seated charter. Cached for {@link TEAM_TTL_MS} and
-   * dropped after every moderation action. Null when the topology declares no
-   * moderation.
+   * dropped after every moderation action; `fresh` reads it again now (and
+   * refreshes the cache), for a decision that must not trust a minute-old
+   * team, such as whom a report's private-feed key is sealed to. Null when
+   * the topology declares no moderation. Throws when the read fails.
    */
-  async getTeam(): Promise<ModerationTeam | null> {
+  async getTeam({ fresh = false }: { fresh?: boolean } = {}): Promise<ModerationTeam | null> {
+    if (fresh) this.invalidateTeam();
     const read = this.readTeam();
     return read === null ? null : (await read).team;
   }

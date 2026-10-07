@@ -48,9 +48,15 @@ async function encryptionKeyOf(identityId: string): Promise<Uint8Array | null> {
   return bytes?.length === 33 ? bytes : null
 }
 
-/** The current moderators' encryption keys, and how many moderators have none. Throws when the team cannot be read. */
+/**
+ * The current moderators' encryption keys, and how many moderators have none,
+ * from a FRESH team read: a moderator removed (or the interim owner replaced
+ * by a seated team) within the cache's minute must not receive the key, and
+ * one just added must. Consensus never checks who a box is sealed to. Throws
+ * when the team cannot be read, and nothing is sealed.
+ */
 async function moderatorKeys(): Promise<{ keys: Uint8Array[]; missing: number }> {
-  const team = await moderationService.getTeam()
+  const team = await moderationService.getTeam({ fresh: true })
   const ids = team ? moderatorIdsOf(team) : []
   const keys = await Promise.all(ids.map((id) => encryptionKeyOf(id).catch((error: unknown) => {
     logger.warn(`reportBox: could not read moderator ${id}'s encryption key`, error)

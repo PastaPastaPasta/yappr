@@ -69,6 +69,31 @@ describe('the report box service', () => {
     await expect(openReportedContent(outcome.box, privatePost, secret(50))).resolves.toMatchObject({ kind: 'failed' })
   })
 
+  it('seals to the team as it is now, never to a cached one: a removed moderator is left out, a new one included', async () => {
+    const NEWCOMER = id(6)
+    MODERATOR_KEYS[NEWCOMER] = secret(50)
+    const before = { ownerId: id(99), appointed: [LEADER, MEMBER], elected: true, ownerModerates: false }
+    const after = { ownerId: id(99), appointed: [LEADER, NEWCOMER], elected: true, ownerModerates: false }
+    // A cached read still answers the old team; only a fresh read sees the change.
+    mocks.getTeam.mockImplementation(async (options?: { fresh?: boolean }) => (options?.fresh ? after : before))
+    try {
+      const { buildReportBox, openReportedContent } = await import('./report-box-service')
+      const outcome = await buildReportBox(REPORTER, privatePost)
+      if (outcome.kind !== 'sealed') throw new Error(`expected a sealed box, got ${outcome.kind}`)
+      expect(mocks.getTeam).toHaveBeenCalledWith({ fresh: true })
+      await expect(openReportedContent(outcome.box, privatePost, MODERATOR_KEYS[NEWCOMER])).resolves.toMatchObject({ kind: 'opened' })
+      await expect(openReportedContent(outcome.box, privatePost, MODERATOR_KEYS[MEMBER])).resolves.toMatchObject({ kind: 'failed' })
+    } finally {
+      delete MODERATOR_KEYS[NEWCOMER]
+    }
+  })
+
+  it('seals nothing, and says so by throwing, when the fresh team read fails', async () => {
+    mocks.getTeam.mockRejectedValue(new Error('DAPI unavailable'))
+    const { buildReportBox } = await import('./report-box-service')
+    await expect(buildReportBox(REPORTER, privatePost)).rejects.toThrow('DAPI unavailable')
+  })
+
   it('seals nothing when no moderator holds an encryption key (the email channel)', async () => {
     mocks.getTeam.mockResolvedValue({ ownerId: id(99), appointed: [KEYLESS], elected: true, ownerModerates: false })
     const { buildReportBox } = await import('./report-box-service')
