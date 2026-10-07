@@ -337,9 +337,11 @@ sdk.documents.query({ dataContractId, documentTypeName: 'vote',
 that make them select exactly `wanted` (`planBallotWrites`), and runs them one
 at a time. A 10422 naming `writtenBeforeClose` is reported as "This poll has
 closed"; a stale revision (40106) or a ballot another tab created first (40105)
-as `stale`, and the card reloads. After any failed write it re-reads the
-ballots and reports what the chain shows, since a timed-out replace may have
-landed. Optimistic tallies move down as well as up. `tallyIsFinal` is true
+as `stale`, and the card reloads. After a refused write it re-reads the
+ballots and reports what the chain shows. A write whose confirmation timed out
+stops the run and comes back `unconfirmed`, with no re-read (one this soon
+would likely predate the write), and the card says so. The ballots copy the
+poll's stored `optionCount`. Optimistic tallies move down as well as up. `tallyIsFinal` is true
 only for a tally read off the chain after `endsAt` (plus a 30 s margin for the
 device clock against block time); the card says "Final results" only then.
 The poll editor offers 1, 3, 7, 14 and 30 days (default 1 day) — 30, not 31,

@@ -67,6 +67,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // Reopens the ballot after voting: on v5 to change or withdraw the vote, on
   // v3 (immutable ballots) for a multi-choice voter to add more selections.
   const [editing, setEditing] = useState(false)
+  // Platform refused a write because the poll has closed, though this device's
+  // clock says it is still open: trust the chain, or every retry is refused.
+  const [closedOnChain, setClosedOnChain] = useState(false)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
@@ -145,7 +148,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     stopEditing()
   }, [pollId, userId, stopEditing])
 
-  const isClosed = poll ? pollIsClosed(poll) : false
+  useEffect(() => {
+    setClosedOnChain(false)
+  }, [pollId])
+
+  const isClosed = closedOnChain || (poll ? pollIsClosed(poll) : false)
   const hasVoted = myVotes.length > 0
   // v3 stays in vote mode while choices are still selected: a multi-choice
   // ballot that failed partway leaves its unrecorded choices selected for a
@@ -187,10 +194,18 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     const { pollrVoteService } = await import('@/lib/services')
     const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
 
+    if (result.unconfirmed) {
+      // Sent, but not seen yet. Leave the vote and tally as they were rather
+      // than replace them with a read that likely predates the write.
+      toast('Your vote was sent but is not confirmed yet. Check again in a moment.', { icon: '⏳', duration: 6000 })
+      stopEditing()
+      return
+    }
+
     if (result.choices === null) {
       // The ballot state is unknown: close the ballot as when own votes fail to load.
       setVotesUnavailable(true)
-    } else {
+    } else if (result.choices !== undefined) {
       // Adjust the counts by what changed against the selection the tally was
       // read with — down as well as up, since a vote can move or be withdrawn.
       const { added, removed } = choiceDelta(myVotes, result.choices)
@@ -201,11 +216,16 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     }
 
     if (result.closed) {
+      setClosedOnChain(true)
       toast.error('This poll has closed')
     } else if (result.stale) {
       toast('Your vote changed elsewhere — showing the latest.', { icon: 'ℹ️' })
     } else if (!result.success) {
       toast.error(categorizeError(result.error))
+      // Keep the ballot open on the wanted picks for a retry — including after a
+      // partial first multi-choice vote, which now has recorded choices.
+      setSelected(wanted)
+      setEditing(true)
       return
     } else if (wanted.length === 0) {
       toast.success('Vote withdrawn')

@@ -10,7 +10,13 @@ import {
   pollrIsV5,
   pollrVoteDocType,
 } from '@/lib/constants';
-import { extractErrorMessage, hasConsensusCode, isDocumentPropertyRuleError } from '@/lib/error-utils';
+import {
+  PENDING_WRITE_ERROR,
+  extractErrorMessage,
+  hasConsensusCode,
+  isDocumentPropertyRuleError,
+  isTimeoutError,
+} from '@/lib/error-utils';
 import {
   POLL_MAX_OPTIONS,
   applyChoiceDelta,
@@ -60,10 +66,18 @@ export interface SetVoteResult {
   success: boolean;
   /**
    * The choices the voter's ballots select after this call, as best known: the
-   * plan's outcome when every write went through, a fresh read when one did
-   * not, and null when that read failed too (the ballot state is unknown).
+   * plan's outcome when every write went through, a fresh read when one was
+   * refused, and null when that read failed too (the ballot state is unknown).
+   * Undefined when nothing is known to have changed: the call was refused
+   * before writing, or a write's outcome is still unconfirmed.
    */
-  choices: number[] | null;
+  choices?: number[] | null;
+  /**
+   * A write was sent but its outcome is not known yet (the confirmation wait
+   * timed out). Nothing after it was sent, and the ballots were not re-read:
+   * a read this soon would likely show the state before the write.
+   */
+  unconfirmed?: boolean;
   /** Platform refused a write because the poll has closed. */
   closed: boolean;
   /**
@@ -137,8 +151,14 @@ function refused(error: string, failed: number[] = []): CastVoteResult {
 
 /** A v5 selection refused before anything was written. */
 function refusedSet(error: string, closed = false): SetVoteResult {
-  return { success: false, choices: null, closed, stale: false, error };
+  return { success: false, closed, stale: false, error };
 }
+
+/** How one v5 ballot write went. */
+type WriteOutcome =
+  | { status: 'ok' }
+  | { status: 'unconfirmed'; error: string }
+  | { status: 'refused'; error: unknown };
 
 /** A field off a raw document (nested `data` or flat). */
 function readField(doc: Record<string, unknown>, field: string): unknown {
@@ -325,15 +345,16 @@ class PollrVoteService {
    * replace builds on, and either being stale is a refused write. Writes run
    * one at a time (one document transition per state transition, nonces in
    * order). A refusal by the close rule or a stale ballot stops the run; any
-   * other failure moves on to the next, independent ballot. Whenever a write
-   * did not go through, the ballots are re-read so `choices` reports what the
-   * chain shows rather than what was planned — a timed-out replace may well
-   * have landed.
+   * other failure moves on to the next, independent ballot. When a write was
+   * refused, the ballots are re-read so `choices` reports what the chain shows
+   * rather than what was planned. A write whose confirmation timed out (or one
+   * held back because an earlier one may still execute) stops the run too:
+   * the next would only wait out the same pending transition.
    */
   async setVote(poll: Poll, wanted: number[], ownerId: string): Promise<SetVoteResult> {
     if (!pollrIsV5()) return refusedSet('setVote is the v5 ballot path');
 
-    const choices = normalizeChoices(wanted, poll.options.length);
+    const choices = normalizeChoices(wanted, poll.optionCount);
     if (choices.length !== wanted.length) return refusedSet('That is not an option of this poll');
     if (!poll.multiChoice && choices.length > 1) return refusedSet('This poll takes a single choice');
     if (typeof poll.endsAt !== 'number') return refusedSet('This poll has no close time');
@@ -351,8 +372,13 @@ class PollrVoteService {
     let firstError: string | undefined;
 
     for (const write of planBallotWrites(poll.multiChoice, ballots, choices)) {
-      const error = await this.writeBallot(poll, ownerId, write);
-      if (error === null) continue;
+      const outcome = await this.writeBallot(poll, ownerId, write);
+      if (outcome.status === 'ok') continue;
+      if (outcome.status === 'unconfirmed') {
+        this.invalidateTally(poll.id);
+        return { success: false, unconfirmed: true, closed: false, stale: false, error: outcome.error };
+      }
+      const { error } = outcome;
       firstError ??= extractErrorMessage(error) || 'Failed to record your vote';
       if (isPollClosedError(error, poll.endsAt)) {
         closed = true;
@@ -362,6 +388,9 @@ class PollrVoteService {
         stale = true;
         break;
       }
+      // Nothing was sent: an earlier transition may still execute, and every
+      // later write would wait on it and be held back the same way.
+      if (extractErrorMessage(error) === PENDING_WRITE_ERROR) break;
     }
 
     this.invalidateTally(poll.id);
@@ -382,8 +411,8 @@ class PollrVoteService {
     return { success, choices: recorded, closed, stale, error: success ? undefined : firstError };
   }
 
-  /** One v5 ballot write. Resolves to null when it went through, else the refusal. */
-  private async writeBallot(poll: Poll, ownerId: string, write: BallotWrite): Promise<unknown> {
+  /** One v5 ballot write. */
+  private async writeBallot(poll: Poll, ownerId: string, write: BallotWrite): Promise<WriteOutcome> {
     const slot = write.kind === 'create' ? write.slot : write.ballot.slot;
     // A replace rewrites the whole document, so it carries every field; leaving
     // `choice` out is what withdraws or unticks.
@@ -391,7 +420,7 @@ class PollrVoteService {
       pollId: identifierStringToDocumentBytes(poll.id),
       slot,
       // Copied from the poll and bound to it by consensus (40127 on a mismatch).
-      pollOptionCount: poll.options.length,
+      pollOptionCount: poll.optionCount,
       pollMultiChoice: poll.multiChoice,
       pollEndsAt: poll.endsAt,
     };
@@ -409,9 +438,18 @@ class PollrVoteService {
               data,
               write.ballot.revision
             );
-      return result.success ? null : (result.error ?? 'Failed to record your vote');
+      if (result.success) {
+        // An unconfirmed create was broadcast but never seen on chain.
+        return result.confirmed === false
+          ? { status: 'unconfirmed', error: 'The network has not confirmed your vote yet' }
+          : { status: 'ok' };
+      }
+      const error = result.error ?? 'Failed to record your vote';
+      return isTimeoutError(error) ? { status: 'unconfirmed', error } : { status: 'refused', error };
     } catch (error) {
-      return error;
+      return isTimeoutError(error)
+        ? { status: 'unconfirmed', error: extractErrorMessage(error) }
+        : { status: 'refused', error };
     }
   }
 

@@ -24,6 +24,7 @@ const poll = (overrides: Partial<Poll> = {}): Poll => ({
   createdAt: new Date(0),
   question: 'Which?',
   options: ['alpha', 'bravo', 'charlie'],
+  optionCount: 3,
   multiChoice: false,
   ...overrides,
 });
@@ -136,7 +137,10 @@ describe('v5 ballots', () => {
 
   it('refuses a closed poll, a second single choice and a choice past the options before writing', async () => {
     const service = await loadService('v5');
-    expect(await service.setVote(poll({ endsAt: Date.now() - 1 }), [1], VOTER)).toMatchObject({ success: false, closed: true });
+    // Nothing was written, so nothing about the voter's ballots is reported.
+    expect(await service.setVote(poll({ endsAt: Date.now() - 1 }), [1], VOTER)).toEqual({
+      success: false, closed: true, stale: false, error: 'This poll has closed',
+    });
     expect((await service.setVote(open(), [0, 1], VOTER)).success).toBe(false);
     expect((await service.setVote(open(), [3], VOTER)).success).toBe(false);
     expect(mocks.query).not.toHaveBeenCalled();
@@ -168,12 +172,42 @@ describe('v5 ballots', () => {
     expect(await service.setVote(open(), [1], VOTER)).toMatchObject({ success: false, stale: true, closed: false, choices: [0] });
   });
 
-  it('believes the chain when a failed write landed anyway', async () => {
+  it('reports a timed-out replace as unconfirmed, without a re-read or further writes', async () => {
     const service = await loadService('v5');
-    mocks.query.mockResolvedValueOnce(ballots(ballotDoc(0, 1))).mockResolvedValue(ballots(ballotDoc(0, 2, 2)));
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null)));
     mocks.updateDocument.mockResolvedValue({ success: false, error: 'wait for state transition result timed out' });
 
-    expect(await service.setVote(open(), [2], VOTER)).toEqual({ success: true, choices: [2], closed: false, stale: false });
+    const result = await service.setVote(open({ multiChoice: true }), [1, 2], VOTER);
+    expect(result).toMatchObject({ success: false, unconfirmed: true });
+    // Leaves the caller's view alone: a read this soon would predate the write.
+    expect(result.choices).toBeUndefined();
+    expect(mocks.query).toHaveBeenCalledTimes(1);
+    expect(mocks.updateDocument).toHaveBeenCalledTimes(1);
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+  });
+
+  it('reports an unconfirmed create as unconfirmed, not as counted', async () => {
+    const service = await loadService('v5');
+    mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
+
+    expect(await service.setVote(open({ multiChoice: true }), [0, 1], VOTER)).toMatchObject({ success: false, unconfirmed: true });
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops at a write held back for a pending transition, then re-reads', async () => {
+    const service = await loadService('v5');
+    const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils');
+    mocks.createDocument.mockResolvedValue({ success: false, error: PENDING_WRITE_ERROR });
+
+    expect(await service.setVote(open({ multiChoice: true }), [0, 1], VOTER)).toMatchObject({ success: false, choices: [] });
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
+    expect(mocks.query).toHaveBeenCalledTimes(2);
+  });
+
+  it('copies the poll’s stored optionCount, not the options it could read', async () => {
+    const service = await loadService('v5');
+    await service.setVote(open({ optionCount: 4 }), [1], VOTER);
+    expect(mocks.createDocument.mock.calls[0][3]).toMatchObject({ pollOptionCount: 4 });
   });
 
   it('reports the ballot state unknown when the re-read fails too', async () => {

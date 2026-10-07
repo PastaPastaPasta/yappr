@@ -58,6 +58,22 @@ describe('createPoll', () => {
   });
 });
 
+describe('reading a poll', () => {
+  it('keeps v5’s stored optionCount and falls back to the options read before v5', async () => {
+    const service = await loadService('v5');
+    mocks.createDocument.mockResolvedValue({
+      success: true,
+      document: { $id: 'doc', $ownerId: OWNER, question: 'q', options: ['a', 'b'], optionCount: 2, multiChoice: true, endsAt: 5 },
+    });
+    expect(await service.createPoll(OWNER, { question: 'q', options: ['a', 'b'], multiChoice: true, endsAt: Date.now() + DAY }))
+      .toMatchObject({ options: ['a', 'b'], optionCount: 2, multiChoice: true, endsAt: 5 });
+
+    mocks.createDocument.mockResolvedValue({ success: true, document: { $id: 'doc', $ownerId: OWNER, question: 'q', option0: 'a', option1: 'b' } });
+    expect(await service.createPoll(OWNER, { question: 'q', options: ['a', 'b'], endsAt: Date.now() + DAY }))
+      .toMatchObject({ optionCount: 2, multiChoice: false });
+  });
+});
+
 describe('readPollOptions', () => {
   it('reads v5’s options array and the v3/v4 enumerated fields, stopping at a gap', async () => {
     const { readPollOptions } = await import('./pollr-poll-service');

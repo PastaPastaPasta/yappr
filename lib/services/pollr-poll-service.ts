@@ -23,6 +23,11 @@ export interface Poll {
   createdAt: Date;
   question: string;
   options: string[];
+  /**
+   * How many options the poll declares: v5's stored `optionCount`, which every
+   * ballot copies (40127 on a mismatch); `options.length` before v5.
+   */
+  optionCount: number;
   /** True when voters may select more than one choice. */
   multiChoice: boolean;
   /**
@@ -80,12 +85,14 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // Fields may arrive nested under `data` or flat on the document.
     const data = { ...doc, ...((doc.data as Record<string, unknown> | undefined) ?? {}) };
 
+    const options = readPollOptions(data);
     return {
       id: (doc.$id || doc.id) as string,
       ownerId: (doc.$ownerId || doc.ownerId) as string,
       createdAt: new Date(Number((doc.$createdAt || doc.createdAt) ?? Date.now())),
       question: (data.question || '') as string,
-      options: readPollOptions(data),
+      options,
+      optionCount: toFiniteNumber(data.optionCount) ?? options.length,
       multiChoice: Boolean(data.multiChoice ?? false),
       endsAt: toFiniteNumber(data.endsAt),
     };
