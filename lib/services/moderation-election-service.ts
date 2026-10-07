@@ -216,17 +216,6 @@ export function moderatedTypeWaitsForTeam(docType: string): boolean {
 }
 
 class ModerationElectionService {
-  /**
-   * Whether `docType` can be written now: false while a `notYetUsable`
-   * contract has no seated team (every write of a moderated type is refused,
-   * paid, with 41200 until an election seats one). Rejects when the team
-   * cannot be read.
-   */
-  async moderatedTypeOpen(docType: string, targetContractId = YAPPR_CONTRACT_ID): Promise<boolean> {
-    if (!moderatedTypeWaitsForTeam(docType)) return true;
-    return (await this.getSeatedTeam(targetContractId)) !== null;
-  }
-
   /** The seated team, or null when no charter is seated (or the read failed). */
   async getSeatedTeam(targetContractId = YAPPR_CONTRACT_ID): Promise<SeatedTeam | null> {
     const sdk = await getEvoSdk();

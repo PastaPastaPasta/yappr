@@ -23,7 +23,7 @@
  * A report is public: anyone can read who reported what, and why, and how the
  * moderators resolved it.
  */
-import { reportShape, type TargetKind } from './contract-topology'
+import { declaredActionFee, reportShape, type TargetKind } from './contract-topology'
 import { categorizeError, extractErrorMessage, hasConsensusCode, isReferenceNotFoundError } from './error-utils'
 import { normalizeBytes } from './bytes'
 import { identifierToBase58 } from './services/sdk-helpers'
@@ -69,6 +69,12 @@ export function reportReasonsOffered(): readonly ReportReason[] {
   return REPORT_REASONS.filter((reason) => reason.code <= maxReason)
 }
 
+/** What a report names: a post, a reply, or (v13 `about: 1`) the identity's profile. */
+export type ReportTargetKind = TargetKind | 'profile'
+
+/** `report.about` for a profile report (v13). */
+export const ABOUT_PROFILE = 1
+
 /**
  * Where reports go when the chain cannot carry them: the team's email
  * (`support@yap.pr`, the address the mobile apps use), for a private post no
@@ -77,18 +83,17 @@ export function reportReasonsOffered(): readonly ReportReason[] {
 export const MODERATION_EMAIL = 'support@yap.pr'
 
 /** A `mailto:` for reporting `target` by email, naming it and the reason (never the content). */
-export function reportEmailHref(target: { kind: ReportTargetKind; id: string }, reasonCode: number | null): string {
-  const reason = reasonCode === null ? 'a report' : reportReasonLabel(reasonCode)
-  const subject = `Yappr report: ${reason}`
-  const body = `Reported ${target.kind}: ${target.id}\n\nWhat is wrong with it:\n`
+export function reportEmailHref(target: { kind: ReportTargetKind; targetId: string }, reasonCode: number): string {
+  const subject = `Yappr report: ${reportReasonLabel(reasonCode)}`
+  const body = `Reported ${target.kind}: ${target.targetId}\n\nWhat is wrong with it:\n`
   return `mailto:${MODERATION_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 
-/** What a report names: a post, a reply, or (v13 `about: 1`) the identity's profile. */
-export type ReportTargetKind = TargetKind | 'profile'
-
-/** `report.about` for a profile report (v13). */
-export const ABOUT_PROFILE = 1
+/** The moderators' action fee a report pays, in credits (v13: 50M), or null where reports are free. */
+export function reportFeeCredits(): bigint | null {
+  const fee = declaredActionFee('report', 'create')
+  return fee ? fee.owner + fee.moderators : null
+}
 
 /** "Something else": the contract refuses it without a note (`otherHasNote`). */
 export const OTHER_REASON_CODE = 8

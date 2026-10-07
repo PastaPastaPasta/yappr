@@ -24,7 +24,7 @@ import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit }
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
 import { mediaTypeOfMime } from '@/lib/media/media-fields'
 import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
-import { useModeratedTypeOpen } from '@/hooks/use-posting-open'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
 import type { UploadResult } from '@/lib/upload'
 import { isPrivatePost } from '@/components/post/private-post-content'
 import { Button } from '@/components/ui/button'

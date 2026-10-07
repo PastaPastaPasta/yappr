@@ -1,13 +1,16 @@
 import { logger } from '@/lib/logger';
 import { extractErrorMessage } from '../error-utils';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { contractTakesReports, reportShape, reportsAreResolved } from '../contract-topology';
+import { contractTakesReports, reportShape, reportsAreResolved, type TargetKind } from '../contract-topology';
 import { ABOUT_PROFILE, toReportRecord, type ReportRecord, type ReportTargetKind, type ReportView } from '../reports';
 import { getEvoSdk } from './evo-sdk-service';
 import { queryRawDocuments } from './document-service';
 import { paginateFetchAll } from './pagination-utils';
 import { identifierStringToDocumentBytes, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { stateTransitionService, type StateTransitionResult } from './state-transition-service';
+
+/** The property naming a post or reply report's target. */
+const targetField = (kind: TargetKind) => (kind === 'post' ? 'postId' : 'replyId');
 
 /**
  * The equality clauses that pin a report's target: `postId` or `replyId`
@@ -17,7 +20,7 @@ import { stateTransitionService, type StateTransitionResult } from './state-tran
  */
 function targetClauses(kind: ReportTargetKind, targetId: string): DocumentWhereClause[] {
   if (kind === 'profile') return [['targetOwnerId', '==', targetId], ['about', '==', ABOUT_PROFILE]];
-  return [[kind === 'post' ? 'postId' : 'replyId', '==', targetId]];
+  return [[targetField(kind), '==', targetId]];
 }
 
 /** Reports on one target read before a dismissal; each one is its own moderation transition. */
@@ -49,8 +52,9 @@ export function reportInputShapeProblem(input: Pick<ReportInput, 'kind' | 'targe
     if (input.targetId !== input.targetOwnerId) return 'A profile report names the reported identity as its target';
     if (input.box) return 'A profile report carries no box';
   }
-  if (input.box && (boxMaxBytes === null || input.box.length === 0 || input.box.length > boxMaxBytes)) {
-    return boxMaxBytes === null ? 'Reports carry no box on this network' : `The moderators' box is over ${boxMaxBytes} bytes`;
+  if (input.box) {
+    if (boxMaxBytes === null) return 'Reports carry no box on this network';
+    if (input.box.length === 0 || input.box.length > boxMaxBytes) return `The moderators' box must be 1 to ${boxMaxBytes} bytes`;
   }
   return null;
 }
@@ -132,7 +136,7 @@ class ReportService {
     const note = input.note?.trim();
     const target = input.kind === 'profile'
       ? { about: ABOUT_PROFILE }
-      : { [input.kind === 'post' ? 'postId' : 'replyId']: identifierStringToDocumentBytes(input.targetId) };
+      : { [targetField(input.kind)]: identifierStringToDocumentBytes(input.targetId) };
     return stateTransitionService.createDocument(YAPPR_CONTRACT_ID, 'report', reporterId, {
       ...target,
       targetOwnerId: identifierStringToDocumentBytes(input.targetOwnerId),

@@ -1,5 +1,5 @@
 import { mediaCarriesHashes, mediaIsArrays, mediaItemLimit } from '@/lib/contract-topology'
-import { normalizeBytes } from '@/lib/bytes'
+import { concatBytes, normalizeBytes } from '@/lib/bytes'
 import { normalizeMediaUrl } from '@/lib/utils/ipfs-gateway'
 import type { Media } from '@/lib/types'
 import type { MediaHashes } from './media-fingerprint'
@@ -17,14 +17,13 @@ export interface MediaItemInput {
   type?: MediaType
 }
 
-/** The kind byte v13 stores per item in `mediaKinds`. Readers ignore any other byte. */
-const KIND_BYTES: Readonly<Record<MediaType, number>> = { image: 0, video: 1, gif: 2 }
+/** What each v13 `mediaKinds` byte means, by its value. Readers ignore any other byte. */
 const KIND_OF_BYTE: readonly MediaType[] = ['image', 'video', 'gif']
 
 const HASH_BYTES = 32
 const FINGERPRINT_BYTES = 8
 /** One `mediaDigests` entry: the sha256 of the bytes, then the 64-bit fingerprint. */
-export const MEDIA_DIGEST_BYTES = HASH_BYTES + FINGERPRINT_BYTES
+const MEDIA_DIGEST_BYTES = HASH_BYTES + FINGERPRINT_BYTES
 
 /** What a file of MIME type `mime` shows as: a GIF, a video, or an image (the default). */
 export function mediaTypeOfMime(mime: string | undefined): MediaType {
@@ -33,7 +32,7 @@ export function mediaTypeOfMime(mime: string | undefined): MediaType {
 }
 
 /** One item's 40-byte `mediaDigests` entry. */
-export function encodeMediaDigest(hashes: MediaHashes): Uint8Array {
+function encodeMediaDigest(hashes: MediaHashes): Uint8Array {
   if (hashes.mediaHash.length !== HASH_BYTES || hashes.mediaFingerprint.length !== FINGERPRINT_BYTES) {
     throw new Error('A media digest is a 32-byte sha256 and an 8-byte fingerprint')
   }
@@ -48,7 +47,7 @@ export function encodeMediaDigest(hashes: MediaHashes): Uint8Array {
  * bytes do not hold exactly one 40-byte entry per item (consensus refuses
  * that, so only a malformed read produces it).
  */
-export function decodeMediaDigests(digests: Uint8Array | null, count: number): Array<MediaHashes | undefined> {
+function decodeMediaDigests(digests: Uint8Array | null, count: number): Array<MediaHashes | undefined> {
   if (!digests || digests.length !== count * MEDIA_DIGEST_BYTES) return Array.from({ length: count }, () => undefined)
   return Array.from({ length: count }, (_, index) => {
     const start = index * MEDIA_DIGEST_BYTES
@@ -80,12 +79,10 @@ export function mediaDocumentFields(items: readonly MediaItemInput[] | undefined
     throw new Error('This image is missing its content hashes. Remove it and attach it again.')
   }
   if (mediaIsArrays()) {
-    const digests = new Uint8Array(items.length * MEDIA_DIGEST_BYTES)
-    items.forEach((item, index) => digests.set(encodeMediaDigest(item.hashes as MediaHashes), index * MEDIA_DIGEST_BYTES))
     return {
       mediaUrls: items.map((item) => item.url),
-      mediaDigests: digests,
-      mediaKinds: Uint8Array.from(items, (item) => KIND_BYTES[item.type ?? 'image']),
+      mediaDigests: concatBytes(...items.map((item) => encodeMediaDigest(item.hashes as MediaHashes))),
+      mediaKinds: Uint8Array.from(items, (item) => KIND_OF_BYTE.indexOf(item.type ?? 'image')),
     }
   }
   const [{ url, hashes }] = items
@@ -104,11 +101,10 @@ export function mediaDocumentFields(items: readonly MediaItemInput[] | undefined
 export function mediaFromDocument(id: string, data: Record<string, unknown>, doc: Record<string, unknown>): Media[] | undefined {
   const urls = data.mediaUrls ?? doc.mediaUrls
   if (Array.isArray(urls)) {
-    const valid = urls.filter((url): url is string => typeof url === 'string' && url.length > 0)
-    if (valid.length === 0 || valid.length !== urls.length) return undefined
-    const hashes = decodeMediaDigests(normalizeBytes(data.mediaDigests ?? doc.mediaDigests), valid.length)
+    if (urls.length === 0 || !urls.every((url): url is string => typeof url === 'string' && url.length > 0)) return undefined
+    const hashes = decodeMediaDigests(normalizeBytes(data.mediaDigests ?? doc.mediaDigests), urls.length)
     const kinds = normalizeBytes(data.mediaKinds ?? doc.mediaKinds)
-    return valid.map((url, index) => ({
+    return urls.map((url, index) => ({
       id: `${id}-media-${index}`,
       type: KIND_OF_BYTE[kinds?.[index] ?? 0] ?? 'image',
       url: normalizeMediaUrl(url),

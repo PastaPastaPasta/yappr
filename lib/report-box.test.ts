@@ -6,7 +6,6 @@ import {
   ReportBoxError,
   maxReportBoxRecipients,
   openReportBox,
-  reportBoxNames,
   reportBoxSize,
   sealReportBox,
   type ReportBoxPayload,
@@ -23,14 +22,12 @@ describe('the report box', () => {
     const box = sealReportBox(payload, moderators.map(getPublicKey), TARGET)
     expect(box.length).toBe(reportBoxSize(3))
     for (const moderator of moderators) {
-      expect(reportBoxNames(box, getPublicKey(moderator))).toBe(true)
       expect(openReportBox(box, TARGET, moderator)).toEqual(payload)
     }
   })
 
   it('opens for nobody else', () => {
     const box = sealReportBox(payload, moderators.map(getPublicKey), TARGET)
-    expect(reportBoxNames(box, getPublicKey(key(9)))).toBe(false)
     expect(() => openReportBox(box, TARGET, key(9))).toThrow(ReportBoxError)
   })
 

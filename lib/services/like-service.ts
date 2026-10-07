@@ -90,6 +90,15 @@ type TargetLikers = { likers: string[]; complete: boolean };
 const LIKE_NOTIFICATION_MAX_PAGES = 10;
 
 /**
+ * The author property of an indexOnly like doctype, for the reads that pin it
+ * (the v9/v10 author-time index). Only reachable where the doctype carries one.
+ */
+function authorFieldOf(shape: IndexOnlyLikeShape): string {
+  if (shape.authorField === null) throw new Error('This like doctype names no author');
+  return shape.authorField;
+}
+
+/**
  * Likes of posts and likes of replies share this service, but not necessarily a
  * document type: the v9 topology routes reply likes to `likeReply` with
  * `replyId`/`replyOwnerId` in place of `postId`/`postOwnerId`. Every method that
@@ -111,15 +120,6 @@ const LIKE_NOTIFICATION_MAX_PAGES = 10;
  * they count and rank as before but hold no like documents, so every read of
  * who liked something goes through `byPost`/`byReply`.
  */
-/**
- * The author property of an indexOnly like doctype, for the reads that pin it
- * (the v9/v10 author-time index). Only reachable where the doctype carries one.
- */
-function authorFieldOf(shape: IndexOnlyLikeShape): string {
-  if (shape.authorField === null) throw new Error('This like doctype names no author');
-  return shape.authorField;
-}
-
 class LikeService extends BaseDocumentService<LikeDocument> {
   /**
    * Session cache of indexOnly delete tuples, keyed by (kind, ownerId,

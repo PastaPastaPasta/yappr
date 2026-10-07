@@ -22,7 +22,7 @@ import { formatNumber } from '@/lib/utils'
 import { getSocialLinkUrl, isValidHttpUrl } from '@/lib/profile-links'
 import { useCopy } from '@/hooks/use-copy'
 import { useReportPostModal } from '@/hooks/use-report-post-modal'
-import { contractTakesReports, reportShape } from '@/lib/contract-topology'
+import { profilesAreReportable } from '@/lib/contract-topology'
 import { Button } from '@/components/ui/button'
 import { UserAvatar } from '@/components/ui/avatar-image'
 import { BannerImage } from '@/components/ui/banner-image'
@@ -119,7 +119,7 @@ export function ProfileHeader({
   const editing = isOwnProfile && edit.active
   const subject = profile?.displayName || username || 'user'
   const { open: openReport } = useReportPostModal()
-  const profilesReportable = contractTakesReports() && reportShape().profiles
+  const profilesReportable = profilesAreReportable()
 
   return (
     <>

@@ -49,12 +49,15 @@ type TargetState = { state: 'live'; post: Post } | { state: 'tombstoned'; post: 
 
 const keyOf = (target: { kind: ReportTargetKind; targetId: string }) => `${target.kind}:${target.targetId}`
 
-/** What a row reports, in words. */
-const nounOf = (kind: ReportTargetKind) => (kind === 'reply' ? 'reply' : kind === 'profile' ? 'profile' : 'post')
-
 /** The reason a moderation cites for a row: the post or reply itself; a profile cites nothing. */
 const citedDocuments = (group: ReportedTarget) =>
   group.kind === 'profile' ? [] : [{ documentTypeName: group.kind, documentId: group.targetId }]
+
+const shortId = (id: string) => `${id.slice(0, 8)}…`
+const reportsNoun = (count: number) => `${count} report${count === 1 ? '' : 's'}`
+
+/** How a row names what it reports. */
+const ROW_LABEL: Readonly<Record<ReportTargetKind, string>> = { post: 'Post by', reply: 'Reply by', profile: 'Profile of' }
 
 /**
  * A reported private post or reply, opened read-only from a report's box
@@ -68,27 +71,31 @@ function ReportedPrivateContent({ group, post, moderatorId }: { group: ReportedT
     return <p className="text-xs text-gray-500 dark:text-gray-400">No report carries the key to it: ask the reporters by email.</p>
   }
   const open = async () => {
-    const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
-    const key = getEncryptionKeyBytes(moderatorId)
-    if (!key) {
-      setOpened({ error: 'Your encryption key is not on this device. Add it in Settings, then try again.' })
-      return
-    }
-    let failure = 'The reports\' keys do not open it'
-    for (const box of boxes) {
-      const result = await openReportedContent(box, post, key)
-      if (result.kind === 'opened') {
-        setOpened({ text: result.text })
+    try {
+      const { getEncryptionKeyBytes } = await import('@/lib/secure-storage')
+      const key = getEncryptionKeyBytes(moderatorId)
+      if (!key) {
+        setOpened({ error: 'Your encryption key is not on this device. Add it in Settings, then try again.' })
         return
       }
-      failure = result.reason
+      let failure = 'The reports\' keys do not open it'
+      for (const box of boxes) {
+        const result = await openReportedContent(box, post, key)
+        if (result.kind === 'opened') {
+          setOpened({ text: result.text })
+          return
+        }
+        failure = result.reason
+      }
+      setOpened({ error: failure })
+    } catch (error) {
+      setOpened({ error: error instanceof Error ? error.message : 'Could not open it' })
     }
-    setOpened({ error: failure })
   }
   if (!opened) {
     return (
-      <Button variant="outline" size="sm" onClick={() => { open().catch((error: unknown) => setOpened({ error: error instanceof Error ? error.message : 'Could not open it' })) }} className="gap-1">
-        <LockOpenIcon className="h-4 w-4" /> Read the private {group.kind === 'reply' ? 'reply' : 'post'}
+      <Button variant="outline" size="sm" onClick={() => { open().catch(() => { /* reported inside */ }) }} className="gap-1">
+        <LockOpenIcon className="h-4 w-4" /> Read the private {group.kind}
       </Button>
     )
   }
@@ -100,8 +107,6 @@ function ReportedPrivateContent({ group, post, moderatorId }: { group: ReportedT
     <p role="alert" className="text-xs text-red-600 dark:text-red-400">{opened.error}</p>
   )
 }
-const shortId = (id: string) => `${id.slice(0, 8)}…`
-const reportsNoun = (count: number) => `${count} report${count === 1 ? '' : 's'}`
 
 /** The views a moderator can switch between where reports are resolved (v10). */
 const RESOLVED_VIEWS: ReadonlyArray<{ label: string; view: ReportView }> = [
@@ -343,7 +348,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     const key = keyOf(group)
     const state = targets.get(key)?.state
     if (state === undefined || state === 'unknown') return
-    const noun = nounOf(group.kind)
+    const noun = group.kind
     const verb = resolving ? 'Purging' : 'Dismissing'
     const done = resolving ? 'purged' : 'dismissed'
     setDismissing({ key, verb, done: 0, total: group.reports.length })
@@ -424,7 +429,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
     }
     if (!charterReasonReady('resolutions')) return
     const key = keyOf(group)
-    const noun = nounOf(group.kind)
+    const noun = group.kind
     setDismissing({ key, verb: 'Resolving', done: 0, total: group.reports.length })
     const read = await rereadTarget(group, noun, 'resolve')
     if (!read) {
@@ -545,7 +550,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
           {ordered.map((group) => {
             const key = keyOf(group)
             const target = targets.get(key)
-            const noun = nounOf(group.kind)
+            const noun = group.kind
             const busy = dismissing?.key === key
             const count = group.reports.length
             const form = resolveForm?.key === key ? resolveForm : null
@@ -560,7 +565,7 @@ export function ReportQueue({ seatedReasons, onModerateAuthor }: ReportQueueProp
                         <ExclamationTriangleIcon className="h-3 w-3" /> Urgent
                       </span>
                     )}
-                    {noun === 'profile' ? 'Profile of' : noun === 'reply' ? 'Reply by' : 'Post by'} {nameOf(group.targetOwnerId)} · {count} report{count === 1 ? '' : 's'}
+                    {ROW_LABEL[noun]} {nameOf(group.targetOwnerId)} · {count} report{count === 1 ? '' : 's'}
                     {next ? ' loaded' : ''}
                   </span>
                   <span className="text-gray-500 dark:text-gray-400">latest {new Date(group.latestAt).toLocaleString()}</span>

@@ -476,7 +476,7 @@ const V12_DESCRIPTOR: ContractTopologyDescriptor = {
 const V13_DESCRIPTOR: ContractTopologyDescriptor = {
   ...V12_DESCRIPTOR,
   topology: 'v13',
-  tombstonePreserves: { post: V12_DESCRIPTOR.tombstonePreserves.post, reply: V13_REPLY_LINKAGE_PRESERVED },
+  tombstonePreserves: { ...V12_DESCRIPTOR.tombstonePreserves, reply: V13_REPLY_LINKAGE_PRESERVED },
   interactions: {
     post: V12_DESCRIPTOR.interactions.post,
     reply: {
@@ -596,7 +596,7 @@ export function postOwnerIndexPrefix(): Array<['live', '==', true]> {
 
 /** The `orderBy` entries matching {@link postOwnerIndexPrefix}. */
 export function postOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
-  return postsCarryLiveMarker() ? [['live', 'asc']] : []
+  return postOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
 }
 
 /**
@@ -1841,6 +1841,11 @@ export interface ReportShape {
    * the reporter first (v9-v12 `ownerAndPost [$ownerId, postId]`).
    */
   readonly targetFirst: boolean
+}
+
+/** True when profiles can be reported to the moderators (v13 `about: 1`). */
+export function profilesAreReportable(): boolean {
+  return contractTakesReports() && reportShape().profiles
 }
 
 let reportShapeCache: ReportShape | null = null

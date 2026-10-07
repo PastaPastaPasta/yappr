@@ -19,8 +19,8 @@ export function useModeratedTypeOpen(docType: string): boolean {
   useEffect(() => {
     if (!waits) return
     let cancelled = false
-    moderationElectionService.moderatedTypeOpen(docType).then((value) => {
-      if (!cancelled) setOpen(value)
+    moderationElectionService.getSeatedTeam().then((team) => {
+      if (!cancelled) setOpen(team !== null)
     }).catch((error: unknown) => {
       logger.warn(`useModeratedTypeOpen(${docType}): could not read the seated team`, error)
     })

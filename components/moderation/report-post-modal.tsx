@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useReportPostModal, type ReportSubject } from '@/hooks/use-report-post-modal'
 import { CREDITS_PER_DASH } from '@/lib/constants'
-import { declaredActionFee, reportsAreResolved } from '@/lib/contract-topology'
+import { reportsAreResolved } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import {
   MODERATION_EMAIL,
@@ -22,6 +22,7 @@ import {
   reportFailureMessage,
   reportInputProblem,
   reportReasonLabel,
+  reportFeeCredits,
   reportReasonsOffered,
   reportStatusLabel,
   withdrawFailureMessage,
@@ -33,7 +34,7 @@ import { reportService } from '@/lib/services/report-service'
 import { reportBarredWrite } from './barred-writer-notice'
 
 /** The report's target as the write names it. */
-function targetOf(subject: ReportSubject | null): { kind: ReportTargetKind; targetId: string; targetOwnerId: string } | null {
+function reportTargetOf(subject: ReportSubject | null): { kind: ReportTargetKind; targetId: string; targetOwnerId: string } | null {
   if (!subject) return null
   if (subject.kind === 'profile') return { kind: 'profile', targetId: subject.identityId, targetOwnerId: subject.identityId }
   return { kind: subject.kind, targetId: subject.post.id, targetOwnerId: subject.post.author.id }
@@ -41,9 +42,8 @@ function targetOf(subject: ReportSubject | null): { kind: ReportTargetKind; targ
 
 /** The moderators' action fee a report pays (v13: 50M credits), as DASH, or null where reports are free. */
 function reportFeeDash(): string | null {
-  const fee = declaredActionFee('report', 'create')
-  if (!fee) return null
-  return (Number(fee.owner + fee.moderators) / CREDITS_PER_DASH).toFixed(4)
+  const fee = reportFeeCredits()
+  return fee === null ? null : (Number(fee) / CREDITS_PER_DASH).toFixed(4)
 }
 
 /** The reader's own report on the open target: still being read, read, or unreadable. */
@@ -67,7 +67,7 @@ export function ReportPostModal() {
   const [reason, setReason] = useState<number | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
-  const target = targetOf(subject)
+  const target = reportTargetOf(subject)
   const noun: ReportTargetKind = target?.kind ?? 'post'
   const privatePost = subject && subject.kind !== 'profile' && reportNeedsBox(subject.post) ? subject.post : null
   const identityId = user?.identityId
@@ -140,7 +140,7 @@ export function ReportPostModal() {
       setBusy(false)
       return
     }
-    const result = await reportService.fileReport(identityId, { ...target, reason, note, ...(box ? { box } : {}) })
+    const result = await reportService.fileReport(identityId, { ...target, reason, note, box })
     setBusy(false)
     if (!result.success) {
       if (isAlreadyReportedError(result.error)) {
@@ -275,7 +275,7 @@ export function ReportPostModal() {
                 Report it to the{' '}
                 <a href="https://report.cybertip.org/" target="_blank" rel="noopener noreferrer" className="underline">NCMEC CyberTipline</a>
                 {' '}or your country&apos;s hotline, and{' '}
-                <a href={reportEmailHref({ kind: target.kind, id: target.targetId }, reason)} className="underline">email the team</a>.
+                <a href={reportEmailHref(target, reason)} className="underline">email the team</a>.
                 Do not share or describe the material: reports are public.
               </p>
             </div>

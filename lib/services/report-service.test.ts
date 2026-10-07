@@ -114,7 +114,7 @@ describe('a reporter\'s own report and a new one', () => {
     topology.shape = V13_SHAPE
     expect(reportInputShapeProblem({ kind: 'profile', targetId: POST, targetOwnerId: AUTHOR })).toMatch(/reported identity/)
     expect(reportInputShapeProblem({ kind: 'profile', targetId: AUTHOR, targetOwnerId: AUTHOR, box: new Uint8Array(10) })).toMatch(/no box/)
-    expect(reportInputShapeProblem({ kind: 'post', targetId: POST, targetOwnerId: AUTHOR, box: new Uint8Array(5_121) })).toMatch(/5120/)
+    expect(reportInputShapeProblem({ kind: 'post', targetId: POST, targetOwnerId: AUTHOR, box: new Uint8Array(5_121) })).toMatch(/1 to 5120/)
     expect(reportInputShapeProblem({ kind: 'post', targetId: POST, targetOwnerId: AUTHOR, box: new Uint8Array(5_120) })).toBeNull()
     topology.shape = V12_SHAPE
     expect(reportInputShapeProblem({ kind: 'profile', targetId: AUTHOR, targetOwnerId: AUTHOR })).toMatch(/cannot be reported/)

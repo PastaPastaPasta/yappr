@@ -695,20 +695,23 @@ export function brokenPropertyRule(error: unknown): string | null {
  * than something the user typed, so the copy says what went wrong, not how
  * to fix the input.
  */
+const INCOMPLETE_PRIVATE = 'The private post was incomplete. Try again.'
+const UNBLANK_TOMBSTONE = 'Deleting it failed: the network expects it emptied completely. Reload and try again.'
+const OTHER_NEEDS_NOTE = 'Say what is wrong with it in the details.'
 const PROPERTY_RULE_COPY: Readonly<Record<string, string>> = {
   parentIsRoot: 'This reply named the wrong post owner. Reload the thread and reply again.',
   media: 'The attached media did not match its details. Remove it, attach it again and retry.',
   privateNoMedia: 'A private post can\'t carry a public media link.',
-  privateAllOrNone: 'The private post was incomplete. Try again.',
-  private: 'The private post was incomplete. Try again.',
+  privateAllOrNone: INCOMPLETE_PRIVATE,
+  private: INCOMPLETE_PRIVATE,
   notEmpty: 'A post needs some text, media, a quote or a poll.',
-  blankTombstone: 'Deleting it failed: the network expects it emptied completely. Reload and try again.',
-  tombstoneIsBlank: 'Deleting it failed: the network expects it emptied completely. Reload and try again.',
+  blankTombstone: UNBLANK_TOMBSTONE,
+  tombstoneIsBlank: UNBLANK_TOMBSTONE,
   live: 'This post was missing its live marker. Reload the app and try again.',
   oneTarget: 'A report names exactly one post, reply or profile.',
   boxOnContent: 'A profile report can\'t carry private content.',
-  otherNote: 'Say what is wrong with it in the details.',
-  otherHasNote: 'Say what is wrong with it in the details.',
+  otherNote: OTHER_NEEDS_NOTE,
+  otherHasNote: OTHER_NEEDS_NOTE,
 }
 
 /** The 10419 (`distinctFrom`) member of {@link isDocumentPropertyRuleError}. */
@@ -785,6 +788,13 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
 }
 
 /**
+ * What a 41200 means to a user: on a `notYetUsable` contract (mainnet v13)
+ * posts, replies, reports and profile changes open once masternodes elect the
+ * first moderation team.
+ */
+export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
+
+/**
  * **41200** `ContractModeratedDocumentTypeNotYetUsableError` (elected
  * moderation, #4886/#4952): the contract declares elected moderation with a
  * `notYetUsable` interim, and no team is seated yet, so every document
@@ -793,13 +803,6 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
  * Message: "Documents of type <t> on contract <c> can not be used until a
  * moderation team is seated".
  */
-/**
- * What a 41200 means to a user: on a `notYetUsable` contract (mainnet v13)
- * posts, replies, reports and profile changes open once masternodes elect the
- * first moderation team.
- */
-export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
-
 export function isModerationNotYetSeatedError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
   return (

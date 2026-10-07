@@ -1,9 +1,9 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
-import { blocksContractId, contractTakesReports, electedModeration } from '@/lib/contract-topology'
+import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
 import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
-import { moderationElectionService } from '@/lib/services/moderation-election-service'
+import { moderatedTypeWaitsForTeam, moderationElectionService } from '@/lib/services/moderation-election-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
@@ -72,8 +72,7 @@ async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?:
  * Every other contract answers without a read; a failed read rejects.
  */
 async function moderatedTypeOpen(docType: string): Promise<boolean> {
-  const elected = electedModeration()
-  if (elected?.interim !== 'notYetUsable' || !elected.moderatedDocumentTypes[docType]) return true
+  if (!moderatedTypeWaitsForTeam(docType)) return true
   try {
     return (await moderationElectionService.getSeatedTeam()) !== null
   } catch (error) {

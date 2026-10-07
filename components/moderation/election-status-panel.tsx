@@ -13,6 +13,18 @@ import { electionView, moderationElectionService, type ElectionStatus } from '@/
 const short = (id: string) => (id.length > 14 ? `${id.slice(0, 6)}…${id.slice(-6)}` : id)
 const when = (ms: number | null) => (ms === null ? 'unknown' : new Date(ms).toLocaleString())
 const hours = (seconds: number) => `${Math.round(seconds / 3600)} h`
+/** Who moderates before a team is seated, as the panel says it. */
+function interimText(interim: string): string {
+  switch (interim) {
+    case 'contractOwner':
+      return 'the contract owner moderates'
+    case 'notYetUsable':
+      return 'nobody moderates, and posts, replies, reports and profile changes stay closed'
+    default:
+      return `the interim (${interim}) applies`
+  }
+}
+
 /** A window as people say it: days from a day up (mainnet's floor), hours below. */
 const duration = (seconds: number) => (seconds >= 86_400 ? `${Math.round(seconds / 86_400)} days` : hours(seconds))
 
@@ -68,11 +80,7 @@ export function ElectionStatusPanel() {
         <CardTitle className="flex items-center gap-2"><ScaleIcon className="h-5 w-5" /> Moderation election</CardTitle>
         <CardDescription>
           Masternodes elect this contract&apos;s moderation team. Until a team is seated,{' '}
-          {declaration.interim === 'contractOwner'
-            ? 'the contract owner moderates'
-            : declaration.interim === 'notYetUsable'
-              ? 'nobody moderates, and posts, replies, reports and profile changes stay closed'
-              : `the interim (${declaration.interim}) applies`}.
+          {interimText(declaration.interim)}.
           Applicants join for {duration(declaration.joinWindowSeconds)}, then masternodes vote for {duration(declaration.voteWindowSeconds)};{' '}
           {declaration.seatContestable
             ? `the seat becomes contestable once challenges ship${declaration.challengeCoolDownSeconds ? `, with ${duration(declaration.challengeCoolDownSeconds)} of protection after each seat change` : ''}`

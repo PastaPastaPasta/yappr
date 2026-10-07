@@ -53,6 +53,9 @@ export interface BlockProvenance {
   inheritedFrom: string | null
 }
 
+/** What a block write answers on a deployment without its blocks contract. */
+const BLOCKS_UNAVAILABLE = 'Blocking is not available on this network yet.'
+
 /**
  * Block Service - Manages enhanced blocking with bloom filters and block following.
  *
@@ -62,9 +65,6 @@ export interface BlockProvenance {
  * - Follow other users' block lists (hard blocks)
  * - SessionStorage caching for page load optimization
  */
-/** What a block write answers on a deployment without its blocks contract. */
-const BLOCKS_UNAVAILABLE = 'Blocking is not available on this network yet.'
-
 class BlockService extends BaseDocumentService<BlockDocument> {
   private ownBlocksInFlight = new RequestDeduplicator<string, string[]>(0)
   private ownBlockVersions = new Map<string, number>()

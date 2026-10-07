@@ -42,11 +42,12 @@ import { gcm } from '@noble/ciphers/aes.js'
 import { hkdf } from '@noble/hashes/hkdf.js'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { randomBytes } from '@noble/hashes/utils.js'
-import { bytesEqual } from './bytes'
+import * as secp256k1 from '@noble/secp256k1'
+import { bytesEqual, concatBytes as concat } from './bytes'
 import { ecdhSharedX } from './crypto/ecdh'
 import { getPublicKey } from './crypto/keys'
 
-export const REPORT_BOX_VERSION = 1
+const REPORT_BOX_VERSION = 1
 
 const HINT_BYTES = 4
 const PUBLIC_KEY_BYTES = 33
@@ -100,16 +101,6 @@ const hintOf = (publicKey: Uint8Array) => sha256(concat(HINT_LABEL, publicKey)).
 const wrapKey = (sharedX: Uint8Array, ephemeralPub: Uint8Array, recipientPub: Uint8Array) =>
   hkdf(sha256, sharedX, ephemeralPub, concat(WRAP_LABEL, recipientPub), KEY_BYTES)
 
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0))
-  let offset = 0
-  for (const part of parts) {
-    out.set(part, offset)
-    offset += part.length
-  }
-  return out
-}
-
 const xor = (a: Uint8Array, b: Uint8Array) => a.map((byte, index) => byte ^ b[index])
 
 function decodeId(id: string, label: string): Uint8Array {
@@ -120,47 +111,30 @@ function decodeId(id: string, label: string): Uint8Array {
 
 const aadOf = (header: Uint8Array, targetId: Uint8Array) => concat(AAD_LABEL, header, targetId)
 
-/** A secp256k1 private key: 32 random bytes the curve accepts. */
-function ephemeralKeyPair(random: (length: number) => Uint8Array): { privateKey: Uint8Array; publicKey: Uint8Array } {
-  for (;;) {
-    const privateKey = random(KEY_BYTES)
-    try {
-      return { privateKey, publicKey: getPublicKey(privateKey) }
-    } catch {
-      // Zero or past the curve order (about 2^-128): draw again.
-    }
-  }
-}
-
 /**
  * Seal `payload` to every key in `recipientKeys` (compressed secp256k1
  * ENCRYPTION public keys), bound to the reported post or reply `targetId`.
- * `random` is for tests; production draws from the platform CSPRNG.
  */
-export function sealReportBox(
-  payload: ReportBoxPayload,
-  recipientKeys: readonly Uint8Array[],
-  targetId: string,
-  random: (length: number) => Uint8Array = randomBytes
-): Uint8Array {
+export function sealReportBox(payload: ReportBoxPayload, recipientKeys: readonly Uint8Array[], targetId: string): Uint8Array {
   if (recipientKeys.length === 0) throw new ReportBoxError('A box needs at least one recipient')
   if (recipientKeys.length > MAX_WRAPS) throw new ReportBoxError(`A box holds at most ${MAX_WRAPS} recipients`)
   if (payload.cek.length !== KEY_BYTES) throw new ReportBoxError('The content key is not 32 bytes')
   if (!Number.isInteger(payload.keyGeneration) || payload.keyGeneration < 1 || payload.keyGeneration > 0xffffffff) {
     throw new ReportBoxError('The key generation is out of range')
   }
-  const reportKey = random(KEY_BYTES)
+  const reportKey = randomBytes(KEY_BYTES)
   const wraps = recipientKeys.map((recipientPub) => {
     if (recipientPub.length !== PUBLIC_KEY_BYTES) throw new ReportBoxError('A recipient key is not a compressed secp256k1 key')
-    const ephemeral = ephemeralKeyPair(random)
-    const k = wrapKey(ecdhSharedX(ephemeral.privateKey, recipientPub), ephemeral.publicKey, recipientPub)
-    return concat(hintOf(recipientPub), ephemeral.publicKey, xor(reportKey, k))
+    const ephemeralPriv = secp256k1.utils.randomSecretKey()
+    const ephemeralPub = getPublicKey(ephemeralPriv)
+    const k = wrapKey(ecdhSharedX(ephemeralPriv, recipientPub), ephemeralPub, recipientPub)
+    return concat(hintOf(recipientPub), ephemeralPub, xor(reportKey, k))
   })
   const header = concat(Uint8Array.of(REPORT_BOX_VERSION, recipientKeys.length), ...wraps)
   const generation = new Uint8Array(4)
   new DataView(generation.buffer).setUint32(0, payload.keyGeneration)
   const plaintext = concat(decodeId(payload.feedOwnerId, 'The feed owner'), generation, payload.cek)
-  const nonce = random(NONCE_BYTES)
+  const nonce = randomBytes(NONCE_BYTES)
   const sealed = gcm(reportKey, nonce, aadOf(header, decodeId(targetId, 'The target'))).encrypt(plaintext)
   return concat(header, nonce, sealed)
 }
@@ -173,16 +147,6 @@ function parse(box: Uint8Array): { header: Uint8Array; wraps: Uint8Array[]; nonc
   const headerEnd = HEADER_BYTES + count * REPORT_BOX_WRAP_BYTES
   const wraps = Array.from({ length: count }, (_, index) => box.slice(HEADER_BYTES + index * REPORT_BOX_WRAP_BYTES, HEADER_BYTES + (index + 1) * REPORT_BOX_WRAP_BYTES))
   return { header: box.slice(0, headerEnd), wraps, nonce: box.slice(headerEnd, headerEnd + NONCE_BYTES), sealed: box.slice(headerEnd + NONCE_BYTES) }
-}
-
-/** True when `box` holds a wrap whose hint matches `publicKey` (it was probably sealed to it). */
-export function reportBoxNames(box: Uint8Array, publicKey: Uint8Array): boolean {
-  try {
-    const hint = hintOf(publicKey)
-    return parse(box).wraps.some((wrap) => bytesEqual(wrap.slice(0, HINT_BYTES), hint))
-  } catch {
-    return false
-  }
 }
 
 /**

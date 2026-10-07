@@ -334,7 +334,7 @@ describe('v13 reports', () => {
   })
 
   it('emails the team the target and reason, never the content', () => {
-    const href = reportEmailHref({ kind: 'post', id: idOf(3) }, URGENT_REASON_CODE)
+    const href = reportEmailHref({ kind: 'post', targetId: idOf(3) }, URGENT_REASON_CODE)
     expect(href.startsWith('mailto:support@yap.pr?')).toBe(true)
     expect(decodeURIComponent(href)).toContain(idOf(3))
     expect(decodeURIComponent(href)).toContain('Child sexual abuse material')
