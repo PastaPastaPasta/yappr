@@ -73,6 +73,26 @@ describe('the v13 live marker', () => {
     expect(sdk.ranked.mock.calls[0][0]).toMatchObject({ documentTypeName: 'post', groupBy: '$ownerId', where: [['live', '==', true]] })
   })
 
+  it('returns an empty live ranking as proved, without scanning the timeline for tombstones', async () => {
+    const { helpers } = await on('v13')
+    sdk.ranked.mockResolvedValue({ entries: [] })
+    sdk.query.mockResolvedValue([{ $id: 'p1', $ownerId: AUTHOR, $createdAt: 1, deleted: true }])
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual(new Map())
+    expect(sdk.query).not.toHaveBeenCalled()
+  })
+
+  it('counts only live posts in the timeline scan when the ranked read fails', async () => {
+    const { helpers } = await on('v13')
+    sdk.ranked.mockRejectedValue(new Error('ranked read failed'))
+    const page = Array.from({ length: 100 }, (_, index) => (index % 2 === 0
+      ? { $id: `p${index}`, $ownerId: AUTHOR, $createdAt: 1_000 - index, live: true }
+      : { $id: `p${index}`, $ownerId: FOLLOWED, $createdAt: 1_000 - index, deleted: true }))
+    sdk.query.mockResolvedValueOnce(page).mockResolvedValueOnce([{ $id: 'last', $ownerId: AUTHOR, $createdAt: 1, live: true }])
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual(new Map([[AUTHOR, 51]]))
+    // The scan still pages over every document, tombstones included.
+    expect(sdk.query.mock.calls[1][0].startAfter).toBe('p99')
+  })
+
   it('changes nothing on v12: no live field, no live clause', async () => {
     const { postService, ranked } = await on('v12')
     await postService.createPost(AUTHOR, 'hello')
@@ -83,5 +103,12 @@ describe('the v13 live marker', () => {
     expect(sdk.count.mock.calls[0][0].where).toEqual([['$ownerId', '==', AUTHOR]])
     await ranked.topAuthorsByPostCount(10)
     expect(sdk.ranked.mock.calls[0][0]).not.toHaveProperty('where')
+  })
+
+  it('still scans the timeline on v12 when the ranking is empty, counting every post', async () => {
+    const { helpers } = await on('v12')
+    sdk.ranked.mockResolvedValue({ entries: [] })
+    sdk.query.mockResolvedValue([{ $id: 'p1', $ownerId: AUTHOR, $createdAt: 1 }])
+    await expect(helpers.fetchAuthorPostCounts('contract')).resolves.toEqual(new Map([[AUTHOR, 1]]))
   })
 })
