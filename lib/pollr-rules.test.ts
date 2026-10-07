@@ -5,6 +5,7 @@ import {
   applyChoiceDelta,
   charCount,
   choiceDelta,
+  editorStart,
   isChoiceIndex,
   normalizeChoices,
   pollEndsAt,
@@ -119,6 +120,21 @@ describe('ballot plan, multi choice', () => {
     const zero = ballot(0, 0)
     expect(planBallotWrites(true, [zero], [0, 1])).toEqual([{ kind: 'create', slot: 1, choice: 1 }])
     expect(planBallotWrites(true, [zero], [])).toEqual([{ kind: 'replace', ballot: zero, choice: null }])
+  })
+})
+
+describe('editor start after an interrupted vote', () => {
+  it('starts from the recorded choices when nothing was left unsent', () => {
+    expect(editorStart([2, 0], null)).toEqual({ selected: [0, 2], unsent: [] })
+  })
+
+  it('starts from the last request and marks what the chain does not show', () => {
+    // [0, 1, 2] was asked for: 0 confirmed, 1 landed after a timeout, 2 was never sent.
+    expect(editorStart([0, 1], [0, 1, 2])).toEqual({ selected: [0, 1, 2], unsent: [2] })
+    // An untick that never went out counts as unsent too.
+    expect(editorStart([0, 1], [0])).toEqual({ selected: [0], unsent: [1] })
+    // Everything landed: nothing to mark.
+    expect(editorStart([0, 1, 2], [2, 1, 0])).toEqual({ selected: [0, 1, 2], unsent: [] })
   })
 })
 

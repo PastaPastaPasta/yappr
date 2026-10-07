@@ -7,11 +7,11 @@ import type { Poll } from './pollr-poll-service';
 // refused or uncertain write is resolved. No network.
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), count: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), settle: vi.fn(),
-  loadReservation: vi.fn(), contractNonce: vi.fn(),
+  loadReservation: vi.fn(), contractNonce: vi.fn(), getDocument: vi.fn(),
 }));
 vi.mock('./evo-sdk-service', () => ({
   getEvoSdk: async () => ({
-    documents: { query: mocks.query, count: mocks.count },
+    documents: { query: mocks.query, count: mocks.count, get: mocks.getDocument },
     identities: { contractNonce: mocks.contractNonce },
   }),
 }));
@@ -24,6 +24,14 @@ vi.mock('./identity-nonce', async (load) => ({
 vi.mock('./state-transition-service', () => ({
   stateTransitionService: { createDocument: mocks.createDocument, updateDocument: mocks.updateDocument },
 }));
+
+// The uncertain-replace record lives in localStorage; an in-memory one here.
+const storage = new Map<string, string>();
+vi.stubGlobal('localStorage', {
+  getItem: (key: string) => storage.get(key) ?? null,
+  setItem: (key: string, value: string) => { storage.set(key, value); },
+  removeItem: (key: string) => { storage.delete(key); },
+});
 
 const id = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill));
 const CREATOR = id(1);
@@ -76,6 +84,7 @@ beforeEach(() => {
   mocks.query.mockResolvedValue(new Map());
   mocks.settle.mockResolvedValue(0);
   mocks.loadReservation.mockReturnValue(null);
+  storage.clear();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -216,6 +225,8 @@ describe('v5 ballots', () => {
     // It landed. The next edit releases that reservation first, then plans
     // against the ballot at its new revision and writes.
     mocks.settle.mockImplementation(async () => { order.push('settle'); return 1; });
+    // The chain shows the ballot at the revision the replace wrote, so its record clears too.
+    mocks.getDocument.mockResolvedValue({ $revision: 2 });
     mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 2, 2)); });
     mocks.updateDocument.mockImplementation(async () => { order.push('replace'); return { success: true }; });
     expect(await service.setVote(open(), [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
@@ -386,6 +397,40 @@ describe('v5 ballots', () => {
     expect(mocks.settle).not.toHaveBeenCalled();
   });
 
+  it('holds a zero-write selection behind an aged, unconfirmed replace until its revision is proven', async () => {
+    const service = await loadService('v5');
+    const target = open();
+    // 0 -> 1 goes out as a replace (writing revision 3) and times out.
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 2)));
+    mocks.updateDocument.mockResolvedValue({ success: false, error: 'wait for state transition result timed out' });
+    expect(await service.setVote(target, [1], VOTER)).toMatchObject({ unconfirmed: true });
+
+    // 30 minutes on, the nonce store no longer holds it, and the ballot still reads choice 0 at revision 2.
+    vi.setSystemTime(Date.now() + 30 * 60_000);
+    mocks.getDocument.mockResolvedValue({ $revision: 2 });
+    mocks.updateDocument.mockClear();
+    expect(await service.setVote(target, [0], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });
+    expect(mocks.updateDocument).not.toHaveBeenCalled();
+
+    // The ballot reaches revision 3 (the replace landed): settled, and it reads choice 1.
+    mocks.getDocument.mockResolvedValue({ $revision: 3 });
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 3)));
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [1], pending: false });
+  });
+
+  it('clears the replace record on a confirmed replace and on a consensus refusal', async () => {
+    const service = await loadService('v5');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 2)));
+    expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
+    expect(await service.getBallotState(open(), VOTER)).toMatchObject({ pending: false });
+
+    mocks.updateDocument.mockResolvedValue({ success: false, error: 'Document X has invalid revision Some(2) (code=40106)' });
+    await service.setVote(open(), [1], VOTER);
+    expect(await service.getBallotState(open(), VOTER)).toMatchObject({ pending: false });
+    expect(mocks.getDocument).not.toHaveBeenCalled();
+  });
+
   it('reports an unconfirmed create as unconfirmed, not as counted', async () => {
     const service = await loadService('v5');
     mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
@@ -416,9 +461,20 @@ describe('v5 ballots', () => {
   it('reports the ballot state unknown when the re-read fails too', async () => {
     const service = await loadService('v5');
     mocks.query.mockResolvedValueOnce(ballots(ballotDoc(0, 1))).mockRejectedValue(new Error('down'));
+    // A consensus refusal: a verdict, so nothing is left in flight.
+    const refusal = 'Identity has insufficient balance (code=40001)';
+    mocks.updateDocument.mockResolvedValue({ success: false, error: refusal });
+
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, choices: null, error: refusal });
+  });
+
+  it('treats a replace refused without a verdict as possibly in flight', async () => {
+    const service = await loadService('v5');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
+    mocks.getDocument.mockResolvedValue({ $revision: 1 });
     mocks.updateDocument.mockResolvedValue({ success: false, error: 'insufficient balance' });
 
-    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, choices: null, error: 'insufficient balance' });
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, unconfirmed: true });
   });
 
   it('keeps going past an ordinary failure on an independent multi-choice ballot', async () => {

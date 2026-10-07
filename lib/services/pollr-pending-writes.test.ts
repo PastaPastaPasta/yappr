@@ -4,8 +4,18 @@ import type { NonceReservation, PendingTransition } from './identity-nonce';
 // Whether an earlier write could still change a voter's ballots on one poll,
 // against the real reservation rules (`stillPending`) with the store and the
 // chain nonce mocked.
-const mocks = vi.hoisted(() => ({ loadReservation: vi.fn(), contractNonce: vi.fn() }));
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ identities: { contractNonce: mocks.contractNonce } }) }));
+const mocks = vi.hoisted(() => ({ loadReservation: vi.fn(), contractNonce: vi.fn(), getDocument: vi.fn() }));
+vi.mock('./evo-sdk-service', () => ({
+  getEvoSdk: async () => ({ identities: { contractNonce: mocks.contractNonce }, documents: { get: mocks.getDocument } }),
+}));
+// The uncertain-replace record lives in localStorage; an in-memory one here.
+const storage = new Map<string, string>();
+vi.stubGlobal('localStorage', {
+  getItem: (key: string) => storage.get(key) ?? null,
+  setItem: (key: string, value: string) => { storage.set(key, value); },
+  removeItem: (key: string) => { storage.delete(key); },
+});
+
 vi.mock('./identity-nonce', async (load) => ({
   ...(await load<typeof import('./identity-nonce')>()),
   loadReservation: mocks.loadReservation,
@@ -24,8 +34,62 @@ const createPending = (nonce: bigint, scope?: string): NonceReservation => {
 
 beforeEach(() => {
   vi.resetAllMocks();
+  storage.clear();
   mocks.loadReservation.mockReturnValue(null);
   mocks.contractNonce.mockResolvedValue(BigInt(4));
+});
+
+/** A replace of ballot `b0` on POLL writing revision 3, closing in an hour. */
+const replaceRecord = (overrides: Record<string, unknown> = {}) => ({
+  pollId: POLL, ballotId: 'b0', revision: 3, endsAt: Date.now() + 60 * MINUTE, ...overrides,
+});
+
+describe('uncertain ballot replaces', () => {
+  it('keep a replace pending past its reservation’s lifetime until the ballot reaches its revision', async () => {
+    const { pollrWriteMayStillExecute, recordBallotReplace } = await import('./pollr-pending-writes');
+    recordBallotReplace(OWNER, replaceRecord());
+    // The nonce store has long forgotten it (no reservation at all), and the ballot is still at 2.
+    mocks.getDocument.mockResolvedValue({ $revision: 2 });
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 30 * MINUTE);
+    try {
+      expect(await pollrWriteMayStillExecute(OWNER, POLL)).toBe(true);
+      // Another poll is unaffected.
+      expect(await pollrWriteMayStillExecute(OWNER, OTHER_POLL)).toBe(false);
+      // The ballot at revision 3: the replace (built on 2) can never execute now.
+      mocks.getDocument.mockResolvedValue({ $revision: 3 });
+      expect(await pollrWriteMayStillExecute(OWNER, POLL)).toBe(false);
+      // Proven once, the record is gone: no further read.
+      mocks.getDocument.mockClear();
+      expect(await pollrWriteMayStillExecute(OWNER, POLL)).toBe(false);
+      expect(mocks.getDocument).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('count while the ballot cannot be read, and stop once the poll has closed', async () => {
+    const { pollrWriteMayStillExecute, recordBallotReplace } = await import('./pollr-pending-writes');
+    recordBallotReplace(OWNER, replaceRecord({ endsAt: Date.now() + MINUTE }));
+    mocks.getDocument.mockRejectedValue(new Error('down'));
+    expect(await pollrWriteMayStillExecute(OWNER, POLL)).toBe(true);
+    // Past the close (and its margin) no ballot write can land.
+    vi.useFakeTimers();
+    vi.setSystemTime(Date.now() + 2 * MINUTE);
+    try {
+      expect(await pollrWriteMayStillExecute(OWNER, POLL)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('are cleared by a verdict', async () => {
+    const { pollrWriteMayStillExecute, recordBallotReplace, settleBallotReplace } = await import('./pollr-pending-writes');
+    recordBallotReplace(OWNER, replaceRecord());
+    settleBallotReplace(OWNER, replaceRecord());
+    expect(await pollrWriteMayStillExecute(OWNER, POLL)).toBe(false);
+    expect(mocks.getDocument).not.toHaveBeenCalled();
+  });
 });
 
 describe('pollrWriteMayStillExecute', () => {

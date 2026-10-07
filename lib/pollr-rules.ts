@@ -160,6 +160,19 @@ export function sameChoices(a: readonly number[], b: readonly number[]): boolean
   return left.length === right.length && left.every((choice, index) => choice === right[index])
 }
 
+/**
+ * Where the ballot editor starts. Normally from the recorded choices; after a
+ * submission that was not fully confirmed, from what the voter last asked for,
+ * since part of it may never have been sent. `unsent` is where that request
+ * differs from the recorded ballots — shown as "not sent yet", and sent only
+ * when the voter submits again.
+ */
+export function editorStart(recorded: readonly number[], requested: readonly number[] | null): { selected: number[]; unsent: number[] } {
+  if (requested === null) return { selected: normalizeChoices(recorded), unsent: [] }
+  const { added, removed } = choiceDelta(recorded, requested)
+  return { selected: normalizeChoices(requested), unsent: normalizeChoices([...added, ...removed]) }
+}
+
 /** What changed between two selections: the choices `next` adds and the ones it drops. */
 export function choiceDelta(previous: readonly number[], next: readonly number[]): { added: number[]; removed: number[] } {
   const before = new Set(previous)

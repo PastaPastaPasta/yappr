@@ -12,7 +12,7 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsV4, pollrIsV5 } from '@/lib/constants'
-import { choiceDelta, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
+import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
@@ -75,6 +75,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // until a check finds nothing pending; every later submission is a fresh
   // plan against the chain.
   const [ballotPending, setBallotPending] = useState(false)
+  // v5: what the voter last asked for when a submission was not fully
+  // confirmed. Only pre-fills the editor once the ballots settle (part of it
+  // may never have been sent); it is never resent on its own.
+  const [requested, setRequested] = useState<number[] | null>(null)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
@@ -155,7 +159,14 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // Reset any pending selection when switching polls or signing in/out.
   useEffect(() => {
     stopEditing()
+    setRequested(null)
   }, [pollId, userId, stopEditing])
+
+  /** Leave the editor and forget any interrupted request: the voter chose not to send it. */
+  const cancelEditing = useCallback(() => {
+    stopEditing()
+    setRequested(null)
+  }, [stopEditing])
 
   useEffect(() => {
     setClosedOnChain(false)
@@ -185,11 +196,12 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       (editable || (poll?.multiChoice && myVotes.length < (poll?.options.length ?? 0)))
   )
   const startEditing = useCallback(() => {
-    // v5 edits the whole selection, so it starts from what is recorded; v3 only
-    // adds to it, so the recorded choices stay locked and nothing is selected.
-    setSelected(editable ? myVotes : [])
+    // v5 edits the whole selection, so it starts from what is recorded (or
+    // from an interrupted request, see editorStart); v3 only adds to it, so
+    // the recorded choices stay locked and nothing is selected.
+    setSelected(editable ? editorStart(myVotes, requested).selected : [])
     setEditing(true)
-  }, [editable, myVotes])
+  }, [editable, myVotes, requested])
 
   const toggleChoice = useCallback((index: number, multiChoice: boolean) => {
     setSelected((current) => {
@@ -216,6 +228,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         duration: 6000,
       })
       setBallotPending(true)
+      setRequested(normalizeChoices(wanted))
       stopEditing()
       return
     }
@@ -252,6 +265,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     }
 
     stopEditing()
+    setRequested(null)
     // Closed or changed elsewhere: what is on screen is out of date, so re-read
     // the poll's tally and the voter's ballots together.
     if (result.closed || result.stale) setReloadToken((token) => token + 1)
@@ -360,6 +374,10 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // multi-choice ballot is a withdrawal); v3 submits additions, so it needs one.
   const submitDisabled = submitting || (editable ? sameChoices(selected, myVotes) : selected.length === 0)
   const submitLabel = editable && hasVoted ? 'Update vote' : 'Vote'
+  // An interrupted request that the settled ballots do not fully show.
+  const interruptedUnsent = editable && requested ? editorStart(myVotes, requested).unsent : []
+  // While editing, the options the current selection would change.
+  const unsentInEditor = editable && requested ? choiceDelta(myVotes, selected) : null
   // Shown only once the close has passed AND the counts can no longer move.
   const finalResults = tally !== null && tallyIsFinal(poll, tally)
 
@@ -420,12 +438,18 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             )
           })}
 
+          {canEdit && interruptedUnsent.length > 0 && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Part of your last vote was not sent.
+            </p>
+          )}
+
           {canEdit && (
             <button
               onClick={startEditing}
               className="text-xs font-medium text-yappr-500 hover:underline"
             >
-              {editable ? 'Change vote' : 'Add choices'}
+              {editable ? (interruptedUnsent.length > 0 ? 'Finish your vote' : 'Change vote') : 'Add choices'}
             </button>
           )}
 
@@ -487,6 +511,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
                 <span className="text-sm text-gray-900 dark:text-gray-100 break-words">
                   {option}
                   {isRecorded && <span className="ml-1.5 text-xs text-yappr-500">{editable ? '✓ your vote' : '✓ recorded'}</span>}
+                  {unsentInEditor && [...unsentInEditor.added, ...unsentInEditor.removed].includes(index) && (
+                    <span className="ml-1.5 text-xs text-amber-600 dark:text-amber-400">not sent yet</span>
+                  )}
                 </span>
               </label>
             )
@@ -518,7 +545,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             {editing && (
               <Button
                 variant="ghost"
-                onClick={stopEditing}
+                onClick={cancelEditing}
                 disabled={submitting}
                 className="h-9 text-sm"
               >

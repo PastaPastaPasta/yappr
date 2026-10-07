@@ -2,7 +2,13 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
-import { pollrBallotScope, pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
+import {
+  pollrBallotScope,
+  pollrWriteMayStillExecute,
+  recordBallotReplace,
+  settleBallotReplace,
+  settlePendingPollrReplaces,
+} from './pollr-pending-writes';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -12,9 +18,11 @@ import {
   pollrVoteDocType,
 } from '@/lib/constants';
 import {
+  NONCE_STORE_ERROR,
   PENDING_WRITE_ERROR,
   extractErrorMessage,
   hasConsensusCode,
+  isConsensusRefusal,
   isDocumentPropertyRuleError,
   isTimeoutError,
 } from '@/lib/error-utils';
@@ -241,6 +249,12 @@ export function isDuplicateVoteError(error: unknown): boolean {
 function isPollClosedError(error: unknown, endsAt?: number): boolean {
   if (/writtenBeforeClose/.test(extractErrorMessage(error))) return true;
   return isDocumentPropertyRuleError(error) && typeof endsAt === 'number' && Date.now() > endsAt;
+}
+
+/** The write path refused before signing anything: nothing can land from it. */
+function neverSent(error: unknown): boolean {
+  const message = extractErrorMessage(error);
+  return message === PENDING_WRITE_ERROR || message === NONCE_STORE_ERROR;
 }
 
 /**
@@ -511,6 +525,21 @@ class PollrVoteService {
     // Reserved with the poll's scope, so a write left pending here holds back
     // only this poll's ballots.
     const scope = pollrBallotScope(poll.id);
+    // A replace is recorded until its outcome is proven: past its nonce
+    // reservation's lifetime it may still land (see recordBallotReplace).
+    const replaceRecord = write.kind === 'replace'
+      ? { pollId: poll.id, ballotId: write.ballot.id, revision: write.ballot.revision + 1, endsAt: poll.endsAt as number }
+      : null;
+    if (replaceRecord) {
+      try {
+        recordBallotReplace(ownerId, replaceRecord);
+      } catch (error) {
+        return { status: 'refused', error };
+      }
+    }
+    const settleRecord = () => {
+      if (replaceRecord) settleBallotReplace(ownerId, replaceRecord);
+    };
     try {
       const result =
         write.kind === 'create'
@@ -528,13 +557,15 @@ class PollrVoteService {
             );
       if (result.success) {
         // An unconfirmed create was broadcast but never seen on chain.
-        return result.confirmed === false
-          ? { status: 'unconfirmed', error: 'The network has not confirmed your vote yet' }
-          : { status: 'ok' };
+        if (result.confirmed === false) return { status: 'unconfirmed', error: 'The network has not confirmed your vote yet' };
+        settleRecord();
+        return { status: 'ok' };
       }
       const error = result.error ?? 'Failed to record your vote';
+      if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
       return isTimeoutError(error) ? { status: 'unconfirmed', error } : { status: 'refused', error };
     } catch (error) {
+      if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
       return isTimeoutError(error)
         ? { status: 'unconfirmed', error: extractErrorMessage(error) }
         : { status: 'refused', error };

@@ -339,8 +339,12 @@ while an earlier write to this voter's ballots on this poll could still execute
 (`pollrWriteMayStillExecute`): an unconfirmed create until Platform shows its
 nonce consumed (it landed, another transition took it, or it fell out of the
 window behind the tip; a signed transition has no deadline, so no clock ends
-it), an SDK-signed replace until it is settled or its reservation expires, and
-anything when the reservation store or the nonce cannot be read. The ballots
+it), a ballot replace until a verdict, the ballot reaching the revision it
+writes (it can never execute after that) or the poll's close — tracked in its
+own record (`recordBallotReplace`), because the nonce store forgets an
+SDK-signed replace once its 15-minute reservation lifetime passes, which is a
+write-availability policy and not a protocol deadline — and anything when the
+reservation store or the nonce cannot be read. The ballots
 are read only after that check, so a write landing during it is in the read. Ballot writes are reserved with their poll's
 scope (`pollr-vote:<pollId>`, an optional field on the nonce reservation), so a
 pending write on one poll does not hold back another; an entry with no scope (a
@@ -351,7 +355,10 @@ runs that too.
 
 While `pending`, the card shows the results read-only with "Confirming your
 vote… Check again", which re-reads that state; editing comes back once nothing
-is pending, and the voter picks again from the settled ballots.
+is pending. If a submission was interrupted, "Finish your vote" opens the
+editor on what the voter last asked for, with the options the chain does not
+show marked "not sent yet" (`editorStart`); nothing is resent until the voter
+submits.
 
 `setVote(poll, wanted, me)` refuses to plan while anything is pending
 (`heldBack`, nothing sent; an unreadable store refuses too). Otherwise it reads
