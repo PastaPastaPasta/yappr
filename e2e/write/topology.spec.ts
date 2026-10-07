@@ -689,22 +689,36 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
   /** A second pool identity whose like lifts the run's target to 2 (null on a one-identity pool). */
   let secondLiker: BotIdentity | null = null
 
-  /** `who` likes (or unlikes) the target in its own context and waits until the heart state persists. */
+  /**
+   * The target's like button in a LOADED state: `pressed` for the viewer and
+   * exactly `count` likes. The detail page renders the post unenriched first
+   * (0 likes, not pressed), so a count of 1 or more can only come from the
+   * chain-backed enrichment, which carries the viewer's own like state with it.
+   */
+  const likeState = (p: Page, pressed: boolean, count: number) =>
+    p.getByTestId(`like-btn-${taggedPostId}`)
+      .and(p.locator(`[aria-pressed="${pressed}"][aria-label="Like, ${count} like${count === 1 ? '' : 's'}"]`))
+
+  /**
+   * `who` (the second liker) adds (`pressed`) or takes back its like on the run's
+   * target, whose only other like is the run's bot's: 1 like without it, 2 with.
+   * It waits for the loaded state before deciding, clicks only from the loaded
+   * opposite state, and accepts only the loaded target state with its count.
+   */
   const setLike = async (browser: Browser, who: BotIdentity, pressed: boolean) => {
+    const [from, to] = pressed ? [1, 2] : [2, 1]
     const context = await browser.newContext()
     try {
       await seedContext(context, who)
       const page = await context.newPage()
       await page.goto(appUrl(`/post?id=${taggedPostId}`))
-      const likeButton = page.getByTestId(`like-btn-${taggedPostId}`)
-      await expect(likeButton).toBeVisible({ timeout: 60_000 })
-      if ((await likeButton.getAttribute('aria-pressed')) !== String(pressed)) {
-        await likeButton.click()
-        await expect(likeButton).toBeEnabled({ timeout: 60_000 })
+      const before = likeState(page, !pressed, from)
+      await expect(before.or(likeState(page, pressed, to))).toBeVisible({ timeout: 60_000 })
+      if (await before.isVisible()) {
+        await before.click()
+        await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toBeEnabled({ timeout: 60_000 })
       }
-      await reloadUntilVisible(page, appUrl(`/post?id=${taggedPostId}`), (p) =>
-        p.getByTestId(`like-btn-${taggedPostId}`).and(p.locator(`[aria-pressed="${pressed}"]`))
-      )
+      await reloadUntilVisible(page, appUrl(`/post?id=${taggedPostId}`), (p) => likeState(p, pressed, to))
     } finally {
       await context.close()
     }
