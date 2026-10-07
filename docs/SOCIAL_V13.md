@@ -2,7 +2,7 @@
 
 Social v13 is social v12 ([SOCIAL_V12.md](SOCIAL_V12.md)) with the changes the user decided after the 2026-10-06 pre-mainnet audit. Most of them were prototyped and measured offline during the audit; this cut rebuilds them cleanly on Platform 5.0.0-beta.2. The `block`, `blockFilter` and `blockFollow` types move to a new standalone contract, `contracts/yappr-blocks-contract.json`.
 
-This PR is contracts and tooling only. Nothing is registered on any network, and the client still has no `v13` topology: wiring it is the follow-up PR ([below](#client-work-for-the-follow-up-pr)).
+This document was written with the contracts and tooling PR (#690); the client wiring followed as topology `v13` (#694). **Since 2026-10-07 the v13 set is live on the sakura devnet and `/devnet` runs it** (social v13 `6ABCzyyXNus9jKfWvGJUEgzk1FxPFDUK6B7PS1fK51Wr`, blocks `8zJG5EZuPGycLan5JVw6eZArPRqT1pYewrL7FLEw6wPC`): ids, batteries and live fees are in [SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md).
 
 | # | Decision | What changes |
 | --- | --- | --- |
