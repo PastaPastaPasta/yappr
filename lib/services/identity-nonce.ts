@@ -44,6 +44,12 @@ export interface PendingTransition {
   signedAfter?: bigint;
   /** When it was reserved (ms since epoch); absent on entries stored before this was recorded. */
   reservedAt?: number;
+  /**
+   * What the transition writes, as an opaque key its caller chose (a Pollr
+   * ballot names its poll), so a caller can tell which pending transitions can
+   * touch what it is about to do. Absent means unknown: it may touch anything.
+   */
+  scope?: string;
 }
 
 /** A document replace: `revision` is the one the transition writes. */
@@ -114,7 +120,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       mark: string;
-      pending: { id: string; nonce: string | null; expiresAt: number | null; replaces?: unknown; signedAfter?: unknown; reservedAt?: unknown }[];
+      pending: { id: string; nonce: string | null; expiresAt: number | null; replaces?: unknown; signedAfter?: unknown; reservedAt?: unknown; scope?: unknown }[];
     };
     return {
       mark: BigInt(parsed.mark),
@@ -128,6 +134,7 @@ export function loadReservation(ownerId: string, contractId: string): NonceReser
             ? { replaces: p.replaces, signedAfter: BigInt(p.signedAfter) }
             : {}),
           ...(typeof p.reservedAt === 'number' ? { reservedAt: p.reservedAt } : {}),
+          ...(typeof p.scope === 'string' ? { scope: p.scope } : {}),
         })),
     };
   } catch (error) {
@@ -145,6 +152,7 @@ function saveReservation(ownerId: string, contractId: string, reservation: Nonce
       expiresAt: p.expiresAt,
       ...(p.replaces && p.signedAfter !== undefined ? { replaces: p.replaces, signedAfter: p.signedAfter.toString() } : {}),
       ...(p.reservedAt !== undefined ? { reservedAt: p.reservedAt } : {}),
+      ...(p.scope !== undefined ? { scope: p.scope } : {}),
     }));
     localStorage.setItem(reservationKey(ownerId, contractId), JSON.stringify({ mark: reservation.mark.toString(), pending }));
   } catch (error) {
@@ -191,7 +199,8 @@ export function reserveNonce(
   contractId: string,
   nonce: bigint | null,
   current: bigint | undefined | null,
-  replaces?: DocumentReplace
+  replaces?: DocumentReplace,
+  scope?: string
 ): PendingTransition {
   const previous = loadReservation(ownerId, contractId);
   // Unique across tabs: releasing one must never release another.
@@ -201,6 +210,7 @@ export function reserveNonce(
     expiresAt: nonce === null ? Date.now() + PENDING_LIFETIME_MS : null,
     reservedAt: Date.now(),
     ...(replaces ? { replaces, signedAfter: current ?? BigInt(0) } : {}),
+    ...(scope !== undefined ? { scope } : {}),
   };
   const mark = previous?.mark ?? BigInt(0);
   saveReservation(ownerId, contractId, {
@@ -255,9 +265,16 @@ function isVerdict(error: unknown): boolean {
  *
  * `replaces` names the document replace the write makes, stored with its
  * pending entry, so that {@link settleSupersededReplaces} can later prove it
- * can no longer execute. It changes nothing else.
+ * can no longer execute. `scope` is stored with it too (see
+ * {@link PendingTransition.scope}). Neither changes anything else.
  */
-export async function withSdkSignedWrite<T>(ownerId: string, contractId: string, write: () => Promise<T>, replaces?: DocumentReplace): Promise<T> {
+export async function withSdkSignedWrite<T>(
+  ownerId: string,
+  contractId: string,
+  write: () => Promise<T>,
+  replaces?: DocumentReplace,
+  scope?: string
+): Promise<T> {
   return withIdentityWriteLock(ownerId, contractId, async () => {
     const sdk = await getEvoSdk();
     const reservation = loadReservation(ownerId, contractId);
@@ -272,7 +289,7 @@ export async function withSdkSignedWrite<T>(ownerId: string, contractId: string,
       current = await sdk.identities.contractNonce(ownerId, contractId);
     }
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
-    const entry = reserveNonce(ownerId, contractId, null, current, replaces);
+    const entry = reserveNonce(ownerId, contractId, null, current, replaces, scope);
     try {
       const result = await write();
       releaseNonce(ownerId, contractId, entry);

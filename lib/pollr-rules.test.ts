@@ -5,9 +5,7 @@ import {
   applyChoiceDelta,
   charCount,
   choiceDelta,
-  confirmsPendingVote,
   isChoiceIndex,
-  pendingAfterSubmit,
   normalizeChoices,
   pollEndsAt,
   pollEndsAtError,
@@ -121,46 +119,6 @@ describe('ballot plan, multi choice', () => {
     const zero = ballot(0, 0)
     expect(planBallotWrites(true, [zero], [0, 1])).toEqual([{ kind: 'create', slot: 1, choice: 1 }])
     expect(planBallotWrites(true, [zero], [])).toEqual([{ kind: 'replace', ballot: zero, choice: null }])
-  })
-})
-
-describe('confirming an unconfirmed vote', () => {
-  const withdrawal = { wanted: [], afterRead: 3 }
-
-  it('needs a successful read made after the submission went unconfirmed', () => {
-    // No completed read (it failed, or is still in flight): nothing confirms,
-    // even though an empty withdrawal "matches" an empty placeholder.
-    expect(confirmsPendingVote(withdrawal, null)).toBe(false)
-    // The read the submission was planned against predates it.
-    expect(confirmsPendingVote(withdrawal, { choices: [], generation: 3 })).toBe(false)
-    expect(confirmsPendingVote(withdrawal, { choices: [], generation: 4 })).toBe(true)
-  })
-
-  it('needs the read to show exactly the wanted selection', () => {
-    expect(confirmsPendingVote(withdrawal, { choices: [1], generation: 4 })).toBe(false)
-    expect(confirmsPendingVote({ wanted: [0, 2], afterRead: 0 }, { choices: [0], generation: 1 })).toBe(false)
-    expect(confirmsPendingVote({ wanted: [0, 2], afterRead: 0 }, { choices: [2, 0], generation: 1 })).toBe(true)
-    expect(confirmsPendingVote(null, { choices: [], generation: 9 })).toBe(false)
-  })
-})
-
-describe('the pending vote after a submission', () => {
-  it('confirms the latest request, not an older one, after a held-back retry', () => {
-    // [0, 1] goes unconfirmed after read 2.
-    const first = pendingAfterSubmit(null, [0, 1], 2, 'unconfirmed')
-    expect(first).toEqual({ wanted: [0, 1], afterRead: 2 })
-    // The voter unticks 1 and submits [0]: held back while slot 1 may land.
-    const retry = pendingAfterSubmit(first, [0], 2, 'notSent')
-    expect(retry).toEqual({ wanted: [0], afterRead: 2 })
-    // Slot 1 lands and the next read shows [0, 1]: that settles the OLD request,
-    // so it must not close the newer [0] edit.
-    expect(confirmsPendingVote(retry, { choices: [0, 1], generation: 3 })).toBe(false)
-    expect(confirmsPendingVote(retry, { choices: [0], generation: 3 })).toBe(true)
-  })
-
-  it('has nothing to confirm after a refusal with nothing pending, or once settled', () => {
-    expect(pendingAfterSubmit(null, [1], 4, 'notSent')).toBeNull()
-    expect(pendingAfterSubmit({ wanted: [1], afterRead: 1 }, [2], 4, 'settled')).toBeNull()
   })
 })
 

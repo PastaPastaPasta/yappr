@@ -2,7 +2,7 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
-import { pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
+import { pollrBallotScope, pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -80,10 +80,10 @@ export interface SetVoteResult {
    */
   unconfirmed?: boolean;
   /**
-   * Nothing was sent: an earlier Pollr write from this account (say the
-   * unconfirmed half of a multi-choice vote) could still execute, and a plan
-   * judged against the ballots on chain now could be undone by it. Retry once
-   * it settles.
+   * Nothing was sent: an earlier write to this voter's ballots on this poll
+   * (say the unconfirmed half of a multi-choice vote) could still execute, and
+   * a plan judged against the ballots on chain now could be undone by it.
+   * Retry once {@link PollrVoteService.getBallotState} reports nothing pending.
    */
   heldBack?: boolean;
   /** Platform refused a write because the poll has closed. */
@@ -95,6 +95,17 @@ export interface SetVoteResult {
   stale: boolean;
   /** Message from the first failure, if any. */
   error?: string;
+}
+
+/** A voter's ballots on one poll, as the single source of truth for the card. */
+export interface BallotState {
+  /** The choices the voter's ballots select on chain. */
+  choices: number[];
+  /**
+   * An earlier write to these ballots could still execute, so `choices` may yet
+   * change: show them read-only and check again. Always false before v5.
+   */
+  pending: boolean;
 }
 
 export interface PollTally {
@@ -376,7 +387,7 @@ class PollrVoteService {
     await settlePendingPollrReplaces(ownerId);
     let mayStillExecute: boolean;
     try {
-      mayStillExecute = await pollrWriteMayStillExecute(ownerId);
+      mayStillExecute = await pollrWriteMayStillExecute(ownerId, poll.id);
     } catch (error) {
       // The reservation store is unreadable: nothing proves an earlier write
       // cannot land, so refuse rather than plan (nothing was sent).
@@ -438,18 +449,23 @@ class PollrVoteService {
   }
 
   /**
-   * Whether a Pollr write from `ownerId` could still execute, after releasing
-   * the replaces Platform shows landed. A read-based confirmation of an earlier
-   * unconfirmed vote is only final when none can: a late write would still
-   * change the ballots it read. True when that cannot be determined.
+   * The voter's ballots on this poll and whether they are settled — the one
+   * place the card learns either. On v5 it first releases the replaces
+   * Platform shows landed, then asks whether any earlier write to this poll's
+   * ballots could still execute; `pending` is true when one could, or when
+   * that cannot be determined (an unreadable store or nonce). Throws when the
+   * ballots themselves cannot be read, as {@link getMyVotes} does.
    */
-  async writesMayStillExecute(ownerId: string): Promise<boolean> {
-    await settlePendingPollrReplaces(ownerId);
+  async getBallotState(poll: Poll, userId: string): Promise<BallotState> {
+    if (!pollrIsV5()) return { choices: await this.getMyVotes(poll, userId), pending: false };
+    await settlePendingPollrReplaces(userId);
+    let pending: boolean;
     try {
-      return await pollrWriteMayStillExecute(ownerId);
+      pending = await pollrWriteMayStillExecute(userId, poll.id);
     } catch {
-      return true;
+      pending = true;
     }
+    return { choices: await this.getMyVotes(poll, userId), pending };
   }
 
   /** One v5 ballot write. */
@@ -467,17 +483,23 @@ class PollrVoteService {
     };
     if (write.choice !== null) data.choice = write.choice;
 
+    // Reserved with the poll's scope, so a write left pending here holds back
+    // only this poll's ballots.
+    const scope = pollrBallotScope(poll.id);
     try {
       const result =
         write.kind === 'create'
-          ? await stateTransitionService.createDocument(POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES.VOTE, ownerId, data)
+          ? await stateTransitionService.createDocument(POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES.VOTE, ownerId, data, {
+              reservationScope: scope,
+            })
           : await stateTransitionService.updateDocument(
               POLLR_CONTRACT_ID,
               POLLR_DOCUMENT_TYPES.VOTE,
               write.ballot.id,
               ownerId,
               data,
-              write.ballot.revision
+              write.ballot.revision,
+              scope
             );
       if (result.success) {
         // An unconfirmed create was broadcast but never seen on chain.

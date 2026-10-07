@@ -539,6 +539,8 @@ class StateTransitionService {
        * confirmation must read the write back through a value query.
        */
       confirmation?: 'strict' | 'affectedState';
+      /** Stored with the nonce reservation: what this create writes (see `PendingTransition.scope`). */
+      reservationScope?: string;
     }
   ): Promise<StateTransitionResult> {
     return withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
@@ -721,7 +723,7 @@ class StateTransitionService {
 
       // Reserved before the broadcast: a broadcast that errors may still have
       // gone out, and skipping a nonce that did not only leaves a gap Drive fills.
-      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce);
+      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce, undefined, options?.reservationScope);
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.debug('Broadcast succeeded, waiting for confirmation...');
@@ -867,7 +869,9 @@ class StateTransitionService {
     documentId: string,
     ownerId: string,
     documentData: Record<string, unknown>,
-    revision: number
+    revision: number,
+    /** Stored with the nonce reservation: what this replace writes (see `PendingTransition.scope`). */
+    reservationScope?: string
   ): Promise<StateTransitionResult> {
     try {
       this.assertUnpricedAction(contractId, documentType, 'replace');
@@ -909,7 +913,7 @@ class StateTransitionService {
         documentType,
         documentId,
         revision: newRevision,
-      });
+      }, reservationScope);
       logger.debug('Document update submitted successfully');
 
       return {

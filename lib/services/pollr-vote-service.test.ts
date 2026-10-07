@@ -245,7 +245,7 @@ describe('v5 ballots', () => {
     // That create is still reserved at its nonce (6) and Platform has not consumed it.
     mocks.loadReservation.mockReturnValue({
       mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now() }],
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now(), scope: `pollr-vote:${id(9)}` }],
     });
     mocks.contractNonce.mockResolvedValue(BigInt(5));
     // The chain shows only slot 0, so [0] plans no writes, yet slot 1 can still land.
@@ -276,20 +276,49 @@ describe('v5 ballots', () => {
     expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 
-  it('reports whether an earlier write could still change a read-confirmed vote', async () => {
+  it('getBallotState reads the ballots and whether a write to them could still land', async () => {
     const service = await loadService('v5');
-    expect(await service.writesMayStillExecute(VOTER)).toBe(false);
+    const target = open({ multiChoice: true });
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null)));
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: false });
+    expect(mocks.settle).toHaveBeenCalledWith(VOTER, expect.any(String));
 
+    // A create to this poll's ballots is still out, unconsumed.
     mocks.loadReservation.mockReturnValue({
       mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now() }],
+      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, reservedAt: Date.now(), scope: `pollr-vote:${id(9)}` }],
     });
     mocks.contractNonce.mockResolvedValue(BigInt(5));
-    expect(await service.writesMayStillExecute(VOTER)).toBe(true);
-    // An unreadable store cannot prove anything: not final.
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });
+    // A pending write on another poll does not hold this one.
+    expect(await service.getBallotState(open({ id: id(8), multiChoice: true }), VOTER)).toEqual({ choices: [0], pending: false });
+
+    // An unreadable store proves nothing: pending, not settled.
     mocks.loadReservation.mockImplementation(() => { throw new Error('blocked'); });
-    expect(await service.writesMayStillExecute(VOTER)).toBe(true);
-    expect(mocks.settle).toHaveBeenCalled();
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });
+  });
+
+  it('getBallotState throws when the ballots cannot be read', async () => {
+    const service = await loadService('v5');
+    mocks.query.mockRejectedValue(new Error('down'));
+    await expect(service.getBallotState(open(), VOTER)).rejects.toThrow('down');
+  });
+
+  it('getBallotState is never pending before v5', async () => {
+    const service = await loadService('v3');
+    mocks.query.mockResolvedValue(new Map([['0', { choice: 1 }]]));
+    expect(await service.getBallotState(poll(), VOTER)).toEqual({ choices: [1], pending: false });
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('reserves each ballot write with its poll’s scope', async () => {
+    const service = await loadService('v5');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 3)));
+    await service.setVote(open({ multiChoice: true }), [1], VOTER);
+
+    const scope = `pollr-vote:${id(9)}`;
+    expect(mocks.updateDocument.mock.calls[0][6]).toBe(scope);
+    expect(mocks.createDocument.mock.calls[0][4]).toEqual({ reservationScope: scope });
   });
 
   it('reports an unconfirmed create as unconfirmed, not as counted', async () => {

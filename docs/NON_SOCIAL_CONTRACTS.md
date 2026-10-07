@@ -333,32 +333,47 @@ sdk.documents.query({ dataContractId, documentTypeName: 'vote',
 ```
 
 **Client (`lib/services/pollr-vote-service.ts`, `lib/pollr-rules.ts`).**
-`setVote(poll, wanted, me)` reads the voter's ballots fresh, plans the writes
-that make them select exactly `wanted` (`planBallotWrites`), and runs them one
-at a time. A 10422 naming `writtenBeforeClose` is reported as "This poll has
+The service is the one source of truth for a voter's ballots:
+`getBallotState(poll, me)` returns `{ choices, pending }`. `pending` is true
+while an earlier write to this voter's ballots on this poll could still execute
+(`pollrWriteMayStillExecute`): an unconfirmed create until Platform shows its
+nonce consumed (it landed, or cannot) or it is 15 minutes old, an SDK-signed
+replace until it is settled or expires, and anything when the reservation
+store or the nonce cannot be read. Ballot writes are reserved with their poll's
+scope (`pollr-vote:<pollId>`, an optional field on the nonce reservation), so a
+pending write on one poll does not hold back another; an entry with no scope (a
+poll create, or one stored before scopes) counts for every poll. Before
+anything, the replaces Platform shows landed are released
+(`settlePendingPollrReplaces`, over `settleSupersededReplaces`); `createPoll`
+runs that too.
+
+While `pending`, the card shows the results read-only with "Confirming your
+vote… Check again", which re-reads that state; editing comes back once nothing
+is pending, and the voter picks again from the settled ballots.
+
+`setVote(poll, wanted, me)` refuses to plan while anything is pending
+(`heldBack`, nothing sent; an unreadable store refuses too). Otherwise it reads
+the ballots fresh, plans the writes that make them select exactly `wanted`
+(`planBallotWrites`), and runs them one at a time, each reserved with the
+poll's scope. A 10422 naming `writtenBeforeClose` is reported as "This poll has
 closed"; a stale revision (40106) or a ballot another tab created first (40105)
 as `stale`, and the card reloads. After a refused write it re-reads the
 ballots and reports what the chain shows. A write whose confirmation timed out
 stops the run and comes back `unconfirmed`, with no re-read (one this soon
-would likely predate the write); the card keeps the ballot open on the wanted
-selection with a "Check again" re-read, so whatever did not land can be sent
-again. Before writing, `setVote` and `createPoll` release the nonce
-reservations of earlier replaces Platform shows landed
-(`settlePendingPollrReplaces`, over `settleSupersededReplaces`), so a timed-out
-edit does not hold back the next ballot or poll until it expires. `setVote`
-then refuses to plan at all (`heldBack`, nothing sent) while any earlier Pollr
-write from the account could still execute — an unconfirmed create until its
-nonce is consumed or it is 15 minutes old — since a late write would change the
-selection the plan was judged against. An unreadable reservation store refuses
-the vote too (no Pollr write can be signed without it anyway). The card
-confirms a pending vote against the voter's latest request only, and only when
-no earlier write could still land. The ballots copy the
-poll's stored `optionCount`. Optimistic tallies move down as well as up. `tallyIsFinal` is true
-only for a tally read off the chain after `endsAt` (plus a 30 s margin for the
-device clock against block time); the card says "Final results" only then.
-The poll editor offers 1, 3, 7, 14 and 30 days (default 1 day) — 30, not 31,
-because the close time comes from the device clock and the rule judges block
-time — and enforces the character and byte limits and distinct options.
+would likely predate the write), and the card shows the ballots as pending.
+Every submission is a fresh plan against the chain. The ballots copy the poll's
+stored `optionCount`. Optimistic tallies move down as well as up.
+`tallyIsFinal` is true only for a tally read off the chain after `endsAt`
+(plus a 30 s margin for the device clock against block time); the card says
+"Final results" only then. The poll editor offers 1, 3, 7, 14 and 30 days
+(default 1 day) — 30, not 31, because the close time comes from the device
+clock and the rule judges block time — and enforces the character and byte
+limits and distinct options.
+
+A submission cannot be one atomic batch: the batch cap is one document
+transition (see "Not possible at 4.2" below), so a multi-choice change is
+several transitions, and the pending state above is what keeps a partial one
+from being read as settled.
 
 **v3 and v4.** v3 (testnet) keeps its immutable, one-document-per-selection
 ballots and the time-bounded "final results" read. v4 is **read-only** in the

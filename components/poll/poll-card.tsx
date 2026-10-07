@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
@@ -12,15 +12,7 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { pollrPollUrl } from '@/lib/poll-embed'
 import { pollrIsV4, pollrIsV5 } from '@/lib/constants'
-import {
-  choiceDelta,
-  confirmsPendingVote,
-  normalizeChoices,
-  pendingAfterSubmit,
-  sameChoices,
-  type BallotRead,
-  type PendingVote,
-} from '@/lib/pollr-rules'
+import { choiceDelta, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
@@ -78,15 +70,11 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // Platform refused a write because the poll has closed, though this device's
   // clock says it is still open: trust the chain, or every retry is refused.
   const [closedOnChain, setClosedOnChain] = useState(false)
-  // v5: the selection a submission was asked for when one of its writes went
-  // unconfirmed. The run stopped there, so later picks were never sent; the
-  // ballot stays open on this selection until a re-read shows it recorded.
-  const [pendingVote, setPendingVote] = useState<PendingVote | null>(null)
-  // The last completed, successful read of the voter's ballots — null while a
-  // load is in flight or when it failed. Only this may confirm a pending vote:
-  // `myVotes` is reset to an empty placeholder before every read.
-  const [ballotRead, setBallotRead] = useState<BallotRead | null>(null)
-  const readGeneration = useRef(0)
+  // v5: an earlier write to the voter's ballots on this poll could still land
+  // (pollrVoteService.getBallotState). The ballots are then shown read-only
+  // until a check finds nothing pending; every later submission is a fresh
+  // plan against the chain.
+  const [ballotPending, setBallotPending] = useState(false)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
@@ -105,7 +93,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       // failed lookup can't leave the previous account's (or poll's) answer on
       // screen as if it belonged to the one now being loaded.
       setMyVotes([])
-      setBallotRead(null)
+      setBallotPending(false)
       setTally(null)
       try {
         const { pollrPollService, pollrVoteService } = await import('@/lib/services')
@@ -119,7 +107,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
 
         const [tallyResult, votesResult] = await Promise.allSettled([
           pollrVoteService.getTally(loadedPoll),
-          userId ? pollrVoteService.getMyVotes(loadedPoll, userId) : Promise.resolve<number[]>([]),
+          userId
+            ? pollrVoteService.getBallotState(loadedPoll, userId)
+            : Promise.resolve({ choices: [] as number[], pending: false }),
         ])
         if (cancelled) return
 
@@ -135,9 +125,8 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         // Own votes are load-bearing for correctness, so a failure closes the
         // ballot instead of guessing that the user hasn't voted.
         if (votesResult.status === 'fulfilled') {
-          setMyVotes(votesResult.value)
-          readGeneration.current += 1
-          setBallotRead({ choices: votesResult.value, generation: readGeneration.current })
+          setMyVotes(votesResult.value.choices)
+          setBallotPending(votesResult.value.pending)
         } else {
           logger.error('PollCard: failed to load own votes', votesResult.reason)
           setVotesUnavailable(true)
@@ -161,7 +150,6 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   const stopEditing = useCallback(() => {
     setSelected([])
     setEditing(false)
-    setPendingVote(null)
   }, [])
 
   // Reset any pending selection when switching polls or signing in/out.
@@ -173,29 +161,6 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     setClosedOnChain(false)
   }, [pollId])
 
-  // An unconfirmed submission is settled once a successful ballot read, made
-  // after it went unconfirmed, shows the voter's ballots selecting what was
-  // asked for. A failed or in-flight read settles nothing. Until then the
-  // ballot stays open on it, so "Update vote" sends whatever has not landed.
-  // The read alone is not final while an earlier write could still land and
-  // change the ballots it showed, so that is checked too; if one could, the
-  // ballot stays open for a later "Check again".
-  useEffect(() => {
-    if (!userId || !confirmsPendingVote(pendingVote, ballotRead)) return
-    let cancelled = false
-    const confirm = async () => {
-      const { pollrVoteService } = await import('@/lib/services')
-      if (await pollrVoteService.writesMayStillExecute(userId)) return
-      if (cancelled) return
-      stopEditing()
-      toast.success('Vote confirmed')
-    }
-    confirm().catch((error) => logger.error('PollCard: failed to confirm a pending vote', error))
-    return () => {
-      cancelled = true
-    }
-  }, [userId, pendingVote, ballotRead, stopEditing])
-
   const isClosed = closedOnChain || (poll ? pollIsClosed(poll) : false)
   const hasVoted = myVotes.length > 0
   // v3 stays in vote mode while choices are still selected: a multi-choice
@@ -206,6 +171,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     !votingSupported ||
     isClosed ||
     votesUnavailable ||
+    ballotPending ||
     (hasVoted && !editing && (editable || selected.length === 0))
   // v5: any voter may change their vote while the poll is open. v3: a
   // multi-choice voter who hasn't picked everything can still add selections.
@@ -214,6 +180,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       votingSupported &&
       !isClosed &&
       !votesUnavailable &&
+      !ballotPending &&
       hasVoted &&
       (editable || (poll?.multiChoice && myVotes.length < (poll?.options.length ?? 0)))
   )
@@ -238,23 +205,18 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     const { pollrVoteService } = await import('@/lib/services')
     const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
 
-    if (result.heldBack) {
-      // Nothing was sent. Keep the ballot open on what was asked for, so the
-      // voter can submit it once the earlier write has settled.
-      toast('Your earlier vote is still being confirmed. Try again in a moment.', { icon: '⏳', duration: 6000 })
-      setPendingVote((previous) => pendingAfterSubmit(previous, wanted, readGeneration.current, 'notSent'))
-      setSelected(wanted)
-      setEditing(true)
-      return
-    }
-
-    if (result.unconfirmed) {
-      // Sent, but not seen yet. Leave the vote and tally as they were rather
-      // than replace them with a read that likely predates the write.
-      toast('Your vote was sent but is not confirmed yet.', { icon: '⏳', duration: 6000 })
-      setPendingVote((previous) => pendingAfterSubmit(previous, wanted, readGeneration.current, 'unconfirmed'))
-      setSelected(wanted)
-      setEditing(true)
+    if (result.unconfirmed || result.heldBack) {
+      // A write is out with no outcome yet (this one, or an earlier one this
+      // was held back behind), so the ballots may still change. Show them
+      // read-only until "Check again" finds nothing pending; the vote and
+      // tally stay as they were rather than take a read that likely predates
+      // the write. The voter picks again from the settled ballots.
+      toast(result.unconfirmed ? 'Your vote was sent and is being confirmed.' : 'Your earlier vote is still being confirmed.', {
+        icon: '⏳',
+        duration: 6000,
+      })
+      setBallotPending(true)
+      stopEditing()
       return
     }
 
@@ -279,9 +241,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     } else if (!result.success) {
       toast.error(categorizeError(result.error))
       // Keep the ballot open on the wanted picks for a retry — including after a
-      // partial first multi-choice vote, which now has recorded choices — and
-      // make them what a pending earlier vote is confirmed against.
-      setPendingVote((previous) => pendingAfterSubmit(previous, wanted, readGeneration.current, 'notSent'))
+      // partial first multi-choice vote, which now has recorded choices.
       setSelected(wanted)
       setEditing(true)
       return
@@ -469,6 +429,18 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             </button>
           )}
 
+          {ballotPending && user && (
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Confirming your vote…{' '}
+              <button
+                onClick={() => setReloadToken((token) => token + 1)}
+                className="font-medium text-yappr-500 hover:underline"
+              >
+                Check again
+              </button>
+            </p>
+          )}
+
           {/* One retry covers both reads — the reload refetches the tally and
               the user's own votes together. */}
           {(tallyUnavailable || (votesUnavailable && user && !isClosed)) && (
@@ -554,19 +526,6 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
               </Button>
             )}
           </div>
-
-          {pendingVote && (
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Not confirmed yet.{' '}
-              <button
-                onClick={() => setReloadToken((token) => token + 1)}
-                disabled={submitting}
-                className="font-medium text-yappr-500 hover:underline"
-              >
-                Check again
-              </button>
-            </p>
-          )}
         </div>
       )}
 

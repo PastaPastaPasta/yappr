@@ -160,56 +160,6 @@ export function sameChoices(a: readonly number[], b: readonly number[]): boolean
   return left.length === right.length && left.every((choice, index) => choice === right[index])
 }
 
-/** A submission whose last write went unconfirmed, and the ballot read it was made after. */
-export interface PendingVote {
-  wanted: number[]
-  /** The generation of the last successful ballot read when it went unconfirmed. */
-  afterRead: number
-}
-
-/** A completed, successful read of the voter's ballots. */
-export interface BallotRead {
-  choices: number[]
-  /** Increases with every successful read. */
-  generation: number
-}
-
-/**
- * Whether `read` settles `pending`: it is a successful read made AFTER the
- * submission went unconfirmed, and it shows exactly the wanted selection. A
- * read that failed, or one still in flight, is no read at all — an empty
- * placeholder must never pass for a recorded withdrawal.
- */
-export function confirmsPendingVote(pending: PendingVote | null, read: BallotRead | null): boolean {
-  return pending !== null && read !== null && read.generation > pending.afterRead && sameChoices(read.choices, pending.wanted)
-}
-
-/** How a v5 submission ended, as far as the confirmation target is concerned. */
-export type SubmitOutcome =
-  /** A write went out and its outcome is not known yet. */
-  | 'unconfirmed'
-  /** Nothing new is known to have landed: held back, or refused. */
-  | 'notSent'
-  /** Done one way or another: recorded, closed, or changed elsewhere (reloaded). */
-  | 'settled'
-
-/**
- * The pending vote to confirm after a submission of `wanted`. The latest
- * request is always the target: once the voter asks for something new, a read
- * matching an OLDER request must not close their newer edit. A refusal while
- * nothing was pending leaves nothing to confirm.
- */
-export function pendingAfterSubmit(
-  previous: PendingVote | null,
-  wanted: number[],
-  afterRead: number,
-  outcome: SubmitOutcome
-): PendingVote | null {
-  if (outcome === 'settled') return null
-  if (outcome === 'notSent' && previous === null) return null
-  return { wanted: normalizeChoices(wanted), afterRead }
-}
-
 /** What changed between two selections: the choices `next` adds and the ones it drops. */
 export function choiceDelta(previous: readonly number[], next: readonly number[]): { added: number[]; removed: number[] } {
   const before = new Set(previous)

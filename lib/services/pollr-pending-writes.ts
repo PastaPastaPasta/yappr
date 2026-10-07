@@ -22,39 +22,49 @@ export async function settlePendingPollrReplaces(ownerId: string): Promise<void>
   }
 }
 
+/** The reservation scope of a Pollr ballot write: the poll it votes on. */
+export function pollrBallotScope(pollId: string): string {
+  return `pollr-vote:${pollId}`;
+}
+
 /**
- * Whether a Pollr write this browser signed for `ownerId` could still execute
- * — a ballot create or replace whose outcome never came back. Planning a vote
- * against the ballots on chain is only sound when none can: one that lands
- * afterwards changes the selection the plan was judged against (an empty plan
- * would even report a selection "recorded" that the late write then changes).
+ * Whether a Pollr write this browser signed for `ownerId` could still change
+ * the voter's ballots on `pollId` — a ballot create or replace whose outcome
+ * never came back. Planning a vote against the ballots on chain, or showing
+ * them as settled, is only sound when none can: one that lands afterwards
+ * changes the selection that was judged.
+ *
+ * Ballot writes are reserved with their poll's scope, so a pending write on
+ * another poll does not count. An entry with no scope (a poll create, or one
+ * stored before scopes were recorded) may touch anything, so it counts for
+ * every poll.
  *
  * A create is reserved with its nonce, so it stops counting once Platform
  * shows that nonce consumed, whether by it or by another transition — or, as
  * the store already assumes for SDK-signed ones, once it is older than
  * PENDING_LIFETIME_MS: a valid transition executes within a block or two, so
- * one that old was dropped (otherwise a dropped create would hold every later
- * vote back for good, its nonce never consumed). A replace
- * the SDK signed has no known nonce; it counts until it is settled (see
- * {@link settlePendingPollrReplaces}, which callers run first) or expires. The
- * reservations do not record which poll they write, so any pending Pollr write
- * counts. True when the nonce cannot be read while something is pending, since
- * nothing then proves it cannot execute.
+ * one that old was dropped (otherwise a dropped create would hold the poll
+ * back for good, its nonce never consumed). A replace the SDK signed has no
+ * known nonce; it counts until it is settled (see
+ * {@link settlePendingPollrReplaces}, which callers run first) or expires.
+ * True when the nonce cannot be read while something relevant is pending,
+ * since nothing then proves it cannot execute.
  *
  * Throws NONCE_STORE_ERROR when the reservation store cannot be read: nothing
- * is then known about what may still execute, so the caller must refuse — even
- * a plan of no writes, which never reaches the write path's own refusal. This
- * blocks nothing that could otherwise work: no Pollr write can be signed
- * without the store either.
+ * is then known about what may still execute, so the caller must not treat
+ * the ballots as settled. This blocks nothing that could otherwise work: no
+ * Pollr write can be signed without the store either.
  */
-export async function pollrWriteMayStillExecute(ownerId: string): Promise<boolean> {
+export async function pollrWriteMayStillExecute(ownerId: string, pollId: string): Promise<boolean> {
   const reservation = loadReservation(ownerId, POLLR_CONTRACT_ID);
-  if (!reservation || reservation.pending.length === 0) return false;
+  const scope = pollrBallotScope(pollId);
+  const relevant = (reservation?.pending ?? []).filter((p) => p.scope === undefined || p.scope === scope);
+  if (!reservation || relevant.length === 0) return false;
   try {
     const sdk = await getEvoSdk();
     const current = await sdk.identities.contractNonce(ownerId, POLLR_CONTRACT_ID);
     const now = Date.now();
-    return stillPending(current, reservation, now)
+    return stillPending(current, { ...reservation, pending: relevant }, now)
       .some((p) => p.reservedAt === undefined || now - p.reservedAt < PENDING_LIFETIME_MS);
   } catch (error) {
     logger.warn('Pollr: could not check for pending writes', { error: extractErrorMessage(error) });
