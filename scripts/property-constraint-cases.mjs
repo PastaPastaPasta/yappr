@@ -67,7 +67,7 @@ export const blogTombstone = (extra = {}) => ({ blogId: id(), slug: 'constraint-
 /** `publishedNotAhead` judges `publishedAt` against `$updatedAt`, which the oracle sets to the clock. */
 const BLOG_NOW = Date.now();
 
-const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
+export const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
 
 /**
  * [label, docType, data, refusedBy] — `refusedBy` is the rule the document
@@ -163,7 +163,8 @@ export const CONSTRAINT_CASES = {
     ['blogPost: `deleted: false` on a live post', 'blogPost', { ...baseBlogPost(), commentsEnabled: true, deleted: false }, 'tombstoneIsBlank'],
     ['blogPost: publishedAt now', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW }, null],
     ['blogPost: publishedAt backdated (an import)', 'blogPost', { ...baseBlogPost(), publishedAt: 1e12 }, null],
-    ['blogPost: publishedAt an hour ahead', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 3_600_000 }, 'publishedNotAhead'],
+    // A day ahead, so a long live run reaching b19 late still finds it ahead.
+    ['blogPost: publishedAt a day ahead', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 86_400_000 }, 'publishedNotAhead'],
   ],
 };
 

@@ -51,32 +51,33 @@ import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
   MODERATOR_FLAG, id32, reportSelfTest, runBattery,
 } from './battery-lib.mjs';
-import { REPO_ROOT, actionFeeAgreementOptions, feeMultiplierPermille, randomEntropy } from './seed/seed-lib.mjs';
+import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, feeAgreementFor, feeMultiplierPermille, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, BANNED, NOT_A_LIST, REFERENCE_NOT_FOUND_DELETABLE, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
-import { liftBar } from './social-battery-lib.mjs';
-import { DECLARED_RULES, constraintViolation, refusedCreates, refusedReplaces } from './property-constraint-cases.mjs';
+import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET, liftBar } from './social-battery-lib.mjs';
+import { DECLARED_RULES, constraintViolation, drop, refusedCreates, refusedReplaces } from './property-constraint-cases.mjs';
 
 const CONTRACT_FILE = 'yappr-blog-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
 const SCHEMAS = CONTRACT.documentSchemas;
 /** A property the type does not declare (`additionalProperties: false`): JSON-schema 10101. */
 const UNKNOWN_PROPERTY = /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror|additional ?propert/i;
-// 40132/40133 may arrive as prose (verify-v10's matchers).
-const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
-const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
 
-/** The action fee a create of `docType` declares (v7: blog, blogPost, blogComment), or null. */
-function declaredCreateFee(docType) {
-  const fees = SCHEMAS[docType]?.actionFees;
-  const create = fees?.create;
-  if (!create) return null;
-  return { owner: BigInt(create.owner ?? 0), moderators: BigInt(create.moderators ?? 0), pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier' };
-}
+/** An index `docType` declares, by name (undefined when it declares none). */
+const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
 
 /** A v7 trend window as `documents.ranked()` names it: the index's own grid, the window covering it all. */
-function trendWindow(docType, index) {
-  const { range, step } = SCHEMAS[docType].indices.find((entry) => entry.name === index).timeRange;
+function trendWindow(docType, name) {
+  const { range, step } = index(docType, name).timeRange;
   return [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }];
+}
+
+/** The blog every later case writes under: b1's, or (for `--only`) a fresh one. Null when none could be made. */
+async function ensureFixtureBlog(ctx, prefix) {
+  if (!ctx.blogId) {
+    const blog = await ctx.battery.probeCreate(`${prefix} fixture blog created`, null, ctx.author, 'blog', blogData(`${ctx.run}-${prefix}`));
+    ctx.blogId = blog.ok ? blog.id : null;
+  }
+  return ctx.blogId;
 }
 /** "Trending blogs" (72h, a new window every 24h). */
 const TRENDING = trendWindow('blogFollow', 'followersTrend');
@@ -235,8 +236,8 @@ async function caseB9FeeMismatch(ctx) {
   console.log('\n--- b9. the action fee agreement must name the declared amount ---');
   if (!ctx.post1) { battery.check('b9 fee mismatch', false, 'no post fixture'); return; }
   // ABOVE the declared moderators fee: a LOWER one on an elected contract is a discount claim (40139).
-  const declared = declaredCreateFee('blogComment');
-  const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...declared, moderators: declared.moderators + 1n }, ctx.permille));
+  const declared = actionFeeFor('blogComment', SCHEMAS);
+  const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions({ ...declared, moderators: declared.moderators + 1n }, await feeMultiplierPermille(battery.sdk)));
   await battery.probeCreate('b9a a comment agreeing to a different moderators fee is refused (40133)', AGREEMENT_MISMATCH, reader, 'blogComment',
     commentData({ blogPostId: id32(ctx.post1), content: `overpaid ${run}` }), { agreement });
 }
@@ -355,11 +356,7 @@ async function caseB19PropertyConstraints(ctx) {
   const { battery, author, run } = ctx;
   console.log('\n--- b19. propertyConstraints on a create (10422): chunks contiguous, a body, publishedAt not ahead ---');
   // Under b1's fixture blog, or (for `--only b19`) a fresh one; b1b/b1c (one chunk each) are the accepted side.
-  if (!ctx.blogId) {
-    const blog = await battery.probeCreate('b19 fixture blog created', null, author, 'blog', blogData(`${run}-b19`));
-    ctx.blogId = blog.ok ? blog.id : null;
-    if (!ctx.blogId) return;
-  }
+  if (!(await ensureFixtureBlog(ctx, 'b19'))) return;
   for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'blogPost')) {
     await battery.probeCreate(`b19 ${label} is refused (10422 ${rule})`, constraintViolation(rule), author, 'blogPost', { ...data, blogId: id32(ctx.blogId), slug: `gap-${run}-${Date.now()}` });
   }
@@ -368,11 +365,7 @@ async function caseB19PropertyConstraints(ctx) {
 async function caseB20CommentsOff(ctx) {
   const { battery, author, reader, run } = ctx;
   console.log('\n--- b20. a comment carries its post\'s commentsEnabled; comments off is refused (beta.6 v5) ---');
-  if (!ctx.blogId) {
-    const blog = await battery.probeCreate('b20 fixture blog created', null, author, 'blog', blogData(`${run}-b20`));
-    ctx.blogId = blog.ok ? blog.id : null;
-    if (!ctx.blogId) return;
-  }
+  if (!(await ensureFixtureBlog(ctx, 'b20'))) return;
   const post = (title, commentsEnabled) => battery.probeCreate(`b20 fixture post with commentsEnabled ${commentsEnabled}`, null, author, 'blogPost',
     { ...postData({ blogId: id32(ctx.blogId), title: `${title} ${run}`, slug: `${title.toLowerCase()}-${run}` }), commentsEnabled });
   const [on, off] = [await post('Open', true), await post('Closed', false)];
@@ -396,29 +389,23 @@ async function caseB20CommentsOff(ctx) {
 async function caseB21OwnerGate(ctx) {
   const { battery, author, stranger, run } = ctx;
   console.log('\n--- b21. only a blog\'s owner posts to it (beta.6 v5) ---');
-  if (!ctx.blogId) {
-    const blog = await battery.probeCreate('b21 fixture blog created', null, author, 'blog', blogData(`${run}-b21`));
-    ctx.blogId = blog.ok ? blog.id : null;
-    if (!ctx.blogId) return;
-  }
+  if (!(await ensureFixtureBlog(ctx, 'b21'))) return;
   // Before v5 a stranger could squat a slug on someone else's blog (blogAndSlug is unique).
   await battery.probeCreate('b21a a stranger posting to the author\'s blog is refused (40127)', PROPERTY_MISMATCH, stranger, 'blogPost',
     postData({ blogId: id32(ctx.blogId), title: `Squat ${run}`, slug: `squat-${run}` }));
 }
 
-/** A fixture post for the tombstone cases; `publishedAt` kept so the tombstone resends it. */
+/** A fixture post for the tombstone cases (`publishedAt` kept so the tombstone resends it), and `replace` for it. */
 async function tombstoneFixture(ctx, prefix) {
   const { battery, author, run } = ctx;
-  if (!ctx.blogId) {
-    const blog = await battery.probeCreate(`${prefix} fixture blog created`, null, author, 'blog', blogData(`${run}-${prefix}`));
-    ctx.blogId = blog.ok ? blog.id : null;
-    if (!ctx.blogId) return null;
-  }
+  if (!(await ensureFixtureBlog(ctx, prefix))) return null;
   const publishedAt = Date.now();
   const slug = `${prefix}-${run}-${Date.now().toString(36)}`;
   const post = await battery.attemptCreate(author, 'blogPost', postData({ blogId: id32(ctx.blogId), title: `Doomed ${prefix} ${run}`, slug, publishedAt }));
   if (!post.ok) { battery.check(`${prefix} fixture post`, false, (post.error ?? '').slice(0, 200)); return null; }
-  return { id: post.id, slug, publishedAt };
+  // The author's replace of this post, at its current revision.
+  const replace = async (label, expect, data) => battery.probeReplace(label, expect, author, 'blogPost', post.id, data, await battery.revisionOf('blogPost', post.id));
+  return { id: post.id, slug, publishedAt, replace };
 }
 
 /** What an author's delete writes (`tombstoneIsBlank`): the flag, comments off, and the kept fields. */
@@ -429,13 +416,12 @@ async function caseB22Tombstone(ctx) {
   console.log('\n--- b22. an author deletes a post with a tombstone (v7 tombstoneIsBlank, deleted frozen) ---');
   const fixture = await tombstoneFixture(ctx, 'b22');
   if (!fixture) return;
-  const replace = async (label, expect, data) => battery.probeReplace(label, expect, author, 'blogPost', fixture.id, data, await battery.revisionOf('blogPost', fixture.id));
+  const { replace } = fixture;
   // The refused shapes come from the shared table, so the offline oracle judged them first.
   for (const [label, data, rule] of refusedReplaces(CONTRACT_FILE, 'blogPost')) {
     await replace(`b22 ${label} is refused (10422 ${rule})`, constraintViolation(rule), { ...data, blogId: id32(ctx.blogId), slug: fixture.slug, publishedAt: fixture.publishedAt });
   }
-  const undated = Object.fromEntries(Object.entries(tombstoneData(ctx, fixture)).filter(([key]) => key !== 'publishedAt'));
-  await replace('b22a a tombstone that drops publishedAt is refused (40128: frozen once set)', IMMUTABLE_CHANGED, undated);
+  await replace('b22a a tombstone that drops publishedAt is refused (40128: frozen once set)', IMMUTABLE_CHANGED, drop(tombstoneData(ctx, fixture), 'publishedAt'));
   await replace('b22b the author\'s tombstone lands: deleted, comments off, blogId/slug/publishedAt kept', null, tombstoneData(ctx, fixture));
   const stored = (await battery.fetchDocument('blogPost', fixture.id))?.toJSON?.() ?? {};
   battery.check('b22c it reads back as a tombstone: no title, no body, the slug kept',
@@ -456,7 +442,7 @@ async function caseB23BarredRetraction(ctx) {
   console.log('\n--- b23. retractedWhen: a banned author tombstones its own post, and nothing else ---');
   const fixture = await tombstoneFixture(ctx, 'b23');
   if (!fixture) return;
-  const replace = async (label, expect, data) => battery.probeReplace(label, expect, author, 'blogPost', fixture.id, data, await battery.revisionOf('blogPost', fixture.id));
+  const { replace } = fixture;
   const standing = () => battery.readback(() => sdk.contracts.moderationStatus({ contractId, identityId: author.ownerId, lists: ['banlist'] }));
   try {
     let banned = true;
@@ -508,15 +494,14 @@ const CASES = new Map([
 /** v7 shape the cases rely on beyond the per-type rules selfTestModerated checks. */
 function selfTestV7() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
-  const index = (docType, name) => (SCHEMAS[docType].indices ?? []).find((entry) => entry.name === name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
-  const fee = (docType) => declaredCreateFee(docType)?.moderators;
+  const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
   return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v7)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['blog and blogPost creates declare an 80M moderators fee', fee('blog') === 80_000_000n && fee('blogPost') === 80_000_000n],
     ['blogComment creates declare a 16M moderators fee', fee('blogComment') === 16_000_000n],
-    ['follows are unpriced', declaredCreateFee('blogFollow') === null],
+    ['follows are unpriced', actionFeeFor('blogFollow', SCHEMAS) === null],
     ['blog.timeline and blogPost.timeline index [$createdAt]', ['blog', 'blogPost'].every((t) => JSON.stringify(index(t, 'timeline')?.properties) === '[{"$createdAt":"asc"}]')],
     ['the dropped indexes are gone (blogPost/blogComment ownerAndTime, blogFollow following, the count-only twins)',
       !indexNames('blogPost').includes('ownerAndTime') && !indexNames('blogComment').includes('ownerAndTime') && !indexNames('blogComment').includes('commentCount')
@@ -548,22 +533,13 @@ await runBattery({
     blogPost: { where: { blogId: { $ownerId: '$ownerId' } }, immutable: ['blogId'], immutableWhen: { publishedAt: { present: '$old.publishedAt' }, deleted: { present: '$old.deleted' } }, moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 16, maxLength: 40 } }, constraints: DECLARED_RULES[CONTRACT_FILE].blogPost },
     blog: { moderatorDeletable: true, keepsHistory: false, typedArrays: { labels: { items: 'string', maxItems: 64, maxLength: 40 } } },
   }, { moderation: { banlist: true, suspensions: true, warnings: true } })),
+  // Every create of a priced type (blog, blogPost, blogComment) carries the declared agreement,
+  // unless a case opts out (`noAgreement`, b3c) or names its own (`agreement`, b9).
+  agreementFor: (sdk, docType) => feeAgreementFor(sdk, docType, SCHEMAS),
   setup: async ({ battery, args }) => {
     const moderator = await battery.moderatorActor(args.moderator);
     console.log(`moderator=${moderator.label}`);
-    const permille = await feeMultiplierPermille(battery.sdk);
-    // Every create of a priced type carries the declared agreement unless a case
-    // opts out (`noAgreement`, b3c) or names its own (`agreement`, b9).
-    const withFee = (docType, options = {}) => {
-      if (options.noAgreement || options.agreement) return options;
-      const fee = declaredCreateFee(docType);
-      return fee ? { ...options, agreement: new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, permille)) } : options;
-    };
-    const priced = Object.create(battery);
-    priced.attemptCreate = (who, docType, data, options) => battery.attemptCreate(who, docType, data, withFee(docType, options));
-    priced.probeCreate = (label, expect, who, docType, data, options) => battery.probeCreate(label, expect, who, docType, data, withFee(docType, options));
-    console.log(`fee multiplier=${permille} permille`);
-    return { battery: priced, permille, startedAt: Date.now() - 60_000, strangerCommentId: null, draftId: null, publishedAt: null, tombstone: null, moderator };
+    return { startedAt: Date.now() - 60_000, strangerCommentId: null, draftId: null, publishedAt: null, tombstone: null, moderator };
   },
   summary: (ctx) => `blog=${ctx.blogId} posts=${ctx.post1},${ctx.post2}`,
 });
