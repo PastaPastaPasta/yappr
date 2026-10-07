@@ -1,19 +1,28 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { mapLimit } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
+import { BLOG_CHUNK_SIZE, BLOG_MAX_CHUNKS, BLOG_POST_SIZE_LIMIT, YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
 import type { BlogPost } from '@/lib/types'
 import { identifierToBase58, normalizeBytes, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { compressContent, decompressContent, joinChunks, splitIntoChunks } from '@/lib/utils/compression'
 import { generateSlug } from '@/lib/utils/slug'
 import { retryAsync } from '@/lib/retry-utils'
 import { extractErrorMessage, isRateLimitedError } from '@/lib/error-utils'
-import { isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedLabels } from '@/lib/blog/content-utils'
+import { BLOG_POST_TOMBSTONE, BLOG_POST_TOMBSTONE_KEEPS, isPublishedBlogPost, labelsFromStored, publishedPostsNewestFirst, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { logger } from '@/lib/logger'
+import { tombstoneDocument } from './tombstone-helpers'
 
 export interface BlogPostQueryOptions {
   limit?: number
   startAfter?: string
+}
+
+/** One page of the cross-blog "latest posts" feed (blog v7 `timeline`). */
+export interface LatestBlogPostsPage {
+  /** The page's published posts, newest first (drafts and tombstones dropped). */
+  posts: BlogPost[]
+  /** Where the next page starts (the last post READ, shown or not), or undefined at the end. */
+  nextCursor?: string
 }
 
 export interface CreateBlogPostData {
@@ -126,6 +135,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       commentsEnabled: (data.commentsEnabled ?? doc.commentsEnabled) as boolean | undefined,
       slug: (data.slug || doc.slug || '') as string,
       publishedAt: (data.publishedAt ?? doc.publishedAt) as number | undefined,
+      ...((data.deleted ?? doc.deleted) === true ? { deleted: true } : {}),
     }
   }
 
@@ -135,6 +145,7 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
       throw new Error(`Compressed content exceeds ${BLOG_POST_SIZE_LIMIT} bytes`)
     }
 
+    const coverImage = storedImageUrl(data.coverImage, 'cover image')
     let slug = data.slug || generateSlug(data.title)
     // Check for collision and append suffix if needed. This is a read, so a
     // rate-limited one is safe to repeat before giving up on the publish. The
@@ -166,7 +177,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
         payload[`data${i}`] = chunks[i]
       }
       if (data.subtitle !== undefined) payload.subtitle = data.subtitle
-      if (data.coverImage !== undefined) payload.coverImage = data.coverImage
+      // No cover is no field (v7 refuses an empty string against its URL pattern).
+      if (coverImage !== undefined) payload.coverImage = coverImage
       // Empty labels are omitted (the old compose path wrote '', which v4 refuses as a non-list).
       const labels = storedLabels(data.labels, 'post')
       if (labels !== undefined) payload.labels = labels
@@ -191,7 +203,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     const payload: Record<string, unknown> = {}
     if (data.title !== undefined) payload.title = data.title
     if (data.subtitle !== undefined) payload.subtitle = data.subtitle
-    if (data.coverImage !== undefined) payload.coverImage = data.coverImage
+    // An empty URL clears the cover, like an explicit undefined does.
+    if (data.coverImage !== undefined) payload.coverImage = storedImageUrl(data.coverImage, 'cover image')
     // An empty set clears the field (undefined), exactly as an explicit clear does.
     if (data.labels !== undefined) payload.labels = storedLabels(data.labels, 'post')
     if (data.commentsEnabled !== undefined) payload.commentsEnabled = data.commentsEnabled
@@ -211,6 +224,29 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     }
 
     return this.update(postId, ownerId, payload)
+  }
+
+  /**
+   * An author's delete (blog v7): the post becomes a TOMBSTONE, `deleted` and
+   * comments off with every content field gone, keeping `blogId`, `slug` and
+   * `publishedAt` (`tombstoneIsBlank`; the contract freezes `deleted` once
+   * set, so it cannot be undone). Posts cannot be deleted outright on any
+   * cut. A banned or suspended author may still write it (`retractedWhen`),
+   * but no other edit. Resolves false when the replace is refused; throws a
+   * bar the network reports for anything else.
+   */
+  async deletePost(postId: string, ownerId: string): Promise<boolean> {
+    if (!blogIsV7()) throw new Error('Posts cannot be deleted on this network')
+    const deleted = await tombstoneDocument({
+      contractId: this.contractId,
+      documentType: this.documentType,
+      documentId: postId,
+      ownerId,
+      preserve: BLOG_POST_TOMBSTONE_KEEPS,
+      base: BLOG_POST_TOMBSTONE,
+    })
+    this.clearCache(postId)
+    return deleted
   }
 
   async getPost(postId: string): Promise<BlogPost | null> {
@@ -282,15 +318,34 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
     })
   }
 
-  async getPostsByOwner(ownerId: string, options: BlogPostQueryOptions = {}): Promise<BlogPost[]> {
-    const queryOptions: QueryOptions = {
-      where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit,
-      startAfter: options.startAfter,
+  /**
+   * The latest posts across every blog, newest first (blog v7
+   * `timeline [$createdAt]`): one query per page, no per-blog fan-out.
+   * Drafts and tombstones are read but not shown, so a page can come back
+   * shorter than `limit` while more remain; page on with `nextCursor`.
+   */
+  async getLatestPosts(options: BlogPostQueryOptions = {}): Promise<LatestBlogPostsPage> {
+    const { documents, nextCursor } = await this.newestFirstPage(options.limit ?? 20, options.startAfter)
+    return { posts: documents.filter(isPublishedBlogPost), nextCursor }
+  }
+
+  /**
+   * At least `want` published posts from the timeline after `startAfter`,
+   * reading on past pages that drafts and tombstones leave short or empty, up
+   * to `maxPages` pages of `pageSize`. `nextCursor` continues after the last
+   * post READ, so nothing the reads skipped is shown twice or lost.
+   */
+  async getLatestPublishedPosts(options: { want: number; startAfter?: string; pageSize?: number; maxPages?: number }): Promise<LatestBlogPostsPage> {
+    const { want, pageSize = 20, maxPages = 3 } = options
+    const posts: BlogPost[] = []
+    let nextCursor = options.startAfter
+    for (let pages = 0; pages < maxPages; pages++) {
+      const page = await this.getLatestPosts({ limit: pageSize, startAfter: nextCursor })
+      posts.push(...page.posts)
+      nextCursor = page.nextCursor
+      if (posts.length >= want || !nextCursor) break
     }
-    const result = await this.query(queryOptions)
-    return result.documents
+    return { posts, nextCursor }
   }
 
   /**

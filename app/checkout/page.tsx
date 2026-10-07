@@ -4,7 +4,7 @@ import { logger } from '@/lib/logger';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeftIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
+import { ArrowLeftIcon, CheckCircleIcon, CloudArrowDownIcon } from '@heroicons/react/24/outline'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -18,7 +18,8 @@ import {
 } from '@/components/checkout'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
-import { cartService, getCartCurrency } from '@/lib/services/cart-service'
+import { cartService, getCartCurrency, shippableItems } from '@/lib/services/cart-service'
+import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
@@ -32,6 +33,7 @@ import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, 
 import { normalizeBytes } from '@/lib/bytes'
 
 const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.'
+const FULFILLMENT_CHANGED_MESSAGE = 'The seller changed how one of these products is delivered (shipped or digital). Review your order and shipping again before continuing.'
 
 /**
  * The seller's encryption public key as bytes, or null if the identity key
@@ -155,17 +157,39 @@ function CheckoutPage() {
     buyerEncryptionPrivateKey: null
   })
 
-  const validateCartAvailability = useCallback(async (items: CartItem[]): Promise<boolean> => {
+  /**
+   * Check the lines against current inventory. Resolves to the lines as they
+   * now check out, or null when any is unavailable or the check was superseded.
+   *
+   * A product switched to or from digital changes whether it ships, and with
+   * it the address, shipping cost and total the buyer reviewed. Unless
+   * `requireReview` is off (the first load, before anything was reviewed),
+   * such a change also resolves null and sends the buyer back to the details
+   * step, so no later step proceeds on the old shipping.
+   */
+  const validateCartAvailability = useCallback(async (
+    items: CartItem[],
+    { requireReview = true }: { requireReview?: boolean } = {}
+  ): Promise<CartItem[] | null> => {
     const request = ++availabilityRequest.current
     setIsCheckingAvailability(true)
     try {
-      const unavailable = await cartService.validateItems(items)
-      if (request !== availabilityRequest.current || currentStoreId.current !== storeId) return false
+      const availability = await cartService.getAvailability(items)
+      if (request !== availabilityRequest.current || currentStoreId.current !== storeId) return null
+      const current = availability.map(result => result.item)
+      const fulfillmentChanged = current.some((item, index) => item.fulfillment !== items[index]?.fulfillment)
+      if (current.some((item, index) => item !== items[index])) setCartItems(current)
+      if (fulfillmentChanged && requireReview) {
+        setError(FULFILLMENT_CHANGED_MESSAGE)
+        setStep('details')
+        return null
+      }
+      const unavailable = availability.filter(result => result.reason)
       const message = unavailable.length > 0
         ? unavailable.map(result => `${result.item.title}: ${result.reason}`).join(' ')
         : null
       setStockError(message)
-      return message === null
+      return message === null ? current : null
     } finally {
       if (request === availabilityRequest.current && currentStoreId.current === storeId) {
         setIsCheckingAvailability(false)
@@ -285,7 +309,7 @@ function CheckoutPage() {
 
         setStore(storeData)
         setCartItems(items)
-        await validateCartAvailability(items)
+        await validateCartAvailability(items, { requireReview: false })
         setStorePolicies(parseStorePolicies(storeData.policies))
 
         // Select first payment URI by default
@@ -348,6 +372,13 @@ function CheckoutPage() {
     loadSavedAddresses().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
+  // Digital lines are delivered on chain, so an all-digital cart has nothing to ship.
+  const digitalCount = cartItems.filter(isDigitalLine).length
+  const digitalOnly = digitalCount > 0 && digitalCount === cartItems.length
+  useEffect(() => {
+    if (digitalOnly) setIncludeShipping(false)
+  }, [digitalOnly])
+
   // Calculate shipping when address changes (only when shipping is included)
   useEffect(() => {
     setError(current => current === SHIPPING_UNAVAILABLE_MESSAGE ? null : current)
@@ -389,7 +420,8 @@ function CheckoutPage() {
         }
 
         setHasNoZones(false)
-        const subtotal = cartItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
+        // Rates apply to what ships: digital lines add neither weight nor subtotal.
+        const subtotal = shippableItems(cartItems).reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
         const weight = await cartService.getTotalWeight(storeId)
         if (cancelled) return
 
@@ -677,12 +709,14 @@ function CheckoutPage() {
   }
 
   const handlePlaceOrder = async () => {
-    if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || stockError) return
+    // A quote being recalculated reads as 0 until it settles: never place on it.
+    if (!user?.identityId || !store || !selectedPaymentUri || isSubmitting || isCheckingAvailability || isCalculatingShipping || stockError) return
 
     setIsSubmitting(true)
     setError(null)
 
     try {
+      // Resolves null (and returns the buyer to review) if any line's fulfillment changed.
       if (!await validateCartAvailability(cartItems)) return
 
       const payload = storeOrderService.buildOrderPayload(
@@ -765,6 +799,7 @@ function CheckoutPage() {
             <h1 className="text-2xl font-bold mb-2">Order Placed!</h1>
             <p className="text-gray-500 text-center max-w-sm mb-6">
               Your order has been sent to the seller. They will process it and provide updates.
+              {digitalCount > 0 && ' Your digital items will appear under My Orders → Library as soon as the seller delivers them.'}
             </p>
             <div className="flex gap-4">
               <Button variant="outline" onClick={() => router.push('/orders')}>
@@ -881,6 +916,21 @@ function CheckoutPage() {
             </div>
           )}
 
+          {/* Digital delivery notice */}
+          {step === 'details' && !showSavePrompt && digitalCount > 0 && (
+            <div className="px-4 pt-4">
+              <div className="flex items-start gap-2 p-3 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-lg text-sm text-sky-800 dark:text-sky-200">
+                <CloudArrowDownIcon className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
+                <span>
+                  {digitalOnly
+                    ? 'Everything in this order is digital, so no shipping address is needed. '
+                    : `${digitalCount} digital item${digitalCount === 1 ? ' is' : 's are'} delivered online; only the rest ships. `}
+                  The seller delivers your files and keys encrypted to you; find them under My Orders → Library.
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Details Step */}
           {step === 'details' && !showSavePrompt && (
             <AddressForm
@@ -894,7 +944,7 @@ function CheckoutPage() {
               onSavedAddressSelect={handleSavedAddressSelect}
               onManageSavedAddresses={() => setShowAddressModal(true)}
               includeShipping={includeShipping}
-              onIncludeShippingChange={setIncludeShipping}
+              onIncludeShippingChange={digitalOnly ? undefined : setIncludeShipping}
               isCalculatingShipping={isCalculatingShipping}
             />
           )}
@@ -1010,7 +1060,7 @@ function CheckoutPage() {
                 <Button
                   className="w-full"
                   onClick={handlePlaceOrder}
-                  disabled={isSubmitting || isCheckingAvailability || Boolean(stockError) || !selectedPaymentUri}
+                  disabled={isSubmitting || isCheckingAvailability || isCalculatingShipping || Boolean(stockError) || !selectedPaymentUri}
                 >
                   {isSubmitting ? 'Placing Order...' : 'Place Order'}
                 </Button>

@@ -9,6 +9,7 @@ export type EncryptionKeyAction =
   | 'sync_state'
   | 'read_messages'
   | 'read_orders'
+  | 'sell_digital'
   | 'generic'
 
 interface EncryptionKeyPayload {
@@ -45,6 +46,8 @@ export function getEncryptionKeyActionDescription(action: EncryptionKeyAction): 
       return 'read and send your messages'
     case 'read_orders':
       return 'read the orders buyers sent to your store'
+    case 'sell_digital':
+      return 'encrypt and deliver the digital products you sell'
     case 'generic':
     default:
       return 'use private feed features'

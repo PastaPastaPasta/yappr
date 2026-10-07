@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
  * Handles email-based authentication, space management, and IPFS uploads.
  */
 
-import type { UploadProvider, ProviderStatus, UploadOptions, UploadResult, StorachaCredentials } from '../../types'
+import type { UploadProvider, ProviderStatus, UploadOptions, FileUploadOptions, UploadResult, StorachaCredentials } from '../../types'
 import { UploadException, UploadErrorCode } from '../../errors'
 import {
   storeStorachaCredentials,
@@ -435,9 +435,24 @@ export class StorachaProvider implements UploadProvider {
       throw new UploadException(UploadErrorCode.INVALID_FILE, 'Image must be under 10MB')
     }
 
+    return this.uploadFile(file, { ...options, maxBytes: MAX_SIZE })
+  }
+
+  /**
+   * Upload any file up to `maxBytes`
+   */
+  async uploadFile(file: File, options: FileUploadOptions): Promise<UploadResult> {
+    if (!this.client || this.status !== 'connected') {
+      throw new UploadException(UploadErrorCode.NOT_CONNECTED, 'Not connected to Storacha')
+    }
+
+    if (file.size > options.maxBytes) {
+      throw new UploadException(UploadErrorCode.INVALID_FILE, `File must be under ${Math.floor(options.maxBytes / (1024 * 1024))}MB`)
+    }
+
     try {
       // Report initial progress
-      options?.onProgress?.(0)
+      options.onProgress?.(0)
 
       // Upload the file
       const cid = await this.client.uploadFile(file, {
@@ -445,12 +460,12 @@ export class StorachaProvider implements UploadProvider {
           // Approximate progress based on shards
           // This is a rough estimate since we don't know total shards upfront
           logger.debug('Shard stored:', meta.cid.toString())
-          options?.onProgress?.(50)
+          options.onProgress?.(50)
         }
       })
 
       // Report completion
-      options?.onProgress?.(100)
+      options.onProgress?.(100)
 
       const cidString = cid.toString()
       return {

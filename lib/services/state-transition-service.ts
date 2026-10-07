@@ -7,10 +7,10 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogIsV2, keyNetwork, storefrontIsV2 } from '../constants';
-import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
+import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, keyNetwork, storefrontIsV2 } from '../constants';
+import { tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
-import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
+import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
 import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
@@ -324,7 +324,8 @@ class StateTransitionService {
    * undefined when it pays credits (an unpriced type, or an `optional` cost the
    * viewer chose not to pay in YAPP). Three contracts declare a `tokenCost`:
    * the social contract charges its own YAPP, while storefront v2+ and blog
-   * v2+ charge the SOCIAL contract's YAPP — a cross-contract cost, so those
+   * v2–v6 charge the SOCIAL contract's YAPP (blog v7 charges an action fee
+   * instead) — a cross-contract cost, so those
    * agreements name that contract explicitly and stay required (neither
    * contract declares `optional`).
    *
@@ -364,7 +365,7 @@ class StateTransitionService {
     if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontIsV2()) {
       return crossContract((STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
-    if (contractId === YAPPR_BLOG_CONTRACT_ID && blogIsV2()) {
+    if (contractId === YAPPR_BLOG_CONTRACT_ID && blogCommentsCostYapp()) {
       return crossContract((BLOG_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
     return undefined;
@@ -382,7 +383,8 @@ class StateTransitionService {
   /**
    * The `$actionFeeAgreement` a transition on `documentType`/`action` must
    * carry, or undefined when the contract charges nothing for it (every action
-   * on v2; every action but `post`/`reply` create on v9). Built from the
+   * on social v2; every action but `post`/`reply` create on v9; every blog
+   * action but a `blog`/`blogPost`/`blogComment` create on blog v7). Built from the
    * contract's declared amounts and the multiplier this session knows: a
    * different amount is 40133, no agreement is 40132.
    */
@@ -392,8 +394,7 @@ class StateTransitionService {
     documentType: string,
     action: DocumentAction
   ): Promise<DocumentActionFeeAgreement | undefined> {
-    if (contractId !== YAPPR_CONTRACT_ID) return undefined;
-    const fee = declaredActionFee(documentType, action);
+    const fee = declaredActionFeeFor(contractId, documentType, action);
     if (!fee) return undefined;
     const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await currentFeeMultiplierPermille(sdk)));
     logger.debug(`Agreeing to the ${documentType} ${action} fee: moderators=${fee.moderators} owner=${fee.owner} at ${agreement.knownFeeMultiplierPermille ?? 'fixed'} permille`);
@@ -407,7 +408,7 @@ class StateTransitionService {
    * this fails BEFORE signing rather than after paying.
    */
   private assertUnpricedAction(contractId: string, documentType: string, action: DocumentAction): void {
-    if (contractId === YAPPR_CONTRACT_ID && declaredActionFee(documentType, action)) {
+    if (declaredActionFeeFor(contractId, documentType, action)) {
       throw new Error(`${documentType} ${action} charges an action fee, which this write path cannot agree to yet`);
     }
   }

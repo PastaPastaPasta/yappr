@@ -18,6 +18,9 @@
  * The beta.7 cut (storefront topology v5) fixes QA D-25: an order copies its
  * store's `status` into `storeStatus` through the storeId `where` (40127 on a
  * stale copy) and `storeIsOpen` refuses any status but active (10422): s21.
+ * Storefront topology v6 adds digital products (docs/DIGITAL_PRODUCTS.md):
+ * `storeItem.fulfillment`, the seller-only `itemDeliverable` kit and the
+ * seller-written, buyer-bound `orderDelivery`: s22.
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import bs58 from 'bs58';
@@ -25,7 +28,7 @@ import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
   MODERATOR_FLAG, TOKEN_AGREEMENT_MISSING, decodeIntGroupKey, id32, runBattery, settle,
 } from './battery-lib.mjs';
-import { describeErr, randomEntropy } from './seed/seed-lib.mjs';
+import { buildDocument, describeErr, randomEntropy } from './seed/seed-lib.mjs';
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
@@ -36,6 +39,9 @@ const RATINGS = [1, 2, 3, 4, 5];
 // A writer gate (a `where` entry valued `$ownerId`: the signer on the REFERRING
 // side) fails as the same 40127 a value pair does.
 const WRITER_GATE = PROPERTY_MISMATCH;
+const STALE_REVISION = /\b40106\b|has invalid revision/i;
+/** A replace of a documentsMutable:false type (the advanced-structure refusal), or its revision check (40106) if that runs first. */
+const NOT_MUTABLE = /is not mutable and can not be replaced|\bcode"?\s*[=:]\s*(1040[0-9]|40106)\b|invaliddocumentrevision/i;
 
 // ---- Document shapes --------------------------------------------------------
 
@@ -49,6 +55,14 @@ const orderData = ({ storeId, sellerId, storeStatus = 'active' }) => ({ storeId,
 const statusData = ({ orderId, buyerId, status = 'shipped', message }) => ({ orderId, buyerId, status, ...(message ? { message } : {}) });
 const storeReviewData = ({ storeId, orderId, sellerId, rating, title }) => ({ storeId, orderId, sellerId, rating, ...(title ? { title } : {}) });
 const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, itemId, orderId, rating });
+// Digital payloads are opaque ciphertext to consensus, so random bytes stand in.
+const deliverableData = ({ itemId }) => ({ itemId, encryptedPayload: crypto.getRandomValues(new Uint8Array(96)) });
+const deliveryData = ({ orderId, buyerId }) => ({ orderId, buyerId, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
+/** A kit's stored ciphertext, or null when it does not read back. */
+async function kitBytes(battery, id) {
+  const stored = (await battery.fetchDocument('itemDeliverable', id))?.toObject?.().encryptedPayload;
+  return stored ? Buffer.from(stored) : null;
+}
 /** The two doctypes that live UNDER a store, addressed by name for the s2 tables. */
 const UNDER_STORE = { storeItem: (storeId, tag) => itemData({ storeId, title: tag }), shippingZone: (storeId, tag) => zoneData({ storeId, name: tag }) };
 
@@ -436,13 +450,72 @@ async function caseS21StoreMustBeOpen(ctx) {
   await place('s21f the reopened store takes orders again', null, 'active');
 }
 
+async function caseS22Digital(ctx) {
+  const { battery, seller, buyer, stranger, run } = ctx;
+  console.log('\n--- s22. digital products: fulfillment, seller-only kits, seller-written buyer-bound deliveries ---');
+  if (!ctx.storeId || !ctx.strangerStoreId || !ctx.orderId) { battery.check('s22 fixtures', false, 'no store/order fixtures'); return; }
+  const item = await battery.probeCreate('s22a a digital item is accepted', null, seller, 'storeItem', { ...itemData({ storeId: id32(ctx.storeId), title: `Ebook ${run}` }), fulfillment: 'digital' });
+  // An enum breach is a JSON-schema refusal (10101), anchored like ARRAY_OUT_OF_BOUNDS.
+  await battery.probeCreate('s22b an unknown fulfillment is refused by the enum (10101)', /\bcode"?\s*[=:]\s*10101\b|jsonschemaerror:/i, seller, 'storeItem', { ...itemData({ storeId: id32(ctx.storeId), title: `Bad ${run}` }), fulfillment: 'teleport' });
+  if (!item.ok) return;
+
+  const kit = (label, expect, who, data = {}) => battery.probeCreate(label, expect, who, 'itemDeliverable', deliverableData({ itemId: id32(item.id), ...data }));
+  await kit('s22c a STRANGER writing a kit for the seller\'s item is rejected (writer gate, 40127)', WRITER_GATE, stranger);
+  await kit('s22d a kit for a GHOST item is rejected (40120)', REFERENCE_NOT_FOUND, seller, { itemId: randomEntropy() });
+  const created = await kit('s22e the seller\'s kit is accepted', null, seller);
+  await kit('s22f a second kit for the same item is rejected (unique itemDeliverable)', DUPLICATE_UNIQUE, seller);
+  if (created.ok) {
+    const read = await battery.revisionOf('itemDeliverable', created.id);
+    const first = deliverableData({ itemId: id32(item.id) });
+    await battery.probeReplace('s22g the seller replaces the kit (a sale consumed license keys)', null, seller, 'itemDeliverable', created.id, first, read);
+    // The client's reservation rests on this: a pool written from a stale read
+    // (another tab delivered meanwhile) must never put sent keys back. Judged
+    // by content: probeReplace's revision check would count the FIRST replace
+    // as this one landing.
+    const stale = deliverableData({ itemId: id32(item.id) });
+    const outcome = await battery.attemptWrite(
+      { accepted: async () => (await kitBytes(battery, created.id))?.equals(Buffer.from(stale.encryptedPayload)) === true },
+      () => battery.sdk.documents.replace({
+        document: buildDocument({ contractId: ctx.contractId, docType: 'itemDeliverable', ownerId: seller.ownerId, data: stale, revision: BigInt(read) + 1n, id: id32(created.id) }).document,
+        identityKey: seller.identityKey,
+        signer: seller.signer,
+      })
+    );
+    battery.expectRejected('s22g2 a second replace from the SAME read revision is refused (40106 stale revision)', outcome, STALE_REVISION);
+    battery.check('s22g3 the kit still holds the first replace', (await kitBytes(battery, created.id))?.equals(Buffer.from(first.encryptedPayload)) === true);
+    // The stranger's own item is a real target, so this is about immutability.
+    const strangerItem = await battery.probeCreate('s22h fixture: a stranger item', null, stranger, 'storeItem', { ...itemData({ storeId: id32(ctx.strangerStoreId), title: `Other ${run}` }), fulfillment: 'digital' });
+    if (strangerItem.ok) {
+      await battery.probeReplace('s22i a replace moving the kit to another item is rejected (40128)', IMMUTABLE_CHANGED, seller, 'itemDeliverable', created.id, deliverableData({ itemId: id32(strangerItem.id) }), await battery.revisionOf('itemDeliverable', created.id));
+    }
+  }
+
+  const good = { orderId: id32(ctx.orderId), buyerId: id32(buyer.ownerId) };
+  const deliver = (label, expect, who, data = {}) => battery.probeCreate(label, expect, who, 'orderDelivery', deliveryData({ ...good, ...data }));
+  const delivery = await deliver('s22j the seller delivers the order', null, seller);
+  await deliver('s22k a delivery naming the WRONG buyerId is rejected (40127)', PROPERTY_MISMATCH, seller, { buyerId: id32(stranger.ownerId) });
+  await deliver('s22l a delivery for a GHOST order is rejected (40120)', REFERENCE_NOT_FOUND, seller, { orderId: randomEntropy() });
+  await deliver('s22m a STRANGER delivering to the buyer is rejected (writer gate, 40127)', WRITER_GATE, stranger);
+  await deliver('s22n the BUYER cannot write a delivery to themselves (writer gate, 40127)', WRITER_GATE, buyer);
+  await deliver('s22o a second delivery for the same order is accepted (re-send)', null, seller);
+  if (delivery.ok) {
+    await battery.probeDelete('s22p a delivery cannot be deleted (it is the buyer\'s receipt)', DELETE_FORBIDDEN, seller, 'orderDelivery', delivery.id);
+    await battery.probeReplace('s22p2 a delivery cannot be rewritten (documentsMutable: false)', NOT_MUTABLE, seller, 'orderDelivery', delivery.id, deliveryData(good), 1n);
+  }
+  await settle();
+  const rows = await battery.queryDocs('orderDelivery', { where: [['buyerId', '==', buyer.ownerId]], orderBy: [['$createdAt', 'desc']], limit: 20 });
+  const mine = rows.filter((row) => battery.b58(row.orderId) === ctx.orderId);
+  battery.check('s22q buyerDeliveries serves the buyer\'s library, and the order\'s deliveries are the seller\'s', mine.length >= 2 && mine.every((row) => battery.b58(row.$ownerId) === seller.ownerId), `rows=${rows.length} thisOrder=${mine.length}`);
+  battery.workingShapes.push({ label: 'buyer library', shape: { documentTypeName: 'orderDelivery', where: [['buyerId', '==', '<buyerId>']], orderBy: [['$createdAt', 'desc']] } });
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
   ['s9', caseS9OrderCounts], ['s10', caseS10Composite], ['s11', caseS11Permanence], ['s12', caseS12Tokens],
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
   ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfReview], ['s20', caseS20PropertyConstraints],
-  ['s21', caseS21StoreMustBeOpen],
+  ['s21', caseS21StoreMustBeOpen], ['s22', caseS22Digital],
 ]);
 
 await runBattery({
@@ -472,6 +545,10 @@ await runBattery({
       storeReview: { where: { orderId: { storeId: 'storeId', sellerId: 'sellerId', $ownerId: '$ownerId' } }, moderatorDeletable: true, distinctFromOwner: ['sellerId'] },
       itemReview: { where: { itemId: { storeId: 'storeId' }, orderId: { storeId: 'storeId', $ownerId: '$ownerId' } }, moderatorDeletable: true },
       store: { moderatorDeletable: false },
+      // s22: only an item's owner keeps its kit, which never moves; only an
+      // order's seller delivers it, to the order's real buyer.
+      itemDeliverable: { where: { itemId: { $ownerId: '$ownerId' } }, immutable: ['itemId'] },
+      orderDelivery: { where: { orderId: { $ownerId: 'buyerId', sellerId: '$ownerId' } } },
     }, { moderation: { banlist: true, suspensions: true, warnings: true } });
   },
   setup: async ({ battery, tokenId, buyer, args }) => {

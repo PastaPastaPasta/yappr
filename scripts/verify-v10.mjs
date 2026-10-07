@@ -215,6 +215,8 @@ import {
 import {
   asOutcome,
   describeValue,
+  AGREEMENT_MISMATCH,
+  AGREEMENT_NOT_SET,
   errorOf,
   feeAgreement,
   idOf,
@@ -279,7 +281,6 @@ const NOT_WARNED = /\bcode"?\s*[=:]\s*41117\b|carries no warning|contractusernot
 const SUSPENDED = /\bcode"?\s*[=:]\s*41108\b|contractusersuspended|is suspended/i;
 const INSUFFICIENT_TOKENS = /\bcode"?\s*[=:]\s*40700\b|not have enough token|insufficient token|identitydoesnothaveenoughtokenbalance/i;
 // 40132/40133 may arrive as prose (verify-v8's matchers, measured live on beta.3).
-const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set|actionfeeagreementnotset|carries no action fee agreement/i;
 /**
  * 40139: a moderators part below the declared one on an elected contract's
  * moderated type is a discount claim, checked against the seated charter's
@@ -287,7 +288,6 @@ const AGREEMENT_NOT_SET = /\bcode"?\s*[=:]\s*40132\b|fee agreement.{0,40}not set
  */
 const MODERATORS_SHARE_MISMATCH = /\bcode"?\s*[=:]\s*40139\b|actionfeemoderatorssharemismatch|declares a moderators fee of [\d,]+ credits; the transition agreed to/i;
 const NO_SEATED_CHARTER = /discounted: the contract has no seated moderation charter/i;
-const AGREEMENT_MISMATCH = /\bcode"?\s*[=:]\s*40133\b|fee agreement.{0,40}mismatch|actionfeeagreementmismatch|but the transition agreed to [\d,]+ and [\d,]+ credits/i;
 const ALREADY_CLAIMED_EPOCH = /\bcode"?\s*[=:]\s*41111\b|already.{0,30}claimed.{0,30}epoch|alreadyclaimedthisepoch/i;
 const ALREADY_RESTORED = /\bcode"?\s*[=:]\s*41122\b|already restored|contractdocumentalreadyrestored/i;
 const BANNED = /\bcode"?\s*[=:]\s*41107\b|contractuserbanned|is banned/i;

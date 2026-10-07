@@ -1,5 +1,7 @@
 import type { DocumentActionFeeAgreementOptions, TokenPaymentInfoOptions } from '@dashevo/wasm-sdk'
-import type { ActionFeeDeclaration } from '@/lib/contract-topology'
+import { YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID } from '@/lib/constants'
+import { declaredActionFee, type ActionFeeDeclaration, type DocumentAction } from '@/lib/contract-topology'
+import { blogActionFee } from '@/lib/blog/blog-contract'
 import type { PaymentPlan } from '@/lib/payment-preference'
 
 /**
@@ -19,6 +21,20 @@ export const FEE_MULTIPLIER_TOLERANCE_PERCENT = 20
 
 /** The multiplier assumed when the epoch read fails: 1000 permille is 1.0x, today's devnet value. */
 export const DEFAULT_FEE_MULTIPLIER_PERMILLE = 1000n
+
+/**
+ * The action fee a transition on `documentType`/`action` of `contractId` must
+ * agree to, or null when that contract charges nothing for it. Two contracts
+ * price actions: the social contract (v9+: post and reply creates) and blog v7
+ * (blog, post and comment creates). The write path builds the agreement from
+ * exactly these numbers, and refuses to sign a priced action it cannot agree
+ * to.
+ */
+export function declaredActionFeeFor(contractId: string, documentType: string, action: DocumentAction): ActionFeeDeclaration | null {
+  if (contractId === YAPPR_CONTRACT_ID) return declaredActionFee(documentType, action)
+  if (contractId === YAPPR_BLOG_CONTRACT_ID) return blogActionFee(documentType, action)
+  return null
+}
 
 /**
  * The `$actionFeeAgreement` for an action the contract prices. The amounts are

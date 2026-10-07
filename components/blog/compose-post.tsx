@@ -13,7 +13,7 @@ import { blogPostService, blogService } from '@/lib/services'
 import { PrePublishRateLimitError } from '@/lib/services/blog-post-service'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
-import { LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, labelProblem } from '@/lib/blog/content-utils'
+import { BlogFieldError, LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, imageUrlProblem, isPublishedAheadRefusal, labelProblem } from '@/lib/blog/content-utils'
 import { ListLimitError, decodeLabelList } from '@/lib/typed-array-codecs'
 import { isRateLimitedError } from '@/lib/error-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
@@ -146,6 +146,12 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     const validated = validateHttpUrl(coverUrlInput)
     if (!validated) {
       toast.error('Please enter a valid http or https URL')
+      return
+    }
+    // Blog v7 stores https:// (and ipfs://) covers only; say so before publishing.
+    const problem = imageUrlProblem(validated, 'cover image')
+    if (problem) {
+      toast.error(problem)
       return
     }
     setCoverImage(validated)
@@ -312,9 +318,10 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       }
     } catch (err) {
       logger.error(isEditing ? 'Failed to update blog post:' : 'Failed to publish blog post:', err)
-      if (err instanceof ListLimitError) toast.error(err.message)
+      if (err instanceof ListLimitError || err instanceof BlogFieldError) toast.error(err.message)
       // Only the pre-publish lookup fails before anything is broadcast; a rate
       // limit later on may follow a write that landed, and a blind retry pays twice.
+      else if (isPublishedAheadRefusal(err)) toast.error('This device\'s clock is more than 10 minutes ahead, so the network refused the publish date. Set the clock right and try again.')
       else if (err instanceof PrePublishRateLimitError) toast.error('Dash Platform is rate-limiting requests right now. Nothing was published; wait a moment and try again.')
       else if (isRateLimitedError(err)) toast.error(`Dash Platform is rate-limiting requests right now, so the ${isEditing ? 'update' : 'post'} may or may not have gone through. Check your blog before trying again.`)
       else toast.error(isEditing ? 'Failed to update post' : 'Failed to publish post')
