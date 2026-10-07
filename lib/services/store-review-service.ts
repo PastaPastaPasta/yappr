@@ -3,8 +3,9 @@
  *
  * One review per order. Consensus enforces that the order exists, that the
  * review's storeId/sellerId agree with it, and that the signer OWNS the order
- * (the `{$ownerId: $ownerId}` writer gate) — so every review on chain is a
- * verified purchase. Costs 3 YAPP. Aggregates (average, count,
+ * (the `{$ownerId: $ownerId}` writer gate) — so every review on chain comes
+ * from someone who placed an order there (not proof it was paid or
+ * delivered). Costs 3 YAPP on v2–v5 and an action fee on v6. Aggregates (average, count,
  * distribution, rankings) come from `storeStatsService`, never from scans.
  */
 
@@ -29,8 +30,8 @@ class StoreReviewService extends BaseDocumentService<StoreReview> {
       orderId: identifierToBase58(data.orderId) || '',
       sellerId: identifierToBase58(data.sellerId) || '',
       // v2 gates the writer to the order's owner; v1 has no such rule, so a
-      // review there proves nothing about a purchase.
-      verifiedPurchase: storefrontIsV2(),
+      // review there proves nothing about an order.
+      ordered: storefrontIsV2(),
       createdAt: new Date((doc.$createdAt || doc.createdAt) as number),
       rating: data.rating,
       title: data.title,

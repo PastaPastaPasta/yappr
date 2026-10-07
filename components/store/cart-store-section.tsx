@@ -8,8 +8,11 @@ import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
+import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
+import { useAuth } from '@/contexts/auth-context'
 import type { BlockSource } from '@/lib/services/block-service'
 import type { CartItem, Store } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface CartStoreSectionProps {
   storeId: string
@@ -26,11 +29,16 @@ interface CartStoreSectionProps {
 export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps>(
   function CartStoreSection({ storeId, store, ownerBlock, items, availability, isCheckingAvailability, onRefreshAvailability, onRemoveAll }, ref) {
     const router = useRouter()
+    const { user } = useAuth()
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
     // null when this store's lines are priced in different currencies: no single subtotal exists.
     const currency = getCartCurrency(items)
-    const storeClosed = store !== undefined && store.status !== 'active'
+    // A seller never checks out from their own store (storefront v6 refuses it
+    // on chain), and a store that is not open takes no orders.
+    let checkoutBlocker: string | null = null
+    if (isOwnStore(store, user?.identityId)) checkoutBlocker = OWN_STORE_ORDER_MESSAGE
+    else if (store !== undefined && store.status !== 'active') checkoutBlocker = 'This store is not accepting orders right now.'
     const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
@@ -60,7 +68,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
           className="flex items-center gap-2 hover:text-yappr-500"
         >
           {store?.logoUrl ? (
-            <img
+            <IpfsImage
               src={store.logoUrl}
               alt={store.name}
               className="w-8 h-8 rounded-lg object-cover"
@@ -117,9 +125,9 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             {currency ? formatPrice(subtotal, currency) : '—'}
           </span>
         </div>
-        {storeClosed && (
+        {checkoutBlocker && (
           <p role="alert" className="mb-4 text-sm text-red-600">
-            This store is not accepting orders right now.
+            {checkoutBlocker}
           </p>
         )}
         {!currency && (
@@ -135,7 +143,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             <button className="mt-2 text-yappr-600 underline" onClick={onRefreshAvailability}>Check availability again</button>
           </div>
         )}
-        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue || !currency || storeClosed}>
+        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue || !currency || checkoutBlocker !== null}>
           Checkout from {store?.name || 'Store'}
         </Button>
       </div>

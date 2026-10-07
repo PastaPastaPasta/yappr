@@ -90,3 +90,40 @@ describe('newest active stores for discovery', () => {
     expect(query.mock.calls[0][0]).toMatchObject({ orderBy: [['$ownerId', 'asc']], limit: 100 })
   })
 })
+
+describe('storefront v6: categories and indexed discovery', () => {
+  const loadV6 = async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6')
+    const { storeService: service } = await import('./store-service')
+    vi.unstubAllEnvs()
+    return service
+  }
+
+  it('reads the newest active stores as ONE byStatus page, complete, no scan or status filter', async () => {
+    const service = await loadV6()
+    query.mockResolvedValue(new Map([['s1', { ...raw, $id: 's1', category: 'books' }]]))
+    const { stores, complete } = await service.getNewestActiveStores(20)
+    expect(complete).toBe(true)
+    expect(stores.map((store) => [store.id, store.category])).toEqual([['s1', 'books']])
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(query.mock.calls[0][0]).toMatchObject({ where: [['status', '==', 'active']], orderBy: [['status', 'asc'], ['$createdAt', 'desc']], limit: 20 })
+  })
+
+  it('reads one category through byCategory', async () => {
+    const service = await loadV6()
+    query.mockResolvedValue(new Map())
+    await service.getNewestActiveStoresInCategory('books', 10)
+    expect(query.mock.calls[0][0]).toMatchObject({
+      where: [['status', '==', 'active'], ['category', '==', 'books']],
+      orderBy: [['status', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']],
+      limit: 10,
+    })
+  })
+
+  it('keeps the category through an edit that does not name it', async () => {
+    get.mockResolvedValue({ ...raw, category: 'books' })
+    await storeService.updateStore('store', 'owner', { description: 'Rare books' })
+    expect(updateDocument.mock.calls[0][4]).toMatchObject({ category: 'books', description: 'Rare books' })
+  })
+})

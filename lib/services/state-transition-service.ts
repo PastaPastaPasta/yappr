@@ -7,7 +7,7 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, keyNetwork, storefrontIsV2 } from '../constants';
+import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, keyNetwork, storefrontReviewsCostYapp } from '../constants';
 import { tokenCostFor, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
@@ -323,9 +323,9 @@ class StateTransitionService {
    * The `$tokenPaymentInfo` a create of `documentType` should carry, or
    * undefined when it pays credits (an unpriced type, or an `optional` cost the
    * viewer chose not to pay in YAPP). Three contracts declare a `tokenCost`:
-   * the social contract charges its own YAPP, while storefront v2+ and blog
-   * v2–v6 charge the SOCIAL contract's YAPP (blog v7 charges an action fee
-   * instead) — a cross-contract cost, so those
+   * the social contract charges its own YAPP, while storefront v2–v5 and blog
+   * v2–v6 charge the SOCIAL contract's YAPP (storefront v6 and blog v7 charge
+   * an action fee instead) — a cross-contract cost, so those
    * agreements name that contract explicitly and stay required (neither
    * contract declares `optional`).
    *
@@ -362,7 +362,7 @@ class StateTransitionService {
     }
     const crossContract = (amount: number | undefined): TokenPaymentInfoOptions | undefined =>
       amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, tokenContractPosition: YAPP_TOKEN_POSITION, maximumTokenCost: BigInt(amount) } : undefined;
-    if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontIsV2()) {
+    if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontReviewsCostYapp()) {
       return crossContract((STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
     if (contractId === YAPPR_BLOG_CONTRACT_ID && blogCommentsCostYapp()) {
@@ -384,7 +384,8 @@ class StateTransitionService {
    * The `$actionFeeAgreement` a transition on `documentType`/`action` must
    * carry, or undefined when the contract charges nothing for it (every action
    * on social v2; every action but `post`/`reply` create on v9; every blog
-   * action but a `blog`/`blogPost`/`blogComment` create on blog v7). Built from the
+   * action but a `blog`/`blogPost`/`blogComment` create on blog v7; every
+   * storefront action but a store, item or review create on storefront v6). Built from the
    * contract's declared amounts and the multiplier this session knows: a
    * different amount is 40133, no agreement is 40132.
    */

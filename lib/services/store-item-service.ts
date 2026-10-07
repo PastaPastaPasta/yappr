@@ -9,7 +9,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped } from '../constants';
 import { LIST_LIMITS, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
-import { identifierToBase58, identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { parseJsonObject } from '../utils/json-parsing';
 import type {
   StoreItem,
@@ -152,65 +152,6 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       seenCursors.add(page.nextCursor);
       startAfter = page.nextCursor;
     }
-  }
-
-  /**
-   * Get items by category
-   */
-  async getByCategory(section: string, category?: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
-    const where: DocumentWhereClause[] = [['section', '==', section]];
-    if (category) {
-      where.push(['category', '==', category]);
-    }
-
-    const { documents } = await this.query({
-      where,
-      orderBy: [['section', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
-    });
-
-    // Filter to active items
-    const activeItems = documents.filter(item => item.status === 'active');
-
-    return {
-      items: activeItems,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
-   * Get items by owner
-   */
-  async getByOwner(ownerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
-    });
-
-    return {
-      items: documents,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
-   * Get active items for browsing
-   */
-  async getActiveItems(options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['status', '==', 'active']],
-      orderBy: [['status', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
-    });
-
-    return {
-      items: documents,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
   }
 
   /**
