@@ -794,10 +794,11 @@ const PROBES = [
     const rules = types(s).post.propertyConstraints;
     for (let n = 0; Object.keys(rules).length < 17; n++) rules[`extra${n}`] = { absent: 'content' };
   } },
-  // rs-dpp node_count: allOf 1 + each `anyOf [absent, present]` 3; 22 as cut, so 4 more make 34.
-  { label: 'a 34-node optionsContiguous rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
-    const rule = types(s).poll.propertyConstraints.optionsContiguous.allOf;
-    for (const property of ['question', 'option0', 'option1', 'multiChoice']) rule.push({ anyOf: [{ absent: 'endsAt' }, { present: property }] });
+  // rs-dpp node_count counts operands too: pollr v5's multiChoiceIsSlot is 8 as cut, and each
+  // `lessThan [slot, n]` adds 3, so nine more make 35.
+  { label: 'a 35-node multiChoiceIsSlot rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
+    const rule = types(s).vote.propertyConstraints.multiChoiceIsSlot.anyOf;
+    for (let n = 1; n <= 9; n++) rule.push({ lessThan: ['slot', n] });
   } },
 ];
 

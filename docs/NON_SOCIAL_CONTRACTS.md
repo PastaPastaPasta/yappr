@@ -426,69 +426,127 @@ battery probes this and never fails on it.
 
 ## Polls (Pollr)
 
-`contracts/pollr-contract.json` — `poll`, `vote`, `multiVote`. Client gate:
-`NEXT_PUBLIC_POLLR_TOPOLOGY=v4`.
+`contracts/pollr-contract.json` is **pollr v5**: `poll` and one `vote` doctype.
+Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v5`. It replaces the v4 cut (indexOnly
+`vote`/`multiVote`, still registered on sakura as `7VB2hBnA…`; recover it from
+git history). Testnet runs v3 (`GBCR8Jqt…`, externally owned). No network has
+v5 yet; registering it on devnet and running `verify-pollr.mjs` there is a
+follow-up.
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `poll` | `canBeDeleted: false`, no `author` | its `$ownerId` is the agreement source for `pollOwnerId` |
-| `vote` | indexOnly; `pollId`→poll `{pollOwnerId: '$ownerId'}`; `byPoll` (preallocated) structural single ballot; `byPollChoice` count + ranked; `byPollOwner` (preallocated); `byVoterChoice` | body-less flat-priced ballots, ghost-poll rejection, O(log n) winner |
-| `multiVote` | the same minus any `[pollId]`-terminating index | one entry per (poll, voter, choice) |
+| `poll` | immutable, `canBeDeleted: false`, no moderation; `question` (1-280 chars, 560 B), `options[]` (2-10 unique, each 1-80 chars / 160 B), `optionCount`, `multiChoice`, `endsAt` (all required) | a fixed question, choices, mode and close time that every ballot copies |
+| `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId, slot]`; `pollId` → permanentDocument poll `where {optionCount: pollOptionCount, multiChoice: pollMultiChoice, endsAt: pollEndsAt}`; optional `choice`; unique `byPollVoter [pollId, $ownerId, slot]`; `byPollChoice [pollId, choice]` countable, `skipIfAbsent: [choice]` | one editable ballot per voter (single choice) or per voter and option (multi choice), tallied in O(1) per option |
 
-Ballots are free — no `tokenCost`. Structural uniqueness already caps what one
-identity writes per poll, and pricing a vote would make polls useless.
+Ballots are free — no `tokenCost`.
 
-**Single-choice is structural.** indexOnly types cannot declare `unique`
-indexes — uniqueness is a property of the storage, one entry per value tuple and
-terminal — so `byPoll [pollId] terminal $ownerId` *is* "one ballot per voter per
-poll". A second ballot comes back as `duplicate unique properties ["pollId",
-"$ownerId"]`, which the client routes by text (`isDuplicateVoteError`); a lot
-hangs off that predicate, because a duplicate misread as an ordinary error would
-be handed to the landed-write probe, which finds the voter's *earlier* entry and
-reports the rejected write as cast. `multiVote` must NOT have that index — any
-index terminating at `[pollId]` would make a second selection a duplicate — so
-every `multiVote` index carries `choice`. The cost is that nothing counts
-*distinct voters* on a multi-choice poll.
+**Rules (`propertyConstraints`, 10422).** On `poll`: `optionCountMatches`
+(`optionCount == count(options)`), `endsAfterCreation` (`endsAt > $createdAt`)
+and `endsWithin31Days` (`endsAt - $createdAt <= 31 days`), so every poll closes
+and none is born closed. On `vote`: `writtenBeforeClose`
+(`$updatedAt <= pollEndsAt`, judged on every create AND replace), `choiceIsAnOption`
+and `slotIsAnOption` (both `< pollOptionCount`), `singleUsesSlotZero` (a
+single-choice ballot is slot 0) and `multiChoiceIsSlot` (a multi-choice
+ballot's `choice` is absent or equals its slot). The copied poll fields are
+consensus-bound through the reference (40127 on a mismatch, 40120 for a ghost
+poll), and the poll is immutable, so they never move under a ballot.
+`scripts/property-constraint-cases.mjs` holds the accept/refuse cases;
+`node scripts/validate-contract-offline.mjs --constraints` runs them offline.
 
-**No `$createdAt` anywhere.** Keeping no time index leaves `$createdAt` out of
-`required`, so a ballot's delete tuple is just `{pollId, choice, pollOwnerId}`
-and unvote is one hop (social-contract likes must first recover the consensus
-`$createdAt` from a time-carrying projection). The price is no vote history: no
-"recent votes", no "trending polls today".
+**Ballots are editable until the close and final after.** `$updatedAt` is the
+write's block time, so `writtenBeforeClose` refuses any write that lands after
+`pollEndsAt`, and nothing deletes a ballot:
+
+- Single choice: one ballot, slot 0. The first vote creates it; changing the
+  vote replaces `choice`; withdrawing replaces it with `choice` left out.
+- Multi choice: one ballot per option, `slot` = the option. Ticking an option
+  creates its ballot (or replaces it with `choice = slot`); unticking replaces
+  it without `choice`.
+- `byPollChoice` skips ballots without a `choice`, so the tally counts current
+  selections: withdrawn and unticked ballots drop out. On a single-choice poll
+  the total is the number of voters; on a multi-choice poll it is selections.
+
+What the design could not do: a tally index can only be `preallocated` on an
+indexOnly type, and an indexOnly ballot has no stored row to replace, so the ballot trees are
+not preallocated (the first ballot on a poll pays for its branch). And a
+delete cannot be gated by a rule, so ballots are not deletable at all — a
+withdrawal is a replace.
 
 ```js
-// Per-option tally (keys are hex of 0x80 + choice) and winner in O(log n).
-// Ranked pages hand integer group values back DECODED.
+// Per-option tally (keys are hex of 0x80 + choice).
 sdk.documents.count({ dataContractId, documentTypeName: 'vote',
   where: [['pollId', '==', P], ['choice', 'in', [0, 1, 2]]], groupBy: ['choice'] })
-sdk.documents.ranked({ dataContractId, documentTypeName: 'vote',
-  groupBy: 'choice', aggregate: { type: 'count' }, where: [['pollId', '==', P]], limit: 1 })
-// My choices on one poll (also the write-confirmation probe for an indexOnly
-// ballot, with choice '==' and limit 1). An `in` on an indexOnly PREFIX
-// property REQUIRES the matching orderBy or the query is refused outright.
-sdk.documents.query({ dataContractId, documentTypeName: 'multiVote',
-  where: [['pollId', '==', P], ['choice', 'in', [0, 1, 2]], ['$ownerId', '==', me]],
-  orderBy: [['choice', 'asc']] })
+// The voter's ballots on one poll (withdrawn ones included, with their revisions).
+sdk.documents.query({ dataContractId, documentTypeName: 'vote',
+  where: [['pollId', '==', P], ['$ownerId', '==', me]],
+  orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']] })
 ```
 
-**Confirming an indexOnly write.** `documents.get` cannot confirm a ballot —
-there is no row under the id — so the landed-check always comes back empty and a
-DAPI 504 yields `{success: true, confirmed: false}` whether or not the
-transition was rejected. `castVote` therefore treats an unconfirmed success
-exactly like a reported failure: it polls the entry probe and classifies on what
-the chain shows, because a single-choice ballot is one-shot and reporting an
-unverified one as cast would close the ballot on a vote that never landed. The
-tally's last-resort path has the mirror-image constraint: `paginateFetchAll`
-cursors on `$id` and an indexOnly type's synthesized ids address nothing, so it
-keyset-walks the terminal (`countByChoiceKeyset`) and fails outright when no
-cursor can be recovered rather than returning a truncated tally.
+**Client (`lib/services/pollr-vote-service.ts`, `lib/pollr-rules.ts`).**
+The service is the one source of truth for a voter's ballots:
+`getBallotState(poll, me)` returns `{ choices, pending }`. `pending` is true
+while an earlier write to this voter's ballots on this poll could still execute
+(`pollrWriteMayStillExecute`): an unconfirmed create until Platform shows its
+nonce consumed (it landed, another transition took it, or it fell out of the
+window behind the tip; a signed transition has no deadline, so no clock ends
+it), a ballot replace until a verdict, the ballot reaching the revision it
+writes (it can never execute after that) or the poll's close — tracked in its
+own record (`recordBallotReplace`), because the nonce store forgets an
+SDK-signed replace once its 15-minute reservation lifetime passes, which is a
+write-availability policy and not a protocol deadline — and anything when the
+reservation store or the nonce cannot be read. The ballots
+are read only after that check, so a write landing during it is in the read. Ballot writes are reserved with their poll's
+scope (`pollr-vote:<pollId>`, an optional field on the nonce reservation), so a
+pending write on one poll does not hold back another; an entry with no scope (a
+poll create, or one stored before scopes) counts for every poll. Before
+anything, the replaces Platform shows landed are released
+(`settlePendingPollrReplaces`, over `settleSupersededReplaces`); `createPoll`
+runs that too.
+
+While `pending`, the card shows the results read-only with "Confirming your
+vote… Check again", which re-reads that state; editing comes back once nothing
+is pending. If a submission was interrupted, "Finish your vote" opens the
+editor on what the voter last asked for, with the options the chain does not
+show marked "not sent yet" (`editorStart`); nothing is resent until the voter
+submits.
+
+`setVote(poll, wanted, me)` refuses to plan while anything is pending
+(`heldBack`, nothing sent; an unreadable store refuses too). Otherwise it reads
+the ballots fresh, plans the writes that make them select exactly `wanted`
+(`planBallotWrites`), and runs them one at a time, each reserved with the
+poll's scope. A 10422 naming `writtenBeforeClose` is reported as "This poll has
+closed"; a stale revision (40106) or a ballot another tab created first (40105)
+as `stale`, and the card reloads. After a refused write it re-reads the
+ballots and reports what the chain shows. A write whose confirmation timed out
+stops the run and comes back `unconfirmed`, with no re-read (one this soon
+would likely predate the write), and the card shows the ballots as pending.
+Every submission is a fresh plan against the chain. The ballots copy the poll's
+stored `optionCount`. Optimistic tallies move down as well as up.
+`tallyIsFinal` is true only for a tally read off the chain after `endsAt`
+(plus a 30 s margin for the device clock against block time); the card says
+"Final results" only then. The poll editor offers 1, 3, 7, 14 and 30 days
+(default 1 day) — 30, not 31, because the close time comes from the device
+clock and the rule judges block time — and enforces the character and byte
+limits and distinct options.
+
+A submission cannot be one atomic batch: the batch cap is one document
+transition (see "Not possible at 4.2" below), so a multi-choice change is
+several transitions, and the pending state above is what keeps a partial one
+from being read as settled.
+
+**v3 and v4.** v3 (testnet) keeps its immutable, one-document-per-selection
+ballots and the time-bounded "final results" read. v4 is **read-only** in the
+client: its polls, tallies and the voter's own choices still load, but its
+indexOnly write path (affected-state confirmation, entry probes, the keyset
+tally fallback and the ranked winner) is gone. A deployment still on v4 shows
+results but takes no votes until it moves to v5.
 
 **The standalone Pollr app needs the same cut.** The testnet contract
 (`GBCR8Jqt…`) is externally owned and is what
 `https://pastapastapasta.github.io/pollr` reads; only the devnet clone is ours.
-A v4 poll is written exactly like a v3 one, so that app's poll-create path needs
-no change — only its ballot path does. `scripts/verify-poll-interop.mjs` works
-against a v4 contract for the same reason.
+A v5 poll stores `options[]` rather than `option0..9`, so that app needs both
+its poll and its ballot paths changed before it can read or write a v5
+contract.
 
 ---
 
