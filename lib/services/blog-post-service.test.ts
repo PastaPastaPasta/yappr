@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import bs58 from 'bs58';
 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: {} }) }));
+const tombstones = vi.hoisted(() => ({ tombstoneDocument: vi.fn() }));
+vi.mock('./tombstone-helpers', () => tombstones);
 import { PrePublishRateLimitError, blogPostService } from './blog-post-service';
 import type { BlogPost } from '@/lib/types';
 
@@ -181,5 +183,69 @@ describe('public discovery reads past drafts (QA D-27)', () => {
 
     expect(await blogPostService.searchPosts([blogId], 'x')).toEqual([]);
     expect(refill).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('blog v7 posts', () => {
+  const content = [{ type: 'paragraph', content: [{ type: 'text', text: 'hi' }] }];
+
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    tombstones.tombstoneDocument.mockReset();
+  });
+
+  it('deletes by writing a tombstone that keeps blogId, slug and publishedAt', async () => {
+    tombstones.tombstoneDocument.mockResolvedValue(true);
+    await expect(blogPostService.deletePost('post1', ownerId)).resolves.toBe(true);
+    expect(tombstones.tombstoneDocument).toHaveBeenCalledWith(expect.objectContaining({
+      documentType: 'blogPost',
+      documentId: 'post1',
+      ownerId,
+      preserve: { identifiers: ['blogId'], scalars: ['slug', 'publishedAt'] },
+      base: { deleted: true, commentsEnabled: false },
+    }));
+  });
+
+  it('cannot delete a post before v7 (no tombstone rule, and posts are permanent)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v6');
+    await expect(blogPostService.deletePost('post1', ownerId)).rejects.toThrow(/cannot be deleted/);
+    expect(tombstones.tombstoneDocument).not.toHaveBeenCalled();
+  });
+
+  it('reads a tombstone back as deleted', () => {
+    const service = blogPostService as unknown as { transformDocument(doc: Record<string, unknown>): BlogPost };
+    const post = service.transformDocument({ $id: 'p', $ownerId: ownerId, $createdAt: 1, blogId: bs58.decode(blogId), slug: 's', deleted: true, commentsEnabled: false });
+    expect(post.deleted).toBe(true);
+    expect(post.commentsEnabled).toBe(false);
+    const live = service.transformDocument({ $id: 'q', $ownerId: ownerId, $createdAt: 1, blogId: bs58.decode(blogId), slug: 't', title: 'T' });
+    expect(live).not.toHaveProperty('deleted');
+  });
+
+  it('leaves an empty cover out of a create and refuses an http one', async () => {
+    vi.spyOn(blogPostService, 'getPostBySlug').mockResolvedValue(null);
+    const service = blogPostService as unknown as { create(ownerId: string, data: Record<string, unknown>): Promise<BlogPost> };
+    const create = vi.spyOn(service, 'create').mockResolvedValue({ id: 'new' } as BlogPost);
+    await blogPostService.createPost(ownerId, { blogId, title: 'Hello', content, coverImage: '' });
+    expect(create.mock.calls[0][1]).not.toHaveProperty('coverImage');
+    await expect(blogPostService.createPost(ownerId, { blogId, title: 'Hello', content, coverImage: 'http://example.com/a.png' })).rejects.toThrow(/https:\/\/ or ipfs:\/\//);
+    expect(create).toHaveBeenCalledOnce();
+  });
+
+  it('pages the latest posts on the timeline, newest first, dropping drafts and tombstones', async () => {
+    const post = (id: string, extra: Partial<BlogPost> = {}) => ({ id, blogId, ownerId, createdAt: new Date(1), title: id, content: [], slug: id, publishedAt: 1, ...extra } as BlogPost);
+    const query = vi.spyOn(blogPostService, 'query').mockResolvedValue({
+      documents: [post('a'), post('draft', { publishedAt: undefined }), post('gone', { deleted: true })],
+    } as never);
+    const page = await blogPostService.getLatestPosts({ limit: 3, startAfter: 'z' });
+    expect(query).toHaveBeenCalledWith({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 3, startAfter: 'z' });
+    expect(page.posts.map((item) => item.id)).toEqual(['a']);
+    // A full page READ means more may follow, however few of it were shown.
+    expect(page.nextCursor).toBe('gone');
+    query.mockResolvedValue({ documents: [post('b')] } as never);
+    expect((await blogPostService.getLatestPosts({ limit: 3 })).nextCursor).toBeUndefined();
   });
 });

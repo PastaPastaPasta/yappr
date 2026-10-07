@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  BLOG_POST_TOMBSTONE,
+  BlogFieldError,
+  PUBLISHED_AT_MAX_AHEAD_MS,
   blogAuthorHandle,
   blogCommentsDefault,
   blogPostDate,
+  commentsAreEnabled,
   createCommentReads,
+  isBlogPostTombstone,
   isPublishedBlogPost,
   labelProblem,
   labelsFromStored,
   mergeComments,
   publishedPostsNewestFirst,
+  storedImageUrl,
   storedLabels,
 } from './content-utils'
 import { ListLimitError } from '@/lib/typed-array-codecs'
@@ -178,5 +184,66 @@ describe('labels are a list (QA D-55)', () => {
     expect(labelsFromStored('')).toBeUndefined()
     expect(labelsFromStored([])).toBeUndefined()
     expect(storedLabels([], 'post')).toBeUndefined()
+  })
+})
+
+describe('blog v7 tombstones', () => {
+  it('a tombstone is not public, takes no comments, and leaves every listing', () => {
+    const tombstone = { id: 'gone', publishedAt: day(3), createdAt: new Date(day(3)), deleted: true }
+    expect(isBlogPostTombstone(tombstone)).toBe(true)
+    expect(isPublishedBlogPost(tombstone)).toBe(false)
+    expect(commentsAreEnabled({ deleted: true })).toBe(false)
+    const live = { id: 'live', publishedAt: day(2), createdAt: new Date(day(2)) }
+    expect(publishedPostsNewestFirst([tombstone, live]).map((post) => post.id)).toEqual(['live'])
+  })
+
+  it('writes deleted and comments off, exactly what tombstoneIsBlank accepts', () => {
+    // `equal: [deleted, 1]` and `equal: [commentsEnabled, 0]`: the booleans as consensus reads them.
+    expect(BLOG_POST_TOMBSTONE).toEqual({ deleted: true, commentsEnabled: false })
+  })
+
+  it('only `deleted: true` is a tombstone', () => {
+    expect(isBlogPostTombstone({})).toBe(false)
+    expect(isBlogPostTombstone({ deleted: false })).toBe(false)
+  })
+})
+
+describe('blog v7 publishedAt cap (publishedNotAhead)', () => {
+  it('accepts a publishedAt up to ten minutes past $updatedAt, as the contract does', () => {
+    const updatedAt = new Date(day(5))
+    const post = { createdAt: new Date(day(1)), updatedAt, $revision: 2 }
+    expect(blogPostDate({ ...post, publishedAt: day(5) + PUBLISHED_AT_MAX_AHEAD_MS }, day(28)).getTime()).toBe(day(5) + PUBLISHED_AT_MAX_AHEAD_MS)
+    expect(blogPostDate({ ...post, publishedAt: day(5) + PUBLISHED_AT_MAX_AHEAD_MS + 1 }, day(28)).getTime()).toBe(day(1))
+  })
+
+  it('judges a revised v7 post by its $updatedAt, not by now', () => {
+    const post = { publishedAt: day(20), createdAt: new Date(day(1)), updatedAt: new Date(day(5)), $revision: 2 }
+    expect(blogPostDate(post, day(28)).getTime()).toBe(day(1))
+  })
+
+  it('allows a client clock a little ahead of block time on a fresh post', () => {
+    const createdAt = new Date(day(5))
+    expect(blogPostDate({ publishedAt: day(5) + 60_000, createdAt }).getTime()).toBe(day(5) + 60_000)
+  })
+})
+
+describe('image URLs', () => {
+  it('leaves an empty URL out on every cut', () => {
+    expect(storedImageUrl('', 'avatar')).toBeUndefined()
+    expect(storedImageUrl('   ', 'avatar')).toBeUndefined()
+    expect(storedImageUrl(undefined, 'avatar')).toBeUndefined()
+  })
+
+  it('takes only https:// and ipfs:// on v7', () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    expect(storedImageUrl('ipfs://bafy', 'avatar')).toBe('ipfs://bafy')
+    expect(storedImageUrl(' https://example.com/a.png ', 'avatar')).toBe('https://example.com/a.png')
+    expect(() => storedImageUrl('http://example.com/a.png', 'cover image')).toThrow(BlogFieldError)
+    expect(() => storedImageUrl('data:image/png;base64,AAAA', 'cover image')).toThrow(/https:\/\/ or ipfs:\/\//)
+  })
+
+  it('takes any URL before v7', () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v6')
+    expect(storedImageUrl('http://example.com/a.png', 'avatar')).toBe('http://example.com/a.png')
   })
 })

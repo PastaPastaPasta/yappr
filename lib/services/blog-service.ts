@@ -2,8 +2,8 @@ import { BaseDocumentService, type QueryOptions } from './document-service'
 import type { Blog } from '@/lib/types'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
-import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
-import { labelsFromStored, storedLabels } from '@/lib/blog/content-utils'
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
+import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
 
@@ -18,6 +18,16 @@ export interface CreateBlogData {
 }
 
 export interface UpdateBlogData extends Partial<CreateBlogData> {}
+
+/** One page of blogs, newest first (blog v7 `blog.timeline`). */
+export interface BlogTimelinePage {
+  blogs: Blog[]
+  /** Where the next page starts, or undefined at the end. */
+  nextCursor?: string
+}
+
+/** The most blogs one timeline query returns. */
+const BLOG_PAGE_SIZE = 100
 
 function deserializeThemeConfig(raw: unknown): BlogThemeConfig | undefined {
   if (!raw) return undefined
@@ -96,6 +106,9 @@ class BlogService extends BaseDocumentService<Blog> {
     }
     // An explicit `undefined` clears labels during the replace merge; keep it.
     if (data.labels !== undefined) result.labels = storedLabels(data.labels, 'blog')
+    // Likewise for the images; an empty URL clears one (v7 refuses '' outright).
+    if ('avatar' in data) result.avatar = storedImageUrl(data.avatar, 'avatar')
+    if ('headerImage' in data) result.headerImage = storedImageUrl(data.headerImage, 'header image')
     return result
   }
 
@@ -128,14 +141,43 @@ class BlogService extends BaseDocumentService<Blog> {
   }
 
   /**
-   * Get all blogs on the platform (for discovery).
-   * Uses the ownerAndTime index [$ownerId, $createdAt] with cursor-based pagination,
-   * then sorts client-side by createdAt desc for display.
+   * One page of every blog, newest first, on blog v7's `timeline
+   * [$createdAt]`: a single query per page, paged with `nextCursor`.
+   */
+  async getBlogTimelinePage(options: { limit?: number; startAfter?: string } = {}): Promise<BlogTimelinePage> {
+    if (!this.isConfigured()) return { blogs: [] }
+    const limit = Math.min(options.limit ?? BLOG_PAGE_SIZE, BLOG_PAGE_SIZE)
+    const result = await this.query({
+      where: [['$createdAt', '>', 0]],
+      orderBy: [['$createdAt', 'desc']],
+      limit,
+      startAfter: options.startAfter,
+    })
+    const blogs = result.documents
+    return { blogs, nextCursor: blogs.length === limit ? blogs[blogs.length - 1].id : undefined }
+  }
+
+  /**
+   * The newest `limit` blogs on the platform (for discovery). On v7 that is
+   * the head of `blog.timeline`, read page by page. Earlier cuts index blogs
+   * only by `[$ownerId, $createdAt]`, so they page in owner order and sort
+   * client-side by createdAt desc, which only orders the blogs read.
    */
   async getAllBlogs(limit = 100): Promise<Blog[]> {
     if (!this.isConfigured()) return []
+    if (blogIsV7()) {
+      const blogs: Blog[] = []
+      let startAfter: string | undefined
+      do {
+        const page = await this.getBlogTimelinePage({ limit: Math.min(BLOG_PAGE_SIZE, limit - blogs.length), startAfter })
+        blogs.push(...page.blogs)
+        startAfter = page.nextCursor
+      } while (startAfter && blogs.length < limit)
+      return blogs
+    }
+
     const blogs: Blog[] = []
-    const pageSize = Math.min(100, limit)
+    const pageSize = Math.min(BLOG_PAGE_SIZE, limit)
     let startAfter: string | undefined
 
     while (blogs.length < limit) {

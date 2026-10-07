@@ -1,34 +1,49 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import toast from 'react-hot-toast'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { blogService } from '@/lib/services'
-import { blogStatsService } from '@/lib/services/blog-stats-service'
+import { blogStatsService, trendingBlogsLabel } from '@/lib/services/blog-stats-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { Blog } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { blogFollowStatusCache } from '@/lib/caches/user-status-cache'
-import { blogIsV2 } from '@/lib/constants'
+import { blogIsV2, blogIsV7 } from '@/lib/constants'
+import { Button } from '@/components/ui/button'
+import { BlogPostDiscovery } from './blog-post-discovery'
 
 interface BlogWithUsername extends Blog {
   username: string | null
 }
 
 /**
- * Discovery orderings. `newest` pages every blog and sorts client-side (the
- * only shape v1 can serve); the other two are v2 proved rankings, one request
- * each, hydrated with a single by-id fetch.
+ * Discovery orderings. `newest` is v7's `blog.timeline`, paged newest first;
+ * before v7 it pages every blog and sorts client-side (the only shape v1 can
+ * serve). The other two are v2 proved rankings, one request each, hydrated
+ * with a single by-id fetch; `trending` covers today up to v6 and the last ~3
+ * days on v7.
  */
 const SORTS = [
   { key: 'newest', label: 'Newest' },
   { key: 'followed', label: 'Most followed' },
-  { key: 'trending', label: 'Trending today' },
+  { key: 'trending', label: 'Trending' },
 ] as const
 
 type BlogSort = (typeof SORTS)[number]['key']
+
+/** Blogs per `newest` page on v7. */
+const NEWEST_PAGE_SIZE = 50
+
+/** One load of blogs for `sort`; `nextCursor` is set when v7's newest list has more. */
+async function loadBlogs(sort: BlogSort, startAfter?: string): Promise<{ blogs: Blog[]; nextCursor?: string }> {
+  if (sort !== 'newest') return { blogs: await rankedBlogs(sort) }
+  if (blogIsV7()) return blogService.getBlogTimelinePage({ limit: NEWEST_PAGE_SIZE, startAfter })
+  return { blogs: await blogService.getAllBlogs(100) }
+}
 
 /** The blogs a ranked page names, in the proved order; absent ids are dropped. */
 async function rankedBlogs(sort: Exclude<BlogSort, 'newest'>): Promise<Blog[]> {
@@ -43,13 +58,76 @@ async function rankedBlogs(sort: Exclude<BlogSort, 'newest'>): Promise<Blog[]> {
   })
 }
 
+/** Usernames for a page of blogs, with the viewer's follow status prefetched for their cards. */
+async function hydrateBlogs(blogs: Blog[], viewerId: string | undefined): Promise<BlogWithUsername[]> {
+  const usernameMap = await dpnsService.resolveUsernamesBatch(Array.from(new Set(blogs.map((b) => b.ownerId))))
+  if (viewerId) {
+    try {
+      const { blogFollowService } = await import('@/lib/services/blog-follow-service')
+      const statusMap = await blogFollowService.getFollowStatusBatch(blogs.map((b) => b.id), viewerId)
+      blogFollowStatusCache.seed(viewerId, statusMap)
+    } catch {
+      // Non-critical, individual hooks will query on their own
+    }
+  }
+  return blogs.map((blog) => ({ ...blog, username: usernameMap.get(blog.ownerId) ?? null }))
+}
+
+/**
+ * `/blog` discovery. On v7 a Blogs / Posts switch adds the cross-blog post
+ * lists ({@link BlogPostDiscovery}); earlier cuts list blogs only.
+ */
 export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkReady?: boolean; showHeader?: boolean }) {
+  const [view, setView] = useState<'blogs' | 'posts'>('blogs')
+  const postsView = blogIsV7() && view === 'posts'
+
+  return (
+    <div className="space-y-4">
+      {showHeader && (
+        <div className="text-center">
+          <h2 className="text-xl font-bold">Discover Blogs</h2>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Long-form content published on Yappr
+          </p>
+        </div>
+      )}
+
+      {blogIsV7() && (
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-900" role="tablist" aria-label="Discover">
+          {(['blogs', 'posts'] as const).map((key) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={view === key}
+              onClick={() => setView(key)}
+              className={`rounded-md py-1.5 text-sm font-medium transition ${
+                view === key
+                  ? 'bg-white text-gray-900 shadow-sm dark:bg-neutral-800 dark:text-white'
+                  : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
+              }`}
+            >
+              {key === 'blogs' ? 'Blogs' : 'Posts'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {postsView ? <BlogPostDiscovery sdkReady={sdkReady} /> : <BlogList sdkReady={sdkReady} />}
+    </div>
+  )
+}
+
+function BlogList({ sdkReady }: { sdkReady: boolean }) {
   const [blogs, setBlogs] = useState<BlogWithUsername[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [cursor, setCursor] = useState<string | undefined>()
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<BlogSort>('newest')
   const { user } = useAuth()
+  const viewerId = user?.identityId
 
   useEffect(() => {
     if (!sdkReady) return
@@ -59,34 +137,14 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
     const load = async () => {
       setLoading(true)
       setError(null)
+      setCursor(undefined)
       try {
-        const allBlogs = sort === 'newest' ? await blogService.getAllBlogs(100) : await rankedBlogs(sort)
+        const page = await loadBlogs(sort)
         if (cancelled) return
-
-        const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
-        const usernameMap = await dpnsService.resolveUsernamesBatch(ownerIds)
+        const hydrated = await hydrateBlogs(page.blogs, viewerId)
         if (cancelled) return
-
-        // Batch-prefetch follow status for all blogs
-        if (user?.identityId) {
-          try {
-            const { blogFollowService } = await import('@/lib/services/blog-follow-service')
-            const blogIds = allBlogs.map((b) => b.id)
-            const statusMap = await blogFollowService.getFollowStatusBatch(blogIds, user.identityId)
-            if (!cancelled) blogFollowStatusCache.seed(user.identityId, statusMap)
-          } catch {
-            // Non-critical, individual hooks will query on their own
-          }
-        }
-
-        if (cancelled) return
-
-        setBlogs(
-          allBlogs.map((blog) => ({
-            ...blog,
-            username: usernameMap.get(blog.ownerId) ?? null,
-          }))
-        )
+        setBlogs(hydrated)
+        setCursor(page.nextCursor)
       } catch {
         if (!cancelled) setError('Failed to load blogs')
       } finally {
@@ -104,7 +162,25 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
     return () => {
       cancelled = true
     }
-  }, [sdkReady, sort, user?.identityId])
+  }, [sdkReady, sort, viewerId])
+
+  const loadMore = useCallback(async () => {
+    if (!cursor || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const page = await loadBlogs(sort, cursor)
+      const hydrated = await hydrateBlogs(page.blogs, viewerId)
+      setBlogs((prev) => {
+        const seen = new Set(prev.map((blog) => blog.id))
+        return [...prev, ...hydrated.filter((blog) => !seen.has(blog.id))]
+      })
+      setCursor(page.nextCursor)
+    } catch {
+      toast.error('Failed to load more blogs')
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [cursor, loadingMore, sort, viewerId])
 
   const filtered = useMemo(() => {
     if (!search.trim()) return blogs
@@ -118,15 +194,6 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
 
   return (
     <div className="space-y-4">
-      {showHeader && (
-        <div className="text-center">
-          <h2 className="text-xl font-bold">Discover Blogs</h2>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            Long-form content published on Yappr
-          </p>
-        </div>
-      )}
-
       <div className="relative">
         <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" />
         <input
@@ -153,7 +220,7 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
                   : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
               }`}
             >
-              {option.label}
+              {option.key === 'trending' ? trendingBlogsLabel() : option.label}
             </button>
           ))}
         </div>
@@ -173,21 +240,29 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
             </div>
           ))}
         </div>
-      ) : error ? (
+      ) : error && blogs.length === 0 ? (
         <p className="text-center text-sm text-gray-500">{error}</p>
       ) : filtered.length === 0 ? (
         <p className="text-center text-sm text-gray-500">
           {search.trim()
             ? 'No blogs match your search.'
             : sort === 'trending'
-              ? 'No blog gained a follower today.'
+              ? blogIsV7() ? 'No blog gained a follower in the last 3 days.' : 'No blog gained a follower today.'
               : 'No blogs have been created yet.'}
         </p>
       ) : (
         <div className="space-y-2">
           {filtered.map((blog) => (
-            <BlogCard key={blog.id} blog={blog} currentUserId={user?.identityId} />
+            <BlogCard key={blog.id} blog={blog} currentUserId={viewerId} />
           ))}
+        </div>
+      )}
+
+      {cursor && !loading && (
+        <div className="flex justify-center">
+          <Button type="button" variant="outline" size="sm" onClick={() => { loadMore().catch(() => {}) }} disabled={loadingMore}>
+            {loadingMore ? 'Loading...' : 'Load more blogs'}
+          </Button>
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import { blogLabelsAreTyped } from '@/lib/constants'
+import { blogIsV7, blogLabelsAreTyped } from '@/lib/constants'
 import { LIST_LIMITS, ListLimitError, assertListLimits, decodeLabelList, encodeLabelList, uniqueStrings } from '@/lib/typed-array-codecs'
 import { truncateId } from '@/lib/utils/common'
 
@@ -132,29 +132,51 @@ export function formatLabels(labels?: readonly string[]): string {
 }
 
 /**
- * A post with no `publishedAt` is a draft. The app always sets it on create,
- * but other clients (and the seeder) can write drafts, and nothing on chain
- * hides them: every public surface has to filter them out itself.
+ * A post an author deleted (blog v7): `deleted` is set, comments are off and
+ * every content field is gone; only `blogId`, `slug` and `publishedAt`
+ * survive. Its URL still resolves (the slug stays taken), so a reader is told
+ * it was deleted rather than that it never existed.
  */
-export function isPublishedBlogPost(post: { publishedAt?: number }): boolean {
-  return post.publishedAt !== undefined
+export function isBlogPostTombstone(post: { deleted?: boolean }): boolean {
+  return post.deleted === true
 }
 
-type DatedBlogPost = { publishedAt?: number; createdAt: Date; $revision?: number }
+/**
+ * True for a post the public may read: published (`publishedAt` set) and not
+ * deleted. A post with no `publishedAt` is a draft. The app always sets it on
+ * create, but other clients (and the seeder) can write drafts, and nothing on
+ * chain hides them: every public surface has to filter them out itself, and
+ * tombstones with them (a tombstone keeps its `publishedAt`).
+ */
+export function isPublishedBlogPost(post: { publishedAt?: number; deleted?: boolean }): boolean {
+  return post.publishedAt !== undefined && !isBlogPostTombstone(post)
+}
+
+/**
+ * How far past the document's own time `publishedAt` may run: blog v7 refuses
+ * more than this past `$updatedAt` (`publishedNotAhead`), and the reader holds
+ * every cut to the same allowance.
+ */
+export const PUBLISHED_AT_MAX_AHEAD_MS = 10 * 60 * 1000
+
+type DatedBlogPost = { publishedAt?: number; createdAt: Date; updatedAt?: Date; $revision?: number; deleted?: boolean }
 
 /**
  * The date a reader should see: when the post was published, else when it was
- * created. `publishedAt` is author-supplied and uncapped, so it may backdate a
- * post (an import) but not date it after the network recorded it; a future
- * value would otherwise pin the post to the top of every listing, so it falls
- * back to the creation time. A draft can be published by a later revision (the
- * contract allows setting `publishedAt` once), and posts carry no `$updatedAt`,
- * so a revised post may be dated up to now rather than up to its creation.
+ * created. `publishedAt` is author-supplied, so it may backdate a post (an
+ * import) but not date it after the network recorded it; a future value would
+ * otherwise pin the post to the top of every listing, so it falls back to the
+ * creation time. The latest acceptable value is the post's `$updatedAt` (blog
+ * v7 requires it, and refuses a `publishedAt` more than
+ * {@link PUBLISHED_AT_MAX_AHEAD_MS} past it); older cuts store no
+ * `$updatedAt`, and a draft can be published by a later revision (the
+ * contract allows setting `publishedAt` once), so a revised post there may be
+ * dated up to now rather than up to its creation.
  */
 export function blogPostDate(post: DatedBlogPost, now = Date.now()): Date {
   if (post.publishedAt === undefined) return post.createdAt
-  const latest = (post.$revision ?? 1) > 1 ? now : post.createdAt.getTime()
-  return post.publishedAt <= latest ? new Date(post.publishedAt) : post.createdAt
+  const recorded = post.updatedAt?.getTime() ?? ((post.$revision ?? 1) > 1 ? now : post.createdAt.getTime())
+  return post.publishedAt <= recorded + PUBLISHED_AT_MAX_AHEAD_MS ? new Date(post.publishedAt) : post.createdAt
 }
 
 /** A blog's public listing: drafts dropped, newest publication first. */
@@ -162,9 +184,42 @@ export function publishedPostsNewestFirst<T extends DatedBlogPost>(posts: readon
   return posts.filter(isPublishedBlogPost).sort((a, b) => blogPostDate(b).getTime() - blogPostDate(a).getTime())
 }
 
-/** A post's comments are on unless it explicitly turned them off. */
-export function commentsAreEnabled(post: { commentsEnabled?: boolean }): boolean {
-  return post.commentsEnabled !== false
+/** A post's comments are on unless it explicitly turned them off (a tombstone always has). */
+export function commentsAreEnabled(post: { commentsEnabled?: boolean; deleted?: boolean }): boolean {
+  return post.commentsEnabled !== false && !isBlogPostTombstone(post)
+}
+
+/**
+ * What an author's delete writes over a v7 post (`tombstoneIsBlank`): the
+ * `deleted` flag and comments off. Every content field is left out, and the
+ * fields the contract freezes or keys on (`blogId`, `slug`, `publishedAt`) are
+ * carried over from the stored post by the tombstone writer.
+ */
+export const BLOG_POST_TOMBSTONE = { deleted: true, commentsEnabled: false } as const
+
+/** The stored fields a v7 tombstone keeps: the reference and frozen date, and the slug its URL needs. */
+export const BLOG_POST_TOMBSTONE_KEEPS = { identifiers: ['blogId'], scalars: ['slug', 'publishedAt'] } as const
+
+/** A blog field the configured cut would refuse, caught before signing; its message is for the user. */
+export class BlogFieldError extends Error {}
+
+/** The image URL schemes blog v7 accepts on avatars, headers and covers. */
+const V7_IMAGE_URL = /^(https|ipfs):\/\/.+$/
+
+/**
+ * An image URL as the configured cut stores it: undefined for none (an empty
+ * string is left out, which every cut reads as "no image"). Blog v7 accepts
+ * only https:// and ipfs:// URLs, and a write carrying another is refused
+ * after signing, so one is refused here first with a {@link BlogFieldError}
+ * a person can act on. Older cuts take any string.
+ */
+export function storedImageUrl(url: string | undefined, what: string): string | undefined {
+  const trimmed = url?.trim()
+  if (!trimmed) return undefined
+  if (blogIsV7() && !V7_IMAGE_URL.test(trimmed)) {
+    throw new BlogFieldError(`The ${what} must be an https:// or ipfs:// link.`)
+  }
+  return trimmed
 }
 
 /** A blog's default for new posts: on unless the blog explicitly turned it off (the field is optional). */

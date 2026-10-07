@@ -22,6 +22,7 @@ import type { RankingWindow } from '@/lib/services/ranked-likes'
 import { TopCreators } from '@/components/explore/top-creators'
 import type { Post, Blog, BlogPostWithAuthor } from '@/lib/types'
 import { enrichBlogPostsWithAuthors, getBlogPostUrl } from '@/lib/blog/content-utils'
+import { blogIsV7 } from '@/lib/constants'
 
 type ExploreTab = 'hashtags' | 'top' | 'creators' | 'blogs'
 
@@ -110,6 +111,16 @@ export default function ExplorePage() {
       try {
         setIsLoadingBlogs(true)
         const { blogService, blogPostService } = await import('@/lib/services')
+
+        // v7 lists the latest posts across every blog in one timeline read,
+        // then names their blogs; earlier cuts read every blog's newest posts.
+        if (blogIsV7()) {
+          const { posts } = await blogPostService.getLatestPosts({ limit: 20 })
+          const recent = posts.slice(0, 10)
+          const blogs = await blogService.getMany(Array.from(new Set(recent.map(post => post.blogId))))
+          setRecentBlogPosts(await enrichBlogPostsWithAuthors(recent, new Map(blogs.map(blog => [blog.id, blog]))))
+          return
+        }
 
         const allBlogs = await blogService.getAllBlogs()
         if (allBlogs.length === 0) {

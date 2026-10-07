@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { useAuth } from '@/contexts/auth-context'
 import { blogService } from '@/lib/services'
+import { BlogFieldError } from '@/lib/blog/content-utils'
 import type { Blog } from '@/lib/types'
 import toast from 'react-hot-toast'
 
@@ -47,7 +48,7 @@ export function CreateBlogModal({ open, onOpenChange, onCreated }: CreateBlogMod
       setAvatar('')
       setHeaderImage('')
     } catch (error) {
-      toast.error('Failed to create blog')
+      toast.error(error instanceof BlogFieldError ? error.message : 'Failed to create blog')
     } finally {
       setIsSaving(false)
     }

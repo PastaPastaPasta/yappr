@@ -13,7 +13,7 @@ import { blogPostService, blogService } from '@/lib/services'
 import { PrePublishRateLimitError } from '@/lib/services/blog-post-service'
 import { getCompressedSize } from '@/lib/utils/compression'
 import { validateHttpUrl } from '@/lib/utils'
-import { LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, labelProblem } from '@/lib/blog/content-utils'
+import { BlogFieldError, LABEL_LIMITS, blogCommentsDefault, decodeSummary, encodeSummary, labelProblem, storedImageUrl } from '@/lib/blog/content-utils'
 import { ListLimitError, decodeLabelList } from '@/lib/typed-array-codecs'
 import { isRateLimitedError } from '@/lib/error-utils'
 import { useImageUpload } from '@/hooks/use-image-upload'
@@ -146,6 +146,13 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
     const validated = validateHttpUrl(coverUrlInput)
     if (!validated) {
       toast.error('Please enter a valid http or https URL')
+      return
+    }
+    // Blog v7 stores https:// (and ipfs://) covers only; say so before publishing.
+    try {
+      storedImageUrl(validated, 'cover image')
+    } catch (error) {
+      toast.error(error instanceof BlogFieldError ? error.message : 'That cover image link cannot be used')
       return
     }
     setCoverImage(validated)
@@ -312,7 +319,7 @@ export function ComposePost({ blog, onBack, onPublished, editPost, ownerId }: Co
       }
     } catch (err) {
       logger.error(isEditing ? 'Failed to update blog post:' : 'Failed to publish blog post:', err)
-      if (err instanceof ListLimitError) toast.error(err.message)
+      if (err instanceof ListLimitError || err instanceof BlogFieldError) toast.error(err.message)
       // Only the pre-publish lookup fails before anything is broadcast; a rate
       // limit later on may follow a write that landed, and a blind retry pays twice.
       else if (err instanceof PrePublishRateLimitError) toast.error('Dash Platform is rate-limiting requests right now. Nothing was published; wait a moment and try again.')

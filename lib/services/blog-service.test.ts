@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { get, updateDocument, createDocument } = vi.hoisted(() => ({
   get: vi.fn(), updateDocument: vi.fn(), createDocument: vi.fn(),
@@ -136,5 +136,37 @@ describe('blog v4 label limits', () => {
     const labels = Array.from({ length: 65 }, (_, i) => `l${i}`)
     await blogService.updateBlog(blogId, ownerId, { labels })
     expect(updateDocument.mock.calls[0][4].labels).toBe(labels.join(','))
+  })
+})
+
+describe('blog v7 discovery on blog.timeline', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  const blog = (n: number) => ({ id: `b${n}`, ownerId: 'o', createdAt: new Date(n), name: `B${n}` })
+
+  it('reads one newest-first page per request, with a cursor while pages come back full', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    const query = vi.spyOn(blogService, 'query').mockResolvedValue({ documents: [blog(2), blog(1)] } as never)
+    const page = await blogService.getBlogTimelinePage({ limit: 2, startAfter: 'b3' })
+    expect(query).toHaveBeenCalledWith({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 2, startAfter: 'b3' })
+    expect(page).toEqual({ blogs: [blog(2), blog(1)], nextCursor: 'b1' })
+  })
+
+  it('serves getAllBlogs from the timeline on v7, not an owner-order scan', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    const query = vi.spyOn(blogService, 'query').mockResolvedValue({ documents: [blog(3)] } as never)
+    expect((await blogService.getAllBlogs(100)).map((b) => b.id)).toEqual(['b3'])
+    expect(query).toHaveBeenCalledOnce()
+    expect(query.mock.calls[0][0].orderBy).toEqual([['$createdAt', 'desc']])
+  })
+
+  it('refuses an http avatar on v7 before signing', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    createDocument.mockClear()
+    await expect(blogService.createBlog(ownerId, { name: 'B', avatar: 'http://example.com/a.png' })).rejects.toThrow(/https:\/\/ or ipfs:\/\//)
+    expect(createDocument).not.toHaveBeenCalled()
   })
 })
