@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { deliveredFor, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { coverageChanged, deliveredFor, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, withPendingDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -24,13 +24,25 @@ interface DeliverDigitalModalProps {
   listings: ReadonlyMap<string, ItemListing>
   sellerId: string
   sellerPrivateKey: Uint8Array
-  /** True when this order already has a delivery: sending again takes no new unique codes by default. */
-  alreadyDelivered: boolean
-  /** The order's earlier deliveries (decrypted where possible): which lines they covered. */
+  /** The order's earlier deliveries (decrypted where possible), as just read: which lines they covered. */
   previousDeliveries: readonly OrderDelivery[]
+  /** Re-read the order's deliveries from the chain (rejects when the read fails). */
+  refreshDeliveries: () => Promise<OrderDelivery[]>
   onDelivered: (result: FulfillOrderResult) => void
   /** A failed delivery may still have rewritten pools (see FulfillmentError). */
   onFailed: (error: unknown) => void
+}
+
+/** Unique codes each line may still be owed: never one that may already be out. */
+const owedCodesFor = (lines: readonly OrderItem[], coverage: readonly LineCoverage[], sellsCodes: readonly boolean[]) =>
+  lines.map((line, index) => (sellsCodes[index] ? Math.max(0, line.quantity - coverage[index].possiblyCodes) : 0))
+
+const codesByLine = (codes: readonly number[]): Record<number, number> => Object.fromEntries(codes.map((count, index) => [index, count]))
+
+/** The lines still to deliver (every line when none is). */
+function defaultSelection(coverage: readonly LineCoverage[], owedCodes: readonly number[]): ReadonlySet<number> {
+  const pending = coverage.flatMap((line, index) => (!line.possibly || owedCodes[index] > 0 ? [index] : []))
+  return new Set(pending.length > 0 ? pending : coverage.map((_, index) => index))
 }
 
 /**
@@ -47,28 +59,29 @@ export function DeliverDigitalModal({
   listings,
   sellerId,
   sellerPrivateKey,
-  alreadyDelivered,
   previousDeliveries,
+  refreshDeliveries,
   onDelivered,
   onFailed,
 }: DeliverDigitalModalProps) {
   const formId = useId()
   const lines = useMemo(() => digitalLines(payload), [payload])
+  // The receipts this form's allocation is based on: re-checked against the
+  // chain before sending, and replaced (with the allocation) if they changed.
+  const [basis, setBasis] = useState<readonly OrderDelivery[]>(previousDeliveries)
+  // Set when the re-check found new receipts and the allocation was redone.
+  const [coverageMoved, setCoverageMoved] = useState(false)
   // What earlier receipts hold for each line (lineCoverage): "possibly" counts
   // pending receipts and ones this device cannot read, so no code is sent
   // twice by default; "confirmed" alone counts towards marking the order Delivered.
-  const coverage = useMemo(() => lines.map((line) => lineCoverage(line, previousDeliveries)), [lines, previousDeliveries])
+  const coverage = useMemo(() => lines.map((line) => lineCoverage(line, basis)), [lines, basis])
   const sellsCodes = useMemo(() => lines.map((line) => kits.get(line.itemId)?.kit.licenseKeys !== undefined), [lines, kits])
-  // Codes a line may still be owed: never one that may already be out.
-  const owedCodes = lines.map((line, index) => (sellsCodes[index] ? Math.max(0, line.quantity - coverage[index].possiblyCodes) : 0))
+  const owedCodes = owedCodesFor(lines, coverage, sellsCodes)
   // The lines this delivery covers. A delivery too large for one receipt goes
   // out in parts: untick some lines (or send fewer codes), deliver, then the rest.
-  const [selected, setSelected] = useState<ReadonlySet<number>>(() => {
-    const pending = lines.flatMap((line, index) => (!coverage[index].possibly || owedCodes[index] > 0 ? [index] : []))
-    return new Set(pending.length > 0 ? pending : lines.map((_, index) => index))
-  })
+  const [selected, setSelected] = useState<ReadonlySet<number>>(() => defaultSelection(coverage, owedCodes))
   // Unique codes each code-selling line takes now: by default what it is still owed.
-  const [codesNow, setCodesNow] = useState<Record<number, number>>(() => Object.fromEntries(owedCodes.map((owed, index) => [index, owed])))
+  const [codesNow, setCodesNow] = useState<Record<number, number>>(() => codesByLine(owedCodes))
   const [message, setMessage] = useState('')
   const [markDelivered, setMarkDelivered] = useState(isDigitalOnly(payload.items))
   const [extras, setExtras] = useState<Record<string, DigitalAsset[]>>({})
@@ -156,10 +169,38 @@ export function DeliverDigitalModal({
     onClose()
   }
 
+  /**
+   * Re-read the order's receipts before anything is taken from a pool. If they
+   * changed since the form was filled in (a delivery from another device or
+   * tab), redo the allocation from them and let the seller check it: never
+   * send codes chosen against receipts that are out of date.
+   */
+  const coverageStillHolds = async (): Promise<boolean> => {
+    let latest: OrderDelivery[]
+    try {
+      // Receipts this session sent that the read does not show yet still count.
+      latest = withPendingDeliveries(await refreshDeliveries(), basis)
+    } catch (error) {
+      logger.error('Could not re-check the order\'s deliveries:', error)
+      toast.error('Could not check what was already delivered for this order, so nothing was sent. Try again.')
+      return false
+    }
+    if (!coverageChanged(lines, basis, latest)) return true
+    const fresh = lines.map((line) => lineCoverage(line, latest))
+    const owed = owedCodesFor(lines, fresh, sellsCodes)
+    setBasis(latest)
+    setSelected(defaultSelection(fresh, owed))
+    setCodesNow(codesByLine(owed))
+    setCoverageMoved(true)
+    return false
+  }
+
   const handleSubmit = async () => {
     if (blockers.length > 0 || needsReview || isSubmitting || isUploading) return
     setIsSubmitting(true)
+    setCoverageMoved(false)
     try {
+      if (!(await coverageStillHolds())) return
       const result = await fulfillOrder({
         sellerId,
         order,
@@ -189,7 +230,7 @@ export function DeliverDigitalModal({
     <Modal open={isOpen} onOpenChange={(open) => !open && handleClose()} variant="sheet" className="max-w-lg">
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-800">
         <Dialog.Title className="font-semibold text-gray-900 dark:text-gray-100">
-          {alreadyDelivered ? (sendsAgain ? 'Send again' : 'Deliver the rest') : 'Deliver digital items'}
+          {basis.length > 0 ? (sendsAgain ? 'Send again' : 'Deliver the rest') : 'Deliver digital items'}
         </Dialog.Title>
         <IconButton aria-label="Close delivery" onClick={handleClose}>
           <XMarkIcon className="h-5 w-5" />
@@ -334,6 +375,15 @@ export function DeliverDigitalModal({
                 <span className="block text-xs text-gray-500">The buyer writes the order, so its titles and prices can differ from what is delivered: each product&apos;s own content is sent.</span>
               </span>
             </label>
+          </div>
+        )}
+
+        {coverageMoved && (
+          <div role="alert" className="p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+            <p className="flex items-start gap-2 text-sm text-yellow-800 dark:text-yellow-200">
+              <ExclamationTriangleIcon className="h-4 w-4 mt-0.5 flex-shrink-0" aria-hidden="true" />
+              Nothing was sent: this order got another delivery since you opened this form, perhaps from another device. What to send now has been worked out again from it. Check it, then press Deliver again.
+            </p>
           </div>
         )}
 

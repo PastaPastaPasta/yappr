@@ -24,6 +24,8 @@ import {
   planDelivery,
   variantRef,
   wholeOrderProblems,
+  withPendingDeliveries,
+  coverageChanged,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
 import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
@@ -202,6 +204,28 @@ describe('lineProblems', () => {
     expect(check([line(EBOOK_ID)], new Map([[EBOOK_ID, listing(EBOOK_ID, { status: 'active' })]]))).toEqual([])
   })
 
+  it('flags a quantity beyond tracked stock for review, as checkout reads stock, and holds it from bulk delivery', () => {
+    const onOrder = new Map([[EBOOK_ID, kit({ deliverWhen: 'on_order', assets: [file('a.zip')] })]])
+    const bulk = (items: OrderItem[], listings: Map<string, ItemListing>) =>
+      isReadyForBulkDelivery({ payload: { items }, storeId: 'store', latestStatus: undefined, alreadyDelivered: false, kits: onOrder, listings })
+    // Base stock: out of stock, or less than ordered.
+    for (const [stockQuantity, quantity] of [[0, 1], [2, 3]]) {
+      const listings = new Map([[EBOOK_ID, listing(EBOOK_ID, { stockQuantity })]])
+      expect(check([line(EBOOK_ID, quantity)], listings).map((p) => p.blocking)).toEqual([false])
+      expect(bulk([line(EBOOK_ID, quantity)], listings)).toBe(false)
+    }
+    // Enough stock, or untracked: nothing to review.
+    expect(check([line(EBOOK_ID, 2)], new Map([[EBOOK_ID, listing(EBOOK_ID, { stockQuantity: 2 })]]))).toEqual([])
+    expect(bulk([line(EBOOK_ID, 2)], new Map([[EBOOK_ID, listing(EBOOK_ID, { stockQuantity: 2 })]]))).toBe(true)
+    expect(check([line(EBOOK_ID, 5)], listed([EBOOK_ID]))).toEqual([])
+    // A variant's own stock decides, untracked (unlimited) when it has none.
+    const stocked = { axes: [{ name: 'Format', options: ['PDF', 'Deluxe'] }], combinations: [{ key: 'PDF', price: 100 }, { key: 'Deluxe', price: 900, stock: 0 }] }
+    const withStock = new Map([[EBOOK_ID, listing(EBOOK_ID, { variants: stocked, stockQuantity: 0 })]])
+    expect(check([line(EBOOK_ID, 1, { variantKey: 'Deluxe', unitPrice: 900 })], withStock).map((p) => p.blocking)).toEqual([false])
+    expect(bulk([line(EBOOK_ID, 1, { variantKey: 'Deluxe', unitPrice: 900 })], withStock)).toBe(false)
+    expect(check([line(EBOOK_ID, 3, { variantKey: 'PDF' })], withStock)).toEqual([])
+  })
+
   it('flags a title, variant, price or currency the listing does not have, for review', () => {
     const withVariants = new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]])
     // The premium variant at the cheap variant's price.
@@ -229,6 +253,28 @@ describe('lineCoverage', () => {
 
   it('ignores other items and variants', () => {
     expect(lineCoverage(line(GAME_ID, 1, { variantKey: 'Deluxe' }), [sent(['k1'])]).possibly).toBe(false)
+  })
+})
+
+describe('re-checking receipts before a delivery', () => {
+  const receipt = (n: number, licenseKeys: string[], unconfirmed = false) =>
+    ({ nonce: new Uint8Array([n]), unconfirmed, payload: { v: 1 as const, items: [{ itemId: GAME_ID, itemTitle: 'GAME', assets: [], licenseKeys }] } })
+
+  it('keeps a pending receipt a lagging read does not show, and drops it once it lands', () => {
+    const pending = receipt(2, ['k2'], true)
+    expect(withPendingDeliveries([receipt(1, ['k1'])], [receipt(1, ['k1']), pending])).toEqual([receipt(1, ['k1']), pending])
+    expect(withPendingDeliveries([receipt(1, ['k1']), receipt(2, ['k2'])], [pending])).toEqual([receipt(1, ['k1']), receipt(2, ['k2'])])
+    // A confirmed receipt the read no longer shows is the read's to decide.
+    expect(withPendingDeliveries([], [receipt(1, ['k1'])])).toEqual([])
+  })
+
+  it('notices a delivery made elsewhere, but not a pending one confirming', () => {
+    const lines = [line(GAME_ID, 2)]
+    expect(coverageChanged(lines, [], [receipt(1, ['k1'])])).toBe(true)
+    expect(coverageChanged(lines, [receipt(1, ['k1'])], [receipt(1, ['k1']), receipt(2, ['k2'])])).toBe(true)
+    expect(coverageChanged(lines, [{ unconfirmed: false, payload: undefined }], [{ unconfirmed: false, payload: undefined }])).toBe(false)
+    expect(coverageChanged(lines, [receipt(1, ['k1'], true)], [receipt(1, ['k1'])])).toBe(false)
+    expect(coverageChanged([line(SONG_ID)], [], [receipt(1, ['k1'])])).toBe(false)
   })
 })
 

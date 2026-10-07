@@ -21,7 +21,7 @@ import { storefrontSupportsDigital } from '@/lib/constants'
 import { orderDeliveryService } from '@/lib/services/order-delivery-service'
 import { itemDeliverableService, type SellerKit } from '@/lib/services/item-deliverable-service'
 import { fulfillOrder, FulfillmentError, KeyRecoveryError, kitsOf, loggableFulfillmentError, newerKits, toKitPayloads, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, type ItemListing } from '@/lib/services/digital-delivery-plan'
+import { digitalLines, digitalOrders, hasDigitalLines, isDigitalOnly, isReadyForBulkDelivery, planDelivery, withPendingDeliveries, type ItemListing } from '@/lib/services/digital-delivery-plan'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatDate, formatOrderId } from '@/lib/utils/format'
 import { withAuth, useAuth } from '@/contexts/auth-context'
@@ -62,8 +62,8 @@ interface DigitalState {
  */
 async function readListings(itemIds: string[]): Promise<Map<string, ItemListing>> {
   const items = await storeItemService.getManyFresh(itemIds)
-  return new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants, status }): [string, ItemListing] =>
-    [id, { storeId, fulfillment, title, basePrice, currency, variants, status }]))
+  return new Map(items.map(({ id, storeId, fulfillment, title, basePrice, currency, variants, status, stockQuantity }): [string, ItemListing] =>
+    [id, { storeId, fulfillment, title, basePrice, currency, variants, status, stockQuantity }]))
 }
 
 interface CurrentOrderState {
@@ -207,6 +207,8 @@ function SellerOrdersPage() {
   const [kits, setKits] = useState<Map<string, SellerKit>>(new Map())
   const [listings, setListings] = useState<Map<string, ItemListing>>(new Map())
   const [deliverContext, setDeliverContext] = useState<{ orderId: string; sellerPrivateKey: Uint8Array } | null>(null)
+  // The order whose receipts are being re-read before its delivery form opens.
+  const [openingOrderId, setOpeningOrderId] = useState<string | null>(null)
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null)
 
   // Orders whose delivery or status read failed: kept out of "Deliver all".
@@ -354,6 +356,34 @@ function SellerOrdersPage() {
   const applyFailedFulfillment = useCallback((error: unknown) => {
     if (error instanceof FulfillmentError && error.updatedKits.size > 0) setKits(prev => newerKits(prev, error.updatedKits))
   }, [])
+
+  /**
+   * Re-read one order's receipts from the chain and fold them into the page,
+   * keeping any this session sent that the read does not show yet. Throws
+   * when the read fails: delivery waits for a successful one.
+   */
+  const refreshOrderDeliveries = useCallback(async (order: StoreOrder, sellerPrivateKey: Uint8Array): Promise<OrderDelivery[]> => {
+    const read = await orderDeliveryService.loadDecrypted([order], (delivery, owner) => orderDeliveryService.decryptAsSeller(delivery, owner, sellerPrivateKey))
+    const fresh = read.get(order.id) ?? []
+    setDeliveries(prev => new Map(prev).set(order.id, withPendingDeliveries(fresh, prev.get(order.id) ?? [])))
+    return fresh
+  }, [])
+
+  /**
+   * Open the delivery form on the order's receipts as they stand now: the
+   * page's copy may predate a delivery made on another device, and a code
+   * line would default to codes it was already sent.
+   */
+  const openDelivery = (order: StoreOrder, sellerPrivateKey: Uint8Array) => {
+    setOpeningOrderId(order.id)
+    refreshOrderDeliveries(order, sellerPrivateKey)
+      .then(() => setDeliverContext({ orderId: order.id, sellerPrivateKey }))
+      .catch((error) => {
+        logger.error(`Could not re-read order ${order.id}'s deliveries:`, error)
+        toast.error('Could not check what was already delivered for this order. Try again.')
+      })
+      .finally(() => setOpeningOrderId(null))
+  }
 
   /** The seller key is needed to read kits and to key the delivery; ask for it if this device lacks it. */
   const withSellerKey = (then: (sellerPrivateKey: Uint8Array) => void) => {
@@ -753,10 +783,10 @@ function SellerOrdersPage() {
                               size="sm"
                               variant={lastDelivery ? 'outline' : 'default'}
                               // Unknown delivery state must not read as "not delivered": it would take new codes.
-                              disabled={bulkProgress !== null || uncertainOrders.has(order.id)}
-                              onClick={() => withSellerKey((sellerPrivateKey) => setDeliverContext({ orderId: order.id, sellerPrivateKey }))}
+                              disabled={bulkProgress !== null || uncertainOrders.has(order.id) || openingOrderId !== null}
+                              onClick={() => withSellerKey((sellerPrivateKey) => openDelivery(order, sellerPrivateKey))}
                             >
-                              {lastDelivery ? 'Send again' : 'Deliver now'}
+                              {openingOrderId === order.id ? 'Checking…' : lastDelivery ? 'Send again' : 'Deliver now'}
                             </Button>
                           </div>
                         )}
@@ -845,8 +875,8 @@ function SellerOrdersPage() {
               listings={listings}
               sellerId={user.identityId}
               sellerPrivateKey={deliverContext.sellerPrivateKey}
-              alreadyDelivered={(deliveries.get(deliverOrder.id)?.length ?? 0) > 0}
               previousDeliveries={deliveries.get(deliverOrder.id) ?? []}
+              refreshDeliveries={() => refreshOrderDeliveries(deliverOrder, deliverContext.sellerPrivateKey)}
               onDelivered={(result) => applyFulfillment(deliverOrder.id, result)}
               onFailed={applyFailedFulfillment}
             />

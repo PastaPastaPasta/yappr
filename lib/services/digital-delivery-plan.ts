@@ -8,6 +8,7 @@
 import bs58 from 'bs58'
 import { sha256 } from '@noble/hashes/sha2.js'
 import { bytesToHex } from '@noble/hashes/utils.js'
+import { bytesEqual } from '../bytes'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
 import type {
   DeliverWhen,
@@ -235,6 +236,33 @@ export function lineCoverage(line: Pick<OrderItem, 'itemId' | 'variantKey' | 'qu
   return coverage
 }
 
+/**
+ * An order's receipts as just read from the chain, plus any this session sent
+ * that the read does not show yet (matched by nonce): a lagging read must not
+ * make a pending receipt's codes look unsent.
+ */
+export function withPendingDeliveries<T extends Pick<OrderDelivery, 'nonce' | 'unconfirmed'>>(fresh: readonly T[], held: readonly T[]): T[] {
+  const landed = (pending: T) => fresh.some((delivery) => bytesEqual(delivery.nonce, pending.nonce))
+  return [...fresh, ...held.filter((delivery) => delivery.unconfirmed && !landed(delivery))]
+}
+
+/**
+ * Whether two readings of the order's receipts differ in what a delivery is
+ * worked out from: which lines may have gone out, and how many of their
+ * unique codes. (A pending receipt that has since confirmed changes neither.)
+ */
+export function coverageChanged(
+  lines: ReadonlyArray<Pick<OrderItem, 'itemId' | 'variantKey' | 'quantity'>>,
+  before: readonly DeliveryRecord[],
+  after: readonly DeliveryRecord[]
+): boolean {
+  return lines.some((line) => {
+    const a = lineCoverage(line, before)
+    const b = lineCoverage(line, after)
+    return a.possibly !== b.possibly || a.possiblyCodes !== b.possiblyCodes
+  })
+}
+
 /** Longest title a product can have (the product editor's limit). */
 const MAX_ITEM_TITLE_LENGTH = 200
 /** Longest base58 encoding of a 32-byte id. */
@@ -301,7 +329,7 @@ export function kitsAfterDelivery(
 }
 
 /** The seller's own listing of an item, read from the chain. */
-export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status'>>
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status' | 'stockQuantity'>>
 
 const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantKey'>) => `${line.itemId}|${line.variantKey ?? ''}`
 const repeatedLineText = (line: Pick<OrderItem, 'itemTitle'>) => `"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`
@@ -381,6 +409,15 @@ export function lineProblems(
     const combination = line.variantKey ? combinations.find((c) => c.key === line.variantKey) : undefined
     if (line.variantKey && !combination) problem(`"${listing.title}" has no variant "${line.variantKey.replace(/\|/g, ' / ')}".`)
     else if (!line.variantKey && combinations.length > 0) problem(`The order names no variant of "${listing.title}".`)
+    // Tracked stock as checkout reads it (storeItemService.getStock): the
+    // variant's, else the base item's; untracked is unlimited. An active
+    // listing can still be out of stock, which checkout refuses to sell.
+    const stock = combination ? combination.stock : listing.stockQuantity
+    if (typeof stock === 'number' && line.quantity > stock) {
+      problem(stock <= 0
+        ? `"${listing.title}" is out of stock.`
+        : `The order is for ${line.quantity} of "${listing.title}", but only ${stock} ${stock === 1 ? 'is' : 'are'} in stock.`)
+    }
     // What checkout charges (storeItemService.getPrice): the variant's price, else the base price, else 0.
     const listedPrice = combination ? combination.price : (listing.basePrice ?? 0)
     if (line.unitPrice !== listedPrice) problem(`The order's price for "${listing.title}" differs from your listing.`)
@@ -404,7 +441,8 @@ export interface BulkReadinessInput {
  * Whether "Deliver ready orders" may fulfil this order without the seller
  * opening it: it has digital lines, nothing was delivered yet, it is not
  * closed, every digital line agrees with the seller's listing (a digital
- * product of this store, with the listed title, variant and price), every one
+ * product of this store, with the listed title, variant and price, and in
+ * stock for the quantity ordered), every one
  * has a kit with keys enough, and every kit's timing rule is met (`on_order`
  * always; `payment_confirmed` once the seller has marked payment received).
  *
