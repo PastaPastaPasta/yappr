@@ -1,8 +1,8 @@
 import { Platform } from 'react-native';
 
 /**
- * Onboarding and sign-in copy (UX_SPEC §5.1). Strings marked (web) there are
- * the web app's, verbatim: change them on both sides or neither.
+ * Onboarding and sign-in copy (UX_SPEC §5.1). Strings marked (web) there
+ * started as the web app's; mobile owns its copy (UX_SPEC §5).
  */
 export const copy = {
   welcome: {
@@ -17,7 +17,7 @@ export const copy = {
     title: 'Sign in with your Dash wallet',
     subtitle: 'Approve one request in your wallet. Your keys never leave it.',
     /** AUTH-14: the flow opened for an account whose stored key no longer signs. */
-    reauth: (name: string) => `Your session as ${name} has expired. Sign in again with its wallet or key.`,
+    reauth: (name: string) => `Sign in again as ${name} with its wallet or key.`,
     openWallet: 'Open wallet',
     otherDevice: 'Use a wallet on another device',
     other: 'Other ways to sign in',
@@ -53,10 +53,15 @@ export const copy = {
       `This wallet is on a different network. Switch your wallet to ${network} and try again.`,
     noIdentity: (network: string) => `No identity was found for this wallet on ${network}.`,
     unavailable: 'Dash Platform is temporarily unavailable. Please try again in a few moments.',
-    alreadySignedIn: 'Another account is signed in. Add this account from Settings → Accounts.',
+    /** Another account is active (engine `BAD_REQUEST`): sign this one in beside it, with "Add account" (#23). */
+    alreadySignedIn: (current: string | null, adding: string | null) =>
+      `${current ? `You're signed in as ${current}.` : 'Another account is signed in.'} ${
+        adding ? `Add ${adding} as another account?` : 'Add this account too?'
+      }`,
+    addAccount: 'Add account',
     /** AUTH-14: the auth key the wallet's login key derives is disabled on the identity (engine `KEY_DISABLED`). */
     walletKeyDisabled:
-      'The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead.',
+      "This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key.",
   },
   keyreg: {
     title: 'First time login',
@@ -109,10 +114,9 @@ export const copy = {
     signOut: 'Sign out',
     /** AUTH-14: an account whose stored key no longer signs. */
     signInAgain: 'Sign in again',
-    reauthing: 'Getting ready to sign in again…',
     reauthFailed: "Couldn't start signing in again. Please try again.",
-    /** AUTH-14: the engine restarts into the account just signed in again, to load its other keys. */
-    loadingAgain: (name: string) => `Signing in as ${name}…`,
+    /** AUTH-14: the one progress label of signing in again, before the sign-in flow and after it (the engine restarts both times). */
+    signingInAs: (name: string) => `Signing in as ${name}…`,
   },
   signout: {
     title: (name: string) => `Sign out of ${name}?`,

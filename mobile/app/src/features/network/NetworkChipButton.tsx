@@ -1,70 +1,41 @@
-import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
-import { ChevronRightIcon, CpuChipIcon } from 'react-native-heroicons/outline';
+import { View } from 'react-native';
 
 import { config } from '~/config';
 import { useEngineStatus } from '~/engine/hooks';
-import type { EngineState as SupervisorState } from '~/engine/supervisor';
-import { cn } from '~/lib-allowlist';
-import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
+import { chipStateOf, NetworkChip, type EngineState as ChipState } from '~/ui/NetworkChip';
 import { Sheet } from '~/ui/Sheet';
 import { Text } from '~/ui/Text';
-import { tw, useColors } from '~/ui/tokens';
 
-/** UX_SPEC §5.11 (web's network banner copy) and §5.10 diag.states / diag.title. */
+/** UX_SPEC §5.11 network.* */
 export const networkCopy = {
   body: {
-    devnet: 'Running on a Dash Platform devnet. Data may be reset.',
-    testnet: 'Running on Dash Platform Testnet. Data may be reset.',
+    devnet: 'Yappr is running on a Dash Platform devnet. Posts and accounts may be reset.',
+    testnet: 'Yappr is running on Dash Platform Testnet. Posts and accounts may be reset.',
   } as Partial<Record<string, string>>,
-  engine: (state: string) => `Engine: ${state}`,
-  diagnostics: 'Engine diagnostics',
+  /** The connection line, in the chip's states: booting and restarting both read "Connecting…". */
+  state: {
+    ready: 'Connected',
+    booting: 'Connecting…',
+    unavailable: "Can't connect right now",
+  } satisfies Record<ChipState, string>,
 };
 
 /**
- * The engine state line's word (UX_SPEC §5.10 diag.states): Booting / Ready /
- * Restarting / Unavailable. A degraded boot could not connect (PRD NET-01), as
- * the chip above it shows.
- */
-export function engineStateWord(state: SupervisorState): string {
-  if (state === 'ready') return 'Ready';
-  if (state === 'crashed' || state === 'restarting') return 'Restarting';
-  if (state === 'degraded' || state === 'failed' || state === 'unsupported') return 'Unavailable';
-  return 'Booting';
-}
-
-/**
  * The network sheet (UX_SPEC §4.34, PRD NET-07): the chip, what the network
- * means, the engine's state, and the way to Engine diagnostics. A bottom
- * sheet, so swipe, the scrim and Android Back close it.
+ * means, and whether the app is connected. A bottom sheet, so swipe, the
+ * scrim and Android Back close it. Troubleshooting lives in About, not here.
  */
 export function NetworkSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const c = useColors();
-  const { state } = useEngineStatus();
+  const chipState = chipStateOf(useEngineStatus().state);
   const body = networkCopy.body[config.network];
   return (
     <Sheet open={open} onClose={onClose} testID="network-sheet">
-      <NetworkChip network={config.network} state={chipStateOf(state)} testID="network-sheet-chip" />
+      <NetworkChip network={config.network} state={chipState} testID="network-sheet-chip" />
       {body ? <Text variant="body">{body}</Text> : null}
-      <Text variant="subhead" tone="secondary" testID="network-sheet-engine">
-        {networkCopy.engine(engineStateWord(state))}
+      <Text variant="subhead" tone="secondary" testID="network-sheet-status">
+        {networkCopy.state[chipState]}
       </Text>
-      <Pressable
-        accessibilityRole="link"
-        onPress={() => {
-          onClose();
-          router.push('/settings/diagnostics');
-        }}
-        testID="network-sheet-diagnostics"
-        className={cn('-mx-5 min-h-12 flex-row items-center gap-3 px-5', tw.pressed)}
-      >
-        <CpuChipIcon size={20} color={c.textSecondary} />
-        <Text variant="body" tone="link" className="flex-1">
-          {networkCopy.diagnostics}
-        </Text>
-        <ChevronRightIcon size={16} color={c.textDisabled} />
-      </Pressable>
     </Sheet>
   );
 }

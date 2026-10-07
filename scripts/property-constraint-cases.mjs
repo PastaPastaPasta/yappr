@@ -166,6 +166,13 @@ CONSTRAINT_CASES['yappr-social-contract-v11.json'] = [
   ['reply: a tombstone keeping its text', 'reply', { ...baseReply(), deleted: true }, 'tombstoneIsBlank'],
 ];
 
+// Social v12 (5.0.0-beta.2) declares exactly v11's rules: its changes are the like counter indexes
+// and `retractedWhen` on post and reply, neither of which is a propertyConstraints rule. A barred
+// author's tombstone is still judged by `tombstoneIsBlank` (retractedWhen only lets it past the
+// bar), so v11's cases are v12's, run against v12's own file.
+DECLARED_RULES['yappr-social-contract-v12.json'] = DECLARED_RULES['yappr-social-contract-v11.json'];
+CONSTRAINT_CASES['yappr-social-contract-v12.json'] = CONSTRAINT_CASES['yappr-social-contract-v11.json'];
+
 /**
  * The rejection a live write breaking `rule` must produce: the node's 10422
  * `DocumentPropertyConstraintViolatedError` message naming exactly this rule

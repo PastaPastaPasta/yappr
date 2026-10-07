@@ -258,7 +258,7 @@ States: `starting → handshaking → booting → ready ⇄ degraded → crashed
 **Restarts:**
 - **Remount.** A restart remounts the WebView with a new `key` and a new `sid`, and increments `epoch`.
 - **Backoff.** 0.5 s, 1 s, 2 s, 4 s, 8 s, then 30 s.
-- **Giving up (PRD NET-04).** At most 3 restarts within 2 minutes; the next failure moves the supervisor to `failed` (no restart, so `restarts` does not grow), and every queued call rejects with `ENGINE_UNAVAILABLE`. Every cause counts: a crash, a hang, a missed hello or boot deadline, a failed prepare. Two counts, and the larger decides: the failures inside a sliding 2-minute window, and the epochs in a row that never came up (ready or degraded), however long each took to fail, so a 30 s hello or 90 s boot deadline cannot outlast the window and loop forever (SR-08). An epoch that comes up ends that run. Home and Notifications then show the "Couldn't connect to Dash Platform." banner with "Try again"; it, and the diagnostics screen's "Restart engine", reset both counts. A return to the foreground also retries with fresh counts. A start that fails in the background (a locked Keychain) is not counted: it waits for the foreground, and its queued calls with it.
+- **Giving up (PRD NET-04).** At most 3 restarts within 2 minutes; the next failure moves the supervisor to `failed` (no restart, so `restarts` does not grow), and every queued call rejects with `ENGINE_UNAVAILABLE`. Every cause counts: a crash, a hang, a missed hello or boot deadline, a failed prepare. Two counts, and the larger decides: the failures inside a sliding 2-minute window, and the epochs in a row that never came up (ready or degraded), however long each took to fail, so a 30 s hello or 90 s boot deadline cannot outlast the window and loop forever (SR-08). An epoch that comes up ends that run. Home and Notifications then show the "Couldn't connect to Dash Platform." banner with "Try again"; it, and the Troubleshooting screen's "Reconnect" (SET-08), reset both counts. A return to the foreground also retries with fresh counts. A start that fails in the background (a locked Keychain) is not counted: it waits for the foreground, and its queued calls with it.
 - **Clean storage.** Storage is rehydrated from MMKV on every boot. Write-through (§9.1) keeps MMKV current to within one event-loop turn, so a crash loses at most the batch in flight.
 
 **Replay after a restart:**
@@ -516,7 +516,7 @@ The "Wraps" column names the `lib/` (or vendor) functions each method composes, 
 | --- | --- | --- |
 | `info` | `() => Promise<EngineInfo>` | `manifest.json`; `getContractTopology()` (`lib/constants.ts:348`); the capability predicates below |
 | `ping` | `() => Promise<{ t: number }>` | — |
-| `diagnostics` | `() => Promise<{ wasmMs: number \| null; dapi: { configured: number; endpoints: { origin; requests; failures; lastOkAt; lastErrorAt }[]; lastOkAt: number \| null } }>` | Engine diagnostics' live figures (PRD SET-08), polled every 2 s while the screen is open: the WASM init time (`src/wasm-timing.ts`) and each DAPI endpoint's last answer, counted by a `fetch` wrapper over the SDK's gRPC-web requests (`src/dapi-monitor.ts`; origins and outcomes only). Engine-local, no network. `engine.info().contracts` also carries `pollr`. |
+| `diagnostics` | `() => Promise<{ wasmMs: number \| null; dapi: { configured: number; endpoints: { origin; requests; failures; lastOkAt; lastErrorAt }[]; lastOkAt: number \| null } }>` | Troubleshooting's live figures (PRD SET-08), polled every 2 s while the screen is open: the WASM init time (`src/wasm-timing.ts`) and each DAPI endpoint's last answer, counted by a `fetch` wrapper over the SDK's gRPC-web requests (`src/dapi-monitor.ts`; origins and outcomes only). Engine-local, no network. `engine.info().contracts` also carries `pollr`. |
 
 ```ts
 interface EngineInfo {
@@ -712,7 +712,7 @@ Conversation keys are `d:…` or `g:…:…` for v5 (`ConversationView.key`, `en
 | `send` | `(key: string, text: string) => Promise<WriteTicket>` | `send` (:419), which returns `Promise<void>` and throws on failure; see §7.1 for the mapping | `sendMessage` (:66), which returns `{success, error?}` |
 | `startDirect` | `(peerId: Id) => Promise<string>` | `startDirect` (:412) | `getOrCreateConversation` (:601) |
 | `createGroup` | `(name: string, memberIds: Id[]) => Promise<{ key: string; failed: Id[] }>` | `createGroup` (:457); at most 100 members (`MAX_GROUP_MEMBERS`, `lib/dm/group.ts:22`) | `NOT_SUPPORTED` |
-| `renameGroup` / `addMember` / `removeMember` / `leaveGroup` / `endGroup` / `resendKeys` | `(key, …) => Promise<WriteTicket>` | :476 / :468 / :472 / :488 / :480 / :484 | `NOT_SUPPORTED` |
+| `renameGroup` / `addMember` / `removeMember` / `leaveGroup` / `endGroup` / `resendKeys` | `(key, …) => Promise<WriteTicket>` | :476 / :468 / :472 / :488 / :480 / :484; refused at once with `BAD_REQUEST` for a group that is gone, ended or not the caller's to manage, and `resendKeys` to someone not in the group ("They are not in this group."), so none of these becomes an unknown outcome inside lib's run | `NOT_SUPPORTED` |
 | `hide` | `(key: string) => Promise<void>` | `hide` (:433) | — |
 | `setBlocked` | `(peerId: Id, blocked: boolean) => Promise<void>` | `setBlocked` (:444); stored in the encrypted self-state, separate from `safety.block` | — |
 | `setRetention` | `(r: '30d' \| '90d' \| '1y' \| 'never') => Promise<void>` | `setRetention` (:451) | — |
@@ -781,7 +781,7 @@ Link previews are fetched natively by RN, with no CORS proxy, through the allow-
 | --- | --- | --- |
 | `list` | `() => Promise<WriteTicket[]>` | Tickets not yet dismissed: pending, unconfirmed and failed, plus those confirmed in the last 10 minutes |
 | `get` | `(ticketId: string) => Promise<WriteTicket \| null>` | |
-| `check` | `(ticketId: string) => Promise<WriteTicket>` | "Check again" (§7.2) |
+| `check` | `(ticketId: string) => Promise<WriteTicket>` | One check of an `unconfirmed` ticket; the host's reconciler runs it (§7.2) |
 | `retry` | `(ticketId: string) => Promise<WriteTicket>` | Allowed only where §7.2 says so; otherwise `NOT_RETRYABLE` |
 | `dismiss` | `(ticketId: string) => Promise<void>` | |
 
@@ -835,7 +835,9 @@ interface WriteTicket {
 
 ### 7.2 "Check again" and retry
 
-`lib/unconfirmed-writes.ts` holds an in-memory map only, and "check again" is purely a UI pattern on web (for example `components/moderation/report-post-modal.tsx:103`). The engine makes it explicit.
+`lib/unconfirmed-writes.ts` holds an in-memory map only, and "check again" is purely a UI pattern on web (for example `components/moderation/report-post-modal.tsx:103`). The engine makes it explicit. The host never asks the user to call it: its reconciler (`mobile/app/src/data/reconcile.ts`) runs `check` on every `unconfirmed` ticket of the active account 5, 20, 80 and 130 s after it goes `unconfirmed`, when the app returns to the foreground, when a feed, profile or thread read shows a document the ticket names, and when a message's conversation is read (PRD G-3).
+
+**Absence needs time.** A transition that went out executes within a block or two, but until then a read cannot see it. So `check` calls any write absent (`retryable`, `NOT_RECORDED`) only once its last attempt stopped running at least 2 minutes before (`ABSENCE_AFTER_MS`, `tickets.ts`; a restart that cut it short counts as that stop). Earlier, a probe that does not find it leaves the ticket `unconfirmed`, not retryable, with `NOT_FOUND_YET_ERROR`: a like, delete or post still on its way is never rolled back or offered a second send. The reconciler's last automatic check (130 s) falls past this window, so a write that never landed still ends with Retry, not "Couldn't confirm".
 
 **`writes.check(ticketId)`, for an `unconfirmed` ticket:**
 
@@ -845,18 +847,23 @@ interface WriteTicket {
 | A delete | The document is proved absent with `documents.get` → `confirmed`. |
 | An index-only like (v9/v10, `confirmation: 'affectedState'`) | Read it back with `likeService.isLiked` (`like-service.ts:676`). |
 | A `post.publish` part with no known id (an engine restart, or a timeout, cut it short before `lib/` said it) | Looked for by its text among the author's newest posts and replies (`getUserPosts` / `getUserReplies`, `ownerAndTime`, 100 each, no lower date bound, so a device clock ahead of the chain's hides nothing). Found exactly once, dated no more than a minute before the ticket (a device clock ahead of the chain's; kept short so the same words posted elsewhere just before are not taken for it) and hanging where the part would (its reply target, the part before it, its quote), with no other post of the same words from the hour before the ticket (older ones are earlier posts of the same words): the part is named on the ticket and counts as landed. Its text nowhere, on two reads that reach at least an hour before the ticket, at least 2 minutes after the attempt stopped running (a transition that went out executes within a block or two): absent, and `writes.retry` posts it (the rest of a thread). Anything else (another post with the same words from the hour before, or any at all when proving absence; two candidates; a read that failed or did not reach back far enough; too soon) stays unconfirmed, and the app offers Edit once a check 10 minutes after posting still cannot tell. |
-| Not found, or the probe errors | Stays `unconfirmed`. `lastCheckedAt` updates, and `error` records the probe failure for display. |
+| Not found less than 2 minutes after the attempt stopped (`ABSENCE_AFTER_MS`) | Stays `unconfirmed`, not retryable (`NOT_FOUND_YET_ERROR`): it may still be on its way. |
+| Not found, or the probe errors | Stays `unconfirmed`. `lastCheckedAt` updates, and `error` records the probe failure (for diagnostics: the host shows none of the store's own messages). |
 | The call still runs (past its deadline) | Only a landing is proved (`confirmed`). Anything else stays `unconfirmed` with `STILL_SENDING`, never `retryable`: not found may mean still on its way, and a retry beside the running call could land twice. The probe's `sinceSettled()` is `null` until the call answers. A DM v5 write's probe (`dm.send`, `dm.group`) answers at once: lib's DM engine runs its reads on the queue the hung call holds, so a read would wait for the stall to clear. |
 
 **`writes.retry(ticketId)`** re-runs the same operation through `lib/`, with a fresh nonce, only when:
-- the ticket is `failed` and `error.data.outcome` is `refused` with `retryable: true` (for example `NONCE_CONFLICT`, `FEE_CHANGED`, `FEE_SHARE_MISMATCH` or `PARENT_TOO_YOUNG`);
+- the ticket is `failed` and `error.data.outcome` is `refused` with `retryable: true` (for example `FEE_SHARE_MISMATCH`, or `FEE_CHANGED` or `PARENT_TOO_YOUNG` once their silent re-sends ran out);
 - or the ticket is `failed` with outcome `not-sent` (`PENDING_WRITE`, `STORAGE`, `NETWORK` before broadcast);
 - or the ticket is `unconfirmed` and a `check` has proved the document absent. On the create path, `lib/` reports that as `CREATE_NOT_RECORDED_ERROR`, which moves the ticket to `failed`/`NOT_RECORDED`, outcome `not-recorded`.
 
 A thread resumes from `documents` (`DraftDTO.resume`), as on web.
 
+**Silent re-sends of a passing refusal.** `PARENT_TOO_YOUNG` and `FEE_CHANGED` (`AUTO_RETRY_CODES`, `tickets.ts`) are Platform's verdicts about the moment, not the write: refused, they never executed, so sending again cannot duplicate anything. The store puts such a ticket back to `pending`/`queued` and starts it again after 2, 5 and 15 s (`AUTO_RETRY_DELAYS_MS`), as `retry` would, and reports `failed` only when the third re-send is refused too. Not while a thread names a part that is out but unconfirmed, nor for an account that is switching away (then it is reported as refused). A host `retry` starts the count again. `NONCE_CONFLICT` is never re-sent (it may be this very transition executing: it stays `unconfirmed` for a check), and nor is `PENDING_WRITE`: lib holds an unconsumed nonce for up to 15 minutes, so re-sending would only loop. Nor is `FEE_SHARE_MISMATCH`: Yappr always agrees to the full declared moderators fee, so it means the client and the contract disagree, and each re-send would be refused, and charged, the same way.
+
+**A target still on its way.** A like, repost, bookmark, reply or quote that names a document this session created but has not seen confirmed (`isUnconfirmed`) waits for it (`settleTarget`: `settleUnconfirmed` up to six times, about two minutes), reporting `waiting-parent` each round so its deadline restarts; it fails `PARENT_UNCONFIRMED` (nothing sent) only if the target never shows.
+
 **Never blindly.**
-- No ticket is retried automatically, ever. The engine does not loop.
+- No ticket that may have landed is retried automatically, ever. The engine does not loop: only a refusal above is re-sent, at most three times.
 - A `pending` ticket cannot be retried, nor one whose earlier call still runs past its deadline.
 - `lib/`'s own cached-bytes rebroadcast (`yappr:pending-st:<docId>`, `state-transition-service.ts:44,624-672`) and nonce reservations (`identity-nonce.ts`) keep a retry from double-spending a nonce.
 - Tips, the one never-retry case, are out of 1.0.
@@ -948,7 +955,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 ### 7.4 Persistence and engine restarts
 
 - **Where tickets live.** Tickets persist in engine kv under `yappr_engine_writes`, which is MMKV through write-through: a JSON array, at most 100 tickets, with confirmed tickets pruned after 24 h.
-- **On boot,** a ticket left in `pending`, or `unconfirmed` by its deadline while its call still ran (the record persists that the call runs), was interrupted by a crash, so whether it went out is unknown. The engine moves it to `unconfirmed`, with stage `null` and error `ENGINE_RESTARTED`/outcome `unknown`. It emits `write.status`, and the UI shows "Not confirmed yet · Check again". It is never re-sent.
+- **On boot,** a ticket left in `pending`, or `unconfirmed` by its deadline while its call still ran (the record persists that the call runs), was interrupted by a crash, so whether it went out is unknown. The engine moves it to `unconfirmed`, with stage `null` and error `ENGINE_RESTARTED`/outcome `unknown`. It emits `write.status`; the UI keeps "Posting…" / "Sending…" while the host's reconciler checks it (§7.2). It is never re-sent.
 - **Unless it provably sent nothing.** A handler with `stagedSends` (`posts.publish`: `publishThread` reports its progress before each part's write) reports a stage before any write call. A ticket of such a handler that a restart finds still `queued`, naming no unconfirmed document, sent nothing in that attempt: it becomes `failed`, error `ENGINE_RESTARTED`/outcome `not-sent`, retryable when its arguments were kept, and the UI shows "Couldn't post · Retry · Edit". The record persists that flag beside the ticket, and the time the attempt stopped running, which "check again" uses (§7.2).
 - **What makes "check again" survive a restart.** `lib/`'s pending-transition cache (`yappr:pending-st:*`) and its nonce reservations (`yappr:nonce-reservation:*`, 15-minute lifetime, `identity-nonce.ts:60,72`) also live in the kv store. That is why a `check` or `retry` after a restart is still safe.
 

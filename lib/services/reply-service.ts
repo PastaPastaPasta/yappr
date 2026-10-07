@@ -184,9 +184,10 @@ class ReplyService extends BaseDocumentService<Reply> {
 
   /**
    * The author's delete, whatever it means on this topology: a tombstone where
-   * replies are permanent ({@link deletesAreTombstones}: v9, v11), a document
-   * delete elsewhere. Throws the refusal when the author is banned or suspended
-   * (41107/41108, {@link tombstoneDocument}); false for any other failure.
+   * replies are permanent ({@link deletesAreTombstones}: v9, v11, v12), a
+   * document delete elsewhere. Throws the refusal of a banned or suspended
+   * author's tombstone (41107/41108, v9/v11 only, {@link tombstoneDocument});
+   * false for any other failure.
    */
   async deleteOwnReply(replyId: string, ownerId: string): Promise<boolean> {
     return deletesAreTombstones() ? this.tombstoneReply(replyId, ownerId) : this.deleteReply(replyId, ownerId);

@@ -29,8 +29,8 @@ export function DmLocked({ onUnlock }: { onUnlock: () => void }) {
     <EmptyState
       icon={LockClosedIcon}
       title="Unlock your messages"
-      description="Messages are encrypted with your encryption key. Enter it on this device to read and send them."
-      action={{ label: 'Enter encryption key', onPress: onUnlock }}
+      description="Your messages are encrypted. Unlock them to read and send them on this device."
+      action={{ label: 'Unlock messages', onPress: onUnlock }}
       testID="messages-locked"
     />
   );

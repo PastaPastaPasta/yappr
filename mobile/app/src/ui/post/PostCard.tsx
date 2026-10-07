@@ -32,7 +32,7 @@ import { useRelativeTime } from '../use-relative-time';
 import { LinkPreviewCard } from './LinkPreviewCard';
 import { MediaGrid, mediaKindLabel } from './MediaGrid';
 import { PollCard } from './PollCard';
-import { PostActionBar, repostSplitParts } from './PostActionBar';
+import { PostActionBar, plural, repostSplitParts, splitPartLabel } from './PostActionBar';
 import { DeletedLine, PostStub, stubText } from './PostStub';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { QuoteEmbed, QuoteSkeleton } from './QuoteEmbed';
@@ -107,6 +107,8 @@ export interface PostCardProps {
   /** Engine capabilities for this post's kind. */
   canRepost?: boolean;
   canBookmark?: boolean;
+  /** The viewer's marks are still loading: like, repost and bookmark wait with a spinner (`PostActionBar`). */
+  marksLoading?: boolean;
   /** The optimistic variant's write status. */
   writeStatus?: WriteStatusProps;
   /**
@@ -363,10 +365,8 @@ function postAccessibilityLabel(
   }
   const { replies, reposts, quotes, likes } = post.stats;
   const split = repostSplitParts(extras.repostSplit);
-  const shared = split
-    ? split.map(({ count, floor, kind }) => `${count}${floor} ${kind}s`).join(', ')
-    : `${reposts + quotes} reposts`;
-  parts.push(`${replies} replies, ${shared}, ${likes} likes.`);
+  const shared = split ? split.map(splitPartLabel).join(', ') : plural(reposts + quotes, 'repost', 'reposts');
+  parts.push(`${plural(replies, 'reply', 'replies')}, ${shared}, ${plural(likes, 'like', 'likes')}.`);
   return parts.join(' ');
 }
 
@@ -397,6 +397,7 @@ export const PostCard = memo(function PostCard({
   authorPending = false,
   canRepost = true,
   canBookmark = true,
+  marksLoading = false,
   writeStatus,
   repostQuoteCounts,
   tagMaxLength,
@@ -459,7 +460,7 @@ export const PostCard = memo(function PostCard({
   if (post.deleted) {
     body = <DeletedLine kind={post.kind} />;
   } else if (post.encrypted) {
-    body = <PrivatePostPlaceholder name={post.author.displayName} onOpenWeb={actions.onOpenPrivate} />;
+    body = <PrivatePostPlaceholder onOpenWeb={actions.onOpenPrivate} />;
   } else {
     let quoteSlot: ReactNode = null;
     if (post.quoted?.viewer?.authorBlocked) {
@@ -679,6 +680,7 @@ export const PostCard = memo(function PostCard({
               canReply={canReply}
               canRepost={canRepost}
               canBookmark={canBookmark}
+              marksLoading={marksLoading}
               onReply={actions.onReply}
               onRepost={actions.onRepost}
               onLike={actions.onLike}

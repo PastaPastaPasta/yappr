@@ -2,7 +2,13 @@ import { readErrorMessage as exploreMessage } from '~/features/explore/states';
 import { readErrorMessage as homeMessage } from '~/features/home/feed-data';
 import { readErrorMessage as notificationsMessage } from '~/features/notifications/read-error';
 
-import { GENERIC_MESSAGE, isTemporaryReadFailure, readErrorMessage, UNAVAILABLE_MESSAGE } from './read-error';
+import {
+  GENERIC_MESSAGE,
+  isTemporaryReadFailure,
+  NOT_SUPPORTED_MESSAGE,
+  readErrorMessage,
+  UNAVAILABLE_MESSAGE,
+} from './read-error';
 
 const coded = (code: string, message = 'failed') => Object.assign(new Error(message), { code });
 
@@ -42,4 +48,9 @@ it('shows the unavailability copy on every screen for exactly the reads NET-03 r
     expect(exploreMessage(error)).toBeUndefined();
     expect(notificationsMessage(error)).toBeUndefined();
   }
+});
+
+it('says a view the contracts lack is not available yet, never naming the contract (#23)', () => {
+  expect(readErrorMessage(coded('NOT_SUPPORTED', 'This contract has no rankings'))).toBe("This isn't available yet.");
+  expect(NOT_SUPPORTED_MESSAGE).not.toMatch(/contract|network/i);
 });

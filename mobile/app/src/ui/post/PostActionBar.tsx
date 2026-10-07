@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 import {
   ArrowPathIcon,
   ArrowUpTrayIcon,
@@ -30,7 +30,8 @@ import { hitSlopFor, motion, useColors, useLargeText, type IconComponent } from 
 
 const ShareGlyph: IconComponent = Platform.OS === 'ios' ? ArrowUpTrayIcon : ShareIcon;
 
-const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+/** A spoken count: "1 reply", "2 replies", "0 likes". Every count a screen reader hears goes through it. */
+export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /** Reposts and quotes told apart, as the detail counts row shows them (`RepostQuoteCounts`). */
 export interface RepostSplit {
@@ -65,6 +66,11 @@ export function repostSplitParts(split: RepostSplit | null | undefined): RepostS
   return shown.length > 0 ? shown : null;
 }
 
+/** One split count as spoken: "1 quote", "0 quotes"; a floor is always plural ("1+ quotes"). */
+export function splitPartLabel({ count, floor, kind }: RepostSplitPart): string {
+  return floor ? `${count}${floor} ${kind}s` : plural(count, kind, `${kind}s`);
+}
+
 /**
  * The repost control's label (UX_SPEC §5.13): "Repost or quote, {N} reposts",
  * and where the detail counts row tells quotes apart, the same split, so a
@@ -79,7 +85,7 @@ export function repostLabel(
 ): string {
   const parts = repostSplitParts(split);
   const counts = parts
-    ? parts.map(({ count, floor, kind }) => `${count}${floor} ${count === 1 && !floor ? kind : `${kind}s`}`).join(', ')
+    ? parts.map(splitPartLabel).join(', ')
     : plural(total, 'repost', 'reposts');
   const mark = state.reposted ? (state.quoted ? ', quoted' : ', reposted') : '';
   return `Repost or quote, ${counts}${mark}`;
@@ -96,6 +102,8 @@ interface ActionProps {
   label: string;
   onPress?: () => void;
   disabled?: boolean;
+  /** Not usable yet (the viewer's marks are loading): disabled, with a spinner in place of the icon. */
+  busy?: boolean;
   /** Spring the icon when it turns on (the like heart). */
   bounce?: boolean;
   testID: string;
@@ -110,10 +118,12 @@ function Action({
   showCount,
   label,
   onPress,
-  disabled,
+  disabled: disabledProp,
+  busy = false,
   bounce = false,
   testID,
 }: ActionProps) {
+  const disabled = disabledProp || busy;
   const c = useColors();
   const reduceMotion = useReducedMotion();
   const scale = useSharedValue(1);
@@ -140,7 +150,7 @@ function Action({
       android_ripple={ripple}
       accessibilityRole="button"
       accessibilityLabel={label}
-      accessibilityState={{ selected: active, disabled: !!disabled }}
+      accessibilityState={{ selected: active, disabled: !!disabled, busy }}
       onPress={onPress}
       disabled={disabled}
       testID={testID}
@@ -152,7 +162,11 @@ function Action({
       )}
     >
       <Animated.View style={style}>
-        <Glyph size={20} color={color} />
+        {busy ? (
+          <ActivityIndicator size="small" color={c.textSecondary} style={{ width: 20, height: 20 }} />
+        ) : (
+          <Glyph size={20} color={color} />
+        )}
       </Animated.View>
       {showCount && count ? (
         <Text variant="subhead" tabular style={{ color }}>
@@ -182,6 +196,12 @@ export interface PostActionBarProps {
   canRepost?: boolean;
   /** From engine capabilities for the post's kind (`canBookmark(kind)`). */
   canBookmark?: boolean;
+  /**
+   * The viewer's like, repost and bookmark marks are still loading (a bare
+   * repost's target): those buttons show a spinner and take no taps until
+   * they are known (acting on a guess would send a duplicate).
+   */
+  marksLoading?: boolean;
   onReply?: () => void;
   onRepost?: () => void;
   onLike?: () => void;
@@ -216,6 +236,7 @@ export function PostActionBar({
   canReply = true,
   canRepost = true,
   canBookmark = true,
+  marksLoading = false,
   onReply,
   onRepost,
   onLike,
@@ -249,6 +270,7 @@ export function PostActionBar({
             showCount={showCount}
             label={repostLabel(reposts, repostSplit, { reposted, quoted })}
             onPress={onRepost}
+            busy={marksLoading}
             testID={`repost-btn-${postId}`}
           />
         ) : (
@@ -264,6 +286,7 @@ export function PostActionBar({
           showCount={showCount}
           label={`${liked ? 'Unlike' : 'Like'}, ${plural(likes, 'like', 'likes')}`}
           onPress={withLikeHaptic(liked, onLike)}
+          busy={marksLoading}
           testID={`like-btn-${postId}`}
         />
       </View>
@@ -276,6 +299,7 @@ export function PostActionBar({
             showCount={false}
             label={bookmarked ? 'Remove bookmark' : 'Bookmark'}
             onPress={onBookmark}
+            busy={marksLoading}
             testID={`bookmark-btn-${postId}`}
           />
         ) : null}

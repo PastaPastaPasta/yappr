@@ -330,7 +330,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   const unblock = () =>
     requireAuth(() => {
       const ownId = viewerId ?? lastIdentity();
-      if (ownId) sendWrite(blockWrite, { viewerId: ownId, userId: profileId, block: false }, safetyCopy.toast.unblocked);
+      if (ownId) sendWrite(blockWrite, { viewerId: ownId, userId: profileId, block: false }, safetyCopy.toast.unblocked(handle));
     });
   const onMenu = (id: string) => {
     if (!profileId) return;
@@ -488,14 +488,14 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
             blockedByList ? (
               <EmptyState
                 title="This user is blocked"
-                description="Blocked by a block list you follow. You won't see their posts in your feeds"
+                description="A block list you follow hides their posts."
                 icon={NoSymbolIcon}
                 testID="profile-blocked"
               />
             ) : (
               <EmptyState
                 title="You blocked this user"
-                description="You won't see their posts in your feeds"
+                description="You won't see their posts in your feeds."
                 icon={NoSymbolIcon}
                 action={{ label: 'Unblock', onPress: unblock }}
                 testID="profile-blocked"

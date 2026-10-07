@@ -68,7 +68,7 @@ export interface NotificationRowModel {
   actors: AuthorDTO[];
   /** How many identities the row stands for: more than `actors` when v11 aggregated likes (NOTIF-06). */
   total: number;
-  /** v11 likes keep no time: `at` is when this device noticed them ("Noticed 2h ago"). */
+  /** v11 likes keep no time: `at` is when this device noticed them, for ordering only; the row shows no time. */
   noticed: boolean;
   /** Every notification the row stands for (a tap marks them all read). */
   ids: string[];

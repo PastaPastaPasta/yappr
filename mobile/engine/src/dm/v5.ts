@@ -1,3 +1,4 @@
+import bs58 from 'bs58'
 import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
 import type { Conv } from '@/lib/services/dm-v5/conversation'
@@ -32,7 +33,7 @@ type KeyValueArea = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
  * (PRD AUTH-11).
  */
 export function dmLocalKeys(identityId: string): string[] {
-  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId)]
+  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId), blocksKey(identityId)]
 }
 
 /**
@@ -41,6 +42,51 @@ export function dmLocalKeys(identityId: string): string[] {
  * this, so a save that fails before the app is killed would lose it (SR-23).
  */
 const retentionKey = (identityId: string) => scopedKey(`yappr_engine_dm_retention:${identityId}`)
+
+/**
+ * Blocks in Messages asked for while this device had no encryption key, or
+ * before the saved state loaded: a Block made from a profile also blocks in
+ * Messages (PRD SAFE-01), so it is kept here and applied once it can be.
+ */
+const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${identityId}`)
+
+/** A choice kept for later: block or unblock, and when it was made (a newer one from another device wins). */
+interface PendingBlock {
+  blocked: boolean
+  changedAt: number
+}
+
+const isPendingBlock = (value: unknown): value is PendingBlock =>
+  typeof value === 'object' && value !== null &&
+  typeof (value as PendingBlock).blocked === 'boolean' && Number.isFinite((value as PendingBlock).changedAt)
+
+/** Peer id → the latest choice for that peer. */
+function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<string, PendingBlock> {
+  try {
+    const value = JSON.parse(storage.getItem(blocksKey(identityId)) ?? 'null') as unknown
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, PendingBlock] => isPendingBlock(entry[1])))
+    }
+  } catch {
+    // Unreadable: nothing to restore.
+  }
+  return {}
+}
+
+/**
+ * Block or unblock `peerId` unless that already stands (an unblock of
+ * someone never blocked writes nothing). Returns whether it changed anything.
+ */
+function applyBlock(running: DmEngine, peerId: string, blocked: boolean): boolean {
+  if (running.getSnapshot().blocked.includes(peerId) === blocked) return false
+  running.setBlocked(peerId, blocked)
+  return true
+}
+
+/** When the saved state last changed the block on `peerId` (any device), or 0 when it never did. */
+function savedBlockChange(running: DmEngine, peerId: string): number {
+  return running.ctx.store.state.blocks.find(entry => bs58.encode(entry.id) === peerId)?.changedAt ?? 0
+}
 
 interface PendingRetention {
   retention: RetentionSetting
@@ -210,6 +256,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       if (loaded || !engine.getSnapshot().ready) return
       loaded = true
       restoreRetention(identityId, engine)
+      restoreBlocks(identityId, engine)
     }
     const unsubscribe = engine.subscribe(() => {
       restoreOnceLoaded()
@@ -255,6 +302,20 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     const running = engine(identityId)
     if (!running.getSnapshot().ready) throw new RpcError('Messages are still loading', 'ENGINE_BUSY')
     return running
+  }
+
+  /**
+   * Once the saved state has loaded: apply the blocks asked for before it
+   * could be (locked, or still loading), unless the saved state holds a
+   * newer choice for that person, made on another device meanwhile (the
+   * newer change wins, as in a merge).
+   */
+  function restoreBlocks(identityId: string, running: DmEngine): void {
+    const pending = readPendingBlocks(storage(), identityId)
+    storage().removeItem(blocksKey(identityId))
+    for (const [peerId, { blocked, changedAt }] of Object.entries(pending)) {
+      if (savedBlockChange(running, peerId) < changedAt) applyBlock(running, peerId, blocked)
+    }
   }
 
   /** The engine holding conversation `key` (a closed draft is held but not in the snapshot). */
@@ -380,6 +441,24 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       holding(identityId, key).hide(key)
     },
 
+    /**
+     * Block or unblock in Messages: their messages and group invitations are
+     * ignored. Saved at once; nothing is written when it already stands.
+     * Without an encryption key on this device, or before the saved state has
+     * loaded, it is kept on the device with when it was made, and applied once
+     * the state loads unless a newer choice from another device is saved by
+     * then. Sign-out drops it (AUTH-11): the host promises nothing about
+     * Messages while they are locked here. Returns whether it changed
+     * anything (kept for later counts as a change).
+     */
+    setBlocked(identityId: string, peerId: string, blocked: boolean): boolean {
+      const running = engineOf(identityId)
+      if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked)
+      const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: Date.now() } }
+      storage().setItem(blocksKey(identityId), JSON.stringify(pending))
+      return true
+    },
+
     /** "Reclaim message fees": applied at once and saved now, kept on the device until the save lands. */
     setRetention(identityId: string, retention: RetentionSetting): void {
       const running = engine(identityId)
@@ -501,7 +580,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       return found?.key ?? null
     },
 
-    /** The group a management action targets: it must exist, and only its owner manages members. */
+    /** The group a management action targets: it must exist, only its owner manages members, and keys go only to members. */
     assertGroupAction(identityId: string, request: DmGroupAction): void {
       const found = conversationOf(readyEngine(identityId), request.key)
       if (found?.kind !== 'group') throw new RpcError('Group not found', 'BAD_REQUEST')
@@ -509,6 +588,10 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       const ownerOnly = request.action !== 'leave'
       if (ownerOnly !== found.isOwner) {
         throw new RpcError(found.isOwner ? 'The owner ends the group instead of leaving it' : 'Only the group owner can do this', 'BAD_REQUEST')
+      }
+      // Refused here, not in lib's run: there it is an unknown outcome, and the app's resend queue would keep at it.
+      if (request.action === 'resendKeys' && !found.memberIds.includes(request.memberId)) {
+        throw new RpcError('They are not in this group.', 'BAD_REQUEST')
       }
     },
   }

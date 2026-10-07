@@ -4,7 +4,6 @@ import {
   ArrowRightEndOnRectangleIcon,
   BellIcon,
   ChevronRightIcon,
-  CpuChipIcon,
   EnvelopeIcon,
   InformationCircleIcon,
   PaintBrushIcon,
@@ -22,14 +21,13 @@ import { Text } from '~/ui/Text';
 import { colors, tw, useColors } from '~/ui/tokens';
 
 import { copy, THEME_LABEL } from './copy';
-import { formatDash } from './format';
 import { versionLine } from './links';
 import { SettingsGroup, SettingsHeader, SettingsRow, SettingsScroll } from './SettingsList';
 import { useViewerProfile } from './use-viewer-profile';
 
 const ios = Platform.OS === 'ios';
 
-/** The account summary row: avatar, name, handle and balance (UX_SPEC §4.25). */
+/** The account summary row: avatar, name and handle (UX_SPEC §4.25). The balance is on Account. */
 function AccountSummary() {
   const c = useColors();
   const { session } = useSession();
@@ -37,11 +35,10 @@ function AccountSummary() {
   if (!session) return null;
   const handle = accountName(session);
   const name = profile.data?.displayName ?? handle;
-  const detail = `${handle} · ${formatDash(session.credits)}`;
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${copy.sections.account}: ${name}, ${detail}`}
+      accessibilityLabel={`${copy.sections.account}: ${[name, name === handle ? null : handle].filter(Boolean).join(', ')}`}
       onPress={() => router.push('/settings/account')}
       testID="settings-account"
       className={cn('min-h-[72px] flex-row items-center gap-3 px-4 py-3', tw.pressed)}
@@ -51,9 +48,11 @@ function AccountSummary() {
         <Text variant="bodyStrong" numberOfLines={1}>
           {name}
         </Text>
-        <Text variant="subhead" tone="secondary" numberOfLines={1} tabular>
-          {detail}
-        </Text>
+        {name === handle ? null : (
+          <Text variant="subhead" tone="secondary" numberOfLines={1}>
+            {handle}
+          </Text>
+        )}
       </View>
       {ios ? <ChevronRightIcon size={16} color={c.textDisabled} strokeWidth={2.5} /> : null}
     </Pressable>
@@ -62,8 +61,8 @@ function AccountSummary() {
 
 /**
  * Settings (UX_SPEC §4.25, PRD SET-01). Signed out it keeps Privacy & Safety
- * (content settings), Appearance, About and Engine diagnostics, and offers
- * sign-in in place of the account.
+ * (content settings), Appearance and About (Troubleshooting is at the bottom
+ * of About), and offers sign-in in place of the account.
  */
 export function SettingsScreen() {
   const { signedIn, status, accounts } = useSession();
@@ -146,13 +145,6 @@ export function SettingsScreen() {
           iconTint={colors.gray500}
           onPress={go('/settings/about')}
           testID="settings-about"
-        />
-        <SettingsRow
-          label={copy.sections.diagnostics}
-          icon={CpuChipIcon}
-          iconTint={colors.gray600}
-          onPress={go('/settings/diagnostics')}
-          testID="settings-diagnostics"
         />
       </SettingsGroup>
 

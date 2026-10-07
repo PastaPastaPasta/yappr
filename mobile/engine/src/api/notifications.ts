@@ -43,7 +43,7 @@ export interface NotificationDTO {
   blog?: { blogId: string; slug: string }
   /** v11 aggregated like (NOTIF-06): how many identities it stands for, when more than one; `actor` is the first. */
   likers?: number
-  /** v11 like: `at` is when this device first noticed it, not an on-chain time ("Noticed 2h ago"). */
+  /** v11 like: `at` is when this device first noticed it, not an on-chain time: for ordering only, never shown. */
   noticed?: true
 }
 

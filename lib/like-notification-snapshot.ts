@@ -1,12 +1,27 @@
 /**
- * Timeless like notifications (v11, `likeNotificationsAreTimeless`).
+ * Timeless like notifications (v11, v12, `likeNotificationsAreTimeless`).
  *
- * No v11 like index keeps a like's time, so "who liked my content since the
- * last poll" cannot be asked of the chain. Instead this device keeps a
- * snapshot, per user, of who had liked each of their recent posts and replies,
- * and each poll diffs the likers of every target whose like count moved
- * against it. New likers of one target become ONE batch ("Alice and 3 others
- * liked your post"), dated when this device first noticed them.
+ * No v11 or v12 like index keeps a like's time, so "who liked my content
+ * since the last poll" cannot be asked of the chain. Instead this device keeps
+ * a snapshot, per user, of who had liked each of their recent posts and
+ * replies, and each poll diffs the likers of every target whose like count
+ * moved against it. New likers of one target become ONE batch ("Alice and 3
+ * others liked your post"), dated when this device first noticed them.
+ *
+ * Only a count that moved is re-read (on v12 every re-read is its own
+ * request, since the author index there is a counter that lists no likers).
+ * The accepted miss: when one identity unlikes and another likes the same
+ * target between two polls, the count is unchanged and the new liker is not
+ * announced then. It is announced late, by the next poll that sees the
+ * target's count move (a merged re-read names it as new), or never if the
+ * count does not move again while the target is in the recent window.
+ *
+ * The snapshot means the same on v11 and v12 (counts per target, likers per
+ * target), so its format is shared and a stored v11 snapshot needs no
+ * migration: targets that are no longer in the recent window drop out of it
+ * on the next poll. (It is keyed by deployment and user, not by contract: an
+ * identity that survives a move to a new contract keeps its retained batches
+ * until they age out.)
  *
  * The first poll of a kind (no snapshot yet, e.g. a new device) only records
  * the baseline: old likes never notify. Neither does a target that re-enters

@@ -70,11 +70,16 @@ export interface PostItemProps
  * `BareRepostCard`). The target's counts and the viewer's marks on it come
  * from `engage.stats`: a quoted post arrives without them.
  */
-function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean; reloadMarks: (() => void) | null } {
+function useShownPost(post: PostDTO): {
+  post: PostDTO;
+  marksPending: boolean;
+  marksLoading: boolean;
+  reloadMarks: (() => void) | null;
+} {
   const target = post.bareRepost ? post.quoted : undefined;
   const targetId = target?.id ?? '';
   const targetKind = target?.kind ?? 'post';
-  const { data: fresh, isError, refetch } = useEngineQuery(
+  const { data: fresh, isError, isFetching, refetch } = useEngineQuery(
     queryKeys.post.stats(targetId),
     async () => {
       const stats = await readEngageStats(targetId, targetKind);
@@ -101,9 +106,12 @@ function useShownPost(post: PostDTO): { post: PostDTO; marksPending: boolean; re
     };
   }, [post, target, fresh]);
   // Until `engage.stats` answers, a bare repost's like, repost and bookmark state is unknown.
+  const marksPending = target !== undefined && fresh === undefined;
   return {
     post: shown,
-    marksPending: target !== undefined && fresh === undefined,
+    marksPending,
+    // While it loads, those buttons wait with a spinner; a failed read leaves them tappable.
+    marksLoading: marksPending && (isFetching || !isError),
     // A failed read is asked again on the next press, rather than blocking the controls for good.
     reloadMarks: isError ? () => refetch().catch(() => undefined) : null,
   };
@@ -193,28 +201,28 @@ function menuItems(post: PostDTO, own: boolean, followKnown: boolean, removeBook
   return items;
 }
 
-/** The delete confirmation's body, by what a delete does on this contract (web DeleteConfirmationModal). */
-function deleteMessage(noun: string, capabilities: CapabilitiesDTO | null): string {
-  if (capabilities?.deletesAreTombstones) {
-    return `This can't be undone. The text and media are erased; the ${noun} is hidden from feeds and shows as 'deleted by its author' in threads and quotes, and its likes and replies stay.`;
-  }
-  const base = `This action cannot be undone. The ${noun} will be permanently removed from the platform.`;
-  return capabilities?.repostsAreQuotes ? `${base} Replies and quotes stay, and show that it was deleted.` : base;
-}
+/**
+ * The delete confirmation's body: one sentence on every contract, as on web
+ * (DeleteConfirmationModal). Whether the document is erased or blanked is
+ * the network's business; either way replies and quotes show the delete.
+ */
+const DELETE_MESSAGE = "This can't be undone. Replies and quotes will show that it was deleted.";
 
 const DELETED_TOAST = { post: 'Post deleted', reply: 'Reply deleted', quote: 'Quote deleted' } as const;
+
+/** The viewer's quote in the repost slot could not be found to delete it (UX_SPEC §5.4). */
+const UNDO_REPOST_FAILED = "Couldn't undo your repost. Try again.";
 
 /** The native delete confirmation (UX_SPEC §2.13), then the optimistic delete (PRD ENG-06). */
 async function confirmDelete(
   target: TargetRef,
   noun: keyof typeof DELETED_TOAST,
-  capabilities: CapabilitiesDTO | null,
   quotedPostId?: string,
 ): Promise<void> {
   const kind = noun === 'reply' ? 'reply' : 'post';
   const confirmed = await confirmAlert({
     title: `Delete ${kind}?`,
-    message: deleteMessage(kind, capabilities),
+    message: DELETE_MESSAGE,
     confirmText: 'Delete',
     destructive: true,
   });
@@ -234,7 +242,7 @@ export const PostItem = memo(function PostItem({
   onRemoveBookmark,
   ...cardProps
 }: PostItemProps) {
-  const { post: shownPost, marksPending, reloadMarks } = useShownPost(listed);
+  const { post: shownPost, marksPending, marksLoading, reloadMarks } = useShownPost(listed);
   const poll = usePoll(shownPost);
   const listedRemoved = usePostRemoved(listed.id);
   const shownRemoved = usePostRemoved(shownPost.id);
@@ -261,28 +269,37 @@ export const PostItem = memo(function PostItem({
     viewerId === null || !listed.bareRepost || typeof listed.quoted?.viewer?.followsAuthor === 'boolean';
 
   const { actions, menu } = useMemo(() => {
-    // A bare repost's marks are unknown until engage.stats answers: acting on a guess would send a duplicate.
-    // Signed out, the sign-in sheet comes first either way.
+    // A bare repost's marks are unknown until engage.stats answers: acting on a guess would send a
+    // duplicate. Its buttons wait with a spinner meanwhile (`marksLoading`); after a failed read a
+    // press reads them again. Signed out, the sign-in sheet comes first either way.
     const known = (action: () => void) => () =>
       requireAuth(() => {
-        if (!marksPending) {
-          action();
-          return;
-        }
-        reloadMarks?.();
-        toast('Loading this post. Try again in a moment.');
+        if (marksPending) reloadMarks?.();
+        else action();
       });
 
     const like = known(() => sendWrite(likeWrite, { post, like: !post.viewer?.liked }));
 
     const deleteQuote = () => {
-      const quoteId = post.viewer?.ownQuoteId;
-      if (!quoteId || !viewerId) {
-        toast.error('Could not load your quote. Try again in a moment.');
+      if (!viewerId) return;
+      const ask = (quoteId: string) => {
+        const target: TargetRef = { id: quoteId, kind: 'post', ownerId: viewerId, rootPostId: null };
+        confirmDelete(target, 'quote', post.id).catch(() => undefined);
+      };
+      const known = post.viewer?.ownQuoteId;
+      if (known) {
+        ask(known);
         return;
       }
-      const target: TargetRef = { id: quoteId, kind: 'post', ownerId: viewerId, rootPostId: null };
-      confirmDelete(target, 'quote', capabilities, post.id).catch(() => undefined);
+      // The quote in the viewer's slot is not loaded yet (the engine refused the repost for it):
+      // read it, then ask. Only a read that cannot find it says anything.
+      readEngageStats(post.id, post.kind)
+        .then((stats) => {
+          const quoteId = stats?.viewer?.ownQuoteId;
+          if (quoteId) ask(quoteId);
+          else toast.error(UNDO_REPOST_FAILED);
+        })
+        .catch(() => toast.error(UNDO_REPOST_FAILED));
     };
 
     const repost = (on: boolean) => {
@@ -316,7 +333,7 @@ export const PostItem = memo(function PostItem({
       delete: () => {
         // A v10 quote holds the viewer's one slot on the post it quotes: deleting it frees that.
         const quotedPostId = capabilities?.repostsAreQuotes ? post.quotedPostId : undefined;
-        confirmDelete(targetOf(post), post.kind, capabilities, quotedPostId).catch(() => undefined);
+        confirmDelete(targetOf(post), post.kind, quotedPostId).catch(() => undefined);
       },
       block: () => requireAuth(() => router.push({ pathname: '/block/[userId]', params: { userId: post.author.id } })),
       report: () => {
@@ -392,6 +409,8 @@ export const PostItem = memo(function PostItem({
       viewerId={viewerId ?? undefined}
       canRepost={capabilities?.repostable[post.kind] ?? true}
       canBookmark={capabilities?.bookmarkable[post.kind] ?? true}
+      // Signed out, the sign-in sheet comes first: the marks don't matter.
+      marksLoading={marksLoading && viewerId !== null}
       // A tag opens the page it was indexed under: its first 61 characters on dev, 63 elsewhere.
       tagMaxLength={tagMaxLength(capabilities?.hashtagsInline === true)}
       poll={poll}

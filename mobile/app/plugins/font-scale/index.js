@@ -14,6 +14,30 @@
  *   re-lays out the surfaces, and Fabric re-measures text for the new
  *   `fontSizeMultiplier` (`enableFontScaleChangesUpdatingLayout`, on by
  *   default in 0.86).
+ * - But React Native reads the two halves of that from different places.
+ *   The surface's `fontSizeMultiplier` comes from the activity's
+ *   configuration, which is new when `onConfigurationChanged` runs. The
+ *   metrics text is measured with (`DisplayMetricsHolder`) are re-read from
+ *   the React context, which wraps the application context, whose resources
+ *   Android may bring to the new configuration only afterwards (the
+ *   activity's configuration arrives with its window's relayout, the
+ *   process's separately). React Native then sees no change, requests no
+ *   layout, and the window's own relayout lays the surface out with the new
+ *   multiplier and the old metrics: every mounted text got boxes measured at
+ *   the old size, cached under the new scale, and drew at the new size in
+ *   them (clipped at 2.0, floating at 1.0; D-rc5a-001). Newly opened screens
+ *   were fine. So, once React Native's handling has run, MainActivity reads
+ *   the metrics from the activity's own resources and, if the font scale
+ *   changed, asks the React root view to lay out again, before the window
+ *   lays anything out: the surface takes the new multiplier with the new
+ *   metrics and re-measures its text. Only the font scaling is taken from the
+ *   activity (scaledDensity, and the converter Android 14+ scales sp with);
+ *   the sizes stay as React Native read them, so Dimensions does not flip
+ *   between the activity's and the app's in split screen.
+ * - JS also makes every mounted text measure afresh under a new text-size
+ *   cache key (src/ui/Text.tsx, src/ui/font-scale.ts): React Native caches
+ *   text sizes by content and attributes, not by view, so a size cached with
+ *   the old metrics would otherwise come back for the same string.
  * - JS hears of the new scale (`useWindowDimensions().fontScale`, which sizes
  *   the Android tab bar and the text fields) only when DeviceInfo's
  *   `onHostResume` sees it changed, so a change made without leaving the app
@@ -41,10 +65,14 @@ const TAG = 'yappr-font-scale';
 
 const IMPORTS = [
   'android.content.res.Configuration',
+  'android.util.DisplayMetrics',
   'android.view.View',
   'android.view.ViewGroup',
   'com.facebook.react.ReactApplication',
+  'com.facebook.react.ReactRootView',
   'com.facebook.react.bridge.LifecycleEventListener',
+  'com.facebook.react.uimanager.DisplayMetricsHolder',
+  'com.facebook.react.uimanager.PixelUtil',
   'com.swmansion.rnscreens.ScreenStackHeaderConfig',
 ];
 
@@ -52,16 +80,57 @@ const ON_CONFIGURATION_CHANGED = `
   // @generated begin ${TAG} (plugins/font-scale)
   /**
    * A font-size change no longer recreates this activity (fontScale is in its configChanges).
-   * React Native re-lays out its text itself, but tells JS the new scale only on resume:
-   * have DeviceInfo compare it now, once React Native's own handling has run. Header titles
-   * keep the pixel size their sp size had when set, until react-native-screens sets it again.
+   * React Native re-reads the font metrics text is measured with from the application's
+   * resources, which may not have the new scale yet: read them from this activity's, and have
+   * the React root lay out again with them, before the window lays anything out. React Native
+   * tells JS the new scale only on resume: have DeviceInfo compare it now. Header titles keep
+   * the pixel size their sp size had when set, until react-native-screens sets it again.
    */
   override fun onConfigurationChanged(newConfig: Configuration) {
+    val reactStarted = (application as ReactApplication).reactHost?.currentReactContext != null
+    // Before React Native has started nothing is measured yet, and it reads the metrics itself.
+    val spBefore = if (reactStarted) PixelUtil.toPixelFromSP(1f) else Float.NaN
     super.onConfigurationChanged(newConfig)
+    if (reactStarted) refreshFontMetrics(spBefore)
     window.decorView.post {
       updateStackHeaders(window.decorView)
       val context = (application as ReactApplication).reactHost?.currentReactContext ?: return@post
       (context.getNativeModule("DeviceInfo") as? LifecycleEventListener)?.onHostResume()
+    }
+  }
+
+  /**
+   * DisplayMetricsHolder's font scaling (what text is measured with) taken from this
+   * activity's resources, which have the new configuration, its sizes kept as React Native
+   * read them (an activity in split screen is smaller than the app); and, when the font scale
+   * changed since spBefore (one sp in pixels before the change), every React root view asked
+   * to lay out again: its surface then takes the new scale, with these metrics, and
+   * re-measures its text.
+   */
+  private fun refreshFontMetrics(spBefore: Float) {
+    val font = resources.displayMetrics
+    DisplayMetricsHolder.setScreenDisplayMetrics(withFontScaling(DisplayMetricsHolder.getScreenDisplayMetrics(), font))
+    DisplayMetricsHolder.setWindowDisplayMetrics(withFontScaling(DisplayMetricsHolder.getWindowDisplayMetrics(), font))
+    if (PixelUtil.toPixelFromSP(1f) != spBefore) requestRootLayouts(window.decorView)
+  }
+
+  /**
+   * A copy of metrics with font's sp scaling: its scaledDensity and, on Android 14+, the
+   * nonlinear font-scale converter (not public, so copied with the rest by setTo), the
+   * sizes put back from metrics.
+   */
+  private fun withFontScaling(metrics: DisplayMetrics, font: DisplayMetrics): DisplayMetrics =
+    DisplayMetrics().apply {
+      setTo(font)
+      widthPixels = metrics.widthPixels
+      heightPixels = metrics.heightPixels
+    }
+
+  private fun requestRootLayouts(view: View) {
+    if (view is ReactRootView) {
+      view.requestLayout()
+    } else if (view is ViewGroup) {
+      for (index in 0 until view.childCount) requestRootLayouts(view.getChildAt(index))
     }
   }
 

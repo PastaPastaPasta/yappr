@@ -942,6 +942,7 @@ export type ModerationErrorKind =
   | 'SETTLED_DELETION_NOT_RESTORABLE'
   | 'TEAM_ACTION_COMPLETED'
   | 'TEAM_ACTION_DOCUMENT_CHANGED'
+  | 'TEAM_MEMBER_ADDED_AFTER_DOCUMENT'
   | 'ALREADY_BANNED'
   | 'NOT_BANNED'
   | 'NOT_SUSPENDED'
@@ -1002,6 +1003,13 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['SETTLED_DELETION_NOT_RESTORABLE', [41209], /settleddeletionnotrestorable|a deletion the team agreed on is not restored/i],
   ['TEAM_ACTION_COMPLETED', [41210], /contractteamactionalreadycompleted|team action .* on contract .* already ran/i],
   ['TEAM_ACTION_DOCUMENT_CHANGED', [41211], /contractteamactiondocumentchanged|changed since team action .* proposed its deletion/i],
+  // 5.0.0-beta.2 (platform#5260): with `approvals` above 1,
+  // `approversPredateDocument` defaults to true, and then a member the leader
+  // added counts only for documents created strictly AFTER its addition (an
+  // addition in the same block does not count). Its proposal or approval of
+  // an older document's deletion is a 41212. The leader and elected members
+  // always count, and `approversPredateDocument: false` lifts the rule.
+  ['TEAM_MEMBER_ADDED_AFTER_DOCUMENT', [41212], /contractteammemberaddedafterdocument|was added at \d+, not before document .* was created/i],
   // The identity lists (rs-dpp at v5.0.0-beta.1): 41103 a ban of a banned
   // identity, 41104 an unban of one that is not banned, 41105 an unsuspend of
   // one that is not suspended (a lapsed suspension is swept by the identity's
@@ -1073,7 +1081,7 @@ export function categorizeError(error: unknown): string {
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
   if (isModerationNotYetSeatedError(error)) {
-    return 'This opens once the community elects its moderation team. Nothing was posted.'
+    return 'This isn\'t available yet. Try again later.'
   }
   if (isPropertyMaxBytesError(error)) {
     // maxLength counts characters and the UI enforces it; maxBytes counts

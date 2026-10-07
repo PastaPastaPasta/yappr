@@ -86,7 +86,7 @@ export function validateForm(form: ProfileForm, limits: FormLimits): FormErrors 
   if (charCount(form.location.trim()) > FIXED_LIMITS.location) errors.location = `At most ${FIXED_LIMITS.location} characters`;
   if (charCount(form.website.trim()) > FIXED_LIMITS.website) errors.website = `At most ${FIXED_LIMITS.website} characters`;
   const banner = form.bannerUri.trim();
-  if (banner && !isMediaUrl(banner)) errors.bannerUri = 'Use an https:// or ipfs:// image link';
+  if (banner && !isMediaUrl(banner)) errors.bannerUri = "That doesn't look like an image link.";
   else if (banner.length > FIXED_LIMITS.banner) errors.bannerUri = `At most ${FIXED_LIMITS.banner} characters`;
   return errors;
 }
@@ -127,11 +127,42 @@ export function randomSeed(maxLength: number, random: () => number = Math.random
 }
 
 /**
- * The navigation-bar title while a save runs (UX_SPEC edit.saving): "Saving…",
- * and "Saving… (1 of 2)" / "(2 of 2)" while a dev save writes the DashPay
- * profile and then the Yappr profile (the engine reports each on the ticket).
+ * The fields a dev save writes in its second document (the Yappr profile,
+ * after the DashPay one), as the failure names them. Name, bio and an image
+ * avatar go in the first; an avatar can land in either, so it is not named.
  */
-export function savingTitle(progress: WriteTicket['progress'] | undefined): string {
-  if (!progress || progress.total < 2) return 'Saving…';
-  return `Saving… (${Math.min(progress.done + 1, progress.total)} of ${progress.total})`;
+const SECOND_DOCUMENT_FIELDS: readonly [keyof ProfilePatchDTO, string][] = [
+  ['pronouns', 'pronouns'],
+  ['location', 'location'],
+  ['website', 'website'],
+  ['bannerUri', 'banner'],
+  ['nsfw', 'NSFW setting'],
+];
+
+/** Engine codes whose own copy says what to do (credits, YAPP): the partial-save wording never hides them. */
+const OWN_COPY_CODES = new Set(['INSUFFICIENT_CREDITS', 'INSUFFICIENT_YAPP']);
+
+/** "pronouns", "pronouns and website", "pronouns, location and website". */
+function listOf(names: readonly string[]): string {
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+/**
+ * A dev save that wrote the DashPay profile and then failed on the Yappr
+ * profile (the ticket's progress says 1 of 2 were done): the failure names
+ * what did not save, "Couldn't save pronouns, location and website. Try
+ * again." (UX_SPEC edit.partialFailed). Null for any other failure, which
+ * keeps the write's own sentence.
+ */
+export function partialSaveFailure(
+  ticket: Pick<WriteTicket, 'progress' | 'error'>,
+  patch: ProfilePatchDTO,
+): string | null {
+  const { progress } = ticket;
+  if (!progress || progress.total < 2 || progress.done < 1) return null;
+  if (ticket.error && OWN_COPY_CODES.has(ticket.error.code)) return null;
+  const names = SECOND_DOCUMENT_FIELDS.filter(([field]) => patch[field] !== undefined).map(([, name]) => name);
+  return names.length > 0
+    ? `Couldn't save ${listOf(names)}. Try again.`
+    : "Couldn't save all of your changes. Try again.";
 }

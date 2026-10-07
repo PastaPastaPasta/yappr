@@ -45,6 +45,44 @@ export async function errorOf(action) {
 /** An `errorOf` answer as the outcome `expectRejected` scores: landed when there is no error. */
 export const asOutcome = (error) => ({ ok: error === null, error });
 
+/** An unban / unsuspend refused because there is no bar to lift (41104 / 41105). */
+const NO_BAR = {
+  ban: /\bcode"?\s*[=:]\s*41104\b|contractusernotbanned|is not banned on contract/i,
+  suspension: /\bcode"?\s*[=:]\s*41105\b|contractusernotsuspended|is not suspended on contract/i,
+};
+const LIFT_ROUNDS = 4;
+const CLEAR_POLLS = 3;
+
+/**
+ * Lifts a ban or suspension a battery case attempted, whatever the attempt answered. A bar whose
+ * broadcast landed while its wait timed out is live even though the call threw, and a lagging node
+ * can still read "not barred" right after, so this never trusts one read: each round settles,
+ * sends the lift (`lift`), and then needs the standing (`standing`, a `moderationStatus` read) to
+ * read clear on CLEAR_POLLS polls in a row. A "not barred" refusal (41104 / 41105) only counts
+ * once those polls agree; a poll that shows the bar, or fails, sends the lift again next round.
+ * When no round confirms it, prints a WARNING naming the identity and contract and answers
+ * `{ lifted: false }` so the case can fail loudly.
+ */
+export async function liftBar({ kind, identityId, contractId, lift, standing }) {
+  const stands = (status) => (kind === 'ban' ? status.banned !== false : status.suspendedUntil !== undefined && status.suspendedUntil !== null);
+  let detail = 'the standing never read clear';
+  for (let round = 1; round <= LIFT_ROUNDS; round += 1) {
+    await settle();
+    const error = await errorOf(lift);
+    if (error !== null && !NO_BAR[kind].test(error)) detail = error;
+    let clear = 0;
+    while (clear < CLEAR_POLLS) {
+      await settle();
+      const status = await standing().catch(() => null);
+      if (status === null || stands(status)) break;
+      clear += 1;
+    }
+    if (clear === CLEAR_POLLS) return { lifted: true, detail: error === null ? '' : `lift answered ${error.slice(0, 120)}; the standing reads clear` };
+  }
+  console.log(`WARNING  could not confirm the ${kind} of ${identityId} on contract ${contractId} was lifted after ${LIFT_ROUNDS} rounds (${detail.slice(0, 200)}): ${identityId} MAY STILL BE BARRED there; lift it by hand`);
+  return { lifted: false, detail };
+}
+
 /**
  * `JSON.stringify` that survives BigInt. `moderationStatus.suspendedUntil` and
  * a warning's `warnedAt` are u64 and reach JS as BigInt, so stringifying a

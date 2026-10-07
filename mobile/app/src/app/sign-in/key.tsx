@@ -6,9 +6,9 @@ import { CheckCircleIcon, ExclamationCircleIcon } from 'react-native-heroicons/o
 import { useSessionStore } from '~/data/session';
 import { isSessionExpired, useSessionExpired } from '~/data/session-expiry';
 import { engine } from '~/engine';
-import { accountName, loadSignedInAgain, switchAccount } from '~/features/auth/accounts';
+import { accountName, addAccount, loadSignedInAgain, switchAccount } from '~/features/auth/accounts';
 import { copy } from '~/features/auth/copy';
-import { isTransient, keyErrorText } from '~/features/auth/errors';
+import { isOtherAccountSignedIn, isTransient, keyErrorText, type SignInNames } from '~/features/auth/errors';
 import { useCloseSignIn } from '~/features/auth/navigation';
 import { SignInBody } from '~/features/auth/SignInChrome';
 import { Button } from '~/ui/Button';
@@ -25,12 +25,13 @@ type Check =
   | { state: 'idle' }
   | { state: 'checking' }
   | { state: 'found'; identityId: string; username: string | null }
-  | { state: 'error'; message: string; transient: boolean };
+  | { state: 'error'; message: string; transient: boolean; otherAccount: boolean };
 
-const errorState = (error: unknown): Check => ({
+const errorState = (error: unknown, names: SignInNames = {}): Check => ({
   state: 'error',
-  message: keyErrorText(error),
+  message: keyErrorText(error, names),
   transient: isTransient(error),
+  otherAccount: isOtherAccountSignedIn(error),
 });
 
 function StatusLine({ ok, text, testID }: { ok: boolean; text: string; testID?: string }) {
@@ -56,6 +57,7 @@ export default function KeySignInScreen() {
   const close = useCloseSignIn();
   const accounts = useSessionStore((s) => s.accounts);
   const activeId = useSessionStore((s) => s.session?.identityId ?? null);
+  const activeUsername = useSessionStore((s) => s.session?.username ?? null);
   const [key, setKey] = useState('');
   const [check, setCheck] = useState<Check>({ state: 'idle' });
   useBlockScreenCapture('secret', useIsFocused());
@@ -119,7 +121,12 @@ export default function KeySignInScreen() {
       if (again) await loadSignedInAgain(session);
       done();
     } catch (error) {
-      setCheck(errorState(error));
+      setCheck(
+        errorState(error, {
+          current: activeId ? accountName({ identityId: activeId, username: activeUsername }) : null,
+          adding: accountName(found),
+        }),
+      );
     } finally {
       setSigningIn(false);
     }
@@ -161,6 +168,20 @@ export default function KeySignInScreen() {
             </>
           ) : null}
           {check.state === 'error' ? <StatusLine ok={false} text={check.message} testID="key-error" /> : null}
+          {check.state === 'error' && check.otherAccount ? (
+            <Button
+              label={copy.signin.addAccount}
+              variant="link"
+              size="sm"
+              layoutStyle={{ alignSelf: 'flex-start' }}
+              testID="key-add-account"
+              onPress={() => {
+                // The add flow opens its own sign-in on top: the key typed here is not left behind it.
+                onChangeKey('');
+                addAccount().catch(() => undefined);
+              }}
+            />
+          ) : null}
           {check.state === 'error' && check.transient ? (
             <Button
               label={copy.signin.tryAgain}

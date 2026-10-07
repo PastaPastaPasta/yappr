@@ -106,6 +106,17 @@ describe('PostCard (feed)', () => {
     expect(onLike).toHaveBeenCalled();
   });
 
+  it('speaks every count of the summary in the singular for 1 (D-rc5a-002)', () => {
+    const post = fixturePost({ id: 'ones', stats: { likes: 1, reposts: 1, replies: 1, quotes: 0 } });
+    const { rerender } = render(<PostCard post={post} />);
+    expect(byId('post-card-ones').props.accessibilityLabel).toMatch(/ 1 reply, 1 repost, 1 like\.$/);
+    rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 1, quotes: 1, truncated: false }} />);
+    expect(byId('post-card-ones').props.accessibilityLabel).toMatch(/ 1 reply, 1 repost, 1 quote, 1 like\.$/);
+    // A floor stays plural, as the counts row reads it.
+    rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 1, quotes: 1, truncated: true }} />);
+    expect(byId('post-card-ones').props.accessibilityLabel).toMatch(/ 1 reply, 1\+ reposts, 1\+ quotes, 1 like\.$/);
+  });
+
   it('keeps the spoken time in its screen-reader summary current', () => {
     jest.useFakeTimers({ now: Date.UTC(2026, 9, 3, 12, 0, 30) });
     try {
@@ -236,9 +247,8 @@ describe('PostCard gates', () => {
     const onOpenPrivate = jest.fn();
     render(<PostCard post={POSTS.private} actions={{ onOpenPrivate }} />);
     expect(screen.getByText('Private post')).toBeTruthy();
-    expect(
-      screen.getByText("Only Carol's private followers can read this. Private feeds aren't in the app yet."),
-    ).toBeTruthy();
+    // Who can see it, with no "not in the app yet" (#23).
+    expect(screen.getByText('Only approved followers can see this.')).toBeTruthy();
     expect(screen.queryByTestId('reply-btn-post-private')).toBeNull();
     fireEvent.press(screen.getByText('Open on yap.pr'));
     expect(onOpenPrivate).toHaveBeenCalled();
@@ -253,7 +263,7 @@ describe('PostCard embeds', () => {
     expect(onQuotePress).toHaveBeenCalled();
 
     rerender(<PostCard post={POSTS.quoteRemoved} />);
-    expect(screen.getByText("This post was removed by the contract's moderators.")).toBeTruthy();
+    expect(screen.getByText('This post was removed by community moderators.')).toBeTruthy();
 
     rerender(<PostCard post={{ ...POSTS.quoteRemoved, quotedRemoved: false }} quoteLoading />);
     expect(screen.getByTestId('quote-skeleton')).toBeTruthy();
@@ -346,7 +356,7 @@ describe('PostCard variants', () => {
     expect(screen.getByText('1 Quote')).toBeTruthy();
     expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 0 reposts, 1 quote, quoted');
     expect(byId('repost-btn-own-quoted')).toBeSelected();
-    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 0 reposts, 1 quotes, 0 likes\.$/);
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 0 reposts, 1 quote, 0 likes\.$/);
 
     // Floors off a list that filled up, as the row shows them.
     rerender(<PostCard post={post} variant="detail" repostQuoteCounts={{ reposts: 100, quotes: 3, truncated: true }} />);
@@ -361,7 +371,7 @@ describe('PostCard variants', () => {
     // Feed cards have no split: the one count the control shows.
     rerender(<PostCard post={post} repostQuoteCounts={split} />);
     expect(byId('repost-btn-own-quoted')).toHaveAccessibleName('Repost or quote, 1 repost, quoted');
-    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 1 reposts, 0 likes\.$/);
+    expect(byId('post-card-own-quoted').props.accessibilityLabel).toMatch(/0 replies, 1 repost, 0 likes\.$/);
   });
 
   it('compact and tombstoned cards have no action bar', () => {
@@ -474,7 +484,8 @@ describe('review fixes', () => {
 
 describe('stubs', () => {
   it.each([
-    ['removed', 'post', "This post was removed by the contract's moderators."],
+    ['removed', 'post', 'This post was removed by community moderators.'],
+    ['removed', 'reply', 'This reply was removed by community moderators.'],
     ['deleted', 'reply', 'This reply was deleted by its author.'],
     ['failed', 'post', 'This post could not be loaded. Try again later.'],
     ['unavailable', 'reply', 'This reply is unavailable.'],
@@ -485,9 +496,16 @@ describe('stubs', () => {
 
   it('is one static element with the reason', () => {
     render(<PostStub state="removed" reason="Spam" />);
-    expect(
-      screen.getByLabelText("This post was removed by the contract's moderators. Reason: Spam"),
-    ).toBeTruthy();
+    expect(screen.getByLabelText('This post was removed by community moderators. Reason: Spam')).toBeTruthy();
+  });
+
+  it("shows no reason line without one, and never a moderator's reason on another stub", () => {
+    const { rerender } = render(<PostStub state="removed" />);
+    expect(screen.getByLabelText('This post was removed by community moderators.')).toBeTruthy();
+    expect(screen.queryByText(/Reason:/)).toBeNull();
+    rerender(<PostStub state="deleted" reason="Spam" />);
+    expect(screen.getByLabelText('This post was deleted by its author.')).toBeTruthy();
+    expect(screen.queryByText(/Reason:/)).toBeNull();
   });
 });
 

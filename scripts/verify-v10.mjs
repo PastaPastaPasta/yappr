@@ -24,6 +24,23 @@
  *     `prove-merged-counts --team-proof` on a contract whose window is
  *     minutes, since a week cannot pass in a battery).
  *
+ * Its 5.0.0-beta.2 successor **v12** (`--contract-file
+ * contracts/yappr-social-contract-v12.json`, docs/SOCIAL_V12.md) keeps every
+ * v11 case. The behaviour switches on what the file declares, never on its
+ * name:
+ *
+ *   - `summableOffCountIndex` on the like author indexes (counters of byPost /
+ *     byReply, no like documents through them): n2's "liked your post" is the
+ *     client's counter diff, then the target's likers on byPost / byReply
+ *     (n2b counter +1, n2bx a liker read through the counter is refused, n2bl
+ *     the likers; n2dc the unlike takes the counter back); the self-test pins
+ *     the counter shapes;
+ *   - `retractedWhen` on post and reply: x4 bans B, then suspends it (and
+ *     lifts both): a barred author's edit is refused (41107 / 41108), a
+ *     tombstone keeping text passes the bar and is 10422, its tombstones of
+ *     its own post and reply land, taking a tombstone back and a new post are
+ *     refused with the bar. On a file without `retractedWhen` x4 skips.
+ *
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
@@ -154,9 +171,9 @@
  *
  * ## Run
  *
- *   node scripts/verify-v10.mjs --self-test          # offline: contract + shapes
+ *   node scripts/verify-v10.mjs --self-test [--contract-file contracts/yappr-social-contract-v12.json]   # offline: contract + shapes
  *   NETWORK=devnet node scripts/verify-v10.mjs --contract <freshV10Id> \
- *        [--bot 0] [--bot2 1] [--fresh-bot 2] [--only e0,x1]
+ *        [--contract-file <the cut it was registered from>] [--bot 0] [--bot2 1] [--fresh-bot 2] [--only e0,x1]
  *
  * `--fresh-bot <n>` names an identity with no DashPay profile and no starter
  * claim yet (x3a, y1d); without it those probes SKIP. Both bots need credits
@@ -201,6 +218,7 @@ import {
   errorOf,
   feeAgreement,
   idOf,
+  liftBar,
   manualCreate,
   resolveModerator,
   settle,
@@ -222,6 +240,13 @@ const TIMELESS_LIKES = V10.documentSchemas.like.indices.some((index) => index.ou
 const TOMBSTONES = V10.documentSchemas.post.canBeDeleted === false && V10.documentSchemas.post.properties.deleted !== undefined;
 /** v11: removal records keep fields (D4). */
 const KEPT_POST_FIELDS = V10.documentSchemas.post.moderatorAbilities?.deleteKeepsFields ?? [];
+/**
+ * v12: the like author indexes (`byAuthorPost`, `byAuthorReply`) are `summableOffCountIndex`
+ * counters of `byPost` / `byReply`: one counter per target, no like documents through them.
+ */
+const COUNTER_AUTHOR_INDEXES = V10.documentSchemas.like.indices.some((index) => index.summableOffCountIndex !== undefined);
+/** v12: post and reply declare `retractedWhen`, so a banned or suspended author may still tombstone. */
+const BARRED_AUTHORS_RETRACT = ['post', 'reply'].every((type) => V10.documentSchemas[type].retractedWhen !== undefined);
 const POST_ACTION_FEE = actionFeeFor('post');
 const REPLY_ACTION_FEE = actionFeeFor('reply');
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
@@ -281,6 +306,8 @@ const MODERATOR_FIELD = /\bcode"?\s*[=:]\s*41124\b|only the moderators of contra
 const FIELD_NOT_CHANGEABLE = /\bcode"?\s*[=:]\s*41123\b|can not be changed by moderators/i;
 /** A change that changes nothing, or names no field (10905). */
 const FIELDS_INVALID = /\bcode"?\s*[=:]\s*10905\b|the fields a moderator's document change sets are invalid/i;
+/** A documents read through an index that keeps no documents (a v12 counter) is refused with this. */
+const NON_INDEXED = /where clause on non indexed property/i;
 const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed/i;
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
@@ -613,19 +640,19 @@ async function caseM2InterimBan(ctx) {
   console.log('\n--- m2. the interim owner bans and unbans (v8 authority before any seat) ---');
   if (interimOnly(ctx, 'm2')) return;
   const probe = () => attemptCreate(sdk, botB, { contractId, docType: 'block', data: blockData({ blockedId: randomIdBytes() }) });
+  // A ban that threw may still have landed (its wait timed out), so it is lifted either way.
   try {
-    await sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v10 battery ban' }, signer: moderator.signer });
-    check('m2a the interim owner bans B', true);
-  } catch (e) {
-    check('m2a the interim owner bans B', false, describeErr(e).slice(0, 220));
-    return;
-  }
-  try {
-    await settle();
-    expectRejected('m2b B\'s create while banned is refused (41107)', await probe(), BANNED);
+    const ban = await errorOf(() => sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v10 battery ban' }, signer: moderator.signer }));
+    check('m2a the interim owner bans B', ban === null, (ban ?? '').slice(0, 220));
+    if (ban === null) {
+      await settle();
+      expectRejected('m2b B\'s create while banned is refused (41107)', await probe(), BANNED);
+    }
   } finally {
-    const unban = await errorOf(() => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }));
-    check('m2c the owner unbans B', unban === null, unban ? `${unban.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand` : '');
+    const { lifted, detail } = await liftBar({ kind: 'ban', identityId: botB.ownerId, contractId,
+      lift: () => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }),
+      standing: () => standingOf(ctx, botB.ownerId, ['banlist']) });
+    check('m2c the owner unbans B (the banlist reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand`);
   }
   await settle();
   const after = await standingOf(ctx, botB.ownerId, ['banlist']);
@@ -1340,6 +1367,11 @@ async function caseN2NotificationWindows(ctx) {
     ['likeReply', bReply, likeReplyData({ replyId: bs58.decode(bReply), replyAuthor: owner }), 'reply', ['n2e', 'n2f', 'n2g']],
   ];
   const liked = (docType, targetId) => entryExists(sdk, contractId, docType, LIKE_FIELDS[docType].target, targetId, botA.ownerId);
+  // v12: the author index is a counter. "Liked your post" diffs it against what the device last
+  // saw, so read it before A's like: the fresh (preallocated) targets start at 0.
+  const counterOf = (docType, targetId) => countWhere(sdk, contractId, docType, [[LIKE_FIELDS[docType].author, '==', botB.ownerId], [LIKE_FIELDS[docType].target, '==', targetId]]);
+  const countersBefore = new Map();
+  if (COUNTER_AUTHOR_INDEXES) for (const [docType, targetId] of likes) countersBefore.set(targetId, await counterOf(docType, targetId));
   for (const [docType, targetId, data, what] of likes) {
     expectAccepted(`n2 fixture: A likes B's ${what}`, await attemptCreateIndexOnly(sdk, botA, { contractId, docType, data, accepted: () => liked(docType, targetId) }));
   }
@@ -1353,6 +1385,10 @@ async function caseN2NotificationWindows(ctx) {
     const [authorIndex, targetIndex] = docType === 'like'
       ? [TIMELESS_LIKES ? 'byAuthorPost' : 'byAuthorPostTime', 'byPost']
       : [TIMELESS_LIKES ? 'byAuthorReply' : 'byAuthorReplyTime', 'byReply'];
+    if (COUNTER_AUTHOR_INDEXES) {
+      await counterNotification(ctx, { docType, targetId, data, what, cases: [notifyCase, heartCase, unlikeCase], authorIndex, targetIndex, before: countersBefore.get(targetId), counterOf, liked });
+      continue;
+    }
     if (TIMELESS_LIKES) {
       // v11: no like keeps its time. "Liked your post" is the author-pinned liker read
       // across the recipient's targets, diffed on the device; the unlike names no time.
@@ -1383,6 +1419,120 @@ async function caseN2NotificationWindows(ctx) {
     const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, id: tuple.id, createdAt: tuple.createdAt, data });
     expectAccepted(`${unlikeCase} A unlikes B's ${what} by values, the tuple read off ${authorIndex} (\`$createdAt <=\` keyset)`,
       await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
+  }
+}
+
+/**
+ * v12's n2 for one like type: the author index is a counter (`summableOffCountIndex`), so
+ * "liked your post" is the client's counter diff then the target's likers on `byPost` /
+ * `byReply` (like-service `getLikersOf`): the counter rose by A's like, a documents read through
+ * the counter is refused, and the target index lists A. The heart and the timeless unlike are
+ * v11's; the unlike takes the counter back down.
+ */
+async function counterNotification(ctx, { docType, targetId, data, what, cases: [notifyCase, heartCase, unlikeCase], authorIndex, targetIndex, before, counterOf, liked }) {
+  const { sdk, contractId, botA, botB } = ctx;
+  const { target: field, author } = LIKE_FIELDS[docType];
+  const after = await counterOf(docType, targetId);
+  check(`${notifyCase} the ${authorIndex} counter of B's ${what} (\`${author} ==\`, \`${field} ==\`, a count reading the counter's sum) rose by A's like: ${before} → ${after}`, after === before + 1, `before ${before} after ${after}`);
+  try {
+    const rows = await sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+      where: [[author, '==', botB.ownerId], [field, 'in', [targetId]]], orderBy: [[author, 'asc'], [field, 'asc']], limit: 100 });
+    check(`${notifyCase}x a liker read through the ${authorIndex} counter is refused (it keeps no like documents)`, false, `ACCEPTED, ${[...rows.values()].filter(Boolean).length} row(s)`);
+  } catch (e) {
+    // Only the node's verdict on the index counts: a timeout or a dropped transport is no refusal.
+    const reason = describeErr(e);
+    check(`${notifyCase}x a liker read through the ${authorIndex} counter is refused as a read on no documents index ("where clause on non indexed property")`, NON_INDEXED.test(reason), reason.slice(0, 200));
+  }
+  const likers = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+    where: [[field, '==', targetId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 100 }));
+  const likerIds = [...likers.values()].filter(Boolean).map((document) => idOf(document.ownerId));
+  check(`${notifyCase}l ${docType}.${targetIndex} lists A among the likers of B's ${what} (\`${field} ==\`, ordered by the \`$ownerId\` terminal: the "liked your ${what}" source once the counter moved)`, likerIds.includes(botA.ownerId), describeValue(likerIds));
+  const hearts = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: docType,
+    where: [[field, 'in', [targetId]], ['$ownerId', '==', botA.ownerId]], orderBy: [[field, 'asc'], ['$ownerId', 'asc']], limit: 1 }));
+  check(`${heartCase} ${docType}.${targetIndex} answers "did A like it" (\`${field} in\`, \`$ownerId ==\`)`, [...hearts.values()].filter(Boolean).length === 1);
+  const { document } = buildDocument({ contractId, docType, ownerId: botA.ownerId, data });
+  expectAccepted(`${unlikeCase} A unlikes B's ${what} by values with no $createdAt`,
+    await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
+  await settle();
+  const unliked = await counterOf(docType, targetId);
+  check(`${unlikeCase}c …and the ${authorIndex} counter is back to ${before} (preallocated: it stays, at zero for a fresh target)`, unliked === before, `counter ${unliked}`);
+}
+
+// ---- v12: a barred author retracts (retractedWhen) -------------------------------------------
+
+/**
+ * v12 (`retractedWhen: { present: "deleted" }`, platform#5253): a banned or suspended author may
+ * still tombstone its own post and reply; every other replace it makes is refused with the bar
+ * (41107 banned, 41108 suspended), and the tombstone's own rules still judge the one it may make.
+ */
+async function caseX4BarredRetraction(ctx) {
+  const { sdk, contractId, botB, moderator } = ctx;
+  console.log('\n--- x4. v12 retractedWhen: a banned or suspended author tombstones its own post and reply, and nothing else ---');
+  if (!BARRED_AUTHORS_RETRACT) { console.log(`SKIP  x4: ${CONTRACT_NAME} declares no retractedWhen on post and reply (a barred author's tombstone is refused there)`); return; }
+  if (interimOnly(ctx, 'x4')) return;
+  const owner = bs58.decode(botB.ownerId);
+  const fixtures = async (label) => {
+    const post = await createFeed(ctx, botB, 'post', postData({ content: `x4 ${label} post ${Date.now()}` }), `x4 ${label} post`);
+    const reply = post ? await createFeed(ctx, botB, 'reply', replyData({ content: `x4 ${label} reply`, rootPostId: bs58.decode(post), parentOwnerId: owner }), `x4 ${label} reply`) : null;
+    return { post, reply };
+  };
+  const banned = await fixtures('banned');
+  const suspended = await fixtures('suspended');
+  if (!banned.post || !banned.reply || !suspended.post || !suspended.reply) { check('x4 fixtures', false, 'a post or reply by B did not land'); return; }
+  await settle();
+  const revisionOf = async (docType, id) => BigInt((await fetchDocument(sdk, contractId, docType, id))?.revision ?? 1);
+  const replaceAs = async (docType, id, data) => attemptReplace(sdk, botB, { contractId, docType, id, revision: await revisionOf(docType, id), data });
+  const isTombstone = async (docType, id) => {
+    const stored = (await fetchDocument(sdk, contractId, docType, id))?.toJSON?.() ?? {};
+    return stored.deleted === true && stored.content === undefined;
+  };
+  const replyOf = (post, content) => replyData({ content, rootPostId: bs58.decode(post), parentOwnerId: owner });
+
+  /** One bar's cases on its own fixtures; `prefix` names them, `refusal` is the bar's error. */
+  const underBar = async (prefix, { post, reply }, refusal, code) => {
+    expectRejected(`${prefix}a B's edit of its post while barred is refused (${code}: no \`deleted\`, so not a retraction)`, await replaceAs('post', post, postData({ content: 'x4 edited' })), refusal);
+    expectRejected(`${prefix}b a tombstone keeping its text passes the bar and is refused by the type's own rule (10422 tombstoneIsBlank)`, await replaceAs('post', post, { deleted: true, content: 'x4 kept' }), constraintViolation('tombstoneIsBlank'));
+    const tombError = await tombstoneOwn(ctx, botB, 'post', post);
+    await settle();
+    check(`${prefix}c B's tombstone of its own post is ACCEPTED while barred (retractedWhen)`, tombError === null && (await isTombstone('post', post)), (tombError ?? '').slice(0, 200));
+    expectRejected(`${prefix}d taking the tombstone back while barred is refused (${code})`, await replaceAs('post', post, postData({ content: 'x4 back' })), refusal);
+    expectRejected(`${prefix}e B's edit of its reply while barred is refused (${code})`, await replaceAs('reply', reply, replyOf(post, 'x4 reply edited')), refusal);
+    const replyTomb = await tombstoneOwn(ctx, botB, 'reply', reply);
+    await settle();
+    check(`${prefix}f B's tombstone of its own reply is ACCEPTED while barred, its linkage kept`, replyTomb === null && (await isTombstone('reply', reply)), (replyTomb ?? '').slice(0, 200));
+    await expectFeedRefused(ctx, `${prefix}g a new post by B is still refused (${code}: the bar holds for everything else)`, botB, 'post', postData({ content: 'x4 new post while barred' }), refusal);
+  };
+
+  // Once a bar was attempted it is always lifted (liftBar): a ban or suspension that threw after it
+  // landed is still live, and a "not barred" refusal only counts once repeated reads agree.
+  try {
+    const ban = await errorOf(() => sdk.contracts.banUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, reason: { text: 'v12 battery x4 ban' }, signer: moderator.signer }));
+    check('x4 the interim owner bans B', ban === null, (ban ?? '').slice(0, 220));
+    if (ban === null) {
+      await settle();
+      await underBar('x4', banned, BANNED, '41107');
+    }
+  } finally {
+    const { lifted, detail } = await liftBar({ kind: 'ban', identityId: botB.ownerId, contractId,
+      lift: () => sdk.contracts.unbanUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }),
+      standing: () => standingOf(ctx, botB.ownerId, ['banlist']) });
+    check('x4 the owner unbans B (the banlist reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 200)} — B MAY STILL BE BANNED; unban by hand`);
+  }
+  await settle();
+
+  const until = Date.now() + 10 * 60_000;
+  try {
+    const suspend = await errorOf(() => sdk.contracts.suspendUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, until: BigInt(until), reason: { text: 'v12 battery x4 suspension' }, signer: moderator.signer }));
+    check('x4s the interim owner suspends B (lifted again below)', suspend === null, (suspend ?? '').slice(0, 220));
+    if (suspend === null) {
+      await settle();
+      await underBar('x4s', suspended, SUSPENDED, '41108');
+    }
+  } finally {
+    const { lifted, detail } = await liftBar({ kind: 'suspension', identityId: botB.ownerId, contractId,
+      lift: () => sdk.contracts.unsuspendUser({ identity: moderator.identity, contractId, identityId: botB.ownerId, signer: moderator.signer }),
+      standing: () => standingOf(ctx, botB.ownerId, ['suspensions']) });
+    check('x4s the owner lifts B\'s suspension (the suspensions list reads clear on repeated polls)', lifted, lifted ? detail : `${detail.slice(0, 200)} — B MAY STILL BE SUSPENDED until ${new Date(until).toISOString()}`);
   }
 }
 
@@ -1786,6 +1936,7 @@ const CASES = new Map([
   ['x1', prepared((ctx) => (TOMBSTONES ? caseX1Tombstones(ctx) : caseX1RealDeletes(ctx)))],
   ['x2', caseX2MediaAndLimits],
   ['x3', prepared(caseX3ProfileExtension)],
+  ['x4', prepared(caseX4BarredRetraction)],
   ['c1', caseC1PropertyConstraints],
   ['r1', prepared(caseR1Reports)],
   ['r2', prepared(caseR2SeatedResolution)],
@@ -1809,11 +1960,15 @@ const CASES = new Map([
 function selfTestTimeless(schemas, { expect, index, shape, names }) {
   expect('v11 like indexes are byPost, byHashtagPost, byAuthorPost, byTrendPost, byTrendHashtagPost; likeReply byReply, byAuthorReply',
     names('like') === 'byPost,byHashtagPost,byAuthorPost,byTrendPost,byTrendHashtagPost' && names('likeReply') === 'byReply,byAuthorReply');
-  const byAuthor = index('like', 'byAuthorPost');
-  expect('like byAuthorPost [postAuthor, postId] terminal $ownerId, rangeCountable, ranked at [postAuthor, postId] (creators, profile Top, n2b)',
-    shape('like', 'byAuthorPost') === 'postAuthor,postId' && byAuthor.terminal === '$ownerId' && byAuthor.rangeCountable === true
-      && JSON.stringify(byAuthor.rankedCountable?.at) === JSON.stringify(['postAuthor', 'postId']));
-  expect('likeReply byAuthorReply [replyAuthor, replyId] terminal $ownerId (n2e)', shape('likeReply', 'byAuthorReply') === 'replyAuthor,replyId' && index('likeReply', 'byAuthorReply').terminal === '$ownerId');
+  if (COUNTER_AUTHOR_INDEXES) {
+    selfTestCounters({ expect, index, shape });
+  } else {
+    const byAuthor = index('like', 'byAuthorPost');
+    expect('like byAuthorPost [postAuthor, postId] terminal $ownerId, rangeCountable, ranked at [postAuthor, postId] (creators, profile Top, n2b)',
+      shape('like', 'byAuthorPost') === 'postAuthor,postId' && byAuthor.terminal === '$ownerId' && byAuthor.rangeCountable === true
+        && JSON.stringify(byAuthor.rankedCountable?.at) === JSON.stringify(['postAuthor', 'postId']));
+    expect('likeReply byAuthorReply [replyAuthor, replyId] terminal $ownerId (n2e)', shape('likeReply', 'byAuthorReply') === 'replyAuthor,replyId' && index('likeReply', 'byAuthorReply').terminal === '$ownerId');
+  }
   expect('every like index on $createdAt outlives deletes, so an unlike carries no time (t2h, n2d, n2g)',
     ['like', 'likeReply'].every((t) => schemas[t].indices.filter((i) => shape(t, i.name).split(',').includes('$createdAt')).every((i) => i.outlivesDelete === true && i.timeRange?.ttl)));
   expect('likeReply requires no $createdAt (it indexes it nowhere)', !schemas.likeReply.required.includes('$createdAt'));
@@ -1823,6 +1978,29 @@ function selfTestTimeless(schemas, { expect, index, shape, names }) {
     expect(`${type}: one moderator deletes for a week, then the leader plus two members (deleteWithin 604800, deleteSettled), and the record keeps ${kept.join(' + ')} (m1k)`,
       JSON.stringify(schemas[type].moderatorAbilities) === JSON.stringify({ delete: true, deleteKeepsFields: kept, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } }));
   }
+}
+
+/**
+ * v12's counter pins: `summableOffCountIndex` on the author and hashtag indexes (no terminal,
+ * `rangeSummable`, preallocated, v11's rankings), and `retractedWhen` on post and reply (x4).
+ */
+function selfTestCounters({ expect, index, shape }) {
+  const counter = (type, name, { source, properties, rankedAt }) => {
+    const i = index(type, name);
+    return shape(type, name) === properties && i.summableOffCountIndex === source && i.terminal === undefined
+      && i.rangeCountable === true && i.rangeSummable === true && i.preallocated === true && i.summable === undefined
+      && JSON.stringify(i.rankedCountable?.at) === JSON.stringify(rankedAt) && i.rankedSummable === undefined && i.rankedAverageable === undefined;
+  };
+  expect('v12 like byAuthorPost [postAuthor, postId] is a counter of byPost (no terminal, rangeCountable + rangeSummable, preallocated), ranked at [postAuthor, postId] (creators, profile Top, n2b)',
+    counter('like', 'byAuthorPost', { source: 'byPost', properties: 'postAuthor,postId', rankedAt: ['postAuthor', 'postId'] }));
+  expect('v12 like byHashtagPost [hashtag, postId] is a counter of byPost, ranked at [hashtag, postId], skipped when untagged (t2g, t2m, x1tp)',
+    counter('like', 'byHashtagPost', { source: 'byPost', properties: 'hashtag,postId', rankedAt: ['hashtag', 'postId'] }) && index('like', 'byHashtagPost').skipIfAbsent === true);
+  expect('v12 likeReply byAuthorReply [replyAuthor, replyId] is an unranked counter of byReply (n2e)',
+    counter('likeReply', 'byAuthorReply', { source: 'byReply', properties: 'replyAuthor,replyId', rankedAt: undefined }) && index('likeReply', 'byAuthorReply').rankedCountable === undefined);
+  expect('v12 the counters\' sources keep every like once: byPost / byReply keep entries (terminal $ownerId), skip nothing, outlive nothing',
+    [['like', 'byPost'], ['likeReply', 'byReply']].every(([type, name]) => index(type, name).terminal === '$ownerId' && !index(type, name).skipIfAbsent && !index(type, name).outlivesDelete));
+  expect('v12 post and reply declare retractedWhen { present: deleted }: a barred author\'s tombstone passes the bar (x4)',
+    ['post', 'reply'].every((type) => JSON.stringify(V10.documentSchemas[type].retractedWhen) === JSON.stringify({ present: 'deleted' })));
 }
 
 function selfTest() {

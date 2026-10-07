@@ -1,7 +1,7 @@
 import { redact } from './redact';
 
 /**
- * The last engine errors, for Engine diagnostics (PRD SET-08: "last 50 engine
+ * The last engine errors, for Troubleshooting (PRD SET-08: "last 50 engine
  * errors (time, operation, message)"). The supervisor records every engine
  * call that failed, reads included, and every error the engine or the host
  * logged. Only the method path and the redacted message are kept, never a

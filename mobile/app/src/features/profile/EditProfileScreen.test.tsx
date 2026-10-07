@@ -142,19 +142,22 @@ describe('EditProfileScreen', () => {
     await flush();
 
     expect(fakeEngine.method('profiles.get')).toHaveBeenCalled();
-    expect(screen.queryByText('DashPay profile')).toBeNull();
+    expect(screen.queryByTestId('edit-name')).toBeNull();
     expect(screen.getByText('Try again')).toBeTruthy();
   });
 
-  it('groups the DashPay fields, saves only the change, and closes once confirmed', async () => {
+  it('lists every field in one list, saves only the change, and closes once confirmed (#20)', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
     fakeEngine.method('profiles.update').mockResolvedValue(pending);
     renderScreen(<EditProfileScreen />);
     await flush();
 
-    expect(screen.getByText('DashPay profile')).toBeTruthy();
-    expect(screen.getByText('This also updates your DashPay profile, which other Dash apps show.')).toBeTruthy();
+    // No sections named after the documents: one list, with a footnote under Bio where DashPay holds them.
+    expect(screen.queryByText(/DashPay profile|Yappr profile/i)).toBeNull();
+    expect(screen.getByTestId('edit-dashpay-note')).toHaveTextContent(
+      'Your name and bio also show in other Dash apps, like DashPay.',
+    );
     expect(screen.getByTestId('edit-save')).toBeDisabled();
 
     fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
@@ -208,7 +211,7 @@ describe('EditProfileScreen', () => {
     expect(screen.getByTestId('edit-cancel')).toBeDisabled();
   });
 
-  it('counts the two documents a dev save writes in the title: "Saving… (1 of 2)" (D-L3a-006)', async () => {
+  it('says just "Saving…" while a dev save writes its two documents (#20)', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
     fakeEngine.method('profiles.update').mockResolvedValue(pending);
@@ -219,25 +222,38 @@ describe('EditProfileScreen', () => {
     fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
     fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
     await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
-    // Before the engine has said how many documents the save writes.
     expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving…', { exact: true });
-
     act(() => fakeEngine.emit('write.status', advance(pending, { progress: { done: 0, total: 2 } })));
-    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving… (1 of 2)');
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving…', { exact: true });
     act(() => fakeEngine.emit('write.status', advance(pending, { progress: { done: 1, total: 2 } })));
-    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving… (2 of 2)');
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving…', { exact: true });
   });
 
-  it('says just "Saving…" for a save that writes one document', async () => {
+  it('names the fields that did not save when the second document fails (#20)', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
     fakeEngine.method('profiles.update').mockResolvedValue(pending);
     renderScreen(<EditProfileScreen />);
     await flush();
+
+    fireEvent.changeText(screen.getByTestId('edit-bio'), 'Film and food.');
     fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    fireEvent.changeText(screen.getByTestId('edit-website'), 'https://jana.film');
     await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
-    act(() => fakeEngine.emit('write.status', advance(pending, { progress: { done: 0, total: 1 } })));
-    expect(screen.getByTestId('screen-title')).toHaveTextContent('Saving…', { exact: true });
+    // The DashPay profile is written; the Yappr profile, second, fails.
+    const halfway = advance(pending, { progress: { done: 1, total: 2 } });
+    act(() => fakeEngine.emit('write.status', halfway));
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(halfway, {
+          state: 'failed',
+          retryable: true,
+          error: { code: 'NETWORK', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Network error.' },
+        }),
+      ),
+    );
+    expect(useToastStore.getState().current?.message).toBe("Couldn't save pronouns and website. Try again.");
   });
 
   it('sends one update for a double-tapped Save, even after the first confirms (SR-14)', async () => {

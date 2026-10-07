@@ -17,7 +17,7 @@ import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
 import { useToastStore } from '~/ui/toast';
 
-import { NotificationsScreen, WINDOWED_FOOTER } from './NotificationsScreen';
+import { NotificationsScreen } from './NotificationsScreen';
 import { POLL_INTERVAL_MS, useNotificationBadge, useNotificationsBadge } from './notifications-data';
 
 jest.mock('~/engine', () => {
@@ -191,8 +191,22 @@ describe('Notifications', () => {
     expect(screen.getByTestId('notification-likes:my-post')).toHaveAccessibleName(
       /^Unread\. Bob Builder and 1 other liked your post\. gm from my post\./,
     );
-    // The dev contract's windowed history (NOTIF-07).
-    expect(screen.getByText(WINDOWED_FOOTER)).toBeTruthy();
+    // The list just ends: no caveat about the dev contract's windowed history (#21).
+    expect(screen.queryByTestId('notifications-windowed')).toBeNull();
+    expect(screen.queryByText(/may not appear here/)).toBeNull();
+  });
+
+  it('shows no time on likes that keep none, never the time this device noticed them (#21)', async () => {
+    signIn();
+    const noticed = NOTIFICATIONS.filter((n) => n.type === 'like').map((n) => ({ ...n, noticed: true as const }));
+    list().mockResolvedValue(page([...noticed, NOTIFICATIONS[3]]));
+    await renderScreen();
+
+    const likes = screen.getByTestId('notification-likes:my-post');
+    expect(likes).toHaveAccessibleName(/^Unread\. Bob Builder and 1 other liked your post\. gm from my post\.$/);
+    expect(screen.queryByText(/Noticed/)).toBeNull();
+    // A notification with a time of its own still shows it.
+    expect(screen.getByTestId('notification-follow-1')).toHaveAccessibleName(/ago$/);
   });
 
   it('marks a row read and opens its target (NOTIF-01)', async () => {

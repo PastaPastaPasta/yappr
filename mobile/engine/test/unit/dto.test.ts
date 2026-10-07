@@ -85,6 +85,15 @@ describe('toPostDTO', () => {
     })
   })
 
+  it('shows the username, never "Unknown User", for an author with a DPNS name but no profile', () => {
+    // resolvePostAuthorsBatch on a reposted post: the name is found, the placeholder display name stays.
+    const nameOnly = { ...author, username: 'yappr-e2e-0', displayName: 'Unknown User', avatar: '', hasDpns: true }
+    expect(toPostDTO(post({ author: nameOnly }), signedOut).author).toEqual({
+      id: author.id, username: 'yappr-e2e-0', displayName: 'yappr-e2e-0', avatar: thumbs(ID('A')), resolved: true,
+    })
+    expect(toPostDTO(post({ quotedPost: post({ id: ID('Q'), author: nameOnly }) }), signedOut).quoted?.author.displayName).toBe('yappr-e2e-0')
+  })
+
   it('flags private posts and maps quotes, replies, reposts and embeds', () => {
     const dto = toPostDTO(post({
       targetKind: 'reply', parentId: ID('B'), rootPostId: ID('C'),

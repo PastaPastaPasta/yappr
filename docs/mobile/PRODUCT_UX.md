@@ -133,8 +133,8 @@ list:
 > ring. YAPP is not hidden: Settings shows the balance read-only where the
 > contract has a token, and writes use web's default payment plan (PRD
 > PD-11). Before a moderation team is seated, Post stays enabled and the
-> refusal arrives as an error ("This opens once the community elects its
-> moderation team. Nothing was posted."). See PRD COMP-01 – COMP-13.
+> refusal arrives as an error ("This isn't available yet. Try again
+> later."). See PRD COMP-01 – COMP-13.
 
 - **Sheet.** Text up to 1,000 characters and 2,000 UTF-8 bytes (v10; bytes
   bind first for CJK and emoji). The counter ring tracks whichever limit is
@@ -302,12 +302,12 @@ See [NOTIFICATIONS.md](NOTIFICATIONS.md). UX essentials:
 > out), Notifications (per-type toggles), Privacy & Safety (link previews,
 > media gate, NSFW mode, blocked accounts, read receipts on testnet), Messages
 > (DM v5 fee reclaiming), Appearance (theme), About (terms, privacy, community
-> rules, support, licenses) and Engine diagnostics. No delete account, media
+> rules, support, licenses, with Troubleshooting as its last row). No delete account, media
 > and storage, or notification modes in 1.0. See PRD SET-*.
 
 | Section | Contents |
 | --- | --- |
-| Account | Identity ID (copy), username, balance (credits in DASH, read-only), "Manage in DashPay", Switch account, Sign out |
+| Account | Usernames, balance (DASH, read-only), accounts and app lock, created, "Copy account ID", Sign out (UX_SPEC §4.26) |
 | Notifications | Mode, per-type toggles, quiet hours, previews, diagnostics |
 | Privacy & safety | Blocked accounts, muted words (local, 1.1), sensitive content, DM requests, instant DM alerts (opt-in; see NOTIFICATIONS) |
 | Security | App lock (Face ID / Touch ID / biometric / device PIN, with a timeout), devices signed in (links to DashPay → Connections), count of retired keys, sign out everywhere (opens the wallet) |

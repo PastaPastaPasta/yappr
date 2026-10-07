@@ -1,7 +1,8 @@
+import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Platform, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { Platform, Pressable, View } from 'react-native';
 import {
   ArrowTopRightOnSquareIcon,
   CodeBracketIcon,
@@ -9,21 +10,25 @@ import {
   GlobeAltIcon,
   LifebuoyIcon,
   LockClosedIcon,
+  PaperAirplaneIcon,
   ShieldCheckIcon,
-  UserGroupIcon,
 } from 'react-native-heroicons/outline';
 
 import icon from '@assets/images/icon.png';
 
 import { config } from '~/config';
 import { useEngineStatus } from '~/engine/hooks';
+import { appendLog, errorMessage } from '~/engine/logs';
 import { COMMUNITY_RULES } from '~/features/auth/terms';
+import { cn } from '~/lib-allowlist';
 import { Sheet } from '~/ui/Sheet';
 import { Text } from '~/ui/Text';
-import { colors, useColors } from '~/ui/tokens';
+import { toast } from '~/ui/toast';
+import { colors, tw, useColors } from '~/ui/tokens';
 
 import { copy } from './copy';
-import { appVersion, emailSupport, links, openInApp, SUPPORT_EMAIL } from './links';
+import { appVersion, buildDetails, emailSupport, links, openInApp, SUPPORT_EMAIL } from './links';
+import { sendDiagnostics } from './send-diagnostics';
 import { SettingsGroup, SettingsHeader, SettingsRow, SettingsScroll } from './SettingsList';
 
 const ios = Platform.OS === 'ios';
@@ -35,58 +40,86 @@ function ExternalMark() {
 }
 
 /**
- * The bundled community-rules summary (PRD SET-07, AUTH-09), readable offline.
- * It scrolls, so large text or a short landscape screen still reaches every rule.
+ * The community rules (PRD SET-07, AUTH-09), bundled and readable offline:
+ * the summary the terms gate shows first, then the full rules it expands
+ * under "Community rules". yap.pr has no rules page yet (COMPLIANCE C4). It
+ * scrolls, so large text or a short landscape screen still reaches every rule.
  */
-function RulesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CommunityRulesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
-    <Sheet open={open} onClose={onClose} title={copy.about.rules} scrollable testID="about-rules-sheet">
-      <View className="gap-3 pb-2">
-        <Text variant="body">{copy.about.rulesIntro}</Text>
-        {copy.about.rulesSummary.map((rule) => (
-          <View key={rule} className="flex-row gap-2">
-            <Text variant="body" tone="secondary">
-              •
-            </Text>
-            <Text variant="body" className="flex-1">
-              {rule}
-            </Text>
-          </View>
-        ))}
+    <Sheet open={open} onClose={onClose} title={copy.about.communityRules} scrollable testID="about-community-rules-sheet">
+      <View className="gap-6 pb-2">
+        <View className="gap-3" testID="about-rules-summary">
+          <Text variant="body">{copy.about.rulesIntro}</Text>
+          {copy.about.rulesSummary.map((rule) => (
+            <View key={rule} className="flex-row gap-2">
+              <Text variant="body" tone="secondary">
+                •
+              </Text>
+              <Text variant="body" className="flex-1">
+                {rule}
+              </Text>
+            </View>
+          ))}
+        </View>
+        <View className="gap-4">
+          {COMMUNITY_RULES.map((rule) => (
+            <View key={rule.title} className="gap-1">
+              <Text variant="bodyStrong">{rule.title}</Text>
+              <Text variant="body" tone="secondary">
+                {rule.body}
+              </Text>
+            </View>
+          ))}
+        </View>
       </View>
     </Sheet>
   );
 }
 
 /**
- * The full community rules (PRD SET-07), the text the terms gate shows under
- * "Community rules". Bundled: yap.pr has no rules page yet (COMPLIANCE C4).
+ * The muted last row: the diagnostics screen (PRD SET-08), for support. It
+ * stays reachable in release builds and signed out; nothing else links it.
  */
-function CommunityRulesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function TroubleshootingRow() {
   return (
-    <Sheet open={open} onClose={onClose} title={copy.about.communityRules} scrollable testID="about-community-rules-sheet">
-      <View className="gap-4 pb-2">
-        {COMMUNITY_RULES.map((rule) => (
-          <View key={rule.title} className="gap-1">
-            <Text variant="bodyStrong">{rule.title}</Text>
-            <Text variant="body" tone="secondary">
-              {rule.body}
-            </Text>
-          </View>
-        ))}
-      </View>
-    </Sheet>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={copy.sections.diagnostics}
+      onPress={() => router.push('/settings/diagnostics')}
+      testID="settings-diagnostics"
+      className={cn('mt-8 min-h-11 items-center justify-center px-4', tw.pressed)}
+    >
+      <Text variant="subhead" tone="secondary">
+        {copy.sections.diagnostics}
+      </Text>
+    </Pressable>
   );
 }
 
 /** Settings → About (UX_SPEC §4.31; PRD SET-06, SET-07). */
 export function AboutScreen() {
-  const status = useEngineStatus();
-  const [sheet, setSheet] = useState<'rules' | 'summary' | null>(null);
-  const closeSheet = () => setSheet(null);
-  const evoSdk = status.info?.evoSdkVersion ?? config.engine?.evoSdkVersion;
-  const bundle = (status.hello?.bundleHash ?? config.engine?.bundleHash)?.slice(0, 8);
-  const engineLine = [evoSdk ? `evo-sdk ${evoSdk}` : null, bundle].filter(Boolean).join(' · ');
+  const { info } = useEngineStatus();
+  const [rulesOpen, setRulesOpen] = useState(false);
+  // The engine's live figures can hold the mail up to 2 s: one send at a time, the row disabled meanwhile.
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+  const sendDiagnosticsOnce = () => {
+    if (sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    sendDiagnostics()
+      .catch((error: unknown) => appendLog('warn', 'host', `Sending diagnostics failed: ${errorMessage(error)}`))
+      .finally(() => {
+        sendingRef.current = false;
+        setSending(false);
+      });
+  };
+  const copyBuildDetails = () => {
+    Clipboard.setStringAsync(buildDetails(info?.evoSdkVersion ?? config.engine?.evoSdkVersion))
+      .then(() => toast.success(copy.about.versionCopied))
+      .catch((error: unknown) => appendLog('warn', 'host', `Copying the version failed: ${errorMessage(error)}`));
+  };
 
   return (
     <SettingsScroll testID="about-settings">
@@ -103,12 +136,14 @@ export function AboutScreen() {
       </View>
 
       <SettingsGroup>
-        <SettingsRow label={copy.about.version} value={appVersion} testID="about-version" />
-        <SettingsRow label={copy.about.network} value={config.network} testID="about-network" />
-        {engineLine ? <SettingsRow label={copy.about.engine} value={engineLine} testID="about-engine" /> : null}
-        {config.commit ? (
-          <SettingsRow label={copy.about.commit} value={config.commit.slice(0, 8)} testID="about-commit" />
-        ) : null}
+        <SettingsRow
+          label={copy.about.version}
+          value={appVersion}
+          chevron={false}
+          onLongPress={copyBuildDetails}
+          accessibilityHint={copy.about.versionHint}
+          testID="about-version"
+        />
       </SettingsGroup>
 
       <SettingsGroup>
@@ -134,15 +169,8 @@ export function AboutScreen() {
           label={copy.about.communityRules}
           icon={ShieldCheckIcon}
           iconTint={colors.amber500}
-          onPress={() => setSheet('rules')}
+          onPress={() => setRulesOpen(true)}
           testID="about-community-rules"
-        />
-        <SettingsRow
-          label={copy.about.rules}
-          icon={UserGroupIcon}
-          iconTint={colors.amber500}
-          onPress={() => setSheet('summary')}
-          testID="about-rules"
         />
       </SettingsGroup>
 
@@ -157,6 +185,15 @@ export function AboutScreen() {
             emailSupport().catch(() => undefined);
           }}
           testID="about-support"
+        />
+        <SettingsRow
+          label={copy.about.sendDiagnostics}
+          icon={PaperAirplaneIcon}
+          iconTint={colors.gray500}
+          chevron={false}
+          disabled={sending}
+          onPress={sendDiagnosticsOnce}
+          testID="about-send-diagnostics"
         />
         <SettingsRow
           label={copy.about.licenses}
@@ -177,12 +214,9 @@ export function AboutScreen() {
         />
       </SettingsGroup>
 
-      <Text variant="caption" tone="secondary" className="px-4 pt-8 text-center">
-        {copy.about.poweredBy}
-      </Text>
+      <TroubleshootingRow />
 
-      <CommunityRulesSheet open={sheet === 'rules'} onClose={closeSheet} />
-      <RulesSheet open={sheet === 'summary'} onClose={closeSheet} />
+      <CommunityRulesSheet open={rulesOpen} onClose={() => setRulesOpen(false)} />
     </SettingsScroll>
   );
 }

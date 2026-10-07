@@ -113,7 +113,7 @@ In story **Gating** lines: `all` = every build; `v2` = testnet build; `dev` = de
 
 - **Situation.** Runs Maestro flows and agent QA on simulators and emulators against sakura pool identities. Has no human wallet.
 - **Wants.** Deterministic sign-in, visible engine state, a way to export diagnostics, and stable accessibility identifiers.
-- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Engine diagnostics (SET-08); give every interactive element a stable `testID` (A11Y-08).
+- **1.0 must:** support key-exchange through the Node test-wallet responder and private key entry (AUTH-03, AUTH-08); expose Troubleshooting (diagnostics, SET-08); give every interactive element a stable `testID` (A11Y-08).
 
 ## 5. Success metrics
 
@@ -124,10 +124,10 @@ There is no analytics or crash SDK. Every metric is measured from the stores, CI
 | M1 | Crash rate (iOS) | ≤ 1 crash per 100 tester sessions; no crash signature from 3 or more testers | TestFlight crash reports, Xcode Organizer |
 | M2 | Crash rate (Android) | Pre-launch report clean on the device matrix; no crash cluster in closed-track vitals | Play Console pre-launch report and Android vitals |
 | M3 | P0 story pass rate | 100% of P0 stories pass on iOS and Android, light and dark, with screenshot evidence | Agentic QA story matrix; Maestro |
-| M4 | ADR E8 flows | Signed-out browse, key sign-in, key exchange, post, like, reply, follow, DM round trip, block and report all green on iOS and Android on every release candidate. Read flows run on both variants; write flows run on the devnet build only, with sakura pool identities (ADR E6). Until sakura has a seated moderation team or an interim owner, the report flow asserts the "elects its moderation team" refusal path. | Maestro on CI (smoke on every PR, write flows nightly) |
+| M4 | ADR E8 flows | Signed-out browse, key sign-in, key exchange, post, like, reply, follow, DM round trip, block and report all green on iOS and Android on every release candidate. Read flows run on both variants; write flows run on the devnet build only, with sakura pool identities (ADR E6). Until sakura has a seated moderation team or an interim owner, the report flow accepts the email path (SAFE-05) in place of the form. | Maestro on CI (smoke on every PR, write flows nightly) |
 | M5 | Write reliability | ≥ 99% of engine contract-test writes become visible within 2 minutes on sakura; zero duplicate documents from any retry path | Engine contract tests (ADR E8), run serially with retries |
-| M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Engine diagnostics (SET-08) |
-| M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Engine diagnostics "boot time" field |
+| M6 | Cold start | Cached feed visible ≤ 1.5 s; fresh feed ≤ 3.0 s p75 on 4G | Manual perf harness on the mid-tier device, timings read from Troubleshooting (SET-08) |
+| M7 | Engine boot | Reported per build; budget set by the engine PR (ADR E1) | Troubleshooting (SET-08) "boot" field |
 | M8 | Scroll | ≥ 58 fps p95 on Home; no frame over 50 ms | Perf monitor on the mid-tier device, per QA_RELEASE budgets |
 | M9 | Sign-in success | ≥ 90% of beta testers who try wallet sign-in succeed on the first attempt | One question in the beta feedback form; support reports |
 | M10 | Beta satisfaction | Median ≥ 4 of 5 on "How native does Yappr feel?" and "Did you trust that your posts went through?" | Beta feedback form (GitHub Discussions + TestFlight feedback) |
@@ -165,17 +165,17 @@ Every story inherits these rules. A story repeats one only to add something spec
 
 | Rule | Applies to | Acceptance |
 | --- | --- | --- |
-| **G-1 Offline** | Every screen | Given the OS reports no connectivity, the screen shows its persisted cache and the offline banner "You're offline. Showing saved posts." A write tap makes no optimistic change and shows the toast "You're offline. Nothing was sent." Compose stays usable and its Post button is disabled with the hint "You're offline". When connectivity returns the banner hides, and visible lists refresh once. |
+| **G-1 Offline** | Every screen | Given the OS reports no connectivity, the screen shows its persisted cache and the offline banner "You're offline. Showing saved posts." A write tap makes no optimistic change and shows the toast "You're offline. Try again when you're connected." (nothing is sent) Compose stays usable and its Post button is disabled with the hint "You're offline". When connectivity returns the banner hides, and visible lists refresh once. |
 | **G-2 Engine booting** | Every screen | While the engine boots, cached content renders at once and a "Connecting to Dash Platform…" state shows only where there is no cache. Reads issued during boot are queued and resolve after boot. A write issued during boot is queued, shown optimistically, and resolves like any other write. |
-| **G-3 Unconfirmed write** | Every write | When the broadcast succeeds but the confirmation wait times out (the DAPI 504 in the root CLAUDE.md), the write counts as done: no error toast, and the optimistic state stays. Creates that are not yet readable show "Not confirmed yet · Check again" after 60 s (COMP-10). No write is ever resent automatically. |
-| **G-4 Failed write** | Every write | The optimistic change rolls back, a toast shows the message from `lib/error-utils.ts` `categorizeError` verbatim (6 s for messages over 80 characters, else 3 s), and a haptic error fires. Composer text is never lost: it returns to the draft. |
-| **G-5 Insufficient credits** | Every paid write | When the identity's credit balance cannot cover the write: toast "Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted." On v2 when YAPP is short: "You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again." with an "Open yap.pr" action. Nothing is retried. |
+| **G-3 Unconfirmed write** | Every write | When the broadcast succeeds but the confirmation wait times out (the DAPI 504 in the root CLAUDE.md), or an engine restart cuts the call short, the write counts as done: no toast, and the optimistic state stays. The app re-checks it by itself 5, 20, 80 and 130 s after, when the app returns to the foreground, and when a feed, profile, thread or conversation read shows it; nobody is asked to check. A check proves a write absent only 2 minutes after it stopped (it may still be on its way before then); a proved absence rolls it back with its failure sentence (G-4). Posts keep "Posting…" (COMP-10) and messages "Sending…" (DM-04) while the checks run. A write that may have landed is never resent, automatically or by a blind Retry. |
+| **G-4 Failed write** | Every write | The optimistic change rolls back, a toast shows one sentence (6 s for messages over 80 characters, else 3 s), and a haptic error fires: the mobile copy for its engine code where the user can act on it (out of credits or YAPP, not allowed from this account, the post no longer exists, update the app, a defect), otherwise the write's own failure sentence ("Couldn't like this post. Try again."), the same for a refusal and a write a check proved absent (UX_SPEC §5.4.1). `categorizeError`'s text goes to diagnostics only. A refusal for a passing reason (a parent too young to reference, a fee multiplier that moved) is sent again by the engine after 2, 5 and 15 s before it is reported. Composer text is never lost: it returns to the draft. |
+| **G-5 Insufficient credits** | Every paid write | When the identity's credit balance cannot cover the write: toast "You don't have enough credits for this. Top up from your Dash wallet." When YAPP is short: "You need YAPP for this." with a "Get YAPP" action (yap.pr). Nothing is retried. |
 | **G-6 Blocked authors** | Every list and thread | Content whose author the viewer blocks (own block or a followed block list) is removed from feeds, search, hashtag pages, profiles' lists, engagements lists and notifications as soon as the block is known, including from caches. In a thread, a reply by a blocked author collapses to "Reply from an account you blocked" with no content. Quote embeds of blocked authors show "Post from an account you blocked". |
 | **G-7 Missing documents** | Every post reference | A post or reply that is gone renders the stub from POST-04, never a blank space or an infinite skeleton. |
 | **G-8 Signed out** | Every write control | Write controls stay visible. A tap opens the sign-in sheet; after sign-in the user returns to the same screen and position and the action is not performed (PD-7), except compose, which reopens with its text. |
 | **G-9 Text** | Every user-content text | Text renders with `whitespace-pre-wrap` semantics (line breaks kept), long unbroken strings wrap, and each paragraph takes its natural direction (Arabic and Hebrew right-aligned). Emoji, ZWJ sequences and combining marks render intact and are never cut mid-grapheme by truncation. Links, `@mentions`, `#hashtags` and `$cashtags` are tappable. The Markdown subset web renders (`**bold**`, `*italic*`, `` `code` ``) renders the same. |
 | **G-10 Gating** | Every gated feature | A feature whose capability flag is off is absent from the UI. |
-| **G-11 Read errors** | Every list and detail | A failed read shows an inline error state with the categorized message and "Try again". A failed page in an infinite list shows a "Load More" footer instead. "Dash Platform is temporarily unavailable. Please try again in a few moments." is used for DAPI unavailability. |
+| **G-11 Read errors** | Every list and detail | A failed read shows an inline error state with the categorized message and "Try again". A failed page in an infinite list shows a "Load more" footer instead. "Dash Platform is temporarily unavailable. Please try again in a few moments." is used for DAPI unavailability. |
 | **G-12 Theme and type** | Every screen | Correct in light and dark mode, and at every text size from the smallest to AX5 (iOS) / 200% (Android), with no clipped or overlapping text. |
 | **G-13 Formatting** | Every time and count | Times use `formatTimeCompact` (`30s`, `2m`, `3h`, `4d`, then `Mar 4`, with the year when not the current one). Counts use `formatNumber` (`1.2K`, `3.4M`); a zero count is blank. |
 | **G-14 Content gates** | Every post surface | The NSFW gate (SAFE-06) and the media gate (SAFE-07) apply on every surface that shows a post: feeds, threads, profiles, search, hashtags, bookmarks, quotes and notifications. |
@@ -199,10 +199,10 @@ As a first-time user, I want a short welcome that tells me what Yappr is, so tha
 
 #### AUTH-02 · Browse signed out · P0 · all
 As a lurker, I want to read Yappr without an account, so that I can decide whether it is worth joining.
-- Home shows For You. The Following tab shows "See posts from people you follow / Log in to view your personalized following feed and see updates from accounts you care about." with a "Sign in" button.
+- Home shows For You. The Following tab shows "See posts from people you follow / Sign in to see posts from people you follow." with a "Sign in" button.
 - Explore, search, hashtag pages, profiles, followers and following lists, post details and engagements all work signed out.
 - The Notifications and Messages tabs show a signed-out placeholder with a "Sign in" button and no data.
-- The Profile tab shows a signed-out screen with "Sign in" and links to Settings sections that need no account: Appearance, Privacy & Safety (content settings only), About, and Engine diagnostics.
+- The Profile tab shows a signed-out screen with "Sign in" and links to Settings sections that need no account: Appearance, Privacy & Safety (content settings only) and About. Troubleshooting (SET-08) stays reachable signed out, from the bottom of About.
 - All media is gated while signed out unless the media-gate setting is off (SAFE-07), as on web.
 - Every write control follows G-8.
 
@@ -291,7 +291,8 @@ As the team, we want App Connect implemented behind `FEATURE_APP_CONNECT`, so th
 #### AUTH-14 · Session expired or key revoked · P1 · all
 As any user, I want to be told when my stored key no longer works, so that I can sign in again.
 - When a write fails with an expired session or a disabled or unknown key, the toast reads "Your session has expired. Please sign in again." and the account is marked "Sign in again" in the account list.
-- Reads keep working for that account. Write controls open the sign-in flow for the same identity.
+- Reads keep working for that account. Write controls open the "Sign in again" sheet ("Sign in again to keep posting as @x. You can keep browsing in the meantime."), whose button opens the sign-in flow for the same identity ("Sign in again as @x with its wallet or key."). The engine restarts before and after that sign-in under one progress label, "Signing in as @x…".
+- A wallet whose Yappr key was disabled on the identity can't sign in: "This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key." (A disabled key can't be re-enabled.)
 
 #### AUTH-15 · No profile, no username · P1 · all
 As Dana, who has no username and no Yappr profile, I want to use the app anyway, so that I'm not forced through setup.
@@ -308,7 +309,7 @@ As any user, I want a feed of everyone's recent posts, so that I can see what's 
 - For You lists posts newest first: on v2 the global timeline in the feed language (FEED-10), on dev one global timeline. Reposts and quotes appear as on web (FEED-08).
 - First load with no cache shows 4 post skeletons and "Connecting to Dash Platform…" under them while the engine boots.
 - Empty: "No posts yet / Be the first to share something!".
-- End of list: "You've reached the end." followed by "Looking for older posts? Browse the previous version of Yappr ↗" (opens the legacy link web shows, in the in-app browser).
+- End of list: "You've reached the end." On testnet only, it is followed by "Looking for older posts? Open Yappr classic ↗" (opens the legacy link web shows, in the in-app browser). Empty states never show that link, and mainnet and devnet builds never show it.
 - Private, NSFW-hidden and blocked content follows G-6, G-14, G-15.
 
 #### FEED-02 · Following · P0 · all
@@ -347,8 +348,8 @@ As a reader, I want to pull down to refresh, so that I get the latest.
 #### FEED-07 · Infinite scroll · P0 · all
 As a reader, I want the feed to keep loading as I scroll, so that I never hit a wall.
 - The next page is requested when the user is within 1.5 screen heights of the end.
-- While loading, a footer spinner shows. A failed page shows a "Load More" pill (`yappr-500`) that retries.
-- No more than 3 pages load automatically without a new user scroll; after that the "Load More" pill shows, as web.
+- While loading, a footer spinner shows. A failed page shows a "Load more" pill (`yappr-500`) that retries.
+- No more than 3 pages load automatically without a new user scroll; after that the "Load more" pill shows, as web.
 - Scrolling 500 posts keeps memory flat (the QA_RELEASE memory budget: no growth over a 500-post scroll).
 
 #### FEED-08 · Reposts and quotes in feeds · P0 · all
@@ -414,13 +415,13 @@ As a reader who opens a reply, I want to see what it answers, so that it makes s
 #### POST-04 · Removed and deleted stubs · P0 · all
 As a reader, I want a clear note where a post used to be, so that a thread still makes sense.
 - A missing post or reply renders a stub with an icon and one sentence, in card or embed form (`components/moderation/removed-post-stub.tsx`):
-  - removed by moderators (`moderated`): "This post was removed by the contract's moderators." plus "Reason: …" when the removal record has one;
+  - removed by moderators (`moderated`): "This post was removed by community moderators." plus "Reason: …" when the removal record has one;
   - deleted by the author (`deletesLeaveHoles`, proven absent with no removal record): "This post was deleted by its author.";
   - read failed: "This post could not be loaded. Try again later.";
   - otherwise: "This post is unavailable."
 - "post" reads "reply" for replies.
 - The stub never asserts "removed" or "deleted" before the engine proves it; until then it shows "unavailable".
-- On v11 (`removalKeepsFields`) a removed post's stub adds what the record kept: "#tag · posted Sep 30" (a reply: "posted Sep 30").
+- Nothing else of what a removal record keeps (v11's tag and date) is shown, on mobile or web.
 - Stubs have no action bar and no menu.
 
 #### POST-05 · Thread whose root is gone · P0 · dev (`deletesLeaveHoles`, `moderated`)
@@ -443,7 +444,7 @@ As anyone, I want a yap.pr post link to open in the app, so that sharing works.
 
 #### POST-08 · Private post placeholder · P0 · all
 As a reader, I want to know a private-feed post exists without seeing broken ciphertext, so that the feed is clean.
-- An encrypted post renders its header and action bar normally and, in place of the body, a muted panel with a lock icon: "Private post / Only {name}'s private followers can read this. Private feeds aren't in the app yet." and "Open on yap.pr" (in-app browser to the post).
+- An encrypted post renders its header and action bar normally and, in place of the body, a muted panel with a lock icon: "Private post / Only approved followers can see this." and "Open on yap.pr" (in-app browser to the post).
 - A private post with a public teaser shows the teaser text above the panel.
 - Replying to or quoting a private post is not offered (the menu and action bar hide Reply and Quote); liking and bookmarking are allowed.
 
@@ -470,11 +471,10 @@ As a user, I want to write and publish a post, so that people can read it.
 #### COMP-02 · Character and byte counter · P0 · all (`contentLimits`)
 As a user, I want to know how much room I have, so that my post isn't rejected.
 - The limits come from `engine.info()` (`contentLimits`). Counting runs in the UI on every keystroke and mirrors `lib/compose/limits.ts` exactly: characters are Unicode code points (`Array.from(text).length`, so one emoji is one character) and bytes are the UTF-8 length. A Jest test pins the RN counter against the `lib` functions on shared fixtures (emoji, ZWJ sequences, CJK, Arabic, combining marks).
-- The counter shows "current / limit" in characters.
-- It is gray, turns amber at 50 or fewer characters left, and red when over.
-- On dev, when the UTF-8 size is over 2000 bytes, a red line under the editor reads "{N} bytes over the size limit. Emoji and non-Latin text count extra." This can happen with fewer than 1000 characters.
-- Over either limit, "Post" is disabled and the overflowing text is highlighted with a red background from the first character past the limit.
-- The counter's screen-reader label is "{current} of {limit} characters" plus ", {N} over limit" when over; it is not announced on every keystroke.
+- The counter shows the characters left: the room left under both limits, counted in the characters a plain letter fills (one code point, one UTF-8 byte), so emoji and non-Latin text use up more of it. It reaches 0 exactly at the longest post the contract takes (lib's `contentOverage` agrees: a Jest test pins it on ASCII, emoji, ZWJ, CJK and Arabic at both limits) and goes negative past it. It never talks about bytes.
+- It is gray, turns amber at 50 or fewer characters left, and red below 0.
+- Over either limit, "Post" is disabled, the overflowing text is highlighted with a red background from the first character past the limit, and a red line under the editor reads "Your post is too long."
+- The counter's screen-reader label is "{n} characters left", or "Too long by {n}"; it is not announced on every keystroke.
 - Each post in a thread has its own counter.
 
 #### COMP-03 · Reply · P0 · all
@@ -495,22 +495,22 @@ As a writer, I want to post several connected posts at once, so that I can say m
 - "Add to thread" under the last post adds a new editor (placeholder "Continue your thread..."), up to 10 in total. Each item has its own counter and a remove button ("Remove this post") once there are two or more.
 - With 2 or more items the button reads "Post all (N)".
 - Posting publishes the items in order. Progress shows on the optimistic thread as "Posting 2 of 5…".
-- If an item fails, the posted ones stay posted and are marked "Posted" in the draft, and the status reads "Posted 2 of 5 · Retry the rest". Retry resumes from the first unposted item and never reposts a posted one. The failure toast reads "Thread partly posted. Post {n} failed: {reason}" (a mobile string: web's "Press Post to retry" does not apply once compose has closed).
-- On success with N > 1, the toast is "Thread with N posts created!".
+- If an item fails, the posted ones stay posted and are marked "Posted" in the draft, and the status reads "Posted 2 of 5 · Retry the rest". Retry resumes from the first unposted item and never reposts a posted one. The failure toast reads "Thread partly posted. Post {n} didn't go through." (a mobile string; the engine's reason goes to diagnostics).
+- On success with N > 1, the toast is "Thread posted".
 - Threads are unavailable for replies and quotes.
 
 #### COMP-06 · Mention autocomplete · P0 · all
 As a writer, I want suggestions when I type @, so that I tag the right person.
 - After `@` and 3 or more characters, a suggestion list appears above the keyboard with up to 8 matches by DPNS prefix: avatar, display name, `@username`.
 - Selecting inserts `@username ` (with a trailing space) in place of the typed fragment. Dismissing (typing a space, Escape, tapping outside) closes it.
-- On dev (`mentionsInline`), when a second `@mention` is typed, a hint under the editor reads "Only the first @mention notifies the person." (P1).
+- On dev (only the first mention notifies), with 2 or more different `@mention`s a muted caption under the editor reads "Only @{first} will be notified." (P1).
 - Mentions of names that do not resolve stay plain text; the post still publishes.
 
 #### COMP-07 · Hashtags and cashtags · P0 · all
 As a writer, I want my #tags to work, so that my post shows up on tag pages.
 - `#tag` and `$tag` are highlighted in the editor in the link color.
-- A tag longer than the limit (63 on v2, 61 on dev) is shown with a red underline and the hint "Tags can be up to {N} characters". Posting is allowed; the over-long tag is not indexed (as web).
-- On dev (`hashtagsInline`), when a second tag is typed, a hint reads "Only the first #tag puts this post on a tag page." (P1).
+- A tag longer than the limit (63 on v2, 61 on dev) is not highlighted as a link in the editor, with no hint. Posting is allowed; the over-long tag is not indexed (as web).
+- No hint about which tags are indexed.
 - There is no hashtag autocomplete in 1.0.
 
 #### COMP-08 · NSFW flag · P0 · all
@@ -531,19 +531,20 @@ As a writer, I want my unfinished text kept, so that an interruption doesn't los
 As a writer, I want to see whether my post went through, so that I neither lose it nor post it twice.
 - Tapping Post closes the sheet, fires a success haptic, and inserts the post optimistically: new posts at the top of the active Home list and of the author's profile; replies in the thread under their parent.
 - The optimistic card shows the write-status row "Posting…" with a small spinner and no action bar.
-- When the engine reports the broadcast accepted and the document readable, the row disappears and the card becomes normal. The toast reads "Post created successfully!" (a reply: "Reply posted").
-- Broadcast accepted but not readable after 60 s: the row reads "Not confirmed yet · Check again". "Check again" asks the engine to look for the document. The card never offers a blind resend.
-- Failed (the broadcast was refused): the row reads "Couldn't post · Retry · Edit". "Retry" resends the same content as a new write only after the engine has proved the original absent. "Edit" reopens compose with the draft. The error toast follows G-4.
-- A "Not confirmed yet" card that later appears on chain becomes normal without user action on the next refresh.
+- When the engine reports the broadcast accepted and the document readable, the row disappears and the card becomes normal. The toast reads "Posted" (a reply: "Reply posted"; a quote: "Quote posted").
+- Broadcast accepted but not readable (the wait timed out, 60 s without an answer, or an engine restart): the row keeps "Posting…" while the app checks it (G-3). The card never offers a manual check or a blind resend.
+- Failed (the broadcast was refused, or a check proved it absent): the row reads "Couldn't post · Retry · Edit". "Retry" resends the same content as a new write only after the engine has proved the original absent. "Edit" reopens compose with the draft. The error toast follows G-4.
+- Checks used up without proof either way: the row reads "Couldn't confirm · Edit", once, with the toast "We couldn't confirm your post. Check your profile before posting it again." Never Retry. Checks go on (foreground, reads).
+- A card whose post later appears on chain becomes normal without user action on the next refresh.
 - Leaving the screen does not cancel the write. The status follows the card wherever it is shown.
-- Unsent drafts and in-flight writes survive an engine restart; an in-flight write after a restart shows "Not confirmed yet · Check again" (NET-04).
+- Unsent drafts and in-flight writes survive an engine restart; an in-flight write after a restart keeps "Posting…" while it is checked (NET-04).
 
 #### COMP-11 · Disabled reasons · P0 · all
 As a writer, I want to know why I can't post, so that I can fix it.
 - Offline: Post disabled, hint "You're offline" (G-1).
 - Signed out: compose opens the sign-in sheet first (G-8).
 - Over a limit: Post disabled (COMP-02).
-- A refusal that names a policy shows its categorized message, kept from web: "This opens once the community elects its moderation team. Nothing was posted.", "Your account has been banned or suspended here by a moderator, so this action isn't allowed right now.", "Another write from your account went out at the same moment, so this one was not saved. Try again.", "This is too long for the network once emoji and special characters are counted. Shorten it and try again."
+- A refusal shows G-4's sentence for its code (UX_SPEC §5.4.1): "You can't do this from this account." for a moderation bar, otherwise "Couldn't post. Try again."; the categorized text goes to diagnostics. A nonce clash is checked like any unknown outcome, never resent.
 
 #### COMP-12 · Keyboard and input · P1 · all
 As a writer, I want the editor to behave like a native text field, so that typing is comfortable.
@@ -563,8 +564,9 @@ As a reader, I want to like a post or reply, so that I can show appreciation.
 - Tapping the heart fills it (`red-600` light / `red-500` dark), plays the spring scale, fires a light haptic and adds one to the count, immediately.
 - Tapping again unlikes: outline heart, count minus one, no haptic.
 - Double-tap on a post's media also likes it (never unlikes), with a heart burst over the image. Reduce Motion replaces the burst with a fade.
-- If the target is not readable yet (just posted, not confirmed): "This post has not confirmed yet. Try again in a moment." and no change.
-- Failure follows G-4 with "Failed to update like. Please try again." unless a categorized message applies (G-5 for YAPP or credits).
+- If the target is not readable yet (just posted by this device, not confirmed): the like shows at once and is sent once the post is readable (up to about two minutes); no toast.
+- While a bare repost's marks load, its like, repost and bookmark buttons show a spinner and take no taps.
+- Failure follows G-4 with "Couldn't like this post. Try again." unless a code has its own copy (G-5 for YAPP or credits).
 - Screen-reader label: "Like, {N} likes" / "Unlike, {N} likes", toggle trait.
 
 #### ENG-02 · Repost and quote menu · P0 · all
@@ -605,7 +607,7 @@ As a reader, I want to share a post outside Yappr, so that friends can see it.
 #### ENG-06 · Delete my post or reply · P0 · all
 As an author, I want to delete my post, so that it's gone from Yappr.
 - The context menu of the viewer's own item has "Delete post" / "Delete reply" in red.
-- Confirmation: "Delete post?" with the web body ("This action cannot be undone. The post will be permanently removed from the platform." and, on dev, "Replies and quotes stay, and show that it was deleted."), "Delete" (destructive) and "Cancel".
+- Confirmation: "Delete post?" / "Delete reply?" with one body on every contract, the same as web: "This can't be undone. Replies and quotes will show that it was deleted.", "Delete" (destructive) and "Cancel".
 - On confirm the item disappears from every list at once (optimistic), toast "Post deleted" / "Reply deleted". On failure it comes back (G-4).
 - A bare repost and the viewer's quote (dev) are undone through the repost menu (ENG-02); a quote post also shows "Delete post" here when opened as its own card.
 
@@ -649,7 +651,7 @@ As a reader, I want to follow someone, so that their posts show in my Following 
 - Tapping "Following" asks "Unfollow @x?" (action sheet) with "Unfollow" (destructive). Confirmed: "Follow", count −1, toast "Unfollowed" (PD-6).
 - The own profile has no follow button. Following yourself is impossible ("You cannot follow yourself").
 - The new follow state shows on every visible surface for that user (cards' menus, user rows) and lifts the media gate for that author.
-- Failure: G-4 with "Failed to update follow status".
+- Failure: G-4 with "Couldn't follow this account. Try again." ("unfollow" for an unfollow).
 
 #### PROF-04 · Followers and following lists · P0 · all
 As anyone, I want to see who follows whom, so that I can find people.
@@ -665,16 +667,16 @@ As a user, I want my own profile to be my hub, so that I can reach my things.
 
 #### PROF-06 · Edit profile (v2) · P0 · v2 (`profileExtension` off)
 As a testnet user, I want to edit my profile, so that people know who I am.
-- "Edit profile" opens a modal form: Name (required, 1–50), Bio (160), Pronouns (20), Location (50), Website (200), "NSFW Content / Mark your profile as containing adult content" toggle, Avatar (PROF-08), Banner image URL (512).
+- "Edit profile" opens a modal form, one list: Name (required, 1–50), Bio (160), Pronouns (20), Location (50), Website (200), "NSFW content / Mark your profile as containing adult content" toggle, Avatar (PROF-08), Banner image URL (512). While saving, the title reads "Saving…".
 - Each field shows a counter when within 20 of its limit. "Save" is disabled while invalid or unchanged.
 - Save writes the profile document, then closes with the toast "Profile updated!". The first save creates the profile (#605 behaviour; a failed read never counts as "no profile").
 - "Cancel" with changes asks "Discard changes?".
 
 #### PROF-07 · Edit profile (dev) · P0 · dev (`profileExtension`)
 As a devnet user, I want to edit my profile, knowing that some fields are my DashPay profile, so that nothing surprises me.
-- The form has two groups. "DashPay profile": Name (25), Bio (140), Avatar; with the note "This also updates your DashPay profile, which other Dash apps show." "Yappr profile": Pronouns (20), Location (50), Website (200), Banner image URL (512), NSFW toggle.
-- Save writes the DashPay profile first (only if it changed or is missing), waits until it is readable, then the `yapprProfile` (only if it changed or is missing), as `lib/services/unified-profile-service.ts` does. Progress shows "Saving… (1 of 2)".
-- If the first write lands and the second fails, the toast says "Your DashPay profile was saved, but your Yappr profile wasn't. Try again." and the form stays open with the second group's values.
+- The form is one list, as on v2: Name (25), Bio (140), Pronouns (20), Location (50), Website (200), Banner image URL (512), NSFW toggle, Avatar. Under Bio, a footnote: "Your name and bio also show in other Dash apps, like DashPay."
+- Save writes the DashPay profile first (only if it changed or is missing), waits until it is readable, then the `yapprProfile` (only if it changed or is missing), as `lib/services/unified-profile-service.ts` does. The title reads just "Saving…".
+- If the first write lands and the second fails, the toast names what did not save: "Couldn't save pronouns, location and website. Try again." (the changed fields the `yapprProfile` holds), with Retry, and the form stays open.
 - An image-URL avatar is fetched once to hash and fingerprint it for DashPay; if that fails it is kept in the Yappr profile only (web behaviour), with no error to the user.
 
 #### PROF-08 · Avatar · P0 · all
@@ -760,7 +762,7 @@ As a user, I want to see who interacted with me, so that I can respond.
 - The Notifications tab lists items newest first: an icon for the type (follow, mention, like, repost, quote, reply), the actor's avatar and name, the phrase ("started following you", "mentioned you in a post", "liked your post", "reposted your post", "quoted your post", "replied to your post"), the time, and for post types a two-line snippet of the post ("NSFW content" when the post is flagged and NSFW mode is not "Always show").
 - Unread items have a tinted background and a dot. Opening an item marks it read and goes to the post (likes, reposts: the liked post; replies, quotes, mentions: the new post) or the profile (follows).
 - Loading: "Loading notifications…". Empty per filter: "When someone interacts with you, you'll see it here" (All), "When someone likes your post, you'll see it here", and so on for each filter.
-- Actor names without a profile follow the fallback chain; "Unknown User" only when nothing resolves.
+- Actor names without a profile follow the fallback chain; "Unknown user" only when nothing resolves.
 
 #### NOTIF-02 · Filters · P0 · all
 As a user, I want to filter notifications, so that I can find replies quickly.
@@ -787,11 +789,11 @@ As a user, I want to turn off notification types, so that I only see what I care
 #### NOTIF-06 · Grouped like notifications · P1 · v11 (`likeNotificationsTimeless`)
 As a user with a popular post, I want likes grouped, so that the list stays readable.
 - On v11 the engine returns like notifications grouped per post: "Alice and 3 others liked your post", with up to 3 stacked avatars.
-- They carry no like time; the time shown is when this device first noticed them ("Noticed 2h ago").
+- They carry no like time, so their rows show no time (never when this device noticed them).
 
 #### NOTIF-07 · Windowed history · P1 · dev (`notificationsWindowed`)
-As a user who was away for a week, I want to know older activity may be missing, so that I'm not misled.
-- On dev, the end of the list reads "Older replies and quotes may not appear here." Nothing is shown on v2.
+As a user who was away for a week, I want a list that just ends, so that I'm not given caveats about indexing.
+- On dev, reply and quote sources are windowed; the list ends with no footer on every contract.
 
 #### NOTIF-08 · Blocked actors · P0 · all
 As a user, I want no notifications from people I block, so that blocking works.
@@ -814,9 +816,9 @@ As a user, I want my conversations in one list, so that I can pick up where I le
 
 #### DM-02 · Unlock messages · P0 · all
 As a user who signed in with a private key, I want to unlock my messages, so that I can read them.
-- When no encryption key for the identity is on the device, the Messages tab shows "Unlock your messages / Messages are encrypted with your encryption key. Enter it on this device to read and send them." with "Enter encryption key".
-- The sheet first tries automatic recovery ("Attempting to automatically recover your encryption key…"); on success "Your encryption key was automatically recovered." and the inbox opens.
-- Otherwise a secure field "WIF (cXyz...) or hex (64 chars)" validates against the identity's encryption key: "Invalid key" on mismatch; "Encryption key saved" on success.
+- When no encryption key for the identity is on the device, the Messages tab shows "Unlock your messages / Your messages are encrypted. Unlock them to read and send them on this device." with "Unlock messages".
+- The sheet first tries automatic recovery ("Unlocking your messages…"); on success the inbox opens with the toast "Messages unlocked".
+- Otherwise: "Unlock your messages / Your messages are encrypted. Paste your encryption key to read and send them on this device." with one secure field ("Paste your encryption key") and "Unlock", checked against the identity's encryption key. Text that is not a key: "That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr."; a key that is not the one this account's messages use (another account's, another of its own keys, another network's): "That isn't the encryption key for this account's messages."; success: "Messages unlocked".
 - Wallet sign-in derives the key, so wallet users never see this.
 
 #### DM-03 · Read a conversation · P0 · all
@@ -830,7 +832,8 @@ As a user, I want to read a conversation, so that I know what was said.
 #### DM-04 · Send a message · P0 · all
 As a user, I want to send a message, so that I can talk privately.
 - Composer: "Type a message..." multiline, grows to 5 lines; a send button ("Send message") enabled when there is visible text.
-- Sending: the bubble appears at once with "Sending…"; then "Sent" (shown under the last own bubble only); or "Failed · Tap to retry" in red. Retry sends the same content only after the engine reports it absent.
+- Sending: the bubble appears at once with "Sending…"; then "Sent" (shown under the last own bubble only); or "Not delivered · Tap to retry" in red. Retry sends the same content only after the engine reports it absent. A refusal the engine won't retry reads "Not delivered · Tap to edit" (the text goes back to the composer).
+- An unknown outcome (G-3) keeps "Sending…" while the app checks it. Only once the checks ran out does it read "Couldn't confirm · Tap to check"; a tap checks again, with a spinner on the bubble, and no toast. A send the engine never took goes back to the composer with "Message not sent. It's back in the message box."
 - On v5, text over 4081 UTF-8 bytes (`MAX_TEXT_BYTES`) is sent as several messages, in order, and shown as one bubble per part.
 - A light haptic on send. Offline follows G-1 (the text stays in the composer).
 - The unsent composer text is kept per conversation on the device.
@@ -846,28 +849,30 @@ As a user, I want to start a chat with someone, so that we can talk.
 As a user, I want to create a group chat, so that several of us can talk.
 - "New group": "Name the group and pick its members." with "Group name" (1–100 characters) and a member picker (same search as DM-05) showing selected members as removable chips ("Remove {name}").
 - At most 100 members including the creator; adding more shows "A group can have at most 100 members."
-- "Create group" opens the new group conversation; failure: "Could not create the group" plus the categorized reason.
+- "Create group" shows "Creating group…" and opens the new group conversation; failure: "Could not create the group" plus the categorized reason. An unknown outcome (a timeout, an engine restart) goes to the inbox, read again, which shows the group once it is there; the form never offers a second creation.
+- Members the creation could not give the group key get it again from the owner's app by itself: on group open, on app foreground and after a backoff (30 s, then 2 min), at most 3 times per member, only for members the creation proved it missed, and never while a resend for that member still runs (the engine's 5-minute `dm.group` deadline). A member the owner removes, or who is no longer in the group, is dropped. Only once the attempts are used up, and only for members whose every attempt proved it failed: "1 member hasn't been added to {group} yet." / "{n} members haven't been added to {group} yet." with "Retry" (without the name when the inbox has not read it). A member with any resend whose outcome stayed unknown (it may have landed) is let go silently. This queue lives in memory: after the app is killed, or once it lets a member go, the member sees "Waiting for access…" and the owner's "Re-invite" is the fallback.
 
 #### DM-07 · Group info · P0 · dev (v5)
 As a group member or owner, I want to see and manage the group, so that it stays useful.
 - Tapping the group header opens "Group info": name, member list with avatars and an "Owner" badge, and actions by role.
-- Owner: "Rename" (toast "Group renamed"), "Add members" (picker, note "New members can read messages sent after they join."), remove a member via the row menu ("Remove member?" → "Remove", toast "Member removed"), "Resend keys" (toast "Keys sent"), "End group" ("End this group? / Nobody will be able to send messages to it any more. This cannot be undone." → "End group", toast "Group ended").
-- Member: "Leave group" ("Leave this group? / The owner removes you the next time they open the app. Until then you can still read new messages." → "Leave", toast "You left the group").
+- Owner: "Rename" (toast "Group renamed"), "Add members" (picker, note "New members can read messages sent after they join."), remove a member via the row menu ("Remove {name} from the group? / They won't see new messages." → "Remove", toast "Member removed"), "Re-invite" in the same menu, the fallback for a member still without the key (toast "Invite sent"), "End group" ("End this group? / Nobody will be able to send messages to it any more. This cannot be undone." → "End group", toast "Group ended").
+- Member: "Leave group" ("Leave group? / You'll stop getting messages from this group." → "Leave"). The inbox opens at once without the group, which comes back only if the leave is proved not to have gone out (or the account changes first; an outcome that stays unknown keeps it out for the session); the owner's app removes the member and rotates the key by itself; toast "You left the group" once confirmed.
+- On legacy (testnet), a link to group info goes to the inbox.
 
 #### DM-08 · Group states · P0 · dev (v5)
 As a member, I want to know when I can't send to a group, so that I'm not confused.
 - Ended: a banner "This group has ended." and no composer.
 - Removed or left: "You are no longer a member of this group." and no composer.
-- Keys missing: "You cannot read this group yet. Ask the owner to resend your keys: they can do it from the group settings."
+- Keys missing: "Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you." (the inbox preview: "Waiting for access…").
 
-#### DM-09 · Delete a conversation · P1 · dev (v5)
-As a user, I want to remove a conversation from my list, so that the inbox stays tidy.
-- Swipe left (iOS) / the row menu: "Delete conversation", confirmed. Toast "Conversation deleted. It comes back if a new message arrives."
-- The list footer shows "Show {N} deleted conversations" / "Hide deleted conversations".
+#### DM-09 · Archive a conversation · P1 · dev (v5)
+As a user, I want to move a conversation out of my list, so that the inbox stays tidy.
+- Swipe left (iOS) "Archive" / the row menu and the conversation menu "Archive conversation", with no confirmation. The row leaves at once with the toast "Conversation archived" and "Undo"; it is saved once Undo has passed (or the app leaves the foreground). A new message brings it back (the engine's `dm.hide`).
+- The list footer shows "Archived ({N})" / "Hide archived". With everything archived the list reads "No conversations yet", with the footer under it.
 
 #### DM-10 · Block from a conversation · P0 · all
 As a user, I want to block someone from the chat, so that they stop messaging me.
-- The conversation menu has "Block" / "Unblock" (1:1 only), using SAFE-01.
+- The conversation menu has "Block" / "Unblock" (1:1 only). "Block" opens the SAFE-01 sheet, the same Block as everywhere: on v5 it also blocks them in Messages. On v5, someone the account already blocks (a block made on web, or before Block covered Messages) is blocked in Messages at once, toast "Blocked @x". On v5 "Unblock" lifts the block in Messages and the account's own block, if there is one; toast "Unblocked @x". When the account's block can't be read (and this device hasn't just changed it), nothing changes: "Couldn't unblock @x. Try again." A repeat tap while that read runs does nothing.
 - After blocking, the composer is replaced by "You blocked this person. Unblock them to send messages." and their new messages and group invitations are ignored.
 
 #### DM-11 · Legacy DMs on testnet · P0 · v2 (`dmVersion` v3)
@@ -876,9 +881,10 @@ As a testnet user, I want my existing web DMs on the phone, so that conversation
 - Read receipts follow the "Read receipts" setting (SET-04): when on, the other person's read state shows as "Read" under the last own message.
 
 #### DM-12 · Message settings · P1 · dev (v5)
-As a user, I want to reclaim message fees, so that storage doesn't cost me forever.
-- "Message settings": "Reclaim message fees" with options "Never (keep paying for storage)", "After 30 days", "After 90 days", "After 1 year", and the web explanation ("Your sent messages stay on Dash Platform and you keep paying for their storage. Choose a period below to delete them once they are that old and get most of their storage fee back. This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have.").
-- "Blocked": people blocked in Messages with "Unblock"; empty "Nobody. Blocked people's messages and group invitations are ignored."
+As a user, I want old sent messages deleted, so that I get most of their storage fee back.
+- "Message settings": "Delete old sent messages" with options "Never", "After 30 days", "After 90 days", "After 1 year", and the footer "Deleting old sent messages refunds most of their storage fee. It doesn't make them private: people you messaged keep their copies, and Dash Platform keeps a history." Never called "disappearing messages", which would promise privacy the feature cannot give.
+- "Blocked": people blocked in Messages with "Unblock"; empty "No blocked accounts" with the caption "Messages and group invites from people you block are ignored."
+- On legacy (testnet), a link to Message settings goes to the inbox.
 
 #### DM-13 · Messages badge · P0 · all
 As a user, I want to know I have unread messages, so that I reply in time.
@@ -892,36 +898,40 @@ As a user, I want what I sent to stay sent when I switch apps, so that nothing i
 
 #### SAFE-01 · Block someone · P0 · all
 As a user, I want to block an account, so that I stop seeing it.
-- "Block @x" (post menu, profile menu, conversation menu) opens a confirmation sheet: "Block @x?" with a body that promises only what the block enforces on that network's Messages (UX_SPEC §5.9 `block.body*`; a block never stops anyone sending a message), with an optional "Add a note (optional)" field (≤ 280 characters, note "Visible to anyone on Dash Platform"), "Block" (destructive) and "Cancel" (PD-5).
-- On confirm: the author's content disappears from every list, thread, notification and cache at once (G-6); toast "User blocked" ("User blocked and private feed access revoked" when the engine reports it).
+- "Block @x" (post menu, profile menu, conversation menu) opens a confirmation sheet: "Block @x?" with a body that promises only what the block enforces on that network's Messages (UX_SPEC §5.9 `block.body*`), an "Add a note" link that opens the optional public note (≤ 280 characters, hint "Anyone can see this note."), "Block" (destructive) and "Cancel" (PD-5).
+- On DM v5 the Block also blocks them in Messages (DM-10), so one Block covers everything and the body says "They won't be able to message you". The engine writes nothing in Messages when that block already stands. Where Messages are locked on this device (no encryption key here yet), the engine keeps the choice on the device, with when it was made, and applies it once they unlock here unless a newer choice from another device is saved by then; sign-out drops it (AUTH-11). Until then the body promises nothing about messages: it is the plain "You won't see their posts or replies. Blocks are public on Dash Platform." On legacy DMs (testnet) the body keeps the caveat that they can still message you.
+- On confirm: the author's content disappears from every list, thread, notification and cache at once (G-6); toast "Blocked @x".
 - Blocking yourself is impossible ("You cannot block yourself").
 
 #### SAFE-02 · Unblock · P0 · all
 As a user, I want to unblock, so that I see someone again.
-- "Unblock @x" (menus, the blocked profile, the blocked list) unblocks without confirmation; toast "User unblocked".
-- When a followed block list still blocks them: "Your block was removed, but a block list you follow still blocks this user".
+- "Unblock @x" (menus, the blocked profile, the blocked list) unblocks without confirmation; toast "Unblocked @x". On DM v5 it lifts the block in Messages too.
+- When a followed block list still blocks them: "Unblocked, but a block list you follow still hides them.".
 
 #### SAFE-03 · Blocked accounts list · P0 · all
 As a user, I want to see everyone I blocked, so that I can review my blocks.
 - Settings → Privacy & Safety → "Blocked accounts" (also from the own profile menu): user rows with the block note (if any) and "Unblock".
 - Empty: "You haven't blocked anyone".
-- A footer notes "Block lists you follow are managed on yap.pr." with a link (in-app browser).
+- Only for someone who follows at least one block list (set up on web), a footer notes "Also hidden by {N} block list(s) you follow · Manage on yap.pr", the link opening the in-app browser. Nobody else hears about block lists.
 
 #### SAFE-04 · Report a post or reply · P0 · dev (`reports`)
 As a reader, I want to report harmful content, so that moderators can act.
-- "Report post" / "Report reply" opens a sheet:
-  - the disclosure, verbatim from web: "Your report goes to this community's moderators. Reports are public on Dash Platform: anyone, including the post's author, can see that you reported it, the reason you pick and anything you write in the details. You can come back here to see how the moderators resolved it. A report expires after 90 days." (the sentence "You can come back here…" only where `reportsResolved` is on, as web);
+- "Report post" / "Report reply" opens a sheet with the form at once:
+  - the one required disclosure: "Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.";
   - "What is wrong with it?" with the reasons of `lib/reports.ts` (label and hint): Spam or scam; Harassment or bullying; Hate; Violence or threats; Sexual content; Self-harm; Illegal goods or activity; Impersonation; Something else;
   - "Details (optional)" ("Details (required)" for Something else), placeholder "Anything the moderators should know", max 500 with a counter;
-  - "Report post" (disabled until valid); "Reporting…" while sending.
-- Success toast "Report sent" (unconfirmed: "Report sent. The network has not confirmed it yet; it reaches the moderators once it does.").
-- Reporting again shows the existing report: "On {date} you reported it for {reason}.", the note, and, when resolved (`reportsResolved`), "Resolved by the moderators: {No action taken | Content removed | Author actioned} on {date}."; with "Withdraw report" (toast "Report withdrawn") and "Done".
-- Before a moderation team exists the refusal reads "This opens once the community elects its moderation team. Nothing was posted." and the sheet offers "Email the Yappr team" instead (SAFE-05).
-- Reporting also offers "Block @x" after success ("Also block @x?"), P1.
+  - "Report post" (disabled until valid); "Reporting…" while the engine takes it.
+- The viewer's existing report is read beside the form, never in front of it, and a failed read never blocks reporting. A `DUPLICATE` refusal says "You already reported this." and shows the report.
+- Sent (confirmed, or not confirmed yet): "Report sent" / "Thanks for letting us know.", with "Also block @x" (P1) and "Done". A sheet dismissed before it could say so (while the report is still on its way) leaves the toast "Report sent", once. The network's answer is reconciled in the background; only a report proven not to have landed brings the form back, with "Couldn't send your report. Try again."
+- Reporting again shows the existing report: "You reported this on {date} for {reason} · Under review" (or "· Resolved: {No action taken | Content removed | Author actioned}" where `reportsResolved`), the note, the muted line "Reports close after 90 days.", "Withdraw report" and "Done".
+- "Withdraw report" asks first, then is optimistic: toast "Report withdrawn" and the sheet closes. Only a withdrawal proven not to have landed brings the report back ("Couldn't withdraw your report. Try again."); a report already gone says "This report was already closed."
+- Where the contract waits for an elected moderation team that isn't seated, the sheet decides before the form (`safety.reportsOpen`) and opens the email path (SAFE-05) directly. A late refusal reads "Your report wasn't sent. Send it by email instead." above the email path, keeping the reason chosen.
+- A post that can't be read says "Couldn't load this post. Try again."
 
 #### SAFE-05 · Report by email · P1 · all (v2 always; dev as fallback)
 As a reader on testnet, I want a way to report content, so that abuse doesn't go unanswered.
-- Where `reports` is off, "Report post" opens the mail composer to the Yappr support address with subject "Report: post {id}" and a body with the post link and an empty "Reason:" line (PD-13).
+- Where `reports` is off, "Report post" opens the email sheet: "Report by email", "Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose.", the same reasons and details as SAFE-04, and "Email the Yappr team".
+- It opens the mail composer to the Yappr support address with subject "Report: post {id}" and a body prefilled with the post link, "Reason: {reason}" and the details (PD-13). The link stays inside the email; the sheet never shows it.
 - With no mail app configured, the address and link are copied, toast "Report address copied. Send it from any email app."
 
 #### SAFE-06 · NSFW gate · P0 · all
@@ -955,13 +965,14 @@ As a reader, I want to know if an image was swapped after posting, so that I'm n
 
 #### SET-01 · Settings root · P0 · all
 As a user, I want my settings in one place, so that I can find each option.
-- Sections, in order: "Account", "Notifications", "Privacy & Safety", "Messages" (v5 only, DM-12), "Appearance", "About", "Engine diagnostics".
-- The network chip and the app version ("Yappr 1.0.0 (123) · devnet") are shown at the bottom.
-- Signed out: Appearance, Privacy & Safety (content settings only), About and Engine diagnostics.
+- Sections, in order: "Account", "Notifications", "Privacy & Safety", "Messages" (v5 only, DM-12), "Appearance", "About".
+- The account row shows the avatar, the display name and the @handle; the balance is on Account (SET-02).
+- The network chip and the app version ("Yappr 1.0.0 (123)") are shown at the bottom; the chip names the network.
+- Signed out: Appearance, Privacy & Safety (content settings only) and About.
 
 #### SET-02 · Account · P0 · all
 As a user, I want to see my identity and balance, so that I know what I'm using.
-- "Identity ID" (monospace, copy button, toast "Identity ID copied"), "Usernames" (the DPNS names, "Register a username on yap.pr ↗"), "Balance" (credits shown in DASH with up to 8 decimals, plus the raw credits in smaller text; a refresh button), "YAPP" (read-only balance, only where the contract has a token, PD-11), "Account created" (date).
+- In order: "Usernames" (the DPNS names, then "Register a username on yap.pr ↗", or "Register another username on yap.pr ↗" when there is one), "Balance" (DASH cut to 4 decimals, "< 0.0001 DASH" below that, with the raw credits in a muted caption; read again when the screen opens and on pull to refresh), "YAPP" (read-only balance, only where the contract has a token, PD-11), "Account created" (date), and last "Copy account ID" (the id middle-truncated, toast "Account ID copied").
 - "Accounts" (AUTH-10), "App lock" (AUTH-12), "Sign out" (AUTH-11).
 
 #### SET-03 · Notifications · P0 · all
@@ -983,16 +994,19 @@ As a user, I want light, dark or system appearance, so that the app is comfortab
 
 #### SET-06 · About · P0 · all
 As a user, I want to know which version I run and where to get help, so that I can report problems.
-- "Yappr / Decentralized social media on Dash Platform", version and build, commit, network, links: "Terms of Use", "Privacy Policy", "Community rules", "Support" (mail and web), "Open-source licenses" (a native list generated at build time), "Yappr on the web" (yap.pr).
+- "Yappr / Decentralized social media on Dash Platform", "Version" with the version and build. A long press on Version copies the build details ("Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet", toast "Version info copied"); the commit, engine and network are not rows.
+- Links: "Terms of Use", "Privacy Policy", "Community rules", "Support" (mail), "Send diagnostics" (a mail to the support address with the redacted SET-08 text, sized for a mail link: newest 10 errors, last 40 log lines, at most 5,000 characters; with no mail app, the native share sheet with the same text, led by the support address), "Open-source licenses" (a native list generated at build time), "Yappr on the web" (yap.pr).
+- A muted last row, "Troubleshooting", opens SET-08, signed in or out.
 
 #### SET-07 · Terms and privacy · P0 · all
 As a user, I want to read the terms and privacy policy, so that I know what I agreed to.
-- Terms, Privacy and Community rules open in the in-app browser at yap.pr. The EULA summary (AUTH-09) is bundled in the app and readable offline from About → "Community rules summary".
+- Terms and Privacy open in the in-app browser at yap.pr. "Community rules" opens one bundled sheet, readable offline: the EULA summary (AUTH-09) first, then the full rules.
 
-#### SET-08 · Engine diagnostics · P0 · all
+#### SET-08 · Troubleshooting (diagnostics) · P0 · all
 As Quinn (and any user reporting a bug), I want to see the engine's state, so that problems can be diagnosed.
+- Reached from About's last row, "Troubleshooting", in every build (release and beta included) and signed out. Nothing else links it: not the Settings root, the signed-out Profile tab or the network sheet.
 - Fields: engine state (Booting / Ready / Restarting / Unavailable), boot time (ms) and WASM compile time, restarts this session, evo-sdk version, engine bundle hash, network, DAPI endpoints with last success, topology and capability flags, contract ids (social, DM, profile, Pollr) with copy, WebAssembly available, cache size, last 50 engine errors (time, operation, message).
-- Actions: "Copy diagnostics" and "Share diagnostics" (a text bundle with no keys, no identity secrets, no message contents), "Restart engine" (confirmed), "Clear cache" (confirmed; keeps accounts, keys and drafts).
+- Actions: "Copy diagnostics" first, at the top (toast "Diagnostics copied"), and "Share diagnostics" (a text bundle with no keys, no identity secrets, no message contents), "Reconnect" (confirmed: "Reconnect to Dash Platform? Lists reload; nothing you posted is lost."; restarts the engine), "Clear cache" (confirmed; keeps accounts, keys and drafts).
 - Available signed out.
 
 #### SET-09 · Settings persistence · P0 · all (PD-12)
@@ -1020,12 +1034,12 @@ As a user, I want an honest message when Dash Platform is down, so that I don't 
 #### NET-04 · Engine restart · P0 · all
 As a user, I want a crash in the engine to be invisible, so that I can keep going.
 - When the WebView process dies (`onContentProcessDidTerminate` / `onRenderProcessGone`), the supervisor restarts it; visible reads resume without user action and lists keep their content.
-- Writes in flight at the crash show "Not confirmed yet · Check again" (COMP-10); none is resent.
+- Writes in flight at the crash keep "Posting…" / "Sending…" while the app checks them (COMP-10, DM-04); none is resent.
 - After 3 restarts within 2 minutes, the "Couldn't connect" banner shows instead of looping.
 
 #### NET-05 · Unconfirmed writes · P0 · all
 As a user, I want likes and follows that timed out to settle to the truth, so that what I see matches the chain.
-- G-3 for every write. A like, follow, bookmark, block or repost whose confirmation timed out keeps its optimistic state; the next refresh shows the chain's truth, and if the write is absent the state reverts with a toast "Your {like} didn't go through. Try again."
+- G-3 for every write. A like, follow, bookmark, block or repost whose confirmation timed out keeps its optimistic state; the app checks it by itself (G-3), and if the write is absent the state reverts with its failure sentence ("Couldn't like this post. Try again.", UX_SPEC §5.4.1).
 
 #### NET-06 · Lockdown Mode · P0 · iOS (PD-17)
 As an iPhone user with Lockdown Mode on, I want to know why Yappr can't connect, so that I can fix it.
@@ -1034,7 +1048,8 @@ As an iPhone user with Lockdown Mode on, I want to know why Yappr can't connect,
 
 #### NET-07 · Network chip · P0 · all
 As a user, I want to know I'm on a test network, so that I don't treat it as real.
-- A compact amber chip "DEVNET" or "TESTNET" in the Home header and at the bottom of Settings. Tapping it opens a sheet: "Running on a Dash Platform devnet. Data may be reset." (testnet: "Running on Dash Platform Testnet. Data may be reset.").
+- A compact amber chip "DEVNET" or "TESTNET" in the Home header and at the bottom of Settings. Tapping it opens a sheet: "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." (testnet: "Yappr is running on Dash Platform Testnet. Posts and accounts may be reset."), and the connection state: "Connected", "Connecting…" (booting or restarting) or "Can't connect right now".
+- The chip's accessibility label carries the same state: "Testnet. Data may be reset. Connected." / "… Connecting." / "… Can't connect."
 - No full-width banner anywhere.
 
 #### NET-08 · Foreground only · P0 · all
@@ -1081,7 +1096,7 @@ As a user sensitive to motion, I want animations reduced when I ask, so that the
 
 #### A11Y-06 · Announcements · P1 · all
 As a screen-reader user, I want to hear when something I did succeeds or fails, so that I'm not left guessing.
-- Toasts are announced. Write status changes ("Posted", "Not confirmed yet", "Couldn't post") are announced once. The new-posts pill is announced when it first appears.
+- Toasts are announced. Write status changes ("Posting…", "Couldn't confirm", "Couldn't post") are announced once. The new-posts pill is announced when it first appears.
 
 #### A11Y-07 · Right-to-left content · P0 · all
 As a reader of Arabic or Hebrew posts, I want them laid out right to left, so that they read naturally.
@@ -1125,7 +1140,7 @@ As a user who turns on Bold Text or Increase Contrast, I want the app to honour 
 | DM requests inbox, DM report, delete-for-me, reactions | No | Not in E7; DM reports wait for the cut | 1.1+ |
 | Muted words | No | 1.1 per PRODUCT_UX | 1.1 |
 | Share extension, widgets | No | Native extension targets | 1.1 |
-| Query inspector / developer settings | Yes | Engine diagnostics replaces it on mobile | Not planned |
+| Query inspector / developer settings | Yes | Troubleshooting (SET-08) replaces it on mobile | Not planned |
 | Storage provider settings | Yes | No upload in 1.0 | With upload |
 | iPad, foldable layouts | Yes (responsive web) | ADR E7 | 1.x |
 | Localization | No | ADR E7 | 1.1 |

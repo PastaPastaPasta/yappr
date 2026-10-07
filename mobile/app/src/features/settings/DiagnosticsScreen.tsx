@@ -251,7 +251,11 @@ function DevSignIn() {
   );
 }
 
-/** Settings → Engine diagnostics (UX_SPEC §4.32, PRD SET-08). Available signed out. */
+/**
+ * Settings → About → Troubleshooting (UX_SPEC §4.32, PRD SET-08), for
+ * support: versions, timings, the network wiring and the redacted log, with
+ * Copy diagnostics first. Available signed out and in release builds.
+ */
 export function DiagnosticsScreen() {
   const status = useEngineStatus();
   const logs = useLogs();
@@ -274,6 +278,11 @@ export function DiagnosticsScreen() {
     Share.share({ message: diagnosticsText(snapshot()) }).catch((error: unknown) =>
       appendLog('warn', 'host', `Sharing diagnostics failed: ${errorMessage(error)}`),
     );
+  };
+  const copyText = () => {
+    Clipboard.setStringAsync(diagnosticsText(snapshot()))
+      .then(() => toast.success(diagCopy.copied))
+      .catch((error: unknown) => appendLog('warn', 'host', `Copying diagnostics failed: ${errorMessage(error)}`));
   };
   const dapi = diagnostics?.dapi;
   const capabilities = capabilityRows(info?.capabilities);
@@ -302,6 +311,10 @@ export function DiagnosticsScreen() {
           ),
         }}
       />
+
+      <View className="px-4 pt-4">
+        <ActionButton label={diagCopy.copy} testID="diagnostics-copy" onPress={copyText} />
+      </View>
 
       <Section title="Status">
         <Row label="Engine" value={`● ${state.label}`} tone={state.tone} />
@@ -381,24 +394,14 @@ export function DiagnosticsScreen() {
       </Section>
 
       <View className="gap-3 px-4 pt-6">
-        <ActionButton
-          kind="outline"
-          label={diagCopy.copy}
-          testID="diagnostics-copy"
-          onPress={() => {
-            Clipboard.setStringAsync(diagnosticsText(snapshot())).catch((error: unknown) =>
-              appendLog('warn', 'host', `Copying diagnostics failed: ${errorMessage(error)}`),
-            );
-          }}
-        />
         <ActionButton kind="outline" label={diagCopy.shareDiagnostics} testID="diagnostics-share" onPress={share} />
         <ActionButton
           kind="danger"
-          label="Restart engine"
+          label={diagCopy.reconnect}
           testID="diagnostics-restart"
           onPress={() =>
-            confirm('Restart the engine?', 'Lists reload; nothing you posted is lost.', 'Restart', () =>
-              engineSupervisor.restart('Restart from diagnostics'),
+            confirm(diagCopy.reconnectTitle, diagCopy.reconnectBody, diagCopy.reconnect, () =>
+              engineSupervisor.restart('Reconnect from troubleshooting'),
             )
           }
         />

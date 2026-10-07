@@ -294,7 +294,7 @@ describe('4.2.0-beta.4 rejections', () => {
       "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
     ['41200 ContractModeratedDocumentTypeNotYetUsableError', isModerationNotYetSeatedError,
-      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /elects its moderation team/i],
+      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /isn't available yet/i],
   ]
 
   it.each(cases)('%s is recognised, permanent and given its own message', (_label, matcher, message, expected) => {
@@ -444,6 +444,7 @@ describe('5.0.0-beta.1 settled-deletion rejections', () => {
     ['SETTLED_DELETION_NOT_RESTORABLE', 'Document D1 on contract 8Xv3 was deleted at 1759800000000 by the approvals of the seated moderation team, and a deletion the team agreed on is not restored'],
     ['TEAM_ACTION_COMPLETED', 'Team action A1 on contract 8Xv3 already ran'],
     ['TEAM_ACTION_DOCUMENT_CHANGED', 'Document D1 changed since team action A1 on contract 8Xv3 proposed its deletion'],
+    ['TEAM_MEMBER_ADDED_AFTER_DOCUMENT', 'Member 9t2e of the moderation team of contract 8Xv3 was added at 1759800000000, not before document D1 was created at 1759700000000, so it can not approve the document\'s deletion'],
     ['NOT_SETTLED_DELETABLE', 'consensus error code=41204'],
     ['TEAM_NOT_SEATED', '{"code":41205}'],
     ['NOT_SETTLED', 'refused (code=41206)'],
@@ -452,6 +453,7 @@ describe('5.0.0-beta.1 settled-deletion rejections', () => {
     ['SETTLED_DELETION_NOT_RESTORABLE', 'refused (code=41209)'],
     ['TEAM_ACTION_COMPLETED', 'refused (code=41210)'],
     ['TEAM_ACTION_DOCUMENT_CHANGED', 'refused (code=41211)'],
+    ['TEAM_MEMBER_ADDED_AFTER_DOCUMENT', 'refused (code=41212)'],
     ['ALREADY_BANNED', 'Identity 9t2e is already banned on contract 8Xv3'],
     ['NOT_BANNED', 'Identity 9t2e is not banned on contract 8Xv3'],
     ['NOT_SUSPENDED', 'Identity 9t2e is not suspended on contract 8Xv3'],

@@ -7,6 +7,7 @@ import {
   avatarDtoOf,
   formFromProfile,
   isMediaUrl,
+  partialSaveFailure,
   patchOf,
   randomSeed,
   validateForm,
@@ -104,7 +105,8 @@ describe('edit-profile-form', () => {
     // v2 requires a name; a blank DashPay name keeps the stored one.
     expect(validateForm({ ...form, displayName: ' ' }, V2_LIMITS).displayName).toBe('Name is required');
     expect(validateForm({ ...form, displayName: ' ' }, DEV_LIMITS)).toEqual({});
-    expect(validateForm({ ...form, bannerUri: 'http://x/y.png' }, DEV_LIMITS).bannerUri).toBeDefined();
+    // Compose's copy: no URL schemes named.
+    expect(validateForm({ ...form, bannerUri: 'http://x/y.png' }, DEV_LIMITS).bannerUri).toBe("That doesn't look like an image link.");
     expect(validateForm({ ...form, bannerUri: 'ipfs://bafy' }, DEV_LIMITS)).toEqual({});
     // Code points, not UTF-16 units: 25 emoji fit a 25-character name.
     expect(validateForm({ ...form, displayName: '😀'.repeat(25) }, DEV_LIMITS)).toEqual({});
@@ -171,5 +173,32 @@ describe('list filters', () => {
     expect(filterBookmarks(posts, 'grain').map((p) => p.id)).toEqual(['a']);
     expect(filterBookmarks(posts, '@emil').map((p) => p.id)).toEqual(['a', 'b', 'c']);
     expect(filterBookmarks(posts, '')).toHaveLength(3);
+  });
+});
+
+describe('partialSaveFailure (#20)', () => {
+  const failed = (done: number, total: number, code = 'NETWORK') => ({
+    progress: { done, total },
+    error: { code, consensusCode: null, outcome: 'refused', retryable: true, userMessage: '' } as never,
+  });
+
+  it('names the fields the second document holds once the first was written', () => {
+    const patch = { bio: 'Hi', pronouns: 'she/her', location: 'Lagos', website: 'https://jana.film' };
+    expect(partialSaveFailure(failed(1, 2), patch)).toBe("Couldn't save pronouns, location and website. Try again.");
+    expect(partialSaveFailure(failed(1, 2), { pronouns: 'she/her' })).toBe("Couldn't save pronouns. Try again.");
+    expect(partialSaveFailure(failed(1, 2), { bannerUri: null, nsfw: true })).toBe(
+      "Couldn't save banner and NSFW setting. Try again.",
+    );
+    // Only the avatar went second (it lands in either document).
+    expect(partialSaveFailure(failed(1, 2), { avatar: { uri: 'https://x.y/a.png' } })).toBe(
+      "Couldn't save all of your changes. Try again.",
+    );
+  });
+
+  it('keeps the write\'s own sentence when nothing saved, for one document, and for credits or YAPP', () => {
+    expect(partialSaveFailure(failed(0, 2), { pronouns: 'x' })).toBeNull();
+    expect(partialSaveFailure(failed(0, 1), { pronouns: 'x' })).toBeNull();
+    expect(partialSaveFailure({ progress: null, error: null }, { pronouns: 'x' })).toBeNull();
+    expect(partialSaveFailure(failed(1, 2, 'INSUFFICIENT_CREDITS'), { pronouns: 'x' })).toBeNull();
   });
 });

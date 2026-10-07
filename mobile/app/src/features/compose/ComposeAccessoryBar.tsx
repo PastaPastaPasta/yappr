@@ -1,12 +1,12 @@
 import { Pressable, View } from 'react-native';
-import { PhotoIcon, PlusCircleIcon, WifiIcon } from 'react-native-heroicons/outline';
+import { LinkIcon, PlusCircleIcon, WifiIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 import { IconButton } from '~/ui/IconButton';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
 
-import { characterCount, counterLabel, counterTone, type ContentLimits } from './limits';
+import { charactersLeft, counterLabel, counterTone, type ContentLimits } from './limits';
 
 export interface ComposeAccessoryBarProps {
   /** The active part's text as it will be posted (trimmed), for the counter. */
@@ -23,8 +23,8 @@ export interface ComposeAccessoryBarProps {
 
 /**
  * The bar above the keyboard (UX_SPEC §2.12): "Add to thread" (or "You're
- * offline"), the image-URL toggle, and the active part's counter: gray,
- * amber at 50 or fewer left, red when over.
+ * offline"), the image-link toggle, and the active part's counter of the
+ * characters left: gray, amber at 50 or fewer, red and negative when over.
  */
 export function ComposeAccessoryBar({
   text,
@@ -67,10 +67,10 @@ export function ComposeAccessoryBar({
         </Pressable>
       ) : null}
       <IconButton
-        icon={PhotoIcon}
+        icon={LinkIcon}
         variant={mediaOpen ? 'primary' : 'default'}
         color={mediaOpen ? c.link : undefined}
-        accessibilityLabel={mediaOpen ? 'Remove image URL' : 'Add image URL'}
+        accessibilityLabel={mediaOpen ? 'Remove image link' : 'Add image link'}
         accessibilityState={{ expanded: mediaOpen }}
         onPress={onToggleMedia}
         testID="compose-media-toggle"
@@ -84,11 +84,7 @@ export function ComposeAccessoryBar({
         className="px-2"
         testID="compose-counter"
       >
-        {characterCount(text)}
-        <Text variant="caption" tone="decorative">
-          {' / '}
-        </Text>
-        {limits.chars}
+        {charactersLeft(text, limits)}
       </Text>
     </View>
   );

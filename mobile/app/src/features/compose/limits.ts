@@ -88,24 +88,33 @@ export function postedOverflowOffset(text: string, limits: ContentLimits): numbe
   return offset === null ? null : offset + (text.length - text.trimStart().length);
 }
 
+/**
+ * How many more characters fit (PRD COMP-02, #19): the room left under both
+ * limits, counted in the characters a plain letter fills (one code point,
+ * one UTF-8 byte), so emoji and non-Latin text use up more of it. It is 0
+ * exactly at the longest text the contract takes, and below 0 exactly when
+ * `isOverContentLimit` (lib's `contentOverage`) says the text is over.
+ */
+export function charactersLeft(text: string, limits: ContentLimits): number {
+  const byCharacters = limits.chars - characterCount(text);
+  return limits.bytes === null ? byCharacters : Math.min(byCharacters, limits.bytes - utf8ByteCount(text));
+}
+
 export type CounterTone = 'secondary' | 'warning' | 'error';
 
-/** The counter's color: gray, amber at 50 or fewer characters left, red when over either limit. */
+/** The counter's color: gray, amber at 50 or fewer characters left, red when over. */
 export function counterTone(text: string, limits: ContentLimits): CounterTone {
-  const { charactersOver, bytesOver } = contentOverage(text, limits);
-  if (charactersOver > 0 || bytesOver > 0) return 'error';
-  return limits.chars - characterCount(text) <= 50 ? 'warning' : 'secondary';
+  const left = charactersLeft(text, limits);
+  if (left < 0) return 'error';
+  return left <= 50 ? 'warning' : 'secondary';
 }
 
 /**
- * "{current} of {limit} characters", plus ", {N} over limit", or with the
- * characters in but the bytes over, ", {N} bytes over the size limit" (UX_SPEC
- * §5.4): the red counter is never the only sign of why Post is off.
+ * The counter's screen-reader label (UX_SPEC §5.4 compose.counterLabel):
+ * "{n} characters left", or "Too long by {n}" past the limit.
  */
 export function counterLabel(text: string, limits: ContentLimits): string {
-  const current = characterCount(text);
-  const { charactersOver, bytesOver } = contentOverage(text, limits);
-  const over =
-    charactersOver > 0 ? `, ${charactersOver} over limit` : bytesOver > 0 ? `, ${bytesOver} bytes over the size limit` : '';
-  return `${current} of ${limits.chars} characters${over}`;
+  const left = charactersLeft(text, limits);
+  if (left < 0) return `Too long by ${-left}`;
+  return `${left} ${left === 1 ? 'character' : 'characters'} left`;
 }

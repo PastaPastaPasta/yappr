@@ -39,7 +39,7 @@ const EDIT_LAYOUT_MS = 500;
  * Keeps the end of the part just edited in view (PRD COMP-12, D-L2i-001).
  * Each editor grows instead of scrolling itself (`scrollEnabled={false}`),
  * so after a long paste nothing scrolled the caret, the overflow highlight
- * or the bytes-over line out from under the keyboard. The part's new height
+ * or the too-long line out from under the keyboard. The part's new height
  * arrives with its layout, so the scroll happens then (and once the edit has
  * rendered, for an edit that changes no height).
  */

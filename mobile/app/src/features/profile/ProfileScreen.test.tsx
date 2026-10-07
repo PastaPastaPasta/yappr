@@ -241,7 +241,7 @@ describe('ProfileScreen', () => {
     await flush();
 
     expect(screen.getByText('This user is blocked')).toBeTruthy();
-    expect(screen.getByText("Blocked by a block list you follow. You won't see their posts in your feeds")).toBeTruthy();
+    expect(screen.getByText('A block list you follow hides their posts.')).toBeTruthy();
     expect(screen.queryByText('Unblock')).toBeNull();
     expect(screen.queryByTestId('profile-tabs')).toBeNull();
   });

@@ -397,10 +397,10 @@ Replaces the action bar on optimistic cards.
 
 | State | Row content |
 | --- | --- |
-| Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`) |
+| Posting | 12 spinner + "Posting…" (`caption`, `text.secondary`). Also while the outcome is unknown (the network's answer timed out, an engine restart cut the call short, a minute with no answer): the app checks it by itself 5, 20, 80 and 130 s after, again when the app returns to the foreground, and when a feed, profile or thread read shows it. No manual check exists. A post that never went out is called so only from the 130 s check ("Couldn't post" with Retry): before then it may still be on its way |
 | Thread progress | spinner + "Posting 2 of 5…" |
-| Not confirmed | `ClockIcon` 14 + "Not confirmed yet" + " · " + "Check again" (`link`). Also shown once the post has gone 60 s without an answer from the network (a stall): it becomes normal by itself if the post then lands. Once checking cannot settle it (Check again 10 minutes or more after posting still cannot tell, or a failure that may have landed), also " · Edit": compose opens on its text, parts known to have posted kept posted; never Retry, and never Edit while the post is still being sent (it may still land) |
-| Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`) |
+| Couldn't confirm | `ExclamationCircleIcon` 14 `text.secondary` + "Couldn't confirm" + " · " + "Edit" (`link`). Only once the automatic checks ran out without proof either way (or a failure that may have landed), with the toast `toast.postUnconfirmed` once. Edit opens compose on its text, parts known to have posted kept posted. Never Retry (it may have landed), and never while the post's call still runs (it may still land). Checks go on (foreground, reads): the card becomes the post by itself if it turns up |
+| Failed | `ExclamationCircleIcon` 14 `error` + "Couldn't post" (`error`) + " · Retry · Edit" (`link`). Only when the post was refused, or a check proved it absent |
 | Partly posted | "Posted 2 of 5 · Retry the rest" |
 
 The card body renders at 70% opacity while Posting; full opacity in the other states. Announced once per change (A11Y-06).
@@ -408,7 +408,7 @@ The card body renders at 70% opacity while Posting; full opacity in the other st
 ### 2.5 Removed and deleted stubs
 
 - Card variant: 16 × 12 padding, `border` bottom. Embed variant: inside a quote frame (`radius.xl`, `border.strong`, 12 padding).
-- One line: icon 16 (`ShieldExclamationIcon` removed, `TrashIcon` deleted, `ExclamationTriangleIcon` failed or unavailable) + the sentence in `subhead` italic `text.secondary`. Removed with a reason: a second line "Reason: …" not italic. v11 kept fields: a second line "#tag · posted Sep 30".
+- One line: icon 16 (`ShieldExclamationIcon` removed, `TrashIcon` deleted, `ExclamationTriangleIcon` failed or unavailable) + the sentence in `subhead` italic `text.secondary`. Removed with a reason: a second line "Reason: …" not italic. Nothing else of what a removal record kept (v11's tag and date) is shown, on mobile or web.
 - Blocked-author variant (G-6): `NoSymbolIcon` + "Reply from an account you blocked" / "Post from an account you blocked".
 - Not tappable, no menu. a11y: one static text element.
 
@@ -469,11 +469,12 @@ All fire `selectionAsync()` on change. a11y: tabs role `tab` with selected state
 
 - Editor: borderless multi-line input, `body.large`, placeholder per mode, grows with content. Leading avatar `sm` per item; thread items are joined by a 2 pt `border` line between avatars (web thread line).
 - Inline highlighting: mentions, hashtags and links in `link` color; over-limit text gets `error.bg` background from the first over-limit grapheme.
-- Footer row per item (above the keyboard for the active item): counter right-aligned; on dev the byte-overflow line under the editor in `error` `caption`.
-- Editors grow rather than scroll themselves, so compose scrolls for them: when text is added at an item's end (typing, a paste) or the item goes over a limit, its end, with the byte-overflow line, is scrolled above the keyboard.
+- Footer row per item (above the keyboard for the active item): counter right-aligned; over a limit, "Your post is too long." under the editor in `error` `caption`.
+- Editors grow rather than scroll themselves, so compose scrolls for them: when text is added at an item's end (typing, a paste) or the item goes over a limit, its end, with the too-long line, is scrolled above the keyboard.
 - **Limits and counting:** the limits come from `engine.info()` capabilities (`contentLimits`); the UI counts locally on each keystroke with the rules of `lib/compose/limits.ts` (code points, UTF-8 bytes, default-ignorable characters), without importing it at runtime (PRD COMP-02).
-- **Counter:** "{current} / {limit}" with tabular figures, `caption`; `text.secondary`, `warning` at ≤ 50 left, `error` when over. The "/" is `text.decorative`. a11y label "{current} of {limit} characters" (+ ", {N} over limit", or ", {N} bytes over the size limit" when only the bytes are over), not live.
-- **Keyboard accessory bar** (sticks above the keyboard): "Add to thread" (`PlusCircleIcon` + label, `link`; hidden in reply and quote modes and at 10 items), then the counter of the active item.
+- **Counter:** the characters left, with tabular figures, `caption`: the room left under both limits, counted in the characters a plain letter fills (one code point, one UTF-8 byte), so emoji and non-Latin text use up more of it. It reaches 0 exactly at the longest post the contract takes and goes negative past it ("-3"). `text.secondary`, `warning` at ≤ 50 left, `error` below 0. a11y label "{n} characters left" / "Too long by {n}", not live. It never mentions bytes.
+- **Keyboard accessory bar** (sticks above the keyboard): "Add to thread" (`PlusCircleIcon` + label, `link`; hidden in reply and quote modes and at 10 items), the image-link toggle (`LinkIcon`, a11y "Add image link" / "Remove image link"), then the counter of the active item.
+- **Image link:** the toggle opens one URL field under the editors, placeholder "Paste an image link", with a preview once typing pauses. Web (https) and IPFS links are both taken; the field never names URL schemes. Errors: "That doesn't look like an image link." / "That link is too long." (over the contracts' 512 characters).
 - **Mention suggestions:** a list docked above the accessory bar, max 4 visible rows (`md` avatars, name, handle), `bg.elevated`, `shadow-lg`, `radius.lg` top corners.
 
 ### 2.13 Sheets and dialogs
@@ -494,7 +495,7 @@ Map of react-hot-toast in `app/layout.tsx`:
 - Position top-center, below the status bar and the navigation bar (safe area + 8).
 - `toast` colors in both themes, `radius.lg`, padding 12 × 16, `subhead` text (web 14 px), max width screen − 32, `shadow-lg`.
 - Leading icon 18: success `CheckCircleIcon` green-500, error `XCircleIcon` red-500, info none.
-- Duration 3000 ms; 6000 ms for messages over 80 characters and for toasts with an action. One optional trailing action ("Retry", "Open yap.pr", "Open in browser", "View") in `#7dd3fc` (yappr-300, 8.6:1 on the toast).
+- Duration 3000 ms; 6000 ms for messages over 80 characters and for toasts with an action. One optional trailing action ("Retry", "Edit", "Get YAPP", "Open in browser", "View") in `#7dd3fc` (yappr-300, 8.6:1 on the toast).
 - In: fade + slide down 10 pt, `duration.base`. Out: fade, `duration.fast`. Swipe up dismisses. A new toast replaces the current one.
 - a11y: announced with `AccessibilityInfo.announceForAccessibility` (iOS) / a polite live region (Android). Android uses this same component, not a Snackbar, so the two platforms match.
 
@@ -519,13 +520,13 @@ Map of react-hot-toast in `app/layout.tsx`:
 
 - Vertical padding 48. Copy from section 5.
 - Error variant: `ExclamationTriangleIcon` in `warning`, title "Something went wrong" (or the categorized message as description), button "Try again" (`primary`, ADR E3: not purple). A list's read that failed with the "temporarily unavailable" category (the one place it is decided: `isTemporaryReadFailure` in `mobile/app/src/data/read-error.ts`, which also picks this copy) is also read again by itself (PRD NET-03: 2 s, 4 s, 8 s, then every 30 s while the app is in the foreground, on the 1.0 terms of NET-03's note; sooner once another read answers). Polls, reads with their own backoff and reads embedded in a card are left alone. The error stays on screen while it retries (not the list's loading state, though a stalled read takes 30-60 s to fail), with "Retrying…" (copy 5.11 `read.retrying`: `caption`, `text.secondary`, an `xs` spinner before it) under "Try again", and gives way to the content as soon as a retry answers. "Try again" (or a pull to refresh) during a retry ends that retry and reads afresh, showing the loading state as it does otherwise; it never waits on the stalled retry.
-- List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding) and the legacy link; "Load More" pill (`primary` `sm`) for paused or failed paging.
+- List footer variants: end-of-list "You've reached the end." (`subhead`, `text.secondary`, 24 padding), with the legacy link under it on testnet's feeds only (never in an empty state); "Load more" pill (`primary` `sm`) for paused or failed paging.
 
 ### 2.17 Network chip
 
 - Height 20, horizontal padding 8, `radius.full`, `network.chip` colors, `chip` text "DEVNET" / "TESTNET". A 6 pt dot before the label: steady black when the engine is ready, pulsing while booting, hollow when unavailable.
 - Placement: Home navigation bar (leading on iOS next to the title, trailing on Android before the overflow), and the Settings footer.
-- Tap → network sheet (4.34). a11y: "Devnet. Data may be reset. Engine ready." (state varies).
+- Tap → network sheet (4.34). a11y: "Testnet. Data may be reset. Connected." (state varies: "Connecting." / "Can't connect."; the dot carries the state, so the label must too).
 
 ### 2.18 Banners
 
@@ -567,8 +568,8 @@ Banners sit directly under the navigation bar of the current screen, push conten
 
 - Max width 78% of the screen. Padding 10 × 14. `radius.2xl` with the corner nearest the sender reduced to `radius.sm` on the last bubble of a run. `body` text.
 - Own: `bubble.own`, right-aligned. Other: `bubble.other`, left-aligned; in groups a 24 avatar on the last bubble of a run and the sender name (`caption.strong`, `text.secondary`) above the first.
-- Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Failed · Tap to retry" (`error`).
-- A send that may have gone out but is not proved (no answer from the network for 60 s, or an engine restart cut it short) reads "Not confirmed · Tap to check" (`error`): the tap asks the engine to look for it, and it turns "Sent" by itself once it lands. While the send's call is still waiting on the network, the tap can't look yet and toasts "Still sending. Tap again in a moment." Only a proved absence offers "Failed · Tap to retry". A failure the engine won't retry reads "Failed · Tap to edit": the tap puts the unsent text back in the composer.
+- Status under the last own bubble: "Sending…", "Sent", "Read" (v3 with receipts), "Not delivered · Tap to retry" (`error`).
+- A send that may have gone out but is not proved (the network's answer timed out, no answer for 60 s, or an engine restart cut it short) still reads "Sending…": the app checks it by itself (5, 20, 80 and 130 s after, on foreground, and when the conversation's messages are read), and it turns "Sent" once it lands. Only once those checks ran out without proof does it read "Couldn't confirm · Tap to check" (`error`); a tap checks again, with a small spinner beside the status while it runs (a second tap does nothing, no toast). A send the engine never took goes back to the composer with `toast.dmNotSent`. Only a proved absence offers "Not delivered · Tap to retry". A refusal the engine won't retry reads "Not delivered · Tap to edit": the tap puts the unsent text back in the composer.
 - Time shown on long-press only (iOS swipe-left reveals times, as Messages; Android: tap a bubble toggles its time).
 - Day separator: centered `caption` `text.secondary` with 16 vertical margin.
 
@@ -793,6 +794,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ```
 
 - Keeps the screen awake while visible. States as 4.3.
+- Reopened as the flow's first screen (a relaunch resuming a waiting request, AUTH-03), it has the sign-in modal's "Cancel" (iOS) / close × (Android) in place of Back, as 4.3 does; it closes the flow as the swipe-down does, and an abandoned "Add account" goes back to the previous account.
 
 ### 4.5 First-time key registration
 
@@ -970,11 +972,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │                                 │
 │ ┌ quoted post embed ──────────┐ │  quote mode only
 │ └─────────────────────────────┘ │
-│ ⚠ 12 bytes over the size limit. │  dev byte line (error)
-│   Emoji and non-Latin text      │
-│   count extra.                  │
+│ Your post is too long.          │  over a limit (error)
 ├─────────────────────────────────┤
-│ ⊕ Add to thread        482/500 │  keyboard accessory bar
+│ ⊕ Add to thread   🔗         18 │  accessory bar: characters left
 ├─────────────────────────────────┤
 │           keyboard              │
 └─────────────────────────────────┘
@@ -983,7 +983,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **NSFW toggle:** a chip in the header: off = outline `border.strong`, `text.secondary` "NSFW"; on = amber-500 fill, black text. a11y "Mark this post as NSFW", switch role.
 - **Post button:** disabled per COMP-01 / COMP-02 / COMP-11; offline it stays disabled and the accessory bar shows "You're offline" instead of "Add to thread".
 - **Close:** "Cancel" (iOS) / × (Android). With content: action sheet "Save draft" / "Delete draft" (destructive) / "Cancel".
-- **Mention suggestions:** 2.12. **Hints:** first-mention and first-tag hints in `caption` `warning` under the active editor (dev).
+- **Mention suggestions:** 2.12. **Mentions (dev, only the first notifies):** with 2 or more different @mentions, a muted caption under the editor, "Only @{first} will be notified." Nothing about tags: a tag longer than the contract indexes is simply not highlighted as a link.
 - **Posting:** the sheet closes at once (PRD PD-3); the optimistic card appears in the list behind it.
 - **Platform:** iOS `fullScreenModal` with the keyboard up on open; Android full-screen dialog, `adjustResize`, IME action = newline.
 
@@ -1021,7 +1021,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Blocked:** tabs replaced by the blocked notice (copy 5.6).
 - **NSFW profile:** interstitial replaces everything below the header bar (copy 5.6).
 - **Loading:** banner gradient, avatar skeleton, 2 skeleton bars for name and handle, tabs disabled.
-- **Signed-out Profile tab:** empty state "Sign in to post, follow and message" with "Sign in", then grouped rows: Appearance, Privacy & Safety, About, Engine diagnostics.
+- **Signed-out Profile tab:** empty state "Sign in to post, follow and message" with "Sign in", then grouped rows: Appearance, Privacy & Safety, About. (Troubleshooting is the last row of About.)
 
 ### 4.13 Edit profile and avatar picker
 
@@ -1033,27 +1033,25 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ├─────────────────────────────────┤
 │▓▓▓▓▓▓ banner preview ▓▓▓▓▓▓▓▓▓▓│  tap → "Banner image link" field focus
 │ (88)  Change avatar             │  link → avatar sheet
-│ ── DashPay profile ──────────── │  dev only: section header + note
-│ This also updates your DashPay  │  caption secondary
-│ profile, which other Dash apps  │
-│ show.                           │
 │ Name                     12/25  │
 │ [ Bob Builder               ]   │
 │ Bio                     40/140  │
 │ [ Builder of things.        ]   │
-│ ── Yappr profile ────────────── │  dev only
+│ Your name and bio also show in  │  dev only: caption secondary
+│ other Dash apps, like DashPay.  │
 │ Pronouns  [ he/him          ]   │
 │ Location  [ Lisbon          ]   │
 │ Website   [ https://bob.dev ]   │
-│ Banner image link [ https://… ] │
+│ Banner image link               │
+│ [ Paste an image link       ]   │
 │ NSFW content               [○]  │  switch row
 │ Mark your profile as containing │
 │ adult content                   │
 └─────────────────────────────────┘
 ```
 
-- v2 shows one ungrouped list: Name (required, 50), Bio (160), Pronouns, Location, Website (200), Banner image link, NSFW.
-- **Save:** disabled until changed and valid; shows a spinner and "Saving…" in the navigation bar title position; on dev, a save that writes both documents counts them: "Saving… (1 of 2)", then "Saving… (2 of 2)".
+- One list on every contract, whichever documents hold the fields: Name, Bio, Pronouns, Location, Website, Banner image link, NSFW. The banner and avatar image links take compose's copy: placeholder "Paste an image link", error "That doesn't look like an image link."; they never name URL schemes. v2: Name (required, 50), Bio (160). Dev: Name (25), Bio (140), with the footnote under Bio.
+- **Save:** disabled until changed and valid; shows a spinner and "Saving…" in the navigation bar title position, however many documents the save writes. If a dev save writes the DashPay profile and then fails on the Yappr profile, the toast names what did not save: "Couldn't save pronouns, location and website. Try again." (copy 5.6 `toast.profilePartial`).
 - **Avatar sheet** (bottom sheet, large detent): segmented "Generated / Image link". Generated: a 4-column grid of 28 style tiles (64 avatars with labels), selected tile has a 2 pt `accent` ring; under it "Seed" field + "Randomize" (`secondary sm`). Image link: URL field + 88 preview + error line. "Use this avatar" (primary block) at the bottom.
 
 ### 4.14 Followers and following
@@ -1133,12 +1131,11 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ ↻ (40) Dan reposted your post  │
 │ 👤 (40) Eve started following   │
 │        you                      │
-│ Older replies and quotes may    │  dev footer (NOTIF-07)
-│ not appear here.                │
 └─────────────────────────────────┘
 ```
 
-- **Row:** type icon 20 (decorative colors 1.2) in a 40 column, then avatar `md` (or stacked `xs` avatars for grouped likes), the sentence ("**Alice** liked your post", name `body.strong`, phrase `body`), the snippet (`subhead`, `text.secondary`, 2 lines, quoted), time (`caption`, `text.secondary`).
+- **Row:** type icon 20 (decorative colors 1.2) in a 40 column, then avatar `md` (or stacked `xs` avatars for grouped likes), the sentence ("**Alice** liked your post", name `body.strong`, phrase `body`), the snippet (`subhead`, `text.secondary`, 2 lines, quoted), time (`caption`, `text.secondary`). Likes that keep no time of their own (dev, v11) show no time at all, never when this device saw them.
+- **End of the list:** nothing; the list just ends.
 - **Tap:** opens the target and marks read. Swipe actions: none in 1.0.
 - **Signed out:** empty state "Sign in to see your notifications" + "Sign in".
 
@@ -1156,13 +1153,14 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │      You: see you there         │  unread dot
 │ (40) Builders (group)      1h   │
 │      Bob: shipped it            │
-│ Show 2 deleted conversations    │  footer link (v5)
+│ Archived (2)                    │  footer link (v5); "Hide archived"
 └─────────────────────────────────┘
 ```
 
 - **Unread rows:** name and preview in `text.primary` weight 600; read rows' preview `text.secondary`.
-- **Swipe (iOS) / long-press menu (Android):** "Delete conversation" (v5).
-- **Locked (no encryption key):** the whole tab shows the unlock empty state (copy 5.8) with "Enter encryption key" opening the unlock sheet (4.38).
+- **Swipe (iOS) / long-press menu (Android):** "Archive" / "Archive conversation" (v5), with no confirmation: the row leaves the list at once with the toast "Conversation archived" and "Undo" (6 s). It is saved once Undo has passed or the app leaves the foreground; a new message brings it back.
+- **Archived:** behind the footer link "Archived ({N})" / "Hide archived". Everything archived: the empty state "No conversations yet" with the footer link under it.
+- **Locked (no encryption key):** the whole tab shows the unlock empty state (copy 5.8) with "Unlock messages" opening the unlock sheet (4.38).
 - **Order:** last activity, newest first. A group with no message yet is placed by when this device joined it (or created it); a 1:1 just opened to write is on top; nothing without a time goes above active conversations.
 - **Loading:** until the engine has loaded the saved conversations, the conversation skeleton (2.15), with "Connecting to Dash Platform…" under it while the engine boots (4.34). If that first load fails: the inline error state (2.16) with the categorized message and "Try again", which checks again at once (as pull to refresh does). Neither shows the welcome or the "Couldn't check for new messages" notice; the notice is only for a list already on screen.
 - **Empty:** welcome empty state with "New message", only once the conversations have loaded and there are none.
@@ -1190,7 +1188,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 └─────────────────────────────────┘
 ```
 
-- **Header "⋯":** 1:1: "Block" / "Unblock", "Delete conversation" (v5). Group: "Group info".
+- **Header "⋯":** 1:1: "Block" / "Unblock", "Archive conversation" (v5). Group: "Group info", "Archive conversation" (v5). Archiving goes back to the inbox, where the toast offers Undo.
+- **Group key missing (member):** the composer banner reads "Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you."; the inbox preview "Waiting for access…".
 - **Composer:** text area growing to 5 lines; send disabled when empty; replaced by the state banners of DM-08 / DM-10 (`bg.muted`, centered `subhead`).
 - **Keyboard:** the list stays pinned to the newest message when the keyboard opens (inverted list). Long-pressing a bubble closes the keyboard before the Copy sheet opens (Android draws the keyboard over sheets).
 - **Pinned to the newest:** while the user reads at the end, the list stays at the newest message whenever messages arrive or history loads above (a thread opened after a cold launch fills in its history after it opens); nothing moves the list while the user's own scroll is under way (finger down, or a fling still moving), and once it comes to rest away from the end nothing moves it until they are back at the end.
@@ -1200,6 +1199,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Routes** `/messages/new`, `/messages/new-group` (modals) · **Stories** DM-05, DM-06.
 - **New message:** title "New message", description line "Choose a person to start an encrypted conversation.", search field "Search by username...", hint line, then "Your followers" section of user rows (no follow buttons). Tapping a row opens the conversation and closes the modal.
+- **Creating:** the form locks with a spinner on "Create group" and the caption "Creating group…". Confirmed: the new group opens. An unknown outcome (a timeout, an engine restart) goes to the inbox, read again, which shows the group once it is there; the form never offers a second creation, and the engine refuses one while the first still runs.
+- **Keys the creation missed:** the owner's app sends them again by itself, with no toast: on group open, on app foreground and after each backoff (30 s, then 2 min), at most 3 times per member, never while a resend for that member still runs (its `dm.group` deadline is 5 minutes). A member the owner removes is dropped. Only once the attempts are used up, and only for members whose every attempt proved it failed: "1 member hasn't been added to {group} yet." / "{n} members haven't been added to {group} yet." with "Retry". A member with any resend whose outcome stayed unknown (it may have landed) is let go with no toast; "Re-invite" stays in the member menu.
 - **New group:** title "New group", description "Name the group and pick its members.", "Group name" field (counter at 80+/100), selected members as chips (avatar `xs` + name + ×), the same search and followers list with checkmarks, and "Create group" (primary, in the navigation bar on iOS, a full-width bottom button on Android that stays above the keyboard while the search field has focus), disabled until a name and at least one member.
 
 ### 4.22 Group info
@@ -1213,24 +1214,28 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │          Builders               │  title; "Rename" link under it (owner)
 │ 5 members                       │  section header
 │ (40) Bob (you)          Owner   │
-│ (40) Alice                  ⋯   │  owner: ⋯ → Remove member
+│ (40) Alice                  ⋯   │  owner: ⋯ → Re-invite / Remove member
 │ ⊕ Add members                   │  owner
 │ New members can read messages   │  caption
 │ sent after they join.           │
-│ Resend keys                     │  owner, link row
 │ End group                       │  owner, destructive row
 │ Leave group                     │  member, destructive row
 └─────────────────────────────────┘
 ```
 
 - **Ended or left:** the actions are replaced by the state text.
+- **Re-invite** (owner's member menu): the fallback when the app's own key resends could not reach a member; toast "Invite sent".
+- **Leave:** after the confirm, the inbox at once, without the group; it comes back only if the leave is proved not to have gone out, or the account changes first.
+- **Legacy (testnet):** no groups; a link here goes to the inbox.
 - Confirmations use the confirm dialog (2.13) with copy 5.8.
+- **Add members:** the person picker opens under the row. Focusing its search scrolls the row to the top of the screen, so the results show between the field and the keyboard on both platforms, never under it.
 
 ### 4.23 Message settings
 
 - **Route** `/messages/settings` · **Story** DM-12.
-- Section "Reclaim message fees": radio rows "Never (keep paying for storage)", "After 30 days", "After 90 days", "After 1 year"; the explanation paragraph below (copy 5.8).
-- Section "Blocked": rows with "Unblock"; empty text.
+- Section "Delete old sent messages": radio rows "Never", "After 30 days", "After 90 days", "After 1 year"; the footer below (copy 5.8 `dm.retention.footer`), which keeps the privacy caveat. Never called "disappearing messages".
+- Section "Blocked": rows with "Unblock"; empty: "No blocked accounts" with the caption "Messages and group invites from people you block are ignored."
+- **Legacy (testnet):** nothing to set; a link here goes to the inbox.
 
 ### 4.24 Bookmarks
 
@@ -1246,7 +1251,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ ‹ Settings                      │
 │ ┌─────────────────────────────┐ │  iOS inset grouped
 │ │ (32) Bob Builder          › │ │  account summary row → Account
-│ │      @bob · 1.23 DASH       │ │
+│ │      @bob                   │ │  no balance here (Account has it)
 │ └─────────────────────────────┘ │
 │ ┌─────────────────────────────┐ │
 │ │ 🔔 Notifications          › │ │
@@ -1256,10 +1261,9 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ └─────────────────────────────┘ │
 │ ┌─────────────────────────────┐ │
 │ │ ℹ About                   › │ │
-│ │ ⚙ Engine diagnostics      › │ │
 │ └─────────────────────────────┘ │
 │        [DEVNET]                 │
-│  Yappr 1.0.0 (123) · devnet     │  caption secondary
+│      Yappr 1.0.0 (123)          │  caption secondary; the chip names the network
 └─────────────────────────────────┘
 ```
 
@@ -1269,11 +1273,13 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 - **Story** SET-02, AUTH-10, AUTH-11, AUTH-12.
 - Groups:
-  1. "Identity ID" (monospace value, 2 lines, copy `IconButton`), "Usernames" (each name as a row; "Register a username on yap.pr" link row), "Account created".
-  2. "Balance" (DASH value `body.strong` tabular, credits below in `caption`, refresh `IconButton`), "YAPP" (where shown).
-  3. "Accounts" › (switcher list screen: rows with `xl` avatars, check on current, "Add account"), "App lock" › (switch + timeout radio rows).
+  1. "Usernames" (each name as a row; then the link row "Register a username on yap.pr", or "Register another username on yap.pr" when there is at least one).
+  2. "Balance" (DASH cut to 4 decimals, `body.strong` tabular, "< 0.0001 DASH" below that; the exact credits below in a muted `caption`). No refresh button: it is read again when the screen opens and on pull to refresh, and a failed pull toasts `account.refreshFailed`. "YAPP" (where shown).
+  3. "Accounts" › (switcher list screen: rows with `xl` avatars, check on current, "Add account"; each row shows the name and @handle only, since the section header names the network), "App lock" › (switch + timeout radio rows).
      - An account marked "Sign in again" (AUTH-14) has an outline `sm` "Sign in again" button beside its row, which opens its sign-in. Tapping the row of a marked account that is not the current one still switches to it, for reading; its write controls then open the "Sign in again" sheet. Tapping the current marked account's row opens its sign-in, and so does tapping one that cannot be opened (its key is gone from the device), without a "Couldn't switch" toast; abandoning that sign-in returns to the account that was current.
-  4. "Sign out" (destructive row).
+     - Once another account has taken over (a switch from here or from the switcher, a finished "Add account", or the next account after signing out the current one), and when the last account signs out, every tab goes back to its first screen (AUTH-10: all screens reload for the new account). A switch made here therefore lands on the Profile tab's root, the new account's profile, not on this list. Signing in from signed out, and an "Add account" or "Sign in again" that ends on the same account, keep the user's place.
+  4. "Account created", then "Copy account ID" (the id middle-truncated as its value; a tap copies it whole, toast "Account ID copied").
+  5. "Sign out" (destructive row).
 - Moderation notice (SAFE-09) at the top when present: `error.bg` card.
 
 ### 4.27 Settings: Notifications
@@ -1292,7 +1298,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 ### 4.29 Blocked accounts
 
 - **Route** `/settings/blocked` · **Story** SAFE-03.
-- User rows with the block note under the handle (`subhead`, `text.secondary`, italic) and "Unblock" (`outline sm`). Footer note with the yap.pr link. Empty state "You haven't blocked anyone".
+- User rows with the block note under the handle (`subhead`, `text.secondary`, italic) and "Unblock" (`outline sm`). Footer note `blocked.listsNote` with the "Manage on yap.pr" link, only when the viewer follows at least one block list (`safety.followedBlockLists`); nothing about block lists otherwise. Empty state "You haven't blocked anyone".
 
 ### 4.30 Settings: Appearance
 
@@ -1301,19 +1307,24 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ### 4.31 Settings: About
 
-- Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line.
-- Rows: "Terms of Use", "Privacy Policy", "Community rules", "Community rules summary" (bundled, opens the 4.7 text read-only), "Support", "Open-source licenses", "Yappr on the web". Footer: the Powered-by-Dash mark.
-- Info rows above the links: "Version" (version and build), "Network", "Engine" (evo-sdk and bundle), "Commit" (the first 8 characters of the git commit, baked in at build time; never fetched).
-- "Community rules" opens the full rules in a sheet (the text the 4.7 gate expands under "Community rules") until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
+- Header block: 48 app icon, "Yappr", "Decentralized social media on Dash Platform", version line. No "Powered by Dash Platform" footer: the tagline says it.
+- One info row above the links: "Version" (version and build, "1.0.0 (123)"). A long press copies the build details, "Yappr 1.0.0 (123) · 9f8e7d6c · evo-sdk 3.0.0 · testnet" (the commit's first 8 characters, baked in at build time and never fetched; a part the build doesn't know is left out), with the toast "Version info copied". A tap does nothing; screen readers hear the hint "Long press to copy version info". No Network, Engine or Commit rows.
+- Rows: "Terms of Use", "Privacy Policy", "Community rules", then "Support" (mail), "Send diagnostics", "Open-source licenses", "Yappr on the web".
+- "Community rules" opens one sheet: the 4.7 summary first (`about.rulesIntro` and its 4 bullets), then the full rules the 4.7 gate expands under "Community rules", until yap.pr publishes a rules page (COMPLIANCE C4); then it opens that page in the in-app browser like Terms and Privacy.
+- "Send diagnostics" opens the mail composer to the support address (PRD §11.1 OQ-1) with the redacted 4.32 text as the body, sized for a mail link: its newest 10 errors (each clipped to 300 characters) and last 40 log lines, within 5,000 characters (the oldest log lines go first). With no mail app, the native share sheet offers the same text, led by "Send to support@yap.pr" so a message or note still says where it goes. The row is disabled until the composer or share sheet opens (up to 2 s while the engine's live figures load), so a second tap sends nothing.
+- Last, a muted row "Troubleshooting" (`subhead`, `text.secondary`, centered, 44 tall) opens 4.32. It is there signed out and in every build, and is the only way in.
 - "Open-source licenses" pushes a native list (`/settings/licenses`) generated at build time from the app's production lockfile and the packages the engine bundles (`mobile/engine/bundled-packages.json`, from esbuild's metafiles): one row per package with its version and license; a row opens to the package's license text.
 
-### 4.32 Engine diagnostics
+### 4.32 Troubleshooting
 
-- **Route** `/settings/diagnostics` · **Story** SET-08.
+- **Route** `/settings/diagnostics` · **Story** SET-08. Reached from About's last row only.
 
 ```
 ┌─────────────────────────────────┐
-│ ‹ Engine diagnostics     Share  │
+│ ‹ Troubleshooting        Share  │
+│ ┌───────────────────────────┐   │
+│ │      Copy diagnostics     │   │  primary block, first
+│ └───────────────────────────┘   │
 │ STATUS                          │
 │ Engine            ● Ready       │
 │ Boot time         3,412 ms      │  monospace values
@@ -1332,17 +1343,15 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 │ CAPABILITIES                  › │  list of flags
 │ CACHE             18.2 MB       │
 │ RECENT ERRORS (3)             › │
-│ ┌───────────────────────────┐   │
-│ │      Copy diagnostics     │   │  secondary block
-│ └───────────────────────────┘   │
-│   Restart engine                │  destructive row (confirm)
+│   Share diagnostics             │  outline
+│   Reconnect                     │  destructive row (confirm)
 │   Clear cache                   │  destructive row (confirm)
 └─────────────────────────────────┘
 ```
 
 - Values refresh every 2 s while visible. The errors list shows time, operation and message, newest first; a row expands to the full message.
 - Recent errors keeps the last 50: every engine call that failed (reads included; the operation is its method path) except the host's own `engine.*` control calls, and every error the engine or the host logged (operation `engine` / `host`). The list is a collapsed row ("Recent errors (3) ›"), so the actions below stay in reach.
-- "Share" (header) and "Share diagnostics" (button) open the native share sheet with the same text "Copy diagnostics" copies. The DAPI row expands to each endpoint's last success and failures; "Capabilities" expands to the flag list; each contract id (social, profile, DM, Pollr) has a copy button.
+- "Copy diagnostics" toasts "Diagnostics copied". "Share" (header) and "Share diagnostics" (button) open the native share sheet with the same text "Copy diagnostics" copies. "Reconnect" asks "Reconnect to Dash Platform? Lists reload; nothing you posted is lost." and restarts the engine. The DAPI row expands to each endpoint's last success and failures; "Capabilities" expands to the flag list; each contract id (social, profile, DM, Pollr) has a copy button.
 - The shared text never includes keys, WIFs, encryption keys or message content.
 
 ### 4.33 Lockdown Mode
@@ -1383,8 +1392,8 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 | Offline | Current screen | Offline banner (2.18); write taps → toast |
 | Couldn't connect | Current screen | "Couldn't connect" banner with "Try again" |
 | Unavailable reads | The list | Inline error state (2.16) with the categorized message |
-| Engine restarting | Nowhere visible | Lists keep content; in-flight writes go to "Not confirmed yet" |
-| Network sheet | From the chip | Bottom sheet, medium detent: chip, "Running on a Dash Platform devnet. Data may be reset." / testnet copy, engine state line, "Engine diagnostics" link |
+| Engine restarting | Nowhere visible | Lists keep content; in-flight writes keep their "Posting…" / "Sending…" while the app checks them |
+| Network sheet | From the chip | Bottom sheet, medium detent: chip, "Yappr is running on a Dash Platform devnet. Posts and accounts may be reset." / testnet copy, and the connection line (`network.state`). No diagnostics link |
 
 ### 4.35 Image viewer
 
@@ -1400,25 +1409,29 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 | Tab or screen | Icon | Title | Description | Button |
 | --- | --- | --- | --- | --- |
-| Home → Following | users icon | "See posts from people you follow" | "Log in to view your personalized following feed and see updates from accounts you care about." | "Sign in" |
+| Home → Following | users icon | "See posts from people you follow" | "Sign in to see posts from people you follow." | "Sign in" |
 | Notifications | `BellIcon` | "Sign in to see your notifications" | "Likes, replies, follows and mentions show up here." | "Sign in" |
 | Messages | `EnvelopeIcon` | "Sign in to read your messages" | "Private 1-on-1 and group conversations." | "Sign in" |
 | Profile | `UserIcon` | "Sign in to post, follow and message" | "You can keep browsing without an account." | "Sign in" |
 
 ### 4.38 Unlock messages sheet
 
-- Bottom sheet (large detent). First "Recovering Key…" with a spinner and "Attempting to automatically recover your encryption key…"; then either "Key Recovered!" / "Your encryption key was automatically recovered." (auto-closes after 1 s) or the manual form: secure field (placeholder "WIF (cXyz...) or hex (64 chars)"), error line, "Save key" (primary block). Toast "Encryption key saved".
+- Bottom sheet (large detent). First "Unlocking your messages…" with a spinner (the automatic recovery). On success the sheet closes onto the inbox with the toast "Messages unlocked", with no "recovered" step. If recovery can't work, the manual form: title "Unlock your messages", body `dm.unlock.body`, one secure field (placeholder "Paste your encryption key"), error line, "Unlock" (primary block); success is the same "Messages unlocked". The key's formats are named only in the error for text that is not a key (`dm.unlock.invalid`); a key that is one but not this account's reads `dm.unlock.mismatch`. Sentence case, no "!".
 
 ### 4.39 Report sheet and block sheet
 
-- **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The disclosure paragraph (`subhead`, `text.secondary`). "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`). "Details (optional)" text area with counter "0/500". "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). Already-reported state replaces the form with the summary, "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), shows "Withdrawing…" until the network answers, then closes the sheet with toast "Report withdrawn". Not confirmed yet (it may have landed), the sheet says so (`report.withdrawUnconfirmed`) with "Check again" (outline) and "Done", and never offers Withdraw again until a check settles it; a sheet reopened meanwhile shows the same. A report already gone closes the sheet with a neutral toast `toast.reportGone`, as on web.
-- **Block** (SAFE-01): bottom sheet, medium detent. Title "Block @x?", explanation paragraph, "Add a note (optional)" field with counter at 260+/280 and the note "Visible to anyone on Dash Platform", "Block" (destructive block), "Cancel" (ghost).
+- **Report** (SAFE-04): bottom sheet, large detent, scrollable. Title "Report post" / "Report reply". The form shows at once: the one-line disclosure `report.disclosure` (`subhead`, `text.secondary`), "What is wrong with it?" with 9 radio rows (label `body.strong`, hint `subhead` `text.secondary`), "Details (optional)" text area with counter "0/500", "Report post" (primary block, `destructive.fill` is **not** used: reporting is not destructive). The viewer's existing report is read beside the form, never in front of it; found, it replaces the form. A failed read never blocks the report: a `DUPLICATE` refusal toasts `report.duplicate` and shows the existing report. "Reporting…" until the engine has the report; then, confirmed or not confirmed yet, `report.sent` with "Also block @x" (outline) and "Done". The network's answer is reconciled in the background; only a report proven not to have landed (or refused) brings the form back, with the toast `toast.reportFailed`. A post that cannot be read shows `report.loadFailed` with "Try again".
+- **Existing report**: `report.existing` (date, reason, "Under review" or "Resolved: {outcome}"), the note, the moderators' resolution text when there is one, `report.expiry` (muted), "Withdraw report" (outline) and "Done" (primary). "Withdraw report" asks first (confirm dialog, `report.withdrawConfirm`), then withdraws optimistically: toast "Report withdrawn" and the sheet closes at once. A withdrawal proven not to have landed brings the report back with `toast.withdrawFailed`; a report already gone toasts `toast.reportGone` (neutral). A sheet reopened while a withdrawal is still settling shows "Report withdrawn", never Withdraw again.
+- **Report by email** (SAFE-05): where the contract takes no reports (testnet), and where it waits for an elected moderation team that is not seated (decided before the form, `safety.reportsOpen`): title `report.emailTitle`, body `report.emailBody`, the same reasons and details, and "Email the Yappr team" (disabled until valid), which opens the mail composer prefilled with the post's link, the reason and the details. The link is never shown on the sheet. A late `MODERATION_NOT_SEATED` refusal shows the same view with the warning `report.notSeated` above it, keeping what was chosen.
+- **Block** (SAFE-01): bottom sheet, medium detent. Title "Block @x?", the body for the network's Messages (`block.body*`), an "Add a note" link that opens the note field (counter at 260+/280, hint "Anyone can see this note."), "Block" (destructive block), "Cancel" (ghost). On DM v5 the Block also blocks them in Messages (and Unblock lifts both), so one Block covers everything; from a conversation's menu it opens the same sheet.
 
 ---
 
 ## 5. Copy deck
 
-Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities, never cute. Successes may end with "!" where web does. Sentence case everywhere except the network chip. Strings marked **(web)** are reused verbatim from the web app; change them on both sides or neither.
+Short, friendly, outcome first. Mention Dash Platform only when it changes what is private, permanent or costly, or what the user must do (public posts, blocks and reports; keys; credits). Toasts: one sentence at most. Sheets and dialogs: two sentences at most. Mobile owns its copy; (web) strings are a starting point, not a constraint.
+
+Sentence case everywhere except the network chip, and "Sign in", never "Log in". Strings marked **(web)** started as the web app's text.
 
 ### 5.1 Onboarding and sign-in
 
@@ -1491,12 +1504,12 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | lock.unlock | Unlock |
 | session.expired | Your session has expired. Please sign in again. (web says "log in") |
 | accounts.signInAgain | Sign in again **(AUTH-14: the account-list button, the write-control sheet's title and button)** |
-| accounts.reauthing | Getting ready to sign in again… |
 | accounts.reauthFailed | Couldn't start signing in again. Please try again. |
-| signin.reauth | Your session as @{name} has expired. Sign in again with its wallet or key. |
-| signInPrompt.reauthBody | Your session has expired. Please sign in again. You can keep browsing in the meantime. |
-| accounts.loadingAgain | Signing in as @{name}… **(AUTH-14: full-screen progress while the app reloads the account just signed in again, to load its other keys)** |
-| signin.walletKeyDisabled | The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead. **(AUTH-14: the "Sign-in failed" message)** |
+| signin.reauth | Sign in again as @{name} with its wallet or key. |
+| signInPrompt.reauthBody | Sign in again to keep posting as @{name}. You can keep browsing in the meantime. |
+| accounts.signingInAs | Signing in as @{name}… **(AUTH-14: the one full-screen progress label of signing in again, both while the app parks the current account before the sign-in flow and while it reloads the account just signed in, to load its other keys)** |
+| signin.alreadySignedIn | You're signed in as @{current}. Add @{x} as another account? / (without @{x}) Add this account too? / (without @{current}) Another account is signed in. … (the engine refused a sign-in beside the active account; on the key screen with the action "Add account") |
+| signin.walletKeyDisabled | This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key. **(AUTH-14: the "Sign-in failed" message. A disabled key can't be re-enabled, so never "Reconnect wallet")** |
 
 ### 5.2 Home
 
@@ -1511,11 +1524,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | home.empty.following.action | Explore |
 | home.empty.top | No liked posts yet / The most-liked posts will appear here **(web)** |
 | home.empty.topFollowing | No liked posts yet / The most-liked posts from people you follow will appear here **(web)** |
-| home.signedOut.following | See posts from people you follow / Log in to view your personalized following feed and see updates from accounts you care about. **(web)** |
+| home.signedOut.following | See posts from people you follow / Sign in to see posts from people you follow. |
 | home.newPosts | Show {N} new posts / Show 1 new post **(web)** |
 | list.end | You've reached the end. **(web)** |
-| list.legacy | Looking for older posts? Browse the previous version of Yappr ↗ **(web)** |
-| list.loadMore | Load More **(web)** |
+| list.legacy | Looking for older posts? Open Yappr classic ↗ (testnet feed ends only) |
+| list.loadMore | Load more |
 | post.reposted | {name} reposted / You reposted |
 
 ### 5.3 Post detail, stubs and engagements
@@ -1533,16 +1546,15 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | replybar.signedOut | Sign in to reply |
 | post.cantReplyDeleted | This post was deleted, so it can't be replied to. **(web)** |
 | post.cantReplyRemoved | This post was removed by moderators, so it can't be replied to. |
-| stub.removed | This {post\|reply} was removed by the contract's moderators. **(web)** |
+| stub.removed | This {post\|reply} was removed by community moderators. **(web)** |
 | stub.reason | Reason: {reason} **(web)** |
 | stub.deleted | This {post\|reply} was deleted by its author. **(web)** |
 | stub.failed | This {post\|reply} could not be loaded. Try again later. **(web)** |
 | stub.unavailable | This {post\|reply} is unavailable. **(web)** |
-| stub.kept | #{tag} · posted {date} |
 | stub.blockedReply | Reply from an account you blocked |
 | stub.blockedPost | Post from an account you blocked |
 | private.title | Private post |
-| private.body | Only {name}'s private followers can read this. Private feeds aren't in the app yet. |
+| private.body | Only approved followers can see this. (with "Open on yap.pr") |
 | private.open | Open on yap.pr |
 | poll.votes | {N} votes |
 | poll.endsIn / ended / noEnd | Ends in {time} / Ended / No end date |
@@ -1570,26 +1582,64 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | compose.remove | Remove this post **(web)** |
 | compose.nsfw | NSFW |
 | compose.nsfwLabel | Mark this post as NSFW **(web)** |
-| compose.counterLabel | {current} of {limit} characters / , {N} over limit **(web)** / , {N} bytes over the size limit (only the bytes over) |
-| compose.bytesOver | {N} bytes over the size limit. Emoji and non-Latin text count extra. **(web)** |
-| compose.tagTooLong | Tags can be up to {N} characters |
-| compose.firstMention | Only the first @mention notifies the person. |
-| compose.firstTag | Only the first #tag puts this post on a tag page. |
+| compose.counter | {n} (the characters left; negative past the limit) |
+| compose.counterLabel | {n} characters left / 1 character left / Too long by {n} |
+| compose.tooLong | Your post is too long. |
+| compose.mentionNote | Only @{first} will be notified. (dev, with 2 or more different mentions; muted) |
+| compose.imageLink | Add image link / Remove image link (toggle a11y) / Paste an image link (placeholder) / Image link (field a11y) |
+| compose.imageLink.invalid / tooLong | That doesn't look like an image link. / That link is too long. |
 | compose.offline | You're offline |
 | compose.close.save / delete / cancel | Save draft / Delete draft / Cancel |
 | status.posting | Posting… |
 | status.threadProgress | Posting {i} of {n}… |
-| status.notConfirmed | Not confirmed yet |
-| status.checkAgain | Check again |
+| status.unconfirmed | Couldn't confirm (only once the automatic checks ran out; with " · Edit", never Retry) |
 | status.failed | Couldn't post |
 | status.retry / edit | Retry / Edit |
 | status.partial | Posted {i} of {n} · Retry the rest |
-| toast.postCreated | Post created successfully! **(web)** |
-| toast.threadCreated | Thread with {N} posts created! **(web)** |
+| toast.postCreated | Posted |
+| toast.quoteCreated | Quote posted |
+| toast.threadCreated | Thread posted |
 | toast.replyPosted | Reply posted |
-| toast.threadPartial | Thread partly posted. Post {n} failed: {reason} (mobile; web's "Press Post to retry" doesn't apply once compose closes) |
+| toast.postFailed | Couldn't post. Try again. (a refusal, and a post a check proved absent; with Retry when the engine allows one) |
+| toast.postUnconfirmed | We couldn't confirm your post. Check your profile before posting it again. (once, when the automatic checks ran out) |
+| toast.threadPartial | Thread partly posted. Post {n} didn't go through. (the engine's reason goes to diagnostics; a code with mobile copy, §5.4.1, says that instead: "Thread partly posted. You don't have enough credits…") |
 | toast.alreadyQuoted | You have already quoted this. **(web)** |
-| toast.mediaUnreadable | Couldn't read the image at that link, so nothing was posted. Edit the post to fix the link or remove the image. (action: Edit; the engine's `MEDIA_UNREADABLE`) |
+| toast.mediaUnreadable | That image link didn't work. Edit the post to fix or remove it. (action: Edit; the engine's `MEDIA_UNREADABLE`) |
+| probe.unclear | Check your profile to see whether part {n} posted. (diagnostics: why a check could not settle a part) |
+
+#### 5.4.1 Write failures (every write)
+
+A failed write toasts one sentence: the mobile copy for its engine code when the user can act on it, else the write's own failure sentence. The same sentence is used for a refusal and for a write a check proved absent. Web's `categorizeError` text and the consensus code go to diagnostics only. A write whose outcome is unknown says nothing while the app checks it (§2.4.11); no toast, card or bubble says "Not confirmed yet", "Check again", "Already updated" or "may still go through".
+
+| Engine code | String |
+| --- | --- |
+| `INSUFFICIENT_CREDITS` | You don't have enough credits for this. Top up from your Dash wallet. |
+| `INSUFFICIENT_YAPP` | You need YAPP for this. (action: Get YAPP, opens yap.pr; never Retry) |
+| `NOT_OWNER`, `MODERATION_BARRED` | You can't do this from this account. |
+| `TARGET_GONE` | This post no longer exists. |
+| `APP_OUTDATED`, `STALE` | Update Yappr and try again. |
+| `BUILD_DEFECT` | Something went wrong. Nothing was charged. Please report this. |
+| `MEDIA_UNREADABLE` | That image link didn't work. Edit the post to fix or remove it. |
+| `NONCE_CONFLICT` | None: it may be this very write executing, so it is checked like any unknown outcome, never re-sent |
+| `PARENT_TOO_YOUNG`, `FEE_CHANGED` | None at first: the engine sends the write again by itself after 2, 5 and 15 s (Platform refused it, so nothing can be duplicated), then the default |
+| `FEE_SHARE_MISMATCH` | The default, at once: the app and the contract disagree about the fee, so a re-send would be refused (and charged) the same way |
+| Anything else (sponsor fees, ownership, private feed sync, the engine's own restarts) | The write's failure sentence (below) |
+
+| Write | Failure sentence |
+| --- | --- |
+| Post, reply, quote, thread | Couldn't post. Try again. |
+| Like / unlike | Couldn't like this post. Try again. / Couldn't unlike this post. Try again. |
+| Repost / undo | Couldn't repost this post. Try again. / Couldn't undo your repost. Try again. |
+| Bookmark / remove | Couldn't bookmark this post. Try again. / Couldn't remove your bookmark. Try again. |
+| Follow / unfollow | Couldn't follow this account. Try again. / Couldn't unfollow this account. Try again. |
+| Delete | Couldn't delete post. Try again. / Couldn't delete reply. Try again. |
+| Block / unblock | Couldn't block @{handle}. Try again. / Couldn't unblock @{handle}. Try again. ("this account" when the handle is unknown) |
+| Profile | Couldn't save your profile. Try again. |
+| Report / withdraw | Couldn't send your report. Try again. / Couldn't withdraw your report. Try again. |
+| Message | Couldn't send your message. Try again. |
+| Group change | Couldn't update the group. Try again. / Couldn't leave the group. Try again. / Couldn't create the group. Try again. |
+
+A like, repost, bookmark or reply on a post this device just made and has not seen confirmed waits for it (up to about two minutes) and then goes, with no toast; the button never refuses with "try again in a moment". A bare repost's like, repost and bookmark buttons show a spinner and take no taps until the viewer's marks have loaded.
 
 ### 5.5 Engagement
 
@@ -1599,9 +1649,8 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | toast.reposted | Reposted! **(web)** |
 | toast.repostRemoved | Removed repost **(web)** |
 | toast.quoteDeleted | Quote deleted **(web)** |
-| toast.likeFailed | Failed to update like. Please try again. **(web)** |
-| toast.repostFailed | Failed to update repost. Please try again. **(web)** |
-| toast.notConfirmed | This post has not confirmed yet. Try again in a moment. **(web)** |
+| toast.likeFailed | Couldn't like this post. Try again. (§5.4.1) |
+| toast.repostFailed | Couldn't repost this post. Try again. (§5.4.1) |
 | toast.bookmarkAdded / removed | Added to bookmarks / Removed from bookmarks **(web)** |
 | toast.linkCopied | Link copied to clipboard **(web)** |
 | menu.follow / unfollow | Follow @{handle} / Unfollow @{handle} **(web)** |
@@ -1613,8 +1662,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | menu.report | Report post / Report reply **(web)** |
 | menu.deleteQuote | Delete your quote **(web)** |
 | delete.title | Delete post? / Delete reply? **(web)** |
-| delete.body | This action cannot be undone. The {post} will be permanently removed from the platform. **(web)** |
-| delete.bodyHoles | This action cannot be undone. The {post} will be permanently removed from the platform. Replies and quotes stay, and show that it was deleted. **(web)** |
+| delete.body | This can't be undone. Replies and quotes will show that it was deleted. **(web)** One string on every contract, whether a delete erases the document or leaves a tombstone. |
 | toast.deleted | Post deleted / Reply deleted **(web)** |
 | bookmarks.title | Bookmarks |
 | bookmarks.search | Search bookmarks **(web)** |
@@ -1635,7 +1683,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | profile.follow / following / followBack | Follow / Following / Follow back **(web)** |
 | profile.unfollowConfirm | Unfollow @{handle}? / Unfollow |
 | toast.following / unfollowed | Following! / Unfollowed **(web)** |
-| toast.followFailed | Failed to update follow status **(web)** |
+| toast.followFailed | Couldn't follow this account. Try again. (§5.4.1) |
 | profile.followSelf | You cannot follow yourself **(web)** |
 | profile.message | Message {name} **(web)** |
 | profile.share | Share profile **(web)** |
@@ -1655,20 +1703,21 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | profile.aka | Also known as {names} |
 | profile.joined | Joined {Month YYYY} |
 | edit.title | Edit profile |
-| edit.dashpayHeader / note | DashPay profile / This also updates your DashPay profile, which other Dash apps show. |
-| edit.yapprHeader | Yappr profile |
+| edit.dashpayNote | Your name and bio also show in other Dash apps, like DashPay. (dev, under Bio) |
 | edit.fields | Name / Bio / Pronouns / Location / Website / Banner image link **(web: Name, Pronouns, Location, Website)** |
-| edit.nsfw | NSFW Content / Mark your profile as containing adult content **(web)** |
-| edit.saving | Saving… / Saving… ({n} of 2) (dev, while a save writes both the DashPay and the Yappr profile) |
+| edit.nsfw | NSFW content / Mark your profile as containing adult content **(web)** |
+| edit.bannerLink | Paste an image link (placeholder) / That doesn't look like an image link. (invalid) |
+| edit.saving | Saving… |
 | toast.profileUpdated | Profile updated! **(web)** |
-| toast.profileFailed | Failed to update profile **(web)** |
-| toast.profilePartial | Your DashPay profile was saved, but your Yappr profile wasn't. Try again. |
+| toast.profileFailed | Couldn't save your profile. Try again. (§5.4.1) |
+| toast.profilePartial | Couldn't save {fields}. Try again. ({fields}: what the second document held, "pronouns, location and website"; "banner", "NSFW setting") / Couldn't save all of your changes. Try again. (only an avatar) |
 | edit.discard | Discard changes? / Discard / Keep editing |
 | avatar.change | Change avatar |
 | avatar.modes | Generated / Image link |
 | avatar.seed / randomize | Seed / Randomize |
 | avatar.use | Use this avatar |
 | avatar.error | Couldn't load this image |
+| avatar.link | Paste an image link (placeholder) |
 | lists.followers / following | Followers / Following **(web)** |
 | lists.searchPlaceholder | Search by username... **(web)** |
 | lists.noMatch | No users found with that name **(web)** |
@@ -1712,7 +1761,6 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | notif.filters | All / Likes / Reposts / Replies / Follows / Mentions **(web)** |
 | notif.phrase | started following you / mentioned you in a post / liked your post / reposted your post / quoted your post / replied to your post **(web)** |
 | notif.grouped | {name} and {N} others liked your post |
-| notif.noticed | Noticed {time} |
 | notif.nsfw | NSFW content **(web)** |
 | notif.loading | Loading notifications… **(web)** |
 | notif.empty.all | When someone interacts with you, you'll see it here **(web)** |
@@ -1721,8 +1769,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | notif.empty.replies | When someone replies to your post, you'll see it here **(web)** |
 | notif.empty.follows | When someone follows you, you'll see it here **(web)** |
 | notif.empty.mentions | When someone mentions you, you'll see it here **(web)** |
-| notif.windowed | Older replies and quotes may not appear here. |
-| notif.unknown | Unknown User **(web)** |
+| notif.unknown | Unknown user |
 | dm.title | Messages **(web)** |
 | dm.search | Search messages **(web)** |
 | dm.new / newGroup | New message / New group **(web)** |
@@ -1734,16 +1781,18 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | dm.you | You: **(web)** |
 | dm.restoring | Restoring your messages **(web)** |
 | dm.restoring.steps | Finding conversations people started with you / Checking recent chats with people you follow / Finding your groups / Checking older chats with people you follow **(web)** |
-| dm.unlock | Unlock your messages / Messages are encrypted with your encryption key. Enter it on this device to read and send them. / Enter encryption key **(web)** |
-| dm.unlock.recovering | Recovering Key… / Attempting to automatically recover your encryption key… **(web)** |
-| dm.unlock.recovered | Key Recovered! / Your encryption key was automatically recovered. **(web)** |
-| dm.unlock.placeholder | WIF (cXyz...) or hex (64 chars) **(web)** |
-| dm.unlock.saved | Encryption key saved **(web)** |
-| dm.unlock.invalid | Invalid key **(web)** |
+| dm.locked | Unlock your messages / Your messages are encrypted. Unlock them to read and send them on this device. / Unlock messages |
+| dm.unlock.recovering | Unlocking your messages… |
+| dm.unlock | Unlock your messages / Your messages are encrypted. Paste your encryption key to read and send them on this device. / Unlock |
+| dm.unlock.placeholder | Paste your encryption key |
+| dm.unlock.done | Messages unlocked |
+| dm.unlock.invalid | That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr. |
+| dm.unlock.mismatch | That isn't the encryption key for this account's messages. (another account's key, another of this account's keys, or another network's) |
 | dm.thread.empty | No messages yet. Start the conversation! **(web)** |
 | dm.composer | Type a message... **(web)** |
 | dm.send | Send message **(web)** |
-| dm.status | Sending… / Sent / Read / Failed · Tap to retry / Not confirmed · Tap to check / Failed · Tap to edit |
+| dm.status | Sending… / Sent / Read / Not delivered · Tap to retry / Not delivered · Tap to edit / Couldn't confirm · Tap to check (only once the automatic checks ran out) |
+| toast.dmNotSent | Message not sent. It's back in the message box. (a send the engine never took) |
 | dm.copy | Copy |
 | dm.newMessage.desc | Choose a person to start an encrypted conversation. **(web)** |
 | dm.picker.search | Search by username... **(web)** |
@@ -1757,69 +1806,80 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | dm.group.create | Create group **(web)** |
 | dm.group.max | A group can have at most 100 members. **(web)** |
 | dm.group.createFailed | Could not create the group **(web)** |
+| dm.group.creating | Creating group… |
+| dm.group.keysFailed | 1 member hasn't been added to {group} yet. / {n} members haven't been added to {group} yet. / (the inbox has not read the name) 1 member hasn't been added yet. / {n} members haven't been added yet. (action: Retry; only once the app's own resends are used up, for members whose every resend proved it failed) |
 | dm.group.info | Group info |
 | dm.group.owner | Owner **(web)** |
 | dm.group.rename / renamed | Rename / Group renamed **(web)** |
 | dm.group.add | Add members |
 | dm.group.addNote | New members can read messages sent after they join. **(web)** |
-| dm.group.remove | Remove member? / Remove / Member removed **(web)** |
-| dm.group.resend | Resend keys / Keys sent **(web)** |
+| dm.group.remove | Remove {name} from the group? / They won't see new messages. / Remove / Member removed |
+| dm.group.reinvite | Re-invite / Invite sent (owner's member menu) |
 | dm.group.end | End this group? / Nobody will be able to send messages to it any more. This cannot be undone. / End group / Group ended **(web)** |
-| dm.group.leave | Leave this group? / The owner removes you the next time they open the app. Until then you can still read new messages. / Leave / You left the group **(web)** |
+| dm.group.leave | Leave group? / You'll stop getting messages from this group. / Leave / You left the group |
 | dm.state.ended | This group has ended. **(web)** |
 | dm.state.left | You are no longer a member of this group. **(web)** |
-| dm.state.noKeys | You cannot read this group yet. Ask the owner to resend your keys: they can do it from the group settings. **(web)** |
+| dm.state.noKeys | Waiting for access to this group. If this doesn't clear, ask the owner to re-invite you. (composer banner) / Waiting for access… (inbox preview) |
 | dm.state.blocked | You blocked this person. Unblock them to send messages. **(web)** |
-| dm.delete | Delete conversation **(web)** |
-| toast.dmDeleted | Conversation deleted. It comes back if a new message arrives. **(web)** |
-| dm.deleted.show / hide | Show {N} deleted conversations / Hide deleted conversations **(web)** |
-| dm.retention | Reclaim message fees **(web)** |
-| dm.retention.options | Never (keep paying for storage) / After 30 days / After 90 days / After 1 year **(web)** (web lists the periods first and Never last; mobile lists Never first) |
-| dm.retention.body | Your sent messages stay on Dash Platform and you keep paying for their storage. Choose a period below to delete them once they are that old and get most of their storage fee back. This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have. **(web, shown while "Never" is selected)** |
-| dm.retention.bodyPeriod | Delete your sent messages from Dash Platform after {period} and get most of their storage fee back. This saves money. It does not make old messages private: copies remain in the blockchain's history, and the people you messaged keep what they have. **(web, shown while a period is selected)** |
-| dm.blocked.empty | Nobody. Blocked people's messages and group invitations are ignored. **(web)** |
+| dm.archive | Archive conversation (menus) / Archive (iOS swipe) |
+| toast.dmArchived | Conversation archived (action: Undo) |
+| toast.dmArchiveFailed | Couldn't archive the conversation. Try again. |
+| dm.archived.show / hide | Archived ({N}) / Hide archived |
+| dm.list.allArchived | No conversations yet |
+| dm.retention | Delete old sent messages (never "disappearing messages") |
+| dm.retention.options | Never / After 30 days / After 90 days / After 1 year |
+| dm.retention.footer | Deleting old sent messages refunds most of their storage fee. It doesn't make them private: people you messaged keep their copies, and Dash Platform keeps a history. |
+| dm.blocked.empty | No blocked accounts / Messages and group invites from people you block are ignored. |
 
 ### 5.9 Safety
 
 | Key | String |
 | --- | --- |
 | block.title | Block @{handle}? |
-| block.body | You won't see their posts or replies. Blocks are public on Dash Platform. **(no Messages capability)** |
-| block.body.legacyDm | You won't see their posts or replies. They can still message you, but their messages won't show as unread, and you can't message them until you unblock them. Blocks are public on Dash Platform. **(testnet: legacy DMs follow the account's blocks)** |
-| block.body.v5Dm | You won't see their posts or replies. This doesn't stop their messages: to do that, block them from your conversation in Messages. Blocks are public on Dash Platform. **(devnet: DM v5 keeps its own private block list, DM-10, DM-12)** |
-| block.note | Add a note (optional) |
-| block.noteHint | Visible to anyone on Dash Platform |
+| block.body | You won't see their posts or replies. Blocks are public on Dash Platform. **(no Messages capability; also DM v5 while Messages are locked on this device, where the block in Messages waits until they unlock here)** |
+| block.body.legacyDm | You won't see their posts or replies. They can still message you, but it won't show as unread. Blocks are public on Dash Platform. **(testnet: legacy DMs follow the account's blocks)** |
+| block.body.v5Dm | They won't be able to message you, and you won't see their posts or replies. Blocks are public on Dash Platform. **(devnet: the Block also blocks them in Messages, DM-10; Unblock lifts both)** |
+| block.addNote | Add a note |
+| block.note | Note |
+| block.noteHint | Anyone can see this note. |
 | block.confirm | Block |
-| toast.blocked | User blocked **(web)** |
-| toast.blockedRevoked | User blocked and private feed access revoked **(web)** |
-| toast.unblocked | User unblocked **(web)** |
-| toast.stillBlocked | Your block was removed, but a block list you follow still blocks this user **(web)** |
+| toast.blocked | Blocked @{handle} |
+| toast.unblocked | Unblocked @{handle} |
+| toast.stillBlocked | Unblocked, but a block list you follow still hides them. |
 | block.self | You cannot block yourself **(web)** |
-| toast.blockFailed | Failed to update block status **(web)** |
+| toast.blockFailed | Couldn't block @{handle}. Try again. / Couldn't unblock @{handle}. Try again. (§5.4.1) |
+| toast.unblockFailed | Couldn't unblock @{handle}. Try again. **(a DM v5 conversation's Unblock when the account's block can't be read)** |
 | blocked.title | Blocked accounts |
 | blocked.empty | You haven't blocked anyone |
-| blocked.listsNote | Block lists you follow are managed on yap.pr. |
+| blocked.listsNote | Also hidden by {N} block list(s) you follow · Manage on yap.pr ("1 block list", "2 block lists"; only when N ≥ 1) |
 | report.title | Report post / Report reply |
-| report.disclosure | Your report goes to this community's moderators. Reports are public on Dash Platform: anyone, including the {post}'s author, can see that you reported it, the reason you pick and anything you write in the details. You can come back here to see how the moderators resolved it. A report expires after 90 days. **(web)** The "You can come back here…" sentence only where `reportsResolved` is on. |
+| report.disclosure | Reports are public. Anyone, including the author, can see that you reported this, your reason and any details. |
 | report.question | What is wrong with it? **(web)** |
 | report.reasons | Spam or scam — Repetitive, misleading or fraudulent content / Harassment or bullying — Targeting, insulting or intimidating someone / Hate — Attacking people for who they are / Violence or threats — Threatening, inciting or glorifying violence / Sexual content — Explicit sexual content / Self-harm — Encouraging suicide or self-injury / Illegal goods or activity — Selling or promoting something illegal / Impersonation — Pretending to be someone else / Something else — Say what in the details **(web, `lib/reports.ts`)** |
 | report.details | Details (optional) / Details (required) **(web)** |
 | report.placeholder | Anything the moderators should know **(web)** |
 | report.submit / busy | Report {post} / Reporting… **(web)** |
-| toast.reportSent | Report sent |
-| toast.reportUnconfirmed | Report sent. The network has not confirmed it yet; it reaches the moderators once it does. **(web)** |
-| report.existing | On {date} you reported it for {reason}. **(web)** |
-| report.resolved | Resolved by the moderators: {No action taken \| Content removed \| Author actioned} on {date}. **(web)** |
+| report.sent | Report sent / Thanks for letting us know. |
+| toast.reportSent | Report sent (only when the sheet closed before it could say so: before the engine took the report, or while it was on its way; once per report) |
+| toast.reportFailed | Couldn't send your report. Try again. |
+| report.duplicate | You already reported this. |
+| report.gone | This {post\|reply} no longer exists. |
+| report.loadFailed | Couldn't load this {post\|reply}. Try again. |
+| report.existing | You reported this on {date} for {reason} · Under review / · Resolved: {No action taken \| Content removed \| Author actioned} |
+| report.expiry | Reports close after 90 days. |
 | report.withdraw / withdrawing | Withdraw report / Withdrawing… **(web)** |
 | toast.reportWithdrawn | Report withdrawn **(web)** |
 | report.withdrawConfirm | Withdraw your report? / The moderators will no longer see it. / Withdraw |
-| toast.reportGone | This report is already gone: the moderators dismissed it, or it was withdrawn elsewhere. **(web)** |
-| toast.withdrawFailed | Failed to withdraw the report. Please try again. |
-| report.withdrawUnconfirmed | Withdrawal not confirmed yet / The network has not confirmed that your report is withdrawn. Check again in a moment; until it confirms, the moderators may still see it. / Check again (Checking…) |
+| toast.reportGone | This report was already closed. |
+| toast.withdrawFailed | Couldn't withdraw your report. Try again. |
+| report.emailTitle | Report by email |
+| report.emailBody | Reports go to the Yappr team by email for now. Your email app opens with a link to the post and the reason you chose. |
 | report.email | Email the Yappr team |
 | report.emailSubject | Report: post {id} |
+| report.emailBodyDraft | {link} / Reason: {reason} / {details} (the mail's body, prefilled) |
+| report.notSeated | Your report wasn't sent. Send it by email instead. |
 | toast.reportCopied | Report address copied. Send it from any email app. |
-| report.alsoBlock | Also block @{handle}? |
+| report.alsoBlock | Also block @{handle} |
 | nsfw.cover | NSFW · The author flagged this post **(web)** |
 | nsfw.show | Show **(web)** / label: Show post flagged as NSFW **(web)** |
 | mediaGate.text | Media from someone you don't follow **(web)** |
@@ -1829,11 +1889,14 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 
 | Key | String |
 | --- | --- |
-| settings.sections | Account / Notifications / Privacy & Safety / Messages / Appearance / About / Engine diagnostics |
-| account.id | Identity ID **(web)** |
+| settings.sections | Account / Notifications / Privacy & Safety / Messages / Appearance / About |
+| settings.account | {name} / @{handle} (no balance) |
+| settings.version | Yappr {version} ({build}) |
+| account.copyId | Copy account ID / Account ID copied |
 | account.usernames | Usernames |
-| account.register | Register a username on yap.pr |
-| account.balance | Balance |
+| account.register | Register a username on yap.pr / Register another username on yap.pr (with one already) |
+| account.balance | Balance / {0.2567} DASH (4 decimals; < 0.0001 DASH) / {25,674,582,414} credits |
+| account.refreshFailed | Couldn't refresh the balance. Please try again. |
 | account.yapp | YAPP |
 | account.created | Account created (web: "Account Created", sentence-cased here) |
 | account.appLock | App lock / Require Face ID / Require Touch ID / Require fingerprint or device PIN |
@@ -1853,16 +1916,21 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | appearance.languageNote | Choose the language for the "For You" feed. Posts in other languages will not appear. **(web)** |
 | appearance.languages | English / Spanish / French / German / Portuguese / Russian / Chinese / Japanese / Korean / Arabic / Hindi / Italian / Dutch / Polish / Turkish **(web)** |
 | about.tagline | Decentralized social media on Dash Platform **(web)** |
-| about.rows | Terms of Use / Privacy Policy / Community rules / Community rules summary / Support / Open-source licenses / Yappr on the web |
-| about.info | Version / Network / Engine / Commit |
-| diag.title | Engine diagnostics |
-| diag.states | Booting / Ready / Restarting / Unavailable |
+| about.rows | Terms of Use / Privacy Policy / Community rules / Support / Send diagnostics / Open-source licenses / Yappr on the web |
+| about.info | Version |
+| about.versionCopied | Version info copied |
+| about.versionHint | Long press to copy version info (Version row's accessibility hint) |
+| about.sendDiagnosticsTo | Send to {email} (first line of the shared diagnostics) |
+| about.troubleshooting | Troubleshooting (About's muted last row) |
+| diag.title | Troubleshooting |
+| diag.states | Booting / Ready / Restarting / Unavailable (the screen's Engine row only) |
 | diag.copy / share | Copy diagnostics / Share diagnostics |
+| diag.copied | Diagnostics copied |
 | diag.shareAction | Share |
 | diag.rows | Boot time / WASM compile / DAPI endpoints / Capabilities / Cache / Errors / Recent errors ({count}) / No errors |
 | diag.dapi | {count} · last ok {4s / 3m / 2h} ago / never |
 | diag.contract | Social contract / Profile contract / DM contract / Pollr contract / Copy {contract} / {contract} copied |
-| diag.restart | Restart engine / Restart the engine? Lists reload; nothing you posted is lost. / Restart |
+| diag.reconnect | Reconnect / Reconnect to Dash Platform? Lists reload; nothing you posted is lost. / Reconnect |
 | diag.clear | Clear cache / Clear saved posts and lists? Your accounts, keys and drafts stay. / Clear |
 
 ### 5.11 Network and engine
@@ -1870,14 +1938,12 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Key | String |
 | --- | --- |
 | chip.devnet / testnet | DEVNET / TESTNET |
-| network.devnet | Running on a Dash Platform devnet. Data may be reset. **(web)** |
-| network.testnet | Running on Dash Platform Testnet. Data may be reset. **(web)** |
-| network.engine | Engine: Booting / Ready / Restarting / Unavailable |
-| network.diagnostics | Engine diagnostics |
+| network.devnet | Yappr is running on a Dash Platform devnet. Posts and accounts may be reset. |
+| network.testnet | Yappr is running on Dash Platform Testnet. Posts and accounts may be reset. |
+| network.state | Connected / Connecting… / Can't connect right now (booting and restarting both read "Connecting…") |
 | offline.banner | You're offline. Showing saved posts. |
-| offline.toast | You're offline. Nothing was sent. |
+| offline.toast | You're offline. Try again when you're connected. |
 | engine.couldntConnect | Couldn't connect to Dash Platform. |
-| engine.closedBeforeSent | The app closed before this was sent. Nothing was posted. Try again. (a write an engine restart cut short before it sent anything, with "Retry") |
 | engine.tryAgain | Try again |
 | read.retrying | Retrying… (under a list's G-11 error while NET-03's backoff reads it again, §2.16) |
 | lockdown.title | Lockdown Mode is blocking Yappr |
@@ -1889,9 +1955,10 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | lockdown.writeBlocked | Unavailable in Lockdown Mode |
 | link.unsupported | This link isn't supported in the app / Open in browser |
 | update.required | This version of Yappr is out of date with the network. Update the app to keep posting. |
-| write.reverted | Your {like} didn't go through. Try again. |
 
-### 5.12 Errors (from `lib/error-utils.ts`, shown verbatim)
+### 5.12 Errors (started from `lib/error-utils.ts`)
+
+Read errors (G-11) show these. Write failures don't: they use §5.4.1, and this text goes to diagnostics.
 
 | Category | String **(web)** |
 | --- | --- |
@@ -1899,14 +1966,14 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Network | Network error. Please check your connection and try again. |
 | Session | Your session has expired. Please log in again. (mobile replaces "log in" with "sign in") |
 | Too long (bytes) | This is too long for the network once emoji and special characters are counted. Shorten it and try again. |
+| Not supported (`NOT_SUPPORTED`, a view these contracts lack) | This isn't available yet. (mobile; never names the contract or network) |
 | Nonce clash | Another write from your account went out at the same moment, so this one was not saved. Try again. |
-| Not seated | This opens once the community elects its moderation team. Nothing was posted. |
+| Not seated | This isn't available yet. Try again later. (a report shows `report.notSeated` and the email path instead) |
 | Barred | Your account has been banned or suspended here by a moderator, so this action isn't allowed right now. |
 | Too young | What this depends on was only just published. Wait a minute and try again. |
 | Target gone | What this points to no longer exists on Dash Platform, so this action can't be completed. |
 | YAPP short (locked) | You don't have enough YAPP. Switch to paying in credits in Settings. (mobile: replaced by G-5 copy, since 1.0 has no payment setting) |
-| Credits short (new) | Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted. |
-| YAPP short on v2 (new) | You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again. |
+| Credits short, YAPP short | Writes only: §5.4.1 |
 | Generic | Something went wrong / Try again |
 
 ### 5.13 Accessibility labels
@@ -1923,7 +1990,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | Compose close | Close composer **(web)** |
 | Avatar (tappable) | {name}'s profile |
 | Media gate | Media hidden. Media from someone you don't follow. |
-| Network chip | {Devnet\|Testnet}. Data may be reset. Engine {ready\|connecting\|unavailable}. |
+| Network chip | {Devnet\|Testnet}. Data may be reset. {Connected\|Connecting\|Can't connect}. |
 | New-posts pill | Show {N} new posts |
 | Tab badge | {Notifications\|Messages}, {N} unread |
 | Mark all read | Mark all as read |
@@ -1931,7 +1998,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 | New conversation | New conversation **(web)** |
 | Back in conversation | Back to conversations **(web)** |
 | Conversation menu | Conversation options **(web)** |
-| Copy ID | Copy identity ID |
+| Copy ID | Copy identity ID (a post's or profile's author); Settings → Account: Copy account ID |
 | Image viewer close | Close image |
 
 ---
@@ -1950,10 +2017,11 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
   - settings rows stack value under label;
   - buttons grow in height; labels never truncate (they wrap to two lines).
 - Line heights scale proportionally; no fixed-height container holds text, except the chip and badges (which cap their multiplier).
+- Changing the text size while the app is open (Android font size, iOS Dynamic Type) keeps the user's screen and typed text; every screen already open re-lays out its text at the new size, never clipped or left at the old box size.
 
 ### 6.2 Screen readers
 
-- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row) and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
+- **Post card:** one accessible element (`accessible`, role `button`) with the label "{name}, @{handle}, {time}. {Reposted by X.} {Replying to @y.} {text}. {Quote: name, text.} {Image: alt or "image"}. {N} replies, {N} reposts, {N} likes." (on detail with quotes told apart: "{N} replies, {N} reposts, {N} quotes, {N} likes.", floors as on the counts row; a count of 1 reads singular, "1 reply", "1 repost", "1 quote", "1 like", and a floor stays plural, "1+ quotes") and custom actions Reply, Repost, Like / Unlike, Bookmark, Share, Open profile, More. The NSFW-covered card says "NSFW post, hidden" and has the action "Show".
 - **Focus order:** navigation bar → banners → tabs or segments → list → FAB → tab bar.
 - **Headings:** screen titles, section headers and empty-state titles have the header role.
 - **Live updates:** toasts and write-status changes are announced once (A11Y-06); counters are not live.
@@ -1965,7 +2033,7 @@ Tone, from PRODUCT_UX: plain, second person, blunt about Dash Platform realities
 
 - Every text pair in 1.2 passes WCAG AA (4.5:1, or 3:1 at 18 pt+ / 14 pt bold) in both themes, except the logged exception for white on `accent` fills **[OQ-2]**.
 - Non-text controls (icons, switch tracks, focus ring, input borders) are at least 3:1 against their background; `border.strong` is used for input borders for that reason.
-- Information is never color-only: active actions also switch to the solid icon; the counter adds ", over limit" in its label; unread rows also have the dot.
+- Information is never color-only: active actions also switch to the solid icon; the counter goes negative and its label says "Too long by {n}", with "Your post is too long." under the editor; unread rows also have the dot.
 
 ### 6.4 Hit targets
 

@@ -3,17 +3,20 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import type { ReactElement, ReactNode } from 'react';
-import { Share } from 'react-native';
+import { Alert, Share, type AlertButton } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { fakeEngine } from '~/data/testing/fake-engine';
+import { engineSupervisor } from '~/engine';
 import { getEngineErrors, recordEngineError } from '~/engine/errors';
 import type { EngineStatus } from '~/engine/supervisor';
 import { queryClient } from '~/state/query-client';
 import { syncStorage } from '~/state/storage';
+import { useToastStore } from '~/ui/toast';
 
 import { capabilityRows, diagnosticsText, formatAgo, formatBytes } from './diagnostics';
 import { DiagnosticsScreen } from './DiagnosticsScreen';
+import { EMAIL_ERRORS, EMAIL_LOG_LINES, EMAIL_MAX_CHARS, emailDiagnosticsText } from './send-diagnostics';
 
 jest.mock('~/engine', () => {
   const fake = jest.requireActual('~/data/testing/fake-engine').engineModule;
@@ -126,9 +129,40 @@ describe('diagnostics helpers', () => {
     expect(text).toContain('profiles.get signing with');
     expect(text).not.toContain(WIF);
   });
+
+  it('sizes the support email: the newest errors and log lines, within a mail-safe length', () => {
+    const status = { state: 'ready', epoch: 1, restarts: 0, queued: 0, reason: null, unsupported: null, hello: null, caps: null, timings: null, info: INFO as EngineInfo } as EngineStatus;
+    const now = Date.now();
+    const logs = (count: number, size: number) =>
+      Array.from({ length: count }, (_, i) => ({ id: i, at: now, level: 'info' as const, source: 'host' as const, message: `log-${i}:${'x'.repeat(size)}` }));
+    const errors = (count: number, size: number) =>
+      Array.from({ length: count }, (_, i) => ({ id: i, at: now, operation: 'feed.home', message: `error-${i}:${'y'.repeat(size)}` }));
+    const snapshot = { status, diagnostics: diagnostics(4000), cacheBytes: 0, networkKey: 'devnet-sakura', now };
+
+    // A quiet session: every one of the last 40 log lines, nothing older.
+    const quiet = emailDiagnosticsText({ ...snapshot, errors: errors(3, 10), logs: logs(60, 10) });
+    expect(quiet.match(/log-\d+:/g)).toHaveLength(EMAIL_LOG_LINES);
+    expect(quiet).toContain('log-59:');
+    expect(quiet).not.toContain('log-19:');
+    expect(quiet).toContain('recent errors (3):');
+
+    // A flaky session: 50 long errors, 30 DAPI endpoints and a full log still fit a mailto body.
+    const endpoints = Array.from({ length: 30 }, (_, i) => ({ origin: `https://10.0.0.${i}:1443`, requests: 9, failures: 9, lastOkAt: null, lastErrorAt: now }));
+    const flaky = emailDiagnosticsText({
+      ...snapshot,
+      diagnostics: { wasmMs: 2180, dapi: { configured: 30, lastOkAt: null, endpoints } },
+      errors: errors(50, 1500),
+      logs: logs(200, 300),
+    });
+    expect(flaky.length).toBeLessThanOrEqual(EMAIL_MAX_CHARS);
+    expect(flaky).toContain(`recent errors (${EMAIL_ERRORS}):`);
+    expect(flaky).toContain('error-49:');
+    expect(flaky).not.toContain('error-39:');
+    expect(flaky.startsWith('Yappr ')).toBe(true);
+  });
 });
 
-describe('Engine diagnostics (SET-08)', () => {
+describe('Troubleshooting (SET-08)', () => {
   it('shows WASM compile, DAPI endpoints, capabilities, every contract with copy, the cache and recent errors', async () => {
     syncStorage.setItem('yappr-query-cache', 'x'.repeat(3072));
     recordEngineError('feed.home', 'Dash Platform is temporarily unavailable');
@@ -210,5 +244,37 @@ describe('Engine diagnostics (SET-08)', () => {
     const header = renderScreen(<>{mockHeader.right?.()}</>);
     fireEvent.press(header.getByTestId('diagnostics-share-header'));
     expect(share).toHaveBeenCalledTimes(2);
+  });
+
+  it('leads with Copy diagnostics, and says it copied', async () => {
+    useToastStore.setState({ current: null });
+    renderScreen(<DiagnosticsScreen />);
+    await settle();
+
+    const ids = screen.UNSAFE_root.findAll((node) => typeof node.type === 'string' && typeof node.props.testID === 'string').map(
+      (node) => node.props.testID as string,
+    );
+    expect(ids.indexOf('diagnostics-copy')).toBeLessThan(ids.indexOf('diagnostics-dapi'));
+    await act(async () => fireEvent.press(screen.getByTestId('diagnostics-copy')));
+    expect(Clipboard.setStringAsync).toHaveBeenCalledWith(expect.stringContaining(`pollr ${CONTRACTS.pollr}`));
+    expect(useToastStore.getState().current?.message).toBe('Diagnostics copied');
+  });
+
+  it('offers Reconnect, not "Restart engine", and asks first', async () => {
+    let buttons: AlertButton[] = [];
+    const alert = jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, given) => {
+      buttons = given ?? [];
+    });
+    const restart = jest.spyOn(engineSupervisor, 'restart').mockImplementation(() => undefined);
+    renderScreen(<DiagnosticsScreen />);
+    await settle();
+
+    expect(screen.queryByText(/Restart engine/)).toBeNull();
+    fireEvent.press(screen.getByTestId('diagnostics-restart'));
+    expect(screen.getByTestId('diagnostics-restart')).toHaveTextContent('Reconnect');
+    expect(alert).toHaveBeenCalledWith('Reconnect to Dash Platform?', 'Lists reload; nothing you posted is lost.', expect.any(Array));
+    expect(restart).not.toHaveBeenCalled();
+    act(() => buttons.find((button) => button.text === 'Reconnect')?.onPress?.());
+    expect(restart).toHaveBeenCalledTimes(1);
   });
 });

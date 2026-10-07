@@ -16,14 +16,16 @@ describe('tokenize', () => {
 });
 
 describe('editorSpans', () => {
-  it('colors tokens and underlines a tag over the limit', () => {
+  it('colors tokens, and leaves a tag too long to index plain (#11)', () => {
     const long = `#${'a'.repeat(62)}`;
     expect(editorSpans(`hi #ok ${long}`, 61, null)).toEqual([
       { text: 'hi ', style: 'plain', over: false },
       { text: '#ok', style: 'link', over: false },
       { text: ' ', style: 'plain', over: false },
-      { text: long, style: 'tagTooLong', over: false },
+      { text: long, style: 'plain', over: false },
     ]);
+    // Where the contract indexes tags that long (63), it is a link.
+    expect(editorSpans(long, 63, null)).toEqual([{ text: long, style: 'link', over: false }]);
   });
 
   it('marks everything from the overflow on, splitting a token', () => {
@@ -72,15 +74,18 @@ describe('insertMention', () => {
 });
 
 describe('composeHints', () => {
-  it('flags a second mention and a second tag, case-insensitively', () => {
-    expect(composeHints('@a @A #x #X', 61)).toEqual({ tagTooLong: false, secondMention: false, secondTag: false });
-    expect(composeHints('@a @b #x $Y', 61)).toEqual({ tagTooLong: false, secondMention: true, secondTag: true });
+  it('names the one mention notified once there are two different ones (#11)', () => {
+    expect(composeHints('@alice hi')).toEqual({ notified: null });
+    expect(composeHints('@alice and @Alice')).toEqual({ notified: null });
+    expect(composeHints('hi @bob and @alice #x #y')).toEqual({ notified: '@bob' });
   });
 
-  it('flags a tag over the contract limit (61 on dev, 63 elsewhere)', () => {
+  it('says nothing about tags (#11)', () => {
+    expect(composeHints(`#one #two #${'a'.repeat(70)}`)).toEqual({ notified: null });
+  });
+
+  it('knows the longest tag each contract indexes (61 on dev, 63 elsewhere)', () => {
     expect(tagMaxLength(true)).toBe(61);
     expect(tagMaxLength(false)).toBe(63);
-    expect(composeHints(`#${'a'.repeat(62)}`, 61).tagTooLong).toBe(true);
-    expect(composeHints(`#${'a'.repeat(62)}`, 63).tagTooLong).toBe(false);
   });
 });

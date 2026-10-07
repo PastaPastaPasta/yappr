@@ -299,8 +299,8 @@ class NotificationService {
   }
 
   /**
-   * v11: no like index keeps a like's time, so new likes are found by diffing
-   * ({@link diffLikeSnapshot}). Returns the retained batches no completed
+   * v11, v12: no like index keeps a like's time, so new likes are found by
+   * diffing ({@link diffLikeSnapshot}). Returns the retained batches no completed
    * fetch of this session has returned yet.
    */
   private async getTimelessLikeNotifications(userId: string): Promise<RawNotification[]> {
@@ -326,9 +326,11 @@ class NotificationService {
   }
 
   /**
-   * One poll of the v11 like diff. Per kind: the like counts of the user's
-   * recent posts or replies (one composite, as on v10), then the likers of
-   * every target whose count moved (`likeService.getLikersOf`), folded into
+   * One poll of the v11/v12 like diff. Per kind: the like counts of the
+   * user's recent posts or replies (one composite, as on v10), then the likers
+   * of every target whose count moved (`likeService.getLikersOf`: one
+   * author-pinned read on v11, one `byPost`/`byReply` read per moved target on
+   * v12, where the author index is a counter), folded into
    * this device's snapshot (lib/like-notification-snapshot.ts). A kind whose
    * reads fail is skipped and retried next poll.
    *
@@ -997,8 +999,8 @@ class NotificationService {
    * window is its own plain query, all in parallel: five requests a poll, plus
    * a page per full window. Likes (like design C) are per recent target,
    * outside the bundle ({@link likeNotificationsPinTarget}): per kind one
-   * composite plus one read (v11: plus a liker read only when a count moved,
-   * {@link getTimelessLikeNotifications}).
+   * composite plus one read (v11, v12: plus liker reads only when a count
+   * moved, {@link getTimelessLikeNotifications}).
    */
   private async fetchWindowedSources(userId: string, sinceTimestamp: number, failures: SourceFailures): Promise<RawNotification[]> {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];

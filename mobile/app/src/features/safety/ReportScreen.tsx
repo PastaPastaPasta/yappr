@@ -13,8 +13,9 @@ import {
 import { cn } from '~/lib-allowlist';
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
+import { NO_READ_RETRY } from '~/data/read-retry';
 import { useCapabilities, useSession } from '~/data/session';
-import { checkWrite, runWrite, useWrite, useWriteTicket } from '~/data/writes';
+import { runWrite, useWrite, useWriteTicket, writeTicketOf } from '~/data/writes';
 import { postWebUrl } from '~/features/post/post-navigation';
 import { targetOf } from '~/features/post/post-writes';
 import { Button } from '~/ui/Button';
@@ -23,6 +24,7 @@ import { handleOf } from '~/ui/handle';
 import { RadioGroup } from '~/ui/RadioGroup';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
+import { toast } from '~/ui/toast';
 import { tw, useColors } from '~/ui/tokens';
 
 import { useAuthorBlocked } from './block-state';
@@ -37,9 +39,11 @@ import {
   reportStatusLabel,
 } from './report-reasons';
 import {
+  announceReportSent,
   emailReport,
   rememberReportTicket,
   rememberWithdrawTicket,
+  reportSheetOpen,
   reportWrite,
   useReportTicketId,
   useWithdrawTicketId,
@@ -58,13 +62,19 @@ const REASON_OPTIONS = REPORT_REASONS.map((reason) => ({
 const shortDate = (date: Date) =>
   new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
+/** "Spam or scam" reads "spam or scam" mid-sentence. */
+const midSentence = (label: string) => label.charAt(0).toLowerCase() + label.slice(1);
+
+/** How long a "reports are open" answer holds: it changes only when a moderation team is seated. */
+const REPORTS_OPEN_STALE_MS = 10 * 60_000;
+
 /**
  * Report a post or reply (PRD SAFE-04, SAFE-05; UX_SPEC §4.39), from its
- * menu. Where the contract takes reports, the sheet first checks for the
- * viewer's existing report (one per target, and paid, so a failed check
- * never offers a second), then shows the form, and stays open until the
- * network has the report. Where it doesn't (testnet), it offers an email to
- * the Yappr team instead.
+ * menu. Where the contract takes reports, the form shows at once and the
+ * viewer's existing report is read beside it (found, the sheet shows it
+ * instead). Where it doesn't (testnet), or before a moderation team is
+ * seated where the contract waits for one, the same reasons go to the Yappr
+ * team by email instead, decided before the form.
  */
 export function ReportScreen() {
   const { postId = '', kind } = useLocalSearchParams<{ postId?: string; kind?: string }>();
@@ -78,6 +88,13 @@ export function ReportScreen() {
     enabled: postId !== '' && takesReports && signedIn,
     placeholderData: seed,
   });
+  // A failed read never holds the form back, nor swaps it later: a refusal after it still offers email.
+  const open = useEngineQuery(queryKeys.reportsOpen, (api) => api.safety.reportsOpen(), {
+    enabled: takesReports && signedIn,
+    staleTime: REPORTS_OPEN_STALE_MS,
+    retry: false,
+    meta: NO_READ_RETRY,
+  });
   const header = <Stack.Screen options={{ title: copy.report.title(noun) }} />;
   // A list showed it: a read that finds nothing may be a transient miss, and filing a report on a
   // post that is really gone fails with its own message (TARGET_GONE).
@@ -89,7 +106,7 @@ export function ReportScreen() {
     return (
       <>
         {header}
-        <EmailReport postId={postId} postUrl={postUrl} noun={noun} />
+        <EmailReport postId={postId} postUrl={postUrl} />
       </>
     );
   }
@@ -101,13 +118,13 @@ export function ReportScreen() {
       </>
     );
   }
-  if (post.isPending) return <SheetLoading testID="report-loading" />;
+  if (post.isPending || open.isPending) return <SheetLoading testID="report-loading" />;
   if (post.isError && !shown) {
     return (
       <>
         {header}
         <SheetMessage
-          title={copy.report.checkFailed(noun)}
+          title={copy.report.loadFailed(noun)}
           icon={ExclamationTriangleIcon}
           action={{ label: 'Try again', onPress: () => post.refetch().catch(() => undefined) }}
           testID="report-error"
@@ -134,32 +151,75 @@ export function ReportScreen() {
   return (
     <>
       {header}
-      <ReportFlow post={shown} noun={noun} postUrl={postUrl} resolves={capabilities.reportsResolved} />
+      {open.data === false ? (
+        <EmailReport postId={shown.id} postUrl={postUrl} />
+      ) : (
+        <ReportFlow post={shown} noun={noun} postUrl={postUrl} />
+      )}
     </>
   );
 }
 
-function ReportFlow({
-  post,
-  noun,
-  postUrl,
-  resolves,
+/** "What is wrong with it?" with the reasons, and the details field. */
+function ReasonFields({
+  reason,
+  onReason,
+  note,
+  onNote,
+  busy = false,
 }: {
-  post: PostDTO;
-  noun: ReportNoun;
-  postUrl: string;
-  resolves: boolean;
+  reason: number | null;
+  onReason: (reason: number) => void;
+  note: string;
+  onNote: (note: string) => void;
+  busy?: boolean;
 }) {
+  return (
+    <>
+      <View className="gap-2">
+        <Text variant="subheadStrong" accessibilityRole="header">
+          {copy.report.question}
+        </Text>
+        <View className={cn('overflow-hidden rounded-xl border', tw.border)} pointerEvents={busy ? 'none' : 'auto'}>
+          <RadioGroup
+            options={REASON_OPTIONS}
+            value={reason === null ? '' : String(reason)}
+            onChange={(value) => onReason(Number(value))}
+            accessibilityLabel={copy.report.question}
+            testID="report-reason"
+          />
+        </View>
+      </View>
+      <TextField
+        label={copy.report.details(reason === OTHER_REASON_CODE)}
+        placeholder={copy.report.placeholder}
+        value={note}
+        onChangeText={onNote}
+        maxLength={REPORT_NOTE_MAX_LENGTH}
+        alwaysCount
+        editable={!busy}
+        multiline
+        testID="report-note"
+      />
+    </>
+  );
+}
+
+function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; postUrl: string }) {
   const target = useMemo(() => targetOf(post), [post]);
+  // Read beside the form, never in front of it: a failed read still lets the report go (a second one is
+  // refused as DUPLICATE, which then shows the report).
   const own = useEngineQuery(queryKeys.post.ownReport(post.id), (api) => api.safety.ownReport(target), {
     staleTime: 0,
   });
   const write = useWrite(reportWrite);
-  // A report an earlier sheet for this post sent (dismissed, then reopened): followed from when it is
-  // seen on its way, to its outcome, instead of offering the form for a second report.
+  // A report an earlier sheet for this post sent (dismissed, then reopened): followed while it is on its
+  // way or may have landed, to its outcome, instead of offering the form for a second, paid report.
   const earlier = useWriteTicket(useReportTicketId(post.id));
   const [followed, setFollowed] = useState<string | null>(null);
-  if (earlier?.state === 'pending' && followed !== earlier.id) setFollowed(earlier.id);
+  const earlierUnsettled =
+    earlier?.state === 'pending' || (earlier?.state === 'unconfirmed' && !earlier.retryable);
+  if (earlier && earlierUnsettled && followed !== earlier.id) setFollowed(earlier.id);
   const current = write.ticket ?? (earlier && earlier.id === followed ? earlier : null);
   const [reason, setReason] = useState<number | null>(null);
   const [note, setNote] = useState('');
@@ -167,27 +227,24 @@ function ReportFlow({
   const [sending, setSending] = useState(false);
   const outcome = current?.state ?? 'idle';
   const code = current?.error?.code;
-  // The withdrawal this sheet follows: the one it sent, or one an earlier sheet sent that may yet land
-  // (on its way, or not confirmed yet), so Withdraw is never offered while a delete may still land.
-  // `report` is what was withdrawn: still shown while the sheet closes (the cache drops it).
-  const latestWithdrawal = useWriteTicket(useWithdrawTicketId(post.id));
-  const [withdrawal, setWithdrawal] = useState<{ ticketId: string; report: OwnReportDTO | null } | null>(null);
-  if (latestWithdrawal && withdrawal?.ticketId !== latestWithdrawal.id && withdrawalUnsettled(latestWithdrawal)) {
-    setWithdrawal({ ticketId: latestWithdrawal.id, report: own.data ?? null });
-  }
-  const withdrawTicket = latestWithdrawal?.id === withdrawal?.ticketId ? latestWithdrawal : null;
-  // From the confirmation until the engine answers: a second tap would send a second delete.
-  const [sendingWithdraw, setSendingWithdraw] = useState(false);
-  const [checkingWithdraw, setCheckingWithdraw] = useState(false);
-  const withdrawn = withdrawTicket?.state === 'confirmed';
-  const withdrawBusy = sendingWithdraw || withdrawTicket?.state === 'pending';
-  // Sent, but the network has not confirmed it (a DAPI wait timeout, often): it may have landed.
-  const withdrawUnconfirmed = withdrawTicket?.state === 'unconfirmed' && !withdrawTicket.retryable;
-  // Already gone (dismissed, or withdrawn elsewhere): the toast says so, and the sheet goes, as on web.
-  const withdrawGone = withdrawTicket?.state === 'failed' && withdrawTicket.error?.code === 'REPORT_GONE';
+  // A withdrawal sent from any sheet that may yet land: it already said "Report withdrawn".
+  const withdrawal = useWriteTicket(useWithdrawTicketId(post.id));
+  // The report being withdrawn, from the confirmation until the sheet closes: it stays on screen while the
+  // cache drops it (optimistic), and a second tap would send a second delete.
+  const [withdrawing, setWithdrawing] = useState<OwnReportDTO | null>(null);
 
-  // The sheet says how it went while it is open; the write toasts only once it is gone.
+  // The sheet says how it went while it is open.
   useEffect(() => watchReportSheet(post.id), [post.id]);
+
+  // Dismissed while the report is on its way: nothing on screen will say it went, and a report the engine
+  // took counts as sent (only one proven not to have landed says otherwise).
+  const onItsWay = outcome === 'pending' ? (current?.id ?? null) : null;
+  useEffect(() => {
+    if (!onItsWay) return undefined;
+    return () => {
+      if (writeTicketOf(onItsWay)?.state === 'pending') announceReportSent(onItsWay);
+    };
+  }, [onItsWay]);
 
   // A duplicate means a report exists after all: show it.
   const refetchOwn = own.refetch;
@@ -195,13 +252,8 @@ function ReportFlow({
     if (code === 'DUPLICATE') refetchOwn().catch(() => undefined);
   }, [code, refetchOwn]);
 
-  // Withdrawn: the write says so ("Report withdrawn"), and the sheet goes, as on web.
-  useEffect(() => {
-    if (withdrawn || withdrawGone) closeSheet();
-  }, [withdrawn, withdrawGone]);
-
   const askWithdraw = (report: OwnReportDTO) => {
-    if (withdrawBusy || withdrawUnconfirmed) return;
+    if (withdrawing) return;
     confirmAlert({
       title: copy.report.withdrawTitle,
       message: copy.report.withdrawBody,
@@ -210,67 +262,41 @@ function ReportFlow({
     })
       .then(async (confirmed) => {
         if (!confirmed) return;
-        setSendingWithdraw(true);
-        try {
-          const result = await runWrite(withdrawReportWrite, { target, reportId: report.id });
-          if (result.status === 'submitted') {
-            rememberWithdrawTicket(post.id, result.ticket.id);
-            setWithdrawal({ ticketId: result.ticket.id, report });
-          }
-        } finally {
-          // Only once the ticket is followed: Withdraw is never enabled in between.
-          setSendingWithdraw(false);
+        setWithdrawing(report);
+        const result = await runWrite(withdrawReportWrite, { target, reportId: report.id });
+        if (result.status === 'refused') {
+          setWithdrawing(null);
+          return;
         }
+        // Optimistic, like a toggle: only a withdrawal proven not to have landed says otherwise.
+        if (result.status === 'submitted') rememberWithdrawTicket(post.id, result.ticket.id);
+        toast.success(copy.toast.reportWithdrawn);
+        closeSheet();
       })
-      .catch(() => undefined);
+      .catch(() => setWithdrawing(null));
   };
 
-  const checkWithdrawal = () => {
-    if (!withdrawTicket || checkingWithdraw) return;
-    setCheckingWithdraw(true);
-    checkWrite(withdrawTicket.id)
-      .catch(() => undefined)
-      .finally(() => setCheckingWithdraw(false));
-  };
-
-  if (withdrawn || withdrawGone) {
-    const report = withdrawal?.report ?? own.data;
-    if (!report) return <SheetLoading testID="report-checking" />;
-    return <ExistingReport report={report} noun={noun} resolves={resolves} withdrawing onWithdraw={askWithdraw} />;
+  if (withdrawing) return <ExistingReport report={withdrawing} withdrawing onWithdraw={askWithdraw} />;
+  if (withdrawalUnsettled(withdrawal)) {
+    return <SheetMessage title={copy.toast.reportWithdrawn} icon={CheckCircleIcon} testID="report-withdrawn" />;
   }
-  if (withdrawUnconfirmed) {
-    return <WithdrawUnconfirmed checking={checkingWithdraw} onCheck={checkWithdrawal} />;
-  }
-  if (outcome === 'confirmed' || outcome === 'unconfirmed') {
-    return <ReportSent author={post.author} unconfirmed={outcome === 'unconfirmed'} />;
+  // Sent: confirmed, or not confirmed yet with no check proving it absent (a DAPI wait timeout, often).
+  if (outcome === 'confirmed' || (outcome === 'unconfirmed' && current?.retryable !== true)) {
+    return <ReportSent author={post.author} />;
   }
   if (outcome === 'failed' && code === 'MODERATION_NOT_SEATED') {
-    return <EmailReport postId={post.id} postUrl={postUrl} noun={noun} refusal={copy.report.notSeated} />;
-  }
-  // A cached "no report" is re-checked before the form shows: one may have been filed since.
-  if (own.isPending || (own.isFetching && own.data === null)) {
-    return <SheetLoading label={copy.report.checking} testID="report-checking" />;
-  }
-  if (own.isError) {
     return (
-      <SheetMessage
-        title={copy.report.checkFailed(noun)}
-        icon={ExclamationTriangleIcon}
-        action={{ label: 'Try again', onPress: () => own.refetch().catch(() => undefined) }}
-        testID="report-check-failed"
+      <EmailReport
+        postId={post.id}
+        postUrl={postUrl}
+        refusal={copy.report.notSeated}
+        initialReason={reason}
+        initialNote={note}
       />
     );
   }
   if (own.data) {
-    return (
-      <ExistingReport
-        report={own.data}
-        noun={noun}
-        resolves={resolves}
-        withdrawing={withdrawBusy}
-        onWithdraw={askWithdraw}
-      />
-    );
+    return <ExistingReport report={own.data} withdrawing={false} onWithdraw={askWithdraw} />;
   }
 
   const busy = sending || outcome === 'pending';
@@ -282,7 +308,10 @@ function ReportFlow({
     write
       .send({ target, reason, note: trimmed || undefined, noun })
       .then((result) => {
-        if (result.status === 'submitted') rememberReportTicket(post.id, result.ticket.id);
+        if (result.status !== 'submitted') return;
+        rememberReportTicket(post.id, result.ticket.id);
+        // Closed before the engine took it: nothing on screen says it went.
+        if (!reportSheetOpen(post.id)) announceReportSent(result.ticket.id);
       })
       .catch(() => undefined)
       .finally(() => setSending(false));
@@ -290,32 +319,8 @@ function ReportFlow({
 
   return (
     <SheetBody testID="report-sheet">
-      <SheetHeading icon={FlagIcon} body={copy.report.disclosure(noun, resolves)} />
-      <View className="gap-2">
-        <Text variant="subheadStrong" accessibilityRole="header">
-          {copy.report.question}
-        </Text>
-        <View className={cn('overflow-hidden rounded-xl border', tw.border)} pointerEvents={busy ? 'none' : 'auto'}>
-          <RadioGroup
-            options={REASON_OPTIONS}
-            value={reason === null ? '' : String(reason)}
-            onChange={(value) => setReason(Number(value))}
-            accessibilityLabel={copy.report.question}
-            testID="report-reason"
-          />
-        </View>
-      </View>
-      <TextField
-        label={copy.report.details(reason === OTHER_REASON_CODE)}
-        placeholder={copy.report.placeholder}
-        value={note}
-        onChangeText={setNote}
-        maxLength={REPORT_NOTE_MAX_LENGTH}
-        alwaysCount
-        editable={!busy}
-        multiline
-        testID="report-note"
-      />
+      <SheetHeading icon={FlagIcon} body={copy.report.disclosure} />
+      <ReasonFields reason={reason} onReason={setReason} note={note} onNote={setNote} busy={busy} />
       <Button
         label={busy ? copy.report.busy : copy.report.submit(noun)}
         size="block"
@@ -330,51 +335,43 @@ function ReportFlow({
 }
 
 /**
- * "You reported this post": what, when, and how the moderators resolved it
- * (v10), with "Withdraw report" (PRD SAFE-04) and "Done".
+ * The viewer's report: when, why and where it stands ("Under review", or how
+ * the moderators resolved it), the note, when reports close, and "Withdraw
+ * report" (PRD SAFE-04) with "Done".
  */
 function ExistingReport({
   report,
-  noun,
-  resolves,
   withdrawing,
   onWithdraw,
 }: {
   report: OwnReportDTO;
-  noun: ReportNoun;
-  resolves: boolean;
   withdrawing: boolean;
   onWithdraw: (report: OwnReportDTO) => void;
 }) {
-  const c = useColors();
-  const summary = `${copy.report.existing(shortDate(report.createdAt), reportReasonLabel(report.reason))} ${
-    resolves ? (report.status === null ? copy.report.pending(noun) : '') : copy.report.pendingUnresolved(noun)
-  }`.trim();
+  const summary = copy.report.existing(
+    shortDate(report.createdAt),
+    midSentence(reportReasonLabel(report.reason)),
+    report.status === null ? null : reportStatusLabel(report.status),
+  );
   return (
     <SheetBody testID="report-existing">
-      <SheetHeading icon={FlagIcon} title={copy.report.existingTitle(noun)} body={summary} />
+      <SheetHeading icon={FlagIcon} body={summary} />
       {report.note ? (
         <View className={cn('rounded-lg border p-3', tw.border, tw.bgSubtle)}>
           <Text variant="subhead">{report.note}</Text>
         </View>
       ) : null}
-      {report.status !== null ? (
+      {report.resolution ? (
         <View
-          className="flex-row gap-2 rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950"
+          className="rounded-lg border border-green-200 bg-green-50 p-3 dark:border-green-900 dark:bg-green-950"
           testID="report-resolution"
         >
-          <CheckCircleIcon size={20} color={c.repost} />
-          <View className="flex-1 gap-1">
-            <Text variant="subhead">
-              {copy.report.resolved(
-                reportStatusLabel(report.status),
-                report.moderatedAt ? shortDate(report.moderatedAt) : null,
-              )}
-            </Text>
-            {report.resolution ? <Text variant="subhead">{report.resolution}</Text> : null}
-          </View>
+          <Text variant="subhead">{report.resolution}</Text>
         </View>
       ) : null}
+      <Text variant="subhead" tone="secondary" testID="report-expiry">
+        {copy.report.expiry}
+      </Text>
       <Button
         label={withdrawing ? copy.report.withdrawing : copy.report.withdraw}
         variant="outline"
@@ -388,35 +385,8 @@ function ExistingReport({
   );
 }
 
-/**
- * A withdrawal the network has not confirmed (a wait that timed out): it may
- * have landed, so Withdraw is not offered again; Check again settles it.
- */
-function WithdrawUnconfirmed({ checking, onCheck }: { checking: boolean; onCheck: () => void }) {
-  const c = useColors();
-  return (
-    <SheetBody testID="report-withdraw-unconfirmed">
-      <SheetHeading
-        icon={ExclamationTriangleIcon}
-        iconColor={c.warning}
-        title={copy.report.withdrawUnconfirmedTitle}
-        body={copy.report.withdrawUnconfirmedBody}
-      />
-      <Button
-        label={checking ? copy.report.checkingAgain : copy.report.checkAgain}
-        variant="outline"
-        size="block"
-        loading={checking}
-        onPress={onCheck}
-        testID="report-withdraw-check"
-      />
-      <Button label={copy.report.done} size="block" onPress={closeSheet} testID="report-done" />
-    </SheetBody>
-  );
-}
-
-/** After the report: thanks, and "Also block @x?" (PRD SAFE-04, P1). */
-function ReportSent({ author, unconfirmed }: { author: PostDTO['author']; unconfirmed: boolean }) {
+/** After the report: thanks, and "Also block @x" (PRD SAFE-04, P1). */
+function ReportSent({ author }: { author: PostDTO['author'] }) {
   const c = useColors();
   const handle = handleOf(author);
   const alreadyBlocked = useAuthorBlocked(author.id);
@@ -425,12 +395,7 @@ function ReportSent({ author, unconfirmed }: { author: PostDTO['author']; unconf
   };
   return (
     <SheetBody testID="report-sent">
-      <SheetHeading
-        icon={CheckCircleIcon}
-        iconColor={c.repost}
-        title={copy.report.sentTitle}
-        body={unconfirmed ? copy.toast.reportUnconfirmed : copy.report.sentBody}
-      />
+      <SheetHeading icon={CheckCircleIcon} iconColor={c.repost} title={copy.report.sentTitle} body={copy.report.sentBody} />
       {alreadyBlocked ? null : (
         <Button
           label={copy.report.alsoBlock(handle)}
@@ -446,21 +411,31 @@ function ReportSent({ author, unconfirmed }: { author: PostDTO['author']; unconf
   );
 }
 
-/** Report by email (PRD SAFE-05): the only way where the contract takes no reports, and the fallback before moderators are seated. */
+/**
+ * Report by email (PRD SAFE-05): the only way where the contract takes no
+ * reports, and where it waits for a moderation team that isn't seated. The
+ * same reasons as the form; the mail opens with them and the post's link.
+ * After a refusal (`refusal`), it keeps what was already chosen.
+ */
 function EmailReport({
   postId,
   postUrl,
-  noun,
   refusal,
+  initialReason = null,
+  initialNote = '',
 }: {
   postId: string;
   postUrl: string;
-  noun: ReportNoun;
   refusal?: string;
+  initialReason?: number | null;
+  initialNote?: string;
 }) {
   const c = useColors();
+  const [reason, setReason] = useState<number | null>(initialReason);
+  const [note, setNote] = useState(initialNote);
   const send = () => {
-    emailReport(postId, postUrl)
+    if (reason === null) return;
+    emailReport(postId, postUrl, { reason: reportReasonLabel(reason), note })
       .then(closeSheet)
       .catch(() => undefined);
   };
@@ -474,13 +449,17 @@ function EmailReport({
           </Text>
         </View>
       ) : null}
-      <SheetHeading icon={EnvelopeIcon} title={copy.report.emailTitle} body={copy.report.emailBody(noun)} />
-      <Text variant="subhead" tone="secondary" selectable numberOfLines={2}>
-        {postUrl}
-      </Text>
-      <Button label={copy.report.email} size="block" icon={EnvelopeIcon} onPress={send} testID="report-email-send" />
+      <SheetHeading icon={EnvelopeIcon} title={copy.report.emailTitle} body={copy.report.emailBody} />
+      <ReasonFields reason={reason} onReason={setReason} note={note} onNote={setNote} />
+      <Button
+        label={copy.report.email}
+        size="block"
+        icon={EnvelopeIcon}
+        disabled={!reportIsValid(reason, note)}
+        onPress={send}
+        testID="report-email-send"
+      />
       <Button label={copy.cancel} variant="ghost" size="block" onPress={closeSheet} testID="report-cancel" />
     </SheetBody>
   );
 }
-

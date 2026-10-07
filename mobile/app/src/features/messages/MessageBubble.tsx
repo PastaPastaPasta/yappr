@@ -1,7 +1,7 @@
 import { useRecyclingState } from '@shopify/flash-list';
 import * as Clipboard from 'expo-clipboard';
 import { memo, type ReactNode } from 'react';
-import { Pressable, Text as RNText, View } from 'react-native';
+import { ActivityIndicator, Pressable, Text as RNText, View } from 'react-native';
 
 import { openExternal } from '~/features/post/post-navigation';
 import { cn, isEmojiOnly } from '~/lib-allowlist';
@@ -14,6 +14,7 @@ import { directionBlocks, directionStyle } from '~/ui/rich-text/direction';
 import { splitUrl } from '~/ui/rich-text/parse';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
+import { useColors } from '~/ui/tokens';
 import { useRelativeTime } from '~/ui/use-relative-time';
 
 import { dayLabel, timeLabel, type TimelineItem } from './dm-model';
@@ -97,10 +98,14 @@ export const MessageBubble = memo(function MessageBubble({
   const failed = statusIsError && !!message.outbox;
   const othersInGroup = group && !own;
   const spokenTime = useRelativeTime(message.at, 'spoken');
+  const c = useColors();
+  // A check of this send is running: a tap meanwhile does nothing more, and a spinner says so.
+  const checking = message.checking === true;
 
   const onPress = () => {
-    if (failed) onResolve?.(message.id);
-    else setShowTime((shown) => !shown);
+    if (failed) {
+      if (!checking) onResolve?.(message.id);
+    } else setShowTime((shown) => !shown);
   };
   const onLongPress = () =>
     showActionSheet({
@@ -183,12 +188,18 @@ export const MessageBubble = memo(function MessageBubble({
       ) : null}
       {status ? (
         <Pressable
-          disabled={!failed}
+          disabled={!failed || checking}
           accessibilityRole={failed ? 'button' : undefined}
+          accessibilityState={{ busy: checking, disabled: !failed || checking }}
           onPress={() => onResolve?.(message.id)}
-          className={cn('mt-0.5', own ? 'self-end' : 'self-start')}
+          className={cn('mt-0.5 flex-row items-center gap-1', own ? 'self-end' : 'self-start')}
           testID={failed ? 'dm-status-error' : 'dm-status'}
         >
+          {checking ? (
+            <View style={{ transform: [{ scale: 0.6 }] }} testID="dm-status-checking">
+              <ActivityIndicator size="small" color={c.textSecondary} />
+            </View>
+          ) : null}
           <Text variant="caption" tone={statusIsError ? 'error' : 'secondary'}>
             {status}
           </Text>

@@ -1,19 +1,20 @@
 import { Fragment, useEffect, useRef } from 'react';
 import { AccessibilityInfo, ActivityIndicator, View } from 'react-native';
-import { ClockIcon, ExclamationCircleIcon } from 'react-native-heroicons/outline';
+import { ExclamationCircleIcon } from 'react-native-heroicons/outline';
 
 import { LinkText } from './LinkText';
 import { Text } from './Text';
 import { hitSlopFor, MIN_TARGET, useColors } from './tokens';
 
 export type WriteState =
+  /** On its way, or not proved either way while the app checks it (PRD COMP-10). */
   | { state: 'posting' }
   | { state: 'threadProgress'; index: number; total: number }
   /**
-   * It may have landed. `canEdit` once checking cannot settle it: Edit is
-   * its way out, never a resend (PRD COMP-10).
+   * It may have landed, and the automatic checks ran out without telling:
+   * Edit is its way out, never a resend (PRD COMP-10).
    */
-  | { state: 'unconfirmed'; canEdit?: boolean }
+  | { state: 'unconfirmed' }
   | { state: 'failed' }
   | { state: 'partial'; posted: number; total: number };
 
@@ -21,7 +22,6 @@ export interface WriteStatusProps {
   status: WriteState;
   /** Whose status: a recycled cell showing another post must not announce. */
   postId?: string;
-  onCheckAgain?: () => void;
   onRetry?: () => void;
   onEdit?: () => void;
   /** "Retry the rest" of a partly posted thread. */
@@ -32,23 +32,14 @@ export interface WriteStatusLink {
   label: string;
   onPress?: () => void;
   /** `write-status-<id>` (PRD A11Y-08). */
-  id: 'check-again' | 'retry' | 'edit' | 'retry-rest';
+  id: 'retry' | 'edit' | 'retry-rest';
 }
 
 /** The actions a state offers, also exposed as the optimistic card's screen-reader actions. */
-export function writeStatusLinks({
-  status,
-  onCheckAgain,
-  onRetry,
-  onEdit,
-  onRetryRest,
-}: WriteStatusProps): WriteStatusLink[] {
+export function writeStatusLinks({ status, onRetry, onEdit, onRetryRest }: WriteStatusProps): WriteStatusLink[] {
   switch (status.state) {
     case 'unconfirmed':
-      return [
-        { label: 'Check again', onPress: onCheckAgain, id: 'check-again' },
-        ...(status.canEdit ? [{ label: 'Edit', onPress: onEdit, id: 'edit' as const }] : []),
-      ];
+      return [{ label: 'Edit', onPress: onEdit, id: 'edit' }];
     case 'failed':
       return [
         { label: 'Retry', onPress: onRetry, id: 'retry' },
@@ -69,7 +60,7 @@ function writeStatusText(status: WriteState): string {
     case 'threadProgress':
       return `Posting ${status.index} of ${status.total}…`;
     case 'unconfirmed':
-      return 'Not confirmed yet';
+      return "Couldn't confirm";
     case 'failed':
       return "Couldn't post";
     case 'partial':
@@ -87,9 +78,10 @@ const LINK_FRAME = { minWidth: MIN_TARGET, alignItems: 'center' } as const;
 
 /**
  * The write-status line that replaces an optimistic card's action bar
- * (UX_SPEC §2.4.11): posting, not confirmed · check again (· edit, once
- * checking cannot settle it), failed · retry · edit, and partly posted ·
- * retry the rest. Each change is announced once.
+ * (UX_SPEC §2.4.11): posting (also while the app checks a post whose outcome
+ * is unknown), couldn't confirm · edit (once those checks ran out), couldn't
+ * post · retry · edit (proved absent or refused), and partly posted · retry
+ * the rest. Each change is announced once.
  */
 export function WriteStatus(props: WriteStatusProps) {
   const { status } = props;
@@ -115,8 +107,9 @@ export function WriteStatus(props: WriteStatusProps) {
           <ActivityIndicator size="small" color={c.textSecondary} />
         </View>
       ) : null}
-      {status.state === 'unconfirmed' ? <ClockIcon size={14} color={c.textSecondary} /> : null}
-      {status.state === 'failed' ? <ExclamationCircleIcon size={14} color={c.error} /> : null}
+      {status.state === 'failed' || status.state === 'unconfirmed' ? (
+        <ExclamationCircleIcon size={14} color={status.state === 'failed' ? c.error : c.textSecondary} />
+      ) : null}
       <Text variant="caption" tone={status.state === 'failed' ? 'error' : 'secondary'}>
         {text}
       </Text>

@@ -210,38 +210,42 @@ export function holdOwnQuote(quotedId: string, quoteId: string): void {
 }
 
 /**
- * Follow state for an author everywhere it is cached: their posts'
- * `viewer.followsAuthor`, their profile (`viewer.follows` and the follower
- * count) and user rows (`viewerFollows`). Returns the undo.
+ * Follow state for an author everywhere it is cached (or in the queries
+ * named only): their posts' `viewer.followsAuthor`, their profile
+ * (`viewer.follows` and the follower count) and user rows (`viewerFollows`).
+ * Returns the hashes of the queries it changed.
  */
+export function applyFollowing(authorId: string, follows: boolean, only?: ReadonlySet<string>): Set<string> {
+  return updateCache((object) => {
+    if (isCachedPost(object)) {
+      if (object.author?.id !== authorId || object.viewer?.followsAuthor === follows) return object;
+      return { ...object, viewer: { ...object.viewer, followsAuthor: follows } };
+    }
+    if (object.id !== authorId) return object;
+    const viewer = object.viewer as { follows?: boolean } | undefined;
+    // ProfileDTO: `viewer.follows`, and the follower count moves with it.
+    if (viewer && typeof viewer.follows === 'boolean' && isPlainObject(object.stats)) {
+      if (viewer.follows === follows) return object;
+      const stats = object.stats as { followers: number };
+      return {
+        ...object,
+        viewer: { ...viewer, follows },
+        stats: { ...stats, followers: Math.max(0, stats.followers + (follows ? 1 : -1)) },
+      };
+    }
+    // UserSummaryDTO.
+    if (typeof object.viewerFollows === 'boolean' && object.viewerFollows !== follows) {
+      return { ...object, viewerFollows: follows };
+    }
+    return object;
+  }, only);
+}
+
+/** {@link applyFollowing} everywhere; returns the undo, which also refetches the author's profile. */
 export function setFollowing(authorId: string, follows: boolean): () => void {
-  const apply = (value: boolean) =>
-    updateCache((object) => {
-      if (isCachedPost(object)) {
-        if (object.author?.id !== authorId || object.viewer?.followsAuthor === value) return object;
-        return { ...object, viewer: { ...object.viewer, followsAuthor: value } };
-      }
-      if (object.id !== authorId) return object;
-      const viewer = object.viewer as { follows?: boolean } | undefined;
-      // ProfileDTO: `viewer.follows`, and the follower count moves with it.
-      if (viewer && typeof viewer.follows === 'boolean' && isPlainObject(object.stats)) {
-        if (viewer.follows === value) return object;
-        const stats = object.stats as { followers: number };
-        return {
-          ...object,
-          viewer: { ...viewer, follows: value },
-          stats: { ...stats, followers: Math.max(0, stats.followers + (value ? 1 : -1)) },
-        };
-      }
-      // UserSummaryDTO.
-      if (typeof object.viewerFollows === 'boolean' && object.viewerFollows !== value) {
-        return { ...object, viewerFollows: value };
-      }
-      return object;
-    });
-  apply(follows);
+  applyFollowing(authorId, follows);
   return () => {
-    apply(!follows);
+    applyFollowing(authorId, !follows);
     queryClient.invalidateQueries({ queryKey: queryKeys.profile.detail(authorId) }).catch(() => undefined);
   };
 }

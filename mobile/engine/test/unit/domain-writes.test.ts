@@ -45,7 +45,11 @@ const m = vi.hoisted(() => ({
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
+    getBlockFollow: vi.fn(),
   },
+  /** `electedModeration()`: null off an elected contract. */
+  elected: null as { interim: string; moderatedDocumentTypes: Record<string, string[]> } | null,
+  election: { getSeatedTeam: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   hashtagService: { createPostHashtags: vi.fn(async () => []) },
@@ -60,6 +64,7 @@ vi.mock('@/lib/contract-topology', async (load) => {
     ...Object.fromEntries(FLAGS.map(flag => [flag, () => m.topology[flag] === true])),
     canRepost: (kind: string) => m.topology[`repost:${kind}`] !== false,
     canBookmark: (kind: string) => m.topology[`bookmark:${kind}`] !== false,
+    electedModeration: () => m.elected,
   }
 })
 vi.mock('@/lib/services/sdk-helpers', async (load) => ({ ...await load<object>(), getCurrentUserId: () => m.viewer }))
@@ -88,6 +93,7 @@ vi.mock('@/lib/services/reply-service', async (load) => ({ ...await load<object>
 vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService }))
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
+vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
 vi.mock('@/lib/services/hashtag-service', () => ({ hashtagService: m.hashtagService }))
 vi.mock('@/lib/services/notification-service', () => ({ notificationService: m.notificationService }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
@@ -103,7 +109,8 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => {
 })
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
-const { createTicketStore } = await import('../../src/writes/tickets')
+const { ABSENCE_AFTER_MS, createTicketStore } = await import('../../src/writes/tickets')
+const { PARENT_WAIT_ROUNDS } = await import('../../src/writes/handler-kit')
 const { createEngageWrites } = await import('../../src/api/engage')
 const { createGraphWrites } = await import('../../src/api/graph')
 const { createPostWrites } = await import('../../src/api/posts')
@@ -136,12 +143,17 @@ function storage() {
   return { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => { items.set(key, value) } }
 }
 
-function engine() {
+function engine({ autoRetryDelaysMs = [] as readonly number[] } = {}) {
+  // Silent re-sends of a passing refusal are off unless a test turns them on (`AUTO_RETRY_CODES`).
+  let elapsed = 0
   const tickets = createTicketStore({
-    storage: storage(), emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0,
+    storage: storage(), emit, currentIdentity: () => m.viewer, documentExists: m.documentExists, absenceRecheckMs: 0, autoRetryDelaysMs,
+    now: () => Date.now() + elapsed,
   })
   return {
     tickets,
+    /** Moves the store's clock on (past `ABSENCE_AFTER_MS`, so a check may call a write absent). */
+    elapse: (ms: number) => { elapsed += ms },
     /** A write's ticket once its background run has settled. */
     outcome: (submitted: Promise<WriteTicket>) => submitted.then(ticket => settled(tickets, ticket.id)),
     engage: createEngageWrites(tickets),
@@ -170,6 +182,7 @@ beforeEach(() => {
   m.viewer = VIEWER
   m.topology = { hashtagsAreInline: true, mentionsAreInline: true, contractTakesReports: true }
   m.unconfirmed.clear()
+  m.elected = null
   m.settle.mockResolvedValue(true)
   m.documentExists.mockResolvedValue(true)
   m.postService.getUserPosts.mockResolvedValue({ documents: [] })
@@ -200,12 +213,26 @@ describe('engage writes', () => {
     expect(await settled(tickets, refused.id)).toMatchObject({ state: 'confirmed' })
   })
 
+  it('queues a write on a post still on its way: it waits for it, then sends (UX_SPEC §5.4)', async () => {
+    const { outcome, engage } = engine()
+    m.unconfirmed.add(TARGET.id)
+    m.settle.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true)
+    m.likeService.likePost.mockResolvedValue(true)
+    const ticket = await outcome(engage.like(TARGET))
+    expect(ticket).toMatchObject({ state: 'confirmed' })
+    expect(m.settle).toHaveBeenCalledTimes(3)
+    // Each round of the wait is a word from the run, so the ticket stays pending past the deadline.
+    expect(stagesOf(ticket.id)).toEqual(['queued', 'waiting-parent', 'waiting-parent', 'waiting-parent', 'signing', null])
+  })
+
   it('refuses to name a target that never confirmed: PARENT_UNCONFIRMED, nothing sent', async () => {
     const { outcome, engage } = engine()
     m.unconfirmed.add(TARGET.id)
     m.settle.mockResolvedValue(false)
     const ticket = await outcome(engage.bookmark(TARGET))
     expect(ticket).toMatchObject({ state: 'failed', error: { code: 'PARENT_UNCONFIRMED', outcome: 'local' } })
+    expect(m.settle).toHaveBeenCalledTimes(PARENT_WAIT_ROUNDS)
+    expect(ticket.error?.userMessage).not.toMatch(/try again in a moment/i)
     expect(m.bookmarkService.bookmarkPost).not.toHaveBeenCalled()
   })
 
@@ -320,7 +347,7 @@ describe('graph and safety writes', () => {
   })
 
   it('blocks with a message of at most 280 characters, and reports an unblock a followed list overrides', async () => {
-    const { tickets, outcome, safety } = engine()
+    const { tickets, outcome, safety, elapse } = engine()
     await expect(safety.block(AUTHOR, { message: 'x'.repeat(281) })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     await expect(safety.block(AUTHOR, { message: 42 as never })).rejects.toMatchObject({ code: 'BAD_REQUEST' })
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
@@ -337,6 +364,7 @@ describe('graph and safety writes', () => {
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block'), confirmed: false })
     const unconfirmed = await outcome(safety.block(AUTHOR))
     m.strict.ownBlockExists.mockResolvedValue(false)
+    elapse(ABSENCE_AFTER_MS)
     expect(await tickets.check(unconfirmed.id)).toMatchObject({ state: 'unconfirmed', retryable: true })
     expect(m.strict.ownBlockExists).toHaveBeenCalledWith(VIEWER, AUTHOR)
     expect(m.blockService.getBlockProvenance).not.toHaveBeenCalled()
@@ -388,6 +416,38 @@ describe('graph and safety writes', () => {
     expect(await safety.isBlocked(ids)).toEqual({ [AUTHOR]: true, [id('Listed')]: true, [id('Free')]: false })
     expect(await safety.blockedBy(ids)).toEqual({ [AUTHOR]: 'self', [id('Listed')]: 'list', [id('Free')]: null })
     expect(m.blockService.getBlockSourcesBatch).toHaveBeenCalledWith(VIEWER, ids)
+  })
+
+  it('counts the block lists the viewer follows, and rejects an unreadable follow list', async () => {
+    const { safety } = engine()
+    m.blockService.getBlockFollow.mockResolvedValue(null)
+    expect(await safety.followedBlockLists()).toBe(0)
+    m.blockService.getBlockFollow.mockResolvedValue({ $id: id('Follow'), $ownerId: VIEWER, followedUserIds: [AUTHOR, id('Other')] })
+    expect(await safety.followedBlockLists()).toBe(2)
+    expect(m.blockService.getBlockFollow).toHaveBeenCalledWith(VIEWER)
+    m.blockService.getBlockFollow.mockRejectedValue(new Error('Request timeout'))
+    await expect(safety.followedBlockLists()).rejects.toBeInstanceOf(Error)
+  })
+
+  it('says whether reports open before the form: only an unseated notYetUsable team keeps them shut', async () => {
+    const { safety } = engine()
+    expect(await safety.reportsOpen()).toBe(true)
+    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { report: ['delete'] } }
+    expect(await safety.reportsOpen()).toBe(true)
+    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
+    expect(await safety.reportsOpen()).toBe(true)
+    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
+
+    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { report: ['delete'] } }
+    m.election.getSeatedTeam.mockResolvedValue(null)
+    expect(await safety.reportsOpen()).toBe(false)
+    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
+    expect(await safety.reportsOpen()).toBe(true)
+    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
+    await expect(safety.reportsOpen()).rejects.toBeInstanceOf(Error)
+
+    m.topology.contractTakesReports = false
+    expect(await safety.reportsOpen()).toBe(false)
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {
@@ -553,6 +613,35 @@ describe('posts.publish and posts.delete', () => {
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.objectContaining({ rootPostId: id('post0') }), expect.anything())
   })
 
+  it('re-sends a passing refusal silently, resuming past the parts that landed (UX_SPEC §5.4)', async () => {
+    const { tickets, outcome, posts } = engine({ autoRetryDelaysMs: [0, 0, 0] })
+    creating(1, FEE_CHANGED)
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'one' }, { text: 'two' }] }))
+    // The refusal never reached the host: the ticket went back to pending and the re-send landed.
+    expect(ticket).toMatchObject({ state: 'confirmed', error: null, documents: [{ part: 0 }, { part: 1, type: 'reply' }] })
+    expect(emitted.some(e => e.event === 'write.status' && (e.payload as WriteTicket).id === ticket.id && (e.payload as WriteTicket).state === 'failed')).toBe(false)
+    // Part one once; part two refused, then sent again under a fresh nonce.
+    expect(m.postService.createPost).toHaveBeenCalledTimes(1)
+    expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('reports a passing refusal once its silent re-sends ran out, and never re-sends anything else', async () => {
+    const { tickets, outcome, posts } = engine({ autoRetryDelaysMs: [0, 0] })
+    m.postService.createPost.mockRejectedValue(new Error(FEE_CHANGED))
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'one' }] }))
+    expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: { code: 'FEE_CHANGED' } })
+    // The first send and two re-sends.
+    expect(m.postService.createPost).toHaveBeenCalledTimes(3)
+
+    // A refusal that may be this very write executing (a nonce refusal) is not re-sent: it is for a check.
+    m.postService.createPost.mockReset().mockRejectedValue(new Error('Invalid identity nonce: nonce already present'))
+    const nonce = await outcome(posts.publish({ parts: [{ text: 'two' }] }))
+    expect(nonce).toMatchObject({ state: 'unconfirmed', error: { code: 'NONCE_CONFLICT' } })
+    expect(m.postService.createPost).toHaveBeenCalledTimes(1)
+    await expect(tickets.retry(nonce.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+  })
+
   it('keeps the image on the first part: a resume past it carries none', async () => {
     const { tickets, outcome, posts } = engine()
     creating(1, FEE_CHANGED)
@@ -563,6 +652,14 @@ describe('posts.publish and posts.delete', () => {
     await tickets.retry(ticket.id)
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
     expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+
+    // A silent re-send, the same.
+    const silent = engine({ autoRetryDelaysMs: [0] })
+    creating(1, FEE_CHANGED)
+    m.replyService.createReply.mockClear()
+    expect(await silent.outcome(silent.posts.publish(draft))).toMatchObject({ state: 'confirmed' })
+    expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
+    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
 
     // The host's own resume, the same.
     creating()
@@ -737,7 +834,7 @@ describe('posts.publish and posts.delete', () => {
   })
 
   it('marks a part the network did not confirm, and proves it with check', async () => {
-    const { tickets, outcome, posts } = engine()
+    const { tickets, outcome, posts, elapse } = engine()
     m.topology.repostsAreQuotes = true
     creating()
     // references enforced: lib records the part as unconfirmed.
@@ -750,8 +847,28 @@ describe('posts.publish and posts.delete', () => {
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'quote', expect.objectContaining({ quotedPostId: TARGET.id }))
     expect(ticket).toMatchObject({ state: 'unconfirmed', target: TARGET, documents: [{ type: 'post', id: id('Late'), confirmed: false, part: 0 }] })
     m.documentExists.mockResolvedValue(false)
+    elapse(ABSENCE_AFTER_MS)
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
     expect(m.documentExists).toHaveBeenCalledTimes(2)
+  })
+
+  it('queues a reply to a post of this session still on its way, as engage writes do', async () => {
+    const { outcome, posts } = engine()
+    creating()
+    m.postService.getPostById.mockResolvedValue(post(TARGET.id))
+    m.unconfirmed.add(TARGET.id)
+    m.settle.mockResolvedValueOnce(false).mockResolvedValue(true)
+    const ticket = await outcome(posts.publish({ parts: [{ text: 'hi' }], replyTo: TARGET }))
+    expect(ticket).toMatchObject({ state: 'confirmed' })
+    expect(m.settle).toHaveBeenCalledWith(TARGET.id)
+    expect(m.replyService.createReply).toHaveBeenCalledTimes(1)
+
+    // One that never shows: refused before anything is sent.
+    m.settle.mockReset().mockResolvedValue(false)
+    m.replyService.createReply.mockClear()
+    const never = await outcome(posts.publish({ parts: [{ text: 'hi again' }], replyTo: TARGET }))
+    expect(never).toMatchObject({ state: 'failed', error: { code: 'PARENT_UNCONFIRMED' } })
+    expect(m.replyService.createReply).not.toHaveBeenCalled()
   })
 
   it('replies to a loaded target, refuses a private one, and carries v10 media hashes', async () => {

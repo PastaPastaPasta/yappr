@@ -1,13 +1,13 @@
 import type { PostDTO, TargetRef, WriteTicket } from '@engine/api';
 
-import { dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
+import { applyFollowing, dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
 import { errorCode, type WriteSpec } from '~/data/writes';
 
 /**
  * The engagement writes a post's controls make (PRD ENG-01 – ENG-08), as
  * `WriteSpec`s for `submitWrite` / `useWrite`. Each one patches every cached
  * copy of the post at once and is undone if the write fails. An unconfirmed
- * engagement counts as done (PRD G-3), so none of them announce it. Screens
+ * write counts as done (PRD G-3): the reconciler checks it quietly. Screens
  * that show posts (thread, bookmarks, profile) reuse these.
  */
 
@@ -31,9 +31,7 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   optimistic: ({ post, like }) => setViewerState(post.id, { liked: like }),
   intent: ({ like }) => like,
   matches: ticketOnPost('like', 'unlike', ({ like }: { post: PostDTO; like: boolean }) => like),
-  noun: 'like',
-  announceUnconfirmed: false,
-  failureMessage: 'Failed to update like. Please try again.',
+  failureMessage: ({ like }) => (like ? "Couldn't like this post. Try again." : "Couldn't unlike this post. Try again."),
 };
 
 export interface RepostVars {
@@ -51,9 +49,7 @@ export const repostWrite: WriteSpec<RepostVars> = {
     setViewerState(post.id, repost ? { reposted: true } : { reposted: false, ownQuoteId: null, ownQuoteBare: false }),
   intent: ({ repost }) => repost,
   matches: ticketOnPost('repost', 'unrepost', ({ repost }: RepostVars) => repost),
-  noun: 'repost',
-  announceUnconfirmed: false,
-  failureMessage: 'Failed to update repost. Please try again.',
+  failureMessage: ({ repost }) => (repost ? "Couldn't repost this post. Try again." : "Couldn't undo your repost. Try again."),
   onRejected: (error, { onQuoteHasText }) => {
     if (errorCode(error) !== 'QUOTE_HAS_TEXT' || !onQuoteHasText) return false;
     onQuoteHasText();
@@ -68,22 +64,23 @@ export const bookmarkWrite: WriteSpec<{ post: PostDTO; bookmark: boolean }> = {
   optimistic: ({ post, bookmark }) => setViewerState(post.id, { bookmarked: bookmark }),
   intent: ({ bookmark }) => bookmark,
   matches: ticketOnPost('bookmark', 'unbookmark', ({ bookmark }: { post: PostDTO; bookmark: boolean }) => bookmark),
-  noun: 'bookmark',
-  announceUnconfirmed: false,
-  failureMessage: 'Failed to update bookmark. Please try again.',
+  failureMessage: ({ bookmark }) =>
+    bookmark ? "Couldn't bookmark this post. Try again." : "Couldn't remove your bookmark. Try again.",
 };
 
 export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
   key: ({ authorId }) => `follow:${authorId}`,
   submit: (api, { authorId, follow }) => (follow ? api.graph.follow(authorId) : api.graph.unfollow(authorId)),
   optimistic: ({ authorId, follow }) => setFollowing(authorId, follow),
+  // A profile reopened while the write is on its way reads the chain before it lands.
+  reapply: ({ authorId, follow }, queries) => {
+    applyFollowing(authorId, follow, queries);
+  },
   intent: ({ follow }) => follow,
   matches: (ticket, { authorId, follow }) =>
     ticket.op === (follow ? 'follow' : 'unfollow') &&
     (ticket.target as { identityId?: string } | null)?.identityId === authorId,
-  noun: 'follow',
-  announceUnconfirmed: false,
-  failureMessage: 'Failed to update follow status',
+  failureMessage: ({ follow }) => (follow ? "Couldn't follow this account. Try again." : "Couldn't unfollow this account. Try again."),
 };
 
 /**
@@ -114,6 +111,5 @@ export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }
     dropFromLists(target.id);
   },
   matches: (ticket, { target }) => ticket.op === 'post.delete' && (ticket.target as { id?: string } | null)?.id === target.id,
-  noun: 'delete',
-  failureMessage: 'Failed to delete. Please try again.',
+  failureMessage: ({ target }) => `Couldn't delete ${target.kind === 'reply' ? 'reply' : 'post'}. Try again.`,
 };

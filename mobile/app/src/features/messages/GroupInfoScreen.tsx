@@ -1,10 +1,10 @@
 import type { ConversationDTO } from '@engine/api';
-import { router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
+import { Redirect, router, Stack, useIsFocused, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { EllipsisHorizontalIcon, PlusCircleIcon, UserGroupIcon } from 'react-native-heroicons/outline';
 
-import { useWrite } from '~/data/writes';
+import { useWrite, type WriteSpec } from '~/data/writes';
 import { openUser } from '~/features/post/post-navigation';
 import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
@@ -22,9 +22,11 @@ import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
+import { toast } from '~/ui/toast';
 import { tw, useColors } from '~/ui/tokens';
 
 import { ConversationAvatar } from './ConversationAvatar';
+import { hideWhileLeaving } from './dm-actions';
 import { readErrorMessage, refreshDm, useConversations, useDmBackend, useDmStatus, useDmViewer, usePeople } from './dm-data';
 import { conversationTitle, GROUP_NAME_MAX, groupNameError, memberCount } from './dm-model';
 import {
@@ -35,7 +37,8 @@ import {
   renameGroupWrite,
   resendKeysWrite,
 } from './dm-writes';
-import { UserPicker } from './UserPicker';
+import { resendMissingKeys } from './group-keys';
+import { usePickerReveal, UserPicker } from './UserPicker';
 
 function RenameDialog({
   open,
@@ -123,9 +126,21 @@ function ActionRow({
 }
 
 /**
+ * "Re-invite" from the owner's member menu (#8): the key resent by hand, the
+ * fallback when the app's own resends (`group-keys`) could not reach them.
+ */
+const reinviteWrite: WriteSpec<{ key: string; memberId: string }> = {
+  ...resendKeysWrite,
+  onConfirmed: () => {
+    refreshDm();
+    toast.success('Invite sent');
+  },
+};
+
+/**
  * Group info (UX_SPEC §4.22, PRD DM-07, DM-08): the name, members with the
- * owner's badge, and actions by role. The owner renames, adds and removes
- * members, resends keys and ends the group; a member leaves.
+ * owner's badge, and actions by role. The owner renames, adds, re-invites
+ * and removes members and ends the group; a member leaves.
  */
 export function GroupInfoScreen() {
   const { conversationId } = useLocalSearchParams<{ conversationId?: string }>();
@@ -143,30 +158,31 @@ export function GroupInfoScreen() {
   const rename = useWrite(renameGroupWrite);
   const add = useWrite(addMemberWrite);
   const remove = useWrite(removeMemberWrite);
-  const resend = useWrite(resendKeysWrite);
+  const resend = useWrite(reinviteWrite);
   const leave = useWrite(leaveGroupWrite);
   const end = useWrite(endGroupWrite);
   const busy = [rename, add, remove, resend, leave, end].some((w) => w.status === 'pending');
 
-  // A member who left no longer holds the group: back to the inbox.
+  // A leave the tracker followed to the end while this screen is still up (adopted after a restart).
   const left = leave.status === 'confirmed';
   useEffect(() => {
     if (left) router.dismissTo('/messages');
   }, [left]);
 
+  // The owner's app resends any key a creation could not send, each time the group opens (#8).
+  const owned = conversation?.isOwner === true;
+  useEffect(() => {
+    if (owned) resendMissingKeys(key);
+  }, [owned, key]);
+
   const [renaming, setRenaming] = useState(false);
   const [adding, setAdding] = useState(false);
+  const picker = usePickerReveal();
 
   const header = <Stack.Screen options={{ title: 'Group info' }} />;
 
-  if (backend === 'legacy') {
-    return (
-      <Screen>
-        {header}
-        <EmptyState icon={UserGroupIcon} title="Groups aren't available on this network" />
-      </Screen>
-    );
-  }
+  // Legacy messages have no groups: a stale link goes to the inbox (#23).
+  if (backend === 'legacy') return <Redirect href="/messages" />;
   if ((status.isError && !status.data) || (conversations.isError && !conversations.data)) {
     return (
       <Screen>
@@ -217,8 +233,8 @@ export function GroupInfoScreen() {
 
   const confirmRemove = (memberId: string, name: string) => {
     confirmAlert({
-      title: 'Remove member?',
-      message: `${name} will not be able to read new messages. This writes a new group key for everyone else.`,
+      title: `Remove ${name} from the group?`,
+      message: "They won't see new messages.",
       confirmText: 'Remove',
       destructive: true,
     })
@@ -236,14 +252,22 @@ export function GroupInfoScreen() {
           confirmText: 'End group',
         }
       : {
-          title: 'Leave this group?',
-          message: 'The owner removes you the next time they open the app. Until then you can still read new messages.',
+          title: 'Leave group?',
+          message: "You'll stop getting messages from this group.",
           confirmText: 'Leave',
         };
     confirmAlert({ ...ask, destructive: true })
-      .then((ok) => {
+      .then(async (ok) => {
         if (!ok) return;
-        (owner ? end : leave).run({ key }).catch(() => undefined);
+        if (owner) {
+          await end.run({ key });
+          return;
+        }
+        // Gone from the inbox at once; it comes back only if the leave fails (#8).
+        const ticket = await leave.run({ key });
+        if (!ticket) return;
+        hideWhileLeaving(key, ticket.id);
+        router.dismissTo('/messages');
       })
       .catch(() => undefined);
   };
@@ -251,7 +275,12 @@ export function GroupInfoScreen() {
   return (
     <Screen>
       {header}
-      <ScrollView keyboardShouldPersistTaps="handled" contentInsetAdjustmentBehavior="automatic" testID="group-info">
+      <ScrollView
+        keyboardShouldPersistTaps="handled"
+        contentInsetAdjustmentBehavior="automatic"
+        {...picker.scrollProps}
+        testID="group-info"
+      >
         <View className="items-center gap-2 px-4 pt-6">
           <ConversationAvatar conversation={group} size="xl" />
           <Text variant="title" tone="emphasis" className="text-center" testID="group-info-name">
@@ -308,7 +337,7 @@ export function GroupInfoScreen() {
               {owner && !inactive && !you ? (
                 <ContextMenu
                   items={[
-                    { id: 'resend', title: 'Resend keys', systemImage: 'key' },
+                    { id: 'resend', title: 'Re-invite', systemImage: 'envelope' },
                     { id: 'remove', title: 'Remove member', systemImage: 'person.badge.minus', destructive: true },
                   ]}
                   onSelect={(action) => {
@@ -325,7 +354,7 @@ export function GroupInfoScreen() {
         })}
 
         {owner && !inactive ? (
-          <View className="mt-2">
+          <View className="mt-2" {...picker.sectionProps} testID="group-add-section">
             <ActionRow
               label={adding ? 'Done adding' : 'Add members'}
               icon={<PlusCircleIcon size={22} color={c.link} />}
@@ -340,11 +369,15 @@ export function GroupInfoScreen() {
                 collapsable={false}
                 pointerEvents={busy ? 'none' : 'auto'}
                 className={busy ? 'opacity-60' : undefined}
+                style={{ minHeight: picker.minHeight }}
+                testID="group-add-picker"
               >
                 <UserPicker
                   viewerId={viewerId}
                   excludeIds={new Set(group.members)}
                   note="New members can read messages sent after they join."
+                  onSearchFocus={picker.reveal}
+                  onSearchBlur={picker.conceal}
                   onPick={(user) => add.run({ key, memberId: user.id, name: user.displayName }).catch(() => undefined)}
                 />
               </View>

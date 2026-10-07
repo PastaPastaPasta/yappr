@@ -25,16 +25,17 @@ export function chipStateOf(state: SupervisorState): EngineState {
   return 'booting';
 }
 
+/** The connection state in plain words: the dot shows it, so VoiceOver and TalkBack read it (UX_SPEC §5.13). */
 const STATE_WORD: Record<EngineState, string> = {
-  ready: 'ready',
-  booting: 'connecting',
-  unavailable: 'unavailable',
+  ready: 'Connected',
+  booting: 'Connecting',
+  unavailable: "Can't connect",
 };
 
-/** UX_SPEC §5.13: "Devnet. Data may be reset. Engine ready." */
+/** UX_SPEC §5.13: "Testnet. Data may be reset. Connected." */
 function networkChipLabel(network: Exclude<ChipNetwork, 'mainnet'>, state: EngineState): string {
   const name = network === 'devnet' ? 'Devnet' : 'Testnet';
-  return `${name}. Data may be reset. Engine ${STATE_WORD[state]}.`;
+  return `${name}. Data may be reset. ${STATE_WORD[state]}.`;
 }
 
 /** The dot's pulse: opacity 1 ↔ 0.3, a second each way. */

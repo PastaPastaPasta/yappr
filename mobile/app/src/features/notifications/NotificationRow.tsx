@@ -93,7 +93,7 @@ export const NotificationRow = memo(function NotificationRow({
   const unread = row.unreadIds.length > 0;
   const actor = row.actors[0];
   const actorId = actor?.id ?? '';
-  const name = actor?.displayName || 'Unknown User';
+  const name = actor?.displayName || 'Unknown user';
   const phrase = phraseOf(row);
   const { Icon, color } = ICONS[row.type] ?? FALLBACK_ICON;
   const spokenTime = useRelativeTime(row.at, 'spoken');
@@ -101,7 +101,8 @@ export const NotificationRow = memo(function NotificationRow({
     unread ? 'Unread.' : null,
     `${name} ${phrase}.`,
     snippet ? `${snippet}.` : null,
-    row.noticed ? `Noticed ${spokenTime}` : spokenTime,
+    // A v11 like keeps no time of its own: no time at all, never when this device saw it (#21).
+    row.noticed ? null : spokenTime,
   ]
     .filter(Boolean)
     .join(' ');
@@ -145,13 +146,9 @@ export const NotificationRow = memo(function NotificationRow({
               </Text>{' '}
               {phrase}
             </Text>
-            <RelativeTime
-              date={row.at}
-              prefix={row.noticed ? 'Noticed ' : undefined}
-              variant="caption"
-              tone="secondary"
-              className="mt-0.5"
-            />
+            {row.noticed ? null : (
+              <RelativeTime date={row.at} variant="caption" tone="secondary" className="mt-0.5" />
+            )}
           </View>
         </View>
         {snippet ? (

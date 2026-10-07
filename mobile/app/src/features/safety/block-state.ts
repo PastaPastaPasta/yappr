@@ -1,4 +1,4 @@
-import type { BlockedUserDTO, ProfileDTO, WriteTicket } from '@engine/api';
+import type { BlockedUserDTO, BlockSourceDTO, ProfileDTO, WriteTicket } from '@engine/api';
 import { type InvalidateQueryFilters } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { create } from 'zustand';
@@ -6,9 +6,14 @@ import { create } from 'zustand';
 import { queryKeys } from '~/data/keys';
 import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
-import { useSessionStore, useViewerId } from '~/data/session';
-import { type WriteSpec } from '~/data/writes';
+import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
+import { sendWrite, type WriteSpec } from '~/data/writes';
+import { engine } from '~/engine';
+import { appendLog, errorMessage } from '~/engine/logs';
+import { setBlockedInMessages, syncMessagesBlock } from '~/features/messages/dm-actions';
 import { queryClient } from '~/state/query-client';
+import { errorFeedback } from '~/ui/haptics';
+import { toast } from '~/ui/toast';
 
 import { copy } from './copy';
 
@@ -211,6 +216,30 @@ export interface BlockVars {
   user?: Pick<BlockedUserDTO, 'username' | 'displayName' | 'avatar'>;
 }
 
+/** Per user, the latest change made in Messages: an older change's undo never overrides a newer one. */
+const messagesChanges = new Map<string, symbol>();
+
+/**
+ * DM v5 keeps its own block list (DM-10): a Block also blocks them there,
+ * and an Unblock lifts it (PRD SAFE-01, SAFE-02), so one Block covers
+ * Messages too. Legacy DMs follow the account's blocks by themselves.
+ * Returns the undo, which reverts only what this call changed (a block in
+ * Messages made before, on web, stays) and only while it is the latest.
+ */
+function blockInMessages(userId: string, block: boolean): () => void {
+  if (getCapabilities()?.dm !== 'v5') return () => undefined;
+  const change = Symbol(userId);
+  messagesChanges.set(userId, change);
+  const changed = syncMessagesBlock(userId, block);
+  return () => {
+    changed
+      .then((did) => {
+        if (did && messagesChanges.get(userId) === change) blockInMessages(userId, !block);
+      })
+      .catch(() => undefined);
+  };
+}
+
 function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () => void {
   const before = useBlockDecisions.getState().byKey[decisionKey(viewerId, userId)];
   const row: BlockedUserDTO | undefined =
@@ -219,23 +248,32 @@ function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () =
   const undoProfiles = patchProfiles(userId, block);
   // The decision lives in memory; the cached posts carry it across a relaunch (SR-25).
   const undoPosts = setAuthorBlocked(userId, block);
+  const undoMessages = blockInMessages(userId, block);
   return () => {
     decide(viewerId, userId, before);
     undoProfiles();
     undoPosts();
+    undoMessages();
     refetch(queryKeys.profile.detail(userId));
   };
 }
 
 const targetIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?: string } | null)?.identityId;
 
+/** "@alice" for the failure toast: the row being blocked, else the cached profile; null when unknown. */
+function handleOf({ userId, user }: BlockVars): string | null {
+  const username = user?.username ?? queryClient.getQueryData<ProfileDTO | null>(queryKeys.profile.detail(userId))?.username;
+  return username ? `@${username}` : null;
+}
+
 /**
  * Block or unblock (`safety.block` / `safety.unblock`), one at a time per
- * user. Optimistic: the author's content goes (or comes back) at once.
- * Confirmed, the lists the engine filters by block status are read again.
- * An unblock that leaves a followed block list blocking the user fails with
- * `STILL_BLOCKED`: the posts stay hidden, the Blocked list drops the own
- * block that is gone, and the toast says why.
+ * user. Optimistic: the author's content goes (or comes back) at once, and
+ * on DM v5 Messages follows (`blockInMessages`). Confirmed, the lists the
+ * engine filters by block status are read again. An unblock that leaves a
+ * followed block list blocking the user fails with `STILL_BLOCKED`: the
+ * posts stay hidden, the Blocked list drops the own block that is gone (and
+ * Messages with it), and the toast says why.
  */
 export const blockWrite: WriteSpec<BlockVars> = {
   key: ({ userId }) => `block:${userId}`,
@@ -249,9 +287,82 @@ export const blockWrite: WriteSpec<BlockVars> = {
   onFailed: (ticket, { viewerId, userId, block }) => {
     if (block || ticket.error?.code !== 'STILL_BLOCKED') return;
     decide(viewerId, userId, { blocked: true, listOnly: true });
+    blockInMessages(userId, false);
     refetch(queryKeys.blocked);
   },
   failureText: (ticket) => (ticket.error?.code === 'STILL_BLOCKED' ? copy.toast.stillBlocked : null),
-  noun: 'block',
-  failureMessage: copy.toast.blockFailed,
+  failureMessage: (vars) => copy.toast.blockFailed(vars.block, handleOf(vars)),
 };
+
+/**
+ * Where the account's block on `peerId` comes from, or null when it isn't
+ * blocked. A failed read falls back to this device's decision, and rejects
+ * without one: guessing "not blocked" would lift only Messages on an Unblock
+ * and still say "Unblocked".
+ */
+async function accountBlockOf(viewerId: string, peerId: string): Promise<BlockSourceDTO | null> {
+  try {
+    return (await engine.api.safety.blockedBy([peerId]))[peerId] ?? null;
+  } catch (error) {
+    const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, peerId)];
+    if (!decided) throw error;
+    if (!decided.blocked) return null;
+    return decided.listOnly ? 'list' : 'self';
+  }
+}
+
+/** Peers whose conversation Block or Unblock is reading the account's block: a repeat tap does nothing meanwhile. */
+const conversationReads = new Set<string>();
+
+async function whileReading<T>(peerId: string, idle: T, run: () => Promise<T>): Promise<T> {
+  if (conversationReads.has(peerId)) return idle;
+  conversationReads.add(peerId);
+  try {
+    return await run();
+  } finally {
+    conversationReads.delete(peerId);
+  }
+}
+
+/**
+ * "Block" from a DM v5 conversation, which shows it while Messages don't
+ * block them. Not blocked yet (or the account's block can't be read): 'sheet',
+ * for the Block sheet (which blocks in Messages too). Already blocked on the
+ * account (a block from before Block covered Messages, or made on web): only
+ * Messages is left, so it blocks there now, with the same "Blocked @x".
+ * 'done' too for a repeat tap while the first is still reading.
+ */
+export function blockFromConversation(viewerId: string, peerId: string, handle: string): Promise<'sheet' | 'done'> {
+  return whileReading(peerId, 'done' as const, async () => {
+    const source = await accountBlockOf(viewerId, peerId).catch(() => null);
+    if (source === null) return 'sheet';
+    await setBlockedInMessages(peerId, true, copy.toast.blocked(handle));
+    return 'done';
+  });
+}
+
+/**
+ * "Unblock" from a DM v5 conversation, which shows it for a block in
+ * Messages: the account's own block goes too when there is one (it lifts
+ * Messages with it), else only the block in Messages (one made in Messages
+ * on web). The same "Unblocked @x" either way. When the account's block
+ * can't be read, nothing changes and the toast asks to try again.
+ */
+export function unblockFromConversation(viewerId: string, peerId: string, handle: string): Promise<void> {
+  return whileReading(peerId, undefined, async () => {
+    let source: BlockSourceDTO | null;
+    try {
+      source = await accountBlockOf(viewerId, peerId);
+    } catch (error) {
+      appendLog('warn', 'host', `Reading the block before an unblock failed: ${errorMessage(error)}`);
+      errorFeedback();
+      toast.error(copy.toast.unblockFailed(handle));
+      return;
+    }
+    if (source === 'self') {
+      sendWrite(blockWrite, { viewerId, userId: peerId, block: false }, copy.toast.unblocked(handle));
+    } else {
+      await setBlockedInMessages(peerId, false, copy.toast.unblocked(handle));
+    }
+  });
+}

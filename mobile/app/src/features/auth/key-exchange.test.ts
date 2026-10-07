@@ -133,7 +133,7 @@ describe('wallet sign-in', () => {
       name: 'error',
       title: 'Sign-in failed',
       message:
-        'The key this wallet uses for Yappr has been disabled on this identity, so it can no longer sign in. Sign in with a private key instead.',
+        "This wallet's Yappr key was turned off, so it can't sign in. Add a new key from your wallet, or sign in with a private key.",
       retry: 'start',
       registration: undefined,
     });

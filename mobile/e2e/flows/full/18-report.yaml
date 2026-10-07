@@ -1,9 +1,9 @@
 # Report a post (PRD SAFE-04, SAFE-05; ADR E8): a fresh post by the peer
 # persona, so every run files a new report rather than finding an old one.
 # The sheet asks for a reason and submits; a community whose moderation team
-# is not seated yet refuses it with the email fallback, which also passes. A
-# sent report shows when the sheet opens again, and is withdrawn from there.
-# The peer deletes its post afterwards.
+# is not seated yet offers email instead (before the form, or as the fallback
+# after a refusal), which also passes. A sent report shows when the sheet
+# opens again, and is withdrawn from there. The peer deletes its post afterwards.
 appId: ${APP_ID}
 tags:
   - full
@@ -20,15 +20,16 @@ tags:
 - tapOn: "Report post"
 - extendedWaitUntil:
     visible:
-      id: "report-sheet|report-existing|report-refused"
+      id: "report-sheet|report-existing|report-email"
     timeout: 60000
 - runFlow:
     when:
       visible:
         id: report-sheet
       notVisible:
-        id: "report-existing|report-refused"
+        id: "report-existing|report-email"
     commands:
+      - assertVisible: "Reports are public\\..*"
       - assertVisible: "What is wrong with it\\?"
       - tapOn:
           id: report-reason-0
@@ -41,7 +42,7 @@ tags:
           id: report-submit
       - extendedWaitUntil:
           visible:
-            id: "report-sent|report-refused|report-existing"
+            id: "report-sent|report-email|report-existing"
           timeout: 120000
 - takeScreenshot: report-result
 # Sent: reopening the sheet shows the report, which is then withdrawn (SAFE-04).
@@ -55,10 +56,18 @@ tags:
       - tapOn:
           id: more-btn-${output.peerPostId}
       - tapOn: "Report post"
+      # The report, once the network has it; or, not confirmed yet, the sheet still says it was sent.
       - extendedWaitUntil:
           visible:
-            id: report-existing
+            id: "report-existing|report-sent"
           timeout: 60000
+      - runFlow:
+          when:
+            visible:
+              id: report-sent
+          commands:
+            - tapOn:
+                id: report-done
 - runFlow:
     when:
       visible:
@@ -77,25 +86,32 @@ tags:
       - tapOn:
           text: "Withdraw|WITHDRAW"
           rightOf: "Cancel|CANCEL"
-      # Withdrawn, the sheet closes; or the network has not confirmed it yet (a DAPI wait
-      # timeout), and the sheet says so with Check again instead of Withdraw. Both pass.
+      # Withdrawn at once (the network's answer is reconciled in the background): the sheet
+      # closes with a 3 s "Report withdrawn" toast. On a loaded host Maestro's tap above can
+      # spend longer than that waiting for the screen to settle (the toast animates), so the
+      # toast is checked but not required; the sheet closing back to the post is.
+      - extendedWaitUntil:
+          visible: "Report withdrawn"
+          timeout: 5000
+          optional: true
       - extendedWaitUntil:
           notVisible:
             id: report-existing
-          timeout: 120000
+          timeout: 30000
+      - assertVisible:
+          id: more-btn-${output.peerPostId}
       - takeScreenshot: report-withdrawn
+# Email instead (no seated moderation team): the sheet asks for the reason, and closes on Cancel.
 - runFlow:
     when:
       visible:
-        id: report-withdraw-unconfirmed
+        id: report-email
     commands:
+      - assertVisible: "Report by email"
+      - scrollUntilVisible:
+          element:
+            id: report-cancel
+          direction: DOWN
       - tapOn:
-          id: report-done
-- runFlow:
-    when:
-      visible:
-        id: report-refused
-    commands:
-      - tapOn:
-          id: "report-done|report-cancel|sheet-close"
+          id: report-cancel
 - runFlow: ../../subflows/peer-delete.yaml

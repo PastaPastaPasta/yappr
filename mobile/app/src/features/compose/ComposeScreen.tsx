@@ -56,7 +56,7 @@ import { insertMention, mentionAt, tagMaxLength } from './text';
 const MAX_PARTS = 10;
 /** Drafts save this long after the last change (PRD COMP-09). */
 const SAVE_DELAY_MS = 500;
-/** `posts.publish` accepts an image hosted elsewhere (no upload in 1.0). */
+/** `posts.publish` accepts an image hosted elsewhere (no upload in 1.0): a web or IPFS link, never named to the user (#27). */
 const HOSTED_URL = /^(https?|ipfs):\/\/\S+$/;
 /** The contracts' `post.mediaUrl` / `reply.mediaUrl` `maxLength` (v2 and v10), in code points. */
 const MAX_MEDIA_URL = 512;
@@ -510,12 +510,12 @@ function Composer({ identityId, username, context }: ComposerProps) {
               <TextInput
                 value={mediaUrl}
                 onChangeText={setMediaUrl}
-                placeholder="Image URL (https:// or ipfs://)"
+                placeholder="Paste an image link"
                 placeholderTextColor={c.textPlaceholder}
                 autoCapitalize="none"
                 autoCorrect={false}
                 keyboardType="url"
-                accessibilityLabel="Image URL"
+                accessibilityLabel="Image link"
                 className={cn(
                   'min-h-11 rounded-lg border px-3 text-base',
                   mediaValid ? tw.borderStrong : 'border-red-600 dark:border-red-400',
@@ -525,9 +525,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
               />
               {!mediaValid ? (
                 <Text variant="caption" tone="error" className="mt-1" testID="compose-media-error">
-                  {mediaTooLong
-                    ? `This link is too long. Use one of up to ${MAX_MEDIA_URL} characters.`
-                    : 'Use an https:// or ipfs:// link to an image.'}
+                  {mediaTooLong ? 'That link is too long.' : "That doesn't look like an image link."}
                 </Text>
               ) : null}
               {previewUri ? (

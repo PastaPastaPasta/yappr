@@ -1,8 +1,9 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
-import { contractTakesReports } from '@/lib/contract-topology'
+import { contractTakesReports, electedModeration } from '@/lib/contract-topology'
 import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
+import { moderationElectionService } from '@/lib/services/moderation-election-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
@@ -239,6 +240,38 @@ export function createSafetyModule(tickets: TicketStore) {
         target,
         documents: [socialDoc('report', reportId, 'delete')],
       })
+    },
+
+    /**
+     * How many accounts' block lists the viewer follows (set up on web), so
+     * the Blocked list mentions them only to someone who follows any.
+     * Rejects when it cannot be read.
+     */
+    async followedBlockLists(): Promise<number> {
+      const viewer = requireViewer('Block lists')
+      try {
+        return (await blockService.getBlockFollow(viewer))?.followedUserIds.length ?? 0
+      } catch (error) {
+        throw readFailure(error)
+      }
+    },
+
+    /**
+     * Whether a report can be filed now. False where the contract takes no
+     * reports, and where it refuses them until an elected moderation team is
+     * seated (a `notYetUsable` interim, `MODERATION_NOT_SEATED`) and none is,
+     * so the sheet offers email before the form instead of after it. Every
+     * other contract answers without a read. Rejects when the team cannot be read.
+     */
+    async reportsOpen(): Promise<boolean> {
+      if (!contractTakesReports()) return false
+      const elected = electedModeration()
+      if (elected?.interim !== 'notYetUsable' || !elected.moderatedDocumentTypes.report) return true
+      try {
+        return (await moderationElectionService.getSeatedTeam()) !== null
+      } catch (error) {
+        throw readFailure(error)
+      }
     },
 
     /** The viewer's own report on a target, or `null`. Rejects when it cannot be read, so the UI never offers a second (paid) report. */

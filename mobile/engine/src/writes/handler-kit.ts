@@ -50,18 +50,31 @@ export function socialDoc(type: string, id: string, action: TicketDocument['acti
 }
 
 /**
+ * How many of lib's waits (`settleUnconfirmed`, up to about 18 s each) a
+ * write spends on a target this session created before it gives up: about
+ * two minutes, the time a post that went out takes to show at the latest.
+ */
+export const PARENT_WAIT_ROUNDS = 6
+
+/**
  * Web's gate before a write that names `id` (`use-post-engagement.ts`
  * `settle`): a document this session created but never saw confirmed is
  * waited for first, because consensus refuses (and charges for) a reference
- * to a document that is not there. Nothing is sent while it waits, so a
- * failure here is `PARENT_UNCONFIRMED`, never "maybe sent".
+ * to a document that is not there. The write is queued behind it (its
+ * ticket stays `pending`, each round a word that restarts its deadline), so
+ * a like or reply on a post that is still on its way just goes once the post
+ * does (UX_SPEC §5.4). Nothing is sent while it waits, so a target that
+ * never shows is `PARENT_UNCONFIRMED`, never "maybe sent".
  */
 export async function settleTarget(ctx: WriteRunContext, id: string): Promise<void> {
   if (!isUnconfirmed(id)) return
-  ctx.stage('waiting-parent')
-  if (!(await settleUnconfirmed(id))) {
-    throw new RpcError('This post has not confirmed yet. Try again in a moment.', 'PARENT_UNCONFIRMED')
+  let landed = false
+  for (let round = 0; round < PARENT_WAIT_ROUNDS && !landed; round++) {
+    // Before any send: a restart while it waits finds it never sent (a stagedSends handler's).
+    ctx.stage('waiting-parent', true)
+    landed = await settleUnconfirmed(id)
   }
+  if (!landed) throw new RpcError('The post this write names never showed up, so nothing was sent.', 'PARENT_UNCONFIRMED')
   // The store reads 'waiting-parent' as "nothing sent yet": leave it before lib's write call.
   ctx.stage('signing')
 }
@@ -71,7 +84,9 @@ export async function settleTarget(ctx: WriteRunContext, id: string): Promise<vo
  * says whether the write's effect is visible to the ticket's signer,
  * `expected` whether it should be. One node can lag, so an answer that
  * disagrees counts only when a second read agrees with it. A read that
- * throws proves nothing.
+ * throws proves nothing. `check` takes a not-applied answer as proof only
+ * once the attempt stopped `ABSENCE_AFTER_MS` before: until then the write
+ * may still be on its way.
  *
  * Several lib reads report a failed query as "absent". Where only those
  * exist, a not-applied verdict may be wrong; the retry it allows is still

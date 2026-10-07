@@ -1,7 +1,6 @@
 import { BottomSheetTextInput } from '@gorhom/bottom-sheet';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Keyboard, View } from 'react-native';
-import { CheckCircleIcon } from 'react-native-heroicons/outline';
 
 import { config } from '~/config';
 import { errorCode } from '~/data/writes';
@@ -19,15 +18,37 @@ import { tw, useColors } from '~/ui/tokens';
 
 import { readErrorMessage, refreshDm } from './dm-data';
 
-type Phase = 'recovering' | 'recovered' | 'manual' | 'no-key';
-
-const RECOVERED_CLOSE_MS = 1000;
+type Phase = 'recovering' | 'manual' | 'no-key';
 
 /**
  * "Unlock messages" (UX_SPEC §4.38, PRD DM-02): first the automatic recovery
- * (the encryption key derived from the sign-in key), then, if that can't
- * work, a secure field for the encryption key, checked against the identity.
+ * (the encryption key derived from the sign-in key), which on success closes
+ * with "Messages unlocked"; if that can't work, one secure field for the
+ * encryption key, checked against the identity. The key's formats are named
+ * only in the error for text that is not one (#22).
  */
+/** Unlocked: the inbox, read again, with "Messages unlocked". */
+function unlocked(close: () => void): void {
+  toast.success('Messages unlocked');
+  refreshDm();
+  close();
+}
+
+/** WIF (51 or 52 base58 characters) or 64 hex: the formats an encryption key comes in (engine `dm.unlock`). */
+const KEY_SHAPE = /^([1-9A-HJ-NP-Za-km-z]{51,52}|[0-9a-fA-F]{64})$/;
+
+/**
+ * Why a key was not taken: text that is not a key at all gets the formats;
+ * a key that is one but not the one messages use says so, whichever way it
+ * is not (another account's, another of this account's keys, another
+ * network's).
+ */
+export function keyError(value: string): string {
+  return KEY_SHAPE.test(value.trim())
+    ? "That isn't the encryption key for this account's messages."
+    : "That doesn't look like an encryption key. It's a WIF or 64-character hex key from yap.pr.";
+}
+
 export function UnlockSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [saving, setSaving] = useState(false);
   return (
@@ -52,9 +73,6 @@ function UnlockBody({
   const [key, setKey] = useState('');
   useBlockScreenCapture('secret');
   const [error, setError] = useState<string | null>(null);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  useEffect(() => () => clearTimeout(closeTimer.current), []);
 
   useEffect(() => {
     let current = true;
@@ -63,9 +81,7 @@ function UnlockBody({
       .then((result) => {
         if (!current) return;
         if (result.unlocked) {
-          setPhase('recovered');
-          refreshDm();
-          closeTimer.current = setTimeout(onClose, RECOVERED_CLOSE_MS);
+          unlocked(onClose);
         } else {
           setPhase(result.reason === 'no-key-on-identity' ? 'no-key' : 'manual');
         }
@@ -90,23 +106,20 @@ function UnlockBody({
         if (result.unlocked) {
           setKey('');
           Keyboard.dismiss();
-          toast.success('Encryption key saved');
-          refreshDm();
-          onClose();
+          unlocked(onClose);
         } else if (result.reason === 'no-key-on-identity') {
           setPhase('no-key');
         } else {
-          setError('Invalid key');
+          setError(keyError(value));
         }
       })
       .catch((e: unknown) => {
-        setError(errorCode(e) === 'KEY_INVALID' ? 'Invalid key' : (readErrorMessage(e) ?? 'Invalid key'));
+        setError(errorCode(e) === 'KEY_INVALID' ? keyError(value) : (readErrorMessage(e) ?? keyError(value)));
       })
       .finally(() => setSaving(false));
   };
 
-  const title =
-    phase === 'recovering' ? 'Recovering Key…' : phase === 'recovered' ? 'Key Recovered!' : 'Unlock your messages';
+  const title = phase === 'recovering' ? 'Unlocking your messages…' : 'Unlock your messages';
 
   return (
     <View className="gap-2">
@@ -114,19 +127,8 @@ function UnlockBody({
         {title}
       </Text>
       {phase === 'recovering' ? (
-        <View className="flex-row items-center gap-3 py-4">
+        <View className="items-center py-4" testID="dm-unlock-recovering">
           <Spinner size="sm" />
-          <Text variant="body" tone="secondary" className="flex-1">
-            Attempting to automatically recover your encryption key…
-          </Text>
-        </View>
-      ) : null}
-      {phase === 'recovered' ? (
-        <View className="flex-row items-center gap-3 py-4" testID="dm-unlock-recovered">
-          <CheckCircleIcon size={24} color={c.repost} />
-          <Text variant="body" className="flex-1">
-            Your encryption key was automatically recovered.
-          </Text>
         </View>
       ) : null}
       {phase === 'no-key' ? (
@@ -145,7 +147,7 @@ function UnlockBody({
       {phase === 'manual' ? (
         <View className="gap-3 pb-2">
           <Text variant="body" tone="secondary">
-            Messages are encrypted with your encryption key. Enter it on this device to read and send them.
+            Your messages are encrypted. Paste your encryption key to read and send them on this device.
           </Text>
           <View
             className={cn(
@@ -160,7 +162,7 @@ function UnlockBody({
                 setKey(text);
                 setError(null);
               }}
-              placeholder="WIF (cXyz...) or hex (64 chars)"
+              placeholder="Paste your encryption key"
               placeholderTextColor={c.textPlaceholder}
               accessibilityLabel="Encryption key"
               accessibilityHint={error ?? undefined}
@@ -182,7 +184,7 @@ function UnlockBody({
             </Text>
           ) : null}
           <Button
-            label="Save key"
+            label="Unlock"
             size="block"
             loading={saving}
             disabled={!key.trim()}

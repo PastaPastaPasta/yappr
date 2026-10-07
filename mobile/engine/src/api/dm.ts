@@ -555,10 +555,16 @@ export function createDmModule(options: DmModuleOptions) {
       await v5('Deleting conversations').hide(session(), keyOf(key))
     },
 
-    /** v5: block in Messages (their messages and group invitations are ignored). Saved at once. */
-    async setBlocked(peerId: string, blocked: boolean): Promise<void> {
+    /**
+     * v5: block in Messages (their messages and group invitations are
+     * ignored). Saved at once, and a no-op when it already stands. Locked or
+     * still loading, it applies once the saved state has loaded, so a profile
+     * Block always reaches Messages (PRD SAFE-01). Resolves whether it changed
+     * anything, so the host undoes only its own change.
+     */
+    async setBlocked(peerId: string, blocked: boolean): Promise<boolean> {
       if (typeof blocked !== 'boolean') throw new RpcError('blocked must be true or false', 'BAD_REQUEST')
-      v5('Blocking in Messages').engine(session()).setBlocked(identityIdOf(peerId, 'user ID'), blocked)
+      return v5('Blocking in Messages').setBlocked(session(), identityIdOf(peerId, 'user ID'), blocked)
     },
 
     /** v5 "Reclaim message fees" (PRD DM-12). */

@@ -6,12 +6,14 @@ import { create } from 'zustand';
 import { config } from '~/config';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { queryClient } from '~/state/query-client';
 import { errorFeedback } from '~/ui/haptics';
 import { toast, type ToastAction } from '~/ui/toast';
 
 import { isOffline } from './connectivity';
 import { onEngineEvent } from './events';
 import type { EngineRemote } from './queries';
+import { recheck, reconcile, resetReconciler, stopReconciling, ticketJob } from './reconcile';
 import { promptSignIn } from './require-auth';
 import { useSessionStore } from './session';
 import { SESSION_EXPIRED_MESSAGE, failedForSession, markSessionExpired, signInAgain } from './session-expiry';
@@ -29,22 +31,25 @@ export interface WriteSpec<V> {
   key?: (vars: V) => string;
   /** Apply the optimistic change and return its undo (`setViewerState` and friends). */
   optimistic?: (vars: V) => () => void;
-  /** Names the write in "Your {noun} didn't go through. Try again." */
-  noun: string;
-  /** The failure toast when the engine has no specific message ("Failed to update like. Please try again."). */
-  failureMessage: string;
   /**
-   * Toast "Not confirmed yet · Check again" when it goes `unconfirmed`
-   * (default). Engagements set false: PRD G-3 counts them as done, and the
-   * next refresh shows the chain's truth. A function decides per ticket (a
-   * sheet on screen that says it itself).
+   * Apply the change again, to the queries named only (by hash): a read that
+   * landed while the write was on its way (queued, or its call still running)
+   * may predate it, and would otherwise put the old state back over the
+   * change until the next read.
    */
-  announceUnconfirmed?: boolean | ((ticket: WriteTicket, vars: V) => boolean);
+  reapply?: (vars: V, queries: ReadonlySet<string>) => void;
+  /**
+   * The write's failure sentence ("Couldn't like this post. Try again."),
+   * for a refusal and for a write a check proved absent alike, unless the
+   * engine's code has its own (`writeFailureText`). A function words it per
+   * write ("Couldn't unlike this post. Try again.").
+   */
+  failureMessage: string | ((vars: V) => string);
   onConfirmed?: (ticket: WriteTicket, vars: V) => void;
   /**
    * The failure toast for a ticket, when the write has something more
-   * specific to say than the engine's message (a partly posted thread);
-   * null falls back to the default.
+   * specific to say than the default (a partly posted thread); null falls
+   * back to the default.
    */
   failureText?: (ticket: WriteTicket, vars: V) => string | null;
   /**
@@ -136,26 +141,31 @@ export function isFollowedWrite(id: string): boolean {
   return followed.has(id);
 }
 const latestByKey = new Map<string, string>();
+
+/** A write, as the queue and the tracker hold it. */
+interface WriteOf {
+  spec: WriteSpec<unknown>;
+  vars: unknown;
+}
+
 /**
- * Keys whose submit or retry hasn't answered yet, with what they ask for.
+ * Keys whose submit or retry hasn't answered yet, with the write that asks.
  * Each call marks its key with its own token and clears only that mark: a
  * queued write released while the call settles marks the key itself.
  */
-const submitting = new Map<string, { token: symbol; intent: unknown }>();
+const submitting = new Map<string, WriteOf & { token: symbol }>();
 
 /** Marks `key` busy for one call; the result clears the mark if it is still that call's. */
-function markSubmitting(key: string | undefined, intent: unknown): () => void {
+function markSubmitting(key: string | undefined, write: WriteOf): () => void {
   if (key === undefined) return () => undefined;
   const token = Symbol(key);
-  submitting.set(key, { token, intent });
+  submitting.set(key, { ...write, token });
   return () => {
     if (submitting.get(key)?.token === token) submitting.delete(key);
   };
 }
 
-interface Waiting {
-  spec: WriteSpec<unknown>;
-  vars: unknown;
+interface Waiting extends WriteOf {
   key: string | undefined;
   /** Its optimistic change, applied when it was made. */
   undo: (() => void) | null;
@@ -216,27 +226,48 @@ function record(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
 }
 
 /** PRD G-1: a write tapped while the OS reports no connectivity. */
-export const OFFLINE_MESSAGE = "You're offline. Nothing was sent.";
-
-/** PRD G-5 (UX_SPEC §5): the mobile copy for a write the identity cannot pay for. */
-const CREDITS_SHORT =
-  "Your identity doesn't have enough credits for this. Top it up from your Dash wallet. Nothing was posted.";
-/** Web's copy points at a buy flow and a payment setting the app does not have. */
-const YAPP_SHORT = 'You need YAPP to do this on testnet. Get YAPP on yap.pr, then try again.';
+export const OFFLINE_MESSAGE = "You're offline. Try again when you're connected.";
 
 /**
- * A failed write's message: PRD G-5's copy when credits or YAPP are short,
- * else categorizeError's (PRD G-4), unless it has nothing specific to say.
+ * The mobile copy for the engine codes that have something the user can act
+ * on (PRD G-4, G-5; UX_SPEC §5.4 "Write failures"). Every other code
+ * (consensus details, sponsor fees, the engine's own restarts) says the
+ * write's own failure sentence. Web's `categorizeError` text never reaches a
+ * toast: it goes to diagnostics (`logFailure`).
  */
+const FAILURE_COPY: Partial<Record<EngineErrorData['code'], string>> = {
+  INSUFFICIENT_CREDITS: "You don't have enough credits for this. Top up from your Dash wallet.",
+  INSUFFICIENT_YAPP: 'You need YAPP for this.',
+  NOT_OWNER: "You can't do this from this account.",
+  MODERATION_BARRED: "You can't do this from this account.",
+  TARGET_GONE: 'This post no longer exists.',
+  APP_OUTDATED: 'Update Yappr and try again.',
+  STALE: 'Update Yappr and try again.',
+  BUILD_DEFECT: 'Something went wrong. Nothing was charged. Please report this.',
+  MEDIA_UNREADABLE: "That image link didn't work. Edit the post to fix or remove it.",
+};
+
+/** A failed write's message: the mobile copy for its code, else the write's own sentence (`fallback`). */
 export function writeFailureText(error: EngineErrorData | null, fallback: string): string {
-  if (error?.code === 'INSUFFICIENT_CREDITS') return CREDITS_SHORT;
-  if (error?.code === 'INSUFFICIENT_YAPP') return YAPP_SHORT;
-  return error && error.code !== 'UNKNOWN' && error.userMessage ? error.userMessage : fallback;
+  return (error && FAILURE_COPY[error.code]) ?? fallback;
 }
 
-/** "Open yap.pr" (PRD G-5): where YAPP is bought, for this variant's network. */
+/** A spec's failure sentence for these vars. */
+function failureSentence<V>(spec: WriteSpec<V>, vars: V): string {
+  return typeof spec.failureMessage === 'function' ? spec.failureMessage(vars) : spec.failureMessage;
+}
+
+/** Diagnostics only: what the engine said about a failed write (its code, consensus code and web's text). */
+function logFailure(ticket: WriteTicket): void {
+  const { error } = ticket;
+  if (!error) return;
+  const consensus = error.consensusCode === null ? '' : ` ${error.consensusCode}`;
+  appendLog('warn', 'host', `Write ${ticket.op} ${ticket.id} ${ticket.state}: ${error.code}${consensus}: ${error.userMessage}`);
+}
+
+/** "Get YAPP" (PRD G-5): where YAPP is bought, for this variant's network. */
 const openYapprWeb: ToastAction = {
-  label: 'Open yap.pr',
+  label: 'Get YAPP',
   onPress: () => {
     WebBrowser.openBrowserAsync(`https://yap.pr${config.webBasePath}`).catch((error: unknown) =>
       appendLog('warn', 'host', `Opening yap.pr failed: ${errorMessage(error)}`),
@@ -286,6 +317,15 @@ function settle(ticket: WriteTicket): void {
     case 'failed': {
       // The account's stored key no longer signs (AUTH-14; `receive` marked it): a retry would fail the same way.
       const sessionFailed = failedForSession(ticket);
+      if (ticket.error?.outcome === 'unknown' && !sessionFailed) {
+        // Final, yet it may have landed (PRD G-3): the change stays and nothing is said, as for an
+        // unconfirmed write; the next refresh shows the chain's truth (a post's card says it itself).
+        logFailure(ticket);
+        entry.undo = null;
+        tracked.delete(ticket.id);
+        if (latest) release(entry.key, true);
+        return;
+      }
       // Final unless the engine allows a retry.
       if (!ticket.retryable || sessionFailed) tracked.delete(ticket.id);
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
@@ -295,7 +335,8 @@ function settle(ticket: WriteTicket): void {
       if (sessionFailed) {
         failSessionExpired(signerOf(ticket));
       } else {
-        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, spec.failureMessage);
+        logFailure(ticket);
+        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
         if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
         else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
       }
@@ -306,22 +347,52 @@ function settle(ticket: WriteTicket): void {
     case 'unconfirmed':
       if (!latest) return;
       if (ticket.retryable) {
-        // A check proved it did not land.
+        // A check proved it did not land: the same sentence as a refusal.
+        logFailure(ticket);
         undo(entry);
-        fail(`Your ${spec.noun} didn't go through. Try again.`, retry);
+        fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
         release(entry.key, false);
-      } else {
-        const { announceUnconfirmed: announce } = spec;
-        if (typeof announce === 'function' ? announce(ticket, entry.vars) : announce !== false) {
-          toast('Not confirmed yet', {
-            action: { label: 'Check again', onPress: () => checkWrite(ticket.id) },
-          });
-        }
-        // It may have landed: send the newer intent, which is harmless if it did not. Not while its
-        // call still runs: the newer one would race it, so it waits for the call's answer.
-        if (!stillRunning(ticket)) release(entry.key, true);
+      } else if (!stillRunning(ticket)) {
+        // It may have landed (PRD G-3): nothing to say, the reconciler checks it (`watch`). Send the
+        // newer intent, which is harmless if it did not. Not while its call still runs: the newer one
+        // would race it, so it waits for the call's answer.
+        release(entry.key, true);
       }
   }
+}
+
+/**
+ * Hands an unknown outcome to the reconciler (`./reconcile`), and takes it
+ * back once the ticket settles: every unconfirmed ticket of the active
+ * account, followed by a spec or not, is checked automatically (5, 20, 80
+ * and 130 s after, then on foreground and on reads that show it).
+ */
+function watch(ticket: WriteTicket): void {
+  const key = ticketJob(ticket.id);
+  const active = useSessionStore.getState().session?.identityId ?? null;
+  const othersTicket = ticket.identityId !== null && active !== null && ticket.identityId !== active;
+  if (ticket.state !== 'unconfirmed' || ticket.retryable || othersTicket) {
+    stopReconciling(key);
+    return;
+  }
+  // Its call still runs past the engine's deadline: its answer settles it, so its checks never run out.
+  const running = stillRunning(ticket);
+  // What a read shows it by: the post it names or created, or (a message) its conversation.
+  const target = ticket.target;
+  const shown = [
+    target && 'id' in target ? target.id : null,
+    target && 'conversationKey' in target ? target.conversationKey : null,
+    ...ticket.documents.map((d) => d.id),
+  ];
+  reconcile(key, {
+    run: async () => {
+      const checked = await checkWrite(ticket.id);
+      return checked !== null && (checked.state !== 'unconfirmed' || checked.retryable);
+    },
+    shownIn: (ids) => shown.some((id) => id !== null && ids.has(id)),
+    canExhaust: !running,
+    episode: running ? 'running' : 'settled',
+  });
 }
 
 /** The pending write for `key` settled: send the write queued behind it, or drop it. */
@@ -344,7 +415,7 @@ function dropQueued(key: string | undefined): void {
   if (!next || key === undefined) return;
   queued.delete(key);
   next.undo?.();
-  fail(`Your ${next.spec.noun} didn't go through. Try again.`);
+  fail(failureSentence(next.spec, next.vars));
 }
 
 /** An untracked ticket (restored after an engine restart): follow it if a cut-short write recognises it. */
@@ -386,14 +457,59 @@ function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
   if (orphans.length > 0) adopt(ticket);
   const current = record(ticket, from);
   settle(current);
+  watch(current);
   return current;
+}
+
+/**
+ * The write on its way for `key`, whose change a read must not undo: the one
+ * queued behind the pending write (the latest intent), else the one whose
+ * call still runs.
+ */
+function onItsWay(key: string): WriteOf | undefined {
+  const waiting = queued.get(key) ?? submitting.get(key);
+  if (waiting) return waiting;
+  const id = latestByKey.get(key);
+  const entry = id === undefined ? undefined : tracked.get(id);
+  return entry && stillRunning(useWriteTickets.getState().byId[id ?? '']) ? entry : undefined;
+}
+
+/**
+ * A read just landed in query `hash`. Read from the chain before the writes
+ * on their way landed, it shows what they change as it was: each puts its
+ * change back on that read (`reapply`). A follow, then an unfollow queued
+ * behind it, would otherwise read as followed again when the profile is
+ * reopened, until a read after both.
+ */
+function keepChangesOverRead(hash: string): void {
+  const keys = new Set([...queued.keys(), ...submitting.keys(), ...latestByKey.keys()]);
+  const only = new Set([hash]);
+  for (const key of keys) {
+    const write = onItsWay(key);
+    write?.spec.reapply?.(write.vars, only);
+  }
 }
 
 let stopTracking: (() => void) | null = null;
 
-/** Follows `write.status` for the app's lifetime. Started by `startDataLayer` (and on the first write). */
+/**
+ * Follows `write.status`, and the reads that land while writes are on their
+ * way, for the app's lifetime. Started by `startDataLayer` (and on the first
+ * write).
+ */
 export function startWriteTracking(): () => void {
-  stopTracking ??= onEngineEvent('write.status', (ticket) => receive(ticket, 'event'));
+  if (!stopTracking) {
+    const stopTickets = onEngineEvent('write.status', (ticket) => receive(ticket, 'event'));
+    const stopReads = queryClient.getQueryCache().subscribe((event) => {
+      // A fetch's result; `setQueryData` (an optimistic change itself) is `manual`.
+      if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
+      keepChangesOverRead(event.query.queryHash);
+    });
+    stopTracking = () => {
+      stopTickets();
+      stopReads();
+    };
+  }
   return () => {
     stopTracking?.();
     stopTracking = null;
@@ -409,9 +525,12 @@ export function resetWriteTracking(): void {
   tracked.clear();
   followed.clear();
   latestByKey.clear();
+  // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
+  submitting.clear();
   queued.clear();
   orphans = [];
   useWriteTickets.setState({ byId: {} });
+  resetReconciler();
 }
 
 const NO_INTENT = Symbol('no intent');
@@ -419,7 +538,7 @@ const NO_INTENT = Symbol('no intent');
 /** What the write pending for `key` asks for, `NO_INTENT` when none is pending. */
 function pendingIntent(key: string): unknown {
   const marked = submitting.get(key);
-  if (marked) return marked.intent;
+  if (marked) return marked.spec.intent?.(marked.vars);
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
   if (!entry || !stillRunning(useWriteTickets.getState().byId[id!])) return NO_INTENT;
@@ -466,7 +585,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
   // A ticket the call made is no older than the call (a timeout answers long after the engine made it).
   const calledAt = Date.now();
-  const done = markSubmitting(key, spec.intent?.(vars));
+  const done = markSubmitting(key, { spec, vars });
   let revert = waiting.undo;
   try {
     revert ??= spec.optimistic?.(vars) ?? null;
@@ -497,7 +616,7 @@ async function send(waiting: Waiting): Promise<WriteResult> {
       failSessionExpired(signer);
     } else if (!spec.onRejected?.(error, vars)) {
       appendLog('warn', 'host', `Write refused: ${errorMessage(error)}`);
-      fail(spec.failureMessage);
+      fail(failureSentence(spec, vars));
     }
     return { status: 'refused', error };
   } finally {
@@ -515,6 +634,16 @@ export async function submitWrite<V>(spec: WriteSpec<V>, vars: V): Promise<Write
 }
 
 /**
+ * A ticket read straight from the engine (`writes.get`, `writes.list`):
+ * recorded and acted on as a `write.status` would be, so one still
+ * `unconfirmed` (from before a relaunch, which the engine does not report
+ * again) is checked by the reconciler too. Returns the copy to act on.
+ */
+export function noteTicket(ticket: WriteTicket): WriteTicket {
+  return receive(ticket, 'call');
+}
+
+/**
  * After an engine boot: follow the tickets it restored for writes a restart
  * cut short (`writes.list`). Called by the data layer on every new engine.
  */
@@ -523,15 +652,28 @@ export async function adoptRestoredWrites(): Promise<void> {
   for (const ticket of await engine.api.writes.list()) receive(ticket, 'call');
 }
 
-/** "Check again" for an unconfirmed write (`writes.check`); its `write.status` says the outcome. */
+/**
+ * One check of an unconfirmed write (`writes.check`); its `write.status` says
+ * the outcome. Quiet: the reconciler runs it, and a check that could not run
+ * proves nothing (null), so it is simply run again later.
+ */
 export async function checkWrite(ticketId: string): Promise<WriteTicket | null> {
   try {
     return receive(await engine.api.writes.check(ticketId), 'call');
   } catch (error) {
     appendLog('warn', 'host', `Check failed: ${errorMessage(error)}`);
-    toast.error("Couldn't check. Try again in a moment.");
     return null;
   }
+}
+
+/**
+ * Checks an unconfirmed write now, through the reconciler (its `checking`
+ * state shows): a tap on a write whose automatic checks ran out. The
+ * ticket as it stands after the check.
+ */
+export async function recheckWrite(ticketId: string): Promise<WriteTicket | null> {
+  if ((await recheck(ticketJob(ticketId))) === null) return checkWrite(ticketId);
+  return useWriteTickets.getState().byId[ticketId] ?? null;
 }
 
 /**
@@ -543,26 +685,29 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   const entry = tracked.get(ticketId);
   if (!entry) return null;
   const { key } = entry;
-  if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) {
-    toast('Already updated');
-    return null;
-  }
+  // A stale Retry (a newer write for its key decides the state, or one is on its way): nothing to do.
+  if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) return null;
   if (isOffline()) {
     toast(OFFLINE_MESSAGE);
     return null;
   }
-  const done = markSubmitting(key, entry.spec.intent?.(entry.vars));
+  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
   try {
     if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
     return receive(await engine.api.writes.retry(ticketId), 'call');
   } catch (error) {
     undo(entry);
     appendLog('warn', 'host', `Retry refused: ${errorMessage(error)}`);
-    fail(entry.spec.failureMessage);
+    fail(failureSentence(entry.spec, entry.vars));
     return null;
   } finally {
     done();
   }
+}
+
+/** A ticket by id, as it stands now (outside React). */
+export function writeTicketOf(ticketId: string): WriteTicket | null {
+  return useWriteTickets.getState().byId[ticketId] ?? null;
 }
 
 /** A ticket by id, live. */
@@ -578,6 +723,7 @@ export interface UseWrite<V> {
   /** The last ticket this hook submitted, kept current by `write.status`. */
   ticket: WriteTicket | null;
   status: 'idle' | WriteState;
+  /** Check the ticket now, quietly (the reconciler checks it on its own anyway). */
   check: () => Promise<WriteTicket | null>;
   retry: () => Promise<WriteTicket | null>;
 }
@@ -611,7 +757,7 @@ export function useWrite<V>(spec: WriteSpec<V>): UseWrite<V> {
     },
     [send],
   );
-  const check = useCallback(async () => (ticketId ? checkWrite(ticketId) : null), [ticketId]);
+  const check = useCallback(async () => (ticketId ? recheckWrite(ticketId) : null), [ticketId]);
   const retry = useCallback(async () => (ticketId ? retryWrite(ticketId) : null), [ticketId]);
 
   return { run, send, ticket, status: ticket?.state ?? 'idle', check, retry };

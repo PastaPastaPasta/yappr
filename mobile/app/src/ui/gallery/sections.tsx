@@ -331,7 +331,7 @@ function FeedbackSection() {
             label="Success"
             size="sm"
             variant="secondary"
-            onPress={() => toast.success('Post created successfully!')}
+            onPress={() => toast.success('Posted')}
           />
           <Button
             label="Error"
@@ -375,8 +375,7 @@ function FeedbackSection() {
       <Section title="Write status">
         <WriteStatus status={{ state: 'posting' }} />
         <WriteStatus status={{ state: 'threadProgress', index: 2, total: 5 }} />
-        <WriteStatus status={{ state: 'unconfirmed' }} onCheckAgain={noop} />
-        <WriteStatus status={{ state: 'unconfirmed', canEdit: true }} onCheckAgain={noop} onEdit={noop} />
+        <WriteStatus status={{ state: 'unconfirmed' }} onEdit={noop} />
         <WriteStatus status={{ state: 'failed' }} onRetry={noop} onEdit={noop} />
         <WriteStatus status={{ state: 'partial', posted: 2, total: 5 }} onRetryRest={noop} />
       </Section>
@@ -588,7 +587,7 @@ function PostCardsC() {
       <Bleed title="Stubs: tombstone, removed, deleted, failed, unavailable, blocked">
         <PostCard post={POSTS.tombstone} />
         <PostStub state="removed" reason="Spam" />
-        <PostStub state="removed" kind="reply" kept="#dash · posted Sep 30" />
+        <PostStub state="removed" kind="reply" />
         <PostStub state="deleted" />
         <PostStub state="failed" kind="reply" />
         <PostStub state="unavailable" />
@@ -603,7 +602,7 @@ function PostCardsC() {
         <PostCard
           post={{ ...POSTS.optimistic, id: 'opt-2' }}
           variant="optimistic"
-          writeStatus={{ status: { state: 'unconfirmed' }, onCheckAgain: noop }}
+          writeStatus={{ status: { state: 'unconfirmed' }, onEdit: noop }}
         />
         <PostCard
           post={{ ...POSTS.optimistic, id: 'opt-3' }}
