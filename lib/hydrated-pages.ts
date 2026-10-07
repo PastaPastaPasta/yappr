@@ -37,3 +37,21 @@ export function appendPage<K, V>(pages: HydratedPages<K, V>, slice: readonly K[]
   })
   return { ...pages, loaded: end, items: [...pages.items, ...items] }
 }
+
+/** A removal from a list: the keys and the hydrated items to keep. */
+export interface PagesDrop<K, V> {
+  keepKey: (key: K) => boolean
+  keepItem: (item: V) => boolean
+}
+
+/**
+ * The keys and items of a hydration that was in flight while `drops` were
+ * made, without what those drops removed: a deleted bookmark whose post was
+ * still loading must not reappear when the load lands.
+ */
+export function withoutDropped<K, V>(drops: readonly PagesDrop<K, V>[], keys: readonly K[], items: readonly V[]): { keys: K[]; items: V[] } {
+  return {
+    keys: keys.filter(key => drops.every(drop => drop.keepKey(key))),
+    items: items.filter(item => drops.every(drop => drop.keepItem(item))),
+  }
+}

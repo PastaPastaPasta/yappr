@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useRef, useState } from 'react'
-import { appendPage, type HydratedPages } from '@/lib/hydrated-pages'
+import { appendPage, dropFromPages, withoutDropped, type HydratedPages, type PagesDrop } from '@/lib/hydrated-pages'
 
 /**
  * A list read whole (every id, no cap) but hydrated a page at a time: only
@@ -20,6 +20,8 @@ export function useHydratedPages<K, V>(hydrate: (slice: K[]) => Promise<V[]>, pa
   const loadingRef = useRef(false)
   const hydrateRef = useRef(hydrate)
   hydrateRef.current = hydrate
+  // Drops made while a reset or loadMore is in flight, applied when it lands.
+  const inFlightDrops = useRef<PagesDrop<K, V>[]>([])
 
   const setPages = useCallback((update: HydratedPages<K, V> | null | ((prev: HydratedPages<K, V> | null) => HydratedPages<K, V> | null)) => {
     const next = typeof update === 'function' ? update(pagesRef.current) : update
@@ -32,12 +34,14 @@ export function useHydratedPages<K, V>(hydrate: (slice: K[]) => Promise<V[]>, pa
     const current = ++generation.current
     // Held for the whole reset: a loadMore now would page the list being replaced.
     loadingRef.current = true
+    inFlightDrops.current = []
     setLoadingMore(false)
     try {
       const slice = keys.slice(0, pageSize)
-      const items = slice.length > 0 ? await hydrateRef.current(slice) : []
+      const hydrated = slice.length > 0 ? await hydrateRef.current(slice) : []
       if (current !== generation.current) return null
-      const next = { keys, loaded: slice.length, items }
+      const kept = withoutDropped(inFlightDrops.current, keys, hydrated)
+      const next = { keys: kept.keys, loaded: withoutDropped(inFlightDrops.current, slice, []).keys.length, items: kept.items }
       setPages(next)
       return next
     } finally {
@@ -50,11 +54,13 @@ export function useHydratedPages<K, V>(hydrate: (slice: K[]) => Promise<V[]>, pa
     if (!start || start.loaded >= start.keys.length || loadingRef.current) return
     const current = generation.current
     loadingRef.current = true
+    inFlightDrops.current = []
     setLoadingMore(true)
     try {
       const slice = start.keys.slice(start.loaded, start.loaded + pageSize)
-      const items = await hydrateRef.current(slice)
+      const hydrated = await hydrateRef.current(slice)
       if (current !== generation.current) return
+      const { items } = withoutDropped(inFlightDrops.current, [], hydrated)
       setPages((prev) => prev && appendPage(prev, slice, items))
     } finally {
       if (current === generation.current) {
@@ -63,6 +69,15 @@ export function useHydratedPages<K, V>(hydrate: (slice: K[]) => Promise<V[]>, pa
       }
     }
   }, [pageSize, setPages])
+
+  /**
+   * Remove keys and their items (an unfollow, a deleted bookmark), including
+   * from a page still hydrating, so a load that lands later cannot bring them back.
+   */
+  const drop = useCallback((keepKey: (key: K) => boolean, keepItem: (item: V) => boolean) => {
+    if (loadingRef.current) inFlightDrops.current.push({ keepKey, keepItem })
+    setPages((prev) => prev && dropFromPages(prev, keepKey, keepItem))
+  }, [setPages])
 
   /** Forget the list (and anything in flight for it). */
   const clear = useCallback(() => {
@@ -75,6 +90,7 @@ export function useHydratedPages<K, V>(hydrate: (slice: K[]) => Promise<V[]>, pa
   return {
     pages,
     setPages,
+    drop,
     reset,
     loadMore,
     clear,

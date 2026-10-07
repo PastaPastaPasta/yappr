@@ -3,7 +3,8 @@ import bs58 from 'bs58'
 
 const query = vi.hoisted(() => vi.fn())
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }))
-vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }))
+const { createDocument } = vi.hoisted(() => ({ createDocument: vi.fn() }))
+vi.mock('./state-transition-service', () => ({ stateTransitionService: { createDocument } }))
 import { followService } from './follow-service'
 
 beforeEach(() => {
@@ -60,5 +61,47 @@ describe('complete connection lists', () => {
       orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
       limit: 50,
     })
+  })
+})
+
+describe('the cached following ids of the new-posts check', () => {
+  const VIEWER = '111111111'
+  const TARGET = '211111111'
+  const follow = (followingId: string) => ({ $id: `f-${followingId}`, $ownerId: VIEWER, $createdAt: 1, followingId })
+
+  it('holds the set, and drops it when a follow settles', async () => {
+    query.mockResolvedValue([follow('311111111')])
+    expect(await followService.getFollowingIdsCached(VIEWER)).toEqual(['311111111'])
+    expect(await followService.getFollowingIdsCached(VIEWER)).toEqual(['311111111'])
+    expect(query).toHaveBeenCalledTimes(1)
+
+    // getFollow finds no follow; the create succeeds.
+    query.mockResolvedValueOnce([])
+    createDocument.mockResolvedValue({ success: true })
+    await followService.followUser(VIEWER, TARGET)
+    query.mockResolvedValue([follow('311111111'), follow(TARGET)])
+    expect(await followService.getFollowingIdsCached(VIEWER)).toEqual(['311111111', TARGET])
+  })
+
+  it('does not cache a read that started before a follow and landed after it settled', async () => {
+    // Its own viewer: the test above left VIEWER's set cached.
+    const viewer = '411111111'
+    // A poll's read is in flight with the old set...
+    let landRead!: (docs: ReturnType<typeof follow>[]) => void
+    query.mockReturnValueOnce(new Promise(resolve => { landRead = resolve }))
+    const reading = followService.getFollowingIdsCached(viewer)
+    await vi.waitFor(() => expect(query).toHaveBeenCalledTimes(1))
+
+    // ...while a follow runs to completion.
+    query.mockResolvedValueOnce([])
+    createDocument.mockResolvedValue({ success: true })
+    await followService.followUser(viewer, TARGET)
+
+    landRead([follow('311111111')])
+    expect(await reading).toEqual(['311111111'])
+
+    // The old set was not cached: the next check reads the new one.
+    query.mockResolvedValue([follow('311111111'), follow(TARGET)])
+    expect(await followService.getFollowingIdsCached(viewer)).toEqual(['311111111', TARGET])
   })
 })

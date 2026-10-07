@@ -11,6 +11,7 @@ import { loadForYouFeed } from '@/lib/feed/load-for-you-feed';
 import { getFeedItemTimestamp, sortFeedByTimestamp, transformRawPost } from '@/lib/feed/transform-raw-post';
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts';
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones';
+import { markAfterCheck, newPostsCheckFrom, type NewPostsMark } from '@/lib/feed/new-posts-mark';
 import { followService, postService } from '@/lib/services';
 import { queryPostsByOwnersSince, queryPostsSince } from '@/lib/services/document-service';
 
@@ -91,6 +92,8 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
   const [newestPostTimestamp, setNewestPostTimestamp] = useState<number | null>(null);
   // Late page/background results belong to the feed view that requested them.
   const loadGenerationRef = useRef(0);
+  // How far the new-posts checks of this feed view have read without a gap.
+  const newPostsMarkRef = useRef<NewPostsMark | null>(null);
   const invalidateFeedLoads = useCallback(() => { loadGenerationRef.current++; }, []);
   const reconcilingPostIdsRef = useRef<Set<string>>(new Set());
 
@@ -425,27 +428,31 @@ export function useFeedData({ activeTab, feedLanguage, enabled = true }: UseFeed
     const generation = loadGenerationRef.current;
 
     try {
-      // Polled through: the newest post on screen or already waiting behind
-      // the pill, so each check reads only what is newer than the last one found.
-      const polledThrough = Math.max(newestPostTimestamp, ...pendingNewPosts.map(getFeedItemTimestamp));
-      logger.debug('Feed: Checking for new posts since', new Date(polledThrough).toISOString());
+      // Read from the newest post on screen, or from where the last complete
+      // check of this view got to, so each check reads only what is newer.
+      const scannedThrough = newPostsCheckFrom(newestPostTimestamp, newPostsMarkRef.current, generation);
+      logger.debug('Feed: Checking for new posts since', new Date(scannedThrough).toISOString());
       const OVERLAP_MS = 2000;
-      const sinceTimestamp = Math.max(0, polledThrough - OVERLAP_MS);
+      const sinceTimestamp = Math.max(0, scannedThrough - OVERLAP_MS);
 
       let newPosts: Array<Record<string, unknown>> = [];
+      let complete = true;
 
       if (activeTab === 'following' && user?.identityId) {
         // Held a minute: the whole following list is not re-read every 15 s.
         const followingIds = await followService.getFollowingIdsCached(user.identityId);
 
         if (followingIds.length > 0) {
-          newPosts = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50);
+          ({ posts: newPosts, complete } = await queryPostsByOwnersSince(followingIds, sinceTimestamp, 50));
         }
       } else {
         newPosts = await queryPostsSince(sinceTimestamp, 50, feedLanguage || 'en');
       }
 
-      if (generation !== loadGenerationRef.current || newPosts.length === 0) return;
+      if (generation !== loadGenerationRef.current) return;
+      // A partial scan may have missed posts older than its newest: it leaves the mark.
+      newPostsMarkRef.current = markAfterCheck(newPostsMarkRef.current, generation, scannedThrough, { posts: newPosts, complete });
+      if (newPosts.length === 0) return;
 
       logger.debug(`Feed: Found ${newPosts.length} new posts`);
 

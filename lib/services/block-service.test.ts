@@ -306,6 +306,17 @@ describe('the blockFilter on unblock', () => {
     expect(written().mightContain(authors[0])).toBe(false)
   })
 
+  it('keeps a block this tab just broadcast that the fresh read does not show yet, cache complete or not', async () => {
+    // A cold cache: the block of authors[4] is recorded locally, in a list not known to be complete.
+    addOwnBlock(viewer, authors[4])
+    expect(getOwnBlocksFromCache(viewer)).toBeNull()
+    query.mockImplementation(network([authors[1]], authors[0]))
+    await blockService.unblockUser(viewer, authors[0])
+    expect(written().mightContain(authors[4])).toBe(true)
+    expect(written().mightContain(authors[1])).toBe(true)
+    expect(written().mightContain(authors[0])).toBe(false)
+  })
+
   it('writes nothing when the user has no filter', async () => {
     query.mockImplementation(network([authors[1]], authors[0], false))
     expect(await blockService.unblockUser(viewer, authors[0])).toEqual({ success: true })

@@ -28,7 +28,7 @@ import { formatNumber } from '@/lib/utils'
 import { useHydratedPages } from '@/hooks/use-hydrated-pages'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
-import { dropFromPages, type HydratedPages } from '@/lib/hydrated-pages'
+import type { HydratedPages } from '@/lib/hydrated-pages'
 
 export type ConnectionKind = 'following' | 'followers'
 
@@ -190,7 +190,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     )
   }, [kind, isOwnProfile, viewerId])
   const list = useHydratedPages(hydrateUsers, PAGE_SIZE)
-  const { reset: resetList, clear: clearList, setPages } = list
+  const { reset: resetList, clear: clearList, setPages, drop: dropFromList } = list
   const data = list.pages?.items ?? null
   const total = list.pages?.keys.length ?? 0
   // False when the followers list stopped at FOLLOWERS_CAP.
@@ -286,7 +286,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     if (kind === 'followers') {
       setPages((prev) => prev && { ...prev, items: prev.items.map((u) => (u.id === userId ? { ...u, isFollowing } : u)) })
     } else if (!isFollowing) {
-      setPages((prev) => prev && dropFromPages(prev, (id) => id !== userId, (u) => u.id !== userId))
+      dropFromList((id) => id !== userId, (u) => u.id !== userId)
     }
   }
 

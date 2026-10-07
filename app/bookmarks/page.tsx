@@ -24,7 +24,6 @@ import type { Post } from '@/lib/types'
 import { useHydratedPages } from '@/hooks/use-hydrated-pages'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
-import { dropFromPages } from '@/lib/hydrated-pages'
 
 /** Bookmarked posts fetched and enriched per page. */
 const PAGE_SIZE = 30
@@ -55,7 +54,7 @@ function BookmarksPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'recent' | 'oldest'>('recent')
   const list = useHydratedPages(hydrateBookmarks, PAGE_SIZE)
-  const { reset: resetList, setPages } = list
+  const { reset: resetList, drop: dropFromList } = list
   const bookmarks = list.pages?.items ?? []
   const bookmarkCount = list.pages?.keys.length ?? 0
   const scroll = useInfiniteScroll({
@@ -102,8 +101,8 @@ function BookmarksPage() {
   }
 
   const dropBookmarks = useCallback((postIds: Set<string>) => {
-    setPages(prev => prev && dropFromPages(prev, doc => !postIds.has(doc.postId), post => !postIds.has(post.id)))
-  }, [setPages])
+    dropFromList(doc => !postIds.has(doc.postId), post => !postIds.has(post.id))
+  }, [dropFromList])
 
   const removeBookmark = async (postId: string) => {
     if (!user || isMutating) return

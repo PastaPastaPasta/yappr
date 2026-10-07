@@ -14,6 +14,7 @@ import {
   addOwnBlock,
   removeOwnBlock,
   getOwnBlocksFromCache,
+  getRecordedOwnBlocks,
   setOwnBlocks,
   getConfirmedBlock,
   addConfirmedBlocksBatch,
@@ -428,10 +429,10 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       if (!existing) return
       // A fresh read: this tab's cached list misses blocks made elsewhere, and
       // a filter that misses a block hides nothing (a miss is a definite "not
-      // blocked"). The cache adds blocks this tab broadcast that the read may
-      // not show yet.
+      // blocked"). Every block this tab recorded is added too, complete list
+      // or not, for those it broadcast that the read may not show yet.
       const fresh = (await this.getUserBlocks(userId)).map(block => block.blockedId)
-      const remaining = [...fresh, ...(getOwnBlocksFromCache(userId) ?? [])].filter(id => id && id !== unblockedId)
+      const remaining = [...fresh, ...getRecordedOwnBlocks(userId)].filter(id => id && id !== unblockedId)
       await this.writeBloomFilter(userId, buildBloomFilter(remaining), existing)
     } catch (error) {
       logger.error('Error rebuilding bloom filter:', error)

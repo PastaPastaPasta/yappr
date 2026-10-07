@@ -59,15 +59,21 @@ export function newestDistinctDocuments(
  * would be refused past 100 owners and would drop the newest posts of
  * high-id owners. Instead each batch of at most 100 owners is read to the
  * end, and the limit applies after merging.
+ *
+ * `complete` is false when a continuation page failed and a batch kept only
+ * the posts read before it: owners later in that batch may have newer posts
+ * than some returned, so a caller must not treat the scan as covering
+ * everything up to the newest post it got.
  */
 export async function queryPostsByOwnersSince(
   ownerIds: string[],
   sinceTimestamp: number,
   limit = 50,
   contractId = YAPPR_CONTRACT_ID
-): Promise<Record<string, unknown>[]> {
+): Promise<{ posts: Record<string, unknown>[]; complete: boolean }> {
   const owners = Array.from(new Set(ownerIds.filter(Boolean)));
-  if (owners.length === 0) return [];
+  if (owners.length === 0) return { posts: [], complete: true };
+  let complete = true;
 
   const sdk = await getEvoSdk();
   const batches = await mapLimit(chunk(owners, MAX_IN_CLAUSE_VALUES), 3, async (batch) => {
@@ -90,12 +96,13 @@ export async function queryPostsByOwnersSince(
       }, { maxResults: NEW_POSTS_BATCH_CAP, inClause: true });
     } catch (error) {
       if (read.length === 0) throw error;
+      complete = false;
       logger.warn('queryPostsByOwnersSince: a continuation page failed; keeping the posts read so far', error);
     }
     return read;
   });
 
-  return newestDistinctDocuments(batches.flat(), limit);
+  return { posts: newestDistinctDocuments(batches.flat(), limit), complete };
 }
 
 /**

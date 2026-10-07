@@ -32,7 +32,37 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Follow a user
    */
   async followUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
-    this.followingIdsCache.delete(followerUserId);
+    return this.changingFollowing(followerUserId, () => this.writeFollow(followerUserId, targetUserId));
+  }
+
+  /**
+   * Unfollow a user
+   */
+  async unfollowUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
+    return this.changingFollowing(followerUserId, () => this.writeUnfollow(followerUserId, targetUserId));
+  }
+
+  /**
+   * Run a follow or unfollow of `followerUserId`'s, dropping their cached
+   * following ids when it starts and again when it settles, and moving their
+   * generation both times, so no read that overlaps the write can cache the
+   * set from before it.
+   */
+  private async changingFollowing<T>(followerUserId: string, write: () => Promise<T>): Promise<T> {
+    this.invalidateFollowingIds(followerUserId);
+    try {
+      return await write();
+    } finally {
+      this.invalidateFollowingIds(followerUserId);
+    }
+  }
+
+  private invalidateFollowingIds(userId: string): void {
+    this.followingIdsGeneration.set(userId, (this.followingIdsGeneration.get(userId) ?? 0) + 1);
+    this.followingIdsCache.delete(userId);
+  }
+
+  private async writeFollow(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
     // v9 refuses a self-follow in consensus (distinctFrom $ownerId, 10419);
     // earlier cuts accept one, which no UI means to write. Refuse on every cut
     // before a broadcast.
@@ -74,11 +104,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     }
   }
 
-  /**
-   * Unfollow a user
-   */
-  async unfollowUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
-    this.followingIdsCache.delete(followerUserId);
+  private async writeUnfollow(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
     try {
       const follow = await this.getFollow(targetUserId, followerUserId);
       if (!follow) {
@@ -238,6 +264,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
 
   /** `getFollowingIds` answers held for a minute; a follow or unfollow drops the follower's. */
   private followingIdsCache = new TtlMap<string, string[]>(60_000);
+  /** Per user, moved by every follow/unfollow start and end: a read spanning one is not cached. */
+  private followingIdsGeneration = new Map<string, number>();
 
   /**
    * Whom a user follows, held for a minute: for the new-posts check, which
@@ -247,8 +275,10 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   async getFollowingIdsCached(userId: string): Promise<string[]> {
     const cached = this.followingIdsCache.get(userId);
     if (cached) return cached;
+    const generation = this.followingIdsGeneration.get(userId) ?? 0;
     const ids = (await this.getFollowing(userId, { throwOnError: true })).map(f => f.followingId).filter(Boolean);
-    this.followingIdsCache.set(userId, ids);
+    // A follow or unfollow started or settled meanwhile: this set may predate it.
+    if (generation === (this.followingIdsGeneration.get(userId) ?? 0)) this.followingIdsCache.set(userId, ids);
     return ids;
   }
 

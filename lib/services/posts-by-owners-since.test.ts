@@ -49,8 +49,9 @@ describe('queryPostsByOwnersSince', () => {
 
   it('keeps the newest posts of high-id owners instead of the first rows in owner order', async () => {
     const owners = Array.from({ length: 250 }, (_, i) => owner(i))
-    const posts = await queryPostsByOwnersSince(owners, 5_000, 50, 'contract')
+    const { posts, complete } = await queryPostsByOwnersSince(owners, 5_000, 50, 'contract')
 
+    expect(complete).toBe(true)
     expect(posts).toHaveLength(50)
     // The 50 newest are the last 25 owners' two posts each, newest first.
     expect(posts[0].$id).toBe('owner-249-b')
@@ -61,7 +62,7 @@ describe('queryPostsByOwnersSince', () => {
 
   it('pages a batch past its first 100 rows until an empty page', async () => {
     const owners = Array.from({ length: 80 }, (_, i) => owner(i))
-    const posts = await queryPostsByOwnersSince(owners, 5_000, 500, 'contract')
+    const { posts } = await queryPostsByOwnersSince(owners, 5_000, 500, 'contract')
     expect(posts).toHaveLength(160)
     // 100 + 60 + the empty page that proves the end.
     expect(query).toHaveBeenCalledTimes(3)
@@ -74,16 +75,19 @@ describe('queryPostsByOwnersSince', () => {
       if (q.startAfter) throw new Error('continuation refused')
       return serve(q)
     })
-    expect(await queryPostsByOwnersSince(owners, 5_000, 500, 'contract')).toHaveLength(100)
+    const partial = await queryPostsByOwnersSince(owners, 5_000, 500, 'contract')
+    expect(partial.posts).toHaveLength(100)
+    // The caller must not treat the scan as covering everything up to its newest post.
+    expect(partial.complete).toBe(false)
 
     query.mockRejectedValue(new Error('offline'))
     await expect(queryPostsByOwnersSince(owners, 5_000, 500, 'contract')).rejects.toThrow('offline')
   })
 
   it('de-duplicates repeated owners and makes no query without any', async () => {
-    expect(await queryPostsByOwnersSince([], 0)).toEqual([])
+    expect(await queryPostsByOwnersSince([], 0)).toEqual({ posts: [], complete: true })
     expect(query).not.toHaveBeenCalled()
-    const posts = await queryPostsByOwnersSince([owner(1), owner(1), ''], 0, 50, 'contract')
+    const { posts } = await queryPostsByOwnersSince([owner(1), owner(1), ''], 0, 50, 'contract')
     expect(posts.map(post => post.$id)).toEqual(['owner-001-b', 'owner-001-a'])
     expect((query.mock.calls[0][0] as PostQuery).where[0][2]).toEqual([owner(1)])
   })

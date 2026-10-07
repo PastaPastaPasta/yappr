@@ -207,7 +207,8 @@ export const feed = {
     let raw: Record<string, unknown>[]
     if (query.tab === 'following') {
       const ids = await followService.getFollowingIdsCached(requireViewer('The Following feed'))
-      raw = ids.length > 0 ? await queryPostsByOwnersSince(ids, sinceMs, NEW_POSTS_LIMIT) : []
+      // The app polls from the posts it holds (`since`), so a partial scan is simply re-read next time.
+      raw = ids.length > 0 ? (await queryPostsByOwnersSince(ids, sinceMs, NEW_POSTS_LIMIT)).posts : []
     } else {
       raw = await queryPostsSince(sinceMs, NEW_POSTS_LIMIT, feedLanguage() || 'en')
     }

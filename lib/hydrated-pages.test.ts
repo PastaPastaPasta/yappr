@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendPage, dropFromPages } from './hydrated-pages'
+import { appendPage, dropFromPages, withoutDropped } from './hydrated-pages'
 
 describe('dropFromPages', () => {
   const pages = { keys: ['a', 'b', 'c', 'd', 'e'], loaded: 3, items: ['A', 'B', 'C'] }
@@ -35,5 +35,20 @@ describe('appendPage', () => {
     const next = appendPage(dropped, ['d', 'e'], ['D'])
     expect(next.loaded).toBe(4)
     expect(next.keys.slice(next.loaded)).toEqual([])
+  })
+})
+
+describe('withoutDropped', () => {
+  it('drops from a landing hydration what was removed while it was in flight', () => {
+    // Clear all removed d and e while the page [d, e] was hydrating.
+    const drops = [{ keepKey: (key: string) => key !== 'd' && key !== 'e', keepItem: (item: string) => item !== 'D' && item !== 'E' }]
+    expect(withoutDropped(drops, ['d', 'e'], ['D', 'E'])).toEqual({ keys: [], items: [] })
+    const pages = dropFromPages({ keys: ['a', 'b', 'c', 'd', 'e'], loaded: 3, items: ['A', 'B', 'C'] }, drops[0].keepKey, drops[0].keepItem)
+    const next = appendPage(pages, ['d', 'e'], withoutDropped(drops, ['d', 'e'], ['D', 'E']).items)
+    expect(next).toEqual({ keys: ['a', 'b', 'c'], loaded: 3, items: ['A', 'B', 'C'] })
+  })
+
+  it('keeps everything when nothing was dropped', () => {
+    expect(withoutDropped([], ['x'], ['X'])).toEqual({ keys: ['x'], items: ['X'] })
   })
 })
