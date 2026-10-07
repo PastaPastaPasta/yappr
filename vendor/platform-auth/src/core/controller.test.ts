@@ -29,6 +29,12 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     secretStore: {
       hasPrivateKey: async () => true,
       storePrivateKey: async () => undefined,
+      clearPrivateKey: async () => undefined,
+      clearEncryptionKey: async () => undefined,
+      clearEncryptionKeyType: async () => undefined,
+      clearTransferKey: async () => undefined,
+      clearLoginKey: async () => undefined,
+      clearAuthVaultDek: async () => undefined,
     } as unknown as SecretStore,
     identity: {
       getIdentity: async (identityId) => ({ id: identityId, balance: 1, publicKeys: [] }),
@@ -79,18 +85,34 @@ describe('PlatformAuthController username sync', () => {
     expect(storedUser()?.username).toBe('alice.dash')
   })
 
-  it('does not overwrite a username set while the restore lookup was in flight', async () => {
+  it.each([null, 'other.dash'])('does not let a restore lookup (%s) overwrite a username set while it was in flight', async (answer) => {
     let finish: (username: string | null) => void = () => undefined
     const { controller, storedUser } = setup(() => new Promise((resolve) => {
       finish = resolve
-    }))
+    }), 'forged')
 
     await controller.restoreSession()
     await controller.setUsername('fresh.dash')
-    finish(null)
+    finish(answer)
+    await new Promise((resolve) => setTimeout(resolve, 0))
 
-    await vi.waitFor(() => expect(controller.getState().user?.username).toBe('fresh.dash'))
+    expect(controller.getState().user?.username).toBe('fresh.dash')
     expect(storedUser()?.username).toBe('fresh.dash')
+  })
+
+  it('does not write a restore lookup into a session that logged out meanwhile', async () => {
+    let finish: (username: string | null) => void = () => undefined
+    const { controller, storedUser } = setup(() => new Promise((resolve) => {
+      finish = resolve
+    }), 'forged')
+
+    await controller.restoreSession()
+    await controller.logout()
+    finish('real.dash')
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(controller.getState().user).toBeNull()
+    expect(storedUser()).toBeUndefined()
   })
 
   it('refreshUsername clears, replaces, or keeps the stored username', async () => {
