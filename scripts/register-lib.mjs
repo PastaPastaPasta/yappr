@@ -1,10 +1,11 @@
 /**
- * What the two registration scripts share for the beta.3 contract grammar:
- * appointing moderators at publish time and auditing the moderation
+ * What the two registration scripts (and the offline validator) share for the
+ * moderation grammar: the interim each network registers an elected contract
+ * with, appointing moderators at publish time, and auditing the moderation
  * declarations off the PARSED contract.
  */
 import bs58 from 'bs58';
-import { referenceKindMismatch } from './contract-probes.mjs';
+import { INTERIM_KINDS, referenceKindMismatch } from './contract-probes.mjs';
 import { describeErr } from './owner-keys.mjs';
 
 /** The parsed config hands appointed identities back as bytes; print them as ids. */
@@ -13,6 +14,35 @@ export function renderModeration(moderation) {
   if (!identities) return JSON.stringify(moderation);
   const rendered = identities.map((id) => (typeof id === 'string' ? id : bs58.encode(Uint8Array.from(Object.values(id)))));
   return JSON.stringify({ ...moderation, moderators: { ...moderation.moderators, identities: rendered } });
+}
+
+/**
+ * The interim each network registers an elected contract with, unless the
+ * caller names one: mainnet `notYetUsable` (nobody moderates and the moderated
+ * types stay closed until a team is seated); every other network keeps the
+ * file's interim. The committed files declare `contractOwner`, so one file
+ * serves a devnet, testnet (undecided: pass `--interim` to change it) and mainnet.
+ */
+const NETWORK_INTERIM = { mainnet: 'notYetUsable' };
+
+/**
+ * The config a contract registers with on `network`: an elected declaration's
+ * `interim` replaced by `interim` (a kind from INTERIM_KINDS), or by the
+ * network's default (NETWORK_INTERIM). Any other config is returned
+ * untouched. `appointedModerators` needs identities, so it can only come from
+ * the file, never from this override.
+ */
+export function withInterim(config, { network, interim } = {}) {
+  const moderators = config?.moderation?.moderators;
+  if (interim !== undefined && !INTERIM_KINDS.includes(interim)) throw new Error(`--interim must be one of ${INTERIM_KINDS.join(', ')} (got "${interim}")`);
+  if (interim === 'appointedModerators') throw new Error('--interim appointedModerators needs identities; declare them in the contract file');
+  if (moderators?.$type !== 'elected') {
+    if (interim !== undefined) throw new Error('--interim was passed, but the contract declares no elected moderation');
+    return config;
+  }
+  const kind = interim ?? NETWORK_INTERIM[network];
+  if (kind === undefined || kind === moderators.interim?.$type) return config;
+  return { ...config, moderation: { ...config.moderation, moderators: { ...moderators, interim: { $type: kind } } } };
 }
 
 /**
