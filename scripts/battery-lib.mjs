@@ -317,7 +317,9 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
       () => (agreement
-        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment: noPayment ? {} : paymentInfo(tokenCost) })
+        // The derived id is kept before the broadcast, so a create whose wait throws after it
+        // landed is still found by id (v7 blogPost/blogComment have no owner index to search).
+        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment: noPayment ? {} : paymentInfo(tokenCost), onDerivedId: (derived) => { id = derived; } })
         : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
