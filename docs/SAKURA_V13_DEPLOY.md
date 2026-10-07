@@ -105,6 +105,11 @@ The first write of each kind cost more than later ones (a new index path): the f
 
 - The first post of each run pays for new index paths (126.1M in run 1, about 84M after), so the 97.9M post mean sits between the two. The estimator's "later" figure (74.8M) is close to the steady state.
 - Image posts measured below the plain post because each ran after the author's posts already existed: per image, a post costs about 1.8M more (85.5M for one, 91.0M for four).
+- **Same day, same chain:** a v12 copy (`9rmMGgz2…`) re-measured on warm index paths matches v13's runs 2 and 3:
+  - post: v12 83.8M against 83.6–84.0M on v13;
+  - reply: v12 97.4M against 90.7–91.0M on v13 (about 6.5M cheaper);
+  - like: v12 16.3M, flat on v13;
+  - reply like: v12 10.1M against 9.7M on v13.
 - A tombstone now refunds 17.3M (about 1¢), where v12 refunded about 0: leaving out `live` takes the post off `ownerAndTime` and its counters.
 - Reply likes and replies are cheaper (no `byAuthorReply` counter). Likes and posts are within noise of v12.
 - The estimator overstates every like and report (74.4M against 15.4M for a first like, for example). The live figures are the ones to quote.
