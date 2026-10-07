@@ -123,20 +123,13 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
    */
   async getFollowedBlogs(userId: string): Promise<BlogFollow[]> {
     const sdk = await getEvoSdk();
-    const byBlog = blogIsV7();
+    const index = blogIsV7()
+      ? { where: [['$ownerId', '==', userId]], orderBy: [['$ownerId', 'asc'], ['blogId', 'asc']] }
+      : { where: [['$ownerId', '==', userId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] };
 
     const { documents } = await paginateFetchAll(
       sdk,
-      () => ({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: byBlog
-          ? [['$ownerId', '==', userId]]
-          : [['$ownerId', '==', userId], ['$createdAt', '>', 0]],
-        orderBy: byBlog
-          ? [['$ownerId', 'asc'], ['blogId', 'asc']]
-          : [['$ownerId', 'asc'], ['$createdAt', 'asc']]
-      }),
+      () => ({ dataContractId: this.contractId, documentTypeName: this.documentType, ...index }),
       (doc) => toBlogFollow(this.transformDocument(doc))
     );
 

@@ -7,6 +7,8 @@ import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/conte
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
 
+const newestFirst = (blogs: Blog[]) => [...blogs].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+
 export interface CreateBlogData {
   name: string
   description?: string
@@ -146,63 +148,31 @@ class BlogService extends BaseDocumentService<Blog> {
    */
   async getBlogTimelinePage(options: { limit?: number; startAfter?: string } = {}): Promise<BlogTimelinePage> {
     if (!this.isConfigured()) return { blogs: [] }
-    const limit = Math.min(options.limit ?? BLOG_PAGE_SIZE, BLOG_PAGE_SIZE)
-    const result = await this.query({
-      where: [['$createdAt', '>', 0]],
-      orderBy: [['$createdAt', 'desc']],
-      limit,
-      startAfter: options.startAfter,
-    })
-    const blogs = result.documents
-    return { blogs, nextCursor: blogs.length === limit ? blogs[blogs.length - 1].id : undefined }
+    const { documents, nextCursor } = await this.newestFirstPage(Math.min(options.limit ?? BLOG_PAGE_SIZE, BLOG_PAGE_SIZE), options.startAfter)
+    return { blogs: documents, nextCursor }
   }
 
   /**
    * The newest `limit` blogs on the platform (for discovery). On v7 that is
-   * the head of `blog.timeline`, read page by page. Earlier cuts index blogs
-   * only by `[$ownerId, $createdAt]`, so they page in owner order and sort
+   * the head of `blog.timeline`. Earlier cuts index blogs only by
+   * `[$ownerId, $createdAt]`, so they page in owner order and sort
    * client-side by createdAt desc, which only orders the blogs read.
    */
   async getAllBlogs(limit = 100): Promise<Blog[]> {
     if (!this.isConfigured()) return []
-    if (blogIsV7()) {
-      const blogs: Blog[] = []
-      let startAfter: string | undefined
-      do {
-        const page = await this.getBlogTimelinePage({ limit: Math.min(BLOG_PAGE_SIZE, limit - blogs.length), startAfter })
-        blogs.push(...page.blogs)
-        startAfter = page.nextCursor
-      } while (startAfter && blogs.length < limit)
-      return blogs
-    }
-
+    const timeline = blogIsV7()
     const blogs: Blog[] = []
-    const pageSize = Math.min(BLOG_PAGE_SIZE, limit)
     let startAfter: string | undefined
-
     while (blogs.length < limit) {
-      const remaining = limit - blogs.length
-      const batchLimit = Math.min(pageSize, remaining)
-
-      const queryOptions: QueryOptions = {
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-        limit: batchLimit,
-        startAfter,
-      }
-
-      const result = await this.query(queryOptions)
-      if (result.documents.length === 0) break
-
-      blogs.push(...result.documents)
-      startAfter = result.documents[result.documents.length - 1].id
-
-      if (result.documents.length < batchLimit) break
+      const pageLimit = Math.min(BLOG_PAGE_SIZE, limit - blogs.length)
+      const page = timeline
+        ? await this.newestFirstPage(pageLimit, startAfter)
+        : await this.cursorPage({ orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: pageLimit, startAfter })
+      blogs.push(...page.documents)
+      startAfter = page.nextCursor
+      if (!startAfter) break
     }
-
-    // Sort client-side by newest first
-    blogs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-
-    return blogs.slice(0, limit)
+    return timeline ? blogs : newestFirst(blogs)
   }
 }
 

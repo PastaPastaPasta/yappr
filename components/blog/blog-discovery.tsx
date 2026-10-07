@@ -1,11 +1,10 @@
 'use client'
 
-import toast from 'react-hot-toast'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { blogService } from '@/lib/services'
-import { blogStatsService, trendingBlogsLabel } from '@/lib/services/blog-stats-service'
+import { blogStatsService, trendingBlogsCopy } from '@/lib/services/blog-stats-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import type { Blog } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -13,8 +12,11 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { blogFollowStatusCache } from '@/lib/caches/user-status-cache'
 import { blogIsV2, blogIsV7 } from '@/lib/constants'
+import { getBlogUrl } from '@/lib/blog/content-utils'
+import { useCursorList, type CursorPage } from '@/hooks/use-cursor-list'
 import { Button } from '@/components/ui/button'
 import { BlogPostDiscovery } from './blog-post-discovery'
+import { PillTabs } from './pill-tabs'
 
 interface BlogWithUsername extends Blog {
   username: string | null
@@ -119,68 +121,19 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
 }
 
 function BlogList({ sdkReady }: { sdkReady: boolean }) {
-  const [blogs, setBlogs] = useState<BlogWithUsername[]>([])
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [cursor, setCursor] = useState<string | undefined>()
-  const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<BlogSort>('newest')
   const { user } = useAuth()
   const viewerId = user?.identityId
-
-  useEffect(() => {
-    if (!sdkReady) return
-
-    let cancelled = false
-
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      setCursor(undefined)
-      try {
-        const page = await loadBlogs(sort)
-        if (cancelled) return
-        const hydrated = await hydrateBlogs(page.blogs, viewerId)
-        if (cancelled) return
-        setBlogs(hydrated)
-        setCursor(page.nextCursor)
-      } catch {
-        if (!cancelled) setError('Failed to load blogs')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    load().catch(() => {
-      if (!cancelled) {
-        setLoading(false)
-        setError('Failed to load blogs')
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [sdkReady, sort, viewerId])
-
-  const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return
-    setLoadingMore(true)
-    try {
-      const page = await loadBlogs(sort, cursor)
-      const hydrated = await hydrateBlogs(page.blogs, viewerId)
-      setBlogs((prev) => {
-        const seen = new Set(prev.map((blog) => blog.id))
-        return [...prev, ...hydrated.filter((blog) => !seen.has(blog.id))]
-      })
-      setCursor(page.nextCursor)
-    } catch {
-      toast.error('Failed to load more blogs')
-    } finally {
-      setLoadingMore(false)
-    }
-  }, [cursor, loadingMore, sort, viewerId])
+  const trending = trendingBlogsCopy()
+  const sorts = useMemo(() => SORTS.map((option) => (option.key === 'trending' ? { ...option, label: trending.label } : option)), [trending.label])
+  const loadPage = useCallback(async (cursor?: string): Promise<CursorPage<BlogWithUsername>> => {
+    const page = await loadBlogs(sort, cursor)
+    return { items: await hydrateBlogs(page.blogs, viewerId), nextCursor: page.nextCursor }
+  }, [sort, viewerId])
+  const { items: blogs, cursor, loading, loadingMore, error, loadMore } = useCursorList(loadPage, {
+    enabled: sdkReady, loadError: 'Failed to load blogs', moreError: 'Failed to load more blogs',
+  })
 
   const filtered = useMemo(() => {
     if (!search.trim()) return blogs
@@ -205,26 +158,7 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
         />
       </div>
 
-      {blogIsV2() && (
-        <div className="flex items-center gap-1" role="tablist" aria-label="Sort blogs">
-          {SORTS.map((option) => (
-            <button
-              key={option.key}
-              type="button"
-              role="tab"
-              aria-selected={sort === option.key}
-              onClick={() => setSort(option.key)}
-              className={`rounded-full px-3 py-1 text-sm font-medium transition ${
-                sort === option.key
-                  ? 'bg-yappr-500 text-white'
-                  : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
-              }`}
-            >
-              {option.key === 'trending' ? trendingBlogsLabel() : option.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {blogIsV2() && <PillTabs options={sorts} value={sort} onChange={setSort} label="Sort blogs" />}
 
       {loading ? (
         <div className="space-y-3">
@@ -240,14 +174,14 @@ function BlogList({ sdkReady }: { sdkReady: boolean }) {
             </div>
           ))}
         </div>
-      ) : error && blogs.length === 0 ? (
+      ) : error ? (
         <p className="text-center text-sm text-gray-500">{error}</p>
       ) : filtered.length === 0 ? (
         <p className="text-center text-sm text-gray-500">
           {search.trim()
             ? 'No blogs match your search.'
             : sort === 'trending'
-              ? blogIsV7() ? 'No blog gained a follower in the last 3 days.' : 'No blog gained a follower today.'
+              ? trending.empty
               : 'No blogs have been created yet.'}
         </p>
       ) : (
@@ -280,7 +214,7 @@ function BlogCard({ blog, currentUserId }: { blog: BlogWithUsername; currentUser
   }
 
   return (
-    <Link href={`/blog?blog=${encodeURIComponent(blog.id)}`} className="block">
+    <Link href={getBlogUrl(blog.id)} className="block">
       <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white p-4 transition hover:border-gray-300 dark:border-gray-800 dark:bg-neutral-950 dark:hover:border-gray-600">
         {blog.avatar ? (
           <IpfsImage

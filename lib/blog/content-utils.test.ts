@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  BLOG_POST_TOMBSTONE,
   BlogFieldError,
   PUBLISHED_AT_MAX_AHEAD_MS,
   blogAuthorHandle,
@@ -14,6 +13,7 @@ import {
   labelsFromStored,
   mergeComments,
   publishedPostsNewestFirst,
+  isPublishedAheadRefusal,
   storedImageUrl,
   storedLabels,
 } from './content-utils'
@@ -197,11 +197,6 @@ describe('blog v7 tombstones', () => {
     expect(publishedPostsNewestFirst([tombstone, live]).map((post) => post.id)).toEqual(['live'])
   })
 
-  it('writes deleted and comments off, exactly what tombstoneIsBlank accepts', () => {
-    // `equal: [deleted, 1]` and `equal: [commentsEnabled, 0]`: the booleans as consensus reads them.
-    expect(BLOG_POST_TOMBSTONE).toEqual({ deleted: true, commentsEnabled: false })
-  })
-
   it('only `deleted: true` is a tombstone', () => {
     expect(isBlogPostTombstone({})).toBe(false)
     expect(isBlogPostTombstone({ deleted: false })).toBe(false)
@@ -221,9 +216,21 @@ describe('blog v7 publishedAt cap (publishedNotAhead)', () => {
     expect(blogPostDate(post, day(28)).getTime()).toBe(day(1))
   })
 
-  it('allows a client clock a little ahead of block time on a fresh post', () => {
+  it('allows a client clock a little ahead of block time on a fresh v7 post', () => {
     const createdAt = new Date(day(5))
-    expect(blogPostDate({ publishedAt: day(5) + 60_000, createdAt }).getTime()).toBe(day(5) + 60_000)
+    expect(blogPostDate({ publishedAt: day(5) + 60_000, createdAt, updatedAt: createdAt }).getTime()).toBe(day(5) + 60_000)
+  })
+
+  it('keeps older cuts (no $updatedAt) strict: a fresh post cannot run ahead of its creation', () => {
+    const createdAt = new Date(day(5))
+    expect(blogPostDate({ publishedAt: day(5) + 60_000, createdAt }).getTime()).toBe(day(5))
+  })
+})
+
+describe('a fast device clock', () => {
+  it('is recognised in the publishedNotAhead refusal, and nothing else is', () => {
+    expect(isPublishedAheadRefusal(new Error('blogPost breaks its propertyConstraints rule "publishedNotAhead": it does not hold'))).toBe(true)
+    expect(isPublishedAheadRefusal(new Error('breaks its propertyConstraints rule "hasBody"'))).toBe(false)
   })
 })
 

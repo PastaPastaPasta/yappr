@@ -5,6 +5,7 @@ import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import type { Post } from '@/lib/types'
 import type { MissingReplyParent } from '@/lib/feed/resolve-reply-parents'
 import { cn } from '@/lib/utils'
+import { getBlogUrl } from '@/lib/blog/content-utils'
 import { likesAreIndexOnly } from '@/lib/contract-topology'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { useSettingsStore } from '@/lib/store'
@@ -175,7 +176,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
         {blogs.blogs.map((blog) => (
           <button
             key={blog.id}
-            onClick={() => router.push(`/blog?blog=${encodeURIComponent(blog.id)}`)}
+            onClick={() => router.push(getBlogUrl(blog.id))}
             className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <p className="text-lg font-semibold">{blog.name}</p>

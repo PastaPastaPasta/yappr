@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { TrashIcon } from '@heroicons/react/24/outline'
 import type { Blog } from '@/lib/types'
+import { getBlogUrl } from '@/lib/blog/content-utils'
 
 /**
  * What a reader sees at a deleted post's URL (a blog v7 tombstone): the post
@@ -18,7 +19,7 @@ export function DeletedBlogPost({ blog }: { blog: Blog }) {
         Its author removed it from {blog.name}. It no longer takes comments.
       </p>
       <Link
-        href={`/blog?blog=${encodeURIComponent(blog.id)}`}
+        href={getBlogUrl(blog.id)}
         className="mt-4 inline-block text-sm font-medium text-yappr-700 hover:text-yappr-800 dark:text-yappr-400 dark:hover:text-yappr-300"
       >
         More from {blog.name}

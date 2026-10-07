@@ -5,6 +5,7 @@ import { PlusIcon } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
 import { blogService, blogPostService } from '@/lib/services'
 import type { Blog } from '@/lib/types'
+import { isBlogPostTombstone } from '@/lib/blog/content-utils'
 import { CreateBlogModal } from './create-blog-modal'
 
 interface MyBlogsListProps {
@@ -31,7 +32,8 @@ export function MyBlogsList({ ownerId, onSelectBlog }: MyBlogsListProps) {
         setBlogs(result)
 
         const pages = await blogPostService.getPostsByBlogs(result.map(blog => blog.id), 100)
-        const countEntries = result.map(blog => [blog.id, pages.get(blog.id)?.length ?? 0])
+        // A deleted post (a v7 tombstone) is not one of the blog's posts any more.
+        const countEntries = result.map(blog => [blog.id, pages.get(blog.id)?.filter(post => !isBlogPostTombstone(post)).length ?? 0])
         if (cancelled) return
 
         setCounts(Object.fromEntries(countEntries))

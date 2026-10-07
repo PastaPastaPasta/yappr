@@ -237,7 +237,6 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
    */
   async deletePost(postId: string, ownerId: string): Promise<boolean> {
     if (!blogIsV7()) throw new Error('Posts cannot be deleted on this network')
-    this.clearCache(postId)
     const deleted = await tombstoneDocument({
       contractId: this.contractId,
       documentType: this.documentType,
@@ -326,18 +325,8 @@ class BlogPostService extends BaseDocumentService<BlogPost> {
    * shorter than `limit` while more remain; page on with `nextCursor`.
    */
   async getLatestPosts(options: BlogPostQueryOptions = {}): Promise<LatestBlogPostsPage> {
-    const limit = options.limit ?? 20
-    const result = await this.query({
-      where: [['$createdAt', '>', 0]],
-      orderBy: [['$createdAt', 'desc']],
-      limit,
-      startAfter: options.startAfter,
-    })
-    const read = result.documents
-    return {
-      posts: read.filter(isPublishedBlogPost),
-      nextCursor: read.length === limit ? read[read.length - 1].id : undefined,
-    }
+    const { documents, nextCursor } = await this.newestFirstPage(options.limit ?? 20, options.startAfter)
+    return { posts: documents.filter(isPublishedBlogPost), nextCursor }
   }
 
   /**

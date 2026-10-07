@@ -65,7 +65,7 @@ function windowFor(axis: RankingAxis, window: RankingWindow): WindowedRanking | 
  * all-time. The grid is named explicitly, which keeps the query unambiguous on
  * a doctype that buckets `$createdAt` by more than one grid.
  */
-function windowClause(windowed: WindowedRanking | null): { timeRange: { field: string; selector: WindowedRanking['selector']; grid: { range: number; step: number } }[] } | Record<string, never> {
+export function windowClause(windowed: Pick<WindowedRanking, 'grid' | 'selector'> | null): { timeRange: { field: string; selector: WindowedRanking['selector']; grid: { range: number; step: number } }[] } | Record<string, never> {
   if (!windowed) return {};
   return { timeRange: [{ field: '$createdAt', selector: windowed.selector, grid: { ...windowed.grid } }] };
 }

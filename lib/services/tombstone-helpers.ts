@@ -175,7 +175,7 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       if (isImmutablePropertyChangedError(result.error)) {
         logger.error(
           `Failed to tombstone ${documentType} ${documentId}: the replacement dropped or changed an immutable ` +
-            `property, so tombstonePreservationFor('${documentType}') is out of sync with the contract.`,
+            `property, so the preserve set for ${documentType} (tombstonePreservationFor, on the social contract) is out of sync with the contract.`,
           result.error
         );
       } else {

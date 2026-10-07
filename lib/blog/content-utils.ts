@@ -1,6 +1,7 @@
 import { blogIsV7, blogLabelsAreTyped } from '@/lib/constants'
 import { LIST_LIMITS, ListLimitError, assertListLimits, decodeLabelList, encodeLabelList, uniqueStrings } from '@/lib/typed-array-codecs'
 import { truncateId } from '@/lib/utils/common'
+import { extractErrorMessage } from '@/lib/error-utils'
 
 /** Zero-width space used to flag a summary as hidden from the post view. */
 export const SUMMARY_HIDDEN_PREFIX = '\u200B'
@@ -88,9 +89,14 @@ export function extractInlineText(content: unknown): string {
     .join('')
 }
 
+/** A blog's home page path. */
+export function getBlogUrl(blogId: string): string {
+  return `/blog?blog=${encodeURIComponent(blogId)}`
+}
+
 /** Build a blog post URL path from blogId and slug. */
 export function getBlogPostUrl(blogId: string, slug: string): string {
-  return `/blog?blog=${encodeURIComponent(blogId)}&post=${encodeURIComponent(slug)}`
+  return `${getBlogUrl(blogId)}&post=${encodeURIComponent(slug)}`
 }
 
 /**
@@ -154,8 +160,8 @@ export function isPublishedBlogPost(post: { publishedAt?: number; deleted?: bool
 
 /**
  * How far past the document's own time `publishedAt` may run: blog v7 refuses
- * more than this past `$updatedAt` (`publishedNotAhead`), and the reader holds
- * every cut to the same allowance.
+ * more than this past `$updatedAt` (`publishedNotAhead`), and the reader
+ * allows the same on a post that stores `$updatedAt`.
  */
 export const PUBLISHED_AT_MAX_AHEAD_MS = 10 * 60 * 1000
 
@@ -166,17 +172,19 @@ type DatedBlogPost = { publishedAt?: number; createdAt: Date; updatedAt?: Date; 
  * created. `publishedAt` is author-supplied, so it may backdate a post (an
  * import) but not date it after the network recorded it; a future value would
  * otherwise pin the post to the top of every listing, so it falls back to the
- * creation time. The latest acceptable value is the post's `$updatedAt` (blog
- * v7 requires it, and refuses a `publishedAt` more than
- * {@link PUBLISHED_AT_MAX_AHEAD_MS} past it); older cuts store no
- * `$updatedAt`, and a draft can be published by a later revision (the
- * contract allows setting `publishedAt` once), so a revised post there may be
- * dated up to now rather than up to its creation.
+ * creation time. On blog v7 the latest acceptable value is the post's
+ * `$updatedAt` plus {@link PUBLISHED_AT_MAX_AHEAD_MS}, which is what the
+ * contract enforces. Older cuts store no `$updatedAt`, and a draft can be
+ * published by a later revision (the contract allows setting `publishedAt`
+ * once), so a revised post there may be dated up to now rather than up to its
+ * creation.
  */
 export function blogPostDate(post: DatedBlogPost, now = Date.now()): Date {
   if (post.publishedAt === undefined) return post.createdAt
-  const recorded = post.updatedAt?.getTime() ?? ((post.$revision ?? 1) > 1 ? now : post.createdAt.getTime())
-  return post.publishedAt <= recorded + PUBLISHED_AT_MAX_AHEAD_MS ? new Date(post.publishedAt) : post.createdAt
+  const latest = post.updatedAt
+    ? post.updatedAt.getTime() + PUBLISHED_AT_MAX_AHEAD_MS
+    : (post.$revision ?? 1) > 1 ? now : post.createdAt.getTime()
+  return post.publishedAt <= latest ? new Date(post.publishedAt) : post.createdAt
 }
 
 /** A blog's public listing: drafts dropped, newest publication first. */
@@ -200,6 +208,16 @@ export const BLOG_POST_TOMBSTONE = { deleted: true, commentsEnabled: false } as 
 /** The stored fields a v7 tombstone keeps: the reference and frozen date, and the slug its URL needs. */
 export const BLOG_POST_TOMBSTONE_KEEPS = { identifiers: ['blogId'], scalars: ['slug', 'publishedAt'] } as const
 
+/**
+ * True when the network refused a post because its `publishedAt` runs more
+ * than {@link PUBLISHED_AT_MAX_AHEAD_MS} past the block time (blog v7
+ * `publishedNotAhead`, 10422): the device clock is ahead. The app writes
+ * `publishedAt` from that clock.
+ */
+export function isPublishedAheadRefusal(error: unknown): boolean {
+  return /publishedNotAhead/.test(extractErrorMessage(error))
+}
+
 /** A blog field the configured cut would refuse, caught before signing; its message is for the user. */
 export class BlogFieldError extends Error {}
 
@@ -216,10 +234,14 @@ const V7_IMAGE_URL = /^(https|ipfs):\/\/.+$/
 export function storedImageUrl(url: string | undefined, what: string): string | undefined {
   const trimmed = url?.trim()
   if (!trimmed) return undefined
-  if (blogIsV7() && !V7_IMAGE_URL.test(trimmed)) {
-    throw new BlogFieldError(`The ${what} must be an https:// or ipfs:// link.`)
-  }
+  const problem = imageUrlProblem(trimmed, what)
+  if (problem) throw new BlogFieldError(problem)
   return trimmed
+}
+
+/** Why `url` cannot be stored as the `what` image on the configured cut, or null (see {@link storedImageUrl}). */
+export function imageUrlProblem(url: string, what: string): string | null {
+  return blogIsV7() && !V7_IMAGE_URL.test(url.trim()) ? `The ${what} must be an https:// or ipfs:// link.` : null
 }
 
 /** A blog's default for new posts: on unless the blog explicitly turned it off (the field is optional). */
@@ -309,4 +331,15 @@ export async function enrichBlogPostsWithAuthors<T extends { ownerId: string; bl
     authorDisplayName: profileMap.get(post.ownerId)?.displayName || undefined,
     blogName: blogMap.get(post.blogId)?.name || undefined,
   }))
+}
+
+/**
+ * {@link enrichBlogPostsWithAuthors} for posts from many blogs: the blogs are
+ * read by id (one query per 100) for their names.
+ */
+export async function enrichBlogPostsWithBlogNames<T extends { ownerId: string; blogId: string }>(posts: T[]) {
+  if (posts.length === 0) return []
+  const { blogService } = await import('@/lib/services/blog-service')
+  const blogs = await blogService.getMany(Array.from(new Set(posts.map((post) => post.blogId))))
+  return enrichBlogPostsWithAuthors(posts, new Map(blogs.map((blog) => [blog.id, blog])))
 }

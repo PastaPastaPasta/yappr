@@ -22,16 +22,14 @@
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { DOCUMENT_TYPES, YAPPR_BLOG_CONTRACT_ID, blogIsV2, blogIsV7 } from '../constants';
-import { blogTrendWindow } from '../blog/blog-contract';
+import { blogTrendWindow, type BlogTrendWindow } from '../blog/blog-contract';
 import { getEvoSdk } from './evo-sdk-service';
-import { isColdBucketError } from './ranked-likes';
+import { isColdBucketError, windowClause } from './ranked-likes';
 
 const RANKING_TTL_MS = 60 * 1000;
 
 /** The daily grid v2–v6's `followersByDay` buckets on (contract `timeRange` range/step). */
-const DAY_WINDOW = { grid: { range: 86400, step: 86400 }, selector: 'newest' } as const;
-
-type RankingWindow = { grid: { range: number; step: number }; selector: 'newest' | 'oldest' };
+const DAY_WINDOW: BlogTrendWindow = { grid: { range: 86400, step: 86400 }, selector: 'newest' };
 
 /** One group of a proved ranking. */
 export interface RankedBlogEntry {
@@ -41,9 +39,11 @@ export interface RankedBlogEntry {
   count: number;
 }
 
-/** What the trending-blogs ranking covers on the configured cut, for its label. */
-export function trendingBlogsLabel(): string {
-  return blogIsV7() ? 'Trending (3 days)' : 'Trending today';
+/** How the trending-blogs ranking is named on the configured cut, and what it says when empty. */
+export function trendingBlogsCopy(): { label: string; empty: string } {
+  return blogIsV7()
+    ? { label: 'Trending (3 days)', empty: 'No blog gained a follower in the last 3 days.' }
+    : { label: 'Trending today', empty: 'No blog gained a follower today.' };
 }
 
 class BlogStatsService {
@@ -60,7 +60,7 @@ class BlogStatsService {
       documentTypeName: string;
       groupBy: string;
       limit: number;
-      window?: RankingWindow;
+      window?: BlogTrendWindow;
     }
   ): Promise<RankedBlogEntry[]> {
     if (!blogIsV2()) return [];
@@ -75,9 +75,7 @@ class BlogStatsService {
         aggregate: { type: 'count' },
         direction: 'desc',
         limit: query.limit,
-        ...(query.window
-          ? { timeRange: [{ field: '$createdAt', selector: query.window.selector, grid: { ...query.window.grid } }] }
-          : {}),
+        ...windowClause(query.window ?? null),
       });
       const entries = result.entries
         .filter((entry) => entry.value > 0n && typeof entry.groupValue === 'string')
@@ -98,7 +96,7 @@ class BlogStatsService {
     });
   }
 
-  /** Blogs ranked by followers gained recently: today up to v6, the last ~3 days on v7 ({@link trendingBlogsLabel}). */
+  /** Blogs ranked by followers gained recently: today up to v6, the last ~3 days on v7 ({@link trendingBlogsCopy}). */
   trendingBlogs(limit = 20): Promise<RankedBlogEntry[]> {
     return this.rankedPage(`blogs:trending:${limit}`, {
       documentTypeName: DOCUMENT_TYPES.BLOG_FOLLOW, groupBy: 'blogId', limit,

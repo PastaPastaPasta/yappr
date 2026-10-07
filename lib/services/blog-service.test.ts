@@ -160,7 +160,7 @@ describe('blog v7 discovery on blog.timeline', () => {
     const query = vi.spyOn(blogService, 'query').mockResolvedValue({ documents: [blog(3)] } as never)
     expect((await blogService.getAllBlogs(100)).map((b) => b.id)).toEqual(['b3'])
     expect(query).toHaveBeenCalledOnce()
-    expect(query.mock.calls[0][0].orderBy).toEqual([['$createdAt', 'desc']])
+    expect(query.mock.calls[0][0]?.orderBy).toEqual([['$createdAt', 'desc']])
   })
 
   it('refuses an http avatar on v7 before signing', async () => {

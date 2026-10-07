@@ -12,22 +12,10 @@
  */
 import blogContract from '@/contracts/yappr-blog-contract.json'
 import { blogIsV7 } from '@/lib/constants'
-import type { ActionFeeDeclaration, DocumentAction } from '@/lib/contract-topology'
+import { actionFeeOf, timeRangeOf, type ActionFeeDeclaration, type DocumentAction, type WindowedRanking } from '@/lib/contract-topology'
 
-interface BlogIndexJson {
-  name: string
-  timeRange?: { range: number; step: number }
-}
-
-interface BlogSchemaJson {
-  indices?: BlogIndexJson[]
-  actionFees?: {
-    pricing?: string
-    [action: string]: { owner?: number; moderators?: number } | string | undefined
-  }
-}
-
-const schemas = blogContract.documentSchemas as unknown as Record<string, BlogSchemaJson>
+type BlogSchemas = Record<string, { actionFees?: Parameters<typeof actionFeeOf>[0] }>
+const schemas = blogContract.documentSchemas as unknown as BlogSchemas
 
 /**
  * The action fee a v7 transition on `docType`/`action` must agree to, or null
@@ -35,26 +23,15 @@ const schemas = blogContract.documentSchemas as unknown as Record<string, BlogSc
  * deletes on v7).
  */
 export function blogActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
-  if (!blogIsV7()) return null
-  const fees = schemas[docType]?.actionFees
-  const fee = fees?.[action]
-  if (!fee || typeof fee !== 'object') return null
-  return {
-    owner: BigInt(fee.owner ?? 0),
-    moderators: BigInt(fee.moderators ?? 0),
-    pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
-  }
+  return blogIsV7() ? actionFeeOf(schemas[docType]?.actionFees, action) : null
 }
 
-/** A rolling window a v7 ranking reads: the contract's grid, and the window that covers it all. */
-export interface BlogTrendWindow {
-  readonly grid: { readonly range: number; readonly step: number }
-  /**
-   * `oldest` is the oldest window still open, which spans nearly the whole
-   * `range` (here 48–72h), rather than `newest`, which may be minutes old.
-   */
-  readonly selector: 'oldest'
-}
+/**
+ * A rolling window a v7 ranking reads: the contract's grid, and `oldest`, the
+ * oldest window still open, which spans nearly the whole `range` (48–72h)
+ * rather than `newest`, which may be minutes old.
+ */
+export type BlogTrendWindow = Pick<WindowedRanking, 'grid' | 'selector'>
 
 const TREND_INDEXES = {
   followers: ['blogFollow', 'followersTrend'],
@@ -68,7 +45,5 @@ const TREND_INDEXES = {
  */
 export function blogTrendWindow(trend: keyof typeof TREND_INDEXES): BlogTrendWindow {
   const [docType, index] = TREND_INDEXES[trend]
-  const timeRange = schemas[docType]?.indices?.find((entry) => entry.name === index)?.timeRange
-  if (!timeRange) throw new Error(`${docType}.${index} declares no timeRange`)
-  return { grid: { range: timeRange.range, step: timeRange.step }, selector: 'oldest' }
+  return { grid: timeRangeOf(blogContract.documentSchemas, docType, index), selector: 'oldest' }
 }

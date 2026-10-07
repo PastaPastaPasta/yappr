@@ -1,13 +1,14 @@
 'use client'
 
-import toast from 'react-hot-toast'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { blogPostService, blogService } from '@/lib/services'
+import { blogPostService } from '@/lib/services'
 import { blogStatsService } from '@/lib/services/blog-stats-service'
-import { enrichBlogPostsWithAuthors, getBlogPostUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
+import { enrichBlogPostsWithBlogNames, getBlogPostUrl, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import type { BlogPost, BlogPostWithAuthor } from '@/lib/types'
+import { useCursorList, type CursorPage } from '@/hooks/use-cursor-list'
 import { BlogPostCard } from './blog-post-card'
+import { PillTabs } from './pill-tabs'
 import { Button } from '@/components/ui/button'
 
 /**
@@ -30,12 +31,6 @@ const DISCUSSED_LIMIT = 50
 /** A post to list; on the `discussed` list it carries its proved comment count over the window. */
 type RankedPost = BlogPost & { recentComments?: number }
 type ListedPost = RankedPost & BlogPostWithAuthor
-
-/** Blog names and author handles for a page of posts (one by-id blog read, one identity batch). */
-async function withAuthors(posts: RankedPost[]): Promise<ListedPost[]> {
-  const blogs = await blogService.getMany(Array.from(new Set(posts.map((post) => post.blogId))))
-  return enrichBlogPostsWithAuthors(posts, new Map(blogs.map((blog) => [blog.id, blog])))
-}
 
 /** The next published posts on the timeline after `cursor`, reading on past pages that show nothing. */
 async function latestPage(cursor?: string): Promise<{ posts: RankedPost[]; nextCursor?: string }> {
@@ -64,85 +59,19 @@ async function discussedPosts(): Promise<RankedPost[]> {
 export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
   const router = useRouter()
   const [sort, setSort] = useState<PostSort>('latest')
-  const [posts, setPosts] = useState<ListedPost[]>([])
-  const [cursor, setCursor] = useState<string | undefined>()
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!sdkReady) return
-    let cancelled = false
-
-    const load = async () => {
-      setLoading(true)
-      setError(null)
-      setPosts([])
-      setCursor(undefined)
-      try {
-        const page = sort === 'latest' ? await latestPage() : { posts: await discussedPosts(), nextCursor: undefined }
-        const listed = await withAuthors(page.posts)
-        if (cancelled) return
-        setPosts(listed)
-        setCursor(page.nextCursor)
-      } catch {
-        if (!cancelled) setError('Failed to load posts')
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    load().catch(() => {
-      if (!cancelled) {
-        setLoading(false)
-        setError('Failed to load posts')
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [sdkReady, sort])
-
-  const loadMore = useCallback(async () => {
-    if (!cursor || loadingMore) return
-    setLoadingMore(true)
-    try {
-      const page = await latestPage(cursor)
-      const listed = await withAuthors(page.posts)
-      setPosts((prev) => {
-        const seen = new Set(prev.map((post) => post.id))
-        return [...prev, ...listed.filter((post) => !seen.has(post.id))]
-      })
-      setCursor(page.nextCursor)
-    } catch {
-      toast.error('Failed to load more posts')
-    } finally {
-      setLoadingMore(false)
-    }
-  }, [cursor, loadingMore])
+  const loadPage = useCallback(async (cursor?: string): Promise<CursorPage<ListedPost>> => {
+    const page = sort === 'latest' ? await latestPage(cursor) : { posts: await discussedPosts(), nextCursor: undefined }
+    return { items: await enrichBlogPostsWithBlogNames(page.posts), nextCursor: page.nextCursor }
+  }, [sort])
+  const { items: posts, cursor, loading, loadingMore, error, loadMore } = useCursorList(loadPage, {
+    enabled: sdkReady, loadError: 'Failed to load posts', moreError: 'Failed to load more posts',
+  })
 
   const openPost = (post: BlogPostWithAuthor) => router.push(getBlogPostUrl(post.blogId, post.slug))
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-1" role="tablist" aria-label="Sort posts">
-        {SORTS.map((option) => (
-          <button
-            key={option.key}
-            type="button"
-            role="tab"
-            aria-selected={sort === option.key}
-            onClick={() => setSort(option.key)}
-            className={`rounded-full px-3 py-1 text-sm font-medium transition ${
-              sort === option.key
-                ? 'bg-yappr-500 text-white'
-                : 'text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800'
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <PillTabs options={SORTS} value={sort} onChange={setSort} label="Sort posts" />
 
       {loading ? (
         <div className="space-y-3">
@@ -150,11 +79,15 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
             <div key={i} className="h-20 animate-pulse rounded-xl border border-gray-200 bg-gray-100 dark:border-gray-800 dark:bg-gray-900" />
           ))}
         </div>
-      ) : error && posts.length === 0 ? (
+      ) : error ? (
         <p className="text-center text-sm text-gray-500">{error}</p>
       ) : posts.length === 0 ? (
         <p className="text-center text-sm text-gray-500">
-          {sort === 'discussed' ? 'No post was commented on in the last 3 days.' : 'No posts have been published yet.'}
+          {sort === 'discussed'
+            ? 'No post was commented on in the last 3 days.'
+            : cursor
+              ? 'Nothing published in the newest posts read so far.'
+              : 'No posts have been published yet.'}
         </p>
       ) : (
         <div className="divide-y divide-gray-200 overflow-hidden rounded-xl border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
@@ -171,7 +104,7 @@ export function BlogPostDiscovery({ sdkReady = true }: { sdkReady?: boolean }) {
         </div>
       )}
 
-      {sort === 'latest' && cursor && !loading && (
+      {cursor && !loading && (
         <div className="flex justify-center">
           <Button type="button" variant="outline" size="sm" onClick={() => { loadMore().catch(() => {}) }} disabled={loadingMore}>
             {loadingMore ? 'Loading...' : 'Load more'}

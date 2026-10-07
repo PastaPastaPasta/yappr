@@ -29,6 +29,18 @@ import { blogPostDate, formatLabels, getBlogPostUrl, isBlogPostTombstone, isPubl
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import toast from 'react-hot-toast'
 
+/** How the author's dashboard badges a post. */
+const POST_STATUS = {
+  published: { label: 'Published', className: 'bg-green-500/10 text-green-700 dark:text-green-400' },
+  draft: { label: 'Draft', className: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' },
+  deleted: { label: 'Deleted', className: 'bg-gray-500/10 text-gray-600 dark:text-gray-400' },
+} as const
+
+function postStatus(post: BlogPost): keyof typeof POST_STATUS {
+  if (isBlogPostTombstone(post)) return 'deleted'
+  return isPublishedBlogPost(post) ? 'published' : 'draft'
+}
+
 function BlogPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -322,8 +334,8 @@ function BlogPageContent() {
               ) : (
                 <div className="divide-y divide-gray-200 dark:divide-gray-800/60">
                   {ownerPosts.map((post) => {
-                    const isDeleted = isBlogPostTombstone(post)
-                    const isPublished = isPublishedBlogPost(post)
+                    const status = postStatus(post)
+                    const isDeleted = status === 'deleted'
                     return (
                       <div key={post.id} className="group flex items-start gap-3 py-3.5 first:pt-0 last:pb-0">
                         <button
@@ -333,15 +345,8 @@ function BlogPageContent() {
                         >
                           <div className="flex items-center gap-2">
                             <p className="truncate font-medium text-gray-900 dark:text-gray-100 group-hover:text-black dark:group-hover:text-white transition-colors">{isDeleted ? post.slug : post.title}</p>
-                            <span className={cn(
-                              'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium',
-                              isDeleted
-                                ? 'bg-gray-500/10 text-gray-600 dark:text-gray-400'
-                                : isPublished
-                                  ? 'bg-green-500/10 text-green-700 dark:text-green-400'
-                                  : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'
-                            )}>
-                              {isDeleted ? 'Deleted' : isPublished ? 'Published' : 'Draft'}
+                            <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium', POST_STATUS[status].className)}>
+                              {POST_STATUS[status].label}
                             </span>
                           </div>
                           <div className="mt-1 flex items-center gap-2">
@@ -352,25 +357,27 @@ function BlogPageContent() {
                           </div>
                         </button>
                         {!isDeleted && (
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-100 dark:group-hover:bg-gray-800/60 group-hover:text-gray-900 dark:group-hover:text-gray-300"
-                            onClick={() => {
-                              setEditingPost(post)
-                              setActiveTab('compose')
-                            }}
-                          >
-                            Edit
-                          </button>
-                        )}
-                        {!isDeleted && blogIsV7() && (
-                          <button
-                            type="button"
-                            className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-                            onClick={() => setDeletingPost(post)}
-                          >
-                            Delete
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all group-hover:bg-gray-100 dark:group-hover:bg-gray-800/60 group-hover:text-gray-900 dark:group-hover:text-gray-300"
+                              onClick={() => {
+                                setEditingPost(post)
+                                setActiveTab('compose')
+                              }}
+                            >
+                              Edit
+                            </button>
+                            {blogIsV7() && (
+                              <button
+                                type="button"
+                                className="shrink-0 rounded-full px-3 py-1 text-xs text-gray-500 transition-all hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                                onClick={() => setDeletingPost(post)}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </>
                         )}
                       </div>
                     )
