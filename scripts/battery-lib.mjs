@@ -24,6 +24,7 @@ import {
   STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
+  createDocument,
   createSdkHandle,
   createdId,
   describeErr,
@@ -282,9 +283,14 @@ export function createBattery({ handle, contractId, socialId }) {
    * row and is reported for the log only; `document` is the SDK's confirmed instance when the
    * create returned (it carries the consensus `$createdAt` a delete-by-values needs), else the
    * local placeholder.
+   *
+   * `agreement` (a `DocumentActionFeeAgreement`) sends the create as a hand-built batch
+   * (seed-lib `createDocument`), the only shape that carries `$actionFeeAgreement`; the facade
+   * has no option for it, and a priced type created without one is a paid 40132.
    */
-  async function attemptCreate(who, docType, data, { tokenCost, noPayment, accepted, contract = contractId } = {}) {
-    const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy: randomEntropy() });
+  async function attemptCreate(who, docType, data, { tokenCost, noPayment, agreement, accepted, contract = contractId } = {}) {
+    const entropy = randomEntropy();
+    const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy });
     let id = null;
     const since = Date.now();
     // A value-identical document that existed BEFORE this create cannot be
@@ -306,7 +312,9 @@ export function createBattery({ handle, contractId, socialId }) {
     };
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
-      () => sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) })
+      () => (agreement
+        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment: noPayment ? {} : paymentInfo(tokenCost) })
+        : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
     return { ...outcome, id, document: outcome.result ?? document };
