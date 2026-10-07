@@ -6,6 +6,7 @@ import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
 import { labelsFromStored, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
+import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils'
 
 export interface CreateBlogData {
   name: string
@@ -128,39 +129,40 @@ class BlogService extends BaseDocumentService<Blog> {
   }
 
   /**
-   * Get all blogs on the platform (for discovery).
-   * Uses the ownerAndTime index [$ownerId, $createdAt] with cursor-based pagination,
-   * then sorts client-side by createdAt desc for display.
+   * The newest blogs for discovery, `limit` at most. The blog contract only
+   * indexes `[$ownerId, $createdAt]`, so there is no newest-first query: this
+   * reads every blog in owner order (up to {@link DISCOVERY_SCAN_LIMIT}) and
+   * sorts by creation time. `complete` is false when that cap cut the read
+   * short, so the newest order only covers the blogs read; callers say so.
    */
-  async getAllBlogs(limit = 100): Promise<Blog[]> {
-    if (!this.isConfigured()) return []
-    const blogs: Blog[] = []
-    const pageSize = Math.min(100, limit)
-    let startAfter: string | undefined
+  async getNewestBlogs(limit = 100): Promise<{ blogs: Blog[]; complete: boolean }> {
+    if (!this.isConfigured()) return { blogs: [], complete: true }
+    const { blogs, complete } = await this.scanNewestBlogs()
+    return { blogs: blogs.slice(0, limit), complete }
+  }
 
-    while (blogs.length < limit) {
-      const remaining = limit - blogs.length
-      const batchLimit = Math.min(pageSize, remaining)
+  /** A full clear (a create runs one) drops the discovery scan too, so a new one is listed. */
+  clearCache(documentId?: string): void {
+    super.clearCache(documentId)
+    if (!documentId) this.newestScan = null
+  }
 
-      const queryOptions: QueryOptions = {
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-        limit: batchLimit,
-        startAfter,
-      }
+  /** The full discovery scan, newest first, held for two minutes (it is up to 10 queries). */
+  private newestScan: { at: number; result: Promise<{ blogs: Blog[]; complete: boolean }> } | null = null
 
-      const result = await this.query(queryOptions)
-      if (result.documents.length === 0) break
-
-      blogs.push(...result.documents)
-      startAfter = result.documents[result.documents.length - 1].id
-
-      if (result.documents.length < batchLimit) break
-    }
-
-    // Sort client-side by newest first
-    blogs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-
-    return blogs.slice(0, limit)
+  private scanNewestBlogs(): Promise<{ blogs: Blog[]; complete: boolean }> {
+    if (this.newestScan && Date.now() - this.newestScan.at < DISCOVERY_SCAN_TTL_MS) return this.newestScan.result
+    const result = this.queryAll(
+      { orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] },
+      DISCOVERY_SCAN_LIMIT
+    ).then(({ documents, reachedLimit }) => ({ blogs: newestFirst(documents), complete: !reachedLimit }))
+    const scan = { at: Date.now(), result }
+    this.newestScan = scan
+    // A failed scan is not held.
+    result.catch(() => {
+      if (this.newestScan === scan) this.newestScan = null
+    })
+    return result
   }
 }
 

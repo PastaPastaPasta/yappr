@@ -88,8 +88,16 @@
  * appointed identity must exist on chain — registration refuses a missing
  * one, paid (41110) — so they are fetched before anything is signed.
  *
+ * ## Interim (elected cuts)
+ *
+ * An elected cut registers here with the interim its file declares (social
+ * v13: `contractOwner`, which a devnet needs to moderate before a team is
+ * seated). `--interim <kind>` registers another (`notYetUsable`,
+ * `noModeration`); mainnet registers through `register-feature-contract.mjs`,
+ * which picks `notYetUsable` there (`withInterim` in register-lib.mjs).
+ *
  * Run:  node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>]
- *       [--contract-file <name|path>] [--moderators <id,id>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]
+ *       [--contract-file <name|path>] [--moderators <id,id>] [--interim <kind>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]
  *       node scripts/register-social-v3-draft.mjs --bot <index> --owner <id> --fund-only <contractId> --fund <id,id>
  */
 import { readFileSync } from 'node:fs';
@@ -98,7 +106,7 @@ import { fileURLToPath } from 'node:url';
 import { DataContract, PlatformVersion, ensureInitialized } from '@dashevo/evo-sdk';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { devnetConfig, devnetSdk as buildDevnetSdk } from './sdk-env.mjs';
-import { auditModeration, requireModeratorsExist, withModerators } from './register-lib.mjs';
+import { auditModeration, requireModeratorsExist, withInterim, withModerators } from './register-lib.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONTRACTS_DIR = join(REPO_ROOT, 'contracts');
@@ -131,18 +139,19 @@ function contractPath(name) {
  * `ownerId`. `identityNonce` seeds a locally-derived id; the authoritative id is
  * whatever `contracts.publish` returns, which is what gets printed.
  */
-function buildDraftContract({ contractFile, ownerId, identityNonce, platformVersion, moderators = [] }) {
+function buildDraftContract({ contractFile, ownerId, identityNonce, platformVersion, moderators = [], interim }) {
   const file = JSON.parse(readFileSync(contractFile, 'utf8'));
   if (!file.documentSchemas || Object.keys(file.documentSchemas).length === 0) {
     throw new Error(`${contractFile} has no documentSchemas`);
   }
+  if (interim !== undefined && !file.config) throw new Error(`--interim was passed, but ${contractFile} declares no config`);
   const json = {
     $formatVersion: file.$formatVersion ?? '1',
     id: DataContract.generateId(ownerId, identityNonce).toBase58(),
     ownerId,
     version: file.version ?? 1,
     documentSchemas: file.documentSchemas,
-    ...(file.config ? { config: withModerators(file.config, moderators) } : {}),
+    ...(file.config ? { config: withModerators(withInterim(file.config, { interim }), moderators) } : {}),
     ...(file.tokens ? { tokens: file.tokens } : {}),
   };
   return { dataContract: DataContract.fromJSON(json, true, platformVersion), file };
@@ -258,6 +267,7 @@ function parseArgs(argv) {
     ownerId: null,
     contractFile: DEFAULT_CONTRACT_FILE,
     moderators: [],
+    interim: undefined,
     fund: [],
     fundAmount: DEFAULT_FUND_AMOUNT,
     fundOnly: null,
@@ -270,6 +280,7 @@ function parseArgs(argv) {
       case '--owner': args.ownerId = argv[++i]; break;
       case '--contract-file': args.contractFile = argv[++i]; break;
       case '--moderators': args.moderators = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
+      case '--interim': args.interim = argv[++i]; if (!args.interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)'); break;
       case '--fund': args.fund = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
       case '--fund-amount': args.fundAmount = BigInt(argv[++i]); break;
       case '--fund-only': args.fundOnly = argv[++i]; break;
@@ -298,7 +309,7 @@ try {
   console.error(e.message);
   console.error(
     'Usage: node scripts/register-social-v3-draft.mjs (--bot <index> | --maker) [--owner <identityId>]\n' +
-    '       [--contract-file <name|path>] [--moderators <id,id>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]'
+    '       [--contract-file <name|path>] [--moderators <id,id>] [--interim <kind>] [--fund <id,id>] [--fund-amount <n>] [--dry-run]'
   );
   process.exit(1);
 }
@@ -312,7 +323,7 @@ try {
   if (args.dryRun) {
     // No identity, no network: prove the JSON assembles into a valid contract.
     const ownerId = args.ownerId ?? DRY_RUN_OWNER;
-    const { dataContract, file } = buildDraftContract({ contractFile, ownerId, identityNonce: 1n, platformVersion, moderators: args.moderators });
+    const { dataContract, file } = buildDraftContract({ contractFile, ownerId, identityNonce: 1n, platformVersion, moderators: args.moderators, interim: args.interim });
     const roundTrip = dataContract.toJSON(platformVersion);
     console.log(`dry run: ${contractFile}`);
     console.log(`  document types : ${Object.keys(roundTrip.documentSchemas).length}`);
@@ -362,6 +373,7 @@ try {
     identityNonce,
     platformVersion,
     moderators: args.moderators,
+    interim: args.interim,
   });
   console.log(`contract file: ${contractFile}`);
   printSchemaAudit(file.documentSchemas);

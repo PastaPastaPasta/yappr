@@ -10,7 +10,7 @@ import type { TicketStore } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import type { Page, UserSummaryDTO } from './dto'
 
-/** Lists are read whole on web (up to 1000); the engine pages them. */
+/** Lists are read whole (every id) on web as here; both page the hydration. */
 const CONNECTIONS_PAGE = 30
 
 const connectionIds = new TtlMap<string, string[]>(60_000)

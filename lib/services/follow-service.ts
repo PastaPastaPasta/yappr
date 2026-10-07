@@ -5,6 +5,7 @@ import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
 import { paginateFetchAll, documentCount, groupedDocumentCount } from './pagination-utils';
+import { TtlMap } from '@/lib/caches/ttl-map';
 
 export interface FollowDocument {
   $id: string;
@@ -31,6 +32,37 @@ class FollowService extends BaseDocumentService<FollowDocument> {
    * Follow a user
    */
   async followUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
+    return this.changingFollowing(followerUserId, () => this.writeFollow(followerUserId, targetUserId));
+  }
+
+  /**
+   * Unfollow a user
+   */
+  async unfollowUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
+    return this.changingFollowing(followerUserId, () => this.writeUnfollow(followerUserId, targetUserId));
+  }
+
+  /**
+   * Run a follow or unfollow of `followerUserId`'s, dropping their cached
+   * following ids when it starts and again when it settles, and moving their
+   * generation both times, so no read that overlaps the write can cache the
+   * set from before it.
+   */
+  private async changingFollowing<T>(followerUserId: string, write: () => Promise<T>): Promise<T> {
+    this.invalidateFollowingIds(followerUserId);
+    try {
+      return await write();
+    } finally {
+      this.invalidateFollowingIds(followerUserId);
+    }
+  }
+
+  private invalidateFollowingIds(userId: string): void {
+    this.followingIdsGeneration.set(userId, (this.followingIdsGeneration.get(userId) ?? 0) + 1);
+    this.followingIdsCache.delete(userId);
+  }
+
+  private async writeFollow(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
     // v9 refuses a self-follow in consensus (distinctFrom $ownerId, 10419);
     // earlier cuts accept one, which no UI means to write. Refuse on every cut
     // before a broadcast.
@@ -72,10 +104,7 @@ class FollowService extends BaseDocumentService<FollowDocument> {
     }
   }
 
-  /**
-   * Unfollow a user
-   */
-  async unfollowUser(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
+  private async writeUnfollow(followerUserId: string, targetUserId: string): Promise<{ success: boolean; error?: string }> {
     try {
       const follow = await this.getFollow(targetUserId, followerUserId);
       if (!follow) {
@@ -132,29 +161,12 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Get followers of a user.
-   * Paginates through all results to return complete list.
+   * Every follower of a user, oldest first, read to the end (no cap): DM
+   * recovery probes each of them in the background.
    */
   async getFollowers(userId: string, options: { throwOnError?: boolean } = {}): Promise<FollowDocument[]> {
     try {
-      const sdk = await getEvoSdk();
-
-      const { documents } = await paginateFetchAll(
-        sdk,
-        () => ({
-          dataContractId: this.contractId,
-          documentTypeName: 'follow',
-          where: [
-            ['followingId', '==', userId],
-            ['$createdAt', '>', 0]
-          ],
-          // Use followers index: [followingId, $createdAt] - must include all index fields in orderBy
-          orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']]
-        }),
-        (doc) => this.transformDocument(doc)
-      );
-
-      return documents;
+      return (await this.listFollowers(userId, Infinity)).follows;
     } catch (error) {
       logger.error('Error getting followers:', error);
       if (options.throwOnError) throw error;
@@ -163,8 +175,49 @@ class FollowService extends BaseDocumentService<FollowDocument> {
   }
 
   /**
-   * Get users that a user follows.
-   * Paginates through all results to return complete list.
+   * A user's followers, oldest first, up to `maxResults`; `complete` is false
+   * when the cap cut the read short (a list page says so). Rejects on failure.
+   */
+  async listFollowers(userId: string, maxResults: number): Promise<{ follows: FollowDocument[]; complete: boolean }> {
+    const sdk = await getEvoSdk();
+    const { documents, reachedLimit } = await paginateFetchAll(
+      sdk,
+      () => ({
+        dataContractId: this.contractId,
+        documentTypeName: 'follow',
+        where: [
+          ['followingId', '==', userId],
+          ['$createdAt', '>', 0]
+        ],
+        // Use followers index: [followingId, $createdAt] - must include all index fields in orderBy
+        orderBy: [['followingId', 'asc'], ['$createdAt', 'asc']]
+      }),
+      (doc) => this.transformDocument(doc),
+      { maxResults }
+    );
+    return { follows: documents, complete: !reachedLimit };
+  }
+
+  /**
+   * A user's `limit` most recent followers, newest first, in one query (for
+   * suggestions that only want the head of a possibly long list).
+   */
+  async getRecentFollowers(userId: string, limit: number): Promise<FollowDocument[]> {
+    const { documents } = await this.query({
+      where: [
+        ['followingId', '==', userId],
+        ['$createdAt', '>', 0]
+      ],
+      orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']],
+      limit
+    });
+    return documents;
+  }
+
+  /**
+   * Every follow a user made, oldest first, read to the end (no cap): the
+   * Following feed, its new-posts check and follow status all treat this as
+   * the whole set, so a capped read would hide accounts past the cap.
    */
   async getFollowing(userId: string, options: { throwOnError?: boolean } = {}): Promise<FollowDocument[]> {
     try {
@@ -182,7 +235,8 @@ class FollowService extends BaseDocumentService<FollowDocument> {
           // Use following index: [$ownerId, $createdAt] - must include all index fields in orderBy
           orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
         }),
-        (doc) => this.transformDocument(doc)
+        (doc) => this.transformDocument(doc),
+        { maxResults: Infinity }
       );
 
       return documents;
@@ -206,6 +260,26 @@ class FollowService extends BaseDocumentService<FollowDocument> {
       const following = await this.getFollowing(userId);
       return following.map(f => f.followingId);
     });
+  }
+
+  /** `getFollowingIds` answers held for a minute; a follow or unfollow drops the follower's. */
+  private followingIdsCache = new TtlMap<string, string[]>(60_000);
+  /** Per user, moved by every follow/unfollow start and end: a read spanning one is not cached. */
+  private followingIdsGeneration = new Map<string, number>();
+
+  /**
+   * Whom a user follows, held for a minute: for the new-posts check, which
+   * asks every 15 s and would otherwise re-read the whole list each time.
+   * Rejects when the read fails (nothing is cached then).
+   */
+  async getFollowingIdsCached(userId: string): Promise<string[]> {
+    const cached = this.followingIdsCache.get(userId);
+    if (cached) return cached;
+    const generation = this.followingIdsGeneration.get(userId) ?? 0;
+    const ids = (await this.getFollowing(userId, { throwOnError: true })).map(f => f.followingId).filter(Boolean);
+    // A follow or unfollow started or settled meanwhile: this set may predate it.
+    if (generation === (this.followingIdsGeneration.get(userId) ?? 0)) this.followingIdsCache.set(userId, ids);
+    return ids;
   }
 
   /**

@@ -12,13 +12,14 @@ import { useAuth } from '@/contexts/auth-context'
 import { useBlogFollow } from '@/hooks/use-blog-follow'
 import { blogFollowStatusCache } from '@/lib/caches/user-status-cache'
 import { blogIsV2 } from '@/lib/constants'
+import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
 
 interface BlogWithUsername extends Blog {
   username: string | null
 }
 
 /**
- * Discovery orderings. `newest` pages every blog and sorts client-side (the
+ * Discovery orderings. `newest` pages every blog (up to DISCOVERY_SCAN_LIMIT) and sorts client-side (the
  * only shape v1 can serve); the other two are v2 proved rankings, one request
  * each, hydrated with a single by-id fetch.
  */
@@ -49,6 +50,8 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<BlogSort>('newest')
+  // `newest` sorted only the first DISCOVERY_SCAN_LIMIT blogs read.
+  const [scanIncomplete, setScanIncomplete] = useState(false)
   const { user } = useAuth()
 
   useEffect(() => {
@@ -60,8 +63,11 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
       setLoading(true)
       setError(null)
       try {
-        const allBlogs = sort === 'newest' ? await blogService.getAllBlogs(100) : await rankedBlogs(sort)
+        const { blogs: allBlogs, complete } = sort === 'newest'
+          ? await blogService.getNewestBlogs(100)
+          : { blogs: await rankedBlogs(sort), complete: true }
         if (cancelled) return
+        setScanIncomplete(!complete)
 
         const ownerIds = Array.from(new Set(allBlogs.map((b) => b.ownerId)))
         const usernameMap = await dpnsService.resolveUsernamesBatch(ownerIds)
@@ -185,6 +191,11 @@ export function BlogDiscovery({ sdkReady = true, showHeader = false }: { sdkRead
         </p>
       ) : (
         <div className="space-y-2">
+          {scanIncomplete && sort === 'newest' && (
+            <p className="text-center text-xs text-gray-500">
+              Newest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} blogs found; there are more.
+            </p>
+          )}
           {filtered.map((blog) => (
             <BlogCard key={blog.id} blog={blog} currentUserId={user?.identityId} />
           ))}

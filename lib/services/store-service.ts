@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES } from '../constants';
 import { parseJsonArray } from '../utils/json-parsing';
+import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils';
 import type {
   Store,
   StoreDocument,
@@ -202,24 +203,41 @@ class StoreService extends BaseDocumentService<Store> {
   }
 
   /**
-   * Get all active stores (for discovery)
+   * The newest active stores for discovery, `limit` at most. A store is only
+   * indexed on `$ownerId`, so neither status nor creation time can be
+   * queried: this reads every store in owner order (up to
+   * {@link DISCOVERY_SCAN_LIMIT}), keeps the active ones and sorts them by
+   * creation time. `complete` is false when that cap cut the read short, so
+   * the order only covers the stores read; the page says so.
    */
-  async getActiveStores(options: { limit?: number; startAfter?: string } = {}): Promise<{ stores: Store[]; nextCursor?: string }> {
-    // Note: Store only has an index on $ownerId, so we can only order by that
-    // Client-side filtering will be needed for status
-    const { documents } = await this.query({
-      orderBy: [['$ownerId', 'asc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
+  async getNewestActiveStores(limit = 50): Promise<{ stores: Store[]; complete: boolean }> {
+    const { stores, complete } = await this.scanNewestActiveStores();
+    return { stores: stores.slice(0, limit), complete };
+  }
+
+  /** A full clear (a create runs one) drops the discovery scan too, so a new one is listed. */
+  clearCache(documentId?: string): void {
+    super.clearCache(documentId);
+    if (!documentId) this.newestScan = null;
+  }
+
+  /** The full discovery scan, newest first, held for two minutes (it is up to 10 queries). */
+  private newestScan: { at: number; result: Promise<{ stores: Store[]; complete: boolean }> } | null = null;
+
+  private scanNewestActiveStores(): Promise<{ stores: Store[]; complete: boolean }> {
+    if (this.newestScan && Date.now() - this.newestScan.at < DISCOVERY_SCAN_TTL_MS) return this.newestScan.result;
+    const result = this.queryAll({ orderBy: [['$ownerId', 'asc']] }, DISCOVERY_SCAN_LIMIT)
+      .then(({ documents, reachedLimit }) => ({
+        stores: newestFirst(documents.filter(store => store.status === 'active')),
+        complete: !reachedLimit,
+      }));
+    const scan = { at: Date.now(), result };
+    this.newestScan = scan;
+    // A failed scan is not held.
+    result.catch(() => {
+      if (this.newestScan === scan) this.newestScan = null;
     });
-
-    // Filter to active stores client-side
-    const activeStores = documents.filter(store => store.status === 'active');
-
-    return {
-      stores: activeStores,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
+    return result;
   }
 
   /**

@@ -217,7 +217,7 @@ function SearchPageContent() {
     try {
       const { blogService, blogPostService } = await import('@/lib/services')
 
-      const allBlogs = await blogService.getAllBlogs()
+      const { blogs: allBlogs } = await blogService.getNewestBlogs()
       if (allBlogs.length === 0) return []
 
       const blogMap = new Map(allBlogs.map(b => [b.id, b]))

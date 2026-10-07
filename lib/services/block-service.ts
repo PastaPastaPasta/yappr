@@ -1,5 +1,5 @@
 import { logger } from '@/lib/logger';
-import { BaseDocumentService, QueryOptions } from './document-service'
+import { BaseDocumentService } from './document-service'
 import { stateTransitionService } from './state-transition-service'
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
@@ -14,6 +14,7 @@ import {
   addOwnBlock,
   removeOwnBlock,
   getOwnBlocksFromCache,
+  getRecordedOwnBlocks,
   setOwnBlocks,
   getConfirmedBlock,
   addConfirmedBlocksBatch,
@@ -31,6 +32,13 @@ const MAX_BLOCK_FOLLOWS = 100
 interface InheritedBlock {
   blockedBy: string
   message?: string
+}
+
+/** A bloom filter holding exactly `ids`. */
+export function buildBloomFilter(ids: Iterable<string>): BloomFilter {
+  const filter = new BloomFilter()
+  for (const id of new Set(ids)) filter.add(id)
+  return filter
 }
 
 /** Whether a blocked target is blocked by the viewer's own block or only by a followed list. */
@@ -70,33 +78,16 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     if (cached !== null) return cached
 
     return this.ownBlocksInFlight.dedupe(userId, async () => {
-      const blockedIds: string[] = []
-      let startAfter: string | undefined
-      let version = this.ownBlockVersions.get(userId)
-      while (true) {
-        // Use the ownerAndBlocked index; never treat a capped page as a full list.
-        const { documents } = await this.query({
-          where: [['$ownerId', '==', userId]],
-          orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
-          limit: 100,
-          startAfter,
-        })
+      for (;;) {
+        const version = this.ownBlockVersions.get(userId)
+        // Every page of the ownerAndBlocked index; never a capped page.
+        const blockedIds = (await this.getUserBlocks(userId)).map(block => block.blockedId)
         // A local block/unblock completed while this snapshot was loading.
-        // Restart the shared read so an older result cannot undo that mutation.
-        if (version !== this.ownBlockVersions.get(userId)) {
-          version = this.ownBlockVersions.get(userId)
-          blockedIds.length = 0
-          startAfter = undefined
-          continue
-        }
-        blockedIds.push(...documents.map(block => block.blockedId))
-        if (documents.length < 100) break
-        const nextCursor = documents[documents.length - 1].$id
-        if (!nextCursor || nextCursor === startAfter) throw new Error('Block list cursor did not advance')
-        startAfter = nextCursor
+        // Read again so an older result cannot undo that mutation.
+        if (version !== this.ownBlockVersions.get(userId)) continue
+        setOwnBlocks(userId, blockedIds)
+        return blockedIds
       }
-      setOwnBlocks(userId, blockedIds)
-      return blockedIds
     })
   }
 
@@ -256,7 +247,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       if (result.success) {
         this.updateOwnBlock(blockerId, targetUserId, false)
-        // Note: Bloom filter is add-only. False positives may occur until rebuilt.
+        // A bloom filter cannot drop one item: rebuild it from the blocks left.
+        await this.rebuildBloomFilter(blockerId, targetUserId)
       }
 
       return result
@@ -289,20 +281,16 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
-   * Get all blocks by a user.
+   * Every block a user made, read to the end on the ownerAndBlocked index
+   * (`$ownerId ==`, ordered by blockedId). Rejects when the read fails, so a
+   * failure never passes for "no blocks".
    */
-  async getUserBlocks(userId: string, options: QueryOptions = {}): Promise<BlockDocument[]> {
-    try {
-      const result = await this.query({
-        where: [['$ownerId', '==', userId]],
-        limit: 100,
-        ...options
-      })
-      return result.documents
-    } catch (error) {
-      logger.error('Error getting user blocks:', error)
-      return []
-    }
+  async getUserBlocks(userId: string): Promise<BlockDocument[]> {
+    const { documents } = await this.queryAll({
+      where: [['$ownerId', '==', userId]],
+      orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
+    })
+    return documents
   }
 
   // ============================================================
@@ -384,48 +372,71 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
+   * Write `filter` as the user's blockFilter: an update of `existing`, or the
+   * first one. An empty filter is still a full-size byte array (filterData
+   * has minItems 1), so a user with no blocks left keeps a filter that
+   * matches nobody.
+   */
+  private async writeBloomFilter(
+    userId: string,
+    filter: BloomFilter,
+    existing: { documentId: string; revision: number } | null
+  ): Promise<void> {
+    const data = {
+      filterData: filter.serialize(),
+      itemCount: filter.itemCount,
+      version: BLOOM_FILTER_VERSION
+    }
+    const result = existing
+      ? await stateTransitionService.updateDocument(
+        this.contractId,
+        DOCUMENT_TYPES.BLOCK_FILTER,
+        existing.documentId,
+        userId,
+        data,
+        existing.revision
+      )
+      : await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.BLOCK_FILTER, userId, data)
+    if (!result.success) throw new Error(result.error || 'blockFilter write failed')
+  }
+
+  /**
    * Add a blocked user ID to the bloom filter.
    * Creates the filter document if it doesn't exist.
    */
   async addToBloomFilter(userId: string, blockedId: string): Promise<void> {
     try {
       const existing = await this.getBloomFilter(userId)
-
-      if (existing) {
-        // Add to existing filter
-        existing.filter.add(blockedId)
-
-        await stateTransitionService.updateDocument(
-          this.contractId,
-          DOCUMENT_TYPES.BLOCK_FILTER,
-          existing.documentId,
-          userId,
-          {
-            filterData: existing.filter.serialize(),
-            itemCount: existing.filter.itemCount,
-            version: BLOOM_FILTER_VERSION
-          },
-          existing.revision
-        )
-      } else {
-        // Create new filter
-        const filter = new BloomFilter()
-        filter.add(blockedId)
-
-        await stateTransitionService.createDocument(
-          this.contractId,
-          DOCUMENT_TYPES.BLOCK_FILTER,
-          userId,
-          {
-            filterData: filter.serialize(),
-            itemCount: filter.itemCount,
-            version: BLOOM_FILTER_VERSION
-          }
-        )
-      }
+      const filter = existing?.filter ?? new BloomFilter()
+      filter.add(blockedId)
+      await this.writeBloomFilter(userId, filter, existing)
     } catch (error) {
       logger.error('Error adding to bloom filter:', error)
       // Non-fatal - block still succeeded
+    }
+  }
+
+  /**
+   * Rebuild the user's bloom filter from their remaining blocks, after
+   * `unblockedId` was unblocked: followers who inherit this user's blocks
+   * pre-screen against it, so a stale bit keeps flagging the unblocked user.
+   * The just-deleted block is left out even if a read still returns it.
+   */
+  async rebuildBloomFilter(userId: string, unblockedId: string): Promise<void> {
+    try {
+      const existing = await this.getBloomFilter(userId)
+      // No filter means nothing stale to correct.
+      if (!existing) return
+      // A fresh read: this tab's cached list misses blocks made elsewhere, and
+      // a filter that misses a block hides nothing (a miss is a definite "not
+      // blocked"). Every block this tab recorded is added too, complete list
+      // or not, for those it broadcast that the read may not show yet.
+      const fresh = (await this.getUserBlocks(userId)).map(block => block.blockedId)
+      const remaining = [...fresh, ...getRecordedOwnBlocks(userId)].filter(id => id && id !== unblockedId)
+      await this.writeBloomFilter(userId, buildBloomFilter(remaining), existing)
+    } catch (error) {
+      logger.error('Error rebuilding bloom filter:', error)
+      // Non-fatal - the unblock still succeeded; the filter only pre-screens
     }
   }
 
