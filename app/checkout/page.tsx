@@ -23,6 +23,7 @@ import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
+import { OWN_STORE_ORDER_MESSAGE, orderPayloadSizeError } from '@/lib/storefront/storefront-contract'
 import { identityService } from '@/lib/services/identity-service'
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
 import { parseStorePolicies } from '@/lib/utils/policies'
@@ -50,6 +51,7 @@ function normalizeKeyData(data: unknown): Uint8Array | null {
 }
 
 type CheckoutReadinessBlocker =
+  | 'own-store'
   | 'store-unavailable'
   | 'store-check-failed'
   | 'no-payment-methods'
@@ -70,6 +72,7 @@ function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): 
   if (!blocker) return null
 
   const messages: Record<CheckoutReadinessBlocker, string> = {
+    'own-store': OWN_STORE_ORDER_MESSAGE,
     'store-unavailable': 'This store is not accepting orders right now.',
     'store-check-failed': 'Could not confirm this store is open. Please try again.',
     'no-payment-methods': 'This store has not configured any payment methods.',
@@ -211,6 +214,13 @@ function CheckoutPage() {
       }
     }
 
+    // A seller never orders from their own store (storefront v6 refuses it on chain).
+    if (storeToValidate && storeToValidate.ownerId === user?.identityId) {
+      const state = blocked('own-store')
+      setCheckoutReadiness(state)
+      return state
+    }
+
     // Before storefront v5 consensus cannot stop an order to a paused or closed
     // store, so the client must; on v5 it refuses one too (QA D-25), and this
     // check keeps the buyer from paying for a refusal. Re-read past the document
@@ -318,7 +328,7 @@ function CheckoutPage() {
         }
 
         const readiness = await validateCheckoutReadiness(storeData)
-        if (readiness.blocker === 'store-unavailable') setError(readiness.blockerMessage)
+        if (readiness.blocker === 'store-unavailable' || readiness.blocker === 'own-store') setError(readiness.blockerMessage)
       } catch (error) {
         logger.error('Failed to load checkout data:', error)
         router.push('/cart')
@@ -764,6 +774,9 @@ function CheckoutPage() {
         nonce,
         store.id
       )
+      // v6 caps the encrypted payload; refuse here rather than after signing.
+      const tooLarge = orderPayloadSizeError(encryptedPayload.length)
+      if (tooLarge) throw new Error(tooLarge)
 
       await storeOrderService.createOrder(user.identityId, {
         storeId: store.id,

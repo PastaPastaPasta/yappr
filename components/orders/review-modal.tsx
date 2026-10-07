@@ -11,7 +11,9 @@ import { StarRatingInput } from '@/components/store/star-rating-input'
 import { storeReviewService } from '@/lib/services/store-review-service'
 import { itemReviewService } from '@/lib/services/item-review-service'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
-import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2 } from '@/lib/constants'
+import { STOREFRONT_YAPP_TOKEN_COSTS, storefrontIsV2, storefrontReviewsCostYapp } from '@/lib/constants'
+import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
+import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import toast from 'react-hot-toast'
 import type { StoreOrder, Store, OrderPayload } from '@/lib/types'
 
@@ -29,6 +31,19 @@ const TITLE_LIMIT = 100
 const CONTENT_LIMIT = 1000
 /** Indexed by the star rating, 0 meaning "not rated yet". */
 const RATING_LABELS = ['Tap a star to rate', 'Poor', 'Fair', 'Good', 'Very Good', 'Excellent']
+
+/**
+ * What a store review plus `itemCount` item reviews cost: YAPP on v2–v5, the
+ * v6 action fees in DASH (at a 1.0x fee multiplier, so "about").
+ */
+function reviewCostLabel(itemCount: number): string {
+  const storeFee = storefrontCreateFeeCredits('storeReview')
+  if (storeFee === null) {
+    return `${STOREFRONT_YAPP_TOKEN_COSTS.storeReview + itemCount * STOREFRONT_YAPP_TOKEN_COSTS.itemReview} YAPP`
+  }
+  const itemFee = storefrontCreateFeeCredits('itemReview') ?? 0n
+  return `about ${formatCreditsAsDash(storeFee + BigInt(itemCount) * itemFee)} DASH in fees`
+}
 
 export function ReviewModal({
   isOpen,
@@ -51,7 +66,9 @@ export function ReviewModal({
     ? Array.from(new Map((payload?.items ?? []).map((line) => [line.itemId, line.itemTitle])).entries())
     : []
   const ratedItems = Object.entries(itemRatings).filter(([, value]) => value > 0)
-  const yappCost = STOREFRONT_YAPP_TOKEN_COSTS.storeReview + ratedItems.length * STOREFRONT_YAPP_TOKEN_COSTS.itemReview
+  const costLabel = reviewCostLabel(ratedItems.length)
+  // v2–v5 reviews are paid in YAPP; v6 charges an action fee in credits instead.
+  const paysYapp = storefrontReviewsCostYapp()
 
   const canSubmit = rating >= 1 && rating <= 5 && !isSubmitting
 
@@ -84,7 +101,7 @@ export function ReviewModal({
           })
         } catch (error) {
           logger.error(`Failed to submit item review for ${itemId}:`, error)
-          if (handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
+          if (paysYapp && handleInsufficientYapp(error, 'You ran out of YAPP before every item review was posted.')) {
             // Nothing after this one was attempted either.
             failedItems.push(...ratedItems.slice(index).map(([id]) => id))
             break
@@ -102,7 +119,7 @@ export function ReviewModal({
       onSuccess()
     } catch (error) {
       logger.error('Failed to submit review:', error)
-      if (!handleInsufficientYapp(error, `A review costs ${yappCost} YAPP.`)) {
+      if (!(paysYapp && handleInsufficientYapp(error, `A review costs ${costLabel}.`))) {
         toast.error('Failed to submit review. Please try again.')
       }
     } finally {
@@ -243,7 +260,7 @@ export function ReviewModal({
                             Submitting...
                           </span>
                         ) : storefrontIsV2() ? (
-                          `Submit Review (${yappCost} YAPP)`
+                          `Submit Review (${costLabel})`
                         ) : (
                           'Submit Review'
                         )}

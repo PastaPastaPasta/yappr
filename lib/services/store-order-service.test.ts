@@ -44,3 +44,40 @@ describe('orders copy the store status on storefront v5 (QA D-25)', () => {
     vi.unstubAllEnvs();
   });
 });
+
+describe('storefront v6 (the mainnet re-cut)', () => {
+  const loadV6 = async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6');
+    const [{ storeOrderService: service }, { storeService }] = await Promise.all([import('./store-order-service'), import('./store-service')]);
+    return { service, storeService };
+  };
+
+  it("pages a seller's orders on their store (storeOrders), the store pinned with ==", async () => {
+    const { service, storeService } = await loadV6();
+    vi.spyOn(storeService, 'getByOwner').mockResolvedValue({ id: 'store-1' } as never);
+    query.mockResolvedValueOnce([order(2)]);
+    await service.getSellerOrders(seller, { limit: 1, startAfter: 'order-3' });
+    expect(query.mock.calls[0][0]).toMatchObject({
+      where: [['storeId', '==', 'store-1']],
+      orderBy: [['storeId', 'asc'], ['$createdAt', 'desc']],
+      startAfter: 'order-3',
+    });
+    vi.unstubAllEnvs();
+  });
+
+  it('a seller without a store has no orders (and makes no order query)', async () => {
+    const { service, storeService } = await loadV6();
+    vi.spyOn(storeService, 'getByOwner').mockResolvedValue(null);
+    expect(await service.getSellerOrders(seller)).toEqual({ orders: [] });
+    expect(query).not.toHaveBeenCalled();
+    vi.unstubAllEnvs();
+  });
+
+  it('refuses an order from your own store before signing', async () => {
+    const create = vi.spyOn(storeOrderService, 'create' as never).mockResolvedValue({} as never);
+    await expect(storeOrderService.createOrder(seller, { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) }))
+      .rejects.toThrow(/your own store/);
+    expect(create).not.toHaveBeenCalled();
+  });
+});

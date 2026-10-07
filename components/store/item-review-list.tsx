@@ -51,10 +51,10 @@ export function ItemReviewList({ itemId, limit = 10 }: ItemReviewListProps) {
               </span>
               <RatingStars rating={review.rating} size="sm" />
               <span className="text-gray-500">{formatDate(review.createdAt)}</span>
-              {review.verifiedPurchase && (
+              {review.ordered && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 dark:bg-green-900/30 dark:text-green-300">
                   <CheckBadgeIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                  Verified purchase
+                  Ordered
                 </span>
               )}
             </div>

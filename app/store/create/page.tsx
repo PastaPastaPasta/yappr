@@ -16,6 +16,10 @@ import { parseStorePolicies, serializeStorePolicies, isPoliciesWithinLimit } fro
 import { ProfileImageUpload } from '@/components/ui/profile-image-upload'
 import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { extractErrorMessage } from '@/lib/error-utils'
+import { storefrontIsV6 } from '@/lib/constants'
+import { storeStatsService } from '@/lib/services/store-stats-service'
+import { STORE_CATEGORY_MAX_LENGTH, isStoreImageUrl, normalizeStoreCategory, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
+import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import type { SocialLink, ParsedPaymentUri, StorePolicy } from '@/lib/types'
 
 const ONE_STORE_MESSAGE = 'You already have a store. Each account can have one store; manage it from Store > Manage.'
@@ -41,12 +45,29 @@ function CreateStorePage() {
   const [defaultCurrency, setDefaultCurrency] = useState('USD')
   const [policies, setPolicies] = useState<StorePolicy[]>([])
   const [status, setStatus] = useState<'active' | 'paused' | 'closed'>('active')
+  // v6: every store files under one category slug; what is typed is normalised to it.
+  const needsCategory = storefrontIsV6()
+  const [category, setCategory] = useState('')
+  const [suggestedCategories, setSuggestedCategories] = useState<string[]>([])
+  const categorySlug = normalizeStoreCategory(category)
+  // v6 charges an action fee on the create (null before v6).
+  const createFeeCredits = storefrontCreateFeeCredits('store')
 
   // Contact methods as social links
   const [contactLinks, setContactLinks] = useState<SocialLink[]>([])
 
   // Payment URIs - preserve existing when editing (managed via Settings tab)
   const [existingPaymentUris, setExistingPaymentUris] = useState<ParsedPaymentUri[]>([])
+
+  // Offer the categories other stores already use, so similar stores share one.
+  useEffect(() => {
+    if (!sdkReady || !needsCategory) return
+    let active = true
+    storeStatsService.topStoreCategories(50)
+      .then((ranked) => { if (active) setSuggestedCategories(ranked.map((entry) => entry.id)) })
+      .catch((err) => logger.warn('Failed to load store categories:', err))
+    return () => { active = false }
+  }, [sdkReady, needsCategory])
 
   // Load existing store data in edit mode
   useEffect(() => {
@@ -77,6 +98,7 @@ function CreateStorePage() {
         setDefaultCurrency(store.defaultCurrency || 'USD')
         setPolicies(parseStorePolicies(store.policies))
         setStatus(store.status || 'active')
+        setCategory(store.category || '')
 
         // Contact methods - already in SocialLink[] format
         setContactLinks(store.contactMethods || [])
@@ -100,6 +122,15 @@ function CreateStorePage() {
     e.preventDefault()
     if (!user?.identityId || !name.trim()) return
 
+    if (needsCategory && !categorySlug) {
+      setError('Choose a category for your store, such as "books" or "vintage clothing".')
+      return
+    }
+    if ([logoUrl, bannerUrl].some((url) => url.trim() && !isStoreImageUrl(url.trim()))) {
+      setError('Logo and banner URLs must start with https:// or ipfs://')
+      return
+    }
+
     // Validate policies length
     if (!isPoliciesWithinLimit(policies)) {
       setError('Store policies exceed the maximum character limit.')
@@ -122,7 +153,9 @@ function CreateStorePage() {
         location: location.trim() || undefined,
         defaultCurrency,
         policies: serializedPolicies || undefined,
-        contactMethods: contactLinks.length > 0 ? contactLinks : undefined
+        contactMethods: contactLinks.length > 0 ? contactLinks : undefined,
+        // Only v6 has the property (and requires it); earlier cuts refuse it.
+        ...(needsCategory ? { category: categorySlug } : {})
       }
 
       if (isEditMode && storeId) {
@@ -223,6 +256,32 @@ function CreateStorePage() {
                   className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500 resize-none"
                 />
               </div>
+
+              {needsCategory && (
+                <div>
+                  <label htmlFor={`${formId}-category`} className="block text-sm font-medium mb-1">Category *</label>
+                  <input
+                    type="text"
+                    id={`${formId}-category`}
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                    placeholder="e.g. vintage clothing"
+                    required
+                    maxLength={STORE_CATEGORY_MAX_LENGTH * 2}
+                    list={`${formId}-categories`}
+                    aria-describedby={`${formId}-category-hint`}
+                    className="w-full px-4 py-2 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-yappr-500"
+                  />
+                  <datalist id={`${formId}-categories`}>
+                    {suggestedCategories.map((slug) => <option key={slug} value={slug} />)}
+                  </datalist>
+                  <p id={`${formId}-category-hint`} className="mt-1 text-xs text-gray-500">
+                    {categorySlug
+                      ? <>Listed under <span className="font-mono">{categorySlug}</span>. Stores with the same category are browsed together.</>
+                      : `Lowercase words and digits, up to ${STORE_CATEGORY_MAX_LENGTH} characters.`}
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-4">
                 <ProfileImageUpload
@@ -328,13 +387,18 @@ function CreateStorePage() {
             <div className="pt-4">
               <Button
                 type="submit"
-                disabled={isSubmitting || !name.trim()}
+                disabled={isSubmitting || !name.trim() || (needsCategory && !categorySlug)}
                 className="w-full"
               >
                 {isSubmitting
                   ? (isEditMode ? 'Saving...' : 'Creating Store...')
                   : (isEditMode ? 'Save Changes' : 'Create Store')}
               </Button>
+              {!isEditMode && createFeeCredits !== null && (
+                <p className="mt-2 text-center text-xs text-gray-500">
+                  Opening a store pays a one-time moderation fee of about {formatCreditsAsDash(createFeeCredits)} DASH, plus the network fee.
+                </p>
+              )}
             </div>
           </form>
           )}

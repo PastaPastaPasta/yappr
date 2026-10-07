@@ -1495,9 +1495,12 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!isDevnetCut()) return null
-  const fees = devnetSchemas()[docType]?.actionFees
-  if (!fees) return null
-  const fee = fees[action]
+  return actionFeeOf(devnetSchemas()[docType]?.actionFees, action)
+}
+
+/** A doctype's declared `actionFees` (any contract's JSON) for `action`, or null when it charges nothing. */
+export function actionFeeOf(fees: SocialDocumentSchema['actionFees'], action: DocumentAction): ActionFeeDeclaration | null {
+  const fee = fees?.[action]
   if (!fee) return null
   return {
     owner: BigInt(fee.owner ?? 0),

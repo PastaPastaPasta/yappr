@@ -136,7 +136,7 @@ function StoreDetailContent() {
           // Per-item averages from the store-pinned ranked read (v2).
           storefrontIsV2() ? storeStatsService.topItemsInStore(storeId) : Promise.resolve([])
         ])
-        const itemCounts = await storeStatsService.getItemReviewCounts(rankedItems.map((entry) => entry.id))
+        const itemCounts = await storeStatsService.getItemReviewCounts(rankedItems.map((entry) => entry.id), storeId)
         const ratings: Record<string, ItemRatingSummary> = {}
         for (const entry of rankedItems) {
           // A ranked entry proves at least one review; the count query refines it.

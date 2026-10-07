@@ -8,6 +8,8 @@ import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
+import { OWN_STORE_ORDER_MESSAGE } from '@/lib/storefront/storefront-contract'
+import { useAuth } from '@/contexts/auth-context'
 import type { BlockSource } from '@/lib/services/block-service'
 import type { CartItem, Store } from '@/lib/types'
 
@@ -26,11 +28,14 @@ interface CartStoreSectionProps {
 export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps>(
   function CartStoreSection({ storeId, store, ownerBlock, items, availability, isCheckingAvailability, onRefreshAvailability, onRemoveAll }, ref) {
     const router = useRouter()
+    const { user } = useAuth()
 
     const subtotal = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0)
     // null when this store's lines are priced in different currencies: no single subtotal exists.
     const currency = getCartCurrency(items)
     const storeClosed = store !== undefined && store.status !== 'active'
+    // A seller never checks out from their own store (storefront v6 refuses it on chain).
+    const ownStore = store !== undefined && store.ownerId === user?.identityId
     const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
@@ -117,7 +122,11 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             {currency ? formatPrice(subtotal, currency) : '—'}
           </span>
         </div>
-        {storeClosed && (
+        {ownStore ? (
+          <p role="alert" className="mb-4 text-sm text-red-600">
+            {OWN_STORE_ORDER_MESSAGE}
+          </p>
+        ) : storeClosed && (
           <p role="alert" className="mb-4 text-sm text-red-600">
             This store is not accepting orders right now.
           </p>
@@ -135,7 +144,7 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
             <button className="mt-2 text-yappr-600 underline" onClick={onRefreshAvailability}>Check availability again</button>
           </div>
         )}
-        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue || !currency || storeClosed}>
+        <Button className="w-full" onClick={handleCheckout} disabled={isCheckingAvailability || hasAvailabilityIssue || !currency || storeClosed || ownStore}>
           Checkout from {store?.name || 'Store'}
         </Button>
       </div>

@@ -108,9 +108,9 @@ function StoreManagePage() {
         const [itemsResult, zonesResult, ordersResult, encKeyResult] = await Promise.allSettled([
           storeItemService.getAllByStore(currentStoreId),
           shippingZoneService.getByStore(currentStoreId),
-          // v2: O(1) countable index; v1: the legacy capped page length.
+          // v2: O(1) countable index (v6: on the store); v1: the legacy capped page length.
           storefrontIsV2()
-            ? storeStatsService.countSellerOrders(user.identityId)
+            ? storeStatsService.countSellerOrders(user.identityId, currentStoreId)
             : storeOrderService.getSellerOrders(user.identityId, { limit: 100 }).then((result) => result.orders.length),
           identityService.hasEncryptionKey(user.identityId)
         ])

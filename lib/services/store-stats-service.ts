@@ -10,7 +10,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID } from '../constants';
+import { STOREFRONT_DOCUMENT_TYPES, YAPPR_STOREFRONT_CONTRACT_ID, storefrontIsV6 } from '../constants';
 import type { ItemRatingSummary, StoreRatingSummary } from '../types';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentCount, groupedCountEntries, groupedDocumentCount, mapLimit } from './pagination-utils';
@@ -23,7 +23,7 @@ const INTEGER_KEY_OFFSET = 0x80;
 const RATINGS = [1, 2, 3, 4, 5] as const;
 
 export interface RankedEntry {
-  /** The group key: a store id or an item id (base58). */
+  /** The group key: a store id or an item id (base58), or a category slug. */
   id: string;
   /** Average rating on the average axis, a document count on the count axis. */
   value: number;
@@ -49,6 +49,11 @@ async function averageOf(sdk: Sdk, documentTypeName: string, where: DocumentWher
   const entry = groupedCountEntries(raw).find(([key]) => key === '')?.[1] as AverageEntry | undefined;
   if (!entry) return { count: 0, sum: 0 };
   return { count: Number(entry.count), sum: Number(entry.sum) };
+}
+
+/** v6 reads item ratings through `storeItemRating`, whose prefix is the store; earlier cuts index `itemId` alone. */
+function storePin(storeId: string): DocumentWhereClause[] {
+  return storefrontIsV6() ? [['storeId', '==', storeId]] : [];
 }
 
 function summaryFrom({ count, sum }: { count: number; sum: number }): ItemRatingSummary {
@@ -132,29 +137,35 @@ class StoreStatsService {
     return distribution;
   }
 
-  /** An item's proved average and review count from the `itemRating` average tree. */
-  async getItemRatingSummary(itemId: string): Promise<ItemRatingSummary> {
+  /**
+   * An item's proved average and review count: the `itemRating [itemId]`
+   * average tree before v6, `storeItemRating [storeId, itemId]` with the
+   * item's store pinned on v6 (which drops the per-item tree).
+   */
+  async getItemRatingSummary(itemId: string, storeId: string): Promise<ItemRatingSummary> {
     const cached = this.itemSummaries.get(itemId);
     if (cached) return cached;
     const sdk = await getEvoSdk();
-    const summary = summaryFrom(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, [['itemId', '==', itemId]]));
+    const summary = summaryFrom(await averageOf(sdk, STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW, [...storePin(storeId), ['itemId', '==', itemId]]));
     this.itemSummaries.set(itemId, summary);
     return summary;
   }
 
   /**
-   * Per-item review counts for a store page: one grouped count over the
-   * `itemReviews` index per 100 items (with the shared helper's per-id
-   * fallback when the grouped shape fails). Averages need the sum too, so
-   * items with reviews take their average from the ranked `storeItemRating`
-   * read the page also makes (see `topItemsInStore`).
+   * Per-item review counts for one store's page: one grouped count per 100
+   * items (with the shared helper's per-id fallback when the grouped shape
+   * fails), over `itemRating [itemId]` before v6 and `storeItemRating
+   * [storeId, itemId]` with the store pinned on v6. Averages need the sum too,
+   * so items with reviews take their average from the ranked
+   * `storeItemRating` read the page also makes (see `topItemsInStore`).
    */
-  async getItemReviewCounts(itemIds: string[]): Promise<Map<string, number>> {
+  async getItemReviewCounts(itemIds: string[], storeId: string): Promise<Map<string, number>> {
     if (itemIds.length === 0) return new Map();
     const sdk = await getEvoSdk();
     const query = { dataContractId: YAPPR_STOREFRONT_CONTRACT_ID, documentTypeName: STOREFRONT_DOCUMENT_TYPES.ITEM_REVIEW };
-    return groupedDocumentCount(sdk, { ...query, groupField: 'itemId' }, itemIds, (itemId) =>
-      documentCount(sdk, { ...query, where: [['itemId', '==', itemId]] })
+    const where = storePin(storeId);
+    return groupedDocumentCount(sdk, { ...query, groupField: 'itemId', where }, itemIds, (itemId) =>
+      documentCount(sdk, { ...query, where: [...where, ['itemId', '==', itemId]] })
     );
   }
 
@@ -200,10 +211,22 @@ class StoreStatsService {
     });
   }
 
-  /** Stores ranked by order count (the `storeOrderCount` ranking). */
+  /** Stores ranked by order count (`storeOrderCount`; v6 ranks the merged `storeOrders` at `storeId`). */
   mostOrderedStores(limit = 20): Promise<RankedEntry[]> {
     return this.rankedPage(`stores:orders:${limit}`, {
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_ORDER, groupBy: 'storeId', aggregate: { type: 'count' }, limit,
+    });
+  }
+
+  /**
+   * The categories with the most active stores, most first: one proved
+   * ranked count over v6's `byCategory [status, category, $createdAt]`
+   * (rankedCountable at `category`) with `status` pinned active.
+   */
+  topStoreCategories(limit = 20): Promise<RankedEntry[]> {
+    return this.rankedPage(`stores:categories:${limit}`, {
+      documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE, groupBy: 'category', aggregate: { type: 'count' },
+      where: [['status', '==', 'active']], limit,
     });
   }
 
@@ -260,13 +283,17 @@ class StoreStatsService {
     }
   }
 
-  /** O(1) seller order total from the countable `sellerOrderCount` index. */
-  async countSellerOrders(sellerId: string): Promise<number> {
+  /**
+   * O(1) order total for a seller's (one) store: the countable
+   * `sellerOrderCount [sellerId]` before v6, the rangeCountable
+   * `storeOrders [storeId, $createdAt]` on v6 (which drops the seller index).
+   */
+  async countSellerOrders(sellerId: string, storeId: string): Promise<number> {
     const sdk = await getEvoSdk();
     return documentCount(sdk, {
       dataContractId: YAPPR_STOREFRONT_CONTRACT_ID,
       documentTypeName: STOREFRONT_DOCUMENT_TYPES.STORE_ORDER,
-      where: [['sellerId', '==', sellerId]],
+      where: storefrontIsV6() ? [['storeId', '==', storeId]] : [['sellerId', '==', sellerId]],
     });
   }
 }

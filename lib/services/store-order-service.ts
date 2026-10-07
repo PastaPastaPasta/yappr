@@ -7,7 +7,9 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontOrdersCarryStoreStatus } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6, storefrontOrdersCarryStoreStatus } from '../constants';
+import { storeService } from './store-service';
+import { OWN_STORE_ORDER_MESSAGE } from '../storefront/storefront-contract';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
 import type {
@@ -65,12 +67,23 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   }
 
   /**
-   * Get orders for a seller, newest first
+   * Get orders for a seller, newest first. Before v6 that is the
+   * `sellerOrders [sellerId, $createdAt]` index; v6 drops it, and a seller has
+   * one store, so it pages that store's `storeOrders [storeId, $createdAt]`
+   * (no store, no orders).
    */
   async getSellerOrders(sellerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ orders: StoreOrder[]; nextCursor?: string }> {
+    let field = 'sellerId';
+    let value = sellerId;
+    if (storefrontIsV6()) {
+      const store = await storeService.getByOwner(sellerId);
+      if (!store) return { orders: [] };
+      field = 'storeId';
+      value = store.id;
+    }
     const { documents } = await this.query({
-      where: [['sellerId', '==', sellerId]],
-      orderBy: [['sellerId', 'asc'], ['$createdAt', 'desc']],
+      where: [[field, '==', value]],
+      orderBy: [[field, 'asc'], ['$createdAt', 'desc']],
       limit: options.limit || 20,
       startAfter: options.startAfter
     });
@@ -113,6 +126,8 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       nonce: Uint8Array;
     }
   ): Promise<StoreOrder> {
+    // v6 refuses it on chain (`sellerId` distinctFrom `$ownerId`); no cut has a use for it.
+    if (buyerId === data.sellerId) throw new Error(OWN_STORE_ORDER_MESSAGE);
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(data.storeId),
       // v2 checks this against the store's own $ownerId, so a wrong value is

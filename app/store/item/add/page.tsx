@@ -33,6 +33,7 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { VariantAxis, VariantCombination, ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
+import { variantsSizeError } from '@/lib/storefront/storefront-contract'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
 const EMPTY_KIT: ItemDeliverablePayload = { v: 1, assets: [], deliverWhen: 'payment_confirmed' }
@@ -354,6 +355,12 @@ function AddItemPage() {
           stock: combinationStocks[key] ? parseInt(combinationStocks[key], 10) : undefined
         }))
         variants = { axes: variantAxes, combinations: variantCombinations }
+      }
+      // v6 caps the stored variants JSON; refuse here rather than after signing.
+      const variantsError = variantsSizeError(variants)
+      if (variantsError) {
+        setError(variantsError)
+        return
       }
 
       // Include any pending image URL that wasn't explicitly added, if it is one
