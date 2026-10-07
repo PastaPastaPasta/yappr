@@ -279,7 +279,9 @@ async function caseB12Immutable(ctx) {
   const revision = await battery.revisionOf('blogPost', ctx.post2);
   for (const [label, data] of [
     ['b12a a replace moving blogId to another REAL blog is rejected (40128)', { blogId: id32(otherBlog.id), publishedAt: ctx.publishedAt }],
-    ['b12b a replace re-dating publishedAt is rejected (40128)', { blogId: id32(ctx.blogId), publishedAt: ctx.publishedAt + 86_400_000 }],
+    // Back-dated: a date more than 10 minutes past the replace would be refused first by
+    // `publishedNotAhead` (10422, judged before immutability), so it would prove nothing.
+    ['b12b a replace re-dating publishedAt is rejected (40128)', { blogId: id32(ctx.blogId), publishedAt: ctx.publishedAt - 86_400_000 }],
     ['b12c a replace DROPPING publishedAt is rejected (40128) — removal counts as a change', { blogId: id32(ctx.blogId), publishedAt: null }],
   ]) await edit(label, IMMUTABLE_CHANGED, ctx.post2, postData({ ...post2Base, ...data }), revision);
 
