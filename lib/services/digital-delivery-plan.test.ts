@@ -26,6 +26,7 @@ import {
   wholeOrderProblems,
   withHeldDeliveries,
   coverageChanged,
+  deliveryCompletesOrder,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
 import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
@@ -266,6 +267,31 @@ describe('re-checking receipts before a delivery', () => {
     expect(withHeldDeliveries([receipt(1, ['k1']), receipt(2, ['k2'])], [pending])).toEqual([receipt(1, ['k1']), receipt(2, ['k2'])])
     // Receipts are append-only: a confirmed one missing from the read is a lagging node, never a removal.
     expect(withHeldDeliveries([], [receipt(1, ['k1'])])).toEqual([receipt(1, ['k1'])])
+  })
+
+  it('completes a split order once an earlier part confirms, judged from the receipts just read', () => {
+    const product = (itemId: string, licenseKeys?: string[]) =>
+      ({ itemId, itemTitle: titleOf(itemId), assets: [], ...(licenseKeys ? { licenseKeys } : {}) })
+    const part = (n: number, items: ReturnType<typeof product>[], unconfirmed = false) =>
+      ({ nonce: new Uint8Array([n]), unconfirmed, payload: { v: 1 as const, items } })
+    const lines = [line(EBOOK_ID), line(SONG_ID)]
+    // Sending the song now; the ebook went out earlier.
+    const songNow = [{ selected: false, sellsCodes: false, codes: 0 }, { selected: true, sellsCodes: false, codes: 0 }]
+    const pending = [part(1, [product(EBOOK_ID)], true)]
+    const confirmed = [part(1, [product(EBOOK_ID)])]
+    // The form opened while the ebook's part was pending: not complete.
+    expect(deliveryCompletesOrder(lines, pending, songNow)).toBe(false)
+    // It confirmed since: the pre-send read sees it, and this delivery finishes the order.
+    expect(coverageChanged(lines, pending, confirmed)).toBe(false)
+    expect(deliveryCompletesOrder(lines, confirmed, songNow)).toBe(true)
+    // A code line needs all its codes in confirmed receipts plus this one.
+    const codeLine = [line(GAME_ID, 3)]
+    const twoSent = [part(2, [product(GAME_ID, ['k1', 'k2'])])]
+    expect(deliveryCompletesOrder(codeLine, twoSent, [{ selected: true, sellsCodes: true, codes: 1 }])).toBe(true)
+    expect(deliveryCompletesOrder(codeLine, twoSent, [{ selected: true, sellsCodes: true, codes: 0 }])).toBe(false)
+    expect(deliveryCompletesOrder(codeLine, [part(2, [product(GAME_ID, ['k1', 'k2'])], true)], [{ selected: true, sellsCodes: true, codes: 1 }])).toBe(false)
+    // An invalid quantity is never complete.
+    expect(deliveryCompletesOrder([line(EBOOK_ID, 0)], confirmed, [{ selected: true, sellsCodes: false, codes: 0 }])).toBe(false)
   })
 
   it('notices a delivery made elsewhere, but not a pending one confirming', () => {

@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
-import { coverageChanged, deliveredFor, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, validQuantity, wholeOrderProblems, withHeldDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
+import { coverageChanged, deliveredFor, deliveryCompletesOrder, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, wholeOrderProblems, withHeldDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
@@ -102,14 +102,11 @@ export function DeliverDigitalModal({
   const isUploading = uploadingLines.size > 0
 
   const selectedLines = useMemo(() => lines.filter((_, index) => selected.has(index)), [lines, selected])
-  const codesFor = (index: number) => (selected.has(index) && sellsCodes[index] ? codesNow[index] ?? 0 : 0)
-  // Complete only when every line's goods are in confirmed receipts or in this
-  // one (which marks the order only if it confirms): a code line needs all its
-  // codes, any other line just one receipt.
-  // An invalid quantity never counts as covered.
-  const completesOrder = lines.every((line, index) => validQuantity(line.quantity) && (sellsCodes[index]
-    ? coverage[index].confirmedCodes + codesFor(index) >= line.quantity
-    : selected.has(index) || coverage[index].confirmed))
+  const sending = lines.map((_, index) => ({ selected: selected.has(index), sellsCodes: sellsCodes[index], codes: codesNow[index] ?? 0 }))
+  // Whether this delivery (which marks the order only if it confirms) finishes
+  // the order, as far as the receipts the form shows go; decided again from
+  // the receipts read just before sending.
+  const completesOrder = deliveryCompletesOrder(lines, basis, sending)
   const toggleLine = (index: number) => setSelected((prev) => {
     const next = new Set(prev)
     if (next.has(index)) next.delete(index)
@@ -173,9 +170,10 @@ export function DeliverDigitalModal({
    * Re-read the order's receipts before anything is taken from a pool. If they
    * changed since the form was filled in (a delivery from another device or
    * tab), redo the allocation from them and let the seller check it: never
-   * send codes chosen against receipts that are out of date.
+   * send codes chosen against receipts that are out of date. Returns the
+   * receipts as just read when the allocation still holds, else null.
    */
-  const coverageStillHolds = async (): Promise<boolean> => {
+  const receiptsIfUnchanged = async (): Promise<OrderDelivery[] | null> => {
     let latest: OrderDelivery[]
     try {
       // Receipts already held that the read does not show yet still count.
@@ -183,9 +181,9 @@ export function DeliverDigitalModal({
     } catch (error) {
       logger.error('Could not re-check the order\'s deliveries:', error)
       toast.error('Could not check what was already delivered for this order, so nothing was sent. Try again.')
-      return false
+      return null
     }
-    if (!coverageChanged(lines, basis, latest)) return true
+    if (!coverageChanged(lines, basis, latest)) return latest
     const fresh = lines.map((line) => lineCoverage(line, latest))
     const owed = owedCodesFor(lines, fresh, sellsCodes)
     setBasis(latest)
@@ -194,7 +192,7 @@ export function DeliverDigitalModal({
     // The new selection may hold lines with warnings the seller has not checked.
     setReviewed(false)
     setCoverageMoved(true)
-    return false
+    return null
   }
 
   const handleSubmit = async () => {
@@ -202,15 +200,17 @@ export function DeliverDigitalModal({
     setIsSubmitting(true)
     setCoverageMoved(false)
     try {
-      if (!(await coverageStillHolds())) return
+      const latest = await receiptsIfUnchanged()
+      if (!latest) return
       const result = await fulfillOrder({
         sellerId,
         order,
         delivery: plan.delivery,
         consumedKeys: plan.consumedKeys,
         kits,
-        // A part of the order is not the whole of it.
-        markDelivered: markDelivered && completesOrder,
+        // A part of the order is not the whole of it. Decided from the receipts
+        // just read: an earlier part that confirmed since the form opened counts.
+        markDelivered: markDelivered && deliveryCompletesOrder(lines, latest, sending),
         sellerPrivateKey,
       })
       if (result.pending) toast('Sent, awaiting confirmation')

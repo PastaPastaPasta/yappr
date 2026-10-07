@@ -265,6 +265,38 @@ export function coverageChanged(
   })
 }
 
+/** What one order line takes in the delivery being sent. */
+export interface LineSending {
+  /** The line is in this delivery. */
+  selected: boolean
+  /** The line's product sells unique codes. */
+  sellsCodes: boolean
+  /** Unique codes this delivery takes for it. */
+  codes: number
+}
+
+/**
+ * Whether this delivery, with the confirmed receipts before it, holds every
+ * line's goods: a code line needs all its codes, any other line just one
+ * receipt. Only confirmed receipts count (a pending one may never land), and
+ * an invalid quantity never counts as covered. `deliveries` should be the
+ * receipts as just read: one that confirmed since the form opened counts.
+ */
+export function deliveryCompletesOrder(
+  lines: ReadonlyArray<Pick<OrderItem, 'itemId' | 'variantKey' | 'quantity'>>,
+  deliveries: readonly DeliveryRecord[],
+  sending: readonly LineSending[]
+): boolean {
+  return lines.every((line, index) => {
+    if (!validQuantity(line.quantity)) return false
+    const coverage = lineCoverage(line, deliveries)
+    const { selected, sellsCodes, codes } = sending[index]
+    return sellsCodes
+      ? coverage.confirmedCodes + (selected ? codes : 0) >= line.quantity
+      : selected || coverage.confirmed
+  })
+}
+
 /** Longest title a product can have (the product editor's limit). */
 const MAX_ITEM_TITLE_LENGTH = 200
 /** Longest base58 encoding of a 32-byte id. */
