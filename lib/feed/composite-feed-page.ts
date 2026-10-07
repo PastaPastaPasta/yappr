@@ -36,6 +36,7 @@ import { documentToPlainObject, identifierToBase58 } from '@/lib/services/sdk-he
 import { unifiedProfileService } from '@/lib/services/unified-profile-service';
 import { profileBaseSource, profileExtensionSource } from '@/lib/profile/v10-profile';
 import { getPrimaryUsername } from '@/lib/utils/username';
+import { dpnsRecordOwner } from '@/lib/utils/dpns-record-owner';
 import { postTimelineClauses, type QueryOptions } from '@/lib/services/document-service';
 import { transformRawPost } from './transform-raw-post';
 import type { OwnQuote } from './quote-reposts';
@@ -410,7 +411,10 @@ function targetIdsOf(records: Record<string, unknown>[], field: string): Set<str
   return ids;
 }
 
-/** Primary DPNS name per identity from a bound `domain` lookup, or empty when the lookup may have been truncated. */
+/**
+ * Primary DPNS name per identity from a bound `domain` lookup, or empty when the lookup may have been truncated.
+ * Only names an identity owns count (`dpnsRecordOwner`); a dropped forgery still used up the lookup's limit.
+ */
 export function usernamesByIdentity(records: Record<string, unknown>[], identityIds: readonly string[], pageSize: number): Map<string, string | null> {
   // At the cap, even returned authors may have unseen aliases that would
   // change their primary name. Leave the entire slice to normal enrichment;
@@ -421,8 +425,8 @@ export function usernamesByIdentity(records: Record<string, unknown>[], identity
   const names = new Map<string, string[]>();
   for (const doc of records) {
     const data = (doc.data || doc) as Record<string, unknown>;
-    const domainRecords = data.records as Record<string, unknown> | undefined;
-    const identityId = identifierToBase58(domainRecords?.identity || domainRecords?.dashUniqueIdentityId);
+    // A name pointing at an identity that did not register it is forged.
+    const identityId = dpnsRecordOwner(doc);
     const label = data.label || data.normalizedLabel;
     if (!identityId || !label) continue;
     const parentDomain = data.normalizedParentDomainName || 'dash';

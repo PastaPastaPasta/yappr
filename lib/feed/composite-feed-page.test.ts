@@ -30,7 +30,7 @@ const ownerIds = ['111111111', '222222222', '333333333', '444444444'];
 const docs = ownerIds.map((ownerId, i) => ({
   $id: `post0000${i}`, $ownerId: ownerId, $createdAt: 1000, content: 'test', language: 'en',
 }));
-const names = ownerIds.map((id, i) => ({ records: { identity: id }, label: `name${i}` }));
+const names = ownerIds.map((id, i) => ({ $ownerId: id, records: { identity: id }, label: `name${i}` }));
 function result(dpns = names, page = docs) {
   return {
     pageDocuments: page,
@@ -106,7 +106,7 @@ describe('composite feed page', () => {
 
   it('should not preload partial primary names or negative cache entries at the cap', async () => {
     mocks.composite.mockResolvedValue(result(Array.from({ length: 100 }, (_, i) => ({
-      records: { identity: ownerIds[0] }, label: `alias${i}`,
+      $ownerId: ownerIds[0], records: { identity: ownerIds[0] }, label: `alias${i}`,
     }))));
     const { loadCompositeFeedPage } = await import('./composite-feed-page');
     const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });
@@ -123,7 +123,7 @@ describe('composite feed page', () => {
 
   it('should leave capacity for empty identity branches before trusting completeness', async () => {
     mocks.composite.mockResolvedValue(result(Array.from({ length: 97 }, (_, i) => ({
-      records: { identity: ownerIds[0] }, label: `alias${i}`,
+      $ownerId: ownerIds[0], records: { identity: ownerIds[0] }, label: `alias${i}`,
     }))));
     const { loadCompositeFeedPage } = await import('./composite-feed-page');
     const page = await loadCompositeFeedPage({ language: 'en', limit: 20 });
@@ -318,5 +318,32 @@ describe('composite feed page on v10 (DashPay profile + yapprProfile)', () => {
     // The extension was read, so a recipe avatar cannot be hiding in it.
     expect(page.preloaded.avatars?.size).toBe(4);
     expect(page.preloaded.profiles?.size).toBe(4);
+  });
+});
+
+describe('usernamesByIdentity', () => {
+  const [victim, attacker] = ownerIds;
+  // Platform does not check `records.identity` against the owner, so anyone can
+  // register a short name that points at someone else.
+  const forged = { $ownerId: attacker, records: { identity: victim }, label: 'aa' };
+
+  it('ignores a name another identity registered for the victim', async () => {
+    const { usernamesByIdentity } = await import('./composite-feed-page');
+    const own = { $ownerId: victim, records: { identity: victim }, label: 'victim' };
+    const usernames = usernamesByIdentity([forged, own], [victim, attacker], 2);
+    expect(usernames.get(victim)).toBe('victim.dash');
+    // The forgery is not the attacker's name either: its record names someone else.
+    expect(usernames.get(attacker)).toBeNull();
+  });
+
+  it('proves a victim with only forged names unnamed', async () => {
+    const { usernamesByIdentity } = await import('./composite-feed-page');
+    expect(usernamesByIdentity([forged], [victim], 1).get(victim)).toBeNull();
+  });
+
+  it('still counts dropped forgeries against the lookup limit', async () => {
+    const { usernamesByIdentity } = await import('./composite-feed-page');
+    const flood = Array.from({ length: 98 }, (_, i) => ({ ...forged, label: `forged${i}` }));
+    expect(usernamesByIdentity(flood, [victim, attacker], 2).size).toBe(0);
   });
 });
