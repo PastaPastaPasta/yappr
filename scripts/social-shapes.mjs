@@ -24,6 +24,7 @@
  * checker below and with rs-dpp's own rule evaluation (the wasm-sdk's
  * `checkDocumentPropertyConstraints`) and serializer, offline.
  */
+import bs58 from 'bs58';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +55,22 @@ export function actionFeeOf(schemas, docType) {
     moderators: BigInt(create.moderators ?? 0),
     pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
   };
+}
+
+/**
+ * The `where` that finds `ownerId`'s report of the target `data` names, on its
+ * unique target-first index (v13 `byPost [postId, $ownerId]`, `byReply
+ * [replyId, $ownerId]`, `byTarget [targetOwnerId, about, $ownerId]`): no v13
+ * report index serves `$ownerId` alone, so a report whose confirmation timed
+ * out is recovered by its target. Identifiers are base58.
+ */
+export function reportRecoveryWhere(data, ownerId) {
+  const encode = (value) => (typeof value === 'string' ? value : bs58.encode(value));
+  const owner = ['$ownerId', '==', ownerId];
+  if (data.postId) return [['postId', '==', encode(data.postId)], owner];
+  if (data.replyId) return [['replyId', '==', encode(data.replyId)], owner];
+  if (data.about !== undefined && data.targetOwnerId) return [['targetOwnerId', '==', encode(data.targetOwnerId)], ['about', '==', data.about], owner];
+  throw new Error('A report names a post, a reply or a profile');
 }
 
 /**
@@ -331,6 +348,17 @@ async function selfTest() {
     if (!ok) failures += 1;
     console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? ` — ${detail}` : ''}`);
   };
+  {
+    // Recovery reads must follow each v13 report index's own property order.
+    const v13Indices = Object.fromEntries(readContract('yappr-social-contract-v13.json').documentSchemas.report.indices
+      .map((index) => [index.name, index.properties.map((entry) => Object.keys(entry)[0])]));
+    const [target, reporter] = [new Uint8Array(32).fill(4), bs58.encode(new Uint8Array(32).fill(5))];
+    for (const [index, data] of [['byPost', { postId: target }], ['byReply', { replyId: target }], ['byTarget', { about: 1, targetOwnerId: target }]]) {
+      const where = reportRecoveryWhere({ ...data, reason: 1 }, reporter);
+      const ok = JSON.stringify(where.map(([field]) => field)) === JSON.stringify(v13Indices[index]) && where.every(([, op]) => op === '==');
+      report(ok, `v13 a timed-out report is recovered on ${index}`, ok ? '' : JSON.stringify(where));
+    }
+  }
   for (const version of SOCIAL_CUTS) {
     const file = `yappr-social-contract-${version}.json`;
     const source = readContract(file);

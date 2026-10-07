@@ -56,9 +56,9 @@ import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as
 import bs58 from 'bs58';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { devnetConfig, devnetSdk, envValue } from './sdk-env.mjs';
-import { REPO_ROOT, createdId, findRecentByValues } from './seed/seed-lib.mjs';
+import { REPO_ROOT, asBase58, createdId, findRecentByValues } from './seed/seed-lib.mjs';
 import { buildDocument, randomIdBytes } from './verify-lib.mjs';
-import { actionFeeOf, socialShapes } from './social-shapes.mjs';
+import { actionFeeOf, reportRecoveryWhere, socialShapes } from './social-shapes.mjs';
 
 const RUNS = 3;
 const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
@@ -327,10 +327,18 @@ async function measureCut(cut, { P, likers }) {
     }
     for (let tries = 0; tries < 6; tries++) {
       await sleep(2500);
-      const found = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
+      const found = docType === 'report'
+        ? await findReport(who, data).catch(() => null)
+        : await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
       if (found) return { ok: true, id: found };
     }
     return { ok: false, error: 'no document after the write' };
+  }
+  /** A report's id, read back on its unique target-first index (no v13 report index serves `$ownerId` alone). */
+  async function findReport(who, data) {
+    const rows = await withReconnect(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'report', where: reportRecoveryWhere(data, who.ownerId), limit: 1 }));
+    const [doc] = [...(rows instanceof Map ? rows.values() : Object.values(rows ?? {}))].filter(Boolean);
+    return doc ? asBase58(doc.toObject?.().$id ?? doc.id) : null;
   }
   const targetField = (docType) => (docType === 'like' ? 'postId' : 'replyId');
   const liked = async (who, docType, data) => {
