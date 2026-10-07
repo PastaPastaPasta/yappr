@@ -516,7 +516,8 @@ export const likeData = ({ postId, hashtag, postAuthor }) => ({
   ...(hashtag === undefined ? {} : { hashtag }),
   postAuthor,
 });
-export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, replyAuthor });
+/** `replyAuthor` is left out when not given: social v13 likes a reply by its id alone (social-shapes `likeReply`). */
+export const likeReplyData = ({ replyId, replyAuthor }) => ({ replyId, ...(replyAuthor === undefined ? {} : { replyAuthor }) });
 export const followData = ({ followingId }) => ({ followingId });
 // ---- Identities -------------------------------------------------------------
 

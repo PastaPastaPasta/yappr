@@ -40,6 +40,7 @@ import {
 } from '@dashevo/evo-sdk';
 import { REPO_ROOT, readEnvFile, privateKeyToWif } from '../derive-identities.mjs';
 import { describeErr } from '../owner-keys.mjs';
+import { actionFeeOf, socialShapes } from '../social-shapes.mjs';
 import { buildSdk, insightUrl, keyNetwork, network } from '../sdk-env.mjs';
 
 export { describeErr, REPO_ROOT, readEnvFile, insightUrl, keyNetwork, network };
@@ -56,17 +57,21 @@ export const REPORT_FILE = join(REPO_ROOT, '.seed-report.local.json');
 export const YAPP_TOKEN_POSITION = 0;
 
 /**
- * The social topologies the seeder writes: v10, v11 and v12. v11 (docs/SOCIAL_V11.md) keeps every
+ * The social topologies the seeder writes: v10, v11, v12 and v13. v11 (docs/SOCIAL_V11.md) keeps every
  * create shape the seeder writes; it differs in deletes (tombstones), unlikes and moderation,
  * which the seeder never does. v12 (docs/SOCIAL_V12.md) changes only how the like author and
- * hashtag indexes store (counters) and who may tombstone, not what a create carries. All take
+ * hashtag indexes store (counters) and who may tombstone, not what a create carries. v13
+ * (docs/SOCIAL_V13.md) does change creates: posts carry `live`, replies `rootOwnerId`, a reply like
+ * no `replyAuthor`, media are arrays; `SOCIAL_SHAPES` builds them off the configured file. All take
  * their profiles from DashPay plus `yapprProfile`.
  */
-export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12'];
+export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
   `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));
 const SOCIAL_DOCUMENT_SCHEMAS = SOCIAL_CONTRACT.documentSchemas;
+/** The post, reply, reply-like and media builders for the configured cut (scripts/social-shapes.mjs). */
+export const SOCIAL_SHAPES = socialShapes(SOCIAL_CONTRACT);
 
 /**
  * YAPP create costs per doctype (the v10 JSON's tokenCost; v9's are the same).
@@ -120,11 +125,13 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Document shapes (social v10/v11/v12) -------------------------------------
+// ---- Document shapes (social v10/v11/v12/v13) ---------------------------------
 //
 // The seeder writes to the devnet social contract, v10
 // (contracts/yappr-social-contract-v10.json), v11 or v12 (-v11.json, -v12.json,
-// the same create shapes); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// the same create shapes) or v13 (-v13.json: `live`, `rootOwnerId`, no
+// `likeReply.replyAuthor`, media arrays, all through `SOCIAL_SHAPES`); nothing
+// else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
 // that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
 // it OMITS `like.hashtag` too — a `where` entry treats both-absent as
 // agreement, while sending `''` is consensus mismatch 40127. The like's
@@ -133,7 +140,8 @@ export function profileContractId() {
 // the rolling hashtag window (`like.byTrendHashtagPost`, skipped when untagged).
 // There is no `language` either. A post or reply naming `mediaUrl` must carry
 // `mediaHash` (sha256 of the bytes) and `mediaFingerprint` (8-byte dHash)
-// beside it (`mediaFieldsFor`). post and reply creates agree to an action fee,
+// beside it (`mediaFieldsFor`); on v13 the same item is a one-entry
+// `mediaUrls` / `mediaDigests` / `mediaKinds`. post and reply creates agree to an action fee,
 // and their token costs are `optional` with the contract owner offering the
 // gas — see `actionFeeFor` / `paymentInfo` below.
 
@@ -174,6 +182,15 @@ export function likeValueTuple(target) {
     ...hashtagProps(target.hashtag),
     postAuthor: bs58.decode(target.ownerId),
   };
+}
+
+/**
+ * The likeReply value tuple for a target reply ref record, for the create and
+ * the delete-by-values alike: `replyAuthor` binds to the reply's `$ownerId` up
+ * to v12; v13 likes a reply by its id alone.
+ */
+export function likeReplyValueTuple(target) {
+  return SOCIAL_SHAPES.likeReply({ replyId: bs58.decode(target.id), replyAuthor: bs58.decode(target.ownerId) });
 }
 
 // ---- Key material -------------------------------------------------------------
@@ -405,7 +422,8 @@ const LINK_PLACEHOLDER = /\{\{link:([A-Za-z0-9_-]+)\}\}/g;
 export const CONTENT_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.content.maxLength;
 /** `post.content` / `reply.content` maxBytes, in UTF-8 bytes (v10: 10421 over it). */
 export const CONTENT_MAX_BYTES = SOCIAL_DOCUMENT_SCHEMAS.post.properties.content.maxBytes;
-export const MEDIA_URL_MAX = SOCIAL_DOCUMENT_SCHEMAS.post.properties.mediaUrl.maxLength;
+/** One media URL's maxLength: `mediaUrl` up to v12, each `mediaUrls` item on v13. */
+export const MEDIA_URL_MAX = (SOCIAL_DOCUMENT_SCHEMAS.post.properties.mediaUrl ?? SOCIAL_DOCUMENT_SCHEMAS.post.properties.mediaUrls.items).maxLength;
 
 /** Code points, as `maxLength` counts them (an emoji is one, not two UTF-16 units). */
 export const codePointLength = (text) => Array.from(text).length;
@@ -785,7 +803,10 @@ const CLOCK_SKEW_MS = 120_000;
 export async function findRecentByValues(sdk, { contractId, docType, ownerId, data, since, limit = 100 }) {
   const fields = Object.entries(data ?? {});
   if (fields.length === 0) return null; // nothing to match on — every candidate would "match"
-  const base = { dataContractId: contractId, documentTypeName: docType, where: [['$ownerId', '==', ownerId]], limit };
+  // A v13 post is listed by its author on [live, $ownerId, $createdAt], which holds only posts
+  // carrying `live`: without the pin no index serves `$ownerId ==` and the scan finds nothing.
+  const owner = docType === 'post' && data.live === true ? [['live', '==', true], ['$ownerId', '==', ownerId]] : [['$ownerId', '==', ownerId]];
+  const base = { dataContractId: contractId, documentTypeName: docType, where: owner, limit };
   let result;
   try {
     result = await sdk.documents.query({ ...base, orderBy: [['$createdAt', 'desc']] });
@@ -867,18 +888,11 @@ export function tokenCostFor(docType) {
 
 /**
  * The action fee `docType`'s create charges, or null when it charges none
- * (everything but `post` and `reply`). Read off the committed contract JSON so
+ * (everything but `post` and `reply`, and `report` from v13). Read off the committed contract JSON so
  * no amount is ever transcribed: a mismatch is a paid 40133.
  */
 export function actionFeeFor(docType) {
-  const fees = SOCIAL_DOCUMENT_SCHEMAS[docType]?.actionFees;
-  const create = fees?.create;
-  if (!create) return null;
-  return {
-    owner: BigInt(create.owner ?? 0),
-    moderators: BigInt(create.moderators ?? 0),
-    pricing: fees.pricing === 'fixed' ? 'fixed' : 'feeMultiplier',
-  };
+  return actionFeeOf(SOCIAL_DOCUMENT_SCHEMAS, docType);
 }
 
 /**

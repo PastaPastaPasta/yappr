@@ -138,7 +138,8 @@ export async function resolveModerator(sdk, spec) {
     : resolveOwner({ botIndex: Number(spec.replace(/^bot:/, '')) });
   const { identityKey, signer } = await signerFor(sdk, owner);
   const identity = await sdk.identities.fetch(owner.ownerId);
-  return { ownerId: owner.ownerId, identity, identityKey, signer, label: owner.label };
+  // `wif` lets the moderator sign a hand-built batch too (a v13 report carries an action fee agreement).
+  return { ownerId: owner.ownerId, identity, identityKey, signer, wif: owner.wif, label: owner.label };
 }
 
 /**

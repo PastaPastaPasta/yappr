@@ -3,7 +3,10 @@
  * (docs/SOCIAL_V10.md, "Media"): `mediaHash` is the sha256 of the exact bytes
  * at the URL, `mediaFingerprint` the 64-bit difference hash (dHash) of the
  * decoded image. Both are required whenever `mediaUrl` is set, and neither may
- * appear without it (dependentRequired, 10101).
+ * appear without it (dependentRequired, 10101). Social v13 (docs/SOCIAL_V13.md)
+ * keeps both per item, concatenated as one 40-byte `mediaDigests` entry (sha256
+ * then dHash) beside `mediaUrls` and `mediaKinds`; `SOCIAL_SHAPES.media`
+ * (scripts/social-shapes.mjs) lays them out for the configured cut.
  *
  * The dHash is pinned here so the seeder, the batteries and the client
  * (`lib/media/dhash.ts`, a later PR) use the same parameters (resamplers differ
