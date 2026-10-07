@@ -1216,17 +1216,20 @@ async function main() {
     // local clock by up to a block or two, so each check polls from then until the expected
     // state shows, within a deadline.
     const leavesOldestAt = (t, name) => Math.floor(t / 1000 / grid(name).step) * grid(name).step * 1000 + grid(name).range * 1000;
+    // An idle devnet makes a block only every few minutes, and a window passes in BLOCK time,
+    // so the poll allows ten minutes past the expected expiry (100 s missed it on sakura).
+    const EXPIRY_GRACE_MS = 600_000;
     const pollUntil = async (from, deadline, read, done) => {
       if (from > Date.now()) { console.log(`     waiting ${Math.ceil((from - Date.now()) / 1000)} s for a window to pass`); await sleep(from - Date.now()); }
       let value = await withReconnect(read);
       while (!done(value) && Date.now() < deadline) { await sleep(10_000); value = await withReconnect(read); }
       return value;
     };
-    await attempt('ol-x1', () => pollUntil(leavesOldestAt(taggedAt, 'byTrendHashtagPost'), leavesOldestAt(taggedAt, 'byTrendHashtagPost') + 100_000,
+    await attempt('ol-x1', () => pollUntil(leavesOldestAt(taggedAt, 'byTrendHashtagPost'), leavesOldestAt(taggedAt, 'byTrendHashtagPost') + EXPIRY_GRACE_MS,
       async () => ({ tags: tagPairs(await trendTags()), posts: rankedPairs(await ranked([['hashtag', '==', tag]], 'postId', oldestOf('byTrendHashtagPost'))) }),
       ({ tags }) => !same(tags, [[tag, 2]])), ({ tags, posts }) => check(`ol-x1 once its window passed, C's unliked tag entry has expired while B's later live like stays: ${tag} 1, Th 1 in the oldest open window`,
       same(tags, [[tag, 1]]) && same(posts, [[Th, 1]]), `${JSON.stringify(tags)} posts ${JSON.stringify(posts)}`));
-    await attempt('ol-x2', () => pollUntil(leavesOldestAt(expiringAt, 'byTrendPost'), leavesOldestAt(expiringAt, 'byTrendPost') + 100_000,
+    await attempt('ol-x2', () => pollUntil(leavesOldestAt(expiringAt, 'byTrendPost'), leavesOldestAt(expiringAt, 'byTrendPost') + EXPIRY_GRACE_MS,
       async () => rankedPairs(await trendPosts()), (got) => !got.some(([k]) => k === T3)),
     (got) => check('ol-x2 once its window passed, C\'s unliked T3 is gone from the 3-day trend window (never re-counted)', !got.some(([k]) => k === T3), JSON.stringify(got)));
     await attempt('ol-x3', () => Promise.all([likeCount('like', 'postId', Th), likeCount('like', 'postId', T1), ranked([['postAuthor', '==', A.ownerId]], 'postId')]),

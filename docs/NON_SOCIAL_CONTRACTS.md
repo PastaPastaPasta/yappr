@@ -69,8 +69,9 @@ contract id is an input to every registration.
 `NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v6`, resolved in `lib/constants.ts`).
 **The file is storefront v6**, the 5.0.0-beta.2 mainnet-ready cut that also
 carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638). It is
-registered on sakura as `EDr9McRVsuRZ1J52crVkiESrJ2uKTasj2WNGuZvPZ6w8`;
-`/devnet` stays on v5 until it is cut over.
+registered on sakura as `EDr9McRVsuRZ1J52crVkiESrJ2uKTasj2WNGuZvPZ6w8`
+and `/devnet` runs it since the 2026-10-07 cut-over
+([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
@@ -225,8 +226,9 @@ gated the other way rather than a loosened gate; `immutable` on
 `contracts/yappr-blog-contract.json` — `blog`, `blogPost`, `blogComment`,
 `blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v7`, resolved
 in `lib/constants.ts` at call time so unit tests can stub it). **The file is
-blog v7**, the 5.0.0-beta.2 mainnet-ready cut; it is not registered anywhere
-yet, and `/devnet` stays on v6 until it is.
+blog v7**, the 5.0.0-beta.2 mainnet-ready cut, registered on sakura as
+`BQyfE9bqHPejKaHKbrZh4ZfRFgUZAa8AqPMPJmH13wq2`; `/devnet` runs it since the
+2026-10-07 cut-over ([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
@@ -429,9 +431,9 @@ battery probes this and never fails on it.
 `contracts/pollr-contract.json` is **pollr v5**: `poll` and one `vote` doctype.
 Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v5`. It replaces the v4 cut (indexOnly
 `vote`/`multiVote`, still registered on sakura as `7VB2hBnA…`; recover it from
-git history). Testnet runs v3 (`GBCR8Jqt…`, externally owned). No network has
-v5 yet; registering it on devnet and running `verify-pollr.mjs` there is a
-follow-up.
+git history). Testnet runs v3 (`GBCR8Jqt…`, externally owned). Sakura runs v5
+as `BX94nj87AZ61KpU2Vqv4oPUu5N4b4YrKrvHvfB833Q3z` (2026-10-07, `/devnet`);
+`verify-pollr.mjs` passed 50/50 there ([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |

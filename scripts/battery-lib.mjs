@@ -26,6 +26,7 @@ import {
   buildDocument,
   createDocument,
   createSdkHandle,
+  createWithAgreement,
   createdId,
   describeErr,
   findRecentByValues,
@@ -314,13 +315,20 @@ export function createBattery({ handle, contractId, socialId, agreementFor }) {
       id = found;
       return id !== null && (await fetchDocument(docType, id, contract)) !== null;
     };
+    const payment = noPayment ? {} : paymentInfo(tokenCost);
+    const onDerivedId = (derived) => { id = derived; };
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
       () => (agreement
         // The derived id is kept before the broadcast, so a create whose wait throws after it
         // landed is still found by id (v7 blogPost/blogComment have no owner index to search).
-        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment: noPayment ? {} : paymentInfo(tokenCost), onDerivedId: (derived) => { id = derived; } })
-        : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) }))
+        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment, onDerivedId })
+        // A case that opts out of a priced type's agreement (40132) is sent hand-built too, with
+        // the nonce read off the chain: this actor's agreed creates moved its nonce by hand, and
+        // the facade's cached nonce can still be behind, which reuses a spent one instead.
+        : noAgreement && who.wif
+          ? createWithAgreement(sdk, { contractId: contract, docType, ownerId: who.ownerId, wif: who.wif, identityKey: who.identityKey, data, entropy, payment, onDerivedId })
+          : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...payment }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
     return { ...outcome, id, document: outcome.result ?? document };
