@@ -1,6 +1,6 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
-import { contractTakesReports, electedModeration } from '@/lib/contract-topology'
+import { blocksContractId, contractTakesReports, electedModeration } from '@/lib/contract-topology'
 import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
 import { moderationElectionService } from '@/lib/services/moderation-election-service'
@@ -88,7 +88,8 @@ export function createSafetyModule(tickets: TicketStore) {
     persistArgs: true,
     async run({ targetId, message }, ctx) {
       const result = await blockService.blockUser(signer(ctx), targetId, message)
-      return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'block'))
+      // v13: the block lands in the blocks contract (blockUser refuses when there is none).
+      return fromTransitionResult(result, createdDocument(result, blocksContractId() ?? YAPPR_CONTRACT_ID, 'block'))
     },
     probe: ownBlock(true),
   })

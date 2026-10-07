@@ -4,7 +4,7 @@ import { stateTransitionService } from './state-transition-service'
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
-import { blockFollowsAreTyped } from '../contract-topology'
+import { blockFollowsAreTyped, blocksContractId } from '../contract-topology'
 import { decodeBlockFollowIds, encodeBlockFollowIds } from '../typed-array-codecs'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
 import { BlockDocument, BlockFollowData } from '../types'
@@ -62,6 +62,9 @@ export interface BlockProvenance {
  * - Follow other users' block lists (hard blocks)
  * - SessionStorage caching for page load optimization
  */
+/** What a block write answers on a deployment without its blocks contract. */
+const BLOCKS_UNAVAILABLE = 'Blocking is not available on this network yet.'
+
 class BlockService extends BaseDocumentService<BlockDocument> {
   private ownBlocksInFlight = new RequestDeduplicator<string, string[]>(0)
   private ownBlockVersions = new Map<string, number>()
@@ -92,7 +95,17 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   constructor() {
-    super(DOCUMENT_TYPES.BLOCK)
+    // v13 keeps block, blockFilter and blockFollow in the blocks contract.
+    super(DOCUMENT_TYPES.BLOCK, blocksContractId() ?? '')
+  }
+
+  /**
+   * False on v13 when the deployment names no blocks contract: nothing is
+   * read (nobody is blocked) and every write refuses, instead of querying a
+   * contract that is not there.
+   */
+  private get available(): boolean {
+    return this.contractId !== ''
   }
 
   /**
@@ -133,6 +146,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     targetUserId: string,
     message?: string
   ): Promise<{ success: boolean; error?: string; autoRevoked?: boolean }> {
+    if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       if (blockerId === targetUserId) {
         return { success: false, error: 'Cannot block yourself' }
@@ -231,6 +245,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     blockerId: string,
     targetUserId: string
   ): Promise<{ success: boolean; error?: string }> {
+    if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       const block = await this.getBlock(targetUserId, blockerId)
       if (!block) {
@@ -265,6 +280,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get a specific block document.
    */
   async getBlock(targetUserId: string, blockerId: string): Promise<BlockDocument | null> {
+    if (!this.available) return null
     try {
       const result = await this.query({
         where: [
@@ -286,6 +302,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * failure never passes for "no blocks".
    */
   async getUserBlocks(userId: string): Promise<BlockDocument[]> {
+    if (!this.available) return []
     const { documents } = await this.queryAll({
       where: [['$ownerId', '==', userId]],
       orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
@@ -301,6 +318,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get the bloom filter for a user.
    */
   async getBloomFilter(userId: string): Promise<{ filter: BloomFilter; documentId: string; revision: number } | null> {
+    if (!this.available) return null
     try {
       const sdk = await getEvoSdk()
       const response = await sdk.documents.query({
@@ -342,7 +360,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    */
   async getBloomFiltersBatch(userIds: string[]): Promise<Map<string, BloomFilter>> {
     const result = new Map<string, BloomFilter>()
-    if (userIds.length === 0) return result
+    if (userIds.length === 0 || !this.available) return result
 
     try {
       const sdk = await getEvoSdk()
@@ -470,6 +488,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * mistake a transient error for "no document".
    */
   private async fetchBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    if (!this.available) return null
     const sdk = await getEvoSdk()
     const response = await sdk.documents.query({
       dataContractId: this.contractId,
@@ -512,6 +531,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     userId: string,
     targetUserId: string
   ): Promise<{ success: boolean; error?: string }> {
+    if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       if (userId === targetUserId) {
         return { success: false, error: 'Cannot follow your own blocks' }
@@ -860,7 +880,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     followedBlockers: string[]
   ): Promise<{ blocks: Map<string, InheritedBlock>; complete: boolean }> {
     const result = new Map<string, InheritedBlock>()
-    if (targetIds.length === 0 || followedBlockers.length === 0) return { blocks: result, complete: true }
+    if (targetIds.length === 0 || followedBlockers.length === 0 || !this.available) return { blocks: result, complete: true }
     let complete = true
 
     try {
