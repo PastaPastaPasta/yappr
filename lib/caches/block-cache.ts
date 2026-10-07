@@ -7,6 +7,7 @@
  */
 
 import { BloomFilter, bloomFilterToBase64, bloomFilterFromBase64 } from '../bloom-filter'
+import { blocksContractId } from '@/lib/contract-topology'
 import { scopedKey } from '@/lib/storage-scope'
 
 const CACHE_KEY_PREFIX = scopedKey('yappr_block_cache_')
@@ -46,8 +47,13 @@ export interface BlockCacheData {
   confirmedBlocks: Record<string, ConfirmedBlock>
 }
 
+/**
+ * Per viewer and per contract holding the blocks (the social contract up to
+ * v12, the blocks contract on v13): a cache written against one contract
+ * never answers for another.
+ */
 function getCacheKey(userId: string): string {
-  return `${CACHE_KEY_PREFIX}${userId}`
+  return `${CACHE_KEY_PREFIX}${blocksContractId() ?? 'none'}:${userId}`
 }
 
 function getEmptyCache(): BlockCacheData {

@@ -77,6 +77,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /** Share the complete owner list across auth, cards and feed enrichment. */
   private async getOwnBlockedIds(userId: string): Promise<string[]> {
+    if (!this.available) return []
     const cached = getOwnBlocksFromCache(userId)
     if (cached !== null) return cached
 
@@ -659,6 +660,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get list of users whose blocks are being followed.
    */
   async getBlockFollows(userId: string): Promise<string[]> {
+    if (!this.available) return []
     // Check cache first — null means "never cached", while an empty
     // array is a valid cached result (the common case) and must not
     // trigger a refetch.
@@ -701,7 +703,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * vs. manage followed block lists). A failed own-list read rejects.
    */
   async getBlockProvenance(targetUserId: string, viewerId: string): Promise<BlockProvenance> {
-    if (!viewerId || !targetUserId || viewerId === targetUserId) {
+    // No blocks contract (v13 without one): nobody is blocked, whatever a cache recorded.
+    if (!viewerId || !targetUserId || viewerId === targetUserId || !this.available) {
       return { isBlocked: false, isOwnBlock: false, inheritedFrom: null }
     }
 
@@ -770,6 +773,10 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     const result = new Map<string, boolean>()
 
     if (!viewerId || targetIds.length === 0) {
+      return result
+    }
+    if (!this.available) {
+      for (const targetId of targetIds) result.set(targetId, false)
       return result
     }
 
@@ -936,6 +943,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Queries all necessary data and populates sessionStorage cache.
    */
   async initializeBlockData(userId: string): Promise<void> {
+    if (!this.available) return
     // Check if cache already exists and is fresh
     const existingCache = loadBlockCache(userId)
     if (getOwnBlocksFromCache(userId) !== null && existingCache?.blockFollows.timestamp) {

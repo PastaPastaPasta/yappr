@@ -70,6 +70,33 @@ describe('blocks on v13', { timeout: 20_000 }, () => {
     expect(createDocument).not.toHaveBeenCalled()
   })
 
+  it('ignores populated block caches when no blocks contract is configured', async () => {
+    const blockService = await blockServiceOn('v13', '')
+    const cache = await import('../caches/block-cache')
+    cache.setOwnBlocks(VIEWER, [TARGET])
+    cache.addConfirmedBlocksBatch(VIEWER, new Map([[TARGET, { isBlocked: true, blockedBy: VIEWER }]]))
+    cache.setBlockFollows(VIEWER, [identity(3)])
+
+    await expect(blockService.isBlocked(TARGET, VIEWER)).resolves.toBe(false)
+    await expect(blockService.checkBlockedBatch(VIEWER, [TARGET])).resolves.toEqual(new Map([[TARGET, false]]))
+    await expect(blockService.getBlockProvenance(TARGET, VIEWER)).resolves.toEqual({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
+    await expect(blockService.getBlockSourcesBatch(VIEWER, [TARGET])).resolves.toEqual(new Map())
+    await expect(blockService.getBlockFollows(VIEWER)).resolves.toEqual([])
+    await blockService.initializeBlockData(VIEWER)
+    expect(query).not.toHaveBeenCalled()
+  })
+
+  it('keeps block caches per blocks contract: a v12 cache never answers on v13', async () => {
+    const v12 = await blockServiceOn('v12', '')
+    ;(await import('../caches/block-cache')).setOwnBlocks(VIEWER, [TARGET])
+    await expect(v12.isBlocked(TARGET, VIEWER)).resolves.toBe(true)
+
+    vi.resetModules()
+    const v13 = await blockServiceOn('v13', BLOCKS)
+    await expect(v13.isBlocked(TARGET, VIEWER)).resolves.toBe(false)
+    expect(query.mock.calls.some(([q]) => q.dataContractId === BLOCKS && q.documentTypeName === 'block')).toBe(true)
+  })
+
   it('keeps blocks in the social contract before v13, whatever the blocks setting says', async () => {
     const blockService = await blockServiceOn('v12', BLOCKS)
     await blockService.blockUser(VIEWER, TARGET)
