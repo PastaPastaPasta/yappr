@@ -100,6 +100,8 @@ export interface BlogPost {
   commentsEnabled?: boolean
   slug: string
   publishedAt?: number
+  /** Blog v7: the author deleted this post; only blogId, slug and publishedAt remain (a tombstone). */
+  deleted?: boolean
 }
 
 export interface BlogComment {

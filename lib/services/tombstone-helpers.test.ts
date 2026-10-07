@@ -281,3 +281,47 @@ describe('a banned or suspended author (QA 2026-10-01, sakura)', () => {
     await expect(tombstone('v11')).resolves.toBe(false)
   })
 })
+
+describe('blog v7 post tombstones (a custom base)', () => {
+  const blogIdBytes = new Uint8Array(32).fill(9)
+  /** A stored live v7 post, every content field set. */
+  const storedBlogPost = (extra: Record<string, unknown> = {}) => ({
+    toObject: () => ({
+      $id: postId, $ownerId: ownerId, $revision: 2,
+      blogId: blogIdBytes, title: 'T', subtitle: 'S', data0: new Uint8Array([1]), data1: new Uint8Array([2]),
+      coverImage: 'ipfs://bafy', labels: ['a'], commentsEnabled: true, slug: 'my-post', publishedAt: 1_700_000_000_000,
+      ...extra,
+    }),
+  })
+  const blogTombstone = async () => {
+    const [{ tombstoneDocument }, { BLOG_POST_TOMBSTONE, BLOG_POST_TOMBSTONE_KEEPS }] = await Promise.all([
+      import('./tombstone-helpers'),
+      import('@/lib/blog/content-utils'),
+    ])
+    return tombstoneDocument({ contractId, documentType: 'blogPost', documentId: postId, ownerId, preserve: BLOG_POST_TOMBSTONE_KEEPS, base: BLOG_POST_TOMBSTONE })
+  }
+
+  it('writes exactly what tombstoneIsBlank accepts: the flag, comments off, blogId as raw bytes, slug and publishedAt', async () => {
+    get.mockResolvedValue(storedBlogPost())
+    updateDocument.mockResolvedValue({ success: true })
+    await expect(blogTombstone()).resolves.toBe(true)
+    const data = attempt(0)
+    expect(Object.keys(data).sort()).toEqual(['blogId', 'commentsEnabled', 'deleted', 'publishedAt', 'slug'])
+    expect(data).toMatchObject({ deleted: true, commentsEnabled: false, slug: 'my-post', publishedAt: 1_700_000_000_000 })
+    expect(Array.from(data.blogId as Uint8Array)).toEqual(Array.from(blogIdBytes))
+    expect(updateDocument.mock.calls[0][5]).toBe(2)
+  })
+
+  it('leaves publishedAt out for a draft, which never had one', async () => {
+    get.mockResolvedValue(storedBlogPost({ publishedAt: undefined }))
+    updateDocument.mockResolvedValue({ success: true })
+    await blogTombstone()
+    expect(attempt(0)).not.toHaveProperty('publishedAt')
+  })
+
+  it('does not rewrite a post that is already a tombstone', async () => {
+    get.mockResolvedValue(storedBlogPost({ deleted: true }))
+    await expect(blogTombstone()).resolves.toBe(true)
+    expect(updateDocument).not.toHaveBeenCalled()
+  })
+})

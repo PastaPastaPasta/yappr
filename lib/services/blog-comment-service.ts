@@ -7,6 +7,7 @@ import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helper
 import { isPropertyAgreementError } from '@/lib/error-utils'
 import { getEvoSdk } from './evo-sdk-service'
 import { blogStatsService } from './blog-stats-service'
+import { isBlogPostTombstone } from '@/lib/blog/content-utils'
 
 export interface BlogCommentQueryOptions {
   limit?: number
@@ -48,7 +49,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     // `get()` swallows read failures and returns null, so an absent post is
     // indistinguishable from a timed-out node. Prefer the caller's value over
     // refusing to comment: consensus (40127) is the real arbiter, and a
-    // rejected create charges no YAPP.
+    // rejected create charges nothing (no YAPP up to v6, no action fee on v7).
     const post = await blogPostService.getPost(blogPostId)
     const ownerId = post?.ownerId || fallback
     if (!ownerId) throw new Error('Cannot resolve the post owner for this comment')
@@ -58,6 +59,8 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     // the flag would be refused for every post that stores one, so an unread
     // post stops the comment here instead.
     if (!post) throw new Error('Could not load this post to check that it takes comments. Try again.')
+    // A tombstone stores comments off too (v7 `tombstoneIsBlank`); say why.
+    if (isBlogPostTombstone(post)) throw new Error('This post was deleted, so it takes no comments')
     if (post.commentsEnabled === false) throw new Error('Comments are turned off for this post')
     // Only a stored boolean is copied: an absent (or null) flag agrees with an absent copy.
     return { ownerId, postFields: typeof post.commentsEnabled === 'boolean' ? { postCommentsEnabled: post.commentsEnabled } : {} }
@@ -123,7 +126,11 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     return result.documents
   }
 
-  /** One proved count on v2's `commentCount` tree; a cursor scan on v1. */
+  /**
+   * One proved count: v2–v6 read the `commentCount [blogPostId]` tree, v7 the
+   * merged `postAndTime [blogPostId, $createdAt]` (rangeCountable: a
+   * `blogPostId ==` pin is its prefix total; same query). A cursor scan on v1.
+   */
   async countCommentsByPost(blogPostId: string): Promise<number> {
     try {
       const sdk = await getEvoSdk()
@@ -147,8 +154,9 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
   }
 
   /**
-   * Comment totals for a list of posts. On v2 that is ONE grouped count over
-   * the `commentCount` tree; on v1 no countable index is deployed, so first
+   * Comment totals for a list of posts. On v2+ that is ONE grouped count over
+   * the `commentCount` tree (v7: the merged `postAndTime`, read the same way:
+   * `blogPostId in` + groupBy); on v1 no countable index is deployed, so first
    * pages are bundled and only posts with 100+ comments pay a full cursor scan.
    */
   async countCommentsByPostBatch(postIds: string[]): Promise<Map<string, number>> {
@@ -171,17 +179,6 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
       id, pages[index].length === 100 ? await this.countCommentsByPost(id) : pages[index].length,
     ] as const)
     return new Map(counts)
-  }
-
-  async getCommentsByOwner(ownerId: string, options: BlogCommentQueryOptions = {}): Promise<BlogComment[]> {
-    const queryOptions: QueryOptions = {
-      where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-      limit: options.limit,
-      startAfter: options.startAfter,
-    }
-    const result = await this.query(queryOptions)
-    return result.documents
   }
 
   /**

@@ -212,6 +212,21 @@ export abstract class BaseDocumentService<T> {
   }
 
   /**
+   * One cursor page of `options`: the documents, and the next page's
+   * `startAfter` (the last id) when the page came back full. A short page is
+   * the end, so this is for queries without an `in` clause.
+   */
+  protected async cursorPage(options: QueryOptions & { limit: number }): Promise<{ documents: T[]; nextCursor?: string }> {
+    const { documents } = await this.query(options);
+    return { documents, nextCursor: documents.length === options.limit ? (documents[documents.length - 1] as { id?: string }).id : undefined };
+  }
+
+  /** One page of every document, newest first, on a `timeline [$createdAt]` index. */
+  protected newestFirstPage(limit: number, startAfter?: string): Promise<{ documents: T[]; nextCursor?: string }> {
+    return this.cursorPage({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit, startAfter });
+  }
+
+  /**
    * Every document matching `options`, walked 100 at a time with `startAfter`
    * (`paginateFetchAll`). `maxResults` bounds the walk (default: none); a
    * walk it stops reports `reachedLimit`. `orderBy` must name an index.

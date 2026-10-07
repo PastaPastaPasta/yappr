@@ -3,7 +3,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, RequestDeduplicator, transformDocumentWithField } from './sdk-helpers';
 import { getEvoSdk } from './evo-sdk-service';
-import { YAPPR_BLOG_CONTRACT_ID, blogIsV2 } from '../constants';
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV2, blogIsV7 } from '../constants';
 import { blogStatsService } from './blog-stats-service';
 import { documentCount, paginateCount, paginateFetchAll } from './pagination-utils';
 import type { BlogFollow } from '@/lib/types';
@@ -116,21 +116,20 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
    * Every blog `userId` follows. Rejects when the read fails, rather than
    * answering "none": blog post notifications must know their read failed
    * (getFollowStatusBatch, the other reader, catches it itself).
+   *
+   * Up to v6 this walks `following [$ownerId, $createdAt]`, oldest first. v7
+   * drops that index: the follows ride `ownerAndBlog [$ownerId, blogId]`, the
+   * unique index every cut keeps, in blog id order (callers want the set).
    */
   async getFollowedBlogs(userId: string): Promise<BlogFollow[]> {
     const sdk = await getEvoSdk();
+    const index = blogIsV7()
+      ? { where: [['$ownerId', '==', userId]], orderBy: [['$ownerId', 'asc'], ['blogId', 'asc']] }
+      : { where: [['$ownerId', '==', userId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] };
 
     const { documents } = await paginateFetchAll(
       sdk,
-      () => ({
-        dataContractId: this.contractId,
-        documentTypeName: this.documentType,
-        where: [
-          ['$ownerId', '==', userId],
-          ['$createdAt', '>', 0]
-        ],
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']]
-      }),
+      () => ({ dataContractId: this.contractId, documentTypeName: this.documentType, ...index }),
       (doc) => toBlogFollow(this.transformDocument(doc))
     );
 
@@ -171,7 +170,11 @@ class BlogFollowService extends BaseDocumentService<BlogFollowDocument> {
     }
   }
 
-  /** One proved count on v2's `followerCount` tree; a cursor scan on v1. */
+  /**
+   * One proved count: v2–v6 read the `followerCount [blogId]` tree, v7 the
+   * merged `followers [blogId, $createdAt]` (rangeCountable, so a `blogId ==`
+   * pin is its prefix total; same query). A cursor scan on v1.
+   */
   async countBlogFollowers(blogId: string): Promise<number> {
     return this.countFollowersDeduplicator.dedupe(blogId, async () => {
       try {
