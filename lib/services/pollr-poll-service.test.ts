@@ -153,6 +153,30 @@ describe('deleting a poll (v6)', () => {
     expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
   });
 
+  it('keeps a poll proven voted non-deletable, even when a lagging node later counts 0', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map());
+    mocks.deleteDocument.mockResolvedValue({ success: false, error: 'rejected: code=40147' });
+    expect(service.hasBallots(poll.id)).toBe(false);
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(service.hasBallots(poll.id)).toBe(true);
+
+    // The reload's count lags at 0; the poll still stays permanent, with no second paid refusal.
+    mocks.count.mockClear();
+    mocks.deleteDocument.mockClear();
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.count).not.toHaveBeenCalled();
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('remembers a positive ballot count', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map([['', 2n]]));
+    expect(await service.countBallots(poll.id)).toBe(2);
+    expect(service.hasBallots(poll.id)).toBe(true);
+    expect(service.hasBallots('other-poll')).toBe(false);
+  });
+
   it('passes any other refusal through, and throws when the ballots cannot be counted', async () => {
     const service = await loadService('v6');
     mocks.count.mockResolvedValue(new Map());

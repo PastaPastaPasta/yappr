@@ -171,12 +171,16 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
         // owner's may be one; otherwise count them all, since a withdrawn ballot
         // leaves the tally but still keeps the poll. Not awaited: the poll shows
         // while the count is read, so a vote sent meanwhile must win over it.
+        // A poll ever known to have a ballot is never offered again: ballots
+        // are permanent, and a lagging node can still count 0.
         const selections = tallyResult.status === 'fulfilled' ? tallyResult.value.total : 0
         const ownBallotPending = votesResult.status === 'fulfilled' && votesResult.value.pending
-        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && selections === 0 && !ownBallotPending) {
+        if (selections > 0) pollrPollService.markHasBallots(loadedPoll.id)
+        const knownVoted = () => ballotSentRef.current || pollrPollService.hasBallots(loadedPoll.id)
+        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && selections === 0 && !ownBallotPending && !knownVoted()) {
           pollrPollService.countBallots(loadedPoll.id)
             .then((ballots) => {
-              if (!cancelled && !ballotSentRef.current) setDeletable(ballots === 0)
+              if (!cancelled && !knownVoted()) setDeletable(ballots === 0)
             })
             .catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
         }
@@ -341,6 +345,10 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     ballotSentRef.current = true
     setDeletable(false)
     try {
+      // For good, across reloads and remounts: a later count of 0 from a
+      // lagging node must not bring the delete back (pollrPollService.hasBallots).
+      const { pollrPollService } = await import('@/lib/services')
+      pollrPollService.markHasBallots(poll.id)
       if (editable) {
         await submitSelection(poll, wanted, authedUser.identityId)
         return

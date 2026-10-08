@@ -179,11 +179,30 @@ class PollrPollService extends BaseDocumentService<Poll> {
    */
   async countBallots(pollId: string): Promise<number> {
     const sdk = await getEvoSdk();
-    return documentCount(sdk, {
+    const ballots = await documentCount(sdk, {
       dataContractId: POLLR_CONTRACT_ID,
       documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
       where: [['pollId', '==', pollId]],
     });
+    if (ballots > 0) this.markHasBallots(pollId);
+    return ballots;
+  }
+
+  /**
+   * Polls known to have a ballot. Ballots are never deleted, so such a poll can
+   * never be deleted again: this only grows, and a later count of 0 from a node
+   * that lags behind cannot bring the delete back.
+   */
+  private readonly withBallots = new Set<string>();
+
+  /** Record that a ballot names the poll (counted, refused 40147, or one was just sent). */
+  markHasBallots(pollId: string): void {
+    this.withBallots.add(pollId);
+  }
+
+  /** Whether the poll is known to have a ballot, so it can never be deleted. */
+  hasBallots(pollId: string): boolean {
+    return this.withBallots.has(pollId);
   }
 
   /**
@@ -195,6 +214,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
    */
   async deletePoll(poll: Poll, ownerId: string): Promise<DeletePollResult> {
     if (!pollrPollsDeletable() || poll.ownerId !== ownerId) return { status: 'failed' };
+    if (this.hasBallots(poll.id)) return { status: 'voted' };
     // A landed but unconfirmed ballot replace would otherwise hold this delete
     // back until its reservation expires (as createPoll does). A no-op when
     // nothing is pending.
@@ -206,7 +226,10 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // read goes to Platform.
     this.cache.delete(poll.id);
     if (result.success) return { status: 'deleted' };
-    if (isDeleteConstraintError(result.error)) return { status: 'voted' };
+    if (isDeleteConstraintError(result.error)) {
+      this.markHasBallots(poll.id);
+      return { status: 'voted' };
+    }
     return { status: 'failed', error: result.error };
   }
 }
