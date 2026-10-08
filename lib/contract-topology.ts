@@ -31,6 +31,7 @@ import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
+import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 
 /**
@@ -247,6 +248,12 @@ const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
 /** v13 adds `rootOwnerId` to a reply's frozen linkage. */
 const V13_REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
   identifiers: ['rootPostId', 'rootOwnerId', 'replyToReplyId', 'parentOwnerId'],
+  scalars: [],
+}
+
+/** v14 stores no owner on a reply: its frozen linkage is the root and the parent alone. */
+const V14_REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
+  identifiers: ['rootPostId', 'replyToReplyId'],
   scalars: [],
 }
 
@@ -487,6 +494,26 @@ const V13_DESCRIPTOR: ContractTopologyDescriptor = {
   },
 }
 
+/**
+ * v14 — `contracts/yappr-social-contract-v14.json`, the 5.0.0-beta.3 re-cut
+ * (docs/SOCIAL_V14.md). v13's surfaces, with:
+ *
+ * - **Replies that store no owner.** `parentOwnerId`, `rootOwnerId` and
+ *   `parentIsRoot` are gone ({@link replyOwnersAreDerived}). The notification
+ *   windows read the owners off the referenced documents: `rootOwnerRecent
+ *   [$createdAt, rootPostId.$ownerId]` holds every reply of a thread under its
+ *   root post's owner, and `parentOwnerRecent [$createdAt,
+ *   replyToReplyId.$ownerId]` (skipping top-level replies) every nested reply
+ *   under its parent reply's owner ({@link notificationWindowFor}).
+ * - Reports withdrawable only while unresolved ({@link reportsWithdrawOnlyWhilePending})
+ *   and an unpaused YAPP ({@link yappIsLocked} is false), outside this descriptor.
+ */
+const V14_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V13_DESCRIPTOR,
+  topology: 'v14',
+  tombstonePreserves: { ...V13_DESCRIPTOR.tombstonePreserves, reply: V14_REPLY_LINKAGE_PRESERVED },
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -503,6 +530,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v11: V11_DESCRIPTOR,
   v12: V12_DESCRIPTOR,
   v13: V13_DESCRIPTOR,
+  v14: V14_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -515,7 +543,7 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 
 /**
  * True on `cut` and on every cut after it, in {@link CONTRACT_TOPOLOGIES}
- * order (v2 < v9 < v10 < v11 < v12 < v13). Each later cut keeps what the
+ * order (v2 < v9 < v10 < v11 < v12 < v13 < v14). Each later cut keeps what the
  * earlier ones introduced unless a predicate says otherwise.
  */
 function isAtLeast(cut: ContractTopology): boolean {
@@ -569,10 +597,22 @@ export function barredAuthorsCanTombstone(): boolean {
  * True when a reply names its thread root's owner (v13 `reply.rootOwnerId`,
  * required and `where`-bound to the root post's `$ownerId`), and a top-level
  * reply's `parentOwnerId` must equal it (`parentIsRoot`, 10422): a reply can
- * no longer name a stranger as the owner it answers.
+ * no longer name a stranger as the owner it answers. False on v14, where a
+ * reply names no owner at all ({@link replyOwnersAreDerived}).
  */
 export function repliesNameRootOwner(): boolean {
-  return isAtLeast('v13')
+  return isAtLeast('v13') && !replyOwnersAreDerived()
+}
+
+/**
+ * True when a reply stores neither `parentOwnerId` nor `rootOwnerId` (v14):
+ * consensus reads both owners off the referenced post and reply to file the
+ * reply in its notification windows (`rootPostId.$ownerId`,
+ * `replyToReplyId.$ownerId`), so there is nothing to write, nothing to forge
+ * and nothing to check on a read.
+ */
+export function replyOwnersAreDerived(): boolean {
+  return isAtLeast('v14')
 }
 
 /**
@@ -1035,15 +1075,23 @@ export function mentionDocTypes(): readonly ('post' | 'reply' | 'postMention')[]
  * refuses a windowed document read of an indexOnly type, so like
  * notifications are read over the recent targets off the permanent `byAuthorPostTime`/`byAuthorReplyTime`
  * ({@link likeNotificationsPinTarget}).
+ *
+ * `threadReply` exists from v14 only: every reply of the recipient's threads
+ * (see {@link notificationWindowFor}).
  */
-export type WindowedNotificationSource = 'reply' | 'quote'
+export type WindowedNotificationSource = 'reply' | 'quote' | 'threadReply'
 
 /** How one windowed notification source is read (v10). */
 export interface NotificationWindow {
   readonly docType: string
   /** The index (documentation and tests; the query names the grid, not the index). */
   readonly index: string
-  /** The recipient property the read pins with `==`: the index's second property. */
+  /**
+   * The recipient property the read pins with `==`: the index's second
+   * property. On v14's reply windows it is a derived one
+   * (`rootPostId.$ownerId`, `replyToReplyId.$ownerId`), which a cursor may
+   * page through only because the read fixes it with `==`.
+   */
   readonly recipientField: string
   /**
    * The window grid in seconds, as the contract declares it: non-overlapping
@@ -1071,7 +1119,7 @@ function notificationWindowOf(docType: string, index: string): NotificationWindo
   }
 }
 
-let notificationWindows: Readonly<Record<WindowedNotificationSource, NotificationWindow>> | null = null
+let notificationWindows: Readonly<Record<WindowedNotificationSource, NotificationWindow | null>> | null = null
 
 /**
  * The rolling windows a notification source is read from (v10), or null
@@ -1086,12 +1134,23 @@ let notificationWindows: Readonly<Record<WindowedNotificationSource, Notificatio
  * clause and no orderBy: entries come back in index order, not time order, so
  * the dedupe, the since-filter and the newest-first sort are client-side.
  * `timeRange` is refused in composite queries, so each read is its own query.
+ *
+ * Replies on v10-v13: `reply` is `parentOwnerRecent [$createdAt,
+ * parentOwnerId]`, every reply naming the recipient as its parent's owner.
+ * On v14 a reply stores no owner, and the replies to the recipient come from
+ * two windows: `reply` is `parentOwnerRecent [$createdAt,
+ * replyToReplyId.$ownerId]`, the nested replies whose parent reply is the
+ * recipient's (top-level replies are skipped), and `threadReply` is
+ * `rootOwnerRecent [$createdAt, rootPostId.$ownerId]`, EVERY reply of the
+ * recipient's threads, of which only the top-level ones answer the recipient.
+ * `threadReply` is null before v14.
  */
 export function notificationWindowFor(source: WindowedNotificationSource): NotificationWindow | null {
   if (!isV10()) return null
   notificationWindows ??= deepFreeze({
     reply: notificationWindowOf('reply', 'parentOwnerRecent'),
     quote: notificationWindowOf('post', 'quotedPostOwnerRecent'),
+    threadReply: replyOwnersAreDerived() ? notificationWindowOf('reply', 'rootOwnerRecent') : null,
   })
   return notificationWindows[source]
 }
@@ -1260,7 +1319,7 @@ export function replyLinkageTo(target: ThreadBearing): { rootPostId: string; rep
   }
 }
 
-/** The owners a reply names, as `createReply` writes them. */
+/** The owners a reply names, as `createReply` writes them (up to v13; v14 writes neither). */
 export interface ReplyOwners {
   /** Set when the reply nests under another reply. */
   replyToReplyId?: string
@@ -1441,13 +1500,16 @@ interface SocialDocumentSchema {
   indices?: Array<{ name: string }>
   tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
+  /** 5.0.0-beta.3 (v14): rules the stored document must meet for its owner to delete it (40147). */
+  deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
   switch (topologyDescriptor().topology) {
+    case 'v14': return socialContractV14
     case 'v13': return socialContractV13
     case 'v12': return socialContractV12
     case 'v11': return socialContractV11
@@ -1675,10 +1737,17 @@ export function starterGrantAmount(): bigint | null {
 }
 
 /**
- * True when YAPP can neither be transferred nor bought (v10): the token starts
- * paused and no one can ever unpause it or set a direct-purchase price. Posting
- * and liking still pay YAPP (a token cost is not a transfer), the starter grant
- * still pays out, and the contract owner still mints. Tips must be credit tips.
+ * True when YAPP can neither be transferred nor bought (v10-v13): the token
+ * starts paused and no one can ever unpause it or set a direct-purchase price.
+ * Posting and liking still pay YAPP (a token cost is not a transfer), the
+ * starter grant still pays out, and the contract owner still mints. Tips must
+ * be credit tips.
+ *
+ * False on v14: from Platform 5.0.0-beta.3 a paused token cannot pay a
+ * `tokenCost` (40711), so v14's YAPP starts unpaused (and, with
+ * `emergencyActionRules: noOne`, can never be paused). It is spendable on
+ * posts, replies and likes, and, since beta.3 has no non-transferable flag,
+ * transferable; Yappr offers no transfer and tips stay credit tips.
  */
 export function yappIsLocked(): boolean {
   if (!isDevnetCut()) return false
@@ -1824,6 +1893,18 @@ export function reportResolutionFields(): readonly string[] {
 /** True when the moderators mark reports handled instead of deleting them (v10). */
 export function reportsAreResolved(): boolean {
   return reportResolutionFields().length > 0
+}
+
+/**
+ * True when a reporter may withdraw a report only while no moderator has
+ * resolved it (v14: `report.deleteConstraints.pending` is `{ absent: status }`).
+ * Withdrawing a resolved report is then refused with 40147, a PAID state
+ * error, so the client stops offering it; the resolved report stays until its
+ * 90-day `ttl`. Elsewhere a reporter may withdraw any of its reports.
+ */
+export function reportsWithdrawOnlyWhilePending(): boolean {
+  if (!contractTakesReports()) return false
+  return JSON.stringify(devnetSchemas().report?.deleteConstraints?.pending) === JSON.stringify({ absent: 'status' })
 }
 
 /** What the configured contract's `report` type accepts beyond a post or reply target. */
