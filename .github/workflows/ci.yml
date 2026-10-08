@@ -233,6 +233,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     continue-on-error: true
+    # Every PR's run signs with the same few bot identities on the same devnet.
+    # Two at once take each other's identity nonces ("the network used its place
+    # without recording it"), pick the same next group number, and block or
+    # message bots the other run is asserting on. So one runs at a time, across
+    # PRs; a newer waiting run replaces an older waiting one (GitHub keeps one
+    # pending job per group), which only drops a stale signal.
+    concurrency:
+      group: devnet-e2e-shared-bots
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4

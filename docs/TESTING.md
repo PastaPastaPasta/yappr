@@ -82,6 +82,13 @@ arguments include a private key. Screenshots and the HTML report remain availabl
 This job is nonblocking: inspect the test results rather than treating the job's
 success status as proof that all tests passed.
 
+Runs share the bot identities, so two runs at once break each other: they take
+each other's identity nonces, pick the same next group number, and block or
+message bots the other run is asserting on. The CI job therefore holds the
+`devnet-e2e-shared-bots` concurrency group (one PR's run at a time). A local
+devnet write run must not overlap a CI devnet job either; check
+`gh run list --status in_progress` before starting one.
+
 ### Deployment
 
 `.github/workflows/deploy.yml` builds one Pages artifact containing all three
