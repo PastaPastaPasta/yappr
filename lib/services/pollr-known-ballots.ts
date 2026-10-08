@@ -11,43 +11,34 @@ import { scopedKey } from '@/lib/storage-scope';
  * confirmed ballot write, a create refused as a duplicate, a tallied
  * selection, a positive ballot count, or a 40147.
  *
+ * One key per poll, written once and never read-modified-written, so two tabs
+ * recording different polls at once cannot overwrite each other.
+ *
  * It is a guard against paid refusals, not the rule: consensus enforces
- * `noBallots` whatever this says. Past {@link MAX_STORED} polls the oldest
- * are dropped from storage (the in-memory copy keeps them for the session).
+ * `noBallots` whatever this says.
  */
-const STORAGE_KEY = scopedKey(`yappr:pollr-known-ballots:${POLLR_CONTRACT_ID}`);
-const MAX_STORED = 5000;
+const KEY_PREFIX = scopedKey(`yappr:pollr-known-ballot:${POLLR_CONTRACT_ID}:`);
 
 const inMemory = new Set<string>();
-
-function storedIds(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string') : [];
-  } catch {
-    // No storage (server, private mode) or a corrupt value: memory still holds this session's.
-    return [];
-  }
-}
 
 /** Record that a ballot names the poll. Never undone. */
 export function markPollHasBallots(pollId: string): void {
   inMemory.add(pollId);
   try {
-    const ids = storedIds();
-    if (ids.includes(pollId)) return;
-    ids.push(pollId);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids.slice(-MAX_STORED)));
+    localStorage.setItem(`${KEY_PREFIX}${pollId}`, '1');
   } catch {
-    // Storage refused the write; memory still holds it for this session.
+    // No storage (server, private mode) or it refused the write: memory still holds it for this session.
   }
 }
 
-/** Whether the poll is known to have a ballot (in this tab, or any other, or earlier), so it can never be deleted. */
+/** Whether the poll is known to have a ballot (in this tab, another, or earlier), so it can never be deleted. */
 export function pollHasKnownBallots(pollId: string): boolean {
   if (inMemory.has(pollId)) return true;
-  if (!storedIds().includes(pollId)) return false;
+  try {
+    if (localStorage.getItem(`${KEY_PREFIX}${pollId}`) === null) return false;
+  } catch {
+    return false;
+  }
   inMemory.add(pollId);
   return true;
 }

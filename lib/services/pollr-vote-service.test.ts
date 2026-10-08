@@ -584,6 +584,21 @@ describe('ballot evidence for the v6 delete', () => {
     expect(mocks.count).not.toHaveBeenCalled();
   });
 
+  it('keeps both polls when two tabs record evidence at once, through a reload', async () => {
+    // Two tabs: separate module instances over the same browser storage.
+    const tabA = await import('./pollr-known-ballots');
+    vi.resetModules();
+    const tabB = await import('./pollr-known-ballots');
+    tabA.markPollHasBallots('poll-p');
+    tabB.markPollHasBallots('poll-q');
+
+    vi.resetModules();
+    const reloaded = await import('./pollr-known-ballots');
+    expect(reloaded.pollHasKnownBallots('poll-p')).toBe(true);
+    expect(reloaded.pollHasKnownBallots('poll-q')).toBe(true);
+    expect(reloaded.pollHasKnownBallots('poll-r')).toBe(false);
+  });
+
   it('takes an own withdrawn ballot as evidence, though it selects nothing', async () => {
     const service = await loadService('v6');
     mocks.query.mockResolvedValue(ballots(ballotDoc(0, null, 3)));
