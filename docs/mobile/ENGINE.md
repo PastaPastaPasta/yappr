@@ -930,7 +930,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 | 17 | `isReferenceNotFoundError` :276 | `TARGET_GONE` | no |
 | 18 | `isWriteGateError` :365 | `NOT_OWNER` | no |
 | 19 | `isPropertyAgreementError` :345 | `STALE` | no |
-| 20 | `isFrozenBalanceError` :239 | `FROZEN` | no |
+| 20 | `isTokenPausedError` (40711), then `isFrozenBalanceError` :239 | `FROZEN` | no |
 | 21 | `isInsufficientTokenError` :217 | `INSUFFICIENT_YAPP` | no |
 
 **Stage 2**, after the chain:

@@ -278,11 +278,24 @@ describe('protocol-14 rejections', () => {
       expect(isPermanentProtocol14Error(new Error(message))).toBe(true)
     })
 
-    it('says YAPP cannot be spent, with no error code and no "buy" or "frozen" advice', () => {
-      for (const message of paused) {
-        const copy = categorizeError(new Error(message))
-        expect(copy).toBe('YAPP can\'t be spent right now. Reload the page and try again to pay with credits instead.')
-        expect(copy).not.toMatch(/40711|buy|frozen/i)
+    it('names the way out each cut offers, with no error code and no "buy" or "frozen" advice', async () => {
+      const copies: Record<string, string> = {
+        // Paused for good: every write already plans credits.
+        v13: 'YAPP can\'t be spent right now. Try again to pay with credits instead.',
+        // The owner paused it; the cost is optional, so credits are a setting away.
+        v9: 'YAPP payments are paused right now. Switch to paying in credits in Settings.',
+        // The owner paused it; the cost is required, so there is no other way.
+        v2: 'YAPP payments are paused right now, so this can\'t go through. Try again later.',
+      }
+      for (const [topology, expected] of Object.entries(copies)) {
+        vi.resetModules()
+        vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+        const scoped = await import('./error-utils')
+        for (const message of paused) {
+          const copy = scoped.categorizeError(new Error(message))
+          expect(copy, topology).toBe(expected)
+          expect(copy).not.toMatch(/40711|buy|frozen/i)
+        }
       }
     })
 

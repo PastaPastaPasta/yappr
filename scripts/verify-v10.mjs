@@ -1781,7 +1781,7 @@ async function caseX4BarredRetraction(ctx) {
 
 async function caseY1YappLocked(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
-  console.log('\n--- y1. YAPP: paused for good (no transfer), never priced (no purchase); costs and the grant still work ---');
+  console.log('\n--- y1. YAPP: paused for good (no transfer), never priced (no purchase); the grant still works; a YAPP-paid cost lands on beta.2, 40711 from beta.3 ---');
   const tokenId = await readback(() => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const balance = (id) => tokenBalance(readback, sdk, tokenId, id);
   const before = { a: await balance(botA.ownerId), b: await balance(botB.ownerId) };

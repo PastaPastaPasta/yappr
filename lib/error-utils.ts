@@ -2,7 +2,7 @@
  * Utility functions for error handling and message extraction.
  */
 import { paymentIsChoosable } from '@/lib/payment-preference'
-import { authorDeletesLeaveHoles, yappIsLocked } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -253,9 +253,9 @@ export function isInsufficientTokenError(error: unknown): boolean {
  * Checks if an error is Platform refusing a token payment because the token is
  * paused: `TokenIsPausedError`, state code **40711**. From 5.0.0-beta.3
  * (dashpay/platform#5325) this covers a document `tokenCost` too, refused as a
- * PAID error, and a YAPP that is locked ({@link yappIsLocked}) is paused for
- * good. The current client plans credits there, so this reaches the user only
- * from an older tab; reloading picks up the credits plan.
+ * PAID error. Where YAPP is paused for good ({@link yappIsPausedForGood}) the
+ * client plans credits, so a retry pays credits; elsewhere the token's owner
+ * paused it, and the way out depends on whether the cost is optional.
  *
  * Drive phrasing (rs-dpp token_is_paused_error.rs): "Token X is paused."
  */
@@ -1261,10 +1261,14 @@ export function categorizeError(error: unknown): string {
     return 'This is out of date — reload the page and try again.'
   }
 
-  // A paused token can't pay at all, whatever the balance: only an older tab
-  // still offers YAPP for it, and reloading switches the write to credits.
+  // A paused token can't pay at all, whatever the balance. Where it is paused
+  // for good every write already plans credits, so trying again pays credits;
+  // where its owner paused it, credits are the way out only on an optional cost.
   if (isTokenPausedError(error)) {
-    return 'YAPP can\'t be spent right now. Reload the page and try again to pay with credits instead.'
+    if (yappIsPausedForGood()) return 'YAPP can\'t be spent right now. Try again to pay with credits instead.'
+    return paymentIsChoosable('post')
+      ? 'YAPP payments are paused right now. Switch to paying in credits in Settings.'
+      : 'YAPP payments are paused right now, so this can\'t go through. Try again later.'
   }
 
   // Check frozen before insufficient-balance: a frozen account can't spend even
@@ -1279,9 +1283,9 @@ export function categorizeError(error: unknown): string {
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
     // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
-    // Locked YAPP is never planned, so only an older tab gets here: reloading
-    // switches the write to credits.
-    if (yappIsLocked()) return 'You don\'t have enough YAPP. Reload the page and try again to pay with credits instead.'
+    // Where it is locked YAPP is never planned for a social write, so trying
+    // again pays credits.
+    if (yappIsLocked()) return 'You don\'t have enough YAPP. Try again to pay with credits instead.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'

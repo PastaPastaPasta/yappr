@@ -486,7 +486,7 @@
       }
     },
     {
-      "name": "token paused, document token payment (40711, beta.3)",
+      "name": "token paused, document token payment (40711, beta.3; the unit topology's required cost)",
       "error": {
         "message": "Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is paused.",
         "name": "Protocol",
@@ -498,7 +498,7 @@
         "outcome": "refused",
         "retryable": false,
         "state": "failed",
-        "userMessage": "YAPP can't be spent right now. Reload the page and try again to pay with credits instead."
+        "userMessage": "YAPP payments are paused right now, so this can't go through. Try again later."
       }
     },
     {
