@@ -6,7 +6,9 @@
  *
  * Two contract shapes, picked by `--topology`:
  *
- *   v5 (default) — `contracts/pollr-contract.json`: `poll` carries options[] / optionCount / multiChoice (always
+ *   v5 (default; also the one for a v6 contract, the checked-in `contracts/pollr-contract.json`, whose poll and
+ *     ballot shapes are v5's — v6 only adds the owner's delete before the first ballot, which verify-pollr.mjs p8
+ *     proves): `poll` carries options[] / optionCount / multiChoice (always
  *     written) / endsAt (required); every ballot is a stored, mutable `vote` with a `slot` (0 on a single-choice
  *     poll, the option itself on a multi-choice one) and the poll's optionCount / multiChoice / endsAt copied in,
  *     bound by the pollId reference (40127 on a mismatch). A voter changes or withdraws a single-choice vote by

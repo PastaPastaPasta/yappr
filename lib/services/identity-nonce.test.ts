@@ -28,7 +28,7 @@ vi.stubGlobal('localStorage', {
 })
 
 import { NONCE_STORE_ERROR, PENDING_WRITE_ERROR } from '@/lib/error-utils'
-import { allocateNonce, loadReservation, releaseNonce, reserveNonce, settleSupersededReplaces, stillPending, withSdkSignedWrite } from './identity-nonce'
+import { WRITE_PRECONDITION_FAILED, allocateNonce, loadReservation, releaseNonce, reserveNonce, settleSupersededReplaces, stillPending, withSdkSignedWrite } from './identity-nonce'
 
 const n = (value: number) => BigInt(value)
 const PENDING_STORE = NONCE_STORE_ERROR
@@ -93,6 +93,37 @@ describe('withSdkSignedWrite', () => {
 
     expect(loadReservation(OWNER, CONTRACT)?.mark).toBe(n(103))
     expect(loadReservation(OWNER, CONTRACT)?.pending).toHaveLength(3)
+  })
+
+  it('sends and reserves nothing when its precondition fails under the lock', async () => {
+    sdk.identities.contractNonce.mockResolvedValue(n(100))
+    const write = vi.fn(async () => 'sent')
+    const outcome = withSdkSignedWrite(OWNER, CONTRACT, write, undefined, undefined, async () => false).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error })
+    )
+    await vi.runAllTimersAsync()
+
+    expect(await outcome).toEqual({ ok: false, error: new Error(WRITE_PRECONDITION_FAILED) })
+    expect(write).not.toHaveBeenCalled()
+    expect(loadReservation(OWNER, CONTRACT)?.pending ?? []).toEqual([])
+  })
+
+  it('checks its precondition only once earlier transitions have settled', async () => {
+    reserveNonce(OWNER, CONTRACT, n(101), n(100))
+    sdk.identities.contractNonce.mockResolvedValueOnce(n(100)).mockResolvedValue(n(101))
+    const seen: bigint[] = []
+    const precondition = vi.fn(async () => {
+      seen.push(await sdk.identities.contractNonce(OWNER, CONTRACT))
+      return true
+    })
+    const outcome = withSdkSignedWrite(OWNER, CONTRACT, async () => 'sent', undefined, undefined, precondition)
+    await vi.runAllTimersAsync()
+
+    expect(await outcome).toBe('sent')
+    // Called once, after Platform showed the earlier nonce consumed.
+    expect(precondition).toHaveBeenCalledTimes(1)
+    expect(seen).toEqual([n(101)])
   })
 
   it('runs once Platform shows the pending nonce consumed', async () => {

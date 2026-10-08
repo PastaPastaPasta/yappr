@@ -33,9 +33,7 @@ Group `Cxxdiq5bBMFr2j8H1ug4hKaDqv7CcVYMt8PPvopj2rDF`, 11 members.
 | 8 | DM v4 | `8a1p5yGq5rJMpWyEm25PEnDcC3kTNWGq3t8au25vC2EX` | `7a86b1d2…` | 2,737 B | 20.2e9 ($12.09) |
 | 9 | DM v5 | `4PU6mxANMUXaApgkUNq7VzmftMmbk8p2fUeFoiqRS79D` | `82c03a3c…` | 3,673 B | 22.2e9 ($13.31) |
 | 10 | social v14 | `6GrRBNDe7r5JXZFr9XgUETKACzvrUZjHdfgKCYCMcc9y` | `b18f7c82…` (staging `5552f4de`, #702) | 17,974 B | 91.8e9 ($55.08) |
-| 11 | pollr v6 | `Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` | `fa081adf…` (#701, unchanged since `dc846d95`) | 4,256 B | 19.2e9 ($11.51) |
-
-**Pollr v6 is registered but not wired yet:** the client's v6 topology arrives with #701, so this cut-over blanks `NEXT_PUBLIC_POLLR_CONTRACT_ID` (polls off: nothing reads, embeds or offers a poll) and a follow-up sets the id and `NEXT_PUBLIC_POLLR_TOPOLOGY=v6`.
+| 11 | pollr v6 | `Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` | `fa081adf…` (#701, merged `c653d322`; the file is unchanged since `dc846d95`) | 4,256 B | 19.2e9 ($11.51) |
 
 The eleven creates cost the maker 330.8e9 credits (about 3.3 DASH, $198). Social v14 published at 17,974 B against the doc's ~17,975 B estimate.
 

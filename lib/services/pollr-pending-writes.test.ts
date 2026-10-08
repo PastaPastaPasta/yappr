@@ -45,6 +45,48 @@ const replaceRecord = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('uncertain ballot replaces', () => {
+  it('keep their ballot evidence when pruned past the close, even by a check of another poll', async () => {
+    (await import('./pollr-pending-writes')).recordBallotReplace(OWNER, replaceRecord({ pollId: 'poll-closed-long-ago', endsAt: Date.now() - 60 * MINUTE }));
+    // A fresh session: nothing in memory, only the stored record.
+    vi.resetModules();
+    const { pollrWriteMayStillExecute } = await import('./pollr-pending-writes');
+    const { pollHasKnownBallots } = await import('./pollr-known-ballots');
+    expect(pollHasKnownBallots('poll-closed-long-ago')).toBe(false);
+
+    // Checking some other poll prunes the expired record ...
+    expect(await pollrWriteMayStillExecute(OWNER, 'poll-unrelated')).toBe(false);
+    expect(await pollrWriteMayStillExecute(OWNER, 'poll-closed-long-ago')).toBe(false);
+    // ... but the ballot it replaced exists for good.
+    expect(pollHasKnownBallots('poll-closed-long-ago')).toBe(true);
+    expect(pollHasKnownBallots('poll-unrelated')).toBe(false);
+  });
+
+  it('noteReplacedBallots records every stored replace, and tolerates an unreadable store', async () => {
+    (await import('./pollr-pending-writes')).recordBallotReplace(OWNER, replaceRecord({ pollId: 'poll-noted' }));
+    vi.resetModules();
+    const { noteReplacedBallots } = await import('./pollr-pending-writes');
+    const { pollHasKnownBallots } = await import('./pollr-known-ballots');
+    expect(pollHasKnownBallots('poll-noted')).toBe(false);
+    noteReplacedBallots(OWNER);
+    expect(pollHasKnownBallots('poll-noted')).toBe(true);
+
+    storage.set([...storage.keys()][0], '{not json');
+    expect(() => noteReplacedBallots(OWNER)).not.toThrow();
+  });
+
+  it('record the replaced ballot as evidence for the v6 delete, even once the replace settles', async () => {
+    const { pollrWriteMayStillExecute, recordBallotReplace } = await import('./pollr-pending-writes');
+    const { pollHasKnownBallots } = await import('./pollr-known-ballots');
+    // A fresh session: the persisted record of a replace that has since landed.
+    recordBallotReplace(OWNER, replaceRecord({ pollId: 'poll-settled' }));
+    mocks.getDocument.mockResolvedValue({ $revision: 3 });
+
+    expect(await pollrWriteMayStillExecute(OWNER, 'poll-settled')).toBe(false);
+    // The record is gone, but the ballot it replaced exists for good.
+    expect(pollHasKnownBallots('poll-settled')).toBe(true);
+    expect(pollHasKnownBallots('poll-never-voted')).toBe(false);
+  });
+
   it('keep a replace pending past its reservation’s lifetime until the ballot reaches its revision', async () => {
     const { pollrWriteMayStillExecute, recordBallotReplace } = await import('./pollr-pending-writes');
     recordBallotReplace(OWNER, replaceRecord());
