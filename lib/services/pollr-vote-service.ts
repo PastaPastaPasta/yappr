@@ -107,13 +107,17 @@ export interface SetVoteResult {
 }
 
 /**
- * Whether a {@link PollrVoteService.setVote} outcome shows a ballot on the poll,
- * or one that may still land. On v6 that keeps the poll permanent for good. A
- * vote refused before any write (held back, an unreadable ballot read, a
- * closed poll) or a write refused with no ballot left proves nothing.
+ * Whether a {@link PollrVoteService.setVote} outcome shows a ballot on the
+ * poll, which on v6 keeps the poll permanent for good. Only a ballot shown on
+ * chain counts. A vote refused before any write (held back, an unreadable
+ * ballot read, a closed poll) or a write refused with no ballot left proves
+ * nothing. So does an unconfirmed one, which may have timed out before it was
+ * ever sent: a write that is really out keeps its reservation, so the next
+ * load's ballot state reads pending and holds the delete back
+ * ({@link ownBallotMayBePending}) until it lands and a count marks the poll.
  */
 export function voteLeftBallot(result: SetVoteResult, wanted: readonly number[]): boolean {
-  if (result.unconfirmed) return true;
+  if (result.unconfirmed) return false;
   if (result.choices && result.choices.length > 0) return true;
   return result.success && wanted.length > 0;
 }

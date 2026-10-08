@@ -508,12 +508,13 @@ describe('v5 ballots', () => {
 });
 
 describe('ballot evidence for the v6 delete', () => {
-  it('counts a vote as leaving a ballot only when one is shown or may still land', async () => {
+  it('counts a vote as leaving a ballot only when one is shown on chain', async () => {
     const { voteLeftBallot } = await import('./pollr-vote-service');
     const base = { closed: false, stale: false };
     expect(voteLeftBallot({ ...base, success: true, choices: [1] }, [1])).toBe(true);
-    // Sent with no outcome yet: it may land.
-    expect(voteLeftBallot({ ...base, success: false, unconfirmed: true }, [1])).toBe(true);
+    // Unconfirmed may mean it was never sent; a write really out keeps its
+    // reservation, which the next load's pending ballot state honours instead.
+    expect(voteLeftBallot({ ...base, success: false, unconfirmed: true }, [1])).toBe(false);
     // A refused write whose re-read still shows a ballot.
     expect(voteLeftBallot({ ...base, success: false, choices: [0] }, [1])).toBe(true);
     // Refused before any write (held back, an unreadable ballot read, a closed
@@ -547,6 +548,24 @@ describe('ballot evidence for the v6 delete', () => {
     const [read] = await Promise.allSettled([service.getBallotState(poll({ endsAt: Date.now() + HOUR }), VOTER)]);
     expect(read.status).toBe('rejected');
     expect(ownBallotMayBePending(read)).toBe(true);
+  });
+
+  it('a first create that times out before it is sent leaves the poll deletable on the next load', async () => {
+    const service = await loadService('v6');
+    const open = poll({ endsAt: Date.now() + HOUR });
+    // The identity or nonce read timed out: nothing was signed, reserved or broadcast.
+    mocks.createDocument.mockResolvedValue({ success: false, error: 'Request timed out after 8000ms' });
+    const result = await service.setVote(open, [1], VOTER);
+    const { ownBallotMayBePending, voteLeftBallot } = await import('./pollr-vote-service');
+    expect(result.unconfirmed).toBe(true);
+    expect(voteLeftBallot(result, [1])).toBe(false);
+
+    // The next load: no reservation, no ballot, so eligibility is counted again.
+    mocks.loadReservation.mockReturnValue(null);
+    mocks.query.mockResolvedValue(new Map());
+    const [read] = await Promise.allSettled([service.getBallotState(open, VOTER)]);
+    expect(read).toMatchObject({ status: 'fulfilled', value: { choices: [], pending: false } });
+    expect(ownBallotMayBePending(read)).toBe(false);
   });
 
   it('a vote refused at its preflight read leaves the poll deletable on a later zero count', async () => {

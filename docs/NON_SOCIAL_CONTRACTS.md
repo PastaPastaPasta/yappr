@@ -489,9 +489,12 @@ it the moment the owner votes, even if a count read before the vote comes back
 later. A poll once known to have a ballot is never offered again in the
 session (`pollrPollService.hasBallots`): a positive count, a 40147, a tallied
 selection, the owner's own recorded choice, or a vote of theirs that shows a
-ballot or may still land (`voteLeftBallot`; one refused before any write
-proves nothing, so the next load counts again). Ballots are permanent, and a
-lagging node can still count 0. Post embeds name the poll in their own fields, not through a reference,
+ballot on chain (`voteLeftBallot`). A vote refused before any write, or left
+unconfirmed, proves nothing, so the next load counts again; a write that is
+really out keeps its reservation, which reads as a pending (or, if the read
+fails, unreadable) ballot state and holds the delete back
+(`ownBallotMayBePending`). Ballots are permanent, and a lagging node can still
+count 0. Post embeds name the poll in their own fields, not through a reference,
 so a post outlives its poll: when `fetchPoll` proves a natively embedded poll
 absent on v6 twice, 2.5 s apart (a node a block behind proves a just-published
 poll absent too; `pollMissingMeansDeleted`), the card says "This poll was

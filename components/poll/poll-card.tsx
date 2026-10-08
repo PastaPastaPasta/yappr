@@ -269,10 +269,10 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
   const submitSelection = useCallback(async (currentPoll: Poll, wanted: number[], voterId: string) => {
     const { pollrPollService, pollrVoteService } = await import('@/lib/services')
     const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
-    // For good, across reloads and remounts, once a ballot is shown or may
-    // still land: a later count of 0 from a lagging node must not bring the
-    // delete back. A vote refused before any write proves nothing, so the next
-    // load counts again.
+    // For good, across reloads and remounts, once a ballot is shown on chain:
+    // a later count of 0 from a lagging node must not bring the delete back.
+    // A vote refused before any write, or one left unconfirmed, proves
+    // nothing; one really out keeps the next load's ballot state pending.
     if (voteLeftBallot(result, wanted)) pollrPollService.markHasBallots(currentPoll.id)
 
     if (result.unconfirmed || result.heldBack) {
