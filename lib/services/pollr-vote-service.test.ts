@@ -196,6 +196,17 @@ describe('v5 ballots', () => {
     expect(await service.setVote(open(), [1], VOTER)).toMatchObject({ success: false, stale: true, closed: false, choices: [0] });
   });
 
+  it('v6 stops a multi-choice vote at the first 40120 (the poll was deleted) and keeps the error', async () => {
+    const service = await loadService('v6');
+    const error = 'Referenced document poll X not found for vote.pollId (code=40120)';
+    mocks.createDocument.mockResolvedValue({ success: false, error });
+
+    const result = await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER);
+    // Every planned ballot names the same missing poll: one paid refusal, not three.
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ success: false, closed: false, stale: false, error });
+  });
+
   it('reports a timed-out replace as unconfirmed, without a re-read or further writes', async () => {
     const service = await loadService('v5');
     mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null)));
