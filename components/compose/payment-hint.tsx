@@ -3,14 +3,17 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
+import { tokenCostFor, yappIsPausedForGood } from '@/lib/contract-topology'
 import { paymentHintCopy, paymentIsChoosable, planPayment } from '@/lib/payment-preference'
 import { tokenService } from '@/lib/services/token-service'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 
 /**
  * What the compose is about to spend, on a contract where the user can
- * choose (v9): "10 YAPP, network fee covered" or "credits". Nothing on
- * contracts where the token cost is required — there is no choice to show.
+ * choose (v9): "10 YAPP, network fee covered" or "credits". Where YAPP is
+ * paused for good (v10–v13) it always says credits, with no switch and no
+ * balance read. Nothing on contracts where the token cost is required — there is no
+ * choice to show.
  */
 export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
   const { user } = useAuth()
@@ -19,6 +22,9 @@ export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
   // `undefined` = not fetched yet (render nothing), `null` = fetch failed.
   const [balance, setBalance] = useState<bigint | null | undefined>(undefined)
   const identityId = user?.identityId
+  const paused = yappIsPausedForGood()
+  // An optional cost is shown even when paused: the hint still names the fee.
+  const shown = tokenCostFor(docType)?.optional === true
 
   useEffect(() => {
     if (!identityId || !paymentIsChoosable(docType)) return
@@ -31,8 +37,9 @@ export function PaymentHint({ docType }: { docType: 'post' | 'reply' }) {
     }
   }, [identityId, docType])
 
-  if (!identityId || !paymentIsChoosable(docType) || balance === undefined) return null
-  const { text, toggle } = paymentHintCopy(planPayment(docType, 'create', balance, payWith), balance, CREDITS_PER_DASH)
+  if (!identityId || !shown || (!paused && balance === undefined)) return null
+  const known = balance ?? null
+  const { text, toggle } = paymentHintCopy(planPayment(docType, 'create', known, payWith), known, CREDITS_PER_DASH)
 
   return (
     <div data-testid="compose-payment-hint" className="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">

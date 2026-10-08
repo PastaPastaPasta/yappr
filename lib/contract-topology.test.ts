@@ -648,6 +648,17 @@ describe('contract topology', () => {
       expect((await topologyModule('v9')).yappIsLocked()).toBe(false)
     })
 
+    it('reads "YAPP can pay a token cost" off the configured cut: paused for good on v10–v13 only', async () => {
+      for (const topology of ['v10', 'v11', 'v12', 'v13']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([true, true])
+      }
+      for (const topology of ['v2', 'v9']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([false, false])
+      }
+    })
+
     it('makes reposts quotes: no repost doctype, one quote or repost per author and target', async () => {
       const v10 = await topologyModule('v10')
       expect(V10.repost).toBeUndefined()

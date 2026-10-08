@@ -117,14 +117,17 @@ Exit code is non-zero while any selected identity is not `ready`.
 NETWORK=devnet node scripts/seed/run-seeder.mjs \
   --personas scripts/seed/personas.pilot.json \
   --corpus  scripts/seed/corpus.pilot.jsonl \
-  [--concurrency 10] [--max-ops 50] [--credits-fraction 0.25]
+  [--concurrency 10] [--max-ops 50] [--credits-fraction 1]
 ```
 
-- `--credits-fraction` (default 0.25) is the share of actors that pay
+- `--credits-fraction` (default 1 where YAPP is paused for good, which is
+  every seeded cut; 0.25 otherwise) is the share of actors that pay
   their token-priced writes in CREDITS — the create carries no
   `$tokenPaymentInfo` at all, which is what makes the `optional: true` token
   costs charge credits — while the rest pay YAPP and offer the gas to the
-  contract owner. An actor's currency is fixed by its persona index, so a
+  contract owner. From Platform 5.0.0-beta.3 a paused token can't pay a
+  document's token cost (a PAID 40711 refusal), so pass a fraction below 1
+  only against a beta.2 chain. An actor's currency is fixed by its persona index, so a
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).

@@ -1674,20 +1674,41 @@ export function starterGrantAmount(): bigint | null {
   return BigInt(grant.amount)
 }
 
+interface YappTokenRules {
+  startAsPaused?: boolean
+  emergencyActionRules: { authorizedToMakeChange: { $type: string } }
+  distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
+}
+
 /**
- * True when YAPP can neither be transferred nor bought (v10): the token starts
- * paused and no one can ever unpause it or set a direct-purchase price. Posting
- * and liking still pay YAPP (a token cost is not a transfer), the starter grant
- * still pays out, and the contract owner still mints. Tips must be credit tips.
+ * True when the configured contract's YAPP is paused for good (v10–v13): it
+ * starts paused and no one may ever unpause it (`emergencyActionRules` is
+ * `noOne`). From Platform 5.0.0-beta.3 (dashpay/platform#5325) a document
+ * `tokenCost` paid with a paused token is refused 40711 as a PAID error, so
+ * posts, replies and likes must pay credits (`planPayment` in
+ * lib/payment-preference.ts). A cut whose YAPP starts unpaused (v2, v9, and
+ * the planned v14) pays YAPP exactly as before.
+ *
+ * Read off the configured contract's committed JSON rather than the chain: a
+ * pause no one can lift never changes, so the two can't disagree, and every
+ * write plans its payment synchronously from this.
+ */
+export function yappIsPausedForGood(): boolean {
+  if (!isDevnetCut()) return false
+  const token = devnetContract().tokens['0'] as YappTokenRules
+  return token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+}
+
+/**
+ * True when YAPP can be neither spent, transferred nor bought (v10–v13): it is
+ * {@link yappIsPausedForGood} and no one can set a direct-purchase price. The
+ * starter grant still pays out and the contract owner still mints; tips must
+ * be credit tips.
  */
 export function yappIsLocked(): boolean {
-  if (!isDevnetCut()) return false
-  const token = devnetContract().tokens['0'] as {
-    startAsPaused?: boolean
-    distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
-  }
-  return token.startAsPaused === true
-    && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
+  if (!yappIsPausedForGood()) return false
+  const token = devnetContract().tokens['0'] as YappTokenRules
+  return token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
 }
 
 // ---------------------------------------------------------------------------
