@@ -3,9 +3,9 @@
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1 and
- * 5.0.0-beta.2 with `DataContract.fromJSON(json, true, latest)` (and a fourth
- * for contract updates, below):
+ * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1,
+ * 5.0.0-beta.2 and 5.0.0-beta.3 with `DataContract.fromJSON(json, true, latest)`
+ * (and a fourth for contract updates, below):
  *
  *   - **wasm-sdk** (`@dashevo/evo-sdk`): the structural parser (findBy/where,
  *     distinctFrom targets, moderatorAbilities, skipIfAbsent, ttl, …). It is
@@ -37,6 +37,14 @@
  * The 5.0.0-beta.2 keywords (`summableOffCountIndex`, `retractedWhen`,
  * `deleteSettled.approversPredateDocument`) are all refused by the wasm-sdk
  * parse itself (10231): the structural rules run with full validation there.
+ *
+ * Rule budgets are not re-counted here: both parses refuse a type with more
+ * than 16 propertyConstraints rules or a rule above 32 nodes (the probes
+ * below record it at the `wasm` layer). 5.0.0-beta.3 adds two things to that
+ * budget: a `countPresent` operand costs 1 node plus 1 per path it tests, and
+ * a type's `deleteConstraints` (rules its owner's delete must meet, refused
+ * with 40147) have their own 16 × 32 budget and 4 distinct totals, counted
+ * apart from `propertyConstraints`.
  *
  * The rs-dpp sources are at v4.2.0-beta.7: config/moderation/{mod,elected}.rs,
  * try_from_schema/common/mod.rs (validate_index_properties,
@@ -79,7 +87,9 @@ const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v5.0.0-beta.2 (beta.2 added
+ * rs-dpp's document meta-schema v3 at v5.0.0-beta.3 (beta.3 added the
+ * `countPresent` operand, `deleteConstraints` and `$id` as a countOf/sumOf
+ * filter value; beta.2 added
  * `summableOffCountIndex` with the `{ "at": ... }` form of `rankedSummable` /
  * `rankedAverageable`, `retractedWhen` and `deleteSettled.approversPredateDocument`;
  * 5.0.0-beta.1 added conditional
@@ -95,7 +105,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * ajv pass names the failing path more precisely.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = 'e32abaed5811374727d6e3404eec2d2871e905b81c45a033b702e2f37be2dbf9';
+const META_SCHEMA_SHA256 = '7d4ddb30d2370a7df1bbff5905e93b153d1f50f757904526c113f18104f2db28';
 
 let metaValidator;
 /**
@@ -108,7 +118,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.2 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.3 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;
