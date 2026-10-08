@@ -71,7 +71,7 @@ describe('contract topology', () => {
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
     const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
     expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
-    // /devnet runs sakura, the v13 cut (5.0.0-beta.2, 2026-10-07).
+    // /devnet runs sakura (5.0.0-beta.3), the v13 cut (registered on 5.0.0-beta.2, 2026-10-07).
     expect(devnetTopology).toBe('v13')
   })
 
@@ -646,6 +646,17 @@ describe('contract topology', () => {
       expect(v10.declaredActionFee('reply', 'create')).toEqual({ owner: 0n, moderators: 16_000_000n, pricing: 'feeMultiplier' })
       expect(v10.declaredActionFee('post', 'delete')).toBeNull()
       expect((await topologyModule('v9')).yappIsLocked()).toBe(false)
+    })
+
+    it('reads "YAPP can pay a token cost" off the configured cut: paused for good on v10–v13 only', async () => {
+      for (const topology of ['v10', 'v11', 'v12', 'v13']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([true, true])
+      }
+      for (const topology of ['v2', 'v9']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([false, false])
+      }
     })
 
     it('makes reposts quotes: no repost doctype, one quote or repost per author and target', async () => {

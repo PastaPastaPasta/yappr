@@ -104,6 +104,36 @@
       }
     },
     {
+      "name": "deleteConstraints rule broken (40147)",
+      "error": {
+        "message": "Document 8Xv3 of type \"poll\" can not be deleted: it breaks its deleteConstraints rule \"noVotes\": it does not hold"
+      },
+      "expect": {
+        "code": "RULE_VIOLATION",
+        "consensusCode": null,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This can't be deleted anymore."
+      }
+    },
+    {
+      "name": "deleteConstraints rule broken (40147 code only)",
+      "error": {
+        "name": "Protocol",
+        "message": "Failed to broadcast: Protocol error: consensus refusal",
+        "code": 40147
+      },
+      "expect": {
+        "code": "RULE_VIOLATION",
+        "consensusCode": 40147,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "This can't be deleted anymore."
+      }
+    },
+    {
       "name": "once-per-identity grant already claimed (40722)",
       "error": {
         "message": "Token claim error: identity '9t2e' already claimed the once-per-identity distribution of token 'AwyQ' at 1790000000000"
@@ -483,6 +513,22 @@
         "retryable": false,
         "state": "failed",
         "userMessage": "Your account is suspended (frozen) and can't spend YAPP right now. Contact a moderator to be reinstated."
+      }
+    },
+    {
+      "name": "token paused, document token payment (40711, beta.3; the unit topology's required cost)",
+      "error": {
+        "message": "Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is paused.",
+        "name": "Protocol",
+        "code": 40711
+      },
+      "expect": {
+        "code": "FROZEN",
+        "consensusCode": 40711,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "YAPP payments are paused right now, so this can't go through. Try again later."
       }
     },
     {
