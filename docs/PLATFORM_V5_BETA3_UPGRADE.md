@@ -64,7 +64,7 @@ None of these is fixed in beta.3. Each was checked against the tag.
 
 Private ops directories (mode 0700; never print a key-bearing file):
 
-- `~/.local/share/yappr-sakura-20261008`: the beta.3 ops runtime. It has its own `package.json`, and `node_modules` installs the beta.3 SDKs there once they are published. It symlinks the key material read-only into `../yappr-sakura-20261006`, and its `RECOVERY.md` lists what is linked. The pinned `scripts/`, `contracts/` and `ops/` (patched for 40711) arrive with the battery run. Until then the `ops/*.mjs` below live in `../yappr-sakura-20261007/ops`.
+- `~/.local/share/yappr-sakura-20261008`: the beta.3 ops runtime. It has its own `package.json` and `node_modules`, with the beta.3 SDKs installed from npm (`SDK_SOURCE`). It symlinks the key material read-only into `../yappr-sakura-20261006`, and its `RECOVERY.md` lists what is linked. The pinned `scripts/`, `contracts/` and `ops/` (patched for 40711) arrive with the battery run. Until then the `ops/*.mjs` below live in `../yappr-sakura-20261007/ops`.
 - `~/.local/share/yappr-sakura-20261006` and `-20261007` stay on the beta.2 runtime, as the rollback.
 
 **In place** (contracts, identities, DPNS, the group and the E1 contest survive):
