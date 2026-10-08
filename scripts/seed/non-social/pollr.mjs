@@ -1,5 +1,5 @@
 /**
- * Pollr v5: per bank entry a `poll` (credits only; options[], optionCount, multiChoice always written, and a required
+ * Pollr v5/v6 (v6 only adds the owner's delete before a poll's first ballot, which nothing here does): per bank entry a `poll` (credits only; options[], optionCount, multiChoice always written, and a required
  * endsAt within 31 days of creation), an embedding `post` on the SOCIAL contract (10 YAPP, the
  * `embedContractId`/`embedDocType`/`embedId` triple lib/poll-embed.ts builds), and the ballots. Every ballot is a
  * stored, mutable `vote` copying the poll's optionCount / multiChoice / endsAt (the pollId reference refuses a
@@ -446,9 +446,10 @@ export default {
   flags: { '--now': ['nowMs', 'number'], '--close-in': ['closeInMs', 'number'] },
   check(args) {
     // The poll and ballot shapes here are v5's (options[], one stored `vote`
-    // doctype with slot and the copied poll fields): refuse any other topology.
+    // doctype with slot and the copied poll fields), which v6 keeps unchanged:
+    // refuse any other topology. Nothing here deletes a poll.
     const topology = envValue('NEXT_PUBLIC_POLLR_TOPOLOGY');
-    if (topology && topology !== 'v5') throw new Error(`this seeder writes v5 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
+    if (topology && topology !== 'v5' && topology !== 'v6') throw new Error(`this seeder writes v5/v6 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
     if (!(args.closeInMs >= 60_000 && args.closeInMs <= MAX_POLL_MS)) throw new Error('--close-in takes milliseconds between 60000 and 31 days');
   },
   plan: (args) => buildPlan({ seed: args.seed, nowMs: args.nowMs }),

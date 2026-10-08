@@ -56,6 +56,13 @@ export const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced d
 /** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
 export const IMMUTABLE_CHANGED = /\b40128\b|is immutable and cannot be changed/i;
 export const DELETE_FORBIDDEN = /can ?not be deleted/i;
+/**
+ * DocumentDeleteConstraintViolatedError (5.0.0-beta.3): the owner's delete
+ * breaks a `deleteConstraints` rule. Its message also says "can not be
+ * deleted", so DELETE_FORBIDDEN matches it too; this one does not match a
+ * `canBeDeleted: false` refusal.
+ */
+export const DELETE_CONSTRAINT = /\b40147\b|deleteConstraints rule/i;
 export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
 export const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 export const FOREIGN_SIGNATURE = /invalid.{0,40}signature|signature.{0,40}(invalid|mismatch)|4020\d/i;
@@ -629,6 +636,8 @@ export async function runBattery(spec) {
  *   immutableWhen: { <property>: <condition> } for its conditional
  *                  `{ property, when }` entries (5.0.0-beta.1, which refuses
  *                  the `immutableAllowSetting` they replaced), exact match
+ *   constraints:   the names of its `propertyConstraints` rules, order-insensitive
+ *   deleteConstraints: { <rule>: <body> } (5.0.0-beta.3), exact match
  *
  * Returns a process exit code.
  */
@@ -666,6 +675,9 @@ export function selfTest(file, expect) {
     // The names of the propertyConstraints rules (property-constraint-cases.mjs holds their cases).
     if (rules.constraints !== undefined) {
       compare(`${docType} propertyConstraints`, sortedNames(Object.keys(schema.propertyConstraints ?? {})), sortedNames(rules.constraints));
+    }
+    if (rules.deleteConstraints !== undefined) {
+      compare(`${docType} deleteConstraints`, sortedPairs(schema.deleteConstraints), sortedPairs(rules.deleteConstraints));
     }
   }
 
