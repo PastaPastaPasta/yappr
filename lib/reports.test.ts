@@ -12,6 +12,9 @@ import {
   groupReports,
   isAlreadyReportedError,
   isReportGoneError,
+  isReportResolvedError,
+  REPORT_RESOLVED_MESSAGE,
+  reportCanBeWithdrawn,
   reportFailureMessage,
   reportInputProblem,
   reportMatchesView,
@@ -230,6 +233,34 @@ describe('withdrawFailureMessage', () => {
 
   it('should not read a query cursor that went missing as a withdrawn report', () => {
     expect(isReportGoneError('startAfter document not found')).toBe(false)
+  })
+
+  it('should say a resolved report cannot be withdrawn (v14: 40147, or refused before signing)', () => {
+    const refused = 'Document r1 of type "report" can not be deleted: it breaks its deleteConstraints rule "pending": the rule is not met (code=40147)'
+    for (const error of [refused, { code: 40147, message: 'refused' }, REPORT_RESOLVED_MESSAGE]) {
+      expect(isReportResolvedError(error)).toBe(true)
+      expect(withdrawFailureMessage(error)).toBe(REPORT_RESOLVED_MESSAGE)
+    }
+    expect(isReportResolvedError(`${idOf(9)} document not found`)).toBe(false)
+  })
+})
+
+describe('reportCanBeWithdrawn', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('keeps a resolved report on v14 only', async () => {
+    for (const [topology, resolvedWithdrawable] of [['v13', true], ['v14', false]] as const) {
+      vi.resetModules()
+      vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+      const { reportCanBeWithdrawn: canWithdraw } = await import('./reports')
+      expect(canWithdraw({ status: null }), topology).toBe(true)
+      expect(canWithdraw({ status: 2 }), topology).toBe(resolvedWithdrawable)
+    }
+    // The statically imported module resolves the default (v2) topology: no reports, so nothing is kept.
+    expect(reportCanBeWithdrawn({ status: 1 })).toBe(true)
   })
 })
 

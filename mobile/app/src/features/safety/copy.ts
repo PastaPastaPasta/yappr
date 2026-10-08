@@ -77,6 +77,8 @@ export const copy = {
     sentBody: 'Thanks for letting us know.',
     alsoBlock: (handle: string) => `Also block ${handle}`,
     withdraw: 'Withdraw report',
+    /** v14: the network keeps a report once the moderators resolved it. */
+    resolvedKept: "A resolved report can't be withdrawn. It closes 90 days after you sent it.",
     withdrawing: 'Withdrawing…',
     withdrawTitle: 'Withdraw your report?',
     withdrawBody: 'The moderators will no longer see it.',

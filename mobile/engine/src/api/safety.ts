@@ -1,7 +1,7 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
-import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
+import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
 import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
@@ -38,6 +38,12 @@ export interface OwnReportDTO {
   status: ReportStatus | null
   resolution: string | null
   moderatedAt: Date | null
+  /**
+   * Whether the viewer may still withdraw it: false on v14 once the
+   * moderators resolved it (the network refuses that delete, paid), so the
+   * UI offers no Withdraw. Always true before v14.
+   */
+  withdrawable: boolean
 }
 
 interface BlockArgs {
@@ -142,6 +148,10 @@ export function createSafetyModule(tickets: TicketStore) {
       if (!result.success && isReportGoneError(result.error)) {
         return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'REPORT_GONE') }
       }
+      // v14: resolved since the sheet read it (refused before signing, or a paid 40147).
+      if (!result.success && isReportResolvedError(result.error)) {
+        return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'RULE_VIOLATION') }
+      }
       return fromTransitionResult(result)
     },
     // The default probe: the report proved absent (its `delete` document).
@@ -243,7 +253,9 @@ export function createSafetyModule(tickets: TicketStore) {
      * Withdraw the viewer's own report (`ownReport().id`) on a target: the
      * reporter deletes it (`reportService.withdrawReport`), and the
      * moderators never see it again. A report that is already gone fails
-     * `REPORT_GONE`, with web's message. Gated by `capabilities.reports`.
+     * `REPORT_GONE`, with web's message. On v14 only an unresolved report can
+     * be withdrawn (`ownReport().withdrawable`): one resolved meanwhile fails
+     * `RULE_VIOLATION`, with web's message. Gated by `capabilities.reports`.
      */
     async withdrawReport(target: TargetRef, reportId: string): Promise<WriteTicket> {
       assertTarget(target)
@@ -310,6 +322,7 @@ export function createSafetyModule(tickets: TicketStore) {
         status: report.status,
         resolution: report.resolution,
         moderatedAt: report.moderatedAt === null ? null : new Date(report.moderatedAt),
+        withdrawable: reportCanBeWithdrawn(report),
       }
     },
   }

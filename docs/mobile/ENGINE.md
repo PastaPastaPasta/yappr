@@ -737,7 +737,7 @@ interface MessageDTO { id: string; sender: Id; text: string; at: Date; own: bool
 | `isBlocked` | `(ids: Id[]) => Promise<Record<Id, boolean>>` | `checkBlockedBatch(viewer, ids)` (:735) |
 | `blockedBy` | `(ids: Id[]) => Promise<Record<Id, 'self' \| 'list' \| null>>` | `getBlockSourcesBatch(viewer, ids)` (:716): the viewer's own block (`'self'`, which `unblock` deletes) vs. only a followed block list (`'list'`) |
 | `report` | `(target: TargetRef, reason: number, note?: string) => Promise<WriteTicket>` | `reportService.fileReport(viewer, {kind, targetId, targetOwnerId, reason, note})` (`lib/services/report-service.ts:89`). `REPORT_REASONS` and codes 0–8 come from `lib/reports.ts:37`, which RN imports directly (allow-listed). Code 8 needs a note of up to 500 characters. Gated by `capabilities.reports`. |
-| `ownReport` | `(target: TargetRef) => Promise<{ reason: number; status: 1 \| 2 \| 3 \| null; resolution: string \| null } \| null>` | `reportService.getOwnReport` (:78) |
+| `ownReport` | `(target: TargetRef) => Promise<{ reason: number; status: 1 \| 2 \| 3 \| null; resolution: string \| null; withdrawable: boolean } \| null>` (`withdrawable` false on v14 once resolved) | `reportService.getOwnReport` (:78) |
 | `withdrawReport` | `(target: TargetRef, reportId: Id) => Promise<WriteTicket>` | `reportService.withdrawReport(viewer, reportId)` (`report-service.ts:106`): the reporter deletes its own report (op `report.withdraw`; the ticket names the `delete`, which Check again proves absent). A report already gone (40101: dismissed on v9, or withdrawn elsewhere) fails `REPORT_GONE` with `withdrawFailureMessage`'s text. Gated by `capabilities.reports`. |
 
 The NSFW gate and the media gate run in RN:

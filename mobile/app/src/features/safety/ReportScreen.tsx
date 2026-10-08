@@ -355,7 +355,8 @@ function ReportFlow({ post, noun, postUrl }: { post: PostDTO; noun: ReportNoun; 
 /**
  * The viewer's report: when, why and where it stands ("Under review", or how
  * the moderators resolved it), the note, when reports close, and "Withdraw
- * report" (PRD SAFE-04) with "Done".
+ * report" (PRD SAFE-04) with "Done". On v14 a resolved report cannot be
+ * withdrawn (`withdrawable` false), and the sheet says so instead.
  */
 function ExistingReport({
   report,
@@ -390,14 +391,20 @@ function ExistingReport({
       <Text variant="subhead" tone="secondary" testID="report-expiry">
         {copy.report.expiry}
       </Text>
-      <Button
-        label={withdrawing ? copy.report.withdrawing : copy.report.withdraw}
-        variant="outline"
-        size="block"
-        loading={withdrawing}
-        onPress={() => onWithdraw(report)}
-        testID="report-withdraw"
-      />
+      {report.withdrawable ? (
+        <Button
+          label={withdrawing ? copy.report.withdrawing : copy.report.withdraw}
+          variant="outline"
+          size="block"
+          loading={withdrawing}
+          onPress={() => onWithdraw(report)}
+          testID="report-withdraw"
+        />
+      ) : (
+        <Text variant="subhead" tone="secondary" testID="report-kept">
+          {copy.report.resolvedKept}
+        </Text>
+      )}
       <Button label={copy.report.done} size="block" onPress={closeSheet} disabled={withdrawing} testID="report-done" />
     </SheetBody>
   );

@@ -825,7 +825,7 @@ describe('ReportScreen', () => {
     expect(screen.queryByText(/Checking/)).toBeNull();
 
     await act(async () =>
-      found({ id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null }),
+      found({ id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null, withdrawable: true }),
     );
     expect(screen.getByTestId('report-existing')).toBeTruthy();
     expect(screen.queryByTestId('report-submit')).toBeNull();
@@ -845,7 +845,7 @@ describe('ReportScreen', () => {
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
 
     fakeEngine.method('safety.ownReport').mockResolvedValue({
-      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null,
+      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null, withdrawable: true,
     });
     await act(async () => fakeEngine.emit('write.status', advance(pending, refused('DUPLICATE'))));
     await settle();
@@ -891,6 +891,7 @@ describe('ReportScreen', () => {
       status,
       resolution: null,
       moderatedAt: status === null ? null : new Date(2026, 9, 1, 12),
+      withdrawable: true,
     };
     fakeEngine.method('safety.ownReport').mockResolvedValue(report);
     withProviders(<ReportScreen />);
@@ -902,6 +903,20 @@ describe('ReportScreen', () => {
     expect(screen.queryByTestId('report-submit')).toBeNull();
   });
 
+  it('offers no Withdraw on a report the network keeps (v14: resolved)', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue({
+      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30, 12), status: 2, resolution: null,
+      moderatedAt: new Date(2026, 9, 1, 12), withdrawable: false,
+    });
+    withProviders(<ReportScreen />);
+    await settle();
+
+    expect(screen.getByTestId('report-existing')).toBeTruthy();
+    expect(screen.queryByTestId('report-withdraw')).toBeNull();
+    expect(screen.getByText(copy.report.resolvedKept)).toBeTruthy();
+    expect(screen.getByTestId('report-done')).toBeTruthy();
+  });
+
   describe('withdrawing an existing report (SAFE-04)', () => {
     const report: OwnReportDTO = {
       id: 'r1',
@@ -911,6 +926,7 @@ describe('ReportScreen', () => {
       status: null,
       resolution: null,
       moderatedAt: null,
+      withdrawable: true,
     };
     let answer: (choice: 'Withdraw' | 'Cancel') => void = () => undefined;
 

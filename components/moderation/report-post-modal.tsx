@@ -17,12 +17,14 @@ import {
   REPORT_NOTE_MAX_LENGTH,
   isAlreadyReportedError,
   isReportGoneError,
+  isReportResolvedError,
   isUrgentReason,
   reportEmailHref,
   reportFailureMessage,
   reportInputProblem,
   reportReasonLabel,
   reportFeeCredits,
+  reportCanBeWithdrawn,
   reportReasonsOffered,
   reportStatusLabel,
   withdrawFailureMessage,
@@ -53,7 +55,8 @@ type OwnReport = { state: 'loading' } | { state: 'none' } | { state: 'filed'; re
 
 /**
  * Reports a post, a reply or (v13) a profile to the contract's moderators, or
- * shows the report the reader already filed and lets them withdraw it. One
+ * shows the report the reader already filed and lets them withdraw it (on v14
+ * only until a moderator resolves it: a resolved report stays). One
  * report per reader and target: the dialog reads the reader's own report
  * first and never offers a second (a paid 40105).
  *
@@ -169,7 +172,8 @@ export function ReportPostModal() {
     const result = await reportService.withdrawReport(identityId, report.id)
     setBusy(false)
     if (!result.success) {
-      if (isReportGoneError(result.error)) {
+      // Gone, or resolved since the dialog read it: nothing left to withdraw here.
+      if (isReportGoneError(result.error) || isReportResolvedError(result.error)) {
         toast(withdrawFailureMessage(result.error))
         finish()
         return
@@ -223,9 +227,15 @@ export function ReportPostModal() {
               {filed.resolution && <p className="mt-1 whitespace-pre-wrap break-words">{filed.resolution}</p>}
             </div>
           )}
-          <Button onClick={() => handleWithdraw(filed)} variant="outline" disabled={busy} className="w-full text-red-500">
-            {busy ? 'Withdrawing…' : 'Withdraw report'}
-          </Button>
+          {reportCanBeWithdrawn(filed) ? (
+            <Button onClick={() => handleWithdraw(filed)} variant="outline" disabled={busy} className="w-full text-red-500">
+              {busy ? 'Withdrawing…' : 'Withdraw report'}
+            </Button>
+          ) : (
+            <p data-testid="own-report-kept" className="text-sm text-gray-500 dark:text-gray-400">
+              A resolved report can&apos;t be withdrawn. It expires 90 days after you filed it.
+            </p>
+          )}
           <Button onClick={handleClose} disabled={busy} className="w-full">Done</Button>
         </div>
       )}
