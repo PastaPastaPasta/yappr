@@ -9,13 +9,15 @@ import {
   settleBallotReplace,
   settlePendingPollrReplaces,
 } from './pollr-pending-writes';
-import { markPollHasBallots } from './pollr-known-ballots';
+import { markPollHasBallots, pollHasKnownBallots } from './pollr-known-ballots';
+import { pollrPollService } from './pollr-poll-service';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
   pollrIsV3,
   pollrIsV4,
   pollrHasV5Ballots,
+  pollrPollsDeletable,
   pollrVoteDocType,
 } from '@/lib/constants';
 import {
@@ -496,6 +498,24 @@ class PollrVoteService {
     }
     const success = recorded !== null && sameChoices(recorded, choices);
     return { success, choices: recorded, closed, stale, error: success ? undefined : firstError };
+  }
+
+  /**
+   * v6: whether `userId` may be offered the delete of `poll` now. Only its
+   * owner, and never once the poll is known to have a ballot: ballots are
+   * permanent, and a lagging node can still count 0 (see pollr-known-ballots,
+   * which the reads here fill). A pending write of the owner's, or an
+   * unreadable ballot state that may hide one, holds it back; otherwise every
+   * ballot is counted. A vote that was never sent leaves nothing behind, so
+   * this offers the delete again. `ownState` reuses a ballot-state read the
+   * caller already has. Throws when the ballots cannot be counted.
+   */
+  async deleteEligible(poll: Poll, userId: string, ownState?: PromiseSettledResult<BallotState>): Promise<boolean> {
+    if (!pollrPollsDeletable() || userId !== poll.ownerId || pollHasKnownBallots(poll.id)) return false;
+    const state = ownState ?? (await Promise.allSettled([this.getBallotState(poll, userId)]))[0];
+    if (ownBallotMayBePending(state) || pollHasKnownBallots(poll.id)) return false;
+    const ballots = await pollrPollService.countBallots(poll.id);
+    return ballots === 0 && !pollHasKnownBallots(poll.id);
   }
 
   /**

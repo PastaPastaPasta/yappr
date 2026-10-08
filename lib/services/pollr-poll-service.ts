@@ -2,7 +2,7 @@ import { BaseDocumentService } from './document-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentCount } from './pagination-utils';
 import { markPollHasBallots, pollHasKnownBallots } from './pollr-known-ballots';
-import { settlePendingPollrReplaces } from './pollr-pending-writes';
+import { pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
 import { stateTransitionService } from './state-transition-service';
 import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants';
 import { isDeleteConstraintError } from '@/lib/error-utils';
@@ -208,6 +208,13 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // back until its reservation expires (as createPoll does). A no-op when
     // nothing is pending.
     await settlePendingPollrReplaces(ownerId);
+    // A ballot write of the owner's that may still land (say an unconfirmed
+    // vote from another card) would turn this delete into a paid 40147 if it
+    // lands while the delete waits its turn. Hold back until it settles, and
+    // fail closed on an unreadable store; it proves no ballot, so nothing is
+    // marked for good.
+    const ownWritePending = await pollrWriteMayStillExecute(ownerId, poll.id).catch(() => true);
+    if (ownWritePending) return { status: 'pending' };
     // Re-checked after the awaits: another card may have seen a ballot meanwhile.
     if ((await this.countBallots(poll.id)) > 0 || this.hasBallots(poll.id)) return { status: 'voted' };
 
@@ -224,10 +231,14 @@ class PollrPollService extends BaseDocumentService<Poll> {
   }
 }
 
-/** How a poll delete ended: `voted` = someone has voted, so the poll is permanent. */
+/**
+ * How a poll delete ended: `voted` = someone has voted, so the poll is
+ * permanent; `pending` = nothing sent, an own ballot write may still land.
+ */
 export type DeletePollResult =
   | { status: 'deleted' }
   | { status: 'voted' }
+  | { status: 'pending' }
   | { status: 'failed'; error?: string };
 
 export const pollrPollService = new PollrPollService();

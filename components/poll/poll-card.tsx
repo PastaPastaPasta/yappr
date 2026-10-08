@@ -16,7 +16,8 @@ import { pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constan
 import { isReferenceNotFoundError } from '@/lib/error-utils'
 import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
-import { ownBallotMayBePending, pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
+import type { BallotState } from '@/lib/services/pollr-vote-service'
+import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
 interface PollCardProps {
   pollId: string
@@ -95,15 +96,29 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
   const [deletable, setDeletable] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  // Set once this load's voter sends a ballot, so a ballot count read before
-  // it cannot bring the delete back.
-  const ballotSentRef = useRef(false)
+  // Bumped by every eligibility check and every vote, so only the latest check
+  // may offer the delete: a count read before a vote cannot bring it back.
+  const deleteCheckRef = useRef(0)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
   const editable = pollrHasV5Ballots()
   // v4 (indexOnly ballots) is shown but not voted on.
   const votingSupported = !pollrIsV4()
+
+  /**
+   * v6: whether the signed-in owner may delete `target` now, recomputed from
+   * scratch (pollrVoteService.deleteEligible). Only the latest check applies,
+   * so a count read before a vote cannot bring the delete back.
+   */
+  const checkDeletable = useCallback(async (target: Poll, ownState?: PromiseSettledResult<BallotState>) => {
+    const epoch = ++deleteCheckRef.current
+    setDeletable(false)
+    if (!pollrPollsDeletable() || !userId) return
+    const { pollrVoteService } = await import('@/lib/services')
+    const eligible = await pollrVoteService.deleteEligible(target, userId, ownState)
+    if (deleteCheckRef.current === epoch) setDeletable(eligible)
+  }, [userId])
 
   useEffect(() => {
     let cancelled = false
@@ -120,7 +135,6 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       setTally(null)
       setDeleted(false)
       setDeletable(false)
-      ballotSentRef.current = false
       try {
         const { pollrPollService, pollrVoteService } = await import('@/lib/services')
         // A failed read throws; null is Platform saying the poll does not exist.
@@ -166,24 +180,10 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
           setVotesUnavailable(true)
         }
 
-        // v6: the owner may delete the poll until its first ballot. A poll ever
-        // known to have a ballot is never offered again: ballots are permanent,
-        // and a lagging node can still count 0. The services record that
-        // evidence as they see it (a tallied selection, any own ballot document
-        // including a withdrawn one, a confirmed write, a positive count; see
-        // pollr-known-ballots). A pending write of the owner's (or an
-        // unreadable ballot state, which may hide one) holds the delete back;
-        // otherwise count every ballot. Not awaited: the poll shows while the
-        // count is read, so a vote sent meanwhile must win over it.
-        const ownBallotPending = ownBallotMayBePending(votesResult)
-        const knownVoted = () => ballotSentRef.current || pollrPollService.hasBallots(loadedPoll.id)
-        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && !ownBallotPending && !knownVoted()) {
-          pollrPollService.countBallots(loadedPoll.id)
-            .then((ballots) => {
-              if (!cancelled && !knownVoted()) setDeletable(ballots === 0)
-            })
-            .catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
-        }
+        // v6: the owner may delete the poll until its first ballot. Not
+        // awaited: the poll shows while the ballots are counted.
+        checkDeletable(loadedPoll, votesResult)
+          .catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
       } catch (error) {
         logger.error('PollCard: failed to load poll', error)
         if (!cancelled) setLoadError(true)
@@ -197,7 +197,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     return () => {
       cancelled = true
     }
-  }, [pollId, userId, reloadToken, nativeEmbed])
+  }, [pollId, userId, reloadToken, nativeEmbed, checkDeletable])
 
   /** Leave the ballot: drop any pending selection and close the edit detour. */
   const stopEditing = useCallback(() => {
@@ -340,9 +340,9 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     }
 
     setSubmitting(true)
-    // A ballot may land even if this submission reports a failure, and one
-    // ballot keeps the poll for good: stop offering the delete either way.
-    ballotSentRef.current = true
+    // No delete while a ballot is on its way, and no count read before it may
+    // bring the delete back (the epoch moves on).
+    deleteCheckRef.current += 1
     setDeletable(false)
     try {
       if (editable) {
@@ -406,8 +406,12 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       toast.error(categorizeError(error))
     } finally {
       setSubmitting(false)
+      // Recomputed from scratch once the submission is over: a landed ballot
+      // is known for good, one that may still land reads as pending, and a vote
+      // that was never sent gives the delete back.
+      checkDeletable(poll).catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
     }
-  }, [poll, selected, tally, user, editable, submitSelection, openLoginPrompt])
+  }, [poll, selected, tally, user, editable, submitSelection, openLoginPrompt, checkDeletable])
 
   /** v6: the owner deletes the poll, which Platform allows only until its first ballot. */
   const handleDelete = useCallback(async () => {
@@ -422,6 +426,11 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       } else if (result.status === 'voted') {
         setDeletable(false)
         toast.error('Someone has voted on this poll, so it can\'t be deleted anymore.')
+        setReloadToken((token) => token + 1)
+      } else if (result.status === 'pending') {
+        // Nothing was sent: the owner's own vote is still being confirmed.
+        setDeletable(false)
+        toast('Your vote on this poll is still being confirmed.', { icon: '⏳' })
         setReloadToken((token) => token + 1)
       } else {
         toast.error(categorizeError(result.error))

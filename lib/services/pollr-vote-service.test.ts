@@ -603,6 +603,34 @@ describe('ballot evidence for the v6 delete', () => {
     expect(ownBallotMayBePending(read)).toBe(false);
   });
 
+  it('offers the delete again after a first vote refused at its preflight read (nothing sent)', async () => {
+    const service = await loadService('v6');
+    const mine = openPoll({ ownerId: VOTER });
+    mocks.query.mockRejectedValueOnce(new Error('down'));
+    expect((await service.setVote(mine, [1], VOTER)).success).toBe(false);
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+
+    // The card's check once the submission is over (Cancel changes nothing):
+    // no reservation, no ballot, and a zero count.
+    mocks.query.mockResolvedValue(new Map());
+    mocks.count.mockResolvedValue(new Map());
+    expect(await service.deleteEligible(mine, VOTER)).toBe(true);
+  });
+
+  it('offers no delete to anyone but the owner, nor once a ballot is known, a write may land or the state is unreadable', async () => {
+    const service = await loadService('v6');
+    const mine = openPoll({ ownerId: VOTER });
+    mocks.count.mockResolvedValue(new Map());
+    expect(await service.deleteEligible(mine, CREATOR)).toBe(false);
+    expect(await service.deleteEligible(mine, VOTER, { status: 'fulfilled', value: { choices: [], pending: true } })).toBe(false);
+    expect(await service.deleteEligible(mine, VOTER, { status: 'rejected', reason: new Error('down') })).toBe(false);
+    expect(mocks.count).not.toHaveBeenCalled();
+    // A lagging zero count cannot override a ballot already seen.
+    (await import('./pollr-known-ballots')).markPollHasBallots(mine.id);
+    expect(await service.deleteEligible(mine, VOTER, { status: 'fulfilled', value: { choices: [], pending: false } })).toBe(false);
+    expect(mocks.count).not.toHaveBeenCalled();
+  });
+
   it('a vote refused at its preflight read leaves the poll deletable on a later zero count', async () => {
     const service = await loadService('v6');
     mocks.query.mockRejectedValue(new Error('down'));

@@ -3,7 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // What createPoll writes per topology and how a poll document reads back, at
 // an in-memory boundary. No network.
 const mocks = vi.hoisted(() => ({
-  createDocument: vi.fn(), deleteDocument: vi.fn(), settle: vi.fn(), count: vi.fn(), get: vi.fn(),
+  createDocument: vi.fn(), deleteDocument: vi.fn(), settle: vi.fn(), count: vi.fn(), get: vi.fn(), mayExecute: vi.fn(),
+}));
+// Whether an own ballot write may still land; the real rules have their own spec.
+vi.mock('./pollr-pending-writes', async (load) => ({
+  ...(await load<typeof import('./pollr-pending-writes')>()),
+  pollrWriteMayStillExecute: mocks.mayExecute,
 }));
 vi.mock('./state-transition-service', () => ({
   stateTransitionService: { createDocument: mocks.createDocument, deleteDocument: mocks.deleteDocument },
@@ -34,6 +39,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.createDocument.mockResolvedValue({ success: true, document: { $id: 'doc', $ownerId: OWNER } });
   mocks.settle.mockResolvedValue(0);
+  mocks.mayExecute.mockResolvedValue(false);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -166,6 +172,23 @@ describe('deleting a poll (v6)', () => {
     mocks.deleteDocument.mockClear();
     expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
     expect(mocks.count).not.toHaveBeenCalled();
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('holds back, writing nothing, while an own ballot write on the poll may still land', async () => {
+    const service = await loadService('v6');
+    // An unconfirmed first vote from another card: its create reservation is still out.
+    mocks.mayExecute.mockResolvedValue(true);
+    mocks.count.mockResolvedValue(new Map());
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
+    expect(mocks.mayExecute).toHaveBeenCalledWith(OWNER, poll.id);
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+    // It proves no ballot: nothing is marked for good.
+    expect(service.hasBallots(poll.id)).toBe(false);
+
+    // An unreadable reservation store fails closed the same way.
+    mocks.mayExecute.mockRejectedValue(new Error('store unreadable'));
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
     expect(mocks.deleteDocument).not.toHaveBeenCalled();
   });
 
