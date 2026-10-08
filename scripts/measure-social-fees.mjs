@@ -27,6 +27,11 @@
  *
  * Every write is built for the cut by scripts/social-shapes.mjs: on v13 posts
  * carry `live: true`, replies `rootOwnerId`, and a reply like is `{ replyId }`.
+ * On v14 a reply names no owner (`{ rootPostId }`: its windows derive the
+ * root and parent owners), so the `reply` row prices one fewer identifier;
+ * the installed 5.0.0-beta.2 SDK cannot parse v14 (countPresent,
+ * deleteConstraints), which `--dry-run` reports as one FAIL line for the cut
+ * (its write shapes still judged by the shape checker) and exits 1.
  *
  * Several cuts in one run (`--contract-file` repeated) are measured one after
  * the other by the same identities on the same network, then compared side by
@@ -167,6 +172,7 @@ function estimatesFor(contract, source) {
   const { cut } = socialShapes(source);
   const plainPost = { content: { length: 140 } };
   // v13: every post carries `live` and every reply `rootOwnerId`, so neither is priced as absent.
+  // v14's reply declares no parentOwnerId, so the reply row below keeps only what the file has.
   const always = { post: cut.liveMarker ? ['live'] : [], reply: cut.rootOwner ? ['rootOwnerId'] : [] };
   const absent = (type, keep) => Object.fromEntries(Object.keys(source.documentSchemas[type].properties).filter((p) => !keep.includes(p) && !(always[type] ?? []).includes(p)).map((p) => [p, { present: false }]));
   const estimate = (type, fields) => documentCreateCost(contract, type, { fields }, pv).totalCredits;
@@ -200,13 +206,23 @@ function estimatesFor(contract, source) {
 async function dryRun(args) {
   await initWasmDpp2();
   const placeholder = '11111111111111111111111111111111';
+  let unparsed = 0;
   for (const { file, reuse } of args.cuts) {
     const source = measureContractSource(file);
     const json = { ...source, id: placeholder, ownerId: placeholder };
-    const contract = DataContract.fromJSON(json, true, PlatformVersion.latest());
-    NodeRulesDataContract.fromJSON(json, true, NodeRulesPlatformVersion.latest());
+    // A cut newer than the installed SDK (v14 on 5.0.0-beta.2) is one FAIL line: its write shapes
+    // are still judged by the shape checker, but there is nothing to estimate against.
+    let contract = null;
+    try {
+      contract = DataContract.fromJSON(json, true, PlatformVersion.latest());
+      NodeRulesDataContract.fromJSON(json, true, NodeRulesPlatformVersion.latest());
+    } catch (e) {
+      contract = null;
+      unparsed += 1;
+      console.error(`\nFAIL  ${fileName(file)}: the measurement copy does not parse with the installed SDK (a newer cut needs a newer SDK; no estimates): ${describeErr(e).slice(0, 200)}`);
+    }
     const counters = source.documentSchemas.like.indices.filter((index) => index.summableOffCountIndex).map((index) => `${index.name}→${index.summableOffCountIndex}`);
-    console.log(`\n${fileName(file)}: the measurement copy parses (wasm-sdk + wasm-dpp2); ${reuse ? `would reuse ${reuse}` : 'would register it'}; tombstone ${source.documentSchemas.post.properties.deleted !== undefined ? 'measured' : 'not on this cut'}; like counters ${counters.join(', ') || 'none'}`);
+    if (contract) console.log(`\n${fileName(file)}: the measurement copy parses (wasm-sdk + wasm-dpp2); ${reuse ? `would reuse ${reuse}` : 'would register it'}; tombstone ${source.documentSchemas.post.properties.deleted !== undefined ? 'measured' : 'not on this cut'}; like counters ${counters.join(', ') || 'none'}`);
     // The live run's writes, as `create` / `like` fit them to the cut: each must be a valid create here.
     const shapes = socialShapes(source);
     const [x, y] = [randomIdBytes(), randomIdBytes()];
@@ -221,10 +237,11 @@ async function dryRun(args) {
       const data = shapes.fit(docType, written);
       const { document } = buildDocument({ contractId: placeholder, docType, ownerId: placeholder, data, entropy: randomIdBytes(), createdAt: Date.now() });
       const problems = shapes.check(docType, data);
-      const broken = contract.checkDocumentPropertyConstraints(document);
+      const broken = contract?.checkDocumentPropertyConstraints(document);
       if (problems.length > 0 || broken) throw new Error(`${fileName(file)}: the ${docType} write ${JSON.stringify(Object.keys(data))} is not valid: ${problems.join('; ')}${broken ? ` 10422 ${broken.rule}` : ''}`);
     }
-    console.log(`  the ${writes.length} measured write shapes are valid creates of this cut (${Object.entries(shapes.cut).filter(([, on]) => on).map(([flag]) => flag).join(', ')})`);
+    console.log(`  the ${writes.length} measured write shapes are valid creates of this cut (${Object.entries(shapes.cut).filter(([, on]) => on).map(([flag]) => flag).join(', ')})${contract ? '' : ' by the shape checker alone'}`);
+    if (!contract) continue;
     const stripped = strippedActionFees(file);
     for (const [key, estimate] of Object.entries(estimatesFor(contract, source))) {
       console.log(`  ${key.padEnd(18)} estimate ${M(Number(estimate.newValues)).padStart(8)} / ${M(Number(estimate.knownValues))}${stripped[key] ? `   + ${M(stripped[key])} moderators action fee (the published file's)` : ''}`);
@@ -232,7 +249,8 @@ async function dryRun(args) {
   }
   const { devnetName, addresses } = devnetConfig();
   console.log(`\nwould measure on devnet "${devnetName}" via ${addresses[0]} (+${addresses.length - 1} more)`);
-  return 0;
+  if (unparsed > 0) console.error(`every other offline check passed; exiting 1 for the ${unparsed} cut(s) the installed SDK cannot parse`);
+  return unparsed > 0 ? 1 : 0;
 }
 
 async function main() {

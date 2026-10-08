@@ -137,6 +137,21 @@
  *   - lv-* the live marker: D's tombstone leaves D's post count, the author
  *     timeline and top creators, while the global timeline still lists it.
  *
+ * ## Social v14 (`--contract-file contracts/yappr-social-contract-v14.json`)
+ *
+ * v14 (docs/SOCIAL_V14.md) is v13 whose replies store no owner, so every v13
+ * phase runs on it: `fit` drops `parentOwnerId` and `rootOwnerId` from the
+ * v12-shaped fixture. The reply windows derive the owner by consensus:
+ *   - n1 reads `rootOwnerRecent` (`rootPostId.$ownerId == A`): every reply in
+ *     A's threads, r1-r6; n1p `parentOwnerRecent` (`replyToReplyId.$ownerId ==
+ *     A`): r5 alone, the top-level replies skipped; n1q the same window for B:
+ *     r3 and r4 under B's r1, in A's thread;
+ *   - n6x/n7x refuse the windowed `rootOwnerRecent` read in a composite and
+ *     without a window, as they did `parentOwnerRecent`.
+ * The installed 5.0.0-beta.2 SDK cannot parse v14 (countPresent): `--dry-run`
+ * reports it as one FAIL line, judges the fixtures by the shape checker and
+ * exits 1.
+ *
  * Then seat a team on the throwaway contract (the ops election tooling: a
  * charter by the leader, join requests, the apply; the windows are
  * PROOF_ELECTION_WINDOW s) and run the second phase:
@@ -486,13 +501,24 @@ async function main() {
   /** A post-count slot or ranking on `post.ownerAndTime` carries the same pin as its `where` (none before v13). */
   const livePin = shapes.ownerPostsWhere();
   const replyCounters = shapes.cut.replyAuthor;
+  /** v14: a reply stores no owner; rootOwnerRecent / parentOwnerRecent derive it (`rootPostId.$ownerId`, `replyToReplyId.$ownerId`). */
+  const derivedReplyOwners = !shapes.cut.storedReplyOwners;
 
   // Offline: both parsers accept the throwaway contract, and every fixture document builds.
-  const parsed = DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
-  NodeRulesDataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, NodeRulesPlatformVersion.latest());
+  // A cut newer than the installed SDK (v14 needs 5.0.0-beta.3: countPresent, a derived skip
+  // property) is one FAIL line on --dry-run, which still judges the fixtures by the shape checker.
+  let parsed = null;
+  try {
+    parsed = DataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, PlatformVersion.latest());
+    NodeRulesDataContract.fromJSON(contractJson(source, { id: DRY_RUN_OWNER, ownerId: DRY_RUN_OWNER }), true, NodeRulesPlatformVersion.latest());
+  } catch (e) {
+    if (!args.dryRun) throw e;
+    parsed = null;
+    console.error(`FAIL  the throwaway contract from ${args.contractFile.replace(/^.*\//, '')} does not parse with the installed SDK (a newer cut needs a newer SDK; the fixtures below are judged by the shape checker alone): ${describeErr(e).slice(0, 200)}`);
+  }
   const indexes = Object.fromEntries(Object.entries(source.documentSchemas).map(([type, schema]) => [type, schema.indices.map((index) => index.name)]));
-  console.log(`throwaway contract parses (wasm-sdk + wasm-dpp2): ${JSON.stringify(indexes)}`);
-  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? `, cn (v12 counters${replyCounters ? '' : ', post counters only'})` : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}${shapes.cut.liveMarker ? ', lv (v13 live marker)' : ''}`);
+  if (parsed) console.log(`throwaway contract parses (wasm-sdk + wasm-dpp2): ${JSON.stringify(indexes)}`);
+  console.log(`phases: ${v11 ? 'ol (timeless likes), M (design M), kf/tm-0' : 'dc (like design C)'}${counters ? `, cn (v12 counters${replyCounters ? '' : ', post counters only'})` : ''}${retracts ? ', rw (v12 retractedWhen)' : ''}${shapes.cut.liveMarker ? ', lv (v13 live marker)' : ''}${derivedReplyOwners ? ', n1 on the derived reply windows (v14)' : ''}`);
   if (args.dryRun) {
     const [x, y, z] = [randomIdBytes(), randomIdBytes(), randomIdBytes()];
     // Every fixture shape, v12-written and fitted to the cut: it must build, serialize, and pass the cut's rules.
@@ -507,14 +533,15 @@ async function main() {
       const data = shapes.fit(docType, written);
       const { document } = buildDocument({ contractId: DRY_RUN_OWNER, docType, ownerId: DRY_RUN_OWNER, data, entropy: randomIdBytes(), createdAt: Date.now() });
       const problems = shapes.check(docType, data);
-      const broken = parsed.checkDocumentPropertyConstraints(document);
+      const broken = parsed?.checkDocumentPropertyConstraints(document);
       if (problems.length > 0 || broken) throw new Error(`the ${docType} fixture ${JSON.stringify(Object.keys(data))} is not valid on this cut: ${problems.join('; ')}${broken ? ` 10422 ${broken.rule}` : ''}`);
       console.log(`fixture ok: ${docType} ${JSON.stringify(Object.keys(data))}`);
     }
     console.log(`author post reads: ${JSON.stringify(ownerPosts({ where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }))}`);
     const { devnetName, addresses } = devnetConfig();
     console.log(`fixture documents build; would register on devnet "${devnetName}" via ${addresses[0]} (+${addresses.length - 1} more)`);
-    return 0;
+    if (!parsed) console.error('every other offline check passed; exiting 1 for the parse failure above');
+    return parsed ? 0 : 1;
   }
 
   const config = devnetConfig();
@@ -558,7 +585,8 @@ async function main() {
   const r1 = await mustCreate('r1 (B → T1)', B, 'reply', { content: 'r1', rootPostId: id(T1), parentOwnerId: id(A.ownerId) });
   await sleep(1100);
   const r2 = await mustCreate('r2 (C → T1)', C, 'reply', { content: 'r2', rootPostId: id(T1), parentOwnerId: id(A.ownerId) });
-  // Nested replies name T1's owner as their root owner (v13 rootOwnerId; dropped before v13).
+  // Nested replies name T1's owner as their root owner (v13 rootOwnerId; dropped before v13 and on
+  // v14, whose replies store no owner: `fit` drops parentOwnerId and rootOwnerId there).
   const r3 = await mustCreate('r3 (A → r1)', A, 'reply', { content: 'r3', rootPostId: id(T1), rootOwnerId: id(A.ownerId), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
   await sleep(1100);
   const r4 = await mustCreate('r4 (C → r1)', C, 'reply', { content: 'r4', rootPostId: id(T1), rootOwnerId: id(A.ownerId), replyToReplyId: id(r1), parentOwnerId: id(B.ownerId) });
@@ -755,7 +783,16 @@ async function main() {
     return { docs: [...byId.values()], current: docsOf(current).length, previous: docsOf(previous).length };
   };
   const sameSet = (got, expected) => got.length === expected.length && expected.every((x) => got.includes(x));
-  await attempt('n1', () => bothWindows('reply', 'parentOwnerId', A.ownerId), ({ docs, current, previous }) => check('n1 replies to A in the current and the previous 3.5-day window (parentOwnerRecent, `newest` + `byStart`, deduped; the previous read is accepted): r1, r2, r5, r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
+  if (derivedReplyOwners) {
+    // v14: the windows name the derived owner with `==`. rootOwnerRecent files every reply of a
+    // thread under the root's owner; parentOwnerRecent a nested reply under its parent's owner,
+    // skipping top-level replies (skipIfAbsent on replyToReplyId.$ownerId).
+    await attempt('n1', () => bothWindows('reply', 'rootPostId.$ownerId', A.ownerId), ({ docs, current, previous }) => check('n1 (v14) replies in A\'s threads in the current and the previous 3.5-day window (rootOwnerRecent, `rootPostId.$ownerId ==`, `newest` + `byStart`, deduped): r1-r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r3, r4, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
+    await attempt('n1p', () => bothWindows('reply', 'replyToReplyId.$ownerId', A.ownerId), ({ docs, current, previous }) => check('n1p (v14) replies to A\'s replies (parentOwnerRecent, `replyToReplyId.$ownerId ==`): r5 alone; the top-level r1, r2, r6 are skipped', sameSet(docs.map(idOf), [r5]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
+    await attempt('n1q', () => bothWindows('reply', 'replyToReplyId.$ownerId', B.ownerId), ({ docs, current, previous }) => check('n1q (v14) replies to B\'s reply r1 (parentOwnerRecent for B, whose root owner is A): r3, r4', sameSet(docs.map(idOf), [r3, r4]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
+  } else {
+    await attempt('n1', () => bothWindows('reply', 'parentOwnerId', A.ownerId), ({ docs, current, previous }) => check('n1 replies to A in the current and the previous 3.5-day window (parentOwnerRecent, `newest` + `byStart`, deduped; the previous read is accepted): r1, r2, r5, r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
+  }
   await attempt('n2', () => bothWindows('post', 'quotedPostOwnerId', A.ownerId), ({ docs, current, previous }) => check('n2 quotes/reposts of A in the last two windows (quotedPostOwnerRecent): q1, q2, q3', sameSet(docs.map(idOf), [q1, q2, q3]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
   // Mentions stay permanent: the mentioning post's own [mentionedUserId, $createdAt].
   const mentionsOfB = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
@@ -777,8 +814,10 @@ async function main() {
   // A windowed source cannot ride the notification bundle: composites take no
   // timeRange, and without one the windowed index is not admissible.
   const bundlePage = { dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
-  await expectRefusal('n6x a windowed source as a composite sibling WITH timeRange is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', ...windowed('parentOwnerId', A.ownerId) }] }));
-  await expectRefusal('n7x a windowed index read WITHOUT a window (composite sibling or plain) is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', where: [['parentOwnerId', '==', A.ownerId]], limit: 100 }] }));
+  // The reply window's recipient: stored up to v13, derived from the root post on v14.
+  const replyRecipient = derivedReplyOwners ? 'rootPostId.$ownerId' : 'parentOwnerId';
+  await expectRefusal('n6x a windowed source as a composite sibling WITH timeRange is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', ...windowed(replyRecipient, A.ownerId) }] }));
+  await expectRefusal('n7x a windowed index read WITHOUT a window (composite sibling or plain) is refused', () => sdk.documents.composite({ ...bundlePage, subQueries: [{ documentType: 'reply', where: [[replyRecipient, '==', A.ownerId]], limit: 100 }] }));
   await attempt('n8', () => sdk.documents.composite({ ...bundlePage, subQueries: [
     { documentType: 'post', ...mentionsOfB },
     { documentType: 'follow', where: [['$ownerId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 },

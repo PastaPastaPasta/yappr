@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10, v11, v12 or v13)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v14)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -26,6 +26,10 @@
  * byReply. v13 drops the reply author counter (a reply like names no author),
  * so only the post counters are compared, and its author post pages pin
  * `live == true` first (`post.ownerAndTime` is [live, $ownerId, $createdAt]).
+ * v14 stores no owner on a reply: its windows name the owner derived by
+ * consensus, `reply.rootOwnerRecent` (`rootPostId.$ownerId ==`, every reply in
+ * the owner's threads) and `reply.parentOwnerRecent` (`replyToReplyId.$ownerId
+ * ==`, replies to the owner's replies), each read alone like v13's one window.
  * What the contract under test declares (fetched by id, not the
  * environment's topology) picks the like reads and the notification grids.
  * There is no postMention: a post or reply names at most one mentionedUserId. */
@@ -122,7 +126,7 @@ await verify('permanent notification sources', [['follow', 'followingId'], ['pos
   orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
 
-/** The social contract under test as published (v10 to v13): its declarations pick the reads below. */
+/** The social contract under test as published (v10 to v14): its declarations pick the reads below. */
 const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
 /** v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts). */
 const SOCIAL = socialShapes(V10);
@@ -156,8 +160,12 @@ async function verifyAlone(name, queries) {
     console.error(`FAIL ${name}: ${message}`);
   }
 }
+/** The reply windows' recipients: stored up to v13, derived from the referenced post or reply on v14. */
+const REPLY_WINDOWS = SOCIAL.cut.storedReplyOwners
+  ? [['reply', 'parentOwnerRecent', 'parentOwnerId']]
+  : [['reply', 'rootOwnerRecent', 'rootPostId.$ownerId'], ['reply', 'parentOwnerRecent', 'replyToReplyId.$ownerId']];
 await verifyAlone('notification windows (current and previous)', [
-  ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
+  ...REPLY_WINDOWS, ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
 ].flatMap(([documentTypeName, indexName, field]) => windowsOf(documentTypeName, indexName).map(timeRange => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner]], timeRange, limit: 100,

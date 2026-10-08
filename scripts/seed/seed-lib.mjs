@@ -62,10 +62,12 @@ export const YAPP_TOKEN_POSITION = 0;
  * which the seeder never does. v12 (docs/SOCIAL_V12.md) changes only how the like author and
  * hashtag indexes store (counters) and who may tombstone, not what a create carries. v13
  * (docs/SOCIAL_V13.md) does change creates: posts carry `live`, replies `rootOwnerId`, a reply like
- * no `replyAuthor`, media are arrays; `SOCIAL_SHAPES` builds them off the configured file. All take
- * their profiles from DashPay plus `yapprProfile`.
+ * no `replyAuthor`, media are arrays; `SOCIAL_SHAPES` builds them off the configured file. v14
+ * (docs/SOCIAL_V14.md) is v13 whose replies store no owner (`{ rootPostId, replyToReplyId? }`: the
+ * notification windows derive the root and parent owners). All take their profiles from DashPay
+ * plus `yapprProfile`.
  */
-export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13'];
+export const SEEDED_TOPOLOGIES = ['v10', 'v11', 'v12', 'v13', 'v14'];
 /** The social contract the seeder writes (the configured topology's file), read once: every limit and cost below comes from it. */
 const SOCIAL_CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT,
   `contracts/yappr-social-contract-${SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY')) ? envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') : 'v10'}.json`), 'utf8'));
@@ -125,13 +127,14 @@ export function profileContractId() {
   return id;
 }
 
-// ---- Document shapes (social v10/v11/v12/v13) ---------------------------------
+// ---- Document shapes (social v10/v11/v12/v13/v14) -----------------------------
 //
 // The seeder writes to the devnet social contract, v10
 // (contracts/yappr-social-contract-v10.json), v11 or v12 (-v11.json, -v12.json,
 // the same create shapes) or v13 (-v13.json: `live`, `rootOwnerId`, no
-// `likeReply.replyAuthor`, media arrays, all through `SOCIAL_SHAPES`); nothing
-// else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
+// `likeReply.replyAuthor`, media arrays, all through `SOCIAL_SHAPES`) or v14
+// (-v14.json: v13 with no stored reply owner, `parentOwnerId` and `rootOwnerId`
+// dropped by `SOCIAL_SHAPES.reply`); nothing else exists to seed. The corpus format keeps `"hashtag": ""` for "untagged", and on chain
 // that is an ABSENT property: an untagged post OMITS `hashtag`, and a like of
 // it OMITS `like.hashtag` too — a `where` entry treats both-absent as
 // agreement, while sending `''` is consensus mismatch 40127. The like's

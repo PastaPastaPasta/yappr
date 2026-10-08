@@ -128,13 +128,15 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).
-- The seeder writes v10/v11/v12/v13 documents only (v11 and v12 keep every create
+- The seeder writes v10/v11/v12/v13/v14 documents only (v11 and v12 keep every create
   shape it writes: v12 changes only how the like author and hashtag indexes
   store, as counters, and who may tombstone; v13 adds `live: true` to posts and
   `rootOwnerId` to replies, drops `likeReply.replyAuthor` and writes media as
-  one-item arrays, all built by `SOCIAL_SHAPES` off the configured file), and
+  one-item arrays; v14 writes v13's shapes but a reply stores no owner, neither
+  `parentOwnerId` nor `rootOwnerId`, since its notification windows derive both;
+  all built by `SOCIAL_SHAPES` off the configured file), and
   refuses to run unless `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is
-  `v10`, `v11`, `v12` or `v13`. The corpus
+  `v10`, `v11`, `v12`, `v13` or `v14`. The corpus
   `"hashtag": ""` convention means "untagged", and the seeder **omits the
   hashtag property** on untagged posts and on their likes (a `where` entry's
   both-absent; `''` is consensus error 40127). Tags longer than 61 characters
@@ -192,5 +194,5 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 node scripts/seed/provision-seed-identities.mjs --self-test   # split/asset-lock construction, validation, ledger states
 node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, document shapes
 NEXT_PUBLIC_CONTRACT_TOPOLOGY=v13 node scripts/seed/run-seeder.mjs --self-test   # the same against another cut's shapes
-node scripts/social-shapes.mjs --self-test                    # every social write built for v10–v13, judged by rs-dpp's rules offline
+node scripts/social-shapes.mjs --self-test                    # every social write built for v10–v14, judged by rs-dpp's rules offline
 ```

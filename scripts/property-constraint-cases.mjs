@@ -408,7 +408,7 @@ export const DECLARED_DELETE_RULES = {
 /**
  * [label, docType, the stored document's data, the delete rule its owner's
  * delete breaks or null] — judged offline by `runConstraintCases` and
- * broadcast by verify-v10 r2 (a resolved report's withdrawal is 40147).
+ * broadcast by verify-v10 r1wa (a resolved report's withdrawal is 40147).
  */
 export const DELETE_CASES = {
   'yappr-social-contract-v14.json': [
