@@ -129,6 +129,18 @@ export interface WithdrawReportVars {
   reportId: string;
 }
 
+/** The neutral words for a withdrawal with nothing left to withdraw: gone, or (v14) resolved meanwhile. */
+function withdrawFailureText(ticket: WriteTicket): string | null {
+  switch (ticket.error?.code) {
+    case 'REPORT_GONE':
+      return copy.toast.reportGone;
+    case 'REPORT_RESOLVED':
+      return copy.toast.reportResolved;
+    default:
+      return null;
+  }
+}
+
 /**
  * Withdraw the viewer's report (`safety.withdrawReport`, PRD SAFE-04): the
  * report is deleted. Optimistic, like the toggles: the sheet closes with
@@ -167,12 +179,8 @@ export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
     if (code === 'REPORT_GONE') queryClient.setQueryData(key, null);
     queryClient.invalidateQueries({ queryKey: key }).catch(() => undefined);
   },
-  failureText: (ticket) => {
-    if (ticket.error?.code === 'REPORT_GONE') return copy.toast.reportGone;
-    if (ticket.error?.code === 'REPORT_RESOLVED') return copy.toast.reportResolved;
-    return null;
-  },
-  failureNeutral: (ticket) => ticket.error?.code === 'REPORT_GONE' || ticket.error?.code === 'REPORT_RESOLVED',
+  failureText: withdrawFailureText,
+  failureNeutral: (ticket) => withdrawFailureText(ticket) !== null,
   failureMessage: copy.toast.withdrawFailed,
 };
 
