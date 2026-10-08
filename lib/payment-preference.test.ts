@@ -57,6 +57,30 @@ describe('planPayment', () => {
     }
   })
 
+  it('pays YAPP exactly as before on a v10+ cut whose YAPP is not paused (the planned v14)', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v13')
+    vi.doMock('@/lib/contract-topology', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('@/lib/contract-topology')>()),
+      yappIsPausedForGood: () => false,
+    }))
+    try {
+      const { planPayment, paymentIsChoosable, paymentHintCopy } = await import('./payment-preference')
+      expect(paymentIsChoosable('post')).toBe(true)
+      expect(planPayment('post', 'create', 100n, 'yapp')).toEqual({
+        payWith: 'yapp', yapp: 10n, gasFeesPaidBy: 2, gasMayBeSponsored: true,
+        actionFee: { owner: 0n, moderators: 80_000_000n, pricing: 'feeMultiplier' }, fallbackReason: null,
+      })
+      for (const docType of ['reply', 'like', 'likeReply']) {
+        expect(planPayment(docType, 'create', 100n, 'yapp')).toMatchObject({ payWith: 'yapp', gasMayBeSponsored: true, fallbackReason: null })
+      }
+      expect(planPayment('post', 'create', 9n, 'yapp')).toMatchObject({ payWith: 'credits', fallbackReason: 'insufficient-yapp' })
+      expect(paymentHintCopy(planPayment('post', 'create', 100n, 'credits'), 100n, 100_000_000_000).toggle).toBe('Use YAPP instead')
+    } finally {
+      vi.doUnmock('@/lib/contract-topology')
+    }
+  })
+
   it('keeps paying YAPP where it is not locked (v9)', async () => {
     const { planPayment } = await load('v9')
     for (const docType of ['post', 'reply', 'like', 'likeReply']) {

@@ -1,5 +1,5 @@
 import type { PayWith } from '@/lib/store'
-import { declaredActionFee, tokenCostFor, yappIsLocked, type ActionFeeDeclaration, type DocumentAction, type GasFeesPaidBy } from '@/lib/contract-topology'
+import { declaredActionFee, tokenCostFor, yappIsPausedForGood, type ActionFeeDeclaration, type DocumentAction, type GasFeesPaidBy } from '@/lib/contract-topology'
 
 /**
  * What one document write is going to cost and how it will be paid, decided
@@ -38,8 +38,8 @@ export interface PaymentPlan {
  * - An unpriced type spends credits, whatever the setting.
  * - A REQUIRED token cost (every priced type on v2) spends YAPP; the
  *   setting cannot override consensus.
- * - An OPTIONAL token cost on a contract whose YAPP is locked
- *   ({@link yappIsLocked}: paused for good) always spends credits, whatever
+ * - An OPTIONAL token cost on a contract whose YAPP is paused for good
+ *   ({@link yappIsPausedForGood}: v10–v13) always spends credits, whatever
  *   the setting and the balance: Platform 5.0.0-beta.3 refuses a paused
  *   token's payment with a PAID 40711.
  * - Otherwise an OPTIONAL token cost follows the setting, except that `yapp`
@@ -70,7 +70,7 @@ export function planPayment(docType: string, action: DocumentAction, balance: bi
     fallbackReason,
   })
   if (!cost.optional) return inYapp(payWith === 'credits' ? 'token-required' : null)
-  if (yappIsLocked()) return inCredits(payWith === 'yapp' ? 'yapp-locked' : null)
+  if (yappIsPausedForGood()) return inCredits(payWith === 'yapp' ? 'yapp-locked' : null)
   const canAfford = balance !== null && balance >= amount
   if (payWith === 'yapp' && canAfford) return inYapp(null)
   return inCredits(payWith === 'yapp' ? 'insufficient-yapp' : null)
@@ -81,7 +81,7 @@ export function planPayment(docType: string, action: DocumentAction, balance: bi
  * token cost is optional and YAPP can actually be spent.
  */
 export function paymentIsChoosable(docType: string): boolean {
-  return tokenCostFor(docType)?.optional === true && !yappIsLocked()
+  return tokenCostFor(docType)?.optional === true && !yappIsPausedForGood()
 }
 
 /**
@@ -101,8 +101,8 @@ export function paymentHintCopy(plan: PaymentPlan, balance: bigint | null, credi
     const text = plan.gasMayBeSponsored ? `Pays ${plan.yapp.toString()} YAPP, ${covered} covered by Yappr` : `Pays ${plan.yapp.toString()} YAPP${fee}`
     return { text, toggle: 'Use credits instead' }
   }
-  // Locked YAPP cannot be spent at all: there is no other currency to offer.
-  if (yappIsLocked()) return { text: `Pays in credits${fee}`, toggle: null }
+  // Paused YAPP cannot be spent at all: there is no other currency to offer.
+  if (yappIsPausedForGood()) return { text: `Pays in credits${fee}`, toggle: null }
   if (plan.fallbackReason !== 'insufficient-yapp') return { text: `Pays in credits${fee}`, toggle: 'Use YAPP instead' }
   // `null` means the balance query itself failed, not that it came back empty.
   return { text: `Pays in credits${balance === null ? ' (YAPP balance unavailable)' : ' (not enough YAPP)'}${fee}`, toggle: null }

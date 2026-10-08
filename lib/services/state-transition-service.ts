@@ -8,7 +8,7 @@ import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from 
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
 import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, keyNetwork, storefrontReviewsCostYapp } from '../constants';
-import { tokenCostFor, yappIsLocked, type DocumentAction } from '../contract-topology';
+import { tokenCostFor, yappIsPausedForGood, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
 import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
 import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
@@ -354,9 +354,9 @@ class StateTransitionService {
       // on an optional cost, where too little means planning credits instead. A
       // user who chose credits, or a required cost consensus gives no choice
       // about, must not pay a balance round-trip on every like.
-      // Locked YAPP (paused for good) is never spent, so its balance never matters.
+      // YAPP paused for good is never spent, so its balance never matters.
       const payWith = useSettingsStore.getState().payWith;
-      const balance = cost.optional && payWith === 'yapp' && !yappIsLocked() ? await this.yappBalanceOrNull(ownerId) : null;
+      const balance = cost.optional && payWith === 'yapp' && !yappIsPausedForGood() ? await this.yappBalanceOrNull(ownerId) : null;
       const plan = planPayment(documentType, 'create', balance, payWith);
       if (plan.fallbackReason) logger.debug(`Paying ${documentType} in ${plan.payWith} (${plan.fallbackReason})`);
       return tokenPaymentOptions(plan, YAPP_TOKEN_POSITION);
