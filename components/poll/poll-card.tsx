@@ -16,7 +16,7 @@ import { pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constan
 import { isReferenceNotFoundError } from '@/lib/error-utils'
 import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
-import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
+import { loadShowsBallot, pollIsClosed, tallyIsFinal, voteLeftBallot } from '@/lib/services/pollr-vote-service'
 
 interface PollCardProps {
   pollId: string
@@ -166,18 +166,21 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
           setVotesUnavailable(true)
         }
 
-        // v6: the owner may delete the poll until its first ballot. A tally with
-        // any selection already proves a ballot, and a pending write of the
-        // owner's may be one; otherwise count them all, since a withdrawn ballot
-        // leaves the tally but still keeps the poll. Not awaited: the poll shows
-        // while the count is read, so a vote sent meanwhile must win over it.
-        // A poll ever known to have a ballot is never offered again: ballots
-        // are permanent, and a lagging node can still count 0.
-        const selections = tallyResult.status === 'fulfilled' ? tallyResult.value.total : 0
+        // v6: the owner may delete the poll until its first ballot. A tallied
+        // selection or the viewer's own recorded choice already proves a ballot,
+        // and a pending write of the owner's may be one; otherwise count them
+        // all, since a withdrawn ballot leaves the tally but still keeps the
+        // poll. Not awaited: the poll shows while the count is read, so a vote
+        // sent meanwhile must win over it. A poll ever known to have a ballot is
+        // never offered again: ballots are permanent, and a lagging node can
+        // still count 0.
+        const ownChoices = votesResult.status === 'fulfilled' ? votesResult.value.choices : []
         const ownBallotPending = votesResult.status === 'fulfilled' && votesResult.value.pending
-        if (selections > 0) pollrPollService.markHasBallots(loadedPoll.id)
+        if (loadShowsBallot(tallyResult.status === 'fulfilled' ? tallyResult.value : null, ownChoices)) {
+          pollrPollService.markHasBallots(loadedPoll.id)
+        }
         const knownVoted = () => ballotSentRef.current || pollrPollService.hasBallots(loadedPoll.id)
-        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && selections === 0 && !ownBallotPending && !knownVoted()) {
+        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && !ownBallotPending && !knownVoted()) {
           pollrPollService.countBallots(loadedPoll.id)
             .then((ballots) => {
               if (!cancelled && !knownVoted()) setDeletable(ballots === 0)
@@ -263,8 +266,13 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
 
   /** v5: make the voter's ballots select exactly `wanted` (empty = withdraw). */
   const submitSelection = useCallback(async (currentPoll: Poll, wanted: number[], voterId: string) => {
-    const { pollrVoteService } = await import('@/lib/services')
+    const { pollrPollService, pollrVoteService } = await import('@/lib/services')
     const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
+    // For good, across reloads and remounts, once a ballot is shown or may
+    // still land: a later count of 0 from a lagging node must not bring the
+    // delete back. A vote refused before any write proves nothing, so the next
+    // load counts again.
+    if (voteLeftBallot(result, wanted)) pollrPollService.markHasBallots(currentPoll.id)
 
     if (result.unconfirmed || result.heldBack) {
       // A write is out with no outcome yet (this one, or an earlier one this
@@ -345,10 +353,6 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     ballotSentRef.current = true
     setDeletable(false)
     try {
-      // For good, across reloads and remounts: a later count of 0 from a
-      // lagging node must not bring the delete back (pollrPollService.hasBallots).
-      const { pollrPollService } = await import('@/lib/services')
-      pollrPollService.markHasBallots(poll.id)
       if (editable) {
         await submitSelection(poll, wanted, authedUser.identityId)
         return

@@ -106,6 +106,27 @@ export interface SetVoteResult {
   error?: string;
 }
 
+/**
+ * Whether a {@link PollrVoteService.setVote} outcome shows a ballot on the poll,
+ * or one that may still land. On v6 that keeps the poll permanent for good. A
+ * vote refused before any write (held back, an unreadable ballot read, a
+ * closed poll) or a write refused with no ballot left proves nothing.
+ */
+export function voteLeftBallot(result: SetVoteResult, wanted: readonly number[]): boolean {
+  if (result.unconfirmed) return true;
+  if (result.choices && result.choices.length > 0) return true;
+  return result.success && wanted.length > 0;
+}
+
+/**
+ * Whether what a poll card loaded proves a ballot names the poll: a tallied
+ * selection, or the viewer's own recorded choice (read off their ballots,
+ * which the tally's short cache can lag behind).
+ */
+export function loadShowsBallot(tally: PollTally | null, ownChoices: readonly number[]): boolean {
+  return (tally?.total ?? 0) > 0 || ownChoices.length > 0;
+}
+
 /** A voter's ballots on one poll, as the single source of truth for the card. */
 export interface BallotState {
   /** The choices the voter's ballots select on chain. */

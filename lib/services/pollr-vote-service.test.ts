@@ -507,6 +507,41 @@ describe('v5 ballots', () => {
   });
 });
 
+describe('ballot evidence for the v6 delete', () => {
+  it('counts a vote as leaving a ballot only when one is shown or may still land', async () => {
+    const { voteLeftBallot } = await import('./pollr-vote-service');
+    const base = { closed: false, stale: false };
+    expect(voteLeftBallot({ ...base, success: true, choices: [1] }, [1])).toBe(true);
+    // Sent with no outcome yet: it may land.
+    expect(voteLeftBallot({ ...base, success: false, unconfirmed: true }, [1])).toBe(true);
+    // A refused write whose re-read still shows a ballot.
+    expect(voteLeftBallot({ ...base, success: false, choices: [0] }, [1])).toBe(true);
+    // Refused before any write (held back, an unreadable ballot read, a closed
+    // poll), or a refused write that left no ballot: the next load counts again.
+    expect(voteLeftBallot({ ...base, success: false, heldBack: true }, [1])).toBe(false);
+    expect(voteLeftBallot({ ...base, success: false, error: "Couldn't read your ballot: down" }, [1])).toBe(false);
+    expect(voteLeftBallot({ success: false, closed: true, stale: false, error: 'This poll has closed' }, [1])).toBe(false);
+    expect(voteLeftBallot({ ...base, success: false, choices: [] }, [1])).toBe(false);
+  });
+
+  it('treats the owner’s own recorded choice as a ballot even when a cached tally is empty', async () => {
+    const { loadShowsBallot } = await import('./pollr-vote-service');
+    expect(loadShowsBallot({ counts: [0, 0, 0], total: 0 }, [1])).toBe(true);
+    expect(loadShowsBallot({ counts: [1, 0, 0], total: 1 }, [])).toBe(true);
+    expect(loadShowsBallot(null, [])).toBe(false);
+    expect(loadShowsBallot({ counts: [0, 0, 0], total: 0 }, [])).toBe(false);
+  });
+
+  it('a vote refused at its preflight read leaves the poll deletable on a later zero count', async () => {
+    const service = await loadService('v6');
+    mocks.query.mockRejectedValue(new Error('down'));
+    const result = await service.setVote(poll({ endsAt: Date.now() + HOUR }), [1], VOTER);
+    const { voteLeftBallot } = await import('./pollr-vote-service');
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(voteLeftBallot(result, [1])).toBe(false);
+  });
+});
+
 describe('v5 tallies', () => {
   it('folds a moved vote in as a decrement plus an increment', async () => {
     const service = await loadService('v5');

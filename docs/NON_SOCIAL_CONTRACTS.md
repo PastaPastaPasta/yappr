@@ -486,9 +486,12 @@ delete comes back as 40147 and is reported the same way. `PollCard` offers
 tally with any selection already proves a ballot; an unreadable count, or a
 ballot write of the owner's still pending, offers nothing), and stops offering
 it the moment the owner votes, even if a count read before the vote comes back
-later. A poll once known to have a ballot (counted, refused 40147, or voted on
-here) is never offered again in the session (`pollrPollService.hasBallots`):
-ballots are permanent, and a lagging node can still count 0. Post embeds name the poll in their own fields, not through a reference,
+later. A poll once known to have a ballot is never offered again in the
+session (`pollrPollService.hasBallots`): a positive count, a 40147, a tallied
+selection, the owner's own recorded choice, or a vote of theirs that shows a
+ballot or may still land (`voteLeftBallot`; one refused before any write
+proves nothing, so the next load counts again). Ballots are permanent, and a
+lagging node can still count 0. Post embeds name the poll in their own fields, not through a reference,
 so a post outlives its poll: when `fetchPoll` proves a natively embedded poll
 absent on v6 twice, 2.5 s apart (a node a block behind proves a just-published
 poll absent too; `pollMissingMeansDeleted`), the card says "This poll was
