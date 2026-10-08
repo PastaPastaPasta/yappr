@@ -19,7 +19,7 @@ import { extractErrorMessage, categorizeError } from '@/lib/error-utils'
 import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { PaymentHint } from './payment-hint'
 import { buildPollEmbed, pollrPollUrl } from '@/lib/poll-embed'
-import { pollrIsV4 } from '@/lib/constants'
+import { pollrIsConfigured, pollrIsV4 } from '@/lib/constants'
 import { planPosts, publishThread } from '@/lib/compose/publish-thread'
 import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit } from '@/lib/compose/limits'
 import { mediaUrlForContract } from '@/lib/utils/ipfs-gateway'
@@ -116,8 +116,9 @@ export function ComposeModal() {
   const willBeEncrypted = isPrivateVisibility || inherited.source !== null
   // A poll post is a single, public, top-level post: the question lives on the
   // public Pollr contract and replies/threads have nowhere to carry the embed.
-  // A v4 deployment is read-only for polls (nobody can vote on a new one), so it creates none.
-  const canAttachPoll = !pollrIsV4() && !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
+  // A v4 deployment is read-only for polls (nobody can vote on a new one), so it creates none,
+  // and a deployment without a pollr contract offers no poll at all.
+  const canAttachPoll = pollrIsConfigured() && !pollrIsV4() && !replyingTo && !quotingPost && !willBeEncrypted && threadPosts.length === 1
   const poll = useComposePoll(canAttachPoll)
 
   // Seed the sensitive toggle from the author's own NSFW profile flag on open.

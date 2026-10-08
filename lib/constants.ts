@@ -297,6 +297,8 @@ export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
 export const pollrHasV5Ballots = () => POLLR_TOPOLOGY === 'v5' || POLLR_TOPOLOGY === 'v6'
 /** v6: a poll's owner may delete it until its first ballot. */
 export const pollrPollsDeletable = () => POLLR_TOPOLOGY === 'v6'
+/** False when the deployment blanks NEXT_PUBLIC_POLLR_CONTRACT_ID: polls are off (no embeds read, no polls created). */
+export const pollrIsConfigured = () => POLLR_CONTRACT_ID !== ''
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
