@@ -4,7 +4,7 @@ import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryOwnedPostIds } from './pagination-utils';
-import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
+import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
 import { indexOnlyLikeShapeFor, likeIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
@@ -231,8 +231,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     } catch (error) {
       logger.error('Error liking post:', error);
       // Let the UI prompt to buy YAPP on insufficient-token failures, and explain
-      // the suspension on frozen-account failures (buying YAPP would not help).
-      if (isInsufficientTokenError(error) || isFrozenBalanceError(error)) throw error;
+      // the suspension on frozen-account failures and the paused token (buying
+      // YAPP would not help either).
+      if (isInsufficientTokenError(error) || isFrozenBalanceError(error) || isTokenPausedError(error)) throw error;
       return false;
     }
   }
@@ -381,7 +382,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     if (!result.success) {
       // Definitive, user-actionable failures propagate to the UI untouched.
       const err = new Error(result.error || 'Like failed');
-      if (isInsufficientTokenError(err) || isFrozenBalanceError(err)) throw err;
+      if (isInsufficientTokenError(err) || isFrozenBalanceError(err) || isTokenPausedError(err)) throw err;
 
       // Anything else may be the post-broadcast throw: believe the chain.
       const landed = await this.waitForLikeVisible(targetId, ownerId, kind);

@@ -250,6 +250,25 @@ export function isInsufficientTokenError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error is Platform refusing a token payment because the token is
+ * paused: `TokenIsPausedError`, state code **40711**. From 5.0.0-beta.3
+ * (dashpay/platform#5325) this covers a document `tokenCost` too, refused as a
+ * PAID error, and a YAPP that is locked ({@link yappIsLocked}) is paused for
+ * good. The current client plans credits there, so this reaches the user only
+ * from an older tab; reloading picks up the credits plan.
+ *
+ * Drive phrasing (rs-dpp token_is_paused_error.rs): "Token X is paused."
+ */
+export function isTokenPausedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('tokenispaused') ||
+    /\btoken \S+ is paused\b/.test(msg) ||
+    hasConsensusCode(error, [40711])
+  )
+}
+
+/**
  * Checks if an error indicates the signer's token account is frozen (suspended
  * by a token authority via a freeze action). Frozen accounts cannot spend YAPP,
  * so token payments fail — but buying more YAPP will NOT help. The UI should
@@ -1110,6 +1129,7 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
   return (
     isInvalidDocumentIdError(error) ||
     isModerationBarredError(error) ||
+    isTokenPausedError(error) ||
     isGasPayerError(error) ||
     isActionFeeAgreementError(error) ||
     isReferencedTypeNotDeletableError(error) ||
@@ -1241,6 +1261,12 @@ export function categorizeError(error: unknown): string {
     return 'This is out of date — reload the page and try again.'
   }
 
+  // A paused token can't pay at all, whatever the balance: only an older tab
+  // still offers YAPP for it, and reloading switches the write to credits.
+  if (isTokenPausedError(error)) {
+    return 'YAPP can\'t be spent right now. Reload the page and try again to pay with credits instead.'
+  }
+
   // Check frozen before insufficient-balance: a frozen account can't spend even
   // with a positive balance, and buying more YAPP won't unfreeze it.
   if (isFrozenBalanceError(error)) {
@@ -1253,7 +1279,9 @@ export function categorizeError(error: unknown): string {
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
     // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
-    if (yappIsLocked()) return 'You don\'t have enough YAPP. Switch to paying in credits in Settings.'
+    // Locked YAPP is never planned, so only an older tab gets here: reloading
+    // switches the write to credits.
+    if (yappIsLocked()) return 'You don\'t have enough YAPP. Reload the page and try again to pay with credits instead.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'

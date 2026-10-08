@@ -4,7 +4,7 @@ import { YAPPR_CONTRACT_ID } from '../constants';
 import { stateTransitionService } from './state-transition-service';
 import { identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58 } from './sdk-helpers';
 import { mapLimit, paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
-import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
+import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 
 /** A repost of a post — a dedicated `repost` document ({ postId, postOwnerId }). */
 export interface RepostDocument {
@@ -77,8 +77,9 @@ class RepostService {
     } catch (error) {
       logger.error('Error reposting:', error);
       // Let the UI prompt to buy YAPP on insufficient-token failures, and explain
-      // the suspension on frozen-account failures (buying YAPP would not help).
-      if (isInsufficientTokenError(error) || isFrozenBalanceError(error)) throw error;
+      // the suspension on frozen-account failures and the paused token (buying
+      // YAPP would not help either).
+      if (isInsufficientTokenError(error) || isFrozenBalanceError(error) || isTokenPausedError(error)) throw error;
       return false;
     }
   }

@@ -34,6 +34,7 @@ import {
   isReferenceRequirementError,
   isReferencedTypeNotDeletableError,
   isTimeoutError,
+  isTokenPausedError,
   isTrailingBytesError,
   isWriteGateError,
 } from '@/lib/error-utils'
@@ -129,7 +130,8 @@ const RULES: readonly Rule[] = [
   ['TARGET_GONE', 'refused', false, isReferenceNotFoundError],
   ['NOT_OWNER', 'refused', false, isWriteGateError],
   ['STALE', 'refused', false, isPropertyAgreementError],
-  ['FROZEN', 'refused', false, isFrozenBalanceError],
+  // A paused token (40711) can't spend either: same outcome, its own message.
+  ['FROZEN', 'refused', false, error => isFrozenBalanceError(error) || isTokenPausedError(error)],
   ['INSUFFICIENT_YAPP', 'refused', false, isInsufficientTokenError],
   // Stage 2: their userMessage stays categorizeError's generic text, for parity with web.
   ['INSUFFICIENT_CREDITS', 'refused', false, isInsufficientCreditsError],

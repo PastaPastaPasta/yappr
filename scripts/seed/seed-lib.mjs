@@ -82,6 +82,15 @@ export const TOKEN_COST = Object.fromEntries(['post', 'reply', 'like', 'likeRepl
   .map((docType) => [docType, SOCIAL_DOCUMENT_SCHEMAS[docType].tokenCost.create.amount]));
 /** The once-per-identity YAPP starter grant a persona may claim. */
 export const STARTER_GRANT = BigInt(SOCIAL_CONTRACT.tokens['0'].distributionRules.oncePerIdentityDistribution.amount);
+/**
+ * True when the configured cut's YAPP is paused for good (v10 onwards: starts
+ * paused, no one may unpause it). From Platform 5.0.0-beta.3
+ * (dashpay/platform#5325) a document `tokenCost` paid with a paused token is
+ * refused 40711 as a PAID error, so the seeder pays credits there (the web
+ * client does the same, lib/payment-preference.ts). Credits land on beta.2 too.
+ */
+const YAPP_TOKEN = SOCIAL_CONTRACT.tokens['0'];
+export const YAPP_LOCKED = YAPP_TOKEN.startAsPaused === true && YAPP_TOKEN.emergencyActionRules?.authorizedToMakeChange?.$type === 'noOne';
 /** TokenOncePerIdentityDistributionAlreadyClaimedError: a second claim. */
 export const ALREADY_CLAIMED = /\bcode"?\s*[=:]\s*40722\b|already claimed/i;
 

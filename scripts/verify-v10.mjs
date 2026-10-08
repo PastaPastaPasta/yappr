@@ -174,8 +174,10 @@
  *       (`==`, batched) by their deltas; ranked top authors, most followed and
  *       most replied agree with those counts
  *   y1  YAPP is locked: a transfer is refused (40711, paused); a direct
- *       purchase is refused (no price: 40721); a post paying 10 YAPP still
- *       lands; the starter grant is claimed once (a second claim 40722)
+ *       purchase is refused (no price: 40721); a post paying 10 YAPP lands
+ *       up to 5.0.0-beta.2 and is refused 40711 from beta.3 (the Platform T1
+ *       retest, see `--paused-payments`); the starter grant is claimed once
+ *       (a second claim 40722)
  *
  * ## Carried from verify-v8 (the v8 grammar v10 keeps; verify-v8 needs a v9 chain)
  *
@@ -190,8 +192,10 @@
  *   s1  a suspension refuses priced and unpriced creates (41108) until it lapses
  *   k1  optional token cost: a like without payment info pays credits, one with
  *       it pays 1 YAPP on the paused token and the contract owner pays the gas
+ *       (up to beta.2; from beta.3 it is refused 40711 and moves no YAPP)
  *   k2  payment info with no YAPP is 40700, never a credits fallback
- *       (`--poor <n>`, default 2; skipped when that bot holds YAPP)
+ *       (`--poor <n>`, default 2; skipped when that bot holds YAPP). beta.3
+ *       keeps the balance check ahead of the pause, so still 40700
  *
  * ## Run
  *
@@ -202,6 +206,12 @@
  * `--fresh-bot <n>` names an identity with no DashPay profile and no starter
  * claim yet (x3a, y1d); without it those probes SKIP. Both bots need credits
  * and YAPP on the contract under test (the register script mints it).
+ *
+ * `--paused-payments refused|accepted` pins whether the chain refuses a
+ * document token payment with the paused YAPP (40711, Platform 5.0.0-beta.3,
+ * dashpay/platform#5325) or takes it (beta.2). Without it the node's drive
+ * version decides; an unrecognised version lets either outcome pass with a
+ * WARN.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -294,6 +304,12 @@ const REASON_DOCUMENT_ID = takeFlag('--reason-doc', null);
 // x3a/y1d need an identity that has neither a DashPay profile nor a starter claim.
 const FRESH_BOT = takeFlag('--fresh-bot', null);
 const FRESH_OWNER = takeFlag('--fresh-owner', null);
+// Whether a YAPP-paid create on the paused token is refused (beta.3+) or lands (beta.2); see pausedPaymentsRefused.
+const PAUSED_PAYMENTS = takeFlag('--paused-payments', null);
+if (PAUSED_PAYMENTS !== null && PAUSED_PAYMENTS !== 'refused' && PAUSED_PAYMENTS !== 'accepted') {
+  console.error(`--paused-payments ${PAUSED_PAYMENTS}: say \`refused\` (5.0.0-beta.3 and later) or \`accepted\` (beta.2)`);
+  process.exit(1);
+}
 // k2 needs an identity holding NO YAPP (40700); verify-v8's `--poor`.
 const POOR_BOT_INDEX = Number(takeFlag('--poor', '2'));
 /** Long enough for the refused write to run, short enough to wait out. */
@@ -347,6 +363,61 @@ const NON_INDEXED = /where clause on non indexed property/i;
 const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed/i;
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
+
+/**
+ * Whether drive `version` refuses a document `tokenCost` paid with a paused
+ * token: dashpay/platform#5325 enforces token pause on document payments from
+ * 5.0.0-beta.3 (a PAID 40711). True from beta.3 (and any rc or release of 5.0
+ * or later), false before 5.0.0-beta.3, null for a version this cannot place
+ * (a dev or alpha build, or none at all).
+ */
+function driveRefusesPausedPayments(version) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.?(\d+)?)?/i.exec(version ?? '');
+  if (!match) return null;
+  const [major, minor, patch] = match.slice(1, 4).map(Number);
+  if (major !== 5) return major > 5;
+  if (minor > 0 || patch > 0) return true;
+  const [tag, n] = [match[4]?.toLowerCase(), Number(match[5])];
+  if (tag === undefined || tag === 'rc') return true;
+  if (tag === 'beta') return Number.isInteger(n) ? n >= 3 : null;
+  return null;
+}
+
+/**
+ * Whether this chain refuses a create paying the contract's paused YAPP
+ * (beta.3+: 40711) rather than taking the payment (beta.2). Read once per run:
+ * `--paused-payments` pins it, else the node's drive version decides. Null when
+ * neither can, and then either outcome passes with a WARN.
+ */
+async function pausedPaymentsRefused(ctx) {
+  if (ctx.pausedPayments !== undefined) return ctx.pausedPayments;
+  if (!V10.tokens['0'].startAsPaused) return (ctx.pausedPayments = false);
+  if (PAUSED_PAYMENTS !== null) return (ctx.pausedPayments = PAUSED_PAYMENTS === 'refused');
+  let drive = null;
+  try {
+    const status = await ctx.sdk.system.status();
+    drive = status?.version?.software?.drive ?? status?.toJSON?.()?.version?.software?.drive ?? null;
+  } catch (e) {
+    console.log(`     (could not read the node's version: ${describeErr(e).slice(0, 120)})`);
+  }
+  ctx.pausedPayments = driveRefusesPausedPayments(drive);
+  const rule = { true: 'refused 40711 (5.0.0-beta.3 and later)', false: 'accepted (before 5.0.0-beta.3)', null: 'UNKNOWN: either outcome passes; pin it with --paused-payments' }[String(ctx.pausedPayments)];
+  console.log(`     drive ${drive ?? '?'}: a document payment with the paused YAPP is ${rule}`);
+  return ctx.pausedPayments;
+}
+
+/**
+ * Judges a create that paid the paused YAPP: refused 40711 where the chain
+ * enforces the pause on document payments (the Platform T1 retest), landed
+ * where it does not. `label` names the write; returns whether it landed.
+ */
+async function expectPausedYappPayment(ctx, label, outcome) {
+  const refused = await pausedPaymentsRefused(ctx);
+  if (refused === true) expectRejected(`${label} is refused (40711: a paused token can't pay, 5.0.0-beta.3+)`, outcome, TOKEN_PAUSED);
+  else if (refused === false || outcome.ok || !TOKEN_PAUSED.test(outcome.error ?? '')) expectAccepted(`${label} lands on the paused token`, outcome);
+  else console.log(`WARN  ${label} was refused 40711 (a paused token can't pay): this node enforces the pause, so it runs 5.0.0-beta.3 or later`);
+  return outcome.ok;
+}
 const NOT_FOR_SALE = /\bcode"?\s*[=:]\s*40721\b|not available for direct sale|no direct-purchase price/i;
 
 // ---- v10 document shapes -----------------------------------------------------
@@ -1725,14 +1796,15 @@ async function caseY1YappLocked(ctx) {
   const purchase = await errorOf(() => sdk.tokens.directPurchase({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, buyerId: botA.ownerId, amount: 100n, maxTotalCost: 10_000_000_000n, identityKey: botA.identityKey, signer: botA.signer }));
   expectRejected('y1c a direct purchase is refused (40721: not for sale)', asOutcome(purchase), NOT_FOR_SALE);
 
-  // A token COST is not a transfer: posting still pays 10 YAPP from a paused token.
+  // A token COST is not a transfer, but from 5.0.0-beta.3 a paused token can't pay one either.
   const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
   const payment = paymentInfo(tokenCostFor('post').amount, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
   const paid = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'y1 paid in YAPP' }), agreement, payment });
-  expectAccepted('y1d a post paying 10 YAPP lands on the paused token', paid);
+  const landed = await expectPausedYappPayment(ctx, 'y1d a post paying 10 YAPP', paid);
   await settle();
   const after = await balance(botA.ownerId);
-  check('y1e …and A\'s balance fell by exactly the post\'s token cost', after === before.a - BigInt(tokenCostFor('post').amount), `before=${before.a} after=${after}`);
+  const spent = landed ? BigInt(tokenCostFor('post').amount) : 0n;
+  check(landed ? 'y1e …and A\'s balance fell by exactly the post\'s token cost' : 'y1e …and A kept its YAPP (a refused payment moves none)', after === before.a - spent, `before=${before.a} after=${after}`);
 
   const fresh = await freshActor(ctx);
   if (!fresh) { console.log('SKIP  y1f–y1g: needs --fresh-bot <n>, an identity that has not claimed its starter grant'); return; }
@@ -1883,9 +1955,14 @@ async function caseK1OptionalTokenCost(ctx) {
     await sdk.documents.create({ document, identityKey: botA.identityKey, signer: botA.signer, tokenPaymentInfo: yappPayment(TOKEN_COST.like), settings: { identityNonceStaleTimeS: 0 } });
   });
   await settle();
-  const landed = await entryExists(sdk, contractId, 'like', 'postId', targets[1], botA.ownerId);
-  check('k1c a like WITH payment info (PreferContractOwner gas) lands on the paused token', landed, landed ? '' : (paidError ?? '').slice(0, 220));
+  const landed = await expectPausedYappPayment(ctx, 'k1c a like WITH payment info (PreferContractOwner gas)',
+    { ok: await entryExists(sdk, contractId, 'like', 'postId', targets[1], botA.ownerId), error: paidError });
   const [ownerAfter, aCreditsAfter, aYappAfter] = await Promise.all([creditsOf(ctx, ctx.ownerId), creditsOf(ctx, botA.ownerId), yappOf(ctx, botA.ownerId)]);
+  if (!landed) {
+    // Refused as a PAID error: someone paid for the reads, but no YAPP moved.
+    check('k1d …moving no YAPP', aYappAfter === aYappBefore, `yapp ${aYappBefore}→${aYappAfter}; credits owner ${ownerBefore}→${ownerAfter} A ${aCreditsBefore}→${aCreditsAfter}`);
+    return;
+  }
   check(`k1d …charging exactly ${TOKEN_COST.like} YAPP`, aYappBefore - aYappAfter === BigInt(TOKEN_COST.like), `yapp ${aYappBefore}→${aYappAfter}`);
   check('k1e …and the contract OWNER paid the gas (its credits moved, A\'s did not)', ownerAfter < ownerBefore && aCreditsAfter === aCreditsBefore, `owner ${ownerBefore}→${ownerAfter} A ${aCreditsBefore}→${aCreditsAfter}`);
 }
@@ -1939,12 +2016,15 @@ async function caseQ1RepostIsAQuote(ctx) {
 
   const [yappBefore, potBefore] = [await yappOf(ctx, botA.ownerId), (await moderatorsPot(ctx)).credits];
   const { agreement, knownPermille } = await feeAgreement(ctx, POST_ACTION_FEE);
-  const repost = await manualCreate(ctx, botA, { docType: 'post', data: bare, agreement, payment: yappPayment(TOKEN_COST.post) });
-  expectAccepted('q1b A\'s bare repost of B\'s post (quotedPostId + quotedPostOwnerId, no content) lands with the post agreement, paying YAPP', repost);
+  const paid = await manualCreate(ctx, botA, { docType: 'post', data: bare, agreement, payment: yappPayment(TOKEN_COST.post) });
+  const paidInYapp = await expectPausedYappPayment(ctx, 'q1b A\'s bare repost of B\'s post (quotedPostId + quotedPostOwnerId, no content) with the post agreement, paying YAPP,', paid);
+  // Where the paused token can't pay (beta.3+), the rest of q1 runs on a repost paid in credits.
+  const repost = paidInYapp ? paid : expectAccepted('q1b\u2032 …so it lands paying credits instead', await manualCreate(ctx, botA, { docType: 'post', data: bare, agreement }));
   if (!repost.ok) return;
   await settle();
   const [yappAfter, potAfter] = [await yappOf(ctx, botA.ownerId), (await moderatorsPot(ctx)).credits];
-  check(`q1c it cost the post price: exactly ${TOKEN_COST.post} YAPP`, yappBefore - yappAfter === BigInt(TOKEN_COST.post), `yapp ${yappBefore}→${yappAfter}`);
+  const yappCost = paidInYapp ? BigInt(TOKEN_COST.post) : 0n;
+  check(paidInYapp ? `q1c it cost the post price: exactly ${TOKEN_COST.post} YAPP` : 'q1c it cost no YAPP', yappBefore - yappAfter === yappCost, `yapp ${yappBefore}→${yappAfter}`);
   const postFee = (POST_ACTION_FEE.moderators * knownPermille) / 1000n;
   check('q1d …and the post\'s action fee: the moderators pot grew by it', potAfter - potBefore === postFee, `pot ${potBefore}→${potAfter} (Δ${potAfter - potBefore}, expected ${postFee})`);
   const stored = (await fetchDocument(sdk, contractId, 'post', repost.id))?.toJSON?.() ?? {};
@@ -2347,6 +2427,9 @@ function selfTest() {
   const token = V10.tokens['0'];
   expect('YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)', token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
   expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
+  expect('a paused token pays a document cost before 5.0.0-beta.3 and is refused 40711 from it (y1d, k1c, q1b)',
+    [['5.0.0-beta.2', false], ['5.0.0-beta.3', true], ['5.0.0-beta.10', true], ['5.0.0-rc.1', true], ['5.0.0', true], ['5.1.0-dev.1', true], ['4.2.0', false], ['5.0.0-dev.4', null], [undefined, null]]
+      .every(([version, expected]) => driveRefusesPausedPayments(version) === expected));
   if (SOCIAL.cut.liveMarker) {
     expect('v13: the mainnet election (a 7-day join window, a 3-day vote, a contestable seat with a 30-day cool-down) (e0c)',
       moderators.joinWindow === 604_800 && moderators.voteWindow === 259_200 && moderators.seatContestable === true && moderators.challengeCoolDown === 2_592_000);

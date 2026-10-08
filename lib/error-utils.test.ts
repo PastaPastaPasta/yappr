@@ -43,6 +43,7 @@ import {
   isContestFundError,
   isFrozenBalanceError,
   isInsufficientTokenError,
+  isTokenPausedError,
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
   isTimeoutError,
@@ -261,6 +262,39 @@ describe('protocol-14 rejections', () => {
     const v10 = await import('./error-utils')
     expect(v10.categorizeError(shortOfYapp)).toMatch(/credits/i)
     expect(v10.categorizeError(shortOfYapp)).not.toMatch(/buy/i)
+  })
+
+  describe('40711 TokenIsPausedError (a paused token paying a tokenCost, beta.3)', () => {
+    // rs-dpp token_is_paused_error.rs: #[error("Token {} is paused.", token_id)]
+    const paused = [
+      'Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is paused.',
+      'TokenIsPausedError: Token AwyQ is paused.',
+      'state transition rejected, code=40711',
+      'Consensus error code: 40711',
+    ]
+
+    it.each(paused)('recognises %s', (message) => {
+      expect(isTokenPausedError(new Error(message))).toBe(true)
+      expect(isPermanentProtocol14Error(new Error(message))).toBe(true)
+    })
+
+    it('says YAPP cannot be spent, with no error code and no "buy" or "frozen" advice', () => {
+      for (const message of paused) {
+        const copy = categorizeError(new Error(message))
+        expect(copy).toBe('YAPP can\'t be spent right now. Reload the page and try again to pay with credits instead.')
+        expect(copy).not.toMatch(/40711|buy|frozen/i)
+      }
+    })
+
+    it.each([
+      // A paused STORE is a storefront status, not a token.
+      'Store is paused and cannot take orders',
+      'Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment',
+      'Identity 9t2e does not have enough token balance, code=40700',
+      'state transition rejected, code=40712',
+    ])('does not claim %s', (message) => {
+      expect(isTokenPausedError(new Error(message))).toBe(false)
+    })
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
