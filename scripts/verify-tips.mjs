@@ -81,7 +81,7 @@ function yappIsLocked(contractJson) {
 /** Skips a case written for the other tip kind, saying why. */
 const onlyWhen = (wantLocked, key, run) => async (ctx) => {
   if (ctx.yappLocked === wantLocked) return run(ctx);
-  console.log(`SKIP  ${key}: ${ctx.yappLocked ? 'YAPP is locked (paused, no price), so tips are credit tips (c1-c2)' : 'YAPP is transferable, so tips are YAPP tips (t1-t5)'}`);
+  console.log(`SKIP  ${key}: ${ctx.yappLocked ? 'YAPP is locked (no price, never sent), so tips are credit tips (c1-c2)' : 'YAPP is transferable, so tips are YAPP tips (t1-t5)'}`);
 };
 
 /** The persona's TRANSFER key (the only purpose a credit transfer accepts), off the seed ledger. */
@@ -349,7 +349,7 @@ await runBattery({
     const social = await battery.readback(() => battery.sdk.contracts.fetch(socialId));
     const yappLocked = yappIsLocked(social.toJSON(protocolVersion));
     const tokenId = await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
-    console.log(`     YAPP ${yappLocked ? 'is locked (paused, no price): credit tips, c1-c2' : 'is transferable: YAPP tips, t1-t5'}`);
+    console.log(`     YAPP ${yappLocked ? 'is locked (no price, never sent): credit tips, c1-c2' : 'is transferable: YAPP tips, t1-t5'}`);
     if (!yappLocked) {
       // t1 sends three: the tip, an untagged control, and one with a max-length note.
       const balance = await battery.ensureYapp(tokenId, tipper, args.amount * 3n);

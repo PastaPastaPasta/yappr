@@ -1379,9 +1379,17 @@ async function resolvedWithdrawalCases(ctx, reportId) {
 async function profileReportCases(ctx, author) {
   const { sdk, contractId, botA, botB } = ctx;
   const profile = reportData({ about: 1, targetOwnerId: author, reason: 1 });
-  // An earlier run's report holds byTarget's unique entry: withdraw it so the create path runs.
+  // An earlier run's report holds byTarget's unique entry: withdraw it so the create path runs. On
+  // v14 a resolved one is kept from its reporter (40147, paid), so the moderator purges it instead.
   const stale = await queryOne(ctx, 'report', [['targetOwnerId', '==', botB.ownerId], ['about', '==', 1], ['$ownerId', '==', botA.ownerId]]);
-  if (stale) { await deleteOwn(ctx, botA, 'report', idOf(stale.id)); await settle(); }
+  if (stale) {
+    const resolved = PENDING_WITHDRAWAL && (stale.toJSON?.() ?? stale).status !== undefined;
+    const purged = resolved
+      ? await errorOf(() => sdk.contracts.moderatorDeleteDocument({ identity: ctx.moderator.identity, contractId, documentTypeName: 'report', documentId: idOf(stale.id), reason: { text: 'v10 battery: clear a stale resolved report' }, signer: ctx.moderator.signer }))
+      : await deleteOwn(ctx, botA, 'report', idOf(stale.id));
+    if (purged !== null) console.log(`     (could not clear the stale profile report ${idOf(stale.id)}: ${String(purged).slice(0, 160)})`);
+    await settle();
+  }
   expectRejected('r1z0 (v13) a report without its action fee agreement is refused (40132)',
     await attemptCreate(sdk, botA, { contractId, docType: 'report', data: profile }), AGREEMENT_NOT_SET);
   const potBefore = (await moderatorsPot(ctx)).credits;
@@ -1783,7 +1791,9 @@ async function derivedWindowCases(ctx, { aReply, thread }) {
   check('n2j (v14) …and reply.rootOwnerRecent lists the same nested reply for A, the root post\'s owner (a key distinct from the parent\'s)', toRoot.found, `${toRoot.scanned} reply(ies) scanned`);
   // B's parentOwnerRecent holds n2i's nested reply, so an absence there is a read of a live window.
   const skipped = await windowLists(ctx, 'reply', 'parentOwnerRecent', parentOwnerIs(botB.ownerId), is(aReply));
-  check('n2k (v14) B\'s parentOwnerRecent leaves out A\'s TOP-LEVEL reply to B\'s post (no parent reply: skipIfAbsent on replyToReplyId.$ownerId)', !skipped.found && toParent.found, `${skipped.scanned} reply(ies) scanned`);
+  // Without the skip a top-level reply would sit under a null key, not under B: this pins that the
+  // window is keyed by the PARENT's owner, never the root's. The skip itself is pinned offline.
+  check('n2k (v14) B\'s parentOwnerRecent does not list A\'s TOP-LEVEL reply to B\'s post (keyed by the parent reply\'s owner, not the root\'s)', !skipped.found && toParent.found, `${skipped.scanned} reply(ies) scanned`);
 }
 
 /**

@@ -134,7 +134,7 @@ const SDK_TIMEOUT_MS = 30_000;
  * Share of a run's actors that pay their token-priced writes in CREDITS
  * (no `$tokenPaymentInfo`) rather than YAPP, so a seeded devnet exercises both
  * halves of the optional-token-cost path. `--credits-fraction` overrides it.
- * Where YAPP is locked (`YAPP_LOCKED`, every seeded cut) the default is 1:
+ * Where YAPP is paused for good (`YAPP_LOCKED`, v10–v13) the default is 1:
  * Platform 5.0.0-beta.3 refuses a paused token's payment with a PAID 40711,
  * so only an explicit `--credits-fraction` (a beta.2 chain) pays YAPP there.
  */

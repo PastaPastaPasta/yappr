@@ -120,8 +120,8 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
   [--concurrency 10] [--max-ops 50] [--credits-fraction 1]
 ```
 
-- `--credits-fraction` (default 1 where YAPP is paused for good, which is
-  every seeded cut; 0.25 otherwise) is the share of actors that pay
+- `--credits-fraction` (default 1 where YAPP is paused for good, v10–v13;
+  0.25 otherwise, v14 included) is the share of actors that pay
   their token-priced writes in CREDITS — the create carries no
   `$tokenPaymentInfo` at all, which is what makes the `optional: true` token
   costs charge credits — while the rest pay YAPP and offer the gas to the

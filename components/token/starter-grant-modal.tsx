@@ -88,7 +88,7 @@ export function StarterGrantModal() {
         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
           {paused
             ? 'YAPP can\'t be spent, bought or transferred on this network. Posts, replies, likes and reposts are paid in credits instead.'
-            : 'You don\'t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can\'t be bought on this network. Posts, replies, likes and reposts can be paid in credits instead: switch in Settings.'}
+            : 'You don\'t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can\'t be bought on this network, so try again to pay with credits instead.'}
         </Dialog.Description>
         <Button data-testid="starter-grant-dismiss" onClick={close} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
           OK

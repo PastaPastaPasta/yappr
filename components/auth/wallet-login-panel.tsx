@@ -34,8 +34,8 @@ interface WalletLoginPanelProps {
  * After a wallet login lands on a ready account, decide whether to prompt for
  * YAPP right away: true when the balance can't cover a single post. A failed
  * balance fetch is "unknown", not zero, so it never triggers the prompt.
- * Where YAPP cannot be bought (v10) there is nothing to prompt for: the
- * starter-grant modal offers the one-time grant on its own.
+ * Where YAPP cannot be bought (v10 onwards) there is nothing to prompt for:
+ * the starter-grant modal offers the one-time grant on its own.
  */
 async function needsYappPrompt(identityId: string): Promise<boolean> {
   if (yappIsLocked()) return false
