@@ -532,6 +532,23 @@ describe('ballot evidence for the v6 delete', () => {
     expect(loadShowsBallot({ counts: [0, 0, 0], total: 0 }, [])).toBe(false);
   });
 
+  it('holds the delete back while the owner’s ballot state is pending or unreadable', async () => {
+    const { ownBallotMayBePending } = await import('./pollr-vote-service');
+    expect(ownBallotMayBePending({ status: 'fulfilled', value: { choices: [], pending: false } })).toBe(false);
+    expect(ownBallotMayBePending({ status: 'fulfilled', value: { choices: [], pending: true } })).toBe(true);
+    // The read may have seen a pending create before failing: a count of 0 must not enable the delete.
+    expect(ownBallotMayBePending({ status: 'rejected', reason: new Error('down') })).toBe(true);
+  });
+
+  it('a getBallotState whose ballot read fails rejects, and so holds the delete back', async () => {
+    const service = await loadService('v6');
+    mocks.query.mockRejectedValue(new Error('down'));
+    const { ownBallotMayBePending } = await import('./pollr-vote-service');
+    const [read] = await Promise.allSettled([service.getBallotState(poll({ endsAt: Date.now() + HOUR }), VOTER)]);
+    expect(read.status).toBe('rejected');
+    expect(ownBallotMayBePending(read)).toBe(true);
+  });
+
   it('a vote refused at its preflight read leaves the poll deletable on a later zero count', async () => {
     const service = await loadService('v6');
     mocks.query.mockRejectedValue(new Error('down'));

@@ -127,6 +127,17 @@ export function loadShowsBallot(tally: PollTally | null, ownChoices: readonly nu
   return (tally?.total ?? 0) > 0 || ownChoices.length > 0;
 }
 
+/**
+ * Whether a ballot write of the viewer's may still land, judging by the
+ * card's ballot-state read. An unreadable state fails closed: the read may
+ * have seen a pending create before failing, so it holds the v6 delete back
+ * (it proves no ballot, so nothing is marked for good, and the next load
+ * counts again).
+ */
+export function ownBallotMayBePending(read: PromiseSettledResult<BallotState>): boolean {
+  return read.status !== 'fulfilled' || read.value.pending;
+}
+
 /** A voter's ballots on one poll, as the single source of truth for the card. */
 export interface BallotState {
   /** The choices the voter's ballots select on chain. */

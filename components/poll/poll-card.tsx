@@ -16,7 +16,7 @@ import { pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constan
 import { isReferenceNotFoundError } from '@/lib/error-utils'
 import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
-import { loadShowsBallot, pollIsClosed, tallyIsFinal, voteLeftBallot } from '@/lib/services/pollr-vote-service'
+import { loadShowsBallot, ownBallotMayBePending, pollIsClosed, tallyIsFinal, voteLeftBallot } from '@/lib/services/pollr-vote-service'
 
 interface PollCardProps {
   pollId: string
@@ -168,14 +168,15 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
 
         // v6: the owner may delete the poll until its first ballot. A tallied
         // selection or the viewer's own recorded choice already proves a ballot,
-        // and a pending write of the owner's may be one; otherwise count them
+        // and a pending write of the owner's (or an unreadable ballot state,
+        // which may hide one) holds the delete back; otherwise count them
         // all, since a withdrawn ballot leaves the tally but still keeps the
         // poll. Not awaited: the poll shows while the count is read, so a vote
         // sent meanwhile must win over it. A poll ever known to have a ballot is
         // never offered again: ballots are permanent, and a lagging node can
         // still count 0.
         const ownChoices = votesResult.status === 'fulfilled' ? votesResult.value.choices : []
-        const ownBallotPending = votesResult.status === 'fulfilled' && votesResult.value.pending
+        const ownBallotPending = ownBallotMayBePending(votesResult)
         if (loadShowsBallot(tallyResult.status === 'fulfilled' ? tallyResult.value : null, ownChoices)) {
           pollrPollService.markHasBallots(loadedPoll.id)
         }
