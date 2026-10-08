@@ -13,6 +13,7 @@ import {
   isContestFundError,
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
+  isDeleteConstraintError,
   isDocumentPropertyRuleError,
   isDuplicateUniqueIndexError,
   isFeeMultiplierNotToleratedError,
@@ -105,7 +106,8 @@ const RULES: readonly Rule[] = [
   ['MODERATION_BARRED', 'refused', false, isModerationBarredError],
   ['MODERATION_NOT_SEATED', 'refused', false, isModerationNotYetSeatedError],
   ['TOO_LONG', 'refused', false, isPropertyMaxBytesError],
-  ['RULE_VIOLATION', 'refused', false, (error, _message, userMessage) => userMessage === NOT_DISTINCT_MESSAGE || isDocumentPropertyRuleError(error)],
+  ['RULE_VIOLATION', 'refused', false, (error, _message, userMessage) =>
+    userMessage === NOT_DISTINCT_MESSAGE || isDocumentPropertyRuleError(error) || isDeleteConstraintError(error)],
   ['ALREADY_CLAIMED', 'refused', false, isOncePerIdentityAlreadyClaimedError],
   ['PARENT_TOO_YOUNG', 'refused', true, (_error, _message, userMessage) => userMessage === TOO_YOUNG_MESSAGE],
   ['FEE_UNPAYABLE', 'refused', false, error => isGasSponsorShortError(error) || isGasPayerError(error)],

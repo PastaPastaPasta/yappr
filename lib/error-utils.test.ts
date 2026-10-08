@@ -19,6 +19,7 @@ import {
   isAlreadyExistsError,
   isContestNotJoinableError,
   isNonFatalWaitError,
+  isDeleteConstraintError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
   isModeratorsShareMismatchError,
@@ -364,6 +365,24 @@ describe('4.2.0-beta.4 rejections', () => {
     expect(categorizeError(new Error('rejected: code=10419'))).toMatch(/yourself/i)
   })
 
+  it('words a deleteConstraints refusal (40147) as final and not free', () => {
+    // Transcribed from rs-dpp's `#[error(...)]` at tag v5.0.0-beta.3.
+    for (const message of [
+      'Document 8Xv3 of type "poll" can not be deleted: it breaks its deleteConstraints rule "noVotes": it does not hold',
+      'rejected: code=40147',
+    ]) {
+      const error = new Error(message)
+      expect(isDeleteConstraintError(error)).toBe(true)
+      expect(isPermanentProtocol14Error(error)).toBe(true)
+      // Not a propertyConstraints refusal, and no rule name for propertyRuleCopy.
+      expect(isDocumentPropertyRuleError(error)).toBe(false)
+      expect(brokenPropertyRule(error)).toBeNull()
+      const copy = categorizeError(error)
+      expect(copy).toMatch(/can't be deleted anymore/i)
+      expect(copy).not.toMatch(/nothing was charged/i)
+    }
+  })
+
   it('never tells a 40139 to reload: it is a share mismatch, not a stale client', () => {
     const error = new Error('Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 0, which is not discounted: the contract has no seated moderation charter')
     expect(isModeratorsShareMismatchError(error)).toBe(true)
@@ -637,6 +656,7 @@ describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platf
     [40722, isOncePerIdentityAlreadyClaimedError],
     [10421, isPropertyMaxBytesError],
     [10422, isDocumentPropertyRuleError],
+    [40147, isDeleteConstraintError],
     [40135, isReferenceRequirementError],
     [41200, isModerationNotYetSeatedError],
     [40140, isDocumentExpiredError],
@@ -714,7 +734,7 @@ describe('every consensus code against every matcher', () => {
     isWriteGateError, isImmutablePropertyChangedError, isInvalidDocumentIdError, isModerationBarredError,
     isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
     isFeeMultiplierNotToleratedError, isGasSponsorShortError, isReferencedTypeNotDeletableError,
-    isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError,
+    isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError, isDeleteConstraintError,
     isReferenceRequirementError, isModerationNotYetSeatedError, isDocumentExpiredError, isContestFundError,
     isContestNotJoinableError, isContestFullError, isTrailingBytesError, isContestedDocumentsNotYetAllowedError,
   }
@@ -739,6 +759,7 @@ describe('every consensus code against every matcher', () => {
     10421: ['isPropertyMaxBytesError'],
     10419: ['isDocumentPropertyRuleError'],
     10422: ['isDocumentPropertyRuleError'],
+    40147: ['isDeleteConstraintError'],
     40135: ['isReferenceRequirementError'],
     40136: ['isReferenceRequirementError'],
     40137: ['isReferenceRequirementError'],
