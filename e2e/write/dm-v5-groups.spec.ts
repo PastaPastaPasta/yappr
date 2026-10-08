@@ -16,7 +16,7 @@
  *     puts at another member's next tag does not show, and that member's send
  *     retries at j + 1 and lands.
  */
-import type { Page } from '@playwright/test'
+import type { Browser, Locator, Page } from '@playwright/test'
 import { bytesToHex } from '../../lib/bytes'
 import { keyringHandle, rosterHandle } from '../../lib/dm/group'
 import { encryptMessage, messageTag } from '../../lib/dm/stream'
@@ -83,7 +83,7 @@ test.describe('DM v5: groups', () => {
   let gid: Uint8Array
   let key = ''
 
-  const dev = async (browser: import('@playwright/test').Browser, bot: DmBot, label: string) => {
+  const dev = async (browser: Browser, bot: DmBot, label: string) => {
     devices[label] ??= await openDevice(browser, bot, label)
     return devices[label]!
   }
@@ -106,13 +106,48 @@ test.describe('DM v5: groups', () => {
     await page.getByRole('dialog', { name: title }).getByRole('button', { name: text, exact: true }).click()
   }
 
+  /**
+   * A member's row in the group settings dialog. It shows only the member's name: the profile
+   * display name when there is one (the devnet ops scripts name every DM bot "DM E2E Bot <n>"),
+   * else the DPNS label. Filtering on the label alone matched no row once the bots had profiles.
+   */
+  const memberRow = async (dialog: Locator, bot: DmBot) =>
+    dialog.getByRole('listitem').filter({ hasText: (await profileDisplayName(bot)) ?? username(bot) })
+
+  /**
+   * End the run's group through the owner's UI unless it already ended. A group left live stays in
+   * every member's poll for good, and each one costs a fresh device about two proved 100-tag queries
+   * on its first poll, so groups left behind by earlier failures once slowed B's and C's first poll
+   * past every delivery window in both DM files.
+   */
+  const endGroupIfLive = async (browser: Browser) => {
+    if (n < 0) return
+    const roster = await ownerRoster(A, n)
+    if (!roster || roster.ended) return
+    const a = await openDevice(browser, A, 'A-cleanup')
+    try {
+      await openGroup(a.page)
+      const dialog = await openSettings(a.page)
+      await dialog.getByRole('button', { name: 'End group' }).click()
+      await confirm(a.page, 'End this group?', 'End group')
+      await expect(a.page.getByText('Group ended')).toBeVisible({ timeout: 180_000 })
+    } finally {
+      await closeDevices([a])
+    }
+  }
+
   test.beforeEach(async () => {
     ;[A, B, C, D, E] = await Promise.all([SLOT.A, SLOT.B, SLOT.C, SLOT.D, SLOT.E].map((s) => dmBot(s)))
     tag ||= uniqueTag(SLOT.A)
   })
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ browser }) => {
+    test.setTimeout(420_000)
     await closeDevices(Object.values(devices))
+    // Best effort: a failure here leaves one live group, which a later run survives.
+    await endGroupIfLive(browser).catch((error: unknown) => {
+      console.warn(`DM v5 groups: group ${n} of A was not ended: ${String(error).slice(0, 200)}`)
+    })
   })
 
   test('A creates a group with B and C; everyone sees its name and members', async ({ browser }) => {
@@ -288,7 +323,7 @@ test.describe('DM v5: groups', () => {
     const a = await dev(browser, A, 'A')
     await openGroup(a.page)
     const dialog = await openSettings(a.page)
-    const cRow = dialog.getByRole('listitem').filter({ hasText: username(C) })
+    const cRow = await memberRow(dialog, C)
     await cRow.getByRole('button', { name: 'Remove' }).click()
     await confirm(a.page, 'Remove member?', 'Remove')
     await expect(a.page.getByText('Member removed')).toBeVisible({ timeout: 300_000 })
@@ -364,7 +399,7 @@ test.describe('DM v5: groups', () => {
     const a = await dev(browser, A, 'A')
     await openGroup(a.page)
     const dialog = await openSettings(a.page)
-    await dialog.getByRole('listitem').filter({ hasText: username(D) }).getByRole('button', { name: 'Resend keys' }).click()
+    await (await memberRow(dialog, D)).getByRole('button', { name: 'Resend keys' }).click()
     await expect(a.page.getByText('Keys sent')).toBeVisible({ timeout: 180_000 })
     await a.page.keyboard.press('Escape')
     const after = await streamWeek(toD, w)
