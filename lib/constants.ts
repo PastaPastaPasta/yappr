@@ -291,6 +291,8 @@ export const POLLR_TOPOLOGY: PollrTopology =
 export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
 export const pollrIsV5 = () => POLLR_TOPOLOGY === 'v5'
+/** False when the deployment blanks NEXT_PUBLIC_POLLR_CONTRACT_ID: polls are off (no embeds read, no polls created). */
+export const pollrIsConfigured = () => POLLR_CONTRACT_ID !== ''
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
