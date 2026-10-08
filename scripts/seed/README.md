@@ -1,7 +1,7 @@
 # Devnet content seeding — ops runbook
 
-Seeds the devnet (sakura on 5.0.0-beta.2: social contract
-`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v12) with synthetic
+Seeds the devnet (sakura on 5.0.0-beta.3: social contract
+`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v13) with synthetic
 users and content. Built for a 10-user /
 ~1100-op pilot first, but resumable and parallel from the start so the same
 scripts scale to 500 users / 50k posts.

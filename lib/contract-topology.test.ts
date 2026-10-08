@@ -74,7 +74,7 @@ describe('contract topology', () => {
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
     const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
     expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
-    // /devnet runs sakura, the v13 cut (5.0.0-beta.2, 2026-10-07).
+    // /devnet runs sakura (5.0.0-beta.3), the v13 cut (registered on 5.0.0-beta.2, 2026-10-07).
     expect(devnetTopology).toBe('v13')
   })
 
