@@ -3,7 +3,7 @@
  * CORPUS_FORMAT.md) against the devnet social contract as the seed
  * identities provisioned by provision-seed-identities.mjs.
  *
- * The target is the v10, v11, v12 or v13 social contract (`.env.devnet`; the run
+ * The target is the v10, v11, v12, v13 or v14 social contract (`.env.devnet`; the run
  * refuses any other NEXT_PUBLIC_CONTRACT_TOPOLOGY, see SEEDED_TOPOLOGIES). The
  * corpus `''` convention means "untagged", and an untagged post/quote/like
  * OMITS the hashtag property (writing `''` is `where` consensus error 40127).
@@ -11,7 +11,9 @@
  * (media-hash.mjs), fetched once per URL before the run starts; on v13 that one
  * item is written as `mediaUrls` / `mediaDigests` / `mediaKinds` (an image), every
  * post carries `live: true`, a reply names its root post's owner (`rootOwnerId`)
- * and a reply like carries no `replyAuthor` (`SOCIAL_SHAPES`). A like is one
+ * and a reply like carries no `replyAuthor` (`SOCIAL_SHAPES`); v14 writes v13's
+ * shapes except that a reply names no owner at all (`{ rootPostId,
+ * replyToReplyId? }`: the notification windows derive both owners). A like is one
  * transition: v10 has no `beat` companion. A `repost` op is written as a post
  * quoting its target with no content (v10 has no repost type), through the
  * same path as a quote; its 40105 is success only when our bare repost is
@@ -132,7 +134,7 @@ const SDK_TIMEOUT_MS = 30_000;
  * Share of a run's actors that pay their token-priced writes in CREDITS
  * (no `$tokenPaymentInfo`) rather than YAPP, so a seeded devnet exercises both
  * halves of the optional-token-cost path. `--credits-fraction` overrides it.
- * Where YAPP is locked (`YAPP_LOCKED`, every seeded cut) the default is 1:
+ * Where YAPP is paused for good (`YAPP_LOCKED`, v10–v13) the default is 1:
  * Platform 5.0.0-beta.3 refuses a paused token's payment with a PAID 40711,
  * so only an explicit `--credits-fraction` (a beta.2 chain) pays YAPP there.
  */
@@ -393,6 +395,7 @@ export function planOp(op, { actors, resolveRef, mediaFor = missingMedia }) {
         docType: 'reply',
         tokenCost: TOKEN_COST.reply,
         // A top-level reply's parent IS the root, so both owners are the root's (v13 parentIsRoot).
+        // v14 stores neither: SOCIAL_SHAPES.reply drops them, keeping rootPostId and replyToReplyId.
         data: SOCIAL_SHAPES.reply({
           content: finalContent ?? '',
           rootPostId: bytes(root.id),
@@ -979,8 +982,9 @@ async function selfTest() {
   const plannedReply = planOp(replyOp, planCtx('')).data;
   check('post OMITS the attested author column and `language` (v10 has neither)',
     !('author' in plannedPost) && !('language' in plannedPost));
-  check('reply OMITS the attested author column, keeping its parent linkage',
-    !('author' in plannedReply) && plannedReply.rootPostId instanceof Uint8Array && plannedReply.parentOwnerId instanceof Uint8Array);
+  check(`reply OMITS the attested author column, keeping its ${SOCIAL_SHAPES.cut.storedReplyOwners ? 'parent linkage' : 'root (v14: no stored owner)'}`,
+    !('author' in plannedReply) && plannedReply.rootPostId instanceof Uint8Array
+      && (SOCIAL_SHAPES.cut.storedReplyOwners ? plannedReply.parentOwnerId instanceof Uint8Array : !('parentOwnerId' in plannedReply) && !('rootOwnerId' in plannedReply)));
   check('a like is ONE document: tagged or not, no beat companion', planOp(likeOp, planCtx('dash')).companion === undefined && planOp(likeOp, planCtx('')).companion === undefined);
   const media = { mediaHash: new Uint8Array(32).fill(3), mediaFingerprint: new Uint8Array(8).fill(4) };
   const withMedia = planOp({ ...postOp, mediaUrl: 'https://example.com/a.png' }, { ...planCtx(''), mediaFor: () => media }).data;
@@ -1011,9 +1015,15 @@ async function selfTest() {
     check(`every planned write is a valid create of the configured cut ${JSON.stringify(SOCIAL_SHAPES.cut)}`, problems.length === 0, problems.join('; '));
     const nested = planOp(nestedOp, byRef).data;
     const top = planOp(replyOp, byRef).data;
-    check(`a nested reply names its parent reply and that reply's owner${SOCIAL_SHAPES.cut.rootOwner ? ', and (v13) both replies the root post\'s owner' : ''}`,
-      bs58.encode(nested.replyToReplyId) === reply.id && bs58.encode(nested.parentOwnerId) === reply.ownerId
-        && (SOCIAL_SHAPES.cut.rootOwner ? bs58.encode(nested.rootOwnerId) === owner && bs58.encode(top.rootOwnerId) === owner : !('rootOwnerId' in nested)));
+    if (SOCIAL_SHAPES.cut.storedReplyOwners) {
+      check(`a nested reply names its parent reply and that reply's owner${SOCIAL_SHAPES.cut.rootOwner ? ', and (v13) both replies the root post\'s owner' : ''}`,
+        bs58.encode(nested.replyToReplyId) === reply.id && bs58.encode(nested.parentOwnerId) === reply.ownerId
+          && (SOCIAL_SHAPES.cut.rootOwner ? bs58.encode(nested.rootOwnerId) === owner && bs58.encode(top.rootOwnerId) === owner : !('rootOwnerId' in nested)));
+    } else {
+      check('a nested reply names its root and its parent reply, and no owner (v14: the windows derive them)',
+        bs58.encode(nested.replyToReplyId) === reply.id && bs58.encode(nested.rootPostId) === targetId
+          && JSON.stringify(Object.keys(nested).filter((key) => key.endsWith('OwnerId'))) === '[]' && JSON.stringify(Object.keys(top).filter((key) => key.endsWith('OwnerId'))) === '[]');
+    }
     check(`a reply like is ${SOCIAL_SHAPES.cut.replyAuthor ? '{ replyId, replyAuthor }' : '{ replyId } (v13)'}`,
       JSON.stringify(Object.keys(planOp(likeReplyOp, byRef).data)) === JSON.stringify(SOCIAL_SHAPES.cut.replyAuthor ? ['replyId', 'replyAuthor'] : ['replyId']));
     check(`posts, quotes and reposts ${SOCIAL_SHAPES.cut.liveMarker ? 'carry live: true (v13)' : 'carry no live marker'}`,

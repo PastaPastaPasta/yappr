@@ -1305,9 +1305,10 @@ export function categorizeError(error: unknown): string {
     // way to act, and a balance that went stale between planning and signing
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
-    // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
-    // Where it is locked YAPP is never planned for a social write, so trying
-    // again pays credits.
+    // contract does not offer. Where YAPP is locked (v10 onwards) it cannot be
+    // bought. Trying again pays credits: on v10–v13 (paused for good) YAPP is
+    // never planned for a social write, and on v14 a balance below the cost
+    // plans credits.
     if (yappIsLocked()) return 'You don\'t have enough YAPP. Try again to pay with credits instead.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'

@@ -205,8 +205,8 @@ interface SettingsState {
    * OPTIONAL (v9): in YAPP (the contract owner then sponsors the gas when
    * able) or in credits (no token, no sponsorship). `yapp` is the default and
    * falls back to credits when the balance does not cover the cost. Where
-   * YAPP is locked (v10 onwards) this setting is ignored and every write
-   * pays credits — see lib/payment-preference.ts.
+   * YAPP is paused for good (v10–v13) this setting is ignored and every
+   * write pays credits; v14's YAPP pays again — see lib/payment-preference.ts.
    */
   payWith: PayWith
   setPayWith: (payWith: PayWith) => void

@@ -162,3 +162,57 @@ describe('v10 repliesOf reads', () => {
     vi.unstubAllEnvs()
   })
 })
+
+describe('v14 replies: no stored owner, two derived notification windows', () => {
+  const idOf = (fill: number) => bs58.encode(new Uint8Array(32).fill(fill))
+  const [ME, MY_ROOT, MY_REPLY, THEIR_REPLY, STRANGER] = [1, 2, 3, 4, 5].map(idOf)
+
+  async function v14Replies() {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v14')
+    return (await import('./reply-service')).replyService
+  }
+
+  const reply = (id: string, replyToReplyId?: string) => ({
+    $id: id, $ownerId: STRANGER, $createdAt: Date.now(), content: id, rootPostId: MY_ROOT, ...(replyToReplyId ? { replyToReplyId } : {}),
+  })
+
+  it('writes neither parentOwnerId nor rootOwnerId', async () => {
+    const replies = await v14Replies()
+    const create = vi.spyOn(replies, 'create').mockResolvedValue({} as never)
+    await replies.createReply(STRANGER, 'hi', { rootPostId: MY_ROOT, replyToReplyId: MY_REPLY, parentOwnerId: ME, rootOwnerId: ME })
+    const data = create.mock.calls[0][1]
+    expect(Object.keys(data).sort()).toEqual(['content', 'replyToReplyId', 'rootPostId'])
+    vi.unstubAllEnvs()
+  })
+
+  it('answers the nested replies to my replies and the top-level replies of my threads, each once', async () => {
+    const replies = await v14Replies()
+    // parentOwnerRecent: only nested replies whose parent is mine. rootOwnerRecent: every reply of my thread.
+    const nested = [reply('to-my-reply', MY_REPLY)]
+    const thread = [reply('top-level'), reply('to-my-reply', MY_REPLY), reply('between-others', THEIR_REPLY)]
+    query.mockImplementation(async ({ where, timeRange }: { where: unknown[][]; timeRange: Array<{ selector: string }> }) => {
+      // Each window is read twice (the current and the previous one); serve the current one only.
+      if (timeRange[0].selector !== 'newest') return []
+      expect(where).toHaveLength(1)
+      expect(where[0].slice(1)).toEqual(['==', ME])
+      return where[0][0] === 'replyToReplyId.$ownerId' ? nested : thread
+    })
+
+    const found = await replies.getRepliesToMyContent(ME, new Date(0))
+
+    expect(found.map((r) => [r.id, r.replyToReplyId ?? null])).toEqual([['to-my-reply', MY_REPLY], ['top-level', null]])
+    expect(query.mock.calls.map(([q]) => q.where[0][0]).sort()).toEqual(['replyToReplyId.$ownerId', 'replyToReplyId.$ownerId', 'rootPostId.$ownerId', 'rootPostId.$ownerId'])
+    vi.unstubAllEnvs()
+  })
+
+  it('rejects when either window cannot be read', async () => {
+    const replies = await v14Replies()
+    query.mockImplementation(async ({ where }: { where: unknown[][] }) => {
+      if (where[0][0] === 'rootPostId.$ownerId') throw new Error('offline')
+      return []
+    })
+    await expect(replies.getRepliesToMyContent(ME, new Date(0))).rejects.toThrow('offline')
+    vi.unstubAllEnvs()
+  })
+})

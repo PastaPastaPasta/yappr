@@ -112,6 +112,7 @@ vi.mock('@/lib/services/unified-profile-service', async (load) => {
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
 const { ABSENCE_AFTER_MS, createTicketStore } = await import('../../src/writes/tickets')
+const { REPORT_RESOLVED_MESSAGE } = await import('@/lib/reports')
 const { PARENT_WAIT_ROUNDS } = await import('../../src/writes/handler-kit')
 const { createEngageWrites } = await import('../../src/api/engage')
 const { createGraphWrites } = await import('../../src/api/graph')
@@ -485,6 +486,18 @@ describe('graph and safety writes', () => {
       state: 'failed', retryable: false,
       error: { code: 'REPORT_GONE', userMessage: expect.stringMatching(/already gone/) },
     })
+
+    // v14: resolved by the moderators, so the network keeps it (a paid 40147, or refused before signing).
+    for (const error of [
+      `Document ${REPORT} of type "report" can not be deleted: it breaks its deleteConstraints rule "pending": it does not hold (code=40147)`,
+      REPORT_RESOLVED_MESSAGE,
+    ]) {
+      m.reportService.withdrawReport.mockResolvedValue({ success: false, error })
+      expect(await outcome(safety.withdrawReport(TARGET, REPORT))).toMatchObject({
+        state: 'failed', retryable: false,
+        error: { code: 'REPORT_RESOLVED', userMessage: REPORT_RESOLVED_MESSAGE },
+      })
+    }
 
     // A gateway timeout may have landed: the report proved absent confirms it.
     m.reportService.withdrawReport.mockResolvedValue({ success: false, error: 'Request timeout' })

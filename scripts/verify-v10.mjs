@@ -65,6 +65,39 @@
  *   - the rule names are v13's (`blankTombstone`, `resolvedStatus`), and the
  *     self-test pins the mainnet election windows.
  *
+ * Its 5.0.0-beta.3 successor **v14** (`--contract-file
+ * contracts/yappr-social-contract-v14.json`, docs/SOCIAL_V14.md) keeps every
+ * v13 case; the switches read the file (the reply's properties, the windows,
+ * `deleteConstraints`, the token's `startAsPaused`), never its name:
+ *
+ *   - a reply stores no owner (no `parentOwnerId`, `rootOwnerId`,
+ *     `parentIsRoot`): every reply is `{ rootPostId, replyToReplyId? }`, so c1
+ *     points a reply case at B's anchor by its root alone; o4d, o4g and o4h
+ *     (forged parent and root owners) SKIP, there being no field to forge;
+ *     o4f (a nested reply under another thread's reply, 40127 on
+ *     `replyToReplyId.where`) stays, and o4i / o4j (a reply carrying
+ *     `parentOwnerId` / `rootOwnerId` at all) are refused by the JSON schema
+ *     (10101);
+ *   - n2 reads the derived windows: n2a lists A's top-level reply in B's
+ *     `rootOwnerRecent` (`rootPostId.$ownerId == B`); on A's thread B replies
+ *     and A answers B's reply (n2h), which `parentOwnerRecent` lists for B
+ *     (`replyToReplyId.$ownerId == B`, n2i) and `rootOwnerRecent` for A (n2j);
+ *     B's `parentOwnerRecent` leaves A's top-level reply out (skipIfAbsent, n2k);
+ *   - `report.deleteConstraints.pending`: r1i (withdrawing an OPEN report)
+ *     still lands; once the moderator resolved A's post report, A's withdrawal
+ *     is refused 40147 naming "pending" (r1wa) and the report stays (r1wb);
+ *     r2 leaves the team-resolved owner report in place (its ttl expires it);
+ *   - YAPP starts unpaused (beta.3 refuses a token cost paid in a paused
+ *     token, 40711): y1a's 1-YAPP transfer LANDS (beta.3 has no
+ *     non-transferable flag), y1d is "the YAPP-paid post lands (unpaused)",
+ *     y1h/y1i a YAPP-paid reply, and k1c's YAPP-paid like lands on the
+ *     unpaused token;
+ *   - the self-test pins the derived windows, the report delete rule and the
+ *     unpaused token, and the countPresent forms of `live` and `notEmpty`.
+ *     The installed 5.0.0-beta.2 SDK cannot parse v14 (countPresent,
+ *     deleteConstraints, a derived skip property): `--self-test` reports that
+ *     as one FAIL line and exits 1 after every other offline check ran.
+ *
  * The rest of this header describes v10.
  *
  * Registration-day battery for **contract v10**
@@ -261,7 +294,7 @@ import {
   wifForBot,
 } from './social-battery-lib.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
-import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
+import { DECLARED_DELETE_RULES, DECLARED_RULES, constraintViolation, deleteConstraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
@@ -297,6 +330,24 @@ const POST_ACTION_FEE = SOCIAL.actionFee('post');
 const REPLY_ACTION_FEE = SOCIAL.actionFee('reply');
 /** v13: a report pays a moderators action fee on create; null on v10–v12. */
 const REPORT_ACTION_FEE = SOCIAL.actionFee('report');
+/**
+ * v14: a reply stores no owner; `rootOwnerRecent` files it under `rootPostId.$ownerId` and
+ * `parentOwnerRecent` (nested replies only) under `replyToReplyId.$ownerId`, derived by consensus.
+ */
+const DERIVED_REPLY_OWNERS = !SOCIAL.cut.storedReplyOwners;
+/**
+ * v14 (`deleteConstraints.pending`): A may withdraw its report only while no moderator has
+ * resolved it; a resolved report's withdrawal is 40147 (paid). Off DECLARED_DELETE_RULES, which
+ * the self-test ties to the file.
+ */
+const PENDING_WITHDRAWAL = (DECLARED_DELETE_RULES[CONTRACT_NAME]?.report ?? []).includes('pending');
+/**
+ * v10–v13's YAPP starts paused for good (a tokenCost still lands on it up to beta.2); v14's
+ * starts unpaused, since beta.3 refuses a tokenCost paid in a paused token (40711), and then a
+ * transfer lands too (beta.3 has no non-transferable flag).
+ */
+const YAPP_PAUSED = V10.tokens['0'].startAsPaused === true;
+const YAPP_STATE = YAPP_PAUSED ? 'paused' : 'unpaused';
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -414,7 +465,7 @@ async function pausedPaymentsRefused(ctx) {
 async function expectPausedYappPayment(ctx, label, outcome) {
   const refused = await pausedPaymentsRefused(ctx);
   if (refused === true) expectRejected(`${label} is refused (40711: a paused token can't pay, 5.0.0-beta.3+)`, outcome, TOKEN_PAUSED);
-  else if (refused === false || outcome.ok || !TOKEN_PAUSED.test(outcome.error ?? '')) expectAccepted(`${label} lands on the paused token`, outcome);
+  else if (refused === false || outcome.ok || !TOKEN_PAUSED.test(outcome.error ?? '')) expectAccepted(`${label} lands on the ${YAPP_STATE} token`, outcome);
   else console.log(`WARN  ${label} was refused 40711 (a paused token can't pay): this node enforces the pause, so it runs 5.0.0-beta.3 or later`);
   return outcome.ok;
 }
@@ -449,7 +500,8 @@ const repostOf = ({ postId, replyId, ownerId }) => SOCIAL.post({ ...(postId ? { 
 /**
  * A top-level reply names its root post's owner as `parentOwnerId` (and, v13,
  * `rootOwnerId`); a nested one names its parent reply (`replyToReplyId`), that
- * reply's owner, and on v13 the root post's owner (SOCIAL.reply).
+ * reply's owner, and on v13 the root post's owner (SOCIAL.reply). On v14 a
+ * reply names no owner: SOCIAL.reply drops both, whatever the caller passes.
  */
 const replyData = ({ content = 'v10 battery reply', rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, mentionedUserId } = {}) => SOCIAL.reply({
   content, rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, ...(mentionedUserId ? { mentionedUserId } : {}),
@@ -908,19 +960,31 @@ async function caseO4QuoteAndParentOwner(ctx) {
   expectRejected('o4b a quote of B\'s reply naming A as its owner is refused', await create('post', { ...postData({ content: 'o4 forged reply-quote owner', quotedPostOwnerId: a }), quotedReplyId: reply }), PROPERTY_MISMATCH);
   expectAccepted('o4c a quote of B\'s reply naming B lands', await create('post', { ...postData({ content: 'o4 reply quote', quotedPostOwnerId: b }), quotedReplyId: reply }));
   // B's anchor post is the thread's root, so B is every nested reply's root owner (v13 rootOwnerId).
-  expectRejected('o4d a reply to B\'s reply naming A as the parent owner is refused', await create('reply', replyData({ content: 'o4 forged parent', rootPostId: post, rootOwnerId: b, parentOwnerId: a, replyToReplyId: reply })), PROPERTY_MISMATCH);
-  expectAccepted('o4e a reply to B\'s reply naming B lands', await create('reply', replyData({ content: 'o4 nested reply', rootPostId: post, rootOwnerId: b, parentOwnerId: b, replyToReplyId: reply })));
-  if (!SOCIAL.cut.rootOwner) return;
-  // v13: the parent must be in the same thread (`replyToReplyId.where` binds rootPostId), and the
-  // root owner must be the root post's (`rootPostId.where` binds rootOwnerId).
+  // v14 stores no owner on a reply (the windows derive it), so there is no parent owner to forge.
+  if (SOCIAL.cut.storedReplyOwners) expectRejected('o4d a reply to B\'s reply naming A as the parent owner is refused', await create('reply', replyData({ content: 'o4 forged parent', rootPostId: post, rootOwnerId: b, parentOwnerId: a, replyToReplyId: reply })), PROPERTY_MISMATCH);
+  else console.log(`SKIP  o4d: ${CONTRACT_NAME} stores no parentOwnerId on a reply (parentOwnerRecent derives replyToReplyId.$ownerId), so there is none to forge`);
+  expectAccepted(SOCIAL.cut.storedReplyOwners ? 'o4e a reply to B\'s reply naming B lands' : 'o4e (v14) a reply to B\'s reply, naming no owner, lands',
+    await create('reply', replyData({ content: 'o4 nested reply', rootPostId: post, rootOwnerId: b, parentOwnerId: b, replyToReplyId: reply })));
+  if (!SOCIAL.cut.rootOwner && SOCIAL.cut.storedReplyOwners) return;
+  // v13 and v14: the parent must be in the same thread (`replyToReplyId.where` binds rootPostId);
+  // v13 also binds the root owner to the root post's (`rootPostId.where` binds rootOwnerId).
+  const cutTag = SOCIAL.cut.rootOwner ? 'v13' : 'v14';
   const otherRoot = await createFeed(ctx, botA, 'post', postData({ content: `o4 other thread ${Date.now()}` }), 'o4 other thread');
   if (otherRoot) {
-    expectRejected('o4f (v13) a reply under A\'s post whose parent is B\'s reply in another thread is refused', await create('reply', replyData({ content: 'o4 cross-thread', rootPostId: bs58.decode(otherRoot), rootOwnerId: a, parentOwnerId: b, replyToReplyId: reply })), PROPERTY_MISMATCH);
+    expectRejected(`o4f (${cutTag}) a reply under A's post whose parent is B's reply in another thread is refused`, await create('reply', replyData({ content: 'o4 cross-thread', rootPostId: bs58.decode(otherRoot), rootOwnerId: a, parentOwnerId: b, replyToReplyId: reply })), PROPERTY_MISMATCH);
   } else {
     check('o4f fixture', false, 'no second thread root');
   }
-  expectRejected('o4g (v13) a reply naming A as the root owner of B\'s post is refused', await create('reply', replyData({ content: 'o4 forged root owner', rootPostId: post, rootOwnerId: a, parentOwnerId: a })), PROPERTY_MISMATCH);
-  expectRejected('o4h (v13) a top-level reply naming A as the parent of B\'s post is refused (10422 parentIsRoot)', await create('reply', replyData({ content: 'o4 forged notification', rootPostId: post, rootOwnerId: b, parentOwnerId: a })), constraintViolation('parentIsRoot'));
+  if (SOCIAL.cut.rootOwner) {
+    expectRejected('o4g (v13) a reply naming A as the root owner of B\'s post is refused', await create('reply', replyData({ content: 'o4 forged root owner', rootPostId: post, rootOwnerId: a, parentOwnerId: a })), PROPERTY_MISMATCH);
+    expectRejected('o4h (v13) a top-level reply naming A as the parent of B\'s post is refused (10422 parentIsRoot)', await create('reply', replyData({ content: 'o4 forged notification', rootPostId: post, rootOwnerId: b, parentOwnerId: a })), constraintViolation('parentIsRoot'));
+    return;
+  }
+  console.log(`SKIP  o4g/o4h: ${CONTRACT_NAME} stores no rootOwnerId and no parentOwnerId on a reply (rootOwnerRecent derives rootPostId.$ownerId), and has no parentIsRoot rule`);
+  // v14: an owner field is not declared at all, so a reply carrying one is the JSON schema's 10101
+  // (built by adding the field after SOCIAL.reply, which drops it).
+  expectRejected('o4i (v14) a reply carrying parentOwnerId is refused (10101: reply declares no such property)', await create('reply', { ...replyData({ content: 'o4 stored parent owner', rootPostId: post }), parentOwnerId: b }), SCHEMA_REFUSED);
+  expectRejected('o4j (v14) a reply carrying rootOwnerId is refused (10101: reply declares no such property)', await create('reply', { ...replyData({ content: 'o4 stored root owner', rootPostId: post }), rootOwnerId: b }), SCHEMA_REFUSED);
 }
 
 
@@ -1166,9 +1230,11 @@ async function caseC1PropertyConstraints(ctx) {
   /**
    * A reply case pointed at B's anchor: its root (and, v13, root owner) become B's; a v13
    * case whose parent was the root's owner keeps B there, while a forged one (parentIsRoot)
-   * keeps its stranger, so it stays forged.
+   * keeps its stranger, so it stays forged. A v14 reply names no owner: its root alone (there is
+   * no forged-owner case).
    */
   const linkage = (data) => {
+    if (DERIVED_REPLY_OWNERS) return { rootPostId: bs58.decode(anchor) };
     if (!SOCIAL.cut.rootOwner) return { rootPostId: bs58.decode(anchor), parentOwnerId: b };
     const parentIsRoot = Buffer.from(data.parentOwnerId).equals(Buffer.from(data.rootOwnerId));
     return { rootPostId: bs58.decode(anchor), rootOwnerId: b, parentOwnerId: parentIsRoot ? b : data.parentOwnerId };
@@ -1219,7 +1285,8 @@ async function caseR1Reports(ctx) {
   if (replyReport.ok) {
     const withdrawn = await deleteOwn(ctx, botA, 'report', replyReport.id);
     await settle();
-    check('r1i A withdraws its reply report', withdrawn === null && (await fetchDocument(sdk, contractId, 'report', replyReport.id)) === null, (withdrawn ?? '').slice(0, 160));
+    check(PENDING_WITHDRAWAL ? 'r1i (v14) A withdraws its OPEN reply report (no status yet: deleteConstraints "pending" holds)' : 'r1i A withdraws its reply report',
+      withdrawn === null && (await fetchDocument(sdk, contractId, 'report', replyReport.id)) === null, (withdrawn ?? '').slice(0, 160));
   }
 
   if (!postReport.ok || interimOnly(ctx, 'r1j–r1s')) return;
@@ -1236,6 +1303,7 @@ async function caseR1Reports(ctx) {
   check('r1m byModerator [$moderatedBy, $moderatedAt] lists it', [...byModerator.keys()].map(idOf).includes(postReport.id), `${byModerator.size} report(s)`);
   const byStatus = await readback(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'report', where: [['status', '==', 2]], orderBy: [['status', 'asc'], ['$createdAt', 'desc']], limit: 50 }));
   check('r1n byStatus [status, $createdAt] lists it under status 2', [...byStatus.keys()].map(idOf).includes(postReport.id), `${byStatus.size} report(s)`);
+  if (PENDING_WITHDRAWAL) await resolvedWithdrawalCases(ctx, postReport.id);
 
   const noop = await changeReport(ctx, moderator, postReport.id, { status: 2, resolution: 'post removed' });
   expectRejected('r1o a change that changes nothing is refused (10905)', asOutcome(noop), FIELDS_INVALID);
@@ -1288,6 +1356,21 @@ async function caseR1Reports(ctx) {
 }
 
 /**
+ * v14's r1w (`report.deleteConstraints.pending: { absent: status }`): the rule judges the STORED
+ * report on its owner's delete, so once the moderator resolved A's post report (r1j: status 2)
+ * A's withdrawal is refused 40147 `DocumentDeleteConstraintViolatedError` (paid) naming
+ * "pending", and the report stays, still resolved. A moderator's purge is not judged (r1v).
+ */
+async function resolvedWithdrawalCases(ctx, reportId) {
+  const { sdk, contractId, botA } = ctx;
+  const withdrawal = await deleteOwnDocument(ctx, botA, 'report', reportId);
+  await settle();
+  expectRejected('r1wa (v14) A withdrawing its RESOLVED report is refused (40147: deleteConstraints "pending", status present)', asOutcome(withdrawal), deleteConstraintViolation('pending'));
+  const stored = (await fetchDocument(sdk, contractId, 'report', reportId))?.toJSON?.() ?? {};
+  check('r1wb (v14) …and the report is still there, resolved (status 2)', stored.status === 2, describeValue({ status: stored.status }));
+}
+
+/**
  * v13's r1z: a profile report (`about: 1`, no post or reply) pays the moderators action fee
  * (40132 without it, the pot grows by it with it), is one per reporter and identity on byTarget
  * (40105), and the identity's reports read back off byTarget. A withdrawal frees the slot for
@@ -1296,9 +1379,17 @@ async function caseR1Reports(ctx) {
 async function profileReportCases(ctx, author) {
   const { sdk, contractId, botA, botB } = ctx;
   const profile = reportData({ about: 1, targetOwnerId: author, reason: 1 });
-  // An earlier run's report holds byTarget's unique entry: withdraw it so the create path runs.
+  // An earlier run's report holds byTarget's unique entry: withdraw it so the create path runs. On
+  // v14 a resolved one is kept from its reporter (40147, paid), so the moderator purges it instead.
   const stale = await queryOne(ctx, 'report', [['targetOwnerId', '==', botB.ownerId], ['about', '==', 1], ['$ownerId', '==', botA.ownerId]]);
-  if (stale) { await deleteOwn(ctx, botA, 'report', idOf(stale.id)); await settle(); }
+  if (stale) {
+    const resolved = PENDING_WITHDRAWAL && (stale.toJSON?.() ?? stale).status !== undefined;
+    const purged = resolved
+      ? await errorOf(() => sdk.contracts.moderatorDeleteDocument({ identity: ctx.moderator.identity, contractId, documentTypeName: 'report', documentId: idOf(stale.id), reason: { text: 'v10 battery: clear a stale resolved report' }, signer: ctx.moderator.signer }))
+      : await deleteOwn(ctx, botA, 'report', idOf(stale.id));
+    if (purged !== null) console.log(`     (could not clear the stale profile report ${idOf(stale.id)}: ${String(purged).slice(0, 160)})`);
+    await settle();
+  }
   expectRejected('r1z0 (v13) a report without its action fee agreement is refused (40132)',
     await attemptCreate(sdk, botA, { contractId, docType: 'report', data: profile }), AGREEMENT_NOT_SET);
   const potBefore = (await moderatorsPot(ctx)).credits;
@@ -1351,7 +1442,9 @@ async function caseR2SeatedResolution(ctx) {
       reason: { text: 'v10 battery r2', reasonDocumentId: REASON_DOCUMENT_ID }, signer: member.signer,
     }));
     expectRejected('r2e the team cannot delete the protected owner\'s report (41102)', asOutcome(deleted), TARGET_NOT_ALLOWED);
-    await deleteOwn(ctx, ctx.moderator, 'report', ownerReport.id);
+    // v14: a resolved report can no longer be withdrawn (40147 "pending"); it is on a fresh post,
+    // so it blocks nothing, and its ttl expires it.
+    if (!PENDING_WITHDRAWAL) await deleteOwn(ctx, ctx.moderator, 'report', ownerReport.id);
   }
 }
 
@@ -1595,6 +1688,9 @@ async function caseN2NotificationWindows(ctx) {
   const bReply = await onTarget(botB, 'n2 B reply');
   const aReply = await onTarget(botA, 'n2 A reply');
   if (!bReply || !aReply) { check('n2 fixtures', false, 'a reply did not land'); return; }
+  // v14: a thread whose root (A's) and nested parent (B's) have different owners, so the two
+  // derived windows file one nested reply under two distinct keys.
+  const thread = DERIVED_REPLY_OWNERS ? await derivedWindowFixtures(ctx) : null;
   // [docType, target id, like data, what is liked, the case ids of its notification / heart / unlike checks]
   const likes = [
     ['like', target, likeData({ postId: targetBytes, postAuthor: owner }), 'post', ['n2b', 'n2c', 'n2d']],
@@ -1612,8 +1708,11 @@ async function caseN2NotificationWindows(ctx) {
   }
   await settle();
 
-  const replies = await windowLists(ctx, 'reply', 'parentOwnerRecent', [['parentOwnerId', '==', botB.ownerId]], (document) => idOf(document.id) === aReply);
-  check('n2a reply.parentOwnerRecent\'s two open windows list A\'s reply for B (the "replied to you" source)', replies.found, `${replies.scanned} reply(ies) scanned`);
+  if (DERIVED_REPLY_OWNERS) await derivedWindowCases(ctx, { aReply, thread });
+  else {
+    const replies = await windowLists(ctx, 'reply', 'parentOwnerRecent', [['parentOwnerId', '==', botB.ownerId]], (document) => idOf(document.id) === aReply);
+    check('n2a reply.parentOwnerRecent\'s two open windows list A\'s reply for B (the "replied to you" source)', replies.found, `${replies.scanned} reply(ies) scanned`);
+  }
   const since = Date.now() - 3_600_000;
   for (const [docType, targetId, data, what, [notifyCase, heartCase, unlikeCase]] of likes) {
     const { target: field, author } = LIKE_FIELDS[docType];
@@ -1655,6 +1754,46 @@ async function caseN2NotificationWindows(ctx) {
     expectAccepted(`${unlikeCase} A unlikes B's ${what} by values, the tuple read off ${authorIndex} (\`$createdAt <=\` keyset)`,
       await attemptDeleteByValues(sdk, botA, { document, accepted: async () => !(await liked(docType, targetId)) }));
   }
+}
+
+/**
+ * v14's n2 thread: A's root post, B's top-level reply to it, and A's nested reply to B's reply.
+ * The nested reply's parent owner (B) and root owner (A) differ, so `parentOwnerRecent` and
+ * `rootOwnerRecent` file it under two distinct keys. Answers `{ root, bOnA, nested }` or null.
+ */
+async function derivedWindowFixtures(ctx) {
+  const { botA, botB } = ctx;
+  const root = await createFeed(ctx, botA, 'post', postData({ content: `n2 thread by A ${Date.now()}` }), 'n2 thread by A');
+  const bOnA = root ? await createFeed(ctx, botB, 'reply', replyData({ content: 'n2 B on A\'s thread', rootPostId: bs58.decode(root) }), 'n2 B on A\'s thread') : null;
+  const nested = bOnA ? await createFeed(ctx, botA, 'reply', replyData({ content: 'n2 A answers B', rootPostId: bs58.decode(root), replyToReplyId: bs58.decode(bOnA) }), 'n2 A answers B') : null;
+  check('n2h (v14) fixture: on A\'s post B replies and A answers B\'s reply (root owner A, parent owner B)', nested !== null, `root ${root} B ${bOnA} nested ${nested}`);
+  return nested ? { root, bOnA, nested } : null;
+}
+
+/**
+ * v14's "replied to you" sources: the owners are derived by consensus off the referenced
+ * documents, and a read names the derived property with `==`, as v13 named `parentOwnerId`.
+ * `rootOwnerRecent` files every reply of a thread under the root post's owner;
+ * `parentOwnerRecent` files a nested reply under its parent reply's owner and skips a top-level
+ * reply (`skipIfAbsent: ["replyToReplyId.$ownerId"]`).
+ */
+async function derivedWindowCases(ctx, { aReply, thread }) {
+  const { botA, botB } = ctx;
+  const rootOwnerIs = (ownerId) => [['rootPostId.$ownerId', '==', ownerId]];
+  const parentOwnerIs = (ownerId) => [['replyToReplyId.$ownerId', '==', ownerId]];
+  const is = (id) => (document) => idOf(document.id) === id;
+  const topLevel = await windowLists(ctx, 'reply', 'rootOwnerRecent', rootOwnerIs(botB.ownerId), is(aReply));
+  check('n2a (v14) reply.rootOwnerRecent\'s two open windows list A\'s top-level reply for B, the root post\'s owner (`rootPostId.$ownerId ==`: the "replied to your post" source)', topLevel.found, `${topLevel.scanned} reply(ies) scanned`);
+  if (!thread) return;
+  const toParent = await windowLists(ctx, 'reply', 'parentOwnerRecent', parentOwnerIs(botB.ownerId), is(thread.nested));
+  check('n2i (v14) reply.parentOwnerRecent lists A\'s nested reply for B, the parent reply\'s owner (`replyToReplyId.$ownerId ==`: the "replied to your reply" source)', toParent.found, `${toParent.scanned} reply(ies) scanned`);
+  const toRoot = await windowLists(ctx, 'reply', 'rootOwnerRecent', rootOwnerIs(botA.ownerId), is(thread.nested));
+  check('n2j (v14) …and reply.rootOwnerRecent lists the same nested reply for A, the root post\'s owner (a key distinct from the parent\'s)', toRoot.found, `${toRoot.scanned} reply(ies) scanned`);
+  // B's parentOwnerRecent holds n2i's nested reply, so an absence there is a read of a live window.
+  const skipped = await windowLists(ctx, 'reply', 'parentOwnerRecent', parentOwnerIs(botB.ownerId), is(aReply));
+  // Without the skip a top-level reply would sit under a null key, not under B: this pins that the
+  // window is keyed by the PARENT's owner, never the root's. The skip itself is pinned offline.
+  check('n2k (v14) B\'s parentOwnerRecent does not list A\'s TOP-LEVEL reply to B\'s post (keyed by the parent reply\'s owner, not the root\'s)', !skipped.found && toParent.found, `${skipped.scanned} reply(ies) scanned`);
 }
 
 /**
@@ -1781,14 +1920,18 @@ async function caseX4BarredRetraction(ctx) {
 
 async function caseY1YappLocked(ctx) {
   const { sdk, contractId, botA, botB } = ctx;
-  console.log('\n--- y1. YAPP: paused for good (no transfer), never priced (no purchase); the grant still works; a YAPP-paid cost lands on beta.2, 40711 from beta.3 ---');
+  console.log(YAPP_PAUSED
+    ? '\n--- y1. YAPP: paused for good (no transfer), never priced (no purchase); the grant still works; a YAPP-paid cost lands on beta.2, 40711 from beta.3 ---'
+    : '\n--- y1. YAPP (v14): unpaused for good (a transfer lands), never priced (no purchase); YAPP-paid creates and the grant work ---');
   const tokenId = await readback(() => sdk.tokens.calculateId(contractId, YAPP_TOKEN_POSITION));
   const balance = (id) => tokenBalance(readback, sdk, tokenId, id);
   const before = { a: await balance(botA.ownerId), b: await balance(botB.ownerId) };
   const transfer = await errorOf(() => sdk.tokens.transfer({ dataContractId: contractId, tokenPosition: YAPP_TOKEN_POSITION, senderId: botA.ownerId, recipientId: botB.ownerId, amount: 1n, identityKey: botA.identityKey, signer: botA.signer }));
   await settle();
-  const moved = (await balance(botB.ownerId)) !== before.b;
-  expectRejected('y1a a YAPP transfer is refused (40711: the token is paused)', { ok: transfer === null || moved, error: transfer }, TOKEN_PAUSED);
+  const bAfterTransfer = await balance(botB.ownerId);
+  const moved = bAfterTransfer !== before.b;
+  if (YAPP_PAUSED) expectRejected('y1a a YAPP transfer is refused (40711: the token is paused)', { ok: transfer === null || moved, error: transfer }, TOKEN_PAUSED);
+  else check('y1a (v14) a 1-YAPP transfer LANDS (beta.3 has no non-transferable flag; the token is unpaused)', transfer === null && bAfterTransfer === before.b + 1n, `${(transfer ?? '').slice(0, 160)} B ${before.b}→${bAfterTransfer}`);
 
   const prices = await readback(() => sdk.tokens.directPurchasePrices([tokenId]));
   const price = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
@@ -1797,14 +1940,30 @@ async function caseY1YappLocked(ctx) {
   expectRejected('y1c a direct purchase is refused (40721: not for sale)', asOutcome(purchase), NOT_FOR_SALE);
 
   // A token COST is not a transfer, but from 5.0.0-beta.3 a paused token can't pay one either.
+  // v14's token is unpaused, and y1a's transfer moved one YAPP, so A's balance is read again first.
+  const paidFrom = YAPP_PAUSED ? before.a : await balance(botA.ownerId);
   const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
   const payment = paymentInfo(tokenCostFor('post').amount, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
   const paid = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'y1 paid in YAPP' }), agreement, payment });
-  const landed = await expectPausedYappPayment(ctx, 'y1d a post paying 10 YAPP', paid);
+  let landed = paid.ok;
+  if (YAPP_PAUSED) landed = await expectPausedYappPayment(ctx, 'y1d a post paying 10 YAPP', paid);
+  else expectAccepted('y1d (v14) the YAPP-paid post lands (unpaused): 10 YAPP, gas offered to the contract owner', paid);
   await settle();
   const after = await balance(botA.ownerId);
   const spent = landed ? BigInt(tokenCostFor('post').amount) : 0n;
-  check(landed ? 'y1e …and A\'s balance fell by exactly the post\'s token cost' : 'y1e …and A kept its YAPP (a refused payment moves none)', after === before.a - spent, `before=${before.a} after=${after}`);
+  check(landed ? 'y1e …and A\'s balance fell by exactly the post\'s token cost' : 'y1e …and A kept its YAPP (a refused payment moves none)', after === paidFrom - spent, `before=${paidFrom} after=${after}`);
+  if (!YAPP_PAUSED && landed) {
+    // v14: a reply pays its own (smaller) cost the same way, under the YAPP-paid post (the cost off
+    // the file under test; seed-lib's tokenCostFor reads the env topology's).
+    const { agreement: replyAgreement } = await feeAgreement(ctx, REPLY_ACTION_FEE);
+    const replyCost = V10.documentSchemas.reply.tokenCost.create.amount;
+    const paidReply = await manualCreate(ctx, botA, { docType: 'reply', data: replyData({ content: 'y1 reply paid in YAPP', rootPostId: bs58.decode(paid.id) }), agreement: replyAgreement,
+      payment: paymentInfo(replyCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo });
+    expectAccepted(`y1h (v14) the YAPP-paid reply lands (unpaused): ${replyCost} YAPP, gas offered to the contract owner`, paidReply);
+    await settle();
+    const afterReply = await balance(botA.ownerId);
+    check('y1i …and A\'s balance fell by exactly the reply\'s token cost', afterReply === after - BigInt(replyCost), `before=${after} after=${afterReply}`);
+  }
 
   const fresh = await freshActor(ctx);
   if (!fresh) { console.log('SKIP  y1f–y1g: needs --fresh-bot <n>, an identity that has not claimed its starter grant'); return; }
@@ -2299,16 +2458,37 @@ function selfTest() {
   if (SOCIAL.cut.replyAuthor) expect('likeReply.replyId agrees replyAuthor with the reply (o2)', where('likeReply', 'replyId').$ownerId === 'replyAuthor');
   expect('there is no repost type: a repost is a post (o3, q1)', !schemas.repost);
   expect('a quote or bare repost binds quotedPostOwnerId (o3, o4a, o4b)', where('post', 'quotedPostId').$ownerId === 'quotedPostOwnerId' && where('post', 'quotedReplyId').$ownerId === 'quotedPostOwnerId');
-  expect('a nested reply binds parentOwnerId (o4d)', where('reply', 'replyToReplyId').$ownerId === 'parentOwnerId');
+  if (SOCIAL.cut.storedReplyOwners) expect('a nested reply binds parentOwnerId (o4d)', where('reply', 'replyToReplyId').$ownerId === 'parentOwnerId');
   if (SOCIAL.cut.rootOwner) {
     expect('v13: a reply names its root post\'s owner (required, immutable, the rootPostId agreement), a nested reply\'s parent is in its thread, and parentIsRoot ties a top-level parent to the root owner (o4f–o4h, c1)',
       schemas.reply.required.includes('rootOwnerId') && schemas.reply.immutable.includes('rootOwnerId') && where('reply', 'rootPostId').$ownerId === 'rootOwnerId'
         && where('reply', 'replyToReplyId').rootPostId === 'rootPostId'
         && JSON.stringify(schemas.reply.propertyConstraints.parentIsRoot) === JSON.stringify({ ifThen: [{ absent: 'replyToReplyId' }, { equal: ['parentOwnerId', 'rootOwnerId'] }] }));
-    expect('v13: a post is live unless tombstoned (`live` const true, optional, the live rule) and ownerAndTime skips a post without it (q2h, q2i, q2n, x1t)',
+  }
+  if (DERIVED_REPLY_OWNERS) {
+    expect('v14: a reply stores no owner (no parentOwnerId, rootOwnerId or parentIsRoot), its root binds nothing, and a nested reply\'s parent is in its thread alone (o4f, o4i, o4j, c1)',
+      !schemas.reply.properties.parentOwnerId && !schemas.reply.properties.rootOwnerId && !schemas.reply.propertyConstraints?.parentIsRoot
+        && schemas.reply.properties.rootPostId.refersTo?.where === undefined && JSON.stringify(where('reply', 'replyToReplyId')) === JSON.stringify({ rootPostId: 'rootPostId' }));
+    expect('v14: the derived windows read through references frozen for good (rootPostId and replyToReplyId immutable without a condition)',
+      ['rootPostId', 'replyToReplyId'].every((p) => schemas.reply.immutable.includes(p)));
+    const o4i = { ...replyData({ rootPostId: new Uint8Array(32) }), parentOwnerId: new Uint8Array(32) };
+    expect('v14: the shape checker calls a reply carrying parentOwnerId undeclared (o4i, the 10101 probe)', SOCIAL.check('reply', o4i).includes('reply.parentOwnerId is not declared'));
+  }
+  if (SOCIAL.cut.liveMarker) {
+    // v14 states both rules with countPresent: "exactly one of deleted and live".
+    const liveRule = JSON.stringify(schemas.post.propertyConstraints.live);
+    expect(`${SOCIAL.cut.rootOwner ? 'v13' : 'v14'}: a post is live unless tombstoned (\`live\` const true, optional, the live rule) and ownerAndTime skips a post without it (q2h, q2i, q2n, x1t)`,
       schemas.post.properties.live?.const === true && !schemas.post.required.includes('live') && schemas.post.indices.find((i) => i.name === 'ownerAndTime')?.skipIfAbsent === true
-        && JSON.stringify(schemas.post.propertyConstraints.live) === JSON.stringify({ ifThenElse: [{ present: 'deleted' }, { absent: 'live' }, { present: 'live' }] }));
-    expect('v13: a report charges the moderators 50M credits on create, priced by the fee multiplier (r1, r1z2)', REPORT_ACTION_FEE?.moderators === 50_000_000n && REPORT_ACTION_FEE.owner === 0n && REPORT_ACTION_FEE.pricing === 'feeMultiplier');
+        && [{ ifThenElse: [{ present: 'deleted' }, { absent: 'live' }, { present: 'live' }] }, { equal: [{ countPresent: ['deleted', 'live'] }, 1] }].some((rule) => JSON.stringify(rule) === liveRule));
+    expect(`${SOCIAL.cut.rootOwner ? 'v13' : 'v14'}: a report charges the moderators 50M credits on create, priced by the fee multiplier (r1, r1z2)`, REPORT_ACTION_FEE?.moderators === 50_000_000n && REPORT_ACTION_FEE.owner === 0n && REPORT_ACTION_FEE.pricing === 'feeMultiplier');
+  }
+  // v14: the rules an owner's delete is judged by (40147); none before.
+  const deleteRules = DECLARED_DELETE_RULES[CONTRACT_NAME] ?? {};
+  expect('the types declare exactly the deleteConstraints rules r1w asserts (DECLARED_DELETE_RULES)',
+    Object.entries(schemas).every(([type, schema]) => JSON.stringify(Object.keys(schema.deleteConstraints ?? {}).sort()) === JSON.stringify([...(deleteRules[type] ?? [])].sort())));
+  if (PENDING_WITHDRAWAL) {
+    expect('v14: a report may be withdrawn only while no moderator resolved it (deleteConstraints pending: status absent) (r1i, r1wa)',
+      JSON.stringify(schemas.report.deleteConstraints.pending) === JSON.stringify({ absent: 'status' }) && schemas.report.moderatorAbilities?.changeFields?.includes('status'));
   }
   if (TOMBSTONES) {
     // v13 strips `documentsMutable: true`, which only restated the contract default.
@@ -2338,7 +2518,14 @@ function selfTest() {
   const HALF_WEEK_WINDOW = JSON.stringify({ on: '$createdAt', range: 302_400, step: 302_400, ttl: 604_800 });
   const halfWeekly = (type, name, properties) => shape(type, name) === properties && JSON.stringify(index(type, name).timeRange) === HALF_WEEK_WINDOW;
   expect('quotedPostOwnerRecent [$createdAt, quotedPostOwnerId] is on the 3.5-day grid kept a week, skipped when absent (q1j)', halfWeekly('post', 'quotedPostOwnerRecent', '$createdAt,quotedPostOwnerId') && index('post', 'quotedPostOwnerRecent').skipIfAbsent === true);
-  expect('reply parentOwnerRecent [$createdAt, parentOwnerId] is on the 3.5-day grid kept a week (n2a)', halfWeekly('reply', 'parentOwnerRecent', '$createdAt,parentOwnerId'));
+  if (SOCIAL.cut.storedReplyOwners) {
+    expect('reply parentOwnerRecent [$createdAt, parentOwnerId] is on the 3.5-day grid kept a week (n2a)', halfWeekly('reply', 'parentOwnerRecent', '$createdAt,parentOwnerId'));
+  } else {
+    expect('v14: reply rootOwnerRecent [$createdAt, rootPostId.$ownerId] is on the 3.5-day grid kept a week and skips nothing (every reply of a thread) (n2a, n2j)',
+      halfWeekly('reply', 'rootOwnerRecent', '$createdAt,rootPostId.$ownerId') && index('reply', 'rootOwnerRecent').skipIfAbsent === undefined);
+    expect('v14: reply parentOwnerRecent [$createdAt, replyToReplyId.$ownerId] is on the 3.5-day grid kept a week and skips a top-level reply (skipIfAbsent on the derived owner) (n2i, n2k)',
+      halfWeekly('reply', 'parentOwnerRecent', '$createdAt,replyToReplyId.$ownerId') && JSON.stringify(index('reply', 'parentOwnerRecent').skipIfAbsent) === '["replyToReplyId.$ownerId"]');
+  }
   for (const [type, cases] of [['post', 'n1c'], ['reply', 'n1f']]) {
     expect(`${type} mentionedUserAndTime [mentionedUserId, $createdAt] is permanent (no window), skipped when absent, like tagAndTime (${cases})`, shape(type, 'mentionedUserAndTime') === 'mentionedUserId,$createdAt' && index(type, 'mentionedUserAndTime').skipIfAbsent === true && index(type, 'mentionedUserAndTime').timeRange === undefined);
     const mentioned = schemas[type].properties.mentionedUserId;
@@ -2388,8 +2575,12 @@ function selfTest() {
   expect('post keeps at most 10 indexes', schemas.post.indices.length <= 10);
   const notEmpty = schemas.post.propertyConstraints?.notEmpty?.anyOf ?? [];
   const mediaField = SOCIAL.cut.mediaArrays ? 'mediaUrls' : 'mediaUrl';
+  // The paths any one of which makes a post non-empty: a `present` alternative each, or (v14) one
+  // `countPresent [...] >= 1` alternative naming them all.
+  const notEmptyPaths = notEmpty.flatMap((alt) => alt.present ?? (alt.greaterThanOrEqual?.[1] === 1 ? alt.greaterThanOrEqual[0]?.countPresent ?? [] : []));
   expect('post notEmpty: content, ciphertext, media, an embed or a quote (q1n, q1o; a bare repost passes through its quote; design M: or a tombstone)',
-    notEmpty.length === (TOMBSTONES ? 7 : 6) && (!TOMBSTONES || notEmpty.some((alt) => alt.present === 'deleted')) && ['encryptedContent', mediaField, 'embedId', 'quotedPostId', 'quotedReplyId'].every((p) => notEmpty.some((alt) => alt.present === p))
+    notEmptyPaths.length === (TOMBSTONES ? 6 : 5) && new Set(notEmptyPaths).size === notEmptyPaths.length && notEmpty.length === (notEmpty.some((alt) => alt.greaterThanOrEqual) ? 2 : notEmptyPaths.length + 1)
+      && (!TOMBSTONES || notEmptyPaths.includes('deleted')) && ['encryptedContent', mediaField, 'embedId', 'quotedPostId', 'quotedReplyId'].every((p) => notEmptyPaths.includes(p))
       && notEmpty.some((alt) => alt.greaterThan?.[0]?.length === 'content' && alt.greaterThan[1] === 0));
   expect('a repost costs the post price: 10 YAPP, optional, gas offered to the owner (q1c)', schemas.post.tokenCost?.create?.amount === TOKEN_COST.post && TOKEN_COST.post === 10 && schemas.post.tokenCost.create.optional === true);
   for (const type of ['post', 'reply']) {
@@ -2425,7 +2616,10 @@ function selfTest() {
   }
   expect('report.targetOwnerId agrees with the target and is not the reporter (r1d, r1e)', where('report', 'postId').$ownerId === 'targetOwnerId' && where('report', 'replyId').$ownerId === 'targetOwnerId' && schemas.report.properties.targetOwnerId.distinctFrom === '$ownerId');
   const token = V10.tokens['0'];
-  expect('YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)', token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
+  expect(YAPP_PAUSED
+    ? 'YAPP starts paused, nobody can unpause it or price it, and the owner may mint to anyone (y1)'
+    : 'v14: YAPP starts unpaused, nobody can ever pause it or price it, and the owner may mint to anyone (y1a, y1d, y1h, k1c)',
+  token.startAsPaused === YAPP_PAUSED && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
   expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
   expect('a paused token pays a document cost before 5.0.0-beta.3 and is refused 40711 from it (y1d, k1c, q1b)',
     [['5.0.0-beta.2', false], ['5.0.0-beta.3', true], ['5.0.0-beta.10', true], ['5.0.0-rc.1', true], ['5.0.0', true], ['5.1.0-dev.1', true], ['4.2.0', false], ['5.0.0-dev.4', null], [undefined, null]]
@@ -2488,7 +2682,20 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   await ensureInitialized();
   const placeholder = bs58.encode(new Uint8Array(32).fill(1));
   const platformVersion = PlatformVersion.latest();
-  const contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: V10.documentSchemas, config: V10.config, tokens: V10.tokens }, true, platformVersion);
+  // v14 needs the 5.0.0-beta.3 SDK (countPresent, deleteConstraints, a derived skip property): an
+  // SDK that cannot parse the file is one FAIL line, the shapes are still judged by the shape
+  // checker, the dry run still runs, and the process exits 1 at the end.
+  let contract = null;
+  try {
+    contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: V10.documentSchemas, config: V10.config, tokens: V10.tokens }, true, platformVersion);
+  } catch (e) {
+    console.error(`FAIL  ${CONTRACT_NAME} does not parse with the installed SDK (a newer cut needs a newer SDK; shapes below are judged by the shape checker alone): ${String(e?.message ?? e).slice(0, 200)}`);
+    process.on('exit', (code) => {
+      if (code !== 0) return;
+      console.error(`${CONTRACT_NAME}: every other offline check passed; exiting 1 for the parse failure above`);
+      process.exitCode = 1;
+    });
+  }
   // v13: the block types serialize under the blocks contract (bare schemas, the default config).
   const blocks = SOCIAL.cut.blocksInSocial ? contract : DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: BLOCKS_SCHEMAS }, true, platformVersion);
   const owner = new Uint8Array(32).fill(2);
@@ -2501,9 +2708,14 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
     const target = inBlocks ? blocks : contract;
     try {
       const document = documentOf(docType, data);
-      document.toBytes(target, platformVersion);
       // Serializing does not judge the rules or undeclared fields: the shape checker and rs-dpp's rule evaluation do.
       const problems = inBlocks ? [] : SOCIAL.check(docType, data);
+      if (!target) {
+        if (problems.length > 0) throw new Error(problems.join('; '));
+        console.log(`shape checker passes (no parsed ${CONTRACT_NAME} to serialize under): ${label}`);
+        continue;
+      }
+      document.toBytes(target, platformVersion);
       const broken = target.checkDocumentPropertyConstraints(document);
       if (problems.length > 0 || broken) throw new Error(`${problems.join('; ')}${broken ? ` 10422 ${broken.rule}` : ''}`);
       console.log(`serializes under ${inBlocks && !SOCIAL.cut.blocksInSocial ? 'the blocks contract' : CONTRACT_NAME}: ${label}`);

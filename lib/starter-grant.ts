@@ -31,9 +31,9 @@ export function markStarterGrantSettled(identityId: string): void {
 
 /**
  * How `identityId` can get more YAPP on the configured contract: `buy` it
- * (v2, v9), `claim` the one-time starter grant (v10, until claimed), or
- * nothing at all (v10 once the grant is claimed: the token is paused and has
- * no purchase price, so it can be neither bought nor transferred in).
+ * (v2, v9), `claim` the one-time starter grant (v10 onwards, until claimed),
+ * or nothing at all (once the grant is claimed: YAPP has no purchase price,
+ * and Yappr never sends it, so it can be neither bought nor received).
  */
 export function yappTopUp(identityId: string): 'buy' | 'claim' | null {
   if (!yappIsLocked()) return 'buy'

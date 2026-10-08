@@ -26,6 +26,8 @@ export type EngineErrorCode =
   | 'STILL_BLOCKED'
   // a report to withdraw is already gone (dismissed, or withdrawn elsewhere)
   | 'REPORT_GONE'
+  // v14: a report to withdraw was resolved by the moderators, so the network keeps it
+  | 'REPORT_RESOLVED'
   // the image a post names could not be read (an HTTP error, not an image, or no CORS) to fingerprint it
   | 'MEDIA_UNREADABLE'
 

@@ -456,6 +456,7 @@ const SOCIAL_V10 = 'contracts/yappr-social-contract-v10.json';
 const SOCIAL_V11 = 'contracts/yappr-social-contract-v11.json';
 const SOCIAL_V12 = 'contracts/yappr-social-contract-v12.json';
 const SOCIAL_V13 = 'contracts/yappr-social-contract-v13.json';
+const SOCIAL_V14 = 'contracts/yappr-social-contract-v14.json';
 const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
@@ -685,6 +686,54 @@ const PROBES = [
   } },
   { label: 'v13 update: the media rule relaxed (rules are fixed)', file: SOCIAL_V13, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).post.propertyConstraints.media = { equal: [{ count: 'mediaUrls' }, { count: 'mediaKinds' }] }; } },
 
+  // Social v14 (5.0.0-beta.3, docs/SOCIAL_V14.md): countPresent rules, the report deleteConstraints,
+  // the derived reply-owner windows and an unpaused YAPP. Every refusal below was first measured
+  // with rs-dpp at the v5.0.0-beta.3 tag; `why` pins the rule that speaks.
+  { label: 'control: social v14 as committed (devnet: interim contractOwner)', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v14 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V14, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  // beta.3 refuses a tokenCost paid in a paused token (40711), so v14's YAPP starts unpaused, and
+  // with `emergencyActionRules: noOne` nobody can ever pause it. Everything else is v13's.
+  { label: 'v14: YAPP starts unpaused, can never be paused, and still has no price', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const yapp = s.tokens['0'];
+    return yapp.startAsPaused === false && yapp.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+      && yapp.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne';
+  } },
+  // Read back off the PARSED contract, so a keyword the parser dropped fails here.
+  { label: 'v14: the parsed reply files its windows under the derived owners, and stores no owner', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => {
+    const reply = parsed.schemas.reply;
+    const window = (name) => reply?.indices?.find((i) => i.name === name);
+    const keys = (index) => index?.properties?.map((p) => Object.keys(p)[0]);
+    return JSON.stringify(keys(window('rootOwnerRecent'))) === '["$createdAt","rootPostId.$ownerId"]'
+      && JSON.stringify(keys(window('parentOwnerRecent'))) === '["$createdAt","replyToReplyId.$ownerId"]'
+      && JSON.stringify(window('parentOwnerRecent')?.skipIfAbsent) === '["replyToReplyId.$ownerId"]'
+      && window('rootOwnerRecent')?.skipIfAbsent === undefined
+      && !reply.properties.parentOwnerId && !reply.properties.rootOwnerId;
+  } },
+  { label: 'v14: the parsed report keeps its deleteConstraints (withdrawal only while pending)', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => JSON.stringify(parsed.schemas.report?.deleteConstraints) === '{"pending":{"absent":"status"}}' },
+  // A derived property reads through a reference the type fixes for good: frozen with a condition
+  // (a tombstone could re-point it) is refused, which is why no quote-owner window exists.
+  { label: 'v14: replyToReplyId frozen only while not tombstoned (parentOwnerRecent derives through it)', file: SOCIAL_V14, expect: 'wasm', why: /list "replyToReplyId" under `immutable` without a condition/i, mutate: (s) => {
+    const reply = types(s).reply;
+    reply.immutable = reply.immutable.map((e) => (e === 'replyToReplyId' ? { property: 'replyToReplyId', when: { absent: 'deleted' } } : e));
+  } },
+  { label: 'v14: rootPostId not frozen (rootOwnerRecent derives through it)', file: SOCIAL_V14, expect: 'wasm', why: /list "rootPostId" under `immutable` without a condition/i, mutate: (s) => { types(s).reply.immutable = types(s).reply.immutable.filter((e) => e !== 'rootPostId'); } },
+  { label: 'v14: a quote-owner window on post (quotedPostId is frozen only until a tombstone)', file: SOCIAL_V14, expect: 'wasm', why: /list "quotedPostId" under `immutable` without a condition/i, mutate: (s) => {
+    types(s).post.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { 'quotedPostId.$ownerId': 'asc' }], skipIfAbsent: ['quotedPostId.$ownerId'], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } });
+  } },
+  // A derived skip property must be able to be absent: rootPostId is required and every post has an owner.
+  { label: 'v14: rootOwnerRecent skipping on rootPostId.$ownerId (never absent)', file: SOCIAL_V14, expect: 'wasm', why: /never absent/i, mutate: (s) => { namedIndex(s, 'reply', 'rootOwnerRecent').skipIfAbsent = ['rootPostId.$ownerId']; } },
+  // Only the array form names a derived property: `true` skips on stored properties alone, and both are required or system.
+  { label: 'v14: parentOwnerRecent with skipIfAbsent: true (the boolean form skips on no derived property)', file: SOCIAL_V14, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { namedIndex(s, 'reply', 'parentOwnerRecent').skipIfAbsent = true; } },
+  { label: 'v14: deleteConstraints on the indexOnly like', file: SOCIAL_V14, expect: 'wasm', why: /deleteConstraints.{0,80}indexOnly/i, mutate: (s) => { types(s).like.deleteConstraints = { r: { absent: 'hashtag' } }; } },
+  { label: 'v14: deleteConstraints on post (canBeDeleted false: authors tombstone)', file: SOCIAL_V14, expect: 'wasm', why: /canBeDeleted: false/i, mutate: (s) => { types(s).post.deleteConstraints = { r: { present: 'deleted' } }; } },
+  { label: 'v14: a deleteConstraints rule reading a property report does not have', file: SOCIAL_V14, expect: 'wasm', why: /presence of "state"/i, mutate: (s) => { types(s).report.deleteConstraints.pending = { absent: 'state' }; } },
+  { label: 'v14: countPresent over a single path', file: SOCIAL_V14, expect: 'wasm', why: /two or more property paths/i, mutate: (s) => { types(s).report.propertyConstraints.oneTarget = { equal: [{ countPresent: ['postId'] }, 1] }; } },
+  { label: 'v14: countPresent naming $ownerId', file: SOCIAL_V14, expect: 'wasm', why: /presence of "\$ownerId"/i, mutate: (s) => { types(s).report.propertyConstraints.oneTarget = { equal: [{ countPresent: ['postId', '$ownerId'] }, 1] }; } },
+  { label: 'v14: countPresent repeating a path', file: SOCIAL_V14, expect: 'wasm', why: /repeats the path/i, mutate: (s) => { types(s).report.propertyConstraints.oneTarget = { equal: [{ countPresent: ['postId', 'postId'] }, 1] }; } },
+  // deleteConstraints are frozen like propertyConstraints (validate_schema_compatibility v1).
+  { label: 'v14 update: the report delete rule relaxed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { types(s).report.deleteConstraints.pending = { notEqual: ['status', 2] }; } },
+  { label: 'v14 update: the report delete rule removed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { delete types(s).report.deleteConstraints; } },
+
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only
   // (#5108), so v10's 3600 s windows are legal on a devnet.
@@ -836,6 +885,13 @@ const WHERE_CASES = [
   ['v13: a post report naming the post\'s author', SOCIAL_V13, 'report', 'postId', { targetOwnerId: 'alice' }, { $ownerId: 'alice' }, null],
   ['v13: a post report naming someone else as the author', SOCIAL_V13, 'report', 'postId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
   ['v13: a reply report naming someone else as the author', SOCIAL_V13, 'report', 'replyId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+  // v14 stores no owner on a reply: there is nothing left to forge, so the root reference binds
+  // nothing, and the windows read the owners off the referenced documents. A nested reply still
+  // stays in its parent's thread.
+  ['v14: a top-level reply names no owner (rootPostId binds nothing)', SOCIAL_V14, 'reply', 'rootPostId', {}, { $ownerId: 'alice' }, null],
+  ['v14: a nested reply in its parent\'s thread', SOCIAL_V14, 'reply', 'replyToReplyId', { rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, null],
+  ['v14: a nested reply crossing threads (its parent is in another thread)', SOCIAL_V14, 'reply', 'replyToReplyId', { rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, '40127'],
+  ['v14: a post report naming someone else as the author', SOCIAL_V14, 'report', 'postId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
 ];
 
 function runWhereCases({ loadContractSource, parseContract }) {

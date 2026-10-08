@@ -163,7 +163,7 @@ const RULES: readonly Rule[] = [
 const ENGINE_CODES: ReadonlySet<string> = new Set<EngineErrorCode>([
   'ABORTED', 'BAD_REQUEST', 'NOT_SUPPORTED', 'NOT_SIGNED_IN', 'NOT_RETRYABLE', 'ENGINE_RESTARTED', 'RESTART_REQUIRED',
   'PARENT_UNCONFIRMED', 'QUOTE_HAS_TEXT', 'PRIVATE_FEED_SYNC_REQUIRED', 'STILL_BLOCKED', 'REPORT_GONE',
-  'MEDIA_UNREADABLE',
+  'REPORT_RESOLVED', 'MEDIA_UNREADABLE',
 ])
 
 function isEngineCode(code: unknown): code is EngineErrorCode {

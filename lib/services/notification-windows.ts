@@ -5,7 +5,8 @@ import { queryDocuments, type QueryDocumentsOptions } from './sdk-helpers';
 
 /**
  * Reads of the v10 notification windows (`reply.parentOwnerRecent`,
- * `post.quotedPostOwnerRecent`; see `notificationWindowFor`).
+ * `post.quotedPostOwnerRecent`, and from v14 `reply.rootOwnerRecent`; see
+ * `notificationWindowFor`).
  *
  * The grid is non-overlapping 3.5-day windows kept for a week (`ttl` twice
  * the range), so the last week is two windows: the current one and the one
