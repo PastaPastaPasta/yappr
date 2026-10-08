@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '@/lib/logger'
 import toast from 'react-hot-toast'
 import { ChartBarIcon } from '@heroicons/react/24/outline'
@@ -12,8 +12,9 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { pollMissingMeansDeleted, pollrPollUrl } from '@/lib/poll-embed'
-import { POLLR_TOPOLOGY, pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants'
-import { canDeletePoll, choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
+import { pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants'
+import { isReferenceNotFoundError } from '@/lib/error-utils'
+import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
@@ -34,6 +35,9 @@ interface PollCardProps {
   nativeEmbed?: boolean
   className?: string
 }
+
+/** How long to wait before re-reading a poll Platform says is absent (v6, see the load). */
+const ABSENT_RECHECK_MS = 2500
 
 function percent(count: number, total: number): number {
   if (total <= 0) return 0
@@ -91,6 +95,9 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
   const [deletable, setDeletable] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // Set once this load's voter sends a ballot, so a ballot count read before
+  // it cannot bring the delete back.
+  const ballotSentRef = useRef(false)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
@@ -113,10 +120,17 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       setTally(null)
       setDeleted(false)
       setDeletable(false)
+      ballotSentRef.current = false
       try {
         const { pollrPollService, pollrVoteService } = await import('@/lib/services')
         // A failed read throws; null is Platform saying the poll does not exist.
-        const loadedPoll = await pollrPollService.fetchPoll(pollId)
+        let loadedPoll = await pollrPollService.fetchPoll(pollId)
+        if (!loadedPoll && !cancelled && pollMissingMeansDeleted(nativeEmbed)) {
+          // A node a block behind proves a just-published poll absent too, so
+          // ask again before saying it was deleted.
+          await new Promise((resolve) => setTimeout(resolve, ABSENT_RECHECK_MS))
+          if (!cancelled) loadedPoll = await pollrPollService.fetchPoll(pollId)
+        }
         if (cancelled) return
         if (!loadedPoll) {
           if (pollMissingMeansDeleted(nativeEmbed)) setDeleted(true)
@@ -153,14 +167,16 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
         }
 
         // v6: the owner may delete the poll until its first ballot. A tally with
-        // any selection already proves a ballot; otherwise count them all, since
-        // a withdrawn ballot leaves the tally but still keeps the poll. Not
-        // awaited: the poll shows while the count is read.
+        // any selection already proves a ballot, and a pending write of the
+        // owner's may be one; otherwise count them all, since a withdrawn ballot
+        // leaves the tally but still keeps the poll. Not awaited: the poll shows
+        // while the count is read, so a vote sent meanwhile must win over it.
         const selections = tallyResult.status === 'fulfilled' ? tallyResult.value.total : 0
-        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && selections === 0) {
+        const ownBallotPending = votesResult.status === 'fulfilled' && votesResult.value.pending
+        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && selections === 0 && !ownBallotPending) {
           pollrPollService.countBallots(loadedPoll.id)
             .then((ballots) => {
-              if (!cancelled) setDeletable(canDeletePoll(POLLR_TOPOLOGY, true, ballots))
+              if (!cancelled && !ballotSentRef.current) setDeletable(ballots === 0)
             })
             .catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
         }
@@ -280,6 +296,16 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       toast.error('This poll has closed')
     } else if (result.stale) {
       toast('Your vote changed elsewhere — showing the latest.', { icon: 'ℹ️' })
+    } else if (!result.success && pollrPollsDeletable() && isReferenceNotFoundError(result.error)) {
+      // v6: the owner deleted the poll after this card loaded. Re-read it
+      // rather than keep a ballot open that every retry would pay to fail.
+      const { pollrPollService } = await import('@/lib/services')
+      pollrPollService.clearCache(currentPoll.id)
+      toast('This poll was deleted.', { icon: 'ℹ️' })
+      stopEditing()
+      setRequested(null)
+      setReloadToken((token) => token + 1)
+      return
     } else if (!result.success) {
       toast.error(categorizeError(result.error))
       // Keep the ballot open on the wanted picks for a retry — including after a
@@ -312,6 +338,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     setSubmitting(true)
     // A ballot may land even if this submission reports a failure, and one
     // ballot keeps the poll for good: stop offering the delete either way.
+    ballotSentRef.current = true
     setDeletable(false)
     try {
       if (editable) {
@@ -394,6 +421,8 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
         setReloadToken((token) => token + 1)
       } else {
         toast.error(categorizeError(result.error))
+        // The delete may still have landed (a timed-out wait): re-read.
+        setReloadToken((token) => token + 1)
       }
     } catch (error) {
       logger.error('PollCard: failed to delete poll', error)
@@ -643,7 +672,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
             Sign in to vote
           </button>
         )}
-        {deletable && !submitting && (
+        {deletable && !submitting && !ballotPending && (
           <button
             onClick={() => setConfirmingDelete(true)}
             className="font-medium text-gray-500 hover:text-red-600 hover:underline"

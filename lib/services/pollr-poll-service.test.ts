@@ -128,6 +128,8 @@ describe('deleting a poll (v6)', () => {
     mocks.deleteDocument.mockResolvedValue({ success: true });
 
     expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'deleted' });
+    // Landed ballot replaces are released first, as before a create.
+    expect(mocks.settle).toHaveBeenCalledTimes(1);
     expect(mocks.count).toHaveBeenCalledWith(expect.objectContaining({ documentTypeName: 'vote', where: [['pollId', '==', 'poll-1']] }));
     expect(mocks.deleteDocument).toHaveBeenCalledWith(expect.any(String), 'poll', 'poll-1', OWNER);
   });

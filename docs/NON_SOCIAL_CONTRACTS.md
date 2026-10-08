@@ -483,20 +483,26 @@ final after. There is no pollr moderation.
 voted poll costs nothing to refuse; a ballot landing between the count and the
 delete comes back as 40147 and is reported the same way. `PollCard` offers
 "Delete poll" only to the signed-in owner, and only once the count reads 0 (a
-tally with any selection already proves a ballot; an unreadable count offers
-nothing), and stops offering it the moment the owner votes. Post embeds name
-the poll in their own fields, not through a reference, so a post outlives its
-poll: when `fetchPoll` proves a natively embedded poll absent on v6
-(`pollMissingMeansDeleted`), the card says "This poll was deleted." A failed
-read still says the poll could not be loaded. `categorizeError` words any
-other 40147 as "This can't be deleted anymore."
+tally with any selection already proves a ballot; an unreadable count, or a
+ballot write of the owner's still pending, offers nothing), and stops offering
+it the moment the owner votes, even if a count read before the vote comes back
+later. Post embeds name the poll in their own fields, not through a reference,
+so a post outlives its poll: when `fetchPoll` proves a natively embedded poll
+absent on v6 twice, 2.5 s apart (a node a block behind proves a just-published
+poll absent too; `pollMissingMeansDeleted`), the card says "This poll was
+deleted." A failed read still says the poll could not be loaded. A ballot sent
+to a poll deleted after the card loaded (40120) re-reads it instead of keeping
+the ballot open. `categorizeError` words any other 40147 as "This can't be
+deleted anymore."
 
 **Battery (`verify-pollr.mjs` p8).** A ballot delete is refused
 (`canBeDeleted: false`); deleting a poll with ballots is 40147; a fresh poll
-with no ballots (byPoll count 0) is deleted by its owner and a ballot on it
-after is 40120; a fresh poll with one ballot is 40147 and still reads back; a
-fresh poll whose only ballot was withdrawn leaves the tally empty, still counts
-1 on byPoll, and is 40147. `--self-test` pins the `noBallots` rule body.
+with no ballots (byPoll count 0) is refused to a stranger (40102), deleted by
+its owner, and a ballot on it after is 40120; a fresh poll with one ballot is
+40147 and still reads back; a fresh poll whose only ballot was withdrawn leaves
+the tally empty, still counts 1 on byPoll, and is 40147. `--self-test` pins the
+`noBallots` rule body, `poll.canBeDeleted`, the `deletableDocument` reference
+and `byPoll`.
 
 **Rules (`propertyConstraints`, 10422).** On `poll`: `optionCountMatches`
 (`optionCount == count(options)`), `endsAfterCreation` (`endsAt > $createdAt`)

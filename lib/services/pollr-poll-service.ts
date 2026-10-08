@@ -2,7 +2,6 @@ import { BaseDocumentService } from './document-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentCount } from './pagination-utils';
 import { settlePendingPollrReplaces } from './pollr-pending-writes';
-import { documentToPlainObject } from './sdk-helpers';
 import { stateTransitionService } from './state-transition-service';
 import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants';
 import { isDeleteConstraintError } from '@/lib/error-utils';
@@ -170,17 +169,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
    * its owner, which must never be shown for a read that merely failed.
    */
   async fetchPoll(pollId: string): Promise<Poll | null> {
-    const cached = this.cache.get(pollId);
-    if (cached !== undefined) return cached;
-    const sdk = await getEvoSdk();
-    const response = await sdk.documents.get(this.contractId, this.documentType, pollId);
-    if (!response) {
-      this.cache.delete(pollId);
-      return null;
-    }
-    const poll = this.transformDocument(documentToPlainObject(response));
-    this.cache.set(pollId, poll);
-    return poll;
+    return this.getOrThrow(pollId);
   }
 
   /**
@@ -205,14 +194,18 @@ class PollrPollService extends BaseDocumentService<Poll> {
    * reported the same way.
    */
   async deletePoll(poll: Poll, ownerId: string): Promise<DeletePollResult> {
-    if (!pollrPollsDeletable() || poll.ownerId !== ownerId) return { status: 'failed', error: 'This poll can\'t be deleted.' };
+    if (!pollrPollsDeletable() || poll.ownerId !== ownerId) return { status: 'failed' };
+    // A landed but unconfirmed ballot replace would otherwise hold this delete
+    // back until its reservation expires (as createPoll does). A no-op when
+    // nothing is pending.
+    await settlePendingPollrReplaces(ownerId);
     if ((await this.countBallots(poll.id)) > 0) return { status: 'voted' };
 
     const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, poll.id, ownerId);
-    if (result.success) {
-      this.cache.delete(poll.id);
-      return { status: 'deleted' };
-    }
+    // Even a reported failure may have landed (a timed-out wait), so the next
+    // read goes to Platform.
+    this.cache.delete(poll.id);
+    if (result.success) return { status: 'deleted' };
     if (isDeleteConstraintError(result.error)) return { status: 'voted' };
     return { status: 'failed', error: result.error };
   }

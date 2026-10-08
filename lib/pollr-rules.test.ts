@@ -3,7 +3,6 @@ import {
   POLL_DURATIONS,
   POLL_MAX_DURATION_MS,
   applyChoiceDelta,
-  canDeletePoll,
   charCount,
   choiceDelta,
   editorStart,
@@ -168,17 +167,5 @@ describe('choices and tallies', () => {
 describe('v6', () => {
   it('keeps v5’s poll limits', () => {
     expect(pollLimits('v6')).toEqual(v5)
-  })
-
-  it('lets only the owner delete a poll, and only while no ballot names it', () => {
-    expect(canDeletePoll('v6', true, 0)).toBe(true)
-    // A withdrawn ballot still counts: one ballot of any kind keeps the poll.
-    expect(canDeletePoll('v6', true, 1)).toBe(false)
-    expect(canDeletePoll('v6', false, 0)).toBe(false)
-    // An unknown count offers nothing.
-    expect(canDeletePoll('v6', true, null)).toBe(false)
-    // Before v6 a poll is permanent.
-    expect(canDeletePoll('v5', true, 0)).toBe(false)
-    expect(canDeletePoll('v3', true, 0)).toBe(false)
   })
 })

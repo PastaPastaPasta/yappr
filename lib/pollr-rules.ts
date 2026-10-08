@@ -119,19 +119,6 @@ export function pollEndsAtError(endsAt: number | undefined, limits: PollLimits, 
   return null
 }
 
-// ---- Deleting a poll (v6) -------------------------------------------------------
-
-/**
- * Whether a poll can still be deleted, by v6's `noBallots` rule: only its owner,
- * and only while no ballot names it. `ballotCount` counts every ballot,
- * withdrawn ones included (a withdrawal is a replace, not a delete), so a poll
- * anyone ever voted on stays for good. Null means the count is unknown, and
- * nothing is offered on a guess.
- */
-export function canDeletePoll(topology: PollrTopology, isOwner: boolean, ballotCount: number | null): boolean {
-  return topology === 'v6' && isOwner && ballotCount === 0
-}
-
 // ---- Ballots (v5) -------------------------------------------------------------
 
 /**
