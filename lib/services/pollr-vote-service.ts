@@ -9,6 +9,7 @@ import {
   settleBallotReplace,
   settlePendingPollrReplaces,
 } from './pollr-pending-writes';
+import { markPollHasBallots } from './pollr-known-ballots';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
@@ -104,31 +105,6 @@ export interface SetVoteResult {
   stale: boolean;
   /** Message from the first failure, if any. */
   error?: string;
-}
-
-/**
- * Whether a {@link PollrVoteService.setVote} outcome shows a ballot on the
- * poll, which on v6 keeps the poll permanent for good. Only a ballot shown on
- * chain counts. A vote refused before any write (held back, an unreadable
- * ballot read, a closed poll) or a write refused with no ballot left proves
- * nothing. So does an unconfirmed one, which may have timed out before it was
- * ever sent: a write that is really out keeps its reservation, so the next
- * load's ballot state reads pending and holds the delete back
- * ({@link ownBallotMayBePending}) until it lands and a count marks the poll.
- */
-export function voteLeftBallot(result: SetVoteResult, wanted: readonly number[]): boolean {
-  if (result.unconfirmed) return false;
-  if (result.choices && result.choices.length > 0) return true;
-  return result.success && wanted.length > 0;
-}
-
-/**
- * Whether what a poll card loaded proves a ballot names the poll: a tallied
- * selection, or the viewer's own recorded choice (read off their ballots,
- * which the tally's short cache can lag behind).
- */
-export function loadShowsBallot(tally: PollTally | null, ownChoices: readonly number[]): boolean {
-  return (tally?.total ?? 0) > 0 || ownChoices.length > 0;
 }
 
 /**
@@ -580,6 +556,12 @@ class PollrVoteService {
     const settleRecord = () => {
       if (replaceRecord) settleBallotReplace(ownerId, replaceRecord);
     };
+    // A create refused as a duplicate (40105) collided with this voter's ballot
+    // on this poll's [pollId, $ownerId, slot] index: proof one exists, even if
+    // a lagging node's re-read cannot show it yet.
+    const markIfDuplicate = (error: unknown) => {
+      if (write.kind === 'create' && isDuplicateVoteError(error)) markPollHasBallots(poll.id);
+    };
     try {
       const result =
         write.kind === 'create'
@@ -599,13 +581,18 @@ class PollrVoteService {
         // An unconfirmed create was broadcast but never seen on chain.
         if (result.confirmed === false) return { status: 'unconfirmed', error: 'The network has not confirmed your vote yet' };
         settleRecord();
+        // A confirmed ballot keeps the poll for good, whatever later writes in
+        // the same submission do (an unconfirmed one proves nothing).
+        markPollHasBallots(poll.id);
         return { status: 'ok' };
       }
       const error = result.error ?? 'Failed to record your vote';
       if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
+      markIfDuplicate(error);
       return isTimeoutError(error) ? { status: 'unconfirmed', error } : { status: 'refused', error };
     } catch (error) {
       if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
+      markIfDuplicate(error);
       return isTimeoutError(error)
         ? { status: 'unconfirmed', error: extractErrorMessage(error) }
         : { status: 'refused', error };
@@ -706,9 +693,13 @@ class PollrVoteService {
       orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']],
       limit: POLL_MAX_OPTIONS,
     });
-    return normalizeSDKResponse(response)
+    const ballots = normalizeSDKResponse(response)
       .map(toBallot)
       .filter((ballot): ballot is Ballot => ballot !== null);
+    // Any own ballot, withdrawn or unticked ones included, keeps the poll for
+    // good (v6 noBallots), even though it selects nothing.
+    if (ballots.length > 0) markPollHasBallots(poll.id);
+    return ballots;
   }
 
   /**
@@ -822,6 +813,8 @@ class PollrVoteService {
     // anyone can write ballots for options that don't exist; summing the real
     // ones ignores those and keeps percentages summing to 100.
     const total = sumCounts(counts.slice(0, size));
+    // A selection read off the chain is a ballot, which keeps the poll for good (v6).
+    if (total > 0) markPollHasBallots(poll.id);
 
     const tally: PollTally = { counts, total, readAt };
     if (closedAt !== null && !onTime) tally.lateIncluded = true;

@@ -487,12 +487,13 @@ tally with any selection already proves a ballot; an unreadable count, or a
 ballot write of the owner's still pending, offers nothing), and stops offering
 it the moment the owner votes, even if a count read before the vote comes back
 later. A poll once known to have a ballot is never offered again in the
-session (`pollrPollService.hasBallots`): a positive count, a 40147, a tallied
-selection, the owner's own recorded choice, or a vote of theirs that shows a
-ballot on chain (`voteLeftBallot`). A vote refused before any write, or left
-unconfirmed, proves nothing, so the next load counts again; a write that is
-really out keeps its reservation, which reads as a pending (or, if the read
-fails, unreadable) ballot state and holds the delete back
+session (`lib/services/pollr-known-ballots.ts`): the services record the
+evidence where they see it, as a positive count, a 40147, a tallied selection,
+any own ballot document read (a withdrawn one included), or a confirmed ballot
+write, even when a later write of the same vote fails. A vote refused before
+any write, or left unconfirmed, proves nothing, so the next load counts again;
+a write that is really out keeps its reservation, which reads as a pending
+(or, if the read fails, unreadable) ballot state and holds the delete back
 (`ownBallotMayBePending`). Ballots are permanent, and a lagging node can still
 count 0. Post embeds name the poll in their own fields, not through a reference,
 so a post outlives its poll: when `fetchPoll` proves a natively embedded poll

@@ -7,7 +7,7 @@ import type { Poll } from './pollr-poll-service';
 // refused or uncertain write is resolved. No network.
 const mocks = vi.hoisted(() => ({
   query: vi.fn(), count: vi.fn(), createDocument: vi.fn(), updateDocument: vi.fn(), settle: vi.fn(),
-  loadReservation: vi.fn(), contractNonce: vi.fn(), getDocument: vi.fn(),
+  loadReservation: vi.fn(), contractNonce: vi.fn(), getDocument: vi.fn(), deleteDocument: vi.fn(),
 }));
 vi.mock('./evo-sdk-service', () => ({
   getEvoSdk: async () => ({
@@ -22,7 +22,7 @@ vi.mock('./identity-nonce', async (load) => ({
   loadReservation: mocks.loadReservation,
 }));
 vi.mock('./state-transition-service', () => ({
-  stateTransitionService: { createDocument: mocks.createDocument, updateDocument: mocks.updateDocument },
+  stateTransitionService: { createDocument: mocks.createDocument, updateDocument: mocks.updateDocument, deleteDocument: mocks.deleteDocument },
 }));
 
 // The uncertain-replace record lives in localStorage; an in-memory one here.
@@ -508,29 +508,64 @@ describe('v5 ballots', () => {
 });
 
 describe('ballot evidence for the v6 delete', () => {
-  it('counts a vote as leaving a ballot only when one is shown on chain', async () => {
-    const { voteLeftBallot } = await import('./pollr-vote-service');
-    const base = { closed: false, stale: false };
-    expect(voteLeftBallot({ ...base, success: true, choices: [1] }, [1])).toBe(true);
-    // Unconfirmed may mean it was never sent; a write really out keeps its
-    // reservation, which the next load's pending ballot state honours instead.
-    expect(voteLeftBallot({ ...base, success: false, unconfirmed: true }, [1])).toBe(false);
-    // A refused write whose re-read still shows a ballot.
-    expect(voteLeftBallot({ ...base, success: false, choices: [0] }, [1])).toBe(true);
-    // Refused before any write (held back, an unreadable ballot read, a closed
-    // poll), or a refused write that left no ballot: the next load counts again.
-    expect(voteLeftBallot({ ...base, success: false, heldBack: true }, [1])).toBe(false);
-    expect(voteLeftBallot({ ...base, success: false, error: "Couldn't read your ballot: down" }, [1])).toBe(false);
-    expect(voteLeftBallot({ success: false, closed: true, stale: false, error: 'This poll has closed' }, [1])).toBe(false);
-    expect(voteLeftBallot({ ...base, success: false, choices: [] }, [1])).toBe(false);
+  const known = async () => (await import('./pollr-known-ballots')).pollHasKnownBallots(id(9));
+  const openPoll = (overrides: Partial<Poll> = {}) => poll({ endsAt: Date.now() + HOUR, ...overrides });
+
+  it('keeps a confirmed first ballot as evidence when a later write of the same vote times out', async () => {
+    const service = await loadService('v6');
+    mocks.createDocument
+      .mockResolvedValueOnce({ success: true, confirmed: true })
+      .mockResolvedValueOnce({ success: false, error: 'Request timed out after 8000ms' });
+
+    const result = await service.setVote(openPoll({ multiChoice: true }), [0, 1], VOTER);
+    expect(result.unconfirmed).toBe(true);
+    // The first create landed: the poll is permanent, whatever a lagging count says later.
+    expect(await known()).toBe(true);
   });
 
-  it('treats the owner’s own recorded choice as a ballot even when a cached tally is empty', async () => {
-    const { loadShowsBallot } = await import('./pollr-vote-service');
-    expect(loadShowsBallot({ counts: [0, 0, 0], total: 0 }, [1])).toBe(true);
-    expect(loadShowsBallot({ counts: [1, 0, 0], total: 1 }, [])).toBe(true);
-    expect(loadShowsBallot(null, [])).toBe(false);
-    expect(loadShowsBallot({ counts: [0, 0, 0], total: 0 }, [])).toBe(false);
+  it('takes a create refused as a duplicate (40105) as evidence, even when the re-read lags', async () => {
+    const service = await loadService('v6');
+    mocks.createDocument.mockResolvedValue({ success: false, error: 'Document X has duplicate unique properties ["pollId", "$ownerId", "slot"] with other documents' });
+    // The lagging node shows no ballot before or after.
+    mocks.query.mockResolvedValue(new Map());
+    expect((await service.setVote(openPoll(), [1], VOTER)).stale).toBe(true);
+    expect(await known()).toBe(true);
+  });
+
+  it('never takes an unconfirmed create or an optimistic tally as evidence', async () => {
+    const service = await loadService('v6');
+    mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
+    expect((await service.setVote(openPoll(), [1], VOTER)).unconfirmed).toBe(true);
+    // Folded in locally, then served from the cache: no chain read showed it.
+    service.applyOptimisticVotes(id(9), { counts: [0, 0, 0], total: 0, readAt: 1 }, [1]);
+    expect((await service.getTally(openPoll())).total).toBe(1);
+    expect(mocks.count).not.toHaveBeenCalled();
+    expect(await known()).toBe(false);
+  });
+
+  it('a ballot the vote service saw makes deletePoll answer voted with no count or write', async () => {
+    const service = await loadService('v6');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
+    await service.getBallotState(openPoll(), VOTER);
+    const { pollrPollService } = await import('./pollr-poll-service');
+    mocks.count.mockClear();
+    expect(await pollrPollService.deletePoll(openPoll({ ownerId: VOTER }), VOTER)).toEqual({ status: 'voted' });
+    expect(mocks.count).not.toHaveBeenCalled();
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('takes an own withdrawn ballot as evidence, though it selects nothing', async () => {
+    const service = await loadService('v6');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, null, 3)));
+    expect(await service.getBallotState(openPoll(), VOTER)).toEqual({ choices: [], pending: false });
+    expect(await known()).toBe(true);
+  });
+
+  it('takes a tallied selection as evidence', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map([['81', 1n]]));
+    await service.getTally(openPoll());
+    expect(await known()).toBe(true);
   });
 
   it('holds the delete back while the owner’s ballot state is pending or unreadable', async () => {
@@ -556,9 +591,9 @@ describe('ballot evidence for the v6 delete', () => {
     // The identity or nonce read timed out: nothing was signed, reserved or broadcast.
     mocks.createDocument.mockResolvedValue({ success: false, error: 'Request timed out after 8000ms' });
     const result = await service.setVote(open, [1], VOTER);
-    const { ownBallotMayBePending, voteLeftBallot } = await import('./pollr-vote-service');
+    const { ownBallotMayBePending } = await import('./pollr-vote-service');
     expect(result.unconfirmed).toBe(true);
-    expect(voteLeftBallot(result, [1])).toBe(false);
+    expect(await known()).toBe(false);
 
     // The next load: no reservation, no ballot, so eligibility is counted again.
     mocks.loadReservation.mockReturnValue(null);
@@ -572,9 +607,9 @@ describe('ballot evidence for the v6 delete', () => {
     const service = await loadService('v6');
     mocks.query.mockRejectedValue(new Error('down'));
     const result = await service.setVote(poll({ endsAt: Date.now() + HOUR }), [1], VOTER);
-    const { voteLeftBallot } = await import('./pollr-vote-service');
+    expect(result.success).toBe(false);
     expect(mocks.createDocument).not.toHaveBeenCalled();
-    expect(voteLeftBallot(result, [1])).toBe(false);
+    expect(await known()).toBe(false);
   });
 });
 
