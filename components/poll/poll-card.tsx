@@ -10,9 +10,10 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
-import { pollrPollUrl } from '@/lib/poll-embed'
-import { pollrIsV4, pollrIsV5 } from '@/lib/constants'
-import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
+import { ConfirmDialog } from '@/components/ui/confirm-dialog'
+import { pollMissingMeansDeleted, pollrPollUrl } from '@/lib/poll-embed'
+import { POLLR_TOPOLOGY, pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants'
+import { canDeletePoll, choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import { pollIsClosed, tallyIsFinal } from '@/lib/services/pollr-vote-service'
 
@@ -26,6 +27,11 @@ interface PollCardProps {
   postContent?: string
   /** Author of the embedding post, so a poll made by someone else can say so. */
   postAuthorId?: string
+  /**
+   * The post names this poll in its embed fields (not a legacy Pollr link), so
+   * a poll that no longer exists was deleted (see pollMissingMeansDeleted).
+   */
+  nativeEmbed?: boolean
   className?: string
 }
 
@@ -47,7 +53,7 @@ function stopPropagation(event: React.MouseEvent | React.KeyboardEvent) {
   event.stopPropagation()
 }
 
-export function PollCard({ pollId, postContent, postAuthorId, className }: PollCardProps) {
+export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = false, className }: PollCardProps) {
   const { user } = useAuth()
   const { openLoginPrompt } = useRequireAuth()
 
@@ -79,10 +85,16 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
   // confirmed. Only pre-fills the editor once the ballots settle (part of it
   // may never have been sent); it is never resent on its own.
   const [requested, setRequested] = useState<number[] | null>(null)
+  // v6: the poll no longer exists because its owner deleted it.
+  const [deleted, setDeleted] = useState(false)
+  // v6: the signed-in owner may still delete the poll (no ballot names it yet).
+  const [deletable, setDeletable] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const userId = user?.identityId ?? null
   // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
-  const editable = pollrIsV5()
+  const editable = pollrHasV5Ballots()
   // v4 (indexOnly ballots) is shown but not voted on.
   const votingSupported = !pollrIsV4()
 
@@ -99,12 +111,16 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
       setMyVotes([])
       setBallotPending(false)
       setTally(null)
+      setDeleted(false)
+      setDeletable(false)
       try {
         const { pollrPollService, pollrVoteService } = await import('@/lib/services')
-        const loadedPoll = await pollrPollService.getPoll(pollId)
+        // A failed read throws; null is Platform saying the poll does not exist.
+        const loadedPoll = await pollrPollService.fetchPoll(pollId)
         if (cancelled) return
         if (!loadedPoll) {
-          setLoadError(true)
+          if (pollMissingMeansDeleted(nativeEmbed)) setDeleted(true)
+          else setLoadError(true)
           return
         }
         setPoll(loadedPoll)
@@ -135,6 +151,19 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
           logger.error('PollCard: failed to load own votes', votesResult.reason)
           setVotesUnavailable(true)
         }
+
+        // v6: the owner may delete the poll until its first ballot. A tally with
+        // any selection already proves a ballot; otherwise count them all, since
+        // a withdrawn ballot leaves the tally but still keeps the poll. Not
+        // awaited: the poll shows while the count is read.
+        const selections = tallyResult.status === 'fulfilled' ? tallyResult.value.total : 0
+        if (pollrPollsDeletable() && userId === loadedPoll.ownerId && selections === 0) {
+          pollrPollService.countBallots(loadedPoll.id)
+            .then((ballots) => {
+              if (!cancelled) setDeletable(canDeletePoll(POLLR_TOPOLOGY, true, ballots))
+            })
+            .catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
+        }
       } catch (error) {
         logger.error('PollCard: failed to load poll', error)
         if (!cancelled) setLoadError(true)
@@ -148,7 +177,7 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     return () => {
       cancelled = true
     }
-  }, [pollId, userId, reloadToken])
+  }, [pollId, userId, reloadToken, nativeEmbed])
 
   /** Leave the ballot: drop any pending selection and close the edit detour. */
   const stopEditing = useCallback(() => {
@@ -281,6 +310,9 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     }
 
     setSubmitting(true)
+    // A ballot may land even if this submission reports a failure, and one
+    // ballot keeps the poll for good: stop offering the delete either way.
+    setDeletable(false)
     try {
       if (editable) {
         await submitSelection(poll, wanted, authedUser.identityId)
@@ -346,6 +378,32 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
     }
   }, [poll, selected, tally, user, editable, submitSelection, openLoginPrompt])
 
+  /** v6: the owner deletes the poll, which Platform allows only until its first ballot. */
+  const handleDelete = useCallback(async () => {
+    if (!poll || !userId) return
+    setDeleting(true)
+    try {
+      const { pollrPollService } = await import('@/lib/services')
+      const result = await pollrPollService.deletePoll(poll, userId)
+      if (result.status === 'deleted') {
+        setDeleted(true)
+        toast.success('Poll deleted')
+      } else if (result.status === 'voted') {
+        setDeletable(false)
+        toast.error('Someone has voted on this poll, so it can\'t be deleted anymore.')
+        setReloadToken((token) => token + 1)
+      } else {
+        toast.error(categorizeError(result.error))
+      }
+    } catch (error) {
+      logger.error('PollCard: failed to delete poll', error)
+      toast.error(categorizeError(error))
+    } finally {
+      setDeleting(false)
+      setConfirmingDelete(false)
+    }
+  }, [poll, userId])
+
   if (loading) {
     return (
       <div className={cn('mt-3 rounded-xl border border-gray-200 dark:border-gray-700 p-3 animate-pulse', className)}>
@@ -353,6 +411,17 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
         <div className="mt-3 space-y-2">
           <div className="h-8 w-full bg-gray-200 dark:bg-gray-700 rounded-lg" />
           <div className="h-8 w-full bg-gray-200 dark:bg-gray-700 rounded-lg" />
+        </div>
+      </div>
+    )
+  }
+
+  if (deleted) {
+    return (
+      <div className={cn('mt-3 rounded-xl border border-gray-200 dark:border-gray-700 p-3', className)}>
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <ChartBarIcon className="h-4 w-4" />
+          <span>This poll was deleted.</span>
         </div>
       </div>
     )
@@ -574,9 +643,29 @@ export function PollCard({ pollId, postContent, postAuthorId, className }: PollC
             Sign in to vote
           </button>
         )}
+        {deletable && !submitting && (
+          <button
+            onClick={() => setConfirmingDelete(true)}
+            className="font-medium text-gray-500 hover:text-red-600 hover:underline"
+          >
+            Delete poll
+          </button>
+        )}
       </div>
 
       <PollFooter pollId={poll.id} ownerId={foreignPollOwner} />
+
+      <ConfirmDialog
+        isOpen={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        onConfirm={() => {
+          handleDelete().catch((error) => logger.error('PollCard: failed to delete poll', error))
+        }}
+        title="Delete this poll?"
+        message="The post stays, but its poll is removed for everyone. A poll can only be deleted until someone votes."
+        confirmText="Delete poll"
+        isLoading={deleting}
+      />
     </div>
   )
 }

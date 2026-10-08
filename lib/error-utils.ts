@@ -682,6 +682,24 @@ export function isDocumentPropertyRuleError(error: unknown): boolean {
 }
 
 /**
+ * **40147** `DocumentDeleteConstraintViolatedError` (5.0.0-beta.3): the
+ * owner's delete of a document breaks a rule of its type's `deleteConstraints`,
+ * judged on the stored document (a poll that already has votes, say). Only the
+ * owner's delete is judged; moderators and a `ttl` delete as before. It is a
+ * state error, so it is paid, and retrying cannot help while the stored state
+ * holds. Message: 'Document <id> of type "<t>" can not be deleted: it breaks
+ * its deleteConstraints rule "<rule>": <why>'.
+ */
+export function isDeleteConstraintError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentdeleteconstraintviolated/i.test(msg) ||
+    /can not be deleted: it breaks its deleteconstraints rule/i.test(msg) ||
+    hasConsensusCode(error, [40147])
+  )
+}
+
+/**
  * The `propertyConstraints` rule a 10422 names ("breaks its
  * propertyConstraints rule "<rule>""), or null.
  */
@@ -1116,6 +1134,7 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
     isOncePerIdentityAlreadyClaimedError(error) ||
     isPropertyMaxBytesError(error) ||
     isDocumentPropertyRuleError(error) ||
+    isDeleteConstraintError(error) ||
     isReferenceRequirementError(error) ||
     isVoteChoiceNotAllowedError(error) ||
     isModerationNotYetSeatedError(error) ||
@@ -1151,6 +1170,10 @@ export function categorizeError(error: unknown): string {
   }
   if (isDocumentPropertyRuleError(error)) {
     return propertyRuleCopy(error) ?? 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
+  }
+  if (isDeleteConstraintError(error)) {
+    // Paid, like the 10422 above, so no "nothing was charged".
+    return 'This can\'t be deleted anymore.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'

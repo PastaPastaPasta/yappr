@@ -49,7 +49,7 @@ const poll = (overrides: Partial<Poll> = {}): Poll => ({
   ...overrides,
 });
 
-async function loadService(topology: 'v3' | 'v4' | 'v5') {
+async function loadService(topology: 'v3' | 'v4' | 'v5' | 'v6') {
   vi.stubEnv('NEXT_PUBLIC_POLLR_TOPOLOGY', topology);
   const { pollrVoteService } = await import('./pollr-vote-service');
   return pollrVoteService;
@@ -94,8 +94,9 @@ afterEach(() => {
 describe('v5 ballots', () => {
   const open = (overrides: Partial<Poll> = {}) => poll({ endsAt: Date.now() + HOUR, ...overrides });
 
-  it('creates a first single-choice ballot on slot 0, copying the poll’s bound fields', async () => {
-    const service = await loadService('v5');
+  // v6 keeps v5's ballots unchanged.
+  it.each(['v5', 'v6'] as const)('%s creates a first single-choice ballot on slot 0, copying the poll’s bound fields', async (topology) => {
+    const service = await loadService(topology);
     const target = open();
 
     expect(await service.setVote(target, [1], VOTER)).toEqual({ success: true, choices: [1], closed: false, stale: false });

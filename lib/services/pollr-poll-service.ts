@@ -1,6 +1,11 @@
 import { BaseDocumentService } from './document-service';
+import { getEvoSdk } from './evo-sdk-service';
+import { documentCount } from './pagination-utils';
 import { settlePendingPollrReplaces } from './pollr-pending-writes';
-import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrIsV5 } from '@/lib/constants';
+import { documentToPlainObject } from './sdk-helpers';
+import { stateTransitionService } from './state-transition-service';
+import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants';
+import { isDeleteConstraintError } from '@/lib/error-utils';
 import {
   POLL_MAX_OPTIONS,
   pollEndsAtError,
@@ -16,7 +21,8 @@ import {
  * v5 stores the choices as an `options` string array; v3/v4 as enumerated
  * `option0`..`option9` fields (option0/option1 required). This service reads
  * either into `options`. Poll documents are immutable and contain no
- * byte-array fields.
+ * byte-array fields. v6 keeps v5's poll, and lets its owner delete it until
+ * the first ballot (`deletePoll`).
  */
 export interface Poll {
   id: string;
@@ -130,7 +136,7 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // back until its reservation expires. A no-op when nothing is pending.
     await settlePendingPollrReplaces(ownerId);
 
-    if (pollrIsV5()) {
+    if (pollrHasV5Ballots()) {
       return this.create(ownerId, {
         question,
         options,
@@ -157,6 +163,65 @@ class PollrPollService extends BaseDocumentService<Poll> {
   async getPoll(pollId: string): Promise<Poll | null> {
     return this.get(pollId);
   }
+
+  /**
+   * Like {@link getPoll}, but only a poll Platform says does not exist reads as
+   * null: a failed read throws. On v6 a missing poll may have been deleted by
+   * its owner, which must never be shown for a read that merely failed.
+   */
+  async fetchPoll(pollId: string): Promise<Poll | null> {
+    const cached = this.cache.get(pollId);
+    if (cached !== undefined) return cached;
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.get(this.contractId, this.documentType, pollId);
+    if (!response) {
+      this.cache.delete(pollId);
+      return null;
+    }
+    const poll = this.transformDocument(documentToPlainObject(response));
+    this.cache.set(pollId, poll);
+    return poll;
+  }
+
+  /**
+   * Every ballot naming the poll, withdrawn ones included, off v6's countable
+   * `byPoll` index: what the poll's `noBallots` delete rule counts. Throws when
+   * the count cannot be read.
+   */
+  async countBallots(pollId: string): Promise<number> {
+    const sdk = await getEvoSdk();
+    return documentCount(sdk, {
+      dataContractId: POLLR_CONTRACT_ID,
+      documentTypeName: POLLR_DOCUMENT_TYPES.VOTE,
+      where: [['pollId', '==', pollId]],
+    });
+  }
+
+  /**
+   * Delete the owner's poll (v6), which consensus allows only until its first
+   * ballot. The ballots are counted first so a poll someone has voted on is
+   * refused without paying for a rejected delete; a ballot landing between that
+   * count and the delete is refused by consensus instead (40147, paid), and
+   * reported the same way.
+   */
+  async deletePoll(poll: Poll, ownerId: string): Promise<DeletePollResult> {
+    if (!pollrPollsDeletable() || poll.ownerId !== ownerId) return { status: 'failed', error: 'This poll can\'t be deleted.' };
+    if ((await this.countBallots(poll.id)) > 0) return { status: 'voted' };
+
+    const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, poll.id, ownerId);
+    if (result.success) {
+      this.cache.delete(poll.id);
+      return { status: 'deleted' };
+    }
+    if (isDeleteConstraintError(result.error)) return { status: 'voted' };
+    return { status: 'failed', error: result.error };
+  }
 }
+
+/** How a poll delete ended: `voted` = someone has voted, so the poll is permanent. */
+export type DeletePollResult =
+  | { status: 'deleted' }
+  | { status: 'voted' }
+  | { status: 'failed'; error?: string };
 
 export const pollrPollService = new PollrPollService();

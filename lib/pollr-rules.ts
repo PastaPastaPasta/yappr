@@ -4,7 +4,7 @@
  * ballot writes. No SDK, no network — the services and the poll editor call in.
  */
 
-export type PollrTopology = 'v3' | 'v4' | 'v5'
+export type PollrTopology = 'v3' | 'v4' | 'v5' | 'v6'
 
 export const POLL_MIN_OPTIONS = 2
 export const POLL_MAX_OPTIONS = 10
@@ -51,9 +51,9 @@ interface PollLimits {
   endsAtRequired: boolean
 }
 
-/** What each topology's `poll` schema accepts. */
+/** What each topology's `poll` schema accepts (v6 keeps v5's poll). */
 export function pollLimits(topology: PollrTopology): PollLimits {
-  if (topology === 'v5') {
+  if (topology === 'v5' || topology === 'v6') {
     return { questionMaxChars: 280, questionMaxBytes: 560, optionMaxChars: 80, optionMaxBytes: 160, uniqueOptions: true, endsAtRequired: true }
   }
   // v3/v4: option0..option9 strings, 1-100 characters, and a 512-character question.
@@ -117,6 +117,19 @@ export function pollEndsAtError(endsAt: number | undefined, limits: PollLimits, 
   if (!Number.isFinite(endsAt) || endsAt <= now) return 'A poll must close in the future'
   if (limits.endsAtRequired && endsAt - now > POLL_MAX_DURATION_MS) return 'A poll can stay open for at most 31 days'
   return null
+}
+
+// ---- Deleting a poll (v6) -------------------------------------------------------
+
+/**
+ * Whether a poll can still be deleted, by v6's `noBallots` rule: only its owner,
+ * and only while no ballot names it. `ballotCount` counts every ballot,
+ * withdrawn ones included (a withdrawal is a replace, not a delete), so a poll
+ * anyone ever voted on stays for good. Null means the count is unknown, and
+ * nothing is offered on a guess.
+ */
+export function canDeletePoll(topology: PollrTopology, isOwner: boolean, ballotCount: number | null): boolean {
+  return topology === 'v6' && isOwner && ballotCount === 0
 }
 
 // ---- Ballots (v5) -------------------------------------------------------------

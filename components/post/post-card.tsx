@@ -686,7 +686,7 @@ function PostCardView({
               />
             ) : null}
 
-            {!isTombstoned && embeddedPollId && !isPrivatePost(post) && <PollCard pollId={embeddedPollId} postContent={displayContent} postAuthorId={post.author.id} />}
+            {!isTombstoned && embeddedPollId && !isPrivatePost(post) && <PollCard pollId={embeddedPollId} postContent={displayContent} postAuthorId={post.author.id} nativeEmbed={nativePollId !== null} />}
 
             {!isTombstoned && quotedPostLoading && <EmbeddedPostSkeleton />}
             {!isTombstoned && quotedPostUnavailable && (quotedTarget && quotedTarget.where !== 'blogPost' && referencesMayDangle()

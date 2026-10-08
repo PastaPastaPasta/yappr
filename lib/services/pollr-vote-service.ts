@@ -14,7 +14,7 @@ import {
   POLLR_DOCUMENT_TYPES,
   pollrIsV3,
   pollrIsV4,
-  pollrIsV5,
+  pollrHasV5Ballots,
   pollrVoteDocType,
 } from '@/lib/constants';
 import {
@@ -302,7 +302,7 @@ class PollrVoteService {
   async castVote(poll: Poll, choices: number[], ownerId: string): Promise<CastVoteResult> {
     const selected = normalizeChoices(choices);
 
-    if (pollrIsV5()) return refused('v5 ballots are written with setVote', selected);
+    if (pollrHasV5Ballots()) return refused('v5 ballots are written with setVote', selected);
     if (pollrIsV4()) return refused('Voting is not available on this poll contract', selected);
 
     if (selected.length === 0) {
@@ -385,7 +385,7 @@ class PollrVoteService {
    * the next would only wait out the same pending transition.
    */
   async setVote(poll: Poll, wanted: number[], ownerId: string): Promise<SetVoteResult> {
-    if (!pollrIsV5()) return refusedSet('setVote is the v5 ballot path');
+    if (!pollrHasV5Ballots()) return refusedSet('setVote is the v5 ballot path');
 
     const choices = normalizeChoices(wanted, poll.optionCount);
     if (choices.length !== wanted.length) return refusedSet('That is not an option of this poll');
@@ -491,7 +491,7 @@ class PollrVoteService {
    * ballots themselves cannot be read, as {@link getMyVotes} does.
    */
   async getBallotState(poll: Poll, userId: string): Promise<BallotState> {
-    if (!pollrIsV5()) return { choices: await this.getMyVotes(poll, userId), pending: false };
+    if (!pollrHasV5Ballots()) return { choices: await this.getMyVotes(poll, userId), pending: false };
     // Past the close (and the margin for this clock against block time) no
     // ballot write can land, whatever is still reserved.
     if (pollIsClosed(poll, Date.now() - FINAL_TALLY_GRACE_MS)) {
@@ -687,7 +687,7 @@ class PollrVoteService {
    */
   async getMyVotes(poll: Poll, userId: string): Promise<number[]> {
     try {
-      if (pollrIsV5()) return recordedChoices(await this.getMyBallots(poll, userId));
+      if (pollrHasV5Ballots()) return recordedChoices(await this.getMyBallots(poll, userId));
 
       // One branch per topology/mode, each spelling its whole query: the three
       // clauses have to agree with one another and with the index being read.
@@ -1009,7 +1009,7 @@ function readAfterClose(poll: Poll, tally: PollTally): boolean {
  */
 export function tallyIsFinal(poll: Poll, tally: PollTally): boolean {
   if (!pollIsClosed(poll)) return false;
-  if (pollrIsV5()) return readAfterClose(poll, tally);
+  if (pollrHasV5Ballots()) return readAfterClose(poll, tally);
   return pollrIsV4() ? !tally.lateIncluded : Boolean(tally.cutoffVerified);
 }
 
@@ -1027,7 +1027,7 @@ function closedCutoff(poll: Poll): number | null {
 function cachedTallyUsable(poll: Poll, cached: PollTally): boolean {
   if (!pollIsClosed(poll)) return true;
   if (pollrIsV3()) return Boolean(cached.cutoffVerified || cached.lateIncluded);
-  if (pollrIsV5()) return readAfterClose(poll, cached);
+  if (pollrHasV5Ballots()) return readAfterClose(poll, cached);
   return true;
 }
 
