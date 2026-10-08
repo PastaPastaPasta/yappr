@@ -69,9 +69,9 @@ contract id is an input to every registration.
 `NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v6`, resolved in `lib/constants.ts`).
 **The file is storefront v6**, the 5.0.0-beta.2 mainnet-ready cut that also
 carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638). It is
-registered on sakura as `EDr9McRVsuRZ1J52crVkiESrJ2uKTasj2WNGuZvPZ6w8`
-and `/devnet` runs it since the 2026-10-07 cut-over
-([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
+registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk`
+(re-registered after the 2026-10-08 beta.3 wipe) and `/devnet` runs it
+([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
@@ -227,8 +227,8 @@ gated the other way rather than a loosened gate; `immutable` on
 `blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v7`, resolved
 in `lib/constants.ts` at call time so unit tests can stub it). **The file is
 blog v7**, the 5.0.0-beta.2 mainnet-ready cut, registered on sakura as
-`BQyfE9bqHPejKaHKbrZh4ZfRFgUZAa8AqPMPJmH13wq2`; `/devnet` runs it since the
-2026-10-07 cut-over ([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
+`4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` (re-registered after the
+2026-10-08 beta.3 wipe); `/devnet` runs it ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
