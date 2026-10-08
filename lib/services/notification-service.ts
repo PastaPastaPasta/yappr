@@ -432,8 +432,10 @@ class NotificationService {
 
   /**
    * Get replies to user's content since timestamp (for notification queries).
-   * Uses the parentOwnerAndTime index (v10: the parentOwnerRecent window) via
-   * replyService.getRepliesToMyContent()
+   * Uses the parentOwnerAndTime index (v10: the parentOwnerRecent window; v14:
+   * that window and rootOwnerRecent, each reply once) via
+   * replyService.getRepliesToMyContent(). "Replied to your post" or "your
+   * reply" follows from the reply's own linkage ({@link repliedToKind}).
    */
   async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     const { replyService } = await import('./reply-service');
@@ -997,8 +999,9 @@ class NotificationService {
    * v10: follows, mentions (post and reply) and follow requests stay permanent
    * and ride one bundle (four members). Replies and quotes/reposts are two
    * open windows each, and `timeRange` is refused in a composite, so each
-   * window is its own plain query, all in parallel: five requests a poll, plus
-   * a page per full window. Likes (like design C) are per recent target,
+   * window is its own plain query, all in parallel: five requests a poll (seven
+   * on v14, whose replies come from two windows of their own), plus a page per
+   * full window. Likes (like design C) are per recent target,
    * outside the bundle ({@link likeNotificationsPinTarget}): per kind one
    * composite plus one read (v11, v12: plus liker reads only when a count
    * moved, {@link getTimelessLikeNotifications}).

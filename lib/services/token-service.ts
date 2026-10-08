@@ -139,8 +139,10 @@ class TokenService {
    * `publicNote` is written verbatim into the token-history `transfer`
    * document and signed along with the amount and the recipient.
    *
-   * Refused without a broadcast where YAPP is locked (v10): the token is
-   * paused for good, and a transfer is the one transition the pause stops.
+   * Refused without a broadcast where YAPP is locked (v10 onwards): Yappr
+   * never sends YAPP. On v10–v13 the token is paused for good, so Drive would
+   * refuse the transfer anyway; v14's would land (beta.3 has no
+   * non-transferable flag), and Yappr deliberately offers none.
    */
   async transfer(
     senderId: string,

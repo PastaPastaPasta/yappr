@@ -3,18 +3,22 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import {
+  noteReplacedBallots,
   pollrBallotScope,
   pollrWriteMayStillExecute,
   recordBallotReplace,
   settleBallotReplace,
   settlePendingPollrReplaces,
 } from './pollr-pending-writes';
+import { markPollHasBallots, pollHasKnownBallots } from './pollr-known-ballots';
+import { pollrPollService } from './pollr-poll-service';
 import {
   POLLR_CONTRACT_ID,
   POLLR_DOCUMENT_TYPES,
   pollrIsV3,
   pollrIsV4,
-  pollrIsV5,
+  pollrHasV5Ballots,
+  pollrPollsDeletable,
   pollrVoteDocType,
 } from '@/lib/constants';
 import {
@@ -24,6 +28,7 @@ import {
   hasConsensusCode,
   isConsensusRefusal,
   isDocumentPropertyRuleError,
+  isReferenceNotFoundError,
   isTimeoutError,
 } from '@/lib/error-utils';
 import {
@@ -103,6 +108,17 @@ export interface SetVoteResult {
   stale: boolean;
   /** Message from the first failure, if any. */
   error?: string;
+}
+
+/**
+ * Whether a ballot write of the viewer's may still land, judging by the
+ * card's ballot-state read. An unreadable state fails closed: the read may
+ * have seen a pending create before failing, so it holds the v6 delete back
+ * (it proves no ballot, so nothing is marked for good, and the next load
+ * counts again).
+ */
+export function ownBallotMayBePending(read: PromiseSettledResult<BallotState>): boolean {
+  return read.status !== 'fulfilled' || read.value.pending;
 }
 
 /** A voter's ballots on one poll, as the single source of truth for the card. */
@@ -302,7 +318,7 @@ class PollrVoteService {
   async castVote(poll: Poll, choices: number[], ownerId: string): Promise<CastVoteResult> {
     const selected = normalizeChoices(choices);
 
-    if (pollrIsV5()) return refused('v5 ballots are written with setVote', selected);
+    if (pollrHasV5Ballots()) return refused('v5 ballots are written with setVote', selected);
     if (pollrIsV4()) return refused('Voting is not available on this poll contract', selected);
 
     if (selected.length === 0) {
@@ -385,7 +401,7 @@ class PollrVoteService {
    * the next would only wait out the same pending transition.
    */
   async setVote(poll: Poll, wanted: number[], ownerId: string): Promise<SetVoteResult> {
-    if (!pollrIsV5()) return refusedSet('setVote is the v5 ballot path');
+    if (!pollrHasV5Ballots()) return refusedSet('setVote is the v5 ballot path');
 
     const choices = normalizeChoices(wanted, poll.optionCount);
     if (choices.length !== wanted.length) return refusedSet('That is not an option of this poll');
@@ -441,6 +457,13 @@ class PollrVoteService {
         stale = true;
         break;
       }
+      // The poll is gone (v6: its owner deleted it after this voter loaded
+      // it), and every later write names the same poll: each would pay to fail.
+      // Its error wins over an earlier one, so the card sees the poll is gone.
+      if (isReferenceNotFoundError(error)) {
+        firstError = extractErrorMessage(error) || firstError;
+        break;
+      }
       // Nothing was sent: an earlier transition may still execute, and every
       // later write would wait on it and be held back the same way. On the
       // first write that transition belongs to another poll (this poll's were
@@ -483,6 +506,26 @@ class PollrVoteService {
   }
 
   /**
+   * v6: whether `userId` may be offered the delete of `poll` now. Only its
+   * owner, and never once the poll is known to have a ballot: ballots are
+   * permanent, and a lagging node can still count 0 (see pollr-known-ballots,
+   * which the reads here fill). A pending write of the owner's, or an
+   * unreadable ballot state that may hide one, holds it back; otherwise every
+   * ballot is counted. A vote that was never sent leaves nothing behind, so
+   * this offers the delete again. `ownState` reuses a ballot-state read the
+   * caller already has. Throws when the ballots cannot be counted.
+   */
+  async deleteEligible(poll: Poll, userId: string, ownState?: PromiseSettledResult<BallotState>): Promise<boolean> {
+    if (!pollrPollsDeletable() || userId !== poll.ownerId) return false;
+    noteReplacedBallots(userId);
+    if (pollHasKnownBallots(poll.id)) return false;
+    const state = ownState ?? (await Promise.allSettled([this.getBallotState(poll, userId)]))[0];
+    if (ownBallotMayBePending(state) || pollHasKnownBallots(poll.id)) return false;
+    const ballots = await pollrPollService.countBallots(poll.id);
+    return ballots === 0 && !pollHasKnownBallots(poll.id);
+  }
+
+  /**
    * The voter's ballots on this poll and whether they are settled — the one
    * place the card learns either. On v5 it first releases the replaces
    * Platform shows landed, then asks whether any earlier write to this poll's
@@ -491,7 +534,7 @@ class PollrVoteService {
    * ballots themselves cannot be read, as {@link getMyVotes} does.
    */
   async getBallotState(poll: Poll, userId: string): Promise<BallotState> {
-    if (!pollrIsV5()) return { choices: await this.getMyVotes(poll, userId), pending: false };
+    if (!pollrHasV5Ballots()) return { choices: await this.getMyVotes(poll, userId), pending: false };
     // Past the close (and the margin for this clock against block time) no
     // ballot write can land, whatever is still reserved.
     if (pollIsClosed(poll, Date.now() - FINAL_TALLY_GRACE_MS)) {
@@ -540,6 +583,12 @@ class PollrVoteService {
     const settleRecord = () => {
       if (replaceRecord) settleBallotReplace(ownerId, replaceRecord);
     };
+    // A create refused as a duplicate (40105) collided with this voter's ballot
+    // on this poll's [pollId, $ownerId, slot] index: proof one exists, even if
+    // a lagging node's re-read cannot show it yet.
+    const markIfDuplicate = (error: unknown) => {
+      if (write.kind === 'create' && isDuplicateVoteError(error)) markPollHasBallots(poll.id);
+    };
     try {
       const result =
         write.kind === 'create'
@@ -559,13 +608,18 @@ class PollrVoteService {
         // An unconfirmed create was broadcast but never seen on chain.
         if (result.confirmed === false) return { status: 'unconfirmed', error: 'The network has not confirmed your vote yet' };
         settleRecord();
+        // A confirmed ballot keeps the poll for good, whatever later writes in
+        // the same submission do (an unconfirmed one proves nothing).
+        markPollHasBallots(poll.id);
         return { status: 'ok' };
       }
       const error = result.error ?? 'Failed to record your vote';
       if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
+      markIfDuplicate(error);
       return isTimeoutError(error) ? { status: 'unconfirmed', error } : { status: 'refused', error };
     } catch (error) {
       if (isConsensusRefusal(error) || neverSent(error)) settleRecord();
+      markIfDuplicate(error);
       return isTimeoutError(error)
         ? { status: 'unconfirmed', error: extractErrorMessage(error) }
         : { status: 'refused', error };
@@ -666,9 +720,13 @@ class PollrVoteService {
       orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']],
       limit: POLL_MAX_OPTIONS,
     });
-    return normalizeSDKResponse(response)
+    const ballots = normalizeSDKResponse(response)
       .map(toBallot)
       .filter((ballot): ballot is Ballot => ballot !== null);
+    // Any own ballot, withdrawn or unticked ones included, keeps the poll for
+    // good (v6 noBallots), even though it selects nothing.
+    if (ballots.length > 0) markPollHasBallots(poll.id);
+    return ballots;
   }
 
   /**
@@ -687,7 +745,7 @@ class PollrVoteService {
    */
   async getMyVotes(poll: Poll, userId: string): Promise<number[]> {
     try {
-      if (pollrIsV5()) return recordedChoices(await this.getMyBallots(poll, userId));
+      if (pollrHasV5Ballots()) return recordedChoices(await this.getMyBallots(poll, userId));
 
       // One branch per topology/mode, each spelling its whole query: the three
       // clauses have to agree with one another and with the index being read.
@@ -782,6 +840,8 @@ class PollrVoteService {
     // anyone can write ballots for options that don't exist; summing the real
     // ones ignores those and keeps percentages summing to 100.
     const total = sumCounts(counts.slice(0, size));
+    // A selection read off the chain is a ballot, which keeps the poll for good (v6).
+    if (total > 0) markPollHasBallots(poll.id);
 
     const tally: PollTally = { counts, total, readAt };
     if (closedAt !== null && !onTime) tally.lateIncluded = true;
@@ -1009,7 +1069,7 @@ function readAfterClose(poll: Poll, tally: PollTally): boolean {
  */
 export function tallyIsFinal(poll: Poll, tally: PollTally): boolean {
   if (!pollIsClosed(poll)) return false;
-  if (pollrIsV5()) return readAfterClose(poll, tally);
+  if (pollrHasV5Ballots()) return readAfterClose(poll, tally);
   return pollrIsV4() ? !tally.lateIncluded : Boolean(tally.cutoffVerified);
 }
 
@@ -1027,7 +1087,7 @@ function closedCutoff(poll: Poll): number | null {
 function cachedTallyUsable(poll: Poll, cached: PollTally): boolean {
   if (!pollIsClosed(poll)) return true;
   if (pollrIsV3()) return Boolean(cached.cutoffVerified || cached.lateIncluded);
-  if (pollrIsV5()) return readAfterClose(poll, cached);
+  if (pollrHasV5Ballots()) return readAfterClose(poll, cached);
   return true;
 }
 

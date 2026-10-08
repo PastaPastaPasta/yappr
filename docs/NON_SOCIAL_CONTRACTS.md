@@ -69,9 +69,9 @@ contract id is an input to every registration.
 `NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v6`, resolved in `lib/constants.ts`).
 **The file is storefront v6**, the 5.0.0-beta.2 mainnet-ready cut that also
 carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638). It is
-registered on sakura as `EDr9McRVsuRZ1J52crVkiESrJ2uKTasj2WNGuZvPZ6w8`
-and `/devnet` runs it since the 2026-10-07 cut-over
-([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
+registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk`
+(re-registered after the 2026-10-08 beta.3 wipe) and `/devnet` runs it
+([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
@@ -227,8 +227,8 @@ gated the other way rather than a loosened gate; `immutable` on
 `blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v7`, resolved
 in `lib/constants.ts` at call time so unit tests can stub it). **The file is
 blog v7**, the 5.0.0-beta.2 mainnet-ready cut, registered on sakura as
-`BQyfE9bqHPejKaHKbrZh4ZfRFgUZAa8AqPMPJmH13wq2`; `/devnet` runs it since the
-2026-10-07 cut-over ([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
+`4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` (re-registered after the
+2026-10-08 beta.3 wipe); `/devnet` runs it ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
@@ -428,19 +428,103 @@ battery probes this and never fails on it.
 
 ## Polls (Pollr)
 
-`contracts/pollr-contract.json` is **pollr v5**: `poll` and one `vote` doctype.
-Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v5`. It replaces the v4 cut (indexOnly
-`vote`/`multiVote`, still registered on sakura as `7VB2hBnA…`; recover it from
-git history). Testnet runs v3 (`GBCR8Jqt…`, externally owned). Sakura runs v5
-as `BX94nj87AZ61KpU2Vqv4oPUu5N4b4YrKrvHvfB833Q3z` (2026-10-07, `/devnet`);
-`verify-pollr.mjs` passed 50/50 there ([SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md)).
+`contracts/pollr-contract.json` is **pollr v6**, the 5.0.0-beta.3 cut: `poll`
+and one `vote` doctype. Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v6`. v6 is v5
+plus the owner's delete before the first ballot (below). Sakura runs it as
+`Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` since the 2026-10-08 beta.3
+wipe (`/devnet`); `verify-pollr.mjs` passed 64/64 there, the `noBallots`
+delete refusals (40147) included ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
+v5 (`BX94nj87…` on the pre-wipe chain, [SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md))
+replaced the v4 cut (indexOnly `vote`/`multiVote`; recover both from git history). Testnet runs v3 (`GBCR8Jqt…`, externally owned).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `poll` | immutable, `canBeDeleted: false`, no moderation; `question` (1-280 chars, 560 B), `options[]` (2-10 unique, each 1-80 chars / 160 B), `optionCount`, `multiChoice`, `endsAt` (all required) | a fixed question, choices, mode and close time that every ballot copies |
-| `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId, slot]`; `pollId` → permanentDocument poll `where {optionCount: pollOptionCount, multiChoice: pollMultiChoice, endsAt: pollEndsAt}`; optional `choice`; unique `byPollVoter [pollId, $ownerId, slot]`; `byPollChoice [pollId, choice]` countable, `skipIfAbsent: [choice]` | one editable ballot per voter (single choice) or per voter and option (multi choice), tallied in O(1) per option |
+| `poll` | immutable, `canBeDeleted: true` with `deleteConstraints.noBallots`, no moderation; `question` (1-280 chars, 560 B), `options[]` (2-10 unique, each 1-80 chars / 160 B), `optionCount`, `multiChoice`, `endsAt` (all required) | a fixed question, choices, mode and close time that every ballot copies; its owner may delete it until the first ballot |
+| `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId, slot]`; `pollId` → deletableDocument poll `where {optionCount: pollOptionCount, multiChoice: pollMultiChoice, endsAt: pollEndsAt}`; optional `choice`; unique `byPollVoter [pollId, $ownerId, slot]`; `byPollChoice [pollId, choice]` countable, `skipIfAbsent: [choice]`; `byPoll [pollId]` countable | one editable ballot per voter (single choice) or per voter and option (multi choice), tallied in O(1) per option, and counted in O(1) per poll for `noBallots` |
 
 Ballots are free — no `tokenCost`.
+
+### What v6 changed (from v5)
+
+The product rule: a poll's owner may delete it only before the first vote, and
+after that it can never be deleted. Votes stay editable until the close and
+final after. There is no pollr moderation.
+
+```json
+"poll": { "canBeDeleted": true,
+  "deleteConstraints": { "noBallots": { "equal": [{ "countOf": ["vote", { "pollId": "$id" }] }, 0] } } },
+"vote.pollId.refersTo.type": "deletableDocument",
+"vote.indices": [ …, { "name": "byPoll", "properties": [{ "pollId": "asc" }], "countable": "countable" } ]
+```
+
+- **`noBallots`** is judged on the owner's delete only, against the stored
+  state. A broken rule is `DocumentDeleteConstraintViolatedError`, a paid
+  **40147**. Ballots are undeletable and a withdrawal is a replace that keeps
+  the document, so a withdrawn ballot still counts: once anyone votes, the poll
+  is permanent. A ballot earlier in the same block counts too.
+- **`byPoll`** is required: a `countOf` total needs a plain countable index
+  whose properties are exactly the filter's keys, and `byPollChoice`
+  (`[pollId, choice]`, skipping absent choices) is not one. Without it beta.3
+  refuses the contract ("no countable index … exactly those keys").
+- **`deletableDocument`**: a `permanentDocument` reference at a deletable type
+  parses in dpp but is refused at registration (40122). A ballot cast after the
+  delete is refused 40120 (the poll is not found); with `deletableDocument`
+  every ballot write re-reads the poll, a small processing cost.
+- **Size and fees.** 4,150 B serialized on the beta.3 validator (v5's schemas
+  are 3,897 B there; +146 B for the rules and index, the rest descriptions).
+  The extra index costs every ballot: the estimator says +13.9M credits on a
+  poll's first ballot and +8.8M on later ones, so about +6-10M live (≈0.4-0.6¢
+  at $60/DASH). Measure it on registration day.
+
+**Client (v6).** `pollrPollService.deletePoll(poll, me)` counts the ballots off
+`byPoll` first and refuses without a write (`voted`) if there are any, so a
+voted poll costs nothing to refuse; a ballot landing between the count and the
+delete comes back as 40147 and is reported the same way. `PollCard` offers
+"Delete poll" only to the signed-in owner, and only once the count reads 0 (a
+tally with any selection already proves a ballot; an unreadable count, or a
+ballot write of the owner's still pending, offers nothing), and stops offering
+it the moment the owner votes, even if a count read before the vote comes back
+later. A poll once known to have a ballot is never offered again
+(`lib/services/pollr-known-ballots.ts`, kept in localStorage, so no reload,
+card or tab resets it): the services record the
+evidence where they see it, as a positive count, a 40147, a tallied selection,
+any own ballot document read (a withdrawn one included), a stored ballot
+replace record (it targets a ballot read off the chain; recorded whenever the
+records are loaded, before any is pruned, and loaded by both delete paths, so a
+closed poll's records count too), or a confirmed ballot write,
+even when a later write of the same vote fails. `deletePoll` re-checks the set
+after its count, so evidence seen meanwhile still stops the write, and sends
+nothing (`pending`) while an own ballot write on the poll may still land. Its
+last check runs under the identity's write lock, once every earlier
+transition of the owner's has settled and before a nonce is reserved
+(`withSdkSignedWrite`'s `precondition`): no known ballot and a fresh count of
+0, with no own ballot write on the poll that may still land, so a vote queued
+ahead of the delete in another card or tab stops it. These guards spare the
+owner a paid refusal; consensus enforces `noBallots` whatever they say. The
+card asks `pollrVoteService.deleteEligible` afresh after every load and every
+submission, and only the latest answer applies, so a vote that was never sent
+gives the delete back. A vote refused before
+any write, or left unconfirmed, proves nothing, so the next load counts again;
+a write that is really out keeps its reservation, which reads as a pending
+(or, if the read fails, unreadable) ballot state and holds the delete back
+(`ownBallotMayBePending`). Ballots are permanent, and a lagging node can still
+count 0. Post embeds name the poll in their own fields, not through a reference,
+so a post outlives its poll: when `fetchPoll` proves a natively embedded poll
+absent on v6 twice, 2.5 s apart (a node a block behind proves a just-published
+poll absent too; `pollMissingMeansDeleted`), the card says "This poll was
+deleted." A failed read still says the poll could not be loaded. A ballot sent
+to a poll deleted after the card loaded (40120) re-reads it instead of keeping
+the ballot open. `categorizeError` words any other 40147 as "This can't be
+deleted anymore."
+
+**Battery (`verify-pollr.mjs` p8).** A ballot delete is refused
+(`canBeDeleted: false`); deleting a poll with ballots is 40147; a fresh poll
+with no ballots (byPoll count 0) is refused to a stranger (40102), deleted by
+its owner, and a ballot on it after is 40120; a fresh poll with one ballot is
+40147 and still reads back; a fresh poll whose only ballot was withdrawn leaves
+the tally empty, still counts 1 on byPoll, and is 40147. `--self-test` pins the
+`noBallots` rule body, `poll.canBeDeleted`, the `deletableDocument` reference
+and `byPoll`.
 
 **Rules (`propertyConstraints`, 10422).** On `poll`: `optionCountMatches`
 (`optionCount == count(options)`), `endsAfterCreation` (`endsAt > $createdAt`)
@@ -470,9 +554,10 @@ write's block time, so `writtenBeforeClose` refuses any write that lands after
 
 What the design could not do: a tally index can only be `preallocated` on an
 indexOnly type, and an indexOnly ballot has no stored row to replace, so the ballot trees are
-not preallocated (the first ballot on a poll pays for its branch). And a
-delete cannot be gated by a rule, so ballots are not deletable at all — a
-withdrawal is a replace.
+not preallocated (the first ballot on a poll pays for its branch). And before
+5.0.0-beta.3 a delete could not be gated by a rule, so ballots were made not
+deletable at all — a withdrawal is a replace. v6 keeps that: a ballot that
+could be deleted would let its voter free the poll for deletion again.
 
 ```js
 // Per-option tally (keys are hex of 0x80 + choice).
@@ -482,6 +567,8 @@ sdk.documents.count({ dataContractId, documentTypeName: 'vote',
 sdk.documents.query({ dataContractId, documentTypeName: 'vote',
   where: [['pollId', '==', P], ['$ownerId', '==', me]],
   orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']] })
+// v6: every ballot on a poll, withdrawn ones included (byPoll), as noBallots counts them.
+sdk.documents.count({ dataContractId, documentTypeName: 'vote', where: [['pollId', '==', P]] })
 ```
 
 **Client (`lib/services/pollr-vote-service.ts`, `lib/pollr-rules.ts`).**

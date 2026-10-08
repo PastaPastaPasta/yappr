@@ -11,7 +11,8 @@
  * - one report per reporter and target (the `ownerAndPost` / `ownerAndReply`
  *   unique indexes, 40105);
  * - "something else" must say what (`otherHasNote`, 10422);
- * - reports are immutable: the reporter withdraws one by deleting it. On v9
+ * - reports are immutable: the reporter withdraws one by deleting it (on v14
+ *   only while no moderator resolved it: `deleteConstraints`, 40147). On v9
  *   the moderators dismiss one by deleting it as moderators (a removal
  *   record); on v10 they resolve it instead, writing `status` and
  *   `resolution` with `moderatorChangeDocumentFields`, which stamps
@@ -23,8 +24,8 @@
  * A report is public: anyone can read who reported what, and why, and how the
  * moderators resolved it.
  */
-import { declaredActionFee, reportShape, type TargetKind } from './contract-topology'
-import { categorizeError, extractErrorMessage, hasConsensusCode, isReferenceNotFoundError } from './error-utils'
+import { declaredActionFee, reportShape, reportsWithdrawOnlyWhilePending, type TargetKind } from './contract-topology'
+import { categorizeError, extractErrorMessage, hasConsensusCode, isDeleteConstraintError, isReferenceNotFoundError } from './error-utils'
 import { normalizeBytes } from './bytes'
 import { identifierToBase58 } from './services/sdk-helpers'
 
@@ -143,9 +144,31 @@ export function isReportGoneError(error: unknown): boolean {
     hasConsensusCode(error, [40101])
 }
 
+/** Why a resolved report cannot be withdrawn (v14), said before or after a refused delete. */
+export const REPORT_RESOLVED_MESSAGE = 'The moderators have already resolved this report, so it can no longer be withdrawn. It expires 90 days after you filed it.'
+
+/**
+ * The withdrawal of a report a moderator already resolved (v14): refused by
+ * consensus with 40147 (the report type's `pending` delete rule, paid), or
+ * locally before anything was signed ({@link REPORT_RESOLVED_MESSAGE}).
+ */
+export function isReportResolvedError(error: unknown): boolean {
+  return isDeleteConstraintError(error) || extractErrorMessage(error) === REPORT_RESOLVED_MESSAGE
+}
+
+/**
+ * True when the reporter may still withdraw `report`: always, except on v14
+ * once a moderator resolved it (`status` set), when consensus refuses the
+ * delete with a paid 40147. A resolved report then stays until its ttl.
+ */
+export function reportCanBeWithdrawn(report: Pick<ReportRecord, 'status'>): boolean {
+  return report.status === null || !reportsWithdrawOnlyWhilePending()
+}
+
 /** What to tell a reporter whose withdrawal was refused. */
 export function withdrawFailureMessage(error: unknown): string {
   if (isReportGoneError(error)) return 'This report is already gone: the moderators dismissed it, or it was withdrawn elsewhere.'
+  if (isReportResolvedError(error)) return REPORT_RESOLVED_MESSAGE
   return categorizeError(error)
 }
 

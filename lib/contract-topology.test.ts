@@ -18,6 +18,7 @@ import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
+import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
@@ -26,13 +27,14 @@ type Schemas = Record<string, {
   immutableAllowSetting?: string[]
   required?: string[]
   retractedWhen?: unknown
-  indices?: Array<{ name: string; summableOffCountIndex?: string; preallocated?: boolean; skipIfAbsent?: boolean | string[]; unique?: boolean; rangeCountable?: boolean; rankedCountable?: boolean | { at: string | string[] }; properties: Array<Record<string, string>> }>
+  indices?: Array<{ name: string; summableOffCountIndex?: string; preallocated?: boolean; skipIfAbsent?: boolean | string[]; unique?: boolean; rangeCountable?: boolean; rankedCountable?: boolean | { at: string | string[] }; timeRange?: Record<string, unknown>; properties: Array<Record<string, string>> }>
   moderatorAbilities?: { delete?: boolean; deleteKeepsRecord?: boolean; changeFields?: string[] }
   dependentRequired?: Record<string, string[]>
   documentsMutable?: boolean
   canBeDeleted?: boolean
   tokenCost?: { create?: { amount: number } }
   actionFees?: Record<string, unknown>
+  deleteConstraints?: Record<string, unknown>
   properties: Record<string, {
     contentMediaType?: string
     maxLength?: number
@@ -50,6 +52,7 @@ const V10 = socialContractV10.documentSchemas as unknown as Schemas
 const V11 = socialContractV11.documentSchemas as unknown as Schemas
 const V12 = socialContractV12.documentSchemas as unknown as Schemas
 const V13 = socialContractV13.documentSchemas as unknown as Schemas
+const V14 = socialContractV14.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
@@ -65,14 +68,14 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
     const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
     expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
-    // /devnet runs sakura (5.0.0-beta.3), the v13 cut (registered on 5.0.0-beta.2, 2026-10-07).
-    expect(devnetTopology).toBe('v13')
+    // /devnet runs sakura, the v14 cut (5.0.0-beta.3, registered after the 2026-10-08 wipe).
+    expect(devnetTopology).toBe('v14')
   })
 
   it('resolves every declared topology to its own descriptor, and v2 when unset', async () => {
@@ -127,7 +130,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -225,7 +228,7 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
@@ -250,7 +253,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -657,6 +660,9 @@ describe('contract topology', () => {
         const m = await topologyModule(topology)
         expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([false, false])
       }
+      // v14 pays token costs in YAPP again, but YAPP is still never bought or sent.
+      const v14 = await topologyModule('v14')
+      expect([v14.yappIsPausedForGood(), v14.yappIsLocked()]).toEqual([false, true])
     })
 
     it('makes reposts quotes: no repost doctype, one quote or repost per author and target', async () => {
@@ -1094,6 +1100,106 @@ describe('contract topology', () => {
         }
       }
       expect(await read('v13')).toEqual(await read('v12'))
+    })
+  })
+
+  describe('v14 (5.0.0-beta.3)', () => {
+    it('stores no owner on a reply: no parentOwnerId, rootOwnerId or parentIsRoot, and a tombstone keeps root and parent', async () => {
+      for (const gone of ['parentOwnerId', 'rootOwnerId']) expect(V14.reply.properties[gone], gone).toBeUndefined()
+      expect(V14.reply.required).toEqual(['$createdAt', '$updatedAt', 'rootPostId'])
+      expect(V14.reply.propertyConstraints?.parentIsRoot).toBeUndefined()
+      expect(V14.reply.properties.rootPostId.refersTo).toEqual({ type: 'moderatedDocument', documentType: 'post' })
+      // A nested reply still stays in its parent's thread.
+      expect(V14.reply.properties.replyToReplyId.refersTo?.where).toEqual({ rootPostId: 'rootPostId' })
+      // The derived windows read through these two, so both are frozen without a condition.
+      const frozen = (V14.reply.immutable as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      expect(frozen).toEqual(['rootPostId', 'replyToReplyId'])
+      const v14 = await topologyModule('v14')
+      const { identifiers, scalars } = v14.tombstonePreservationFor('reply')
+      expect([...identifiers, ...scalars].sort()).toEqual([...frozen].sort())
+      expect([v14.replyOwnersAreDerived(), v14.repliesNameRootOwner()]).toEqual([true, false])
+      // Nothing to name, so nothing a client could get wrong.
+      expect(v14.replyOwnersProblem({ parentOwnerId: 'B' })).toBeNull()
+      for (const before of ['v2', 'v9', 'v10', 'v11', 'v12', 'v13']) expect((await topologyModule(before)).replyOwnersAreDerived(), before).toBe(false)
+    })
+
+    it('reads replies to me off two derived windows on the v13 grid: parent replies and whole threads', async () => {
+      const index = (name: string) => V14.reply.indices?.find((entry) => entry.name === name)
+      const keys = (name: string) => index(name)?.properties.map((entry) => Object.keys(entry)[0])
+      expect(keys('rootOwnerRecent')).toEqual(['$createdAt', 'rootPostId.$ownerId'])
+      expect(keys('parentOwnerRecent')).toEqual(['$createdAt', 'replyToReplyId.$ownerId'])
+      // A top-level reply has no parent reply: it is left out of parentOwnerRecent, never filed under nobody.
+      expect(index('parentOwnerRecent')?.skipIfAbsent).toEqual(['replyToReplyId.$ownerId'])
+      expect(index('rootOwnerRecent')?.skipIfAbsent).toBeUndefined()
+      const v13Window = V13.reply.indices?.find((entry) => entry.name === 'parentOwnerRecent')?.timeRange
+      for (const name of ['rootOwnerRecent', 'parentOwnerRecent']) expect(index(name)?.timeRange, name).toEqual(v13Window)
+
+      const halfWeek = { range: 302_400, step: 302_400 }
+      const v14 = await topologyModule('v14')
+      expect(v14.notificationWindowFor('reply')).toEqual({ docType: 'reply', index: 'parentOwnerRecent', recipientField: 'replyToReplyId.$ownerId', grid: halfWeek })
+      expect(v14.notificationWindowFor('threadReply')).toEqual({ docType: 'reply', index: 'rootOwnerRecent', recipientField: 'rootPostId.$ownerId', grid: halfWeek })
+      const v13 = await topologyModule('v13')
+      expect(v13.notificationWindowFor('reply')).toEqual({ docType: 'reply', index: 'parentOwnerRecent', recipientField: 'parentOwnerId', grid: halfWeek })
+      expect(v13.notificationWindowFor('threadReply')).toBeNull()
+      expect((await topologyModule('v2')).notificationWindowFor('threadReply')).toBeNull()
+    })
+
+    it('starts YAPP unpaused (beta.3 refuses payment in a paused token), so it pays token costs; it is still never bought or sent', async () => {
+      const [v13Token, v14Token] = [socialContractV13.tokens['0'], socialContractV14.tokens['0']]
+      expect([v13Token.startAsPaused, v14Token.startAsPaused]).toEqual([true, false])
+      expect({ ...v14Token, startAsPaused: true }).toEqual(v13Token)
+      // Nobody can ever pause it, or price it.
+      expect(v14Token.emergencyActionRules.authorizedToMakeChange.$type).toBe('noOne')
+      expect(v14Token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type).toBe('noOne')
+      const v14 = await topologyModule('v14')
+      expect([v14.yappIsPausedForGood(), v14.yappIsLocked()]).toEqual([false, true])
+      const v13 = await topologyModule('v13')
+      expect([v13.yappIsPausedForGood(), v13.yappIsLocked()]).toEqual([true, true])
+      const sponsored = { optional: true, gasFeesPaidBy: 2 }
+      for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1]] as const) {
+        expect(v14.tokenCostFor(docType), docType).toEqual({ amount, ...sponsored })
+      }
+      expect(v14.starterGrantAmount()).toBe(100n)
+    })
+
+    it('lets a reporter withdraw a report only while no moderator has resolved it', async () => {
+      expect(V14.report.deleteConstraints).toEqual({ pending: { absent: 'status' } })
+      expect(V13.report.deleteConstraints).toBeUndefined()
+      expect((await topologyModule('v14')).reportsWithdrawOnlyWhilePending()).toBe(true)
+      for (const before of ['v2', 'v9', 'v10', 'v13']) expect((await topologyModule(before)).reportsWithdrawOnlyWhilePending(), before).toBe(false)
+    })
+
+    it('keeps the v13 rule names, rewritten with countPresent', () => {
+      const names = (schemas: Schemas, docType: string) => Object.keys(schemas[docType].propertyConstraints ?? {}).sort()
+      expect(names(V14, 'post')).toEqual(names(V13, 'post'))
+      expect(names(V14, 'report')).toEqual(names(V13, 'report'))
+      expect(names(V14, 'reply')).toEqual(names(V13, 'reply').filter((rule) => rule !== 'parentIsRoot'))
+      expect(V14.report.propertyConstraints?.oneTarget).toEqual({ equal: [{ countPresent: ['postId', 'replyId', 'about'] }, 1] })
+      for (const docType of ['post', 'reply']) {
+        expect(V14[docType].propertyConstraints?.private, docType).toEqual({ in: [{ countPresent: ['encryptedContent', 'keyGeneration', 'nonce'] }, [0, 3]] })
+      }
+    })
+
+    it('keeps every v13 surface and rule but those', async () => {
+      const read = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return {
+          linkage: m.replyLinkage(),
+          post: [m.likeIndexFor('post'), m.repostIndexFor('post'), m.bookmarkIndexFor('post'), m.quoteFieldFor('post'), m.replyCountFieldFor('post'), m.tombstonePreservationFor('post')],
+          reply: [m.likeIndexFor('reply'), m.indexOnlyLikeShapeFor('reply'), m.quoteFieldFor('reply'), m.replyCountFieldFor('reply')],
+          rankings: (['posts', 'hashtags', 'creators'] as const).map((axis) => m.windowedRankingFor(axis)),
+          quotes: m.notificationWindowFor('quote'),
+          flags: [m.isV10(), m.isV11(), m.repostsAreQuotes(), m.mentionsAreInline(), m.notificationsAreWindowed(), m.reportsAreResolved(), m.likesAreIndexOnly(),
+            m.deletesAreTombstones(), m.tombstoneKeepsEmptyContent(), m.likeTreesArePreallocated(), m.authorDeletesLeaveHoles(), m.repliesOutliveTheirParent(), m.tombstonesAreHidden(),
+            m.likeNotificationsPinTarget(), m.likeNotificationsAreTimeless(), m.prefixRankingsAvailable(), m.barredAuthorsCanTombstone(), m.contractTakesReports(),
+            m.postsCarryLiveMarker(), m.mediaIsArrays(), m.mediaItemLimit(), m.profilesAreReportable()],
+          report: [m.reportShape(), m.declaredActionFee('report', 'create')],
+          fees: (['post', 'reply'] as const).map((docType) => m.declaredActionFee(docType, 'create')),
+          elected: m.electedModeration(),
+          settled: (['post', 'reply', 'report'] as const).map((docType) => [m.settledDeletionFor(docType), m.removalKeptFieldsFor(docType), m.moderatorDeleteWindowSeconds(docType)]),
+        }
+      }
+      expect(await read('v14')).toEqual(await read('v13'))
     })
   })
 })

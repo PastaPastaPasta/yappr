@@ -44,6 +44,7 @@ export const copy = {
     reportCopied: 'Report address copied. Send it from any email app.',
     reportWithdrawn: 'Report withdrawn',
     reportGone: 'This report was already closed.',
+    reportResolved: "The moderators already resolved this report, so it can't be withdrawn.",
     withdrawFailed: "Couldn't withdraw your report. Try again.",
   },
   blocked: {
@@ -77,6 +78,8 @@ export const copy = {
     sentBody: 'Thanks for letting us know.',
     alsoBlock: (handle: string) => `Also block ${handle}`,
     withdraw: 'Withdraw report',
+    /** v14: the network keeps a report once the moderators resolved it. */
+    resolvedKept: "A resolved report can't be withdrawn. It closes 90 days after you sent it.",
     withdrawing: 'Withdrawing…',
     withdrawTitle: 'Withdraw your report?',
     withdrawBody: 'The moderators will no longer see it.',

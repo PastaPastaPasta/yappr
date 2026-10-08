@@ -77,7 +77,7 @@ export interface Post {
   repostedByOthers?: number  // v10 feed: further reposters of the same target collapsed into this card
   // Reply fields (present when this Post object represents a Reply for display)
   parentId?: string        // ID of post or reply being replied to (only on replies)
-  parentOwnerId?: string   // Owner of parent (only on replies)
+  parentOwnerId?: string   // Owner of parent (only on replies; '' on v14, which stores none)
   rootPostId?: string      // v9 replies: the post the whole thread hangs off
   rootOwnerId?: string     // v13 replies: the root post's owner (consensus-bound)
   replyToReplyId?: string  // v9 replies: the reply this one is nested under
@@ -133,7 +133,7 @@ export interface Reply {
   bookmarked?: boolean
   media?: Media[]
   parentId: string        // ID of post or reply being replied to (v9: the direct one, derived)
-  parentOwnerId: string   // Owner of parent (for notifications)
+  parentOwnerId: string   // Owner of parent (for notifications; '' on v14, which stores none)
   rootPostId?: string     // v9: the post the whole thread hangs off (required on chain)
   rootOwnerId?: string    // v13: the root post's owner (required on chain, `where`-bound to it)
   replyToReplyId?: string // v9: the reply this one is nested under, if any

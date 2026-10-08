@@ -22,6 +22,7 @@ import {
   replyCountNeedsRoot,
   replyLinkage,
   replyOwnersProblem,
+  replyOwnersAreDerived,
   repliesNameRootOwner,
   threadRootIdOf,
   tombstonePreservationFor,
@@ -42,7 +43,11 @@ export interface ReplyTarget {
   rootPostId: string;
   /** Set when replying to a reply rather than to the root post (v9 only). */
   replyToReplyId?: string;
-  /** Owner of the DIRECT target — what notification queries key on. */
+  /**
+   * Owner of the DIRECT target — what notification queries key on. Not
+   * written on v14, where consensus reads it off the parent itself
+   * ({@link replyOwnersAreDerived}).
+   */
   parentOwnerId: string;
   /**
    * v13: the root post's owner, written as `rootOwnerId`. Consensus binds it
@@ -232,8 +237,9 @@ class ReplyService extends BaseDocumentService<Reply> {
       [rootField]: identifierStringToDocumentBytes(
         replyToReplyField ? target.rootPostId : target.replyToReplyId ?? target.rootPostId
       ),
-      parentOwnerId: identifierStringToDocumentBytes(target.parentOwnerId),
     };
+    // v14 stores no owner: its windows read them off the root and the parent.
+    if (!replyOwnersAreDerived()) data.parentOwnerId = identifierStringToDocumentBytes(target.parentOwnerId);
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
     }
@@ -398,6 +404,10 @@ class ReplyService extends BaseDocumentService<Reply> {
    * `parentOwnerRecent [$createdAt, parentOwnerId]` windows, read whole (paged)
    * and since-filtered client-side (see readNotificationWindow).
    *
+   * On v14 a reply names no owner, so the answer is two sources
+   * ({@link repliesToMeOnV14}): the nested replies to the user's replies, and
+   * the top-level replies of the user's threads.
+   *
    * Rejects when the read fails: an empty answer would let the notification
    * watermark move past the replies it missed.
    *
@@ -409,6 +419,8 @@ class ReplyService extends BaseDocumentService<Reply> {
     const sdk = await getEvoSdk();
 
     const sinceTimestamp = since?.getTime() || 0;
+
+    if (!preloaded && replyOwnersAreDerived()) return this.repliesToMeOnV14(userId, sinceTimestamp);
 
     const window = notificationWindowFor('reply');
     const response = preloaded ?? (window
@@ -429,6 +441,48 @@ class ReplyService extends BaseDocumentService<Reply> {
   }
 
   /**
+   * v14's replies to `userId`'s content since `since`, each once:
+   *
+   * - `parentOwnerRecent` (keyed by `replyToReplyId.$ownerId`): the nested
+   *   replies whose parent reply is the user's. Top-level replies are skipped
+   *   by the index, so all of these are "replied to your reply".
+   * - `rootOwnerRecent` (keyed by `rootPostId.$ownerId`): EVERY reply of the
+   *   user's threads, nested replies between other people included. Only the
+   *   top-level ones answer the user's post; a nested one is either already in
+   *   the first window (its parent is the user's) or not addressed to the user
+   *   at all, and is dropped.
+   *
+   * Consensus derives both keys from the referenced documents, so nothing here
+   * can be forged and no root needs re-reading. A failed read rejects.
+   *
+   * The root window holds every reply of the user's threads, so a busy thread
+   * fills it: each window read stops at `NOTIFICATION_WINDOW_MAX_PAGES` pages
+   * (notification-windows.ts), in id order, and past that top-level replies
+   * can be missed (docs/SOCIAL_V14.md).
+   */
+  private async repliesToMeOnV14(userId: string, since: number): Promise<Reply[]> {
+    const toMyReplies = notificationWindowFor('reply');
+    const inMyThreads = notificationWindowFor('threadReply');
+    if (!toMyReplies || !inMyThreads) throw new Error('v14 reads replies off rootOwnerRecent and parentOwnerRecent');
+    const [nested, thread] = await Promise.all([
+      readNotificationWindow(toMyReplies, userId, since),
+      readNotificationWindow(inMyThreads, userId, since),
+    ]);
+    const toMe = [
+      ...nested.map((doc) => this.transformDocument(doc)),
+      ...thread.map((doc) => this.transformDocument(doc)).filter((reply) => !reply.replyToReplyId),
+    ];
+    // The two sources cannot overlap (one holds only nested replies, the other
+    // keeps only top-level ones); the id check is a guard, not a merge.
+    const seen = new Set<string>();
+    return toMe.filter((reply) => {
+      if (seen.has(reply.id)) return false;
+      seen.add(reply.id);
+      return true;
+    });
+  }
+
+  /**
    * Drops replies that name `userId` as their parent's owner falsely. On v9 the
    * contract binds `parentOwnerId` to the parent reply's `$ownerId` only when
    * `replyToReplyId` is present; a DIRECT reply (to the thread root) is not
@@ -440,7 +494,7 @@ class ReplyService extends BaseDocumentService<Reply> {
    */
   private async withTrueParentOwner(userId: string, replies: Reply[]): Promise<Reply[]> {
     // v13 binds a direct reply's parentOwnerId to its root's owner (`parentIsRoot`).
-    if (!replyLinkage().replyToReply || repliesNameRootOwner()) return replies;
+    if (!replyLinkage().replyToReply || repliesNameRootOwner() || replyOwnersAreDerived()) return replies;
     const direct = replies.filter((reply) => !reply.replyToReplyId && reply.rootPostId);
     if (direct.length === 0) return replies;
     const { postService } = await import('./post-service');

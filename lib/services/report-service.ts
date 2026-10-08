@@ -1,8 +1,8 @@
 import { logger } from '@/lib/logger';
 import { extractErrorMessage } from '../error-utils';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { contractTakesReports, reportShape, reportsAreResolved, type TargetKind } from '../contract-topology';
-import { ABOUT_PROFILE, toReportRecord, type ReportRecord, type ReportTargetKind, type ReportView } from '../reports';
+import { contractTakesReports, reportShape, reportsAreResolved, reportsWithdrawOnlyWhilePending, type TargetKind } from '../contract-topology';
+import { ABOUT_PROFILE, REPORT_RESOLVED_MESSAGE, reportCanBeWithdrawn, toReportRecord, type ReportRecord, type ReportTargetKind, type ReportView } from '../reports';
 import { getEvoSdk } from './evo-sdk-service';
 import { queryRawDocuments } from './document-service';
 import { paginateFetchAll } from './pagination-utils';
@@ -151,9 +151,32 @@ class ReportService {
    * carries a 90-day \`ttl\`, so it refunds nothing, and a delete after it expired
    * (before the platform's cleanup reached it) still passes: only a replace or a
    * restore is refused (40140), and a report is never replaced.
+   *
+   * On v14 only an unresolved report can be withdrawn (the `pending` delete
+   * rule; a resolved one is refused with a PAID 40147). The report is read
+   * again first, since a moderator may have resolved it after the reporter's
+   * screen loaded, and a resolved one is refused here with
+   * {@link REPORT_RESOLVED_MESSAGE} before anything is signed. A report the
+   * read does not find goes on to the delete, which reports it gone (40101);
+   * only a node lagging behind a resolution it has not seen yet can still let
+   * a paid 40147 through.
    */
   async withdrawReport(reporterId: string, reportId: string): Promise<StateTransitionResult> {
     if (!contractTakesReports()) return { success: false, error: 'This contract takes no reports' };
+    if (reportsWithdrawOnlyWhilePending()) {
+      let stored: ReportRecord | undefined;
+      try {
+        stored = records(await queryRawDocuments({
+          dataContractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'report',
+          where: [['$id', '==', reportId]],
+          limit: 1,
+        }))[0];
+      } catch (error) {
+        return { success: false, error: extractErrorMessage(error) };
+      }
+      if (stored && !reportCanBeWithdrawn(stored)) return { success: false, error: REPORT_RESOLVED_MESSAGE };
+    }
     return stateTransitionService.deleteDocument(YAPPR_CONTRACT_ID, 'report', reportId, reporterId);
   }
 

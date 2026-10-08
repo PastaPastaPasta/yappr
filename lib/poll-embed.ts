@@ -7,7 +7,7 @@
  * Pollr web app in their text, so those are hydrated by pattern-matching the URL.
  */
 
-import { POLLR_APP_CONTRACT_ID, POLLR_APP_URL, POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES } from '@/lib/constants';
+import { POLLR_APP_CONTRACT_ID, POLLR_APP_URL, POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, pollrPollsDeletable } from '@/lib/constants';
 import { identifierToBase58 } from '@/lib/services/sdk-helpers';
 import type { Post } from '@/lib/types';
 
@@ -53,6 +53,17 @@ export function getEmbeddedPollId(post: Post): string | null {
   if (post.embedDocType !== POLLR_DOCUMENT_TYPES.POLL) return null;
   if (post.embedContractId !== POLLR_CONTRACT_ID) return null;
   return post.embedId || null;
+}
+
+/**
+ * Whether a poll Platform says does not exist was deleted, rather than one this
+ * client cannot see. Only v6 lets an owner delete a poll (before its first
+ * ballot). A native embed names a poll in the configured contract, so there it
+ * is gone; a legacy Pollr link names one in the standalone app's contract,
+ * which is only this one's when the two are the same.
+ */
+export function pollMissingMeansDeleted(nativeEmbed: boolean): boolean {
+  return pollrPollsDeletable() && (nativeEmbed || POLLR_CONTRACT_ID === POLLR_APP_CONTRACT_ID);
 }
 
 /**

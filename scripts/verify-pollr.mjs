@@ -1,10 +1,16 @@
 /**
- * Registration-day battery for the **Pollr v5 contract**
+ * Registration-day battery for the **Pollr v6 contract**
  * (`contracts/pollr-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run live on a
  * devnet. Actors are seed-ledger personas: a CREATOR (who owns the polls) and two
  * VOTERS. Ballots are free.
  *
- * v5 has ONE stored, mutable, undeletable ballot doctype, `vote`: a single-choice
+ * v6 is v5 plus the owner's delete of a poll until its first ballot: the poll's
+ * `noBallots` deleteConstraints rule counts every ballot naming it (withdrawn
+ * ones included) off `vote.byPoll`, and a delete that breaks it is a paid 40147.
+ * Ballots refer to the poll as a deletableDocument, so one cast after the delete
+ * is a 40120 (p8).
+ *
+ * It has ONE stored, mutable, undeletable ballot doctype, `vote`: a single-choice
  * voter holds one ballot (slot 0) whose `choice` changes or is dropped (withdrawn);
  * a multi-choice voter holds one ballot per option (slot = option), ticked
  * (choice = slot) or unticked (choice dropped). `pollId` binds the copied
@@ -21,9 +27,10 @@
  * and p9 waits out to prove the close rule live.
  */
 import {
-  DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
-  decodeIntGroupKey, ghostIdentity, id32, normalizeId, runBattery, selfTest,
+  DELETE_CONSTRAINT, DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
+  decodeIntGroupKey, ghostIdentity, id32, normalizeId, reportSelfTest, runBattery, selfTest,
 } from './battery-lib.mjs';
+import { readFileSync } from 'node:fs';
 import { buildDocument, sleep } from './seed/seed-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
@@ -33,6 +40,8 @@ const CONTRACT_FILE = 'pollr-contract.json';
 const OPTIONS = ['alpha', 'bravo', 'charlie'];
 const ALL_CHOICES = OPTIONS.map((_, index) => index);
 const DAY_MS = 86_400_000;
+/** DocumentOwnerIdMismatchError: a delete signed by someone other than the document's owner. */
+const OWNER_MISMATCH = /\b40102\b|mismatch with existing/i;
 /** InvalidDocumentRevisionError: a replace built on a revision that is no longer current. */
 const STALE_REVISION = /\b40106\b|has invalid revision/i;
 /** p9 waits this long past the close, so the block time stamped into $updatedAt is past it too. */
@@ -239,11 +248,49 @@ async function caseP7StaleRevision(ctx) {
   ctx.expectedSingle = new Map([[0, 1], [2, 1]]);
 }
 
-async function caseP8NoDeletes(ctx) {
+/** A fresh single-choice poll for one delete case, open for a day. */
+async function deleteFixture(ctx, key, label) {
+  const endsAt = Date.now() + DAY_MS;
+  const created = await ctx.battery.probeCreate(`${key} fixture poll created`, null, ctx.creator, 'poll', pollData({ question: `${label} ${ctx.run}?`, multiChoice: false, endsAt }));
+  if (!created.ok) throw new Error(`the ${key} fixture poll is unavailable`);
+  return { id: created.id, multiChoice: false, endsAt };
+}
+
+/** Every ballot on a poll, withdrawn ones included: the byPoll count the noBallots rule reads. */
+const ballotCount = (ctx, pollId) => ctx.battery.countBy('vote', [['pollId', '==', pollId]]);
+
+async function caseP8Deletes(ctx) {
   const { battery, creator, voter } = ctx;
-  console.log('\n--- p8. nothing deletes: a ballot is withdrawn, never removed; a poll is permanent ---');
+  console.log('\n--- p8. deletes: never a ballot; a poll only by its owner, until its first ballot (40147 noBallots) ---');
   await battery.probeDelete('p8a deleting a ballot is rejected (canBeDeleted:false)', DELETE_FORBIDDEN, voter, 'vote', idOf(ctx, 'S/voter'));
-  await battery.probeDelete('p8b deleting a poll is rejected (canBeDeleted:false)', DELETE_FORBIDDEN, creator, 'poll', ctx.pollZ.id);
+  await battery.probeDelete('p8b deleting a poll with ballots (pollS) is rejected (40147 noBallots)', DELETE_CONSTRAINT, creator, 'poll', ctx.pollS.id);
+
+  // No ballot: only the owner deletes it, and then a ballot can no longer name it.
+  const empty = await deleteFixture(ctx, 'p8c', 'Deleted');
+  battery.check('p8c a poll nobody voted on has no ballots (byPoll count 0)', (await ballotCount(ctx, empty.id)) === 0);
+  await battery.probeDelete('p8d a stranger deleting it is rejected (40102)', OWNER_MISMATCH, voter, 'poll', empty.id);
+  const removed = await battery.probeDelete('p8e the owner deletes a poll with no ballots', null, creator, 'poll', empty.id);
+  if (removed.ok) await probeBallot(ctx, 'p8f a ballot on the deleted poll is rejected (40120)', REFERENCE_NOT_FOUND, voter, ballotData(empty, 0, 0));
+
+  // One ballot: permanent.
+  const voted = await deleteFixture(ctx, 'p8g', 'Voted');
+  const cast = await probeBallot(ctx, 'p8g a ballot on the fresh poll is accepted', null, voter, ballotData(voted, 0, 1), 'V/voter');
+  if (cast.ok) {
+    await battery.probeDelete('p8h deleting it after one ballot is rejected (40147 noBallots)', DELETE_CONSTRAINT, creator, 'poll', voted.id);
+    battery.check('p8i the poll still reads back after the refused delete', (await battery.fetchDocument('poll', voted.id)) !== null);
+  }
+
+  // One withdrawn ballot: it leaves the tally but still counts for noBallots.
+  const withdrawn = await deleteFixture(ctx, 'p8j', 'Withdrawn');
+  const first = await probeBallot(ctx, 'p8j a ballot on the fresh poll is accepted', null, voter, ballotData(withdrawn, 0, 2), 'W/voter');
+  const pulled = first.ok && (await probeEdit(ctx, 'p8k withdrawing it (replace without choice) is accepted', null, voter, 'W/voter', ballotData(withdrawn, 0, undefined))).ok;
+  if (pulled) {
+    const tally = await tallyOf(ctx, withdrawn.id);
+    const ballots = await ballotCount(ctx, withdrawn.id);
+    battery.check('p8l the withdrawn ballot leaves the tally but byPoll still counts it', tally.size === 0 && ballots === 1, `tally=${showTally(tally)} ballots=${ballots}`);
+    await battery.probeDelete('p8m deleting a poll whose only ballot is withdrawn is rejected (40147 noBallots)', DELETE_CONSTRAINT, creator, 'poll', withdrawn.id);
+  }
+  battery.workingShapes.push({ label: 'ballots on a poll, withdrawn included (byPoll count)', shape: { documentTypeName: 'vote', where: [['pollId', '==', '<pollId>']] } });
 }
 
 async function caseP9CloseRule(ctx) {
@@ -286,7 +333,7 @@ async function caseP10PropertyConstraints(ctx) {
 
 const CASES = new Map([
   ['p1', caseP1Fixtures], ['p2', caseP2References], ['p3', caseP3SingleChoice], ['p4', caseP4MultiChoice],
-  ['p5', caseP5Tallies], ['p6', caseP6MyBallots], ['p7', caseP7StaleRevision], ['p8', caseP8NoDeletes],
+  ['p5', caseP5Tallies], ['p6', caseP6MyBallots], ['p7', caseP7StaleRevision], ['p8', caseP8Deletes],
   ['p9', caseP9CloseRule], ['p10', caseP10PropertyConstraints],
 ]);
 
@@ -302,14 +349,30 @@ await runBattery({
     }
   },
   // p2: the copied poll fields. p3i/p4g: the frozen ballot fields. p3j/p4f/p9/p10: the rules.
-  selfTest: () => selfTest(CONTRACT_FILE, {
-    poll: { constraints: DECLARED_RULES[CONTRACT_FILE].poll },
-    vote: {
-      where: { pollId: { optionCount: 'pollOptionCount', multiChoice: 'pollMultiChoice', endsAt: 'pollEndsAt' } },
-      immutable: ['pollId', 'slot'],
-      constraints: DECLARED_RULES[CONTRACT_FILE].vote,
-    },
-  }),
+  // p8: the poll's delete rule.
+  selfTest: () => {
+    const declared = selfTest(CONTRACT_FILE, {
+      poll: {
+        constraints: DECLARED_RULES[CONTRACT_FILE].poll,
+        deleteConstraints: { noBallots: { equal: [{ countOf: ['vote', { pollId: '$id' }] }, 0] } },
+      },
+      vote: {
+        where: { pollId: { optionCount: 'pollOptionCount', multiChoice: 'pollMultiChoice', endsAt: 'pollEndsAt' } },
+        immutable: ['pollId', 'slot'],
+        constraints: DECLARED_RULES[CONTRACT_FILE].vote,
+      },
+    });
+    // What else p8 relies on: the poll is deletable at all, ballots may refer to
+    // a deletable poll, and noBallots has its plain countable index to count off.
+    const { poll, vote } = JSON.parse(readFileSync(new URL(`../contracts/${CONTRACT_FILE}`, import.meta.url), 'utf8')).documentSchemas;
+    const byPoll = vote.indices.find((index) => index.name === 'byPoll');
+    const shape = reportSelfTest(`contracts/${CONTRACT_FILE} (v6 delete shape)`, [
+      ['poll.canBeDeleted is true', poll.canBeDeleted === true],
+      ['vote.pollId is a deletableDocument reference', vote.properties.pollId.refersTo?.type === 'deletableDocument'],
+      ['vote.byPoll is a plain countable [pollId] index', JSON.stringify(byPoll?.properties) === '[{"pollId":"asc"}]' && byPoll?.countable === 'countable' && !byPoll?.unique],
+    ]);
+    return declared || shape;
+  },
   setup: () => ({ ids: new Map(), expectedSingle: new Map(), expectedMulti: new Map() }),
   summary: (ctx) => `pollS=${ctx.pollS?.id} pollM=${ctx.pollM?.id} pollZ=${ctx.pollZ?.id} pollC=${ctx.pollC?.id}`,
 });

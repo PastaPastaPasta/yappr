@@ -283,14 +283,22 @@ export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'G
 // client no longer carries. `v5` (contracts/pollr-contract.json,
 // docs/NON_SOCIAL_CONTRACTS.md) stores `options[]`, requires a close time
 // within 31 days, and keeps one mutable `vote` doctype whose ballots stay
-// editable until the poll closes and are final after. The ballot shapes are
-// incompatible, so the switch must match the deployed contract.
-const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v5']
+// editable until the poll closes and are final after. `v6` (5.0.0-beta.3) is
+// v5 plus the owner's delete of a poll before its first ballot (the poll's
+// `noBallots` deleteConstraints rule; withdrawn ballots count, so after the
+// first vote a poll is permanent). The ballot shapes are incompatible, so the
+// switch must match the deployed contract.
+const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v5', 'v6']
 export const POLLR_TOPOLOGY: PollrTopology =
   POLLR_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_POLLR_TOPOLOGY) ?? 'v3'
 export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
-export const pollrIsV5 = () => POLLR_TOPOLOGY === 'v5'
+/** v5 and v6 share the poll shape and the editable `vote` ballots. */
+export const pollrHasV5Ballots = () => POLLR_TOPOLOGY === 'v5' || POLLR_TOPOLOGY === 'v6'
+/** v6: a poll's owner may delete it until its first ballot. */
+export const pollrPollsDeletable = () => POLLR_TOPOLOGY === 'v6'
+/** False when the deployment blanks NEXT_PUBLIC_POLLR_CONTRACT_ID: polls are off (no embeds read, no polls created). */
+export const pollrIsConfigured = () => POLLR_CONTRACT_ID !== ''
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
@@ -316,7 +324,7 @@ export const POLLR_DOCUMENT_TYPES = {
 
 /** The doctype holding a poll's ballots: by its `multiChoice` flag before v5, always `vote` on v5. */
 export function pollrVoteDocType(multiChoice: boolean): string {
-  return multiChoice && !pollrIsV5() ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
+  return multiChoice && !pollrHasV5Ballots() ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
 }
 
 // App URL (custom domain on GitHub Pages)
@@ -412,6 +420,14 @@ export function keyNetwork(): KeyNetwork {
 // `ownerAndTime`, mainnet election windows, and `block`/`blockFilter`/
 // `blockFollow` moved to the blocks contract (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`).
 //
+// `v14` — the 5.0.0-beta.3 re-cut, `contracts/yappr-social-contract-v14.json`
+// (docs/SOCIAL_V14.md). v13 with the rules rewritten in `countPresent`, reports
+// withdrawable only while no moderator resolved them (`deleteConstraints`,
+// 40147), replies that store no owner (`rootOwnerRecent` and
+// `parentOwnerRecent` read `rootPostId.$ownerId` / `replyToReplyId.$ownerId`
+// off the referenced documents), and a YAPP that starts unpaused, so the
+// optional YAPP token costs can be paid again under beta.3.
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -419,7 +435,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

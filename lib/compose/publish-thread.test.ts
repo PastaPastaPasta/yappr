@@ -287,4 +287,12 @@ describe('publishThread on v13: every reply names its thread root\'s owner', () 
     await publish({ ...base, posts: [{ threadPostId: 'draft-1', content: 'root' }, { threadPostId: 'draft-2', content: 'second' }] })
     expect(services.createReply.mock.calls[0][2]).toEqual({ rootPostId: 'new-root', replyToReplyId: undefined, parentOwnerId: 'author', rootOwnerId: 'author' })
   })
+
+  it('reads no root on v14, where a reply stores no owner (createReply writes neither)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v14')
+    vi.resetModules()
+    await publish({ ...base, replyingTo: replyInTheirThread() })
+    expect(services.getPostById).not.toHaveBeenCalled()
+    expect(services.createReply.mock.calls[0][2]).toEqual({ rootPostId: 'their-post', replyToReplyId: 'a-reply', parentOwnerId: 'replier', rootOwnerId: undefined })
+  })
 })

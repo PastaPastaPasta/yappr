@@ -3,7 +3,7 @@
     "poll": {
       "type": "object",
       "documentsMutable": false,
-      "canBeDeleted": false,
+      "canBeDeleted": true,
       "indices": [
         {
           "name": "byCreatedAt",
@@ -103,8 +103,23 @@
           ]
         }
       },
+      "deleteConstraints": {
+        "noBallots": {
+          "equal": [
+            {
+              "countOf": [
+                "vote",
+                {
+                  "pollId": "$id"
+                }
+              ]
+            },
+            0
+          ]
+        }
+      },
       "additionalProperties": false,
-      "description": "A poll: permanent and immutable, so the optionCount, multiChoice and endsAt its ballots copy never move under them. Closes at endsAt, within 31 days of creation"
+      "description": "A poll: immutable, so the optionCount, multiChoice and endsAt its ballots copy never move under them. Its owner may delete it only until the first ballot, withdrawn or not (noBallots). Closes at endsAt, within 31 days of creation"
     },
     "vote": {
       "type": "object",
@@ -140,6 +155,15 @@
             }
           ],
           "unique": true
+        },
+        {
+          "name": "byPoll",
+          "properties": [
+            {
+              "pollId": "asc"
+            }
+          ],
+          "countable": "countable"
         }
       ],
       "properties": {
@@ -152,7 +176,7 @@
           "position": 0,
           "description": "The poll voted on",
           "refersTo": {
-            "type": "permanentDocument",
+            "type": "deletableDocument",
             "documentType": "poll",
             "where": {
               "optionCount": "pollOptionCount",
@@ -263,7 +287,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "A voter's ballot, editable until the poll closes and final after: every create and replace must land by pollEndsAt ($updatedAt is the write's block time), and nothing deletes one. Single choice: one ballot (slot 0) whose choice may change or be dropped. Multi choice: one ballot per option (slot = option) whose choice is ticked (= slot) or dropped. byPollChoice skips unselected ballots, so it tallies selections"
+      "description": "A voter's ballot, editable until the poll closes and final after: every create and replace must land by pollEndsAt ($updatedAt is the write's block time), and nothing deletes one. Single choice: one ballot (slot 0) whose choice may change or be dropped. Multi choice: one ballot per option (slot = option) whose choice is ticked (= slot) or dropped. byPollChoice skips unselected ballots, so it tallies selections; byPoll counts them all for noBallots"
     }
   }
 }
