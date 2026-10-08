@@ -66,17 +66,19 @@ Run on the production contracts above, serially. Each run waits for a proved rea
 | Battery | Result |
 | --- | --- |
 | contract readback | **159/159** |
-| `verify-v10 --contract-file …v14.json --blocks-contract <blocks>` (interim owner) | **281 PASS**, 2 FAIL, 6 SKIP. The 2 failures (o4, c1) are reads aborted by sakura's "Quorum not found in cache"; BATTERY_V14_RERUN. The skips are by design: o2a and n2e/n2ex/n2gc (no `likeReply.replyAuthor`), r2 (no team seated yet), x3a and y1f–y1g (the fresh-bot run), k2 (its own run). The v14 cases pass live: r1wa/r1wb (a reporter withdrawing a RESOLVED report is refused 40147, the report stays), n2a/n2i/n2j/n2k (the derived windows key each reply under the right owner), y1a (a 1-YAPP transfer lands), y1d/y1h and q1b (YAPP-paid post, reply and repost land, gas offered to the owner). |
+| `verify-v10 --contract-file …v14.json --blocks-contract <blocks>` (interim owner) | **281 PASS**, 2 FAIL, 6 SKIP. The 2 failures (o4, c1) are reads aborted by sakura's "Quorum not found in cache"; their re-run (`--only o4,c1`, with the fixtures they need) passed **73/73**. The skips are by design: o2a and n2e/n2ex/n2gc (no `likeReply.replyAuthor`), r2 (no team seated yet), x3a and y1f–y1g (the fresh-bot run), k2 (its own run). The v14 cases pass live: r1wa/r1wb (a reporter withdrawing a RESOLVED report is refused 40147, the report stays), n2a/n2i/n2j/n2k (the derived windows key each reply under the right owner), y1a (a 1-YAPP transfer lands), y1d/y1h and q1b (YAPP-paid post, reply and repost land, gas offered to the owner). |
 | `verify-v10 --only k2 --poor 3` | **1/1** (before the fresh-bot run) |
 | `verify-v10 --only x3,y1 --fresh-bot 3` | **16/16** |
 | `prove-merged-counts --contract-file …v14.json` (throwaway copy `AcED42QGa3GTxGVpdF5tvWwkARKwmipvubfKqAgxTCKu`) | **164 PASS, 0 FAIL**, 2 SKIP (no reply-like author counter) |
-| pollr v6 (`verify-pollr.mjs`, #701) | BATTERY_POLLR |
-| blog v7 (`--moderator maker`) | BATTERY_BLOG |
-| storefront v6 (`--moderator maker`) | BATTERY_STOREFRONT |
+| pollr v6 (`verify-pollr.mjs`, #701) | **64/64**, among them p8b/p8h/p8m: deleting a poll that has a ballot, even one since withdrawn, is refused 40147 (`noBallots`) |
+| blog v7 (`--moderator maker`) | **24/24 cases** clean across three full runs (93, 89 and a partial re-run): every failure was a read aborted by the quorum cache or "no available addresses", and each case passed cleanly in another run |
+| storefront v6 (`--moderator maker`) | **24/24 cases** clean across runs (100 and 105 checks per full run): the same transport aborts, plus one s14c identity-contract nonce reuse after a paid ban refusal (the SDK nonce cache, ID-2), which passed in the other run |
 | DM v4 | **31/31** |
 | DM v5 | **106/106** |
 | tips | 6 PASS, 5 SKIP (tips are credit tips) |
-| devnet topology e2e (local `/devnet` build) | E2E_RESULT |
+| devnet e2e, local `/devnet` build | `topology dpns-username-entry` **25/25**; `dm-v5-direct` **11/11** after the DM fixture fix (#704); `dm-v5-groups` 6 passed, then "remove C" hit #703's member-row lookup bug |
+| pollr v6 UI smoke (throwaway spec, local and live) | **2/2**: a poll is created and its owner deletes it before any ballot; a second poll takes a vote, which survives a reload, and no longer offers Delete |
+| live `yap.pr/devnet` after the Pages deploy | `topology` **21 passed, 1 flaky** (repost a reply, #703's known race, passed on retry); the live bundle carries every new id and no v13 id |
 
 ## Sakura quirks
 
