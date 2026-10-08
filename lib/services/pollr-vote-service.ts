@@ -3,6 +3,7 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import {
+  noteReplacedBallots,
   pollrBallotScope,
   pollrWriteMayStillExecute,
   recordBallotReplace,
@@ -511,7 +512,9 @@ class PollrVoteService {
    * caller already has. Throws when the ballots cannot be counted.
    */
   async deleteEligible(poll: Poll, userId: string, ownState?: PromiseSettledResult<BallotState>): Promise<boolean> {
-    if (!pollrPollsDeletable() || userId !== poll.ownerId || pollHasKnownBallots(poll.id)) return false;
+    if (!pollrPollsDeletable() || userId !== poll.ownerId) return false;
+    noteReplacedBallots(userId);
+    if (pollHasKnownBallots(poll.id)) return false;
     const state = ownState ?? (await Promise.allSettled([this.getBallotState(poll, userId)]))[0];
     if (ownBallotMayBePending(state) || pollHasKnownBallots(poll.id)) return false;
     const ballots = await pollrPollService.countBallots(poll.id);

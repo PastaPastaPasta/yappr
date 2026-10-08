@@ -617,6 +617,24 @@ describe('ballot evidence for the v6 delete', () => {
     expect(await service.deleteEligible(mine, VOTER)).toBe(true);
   });
 
+  it('a fresh session keeps a closed poll with an expired replace record undeletable on zero reads', async () => {
+    const closed = poll({ ownerId: VOTER, endsAt: Date.now() - 2 * HOUR });
+    // Left by an earlier session: a replace on this poll, long past its close.
+    const { recordBallotReplace } = await import('./pollr-pending-writes');
+    recordBallotReplace(VOTER, { pollId: closed.id, ballotId: 'ballot-0', revision: 2, endsAt: closed.endsAt as number });
+    // A fresh session: nothing in memory, only the stored record.
+    vi.resetModules();
+    const service = await loadService('v6');
+    expect((await import('./pollr-known-ballots')).pollHasKnownBallots(closed.id)).toBe(false);
+    mocks.query.mockResolvedValue(new Map());
+    mocks.count.mockResolvedValue(new Map());
+
+    expect(await service.deleteEligible(closed, VOTER)).toBe(false);
+    const { pollrPollService } = await import('./pollr-poll-service');
+    expect(await pollrPollService.deletePoll(closed, VOTER)).toEqual({ status: 'voted' });
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
   it('offers no delete to anyone but the owner, nor once a ballot is known, a write may land or the state is unreadable', async () => {
     const service = await loadService('v6');
     const mine = openPoll({ ownerId: VOTER });

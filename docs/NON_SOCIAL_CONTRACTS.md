@@ -489,8 +489,10 @@ it the moment the owner votes, even if a count read before the vote comes back
 later. A poll once known to have a ballot is never offered again in the
 session (`lib/services/pollr-known-ballots.ts`): the services record the
 evidence where they see it, as a positive count, a 40147, a tallied selection,
-any own ballot document read (a withdrawn one included), a recorded ballot
-replace (it targets a ballot read off the chain), or a confirmed ballot write,
+any own ballot document read (a withdrawn one included), a stored ballot
+replace record (it targets a ballot read off the chain; recorded whenever the
+records are loaded, before any is pruned, and loaded by both delete paths, so a
+closed poll's records count too), or a confirmed ballot write,
 even when a later write of the same vote fails. `deletePoll` re-checks the set
 after its count, so evidence seen meanwhile still stops the write, and sends
 nothing (`pending`) while an own ballot write on the poll may still land. The

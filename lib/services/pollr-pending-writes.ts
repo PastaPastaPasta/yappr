@@ -41,13 +41,34 @@ function isUncertainReplace(value: unknown): value is UncertainReplace {
 
 /** Throws {@link NONCE_STORE_ERROR} when localStorage cannot be read. */
 function loadUncertain(ownerId: string): UncertainReplace[] {
+  let entries: UncertainReplace[];
   try {
     const raw = localStorage.getItem(`${UNCERTAIN_PREFIX}${ownerId}`);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter(isUncertainReplace) : [];
+    entries = Array.isArray(parsed) ? parsed.filter(isUncertainReplace) : [];
   } catch (error) {
     logger.warn('Pollr: could not read uncertain ballot replaces', { error: extractErrorMessage(error) });
     throw new Error(NONCE_STORE_ERROR);
+  }
+  // A replace targets a ballot read off the chain, and ballots are never
+  // deleted: each record proves its poll has one for good (v6 noBallots),
+  // whatever a lagging read shows later. Recorded on every load, before any
+  // caller prunes a record (settled, past its poll's close, or another poll's).
+  for (const entry of entries) markPollHasBallots(entry.pollId);
+  return entries;
+}
+
+/**
+ * Record, as ballot evidence, every poll this voter's stored ballot replaces
+ * name (see loadUncertain). For the v6 delete paths, which may not otherwise
+ * read the records (a closed poll's ballot state skips them). An unreadable
+ * store adds nothing.
+ */
+export function noteReplacedBallots(ownerId: string): void {
+  try {
+    loadUncertain(ownerId);
+  } catch {
+    // Already logged; the delete paths fail closed on the store on their own.
   }
 }
 
@@ -102,10 +123,6 @@ async function uncertainReplaceMayLand(ownerId: string, pollId: string): Promise
       kept.push(entry);
       continue;
     }
-    // A replace targets a ballot read off the chain, and ballots are never
-    // deleted: one names this poll for good (v6 noBallots), whatever a later
-    // lagging read shows.
-    markPollHasBallots(pollId);
     let revision: number | null = null;
     try {
       const sdk = await getEvoSdk();

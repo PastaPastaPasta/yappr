@@ -2,7 +2,7 @@ import { BaseDocumentService } from './document-service';
 import { getEvoSdk } from './evo-sdk-service';
 import { documentCount } from './pagination-utils';
 import { markPollHasBallots, pollHasKnownBallots } from './pollr-known-ballots';
-import { pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
+import { noteReplacedBallots, pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
 import { stateTransitionService } from './state-transition-service';
 import { POLLR_CONTRACT_ID, POLLR_DOCUMENT_TYPES, POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants';
 import { isDeleteConstraintError } from '@/lib/error-utils';
@@ -203,6 +203,8 @@ class PollrPollService extends BaseDocumentService<Poll> {
    */
   async deletePoll(poll: Poll, ownerId: string): Promise<DeletePollResult> {
     if (!pollrPollsDeletable() || poll.ownerId !== ownerId) return { status: 'failed' };
+    // Stored ballot replaces prove a ballot even once pruned or past the close.
+    noteReplacedBallots(ownerId);
     if (this.hasBallots(poll.id)) return { status: 'voted' };
     // A landed but unconfirmed ballot replace would otherwise hold this delete
     // back until its reservation expires (as createPoll does). A no-op when
