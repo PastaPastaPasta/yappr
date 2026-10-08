@@ -110,9 +110,12 @@ test.describe('DM v5: groups', () => {
    * A member's row in the group settings dialog. It shows only the member's name: the profile
    * display name when there is one (the devnet ops scripts name every DM bot "DM E2E Bot <n>"),
    * else the DPNS label. Filtering on the label alone matched no row once the bots had profiles.
+   * The name is matched whole, so "DM E2E Bot 1" can never pick "DM E2E Bot 10".
    */
-  const memberRow = async (dialog: Locator, bot: DmBot) =>
-    dialog.getByRole('listitem').filter({ hasText: (await profileDisplayName(bot)) ?? username(bot) })
+  const memberRow = async (dialog: Locator, bot: DmBot) => {
+    const name = (await profileDisplayName(bot)) ?? username(bot)
+    return dialog.getByRole('listitem').filter({ has: dialog.page().getByText(name, { exact: true }) })
+  }
 
   /**
    * End the run's group through the owner's UI unless it already ended. A group left live stays in
@@ -142,7 +145,9 @@ test.describe('DM v5: groups', () => {
   })
 
   test.afterAll(async ({ browser }) => {
-    test.setTimeout(420_000)
+    // The cleanup's own waits (a fresh device's inbox load, the group row, the end write) add up
+    // to about ten minutes in the worst case; a hook timeout would escape the catch below.
+    test.setTimeout(900_000)
     await closeDevices(Object.values(devices))
     // Best effort: a failure here leaves one live group, which a later run survives.
     await endGroupIfLive(browser).catch((error: unknown) => {

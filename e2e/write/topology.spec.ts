@@ -738,7 +738,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     await expect(
       page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
     ).toBeVisible({ timeout: 60_000 })
-    if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toContainText('2')
+    if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toHaveAttribute('aria-label', 'Like, 2 likes')
   })
 })
 
@@ -837,7 +837,7 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
       await expect(
         page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
       ).toBeVisible({ timeout: 60_000 })
-      if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toContainText('2')
+      if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toHaveAttribute('aria-label', 'Like, 2 likes')
       await expect(page.getByTestId('profile-top-window')).toHaveCount(0)
       return
     }
