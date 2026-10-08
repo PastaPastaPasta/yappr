@@ -506,7 +506,9 @@ const V13_DESCRIPTOR: ContractTopologyDescriptor = {
  *   replyToReplyId.$ownerId]` (skipping top-level replies) every nested reply
  *   under its parent reply's owner ({@link notificationWindowFor}).
  * - Reports withdrawable only while unresolved ({@link reportsWithdrawOnlyWhilePending})
- *   and an unpaused YAPP ({@link yappIsLocked} is false), outside this descriptor.
+ *   and an unpaused YAPP that pays token costs again ({@link yappIsPausedForGood}
+ *   is false; {@link yappIsLocked} stays true: no buying, no transfers offered),
+ *   outside this descriptor.
  */
 const V14_DESCRIPTOR: ContractTopologyDescriptor = {
   ...V13_DESCRIPTOR,
@@ -1736,26 +1738,48 @@ export function starterGrantAmount(): bigint | null {
   return BigInt(grant.amount)
 }
 
+interface YappTokenRules {
+  startAsPaused?: boolean
+  emergencyActionRules: { authorizedToMakeChange: { $type: string } }
+  distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
+}
+
 /**
- * True when YAPP can neither be transferred nor bought (v10-v13): the token
- * starts paused and no one can ever unpause it or set a direct-purchase price.
- * Posting and liking still pay YAPP (a token cost is not a transfer), the
- * starter grant still pays out, and the contract owner still mints. Tips must
- * be credit tips.
+ * True when the configured contract's YAPP is paused for good (v10–v13): it
+ * starts paused and no one may ever unpause it (`emergencyActionRules` is
+ * `noOne`). From Platform 5.0.0-beta.3 (dashpay/platform#5325) a document
+ * `tokenCost` paid with a paused token is refused 40711 as a PAID error, so
+ * posts, replies and likes must pay credits (`planPayment` in
+ * lib/payment-preference.ts). A cut whose YAPP starts unpaused (v2, v9, and
+ * v14, cut for beta.3 to keep YAPP spendable) pays YAPP exactly as before.
  *
- * False on v14: from Platform 5.0.0-beta.3 a paused token cannot pay a
- * `tokenCost` (40711), so v14's YAPP starts unpaused (and, with
- * `emergencyActionRules: noOne`, can never be paused). It is spendable on
- * posts, replies and likes, and, since beta.3 has no non-transferable flag,
- * transferable; Yappr offers no transfer and tips stay credit tips.
+ * Read off the configured contract's committed JSON rather than the chain: a
+ * pause no one can lift never changes, so the two can't disagree, and every
+ * write plans its payment synchronously from this.
+ */
+export function yappIsPausedForGood(): boolean {
+  if (!isDevnetCut()) return false
+  const token = devnetContract().tokens['0'] as YappTokenRules
+  return token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+}
+
+/**
+ * True when YAPP is an in-app token that Yappr never sells and never sends
+ * (v10 onwards): no one can ever set a direct-purchase price, and its pause
+ * state is fixed for good (`emergencyActionRules` is `noOne`). Buying, YAPP
+ * tips and other transfers are not offered; tips are credit tips; the
+ * starter grant still pays out and the contract owner still mints.
+ *
+ * On v10–v13 the token is also {@link yappIsPausedForGood}, so YAPP cannot
+ * move at all. v14's starts unpaused so that it can pay token costs under
+ * beta.3; since beta.3 has no non-transferable flag a transfer would land on
+ * chain, and Yappr deliberately offers none. Whether YAPP can pay for a post
+ * is {@link yappIsPausedForGood}'s question, not this one's.
  */
 export function yappIsLocked(): boolean {
   if (!isDevnetCut()) return false
-  const token = devnetContract().tokens['0'] as {
-    startAsPaused?: boolean
-    distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
-  }
-  return token.startAsPaused === true
+  const token = devnetContract().tokens['0'] as YappTokenRules
+  return token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
     && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
 }
 

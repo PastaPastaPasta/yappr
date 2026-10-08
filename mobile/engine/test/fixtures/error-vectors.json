@@ -516,6 +516,22 @@
       }
     },
     {
+      "name": "token paused, document token payment (40711, beta.3; the unit topology's required cost)",
+      "error": {
+        "message": "Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is paused.",
+        "name": "Protocol",
+        "code": 40711
+      },
+      "expect": {
+        "code": "FROZEN",
+        "consensusCode": 40711,
+        "outcome": "refused",
+        "retryable": false,
+        "state": "failed",
+        "userMessage": "YAPP payments are paused right now, so this can't go through. Try again later."
+      }
+    },
+    {
       "name": "insufficient YAPP (40700)",
       "error": {
         "message": "Identity 9t2e does not have enough token balance, code=40700"

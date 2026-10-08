@@ -86,6 +86,7 @@ import {
   tokenCostFor,
   TRANSPORT_COLLAPSE,
   WAIT_MAYBE_LANDED,
+  YAPP_LOCKED,
   YAPP_TOKEN_POSITION,
   actionFeeAgreementOptions,
   actionFeeFor,
@@ -133,8 +134,11 @@ const SDK_TIMEOUT_MS = 30_000;
  * Share of a run's actors that pay their token-priced writes in CREDITS
  * (no `$tokenPaymentInfo`) rather than YAPP, so a seeded devnet exercises both
  * halves of the optional-token-cost path. `--credits-fraction` overrides it.
+ * Where YAPP is locked (`YAPP_LOCKED`, every seeded cut) the default is 1:
+ * Platform 5.0.0-beta.3 refuses a paused token's payment with a PAID 40711,
+ * so only an explicit `--credits-fraction` (a beta.2 chain) pays YAPP there.
  */
-const DEFAULT_CREDITS_FRACTION = 0.25;
+const DEFAULT_CREDITS_FRACTION = YAPP_LOCKED ? 1 : 0.25;
 const MAX_ATTEMPTS = 4;
 /** Reads settle behind the write quorum; poll cadence for landed-or-not checks. */
 const SETTLE_MS = 3_000;

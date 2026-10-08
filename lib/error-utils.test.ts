@@ -44,6 +44,7 @@ import {
   isContestFundError,
   isFrozenBalanceError,
   isInsufficientTokenError,
+  isTokenPausedError,
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
   isTimeoutError,
@@ -262,6 +263,52 @@ describe('protocol-14 rejections', () => {
     const v10 = await import('./error-utils')
     expect(v10.categorizeError(shortOfYapp)).toMatch(/credits/i)
     expect(v10.categorizeError(shortOfYapp)).not.toMatch(/buy/i)
+  })
+
+  describe('40711 TokenIsPausedError (a paused token paying a tokenCost, beta.3)', () => {
+    // rs-dpp token_is_paused_error.rs: #[error("Token {} is paused.", token_id)]
+    const paused = [
+      'Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is paused.',
+      'TokenIsPausedError: Token AwyQ is paused.',
+      'state transition rejected, code=40711',
+      'Consensus error code: 40711',
+    ]
+
+    it.each(paused)('recognises %s', (message) => {
+      expect(isTokenPausedError(new Error(message))).toBe(true)
+      expect(isPermanentProtocol14Error(new Error(message))).toBe(true)
+    })
+
+    it('names the way out each cut offers, with no error code and no "buy" or "frozen" advice', async () => {
+      const copies: Record<string, string> = {
+        // Paused for good: every write already plans credits.
+        v13: 'YAPP can\'t be spent right now. Try again to pay with credits instead.',
+        // The owner paused it; the cost is optional, so credits are a setting away.
+        v9: 'YAPP payments are paused right now. Switch to paying in credits in Settings.',
+        // The owner paused it; the cost is required, so there is no other way.
+        v2: 'YAPP payments are paused right now, so this can\'t go through. Try again later.',
+      }
+      for (const [topology, expected] of Object.entries(copies)) {
+        vi.resetModules()
+        vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+        const scoped = await import('./error-utils')
+        for (const message of paused) {
+          const copy = scoped.categorizeError(new Error(message))
+          expect(copy, topology).toBe(expected)
+          expect(copy).not.toMatch(/40711|buy|frozen/i)
+        }
+      }
+    })
+
+    it.each([
+      // A paused STORE is a storefront status, not a token.
+      'Store is paused and cannot take orders',
+      'Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment',
+      'Identity 9t2e does not have enough token balance, code=40700',
+      'state transition rejected, code=40712',
+    ])('does not claim %s', (message) => {
+      expect(isTokenPausedError(new Error(message))).toBe(false)
+    })
   })
 
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {

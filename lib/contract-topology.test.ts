@@ -651,6 +651,20 @@ describe('contract topology', () => {
       expect((await topologyModule('v9')).yappIsLocked()).toBe(false)
     })
 
+    it('reads "YAPP can pay a token cost" off the configured cut: paused for good on v10–v13 only', async () => {
+      for (const topology of ['v10', 'v11', 'v12', 'v13']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([true, true])
+      }
+      for (const topology of ['v2', 'v9']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([false, false])
+      }
+      // v14 pays token costs in YAPP again, but YAPP is still never bought or sent.
+      const v14 = await topologyModule('v14')
+      expect([v14.yappIsPausedForGood(), v14.yappIsLocked()]).toEqual([false, true])
+    })
+
     it('makes reposts quotes: no repost doctype, one quote or repost per author and target', async () => {
       const v10 = await topologyModule('v10')
       expect(V10.repost).toBeUndefined()
@@ -1130,7 +1144,7 @@ describe('contract topology', () => {
       expect((await topologyModule('v2')).notificationWindowFor('threadReply')).toBeNull()
     })
 
-    it('starts YAPP unpaused (beta.3 refuses payment in a paused token), so it is spendable; every other token property is the v13 one', async () => {
+    it('starts YAPP unpaused (beta.3 refuses payment in a paused token), so it pays token costs; it is still never bought or sent', async () => {
       const [v13Token, v14Token] = [socialContractV13.tokens['0'], socialContractV14.tokens['0']]
       expect([v13Token.startAsPaused, v14Token.startAsPaused]).toEqual([true, false])
       expect({ ...v14Token, startAsPaused: true }).toEqual(v13Token)
@@ -1138,8 +1152,9 @@ describe('contract topology', () => {
       expect(v14Token.emergencyActionRules.authorizedToMakeChange.$type).toBe('noOne')
       expect(v14Token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type).toBe('noOne')
       const v14 = await topologyModule('v14')
-      expect(v14.yappIsLocked()).toBe(false)
-      expect((await topologyModule('v13')).yappIsLocked()).toBe(true)
+      expect([v14.yappIsPausedForGood(), v14.yappIsLocked()]).toEqual([false, true])
+      const v13 = await topologyModule('v13')
+      expect([v13.yappIsPausedForGood(), v13.yappIsLocked()]).toEqual([true, true])
       const sponsored = { optional: true, gasFeesPaidBy: 2 }
       for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1]] as const) {
         expect(v14.tokenCostFor(docType), docType).toEqual({ amount, ...sponsored })
