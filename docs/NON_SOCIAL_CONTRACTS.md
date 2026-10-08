@@ -495,7 +495,11 @@ records are loaded, before any is pruned, and loaded by both delete paths, so a
 closed poll's records count too), or a confirmed ballot write,
 even when a later write of the same vote fails. `deletePoll` re-checks the set
 after its count, so evidence seen meanwhile still stops the write, and sends
-nothing (`pending`) while an own ballot write on the poll may still land. The
+nothing (`pending`) while an own ballot write on the poll may still land. Its
+last check runs under the identity's write lock, once every earlier
+transition of the owner's has settled and before a nonce is reserved
+(`withSdkSignedWrite`'s `precondition`): no known ballot and a fresh count of
+0, so a vote queued ahead of the delete in another card or tab stops it. The
 card asks `pollrVoteService.deleteEligible` afresh after every load and every
 submission, and only the latest answer applies, so a vote that was never sent
 gives the delete back. A vote refused before

@@ -1,5 +1,6 @@
 import { BaseDocumentService } from './document-service';
 import { getEvoSdk } from './evo-sdk-service';
+import { WRITE_PRECONDITION_FAILED } from './identity-nonce';
 import { documentCount } from './pagination-utils';
 import { markPollHasBallots, pollHasKnownBallots } from './pollr-known-ballots';
 import { noteReplacedBallots, pollrWriteMayStillExecute, settlePendingPollrReplaces } from './pollr-pending-writes';
@@ -220,7 +221,16 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // Re-checked after the awaits: another card may have seen a ballot meanwhile.
     if ((await this.countBallots(poll.id)) > 0 || this.hasBallots(poll.id)) return { status: 'voted' };
 
-    const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, poll.id, ownerId);
+    // The last word, under the write lock once every earlier transition of the
+    // owner's has settled: a ballot of theirs queued meanwhile (another card or
+    // tab) has then landed or not, so a fresh count sees it.
+    const stillNoBallots = async () => {
+      noteReplacedBallots(ownerId);
+      if (this.hasBallots(poll.id)) return false;
+      return (await this.countBallots(poll.id)) === 0 && !this.hasBallots(poll.id);
+    };
+    const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, poll.id, ownerId, stillNoBallots);
+    if (result.error === WRITE_PRECONDITION_FAILED) return { status: 'voted' };
     // Even a reported failure may have landed (a timed-out wait), so the next
     // read goes to Platform.
     this.cache.delete(poll.id);

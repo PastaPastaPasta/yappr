@@ -137,7 +137,8 @@ describe('deleting a poll (v6)', () => {
     // Landed ballot replaces are released first, as before a create.
     expect(mocks.settle).toHaveBeenCalledTimes(1);
     expect(mocks.count).toHaveBeenCalledWith(expect.objectContaining({ documentTypeName: 'vote', where: [['pollId', '==', 'poll-1']] }));
-    expect(mocks.deleteDocument).toHaveBeenCalledWith(expect.any(String), 'poll', 'poll-1', OWNER);
+    // With the precondition the write lock re-checks before sending.
+    expect(mocks.deleteDocument).toHaveBeenCalledWith(expect.any(String), 'poll', 'poll-1', OWNER, expect.any(Function));
   });
 
   it('refuses without a write once any ballot names the poll, withdrawn ones included', async () => {
@@ -190,6 +191,24 @@ describe('deleting a poll (v6)', () => {
     mocks.mayExecute.mockRejectedValue(new Error('store unreadable'));
     expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
     expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('re-checks under the write lock, so a first vote that lands while the delete waits stops it', async () => {
+    const service = await loadService('v6');
+    const { WRITE_PRECONDITION_FAILED } = await import('./identity-nonce');
+    // The preflight counts 0; the owner's first vote, queued ahead under the
+    // lock, then lands, and the count inside the lock sees it.
+    mocks.count.mockResolvedValueOnce(new Map()).mockResolvedValue(new Map([['', 1n]]));
+    // As the real deleteDocument does: the precondition decides, under the lock, before anything is sent.
+    mocks.deleteDocument.mockImplementation(async (...args: unknown[]) => {
+      const precondition = args[4] as () => Promise<boolean>;
+      return (await precondition()) ? { success: true } : { success: false, error: WRITE_PRECONDITION_FAILED };
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.count).toHaveBeenCalledTimes(2);
+    // The positive count is remembered for good.
+    expect(service.hasBallots(poll.id)).toBe(true);
   });
 
   it('re-checks the known ballots after its count, so evidence seen meanwhile stops the delete', async () => {

@@ -459,7 +459,11 @@ class PollrVoteService {
       }
       // The poll is gone (v6: its owner deleted it after this voter loaded
       // it), and every later write names the same poll: each would pay to fail.
-      if (isReferenceNotFoundError(error)) break;
+      // Its error wins over an earlier one, so the card sees the poll is gone.
+      if (isReferenceNotFoundError(error)) {
+        firstError = extractErrorMessage(error) || firstError;
+        break;
+      }
       // Nothing was sent: an earlier transition may still execute, and every
       // later write would wait on it and be held back the same way. On the
       // first write that transition belongs to another poll (this poll's were

@@ -207,6 +207,19 @@ describe('v5 ballots', () => {
     expect(result).toMatchObject({ success: false, closed: false, stale: false, error });
   });
 
+  it('v6 reports the 40120 even after an earlier, different failure in the same vote', async () => {
+    const service = await loadService('v6');
+    const missing = 'Referenced document poll X not found for vote.pollId (code=40120)';
+    mocks.createDocument
+      .mockResolvedValueOnce({ success: false, error: 'Identity not found' })
+      .mockResolvedValueOnce({ success: false, error: missing });
+
+    const result = await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER);
+    // Stopped at the 40120, and the card sees it to re-read the poll.
+    expect(mocks.createDocument).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ success: false, error: missing });
+  });
+
   it('reports a timed-out replace as unconfirmed, without a re-read or further writes', async () => {
     const service = await loadService('v5');
     mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null)));
