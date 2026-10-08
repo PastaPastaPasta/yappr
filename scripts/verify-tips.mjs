@@ -66,13 +66,15 @@ function parseTipNote(note) {
 }
 
 /**
- * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: YAPP starts
- * paused and nobody may ever set its direct-purchase price, so it can neither be
- * transferred nor bought and tips must be credit tips.
+ * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: nobody may
+ * ever set YAPP's direct-purchase price or change its pause state, so Yappr
+ * neither sells nor sends it and tips must be credit tips (v10-v13: paused for
+ * good; v14: unpaused so that it pays token costs, but still never offered for
+ * transfer).
  */
 function yappIsLocked(contractJson) {
   const token = contractJson?.tokens?.['0'];
-  return token?.startAsPaused === true
+  return token?.emergencyActionRules?.authorizedToMakeChange?.$type === 'noOne'
     && token?.distributionRules?.changeDirectPurchasePricingRules?.authorizedToMakeChange?.$type === 'noOne';
 }
 
@@ -327,6 +329,7 @@ function selfTestTipNotes() {
     ['a non-string note is refused', parseTipNote(undefined) === null],
     ['v9 YAPP is transferable: YAPP tips', yappIsLocked(social('v9')) === false],
     ['v10 YAPP is locked: credit tips', yappIsLocked(social('v10')) === true],
+    ['v14 YAPP pays token costs but is still never sent: credit tips', yappIsLocked(social('v14')) === true],
   ]);
 }
 
