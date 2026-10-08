@@ -224,13 +224,20 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // The last word, under the write lock once every earlier transition of the
     // owner's has settled: a ballot of theirs queued meanwhile (another card or
     // tab) has then landed or not, so a fresh count sees it.
+    let refusal: 'voted' | 'pending' = 'voted';
     const stillNoBallots = async () => {
       noteReplacedBallots(ownerId);
       if (this.hasBallots(poll.id)) return false;
+      // Not the lock's own wait (nonce reservations) alone: a stored ballot
+      // replace on this poll may also still land. An unreadable store fails closed.
+      if (await pollrWriteMayStillExecute(ownerId, poll.id).catch(() => true)) {
+        refusal = 'pending';
+        return false;
+      }
       return (await this.countBallots(poll.id)) === 0 && !this.hasBallots(poll.id);
     };
     const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, poll.id, ownerId, stillNoBallots);
-    if (result.error === WRITE_PRECONDITION_FAILED) return { status: 'voted' };
+    if (result.error === WRITE_PRECONDITION_FAILED) return { status: refusal };
     // Even a reported failure may have landed (a timed-out wait), so the next
     // read goes to Platform.
     this.cache.delete(poll.id);

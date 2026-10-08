@@ -211,6 +211,23 @@ describe('deleting a poll (v6)', () => {
     expect(service.hasBallots(poll.id)).toBe(true);
   });
 
+  it('re-checks pending own writes under the write lock too, reporting them as pending', async () => {
+    const service = await loadService('v6');
+    const { WRITE_PRECONDITION_FAILED } = await import('./identity-nonce');
+    mocks.count.mockResolvedValue(new Map());
+    // Nothing pending at the preflight; a ballot write of the owner's is out by the time the lock is held.
+    mocks.mayExecute.mockResolvedValueOnce(false).mockResolvedValue(true);
+    mocks.deleteDocument.mockImplementation(async (...args: unknown[]) => {
+      const precondition = args[4] as () => Promise<boolean>;
+      return (await precondition()) ? { success: true } : { success: false, error: WRITE_PRECONDITION_FAILED };
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
+    expect(mocks.mayExecute).toHaveBeenCalledTimes(2);
+    // Pending proves no ballot: nothing is marked for good.
+    expect(service.hasBallots(poll.id)).toBe(false);
+  });
+
   it('re-checks the known ballots after its count, so evidence seen meanwhile stops the delete', async () => {
     const service = await loadService('v6');
     const { markPollHasBallots } = await import('./pollr-known-ballots');

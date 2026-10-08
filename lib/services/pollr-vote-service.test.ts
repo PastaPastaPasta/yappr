@@ -567,6 +567,23 @@ describe('ballot evidence for the v6 delete', () => {
     expect(mocks.deleteDocument).not.toHaveBeenCalled();
   });
 
+  it('keeps the evidence through a reload or in another tab: nothing resets it', async () => {
+    const service = await loadService('v6');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
+    await service.getBallotState(openPoll(), VOTER);
+    expect(await known()).toBe(true);
+
+    // A reload (or another tab): fresh modules, the same browser storage.
+    vi.resetModules();
+    const reloaded = await loadService('v6');
+    expect(await known()).toBe(true);
+    // And a lagging zero count cannot offer the delete there either.
+    mocks.query.mockResolvedValue(new Map());
+    mocks.count.mockResolvedValue(new Map());
+    expect(await reloaded.deleteEligible(openPoll({ ownerId: VOTER }), VOTER)).toBe(false);
+    expect(mocks.count).not.toHaveBeenCalled();
+  });
+
   it('takes an own withdrawn ballot as evidence, though it selects nothing', async () => {
     const service = await loadService('v6');
     mocks.query.mockResolvedValue(ballots(ballotDoc(0, null, 3)));

@@ -486,8 +486,9 @@ delete comes back as 40147 and is reported the same way. `PollCard` offers
 tally with any selection already proves a ballot; an unreadable count, or a
 ballot write of the owner's still pending, offers nothing), and stops offering
 it the moment the owner votes, even if a count read before the vote comes back
-later. A poll once known to have a ballot is never offered again in the
-session (`lib/services/pollr-known-ballots.ts`): the services record the
+later. A poll once known to have a ballot is never offered again
+(`lib/services/pollr-known-ballots.ts`, kept in localStorage, so no reload,
+card or tab resets it): the services record the
 evidence where they see it, as a positive count, a 40147, a tallied selection,
 any own ballot document read (a withdrawn one included), a stored ballot
 replace record (it targets a ballot read off the chain; recorded whenever the
@@ -499,7 +500,9 @@ nothing (`pending`) while an own ballot write on the poll may still land. Its
 last check runs under the identity's write lock, once every earlier
 transition of the owner's has settled and before a nonce is reserved
 (`withSdkSignedWrite`'s `precondition`): no known ballot and a fresh count of
-0, so a vote queued ahead of the delete in another card or tab stops it. The
+0, with no own ballot write on the poll that may still land, so a vote queued
+ahead of the delete in another card or tab stops it. These guards spare the
+owner a paid refusal; consensus enforces `noBallots` whatever they say. The
 card asks `pollrVoteService.deleteEligible` afresh after every load and every
 submission, and only the latest answer applies, so a vote that was never sent
 gives the delete back. A vote refused before
