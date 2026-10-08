@@ -2,7 +2,7 @@
 
 Social v14 is social v13 ([SOCIAL_V13.md](SOCIAL_V13.md)) re-cut for Platform 5.0.0-beta.3 ([PLATFORM_V5_BETA3_UPGRADE.md](PLATFORM_V5_BETA3_UPGRADE.md)). It adopts beta.3's new grammar (`countPresent`, `deleteConstraints`, a derived `skipIfAbsent` property) and unpauses YAPP, which beta.3 would otherwise make unspendable. The analysis behind it, with every rule checked in the beta.3 source, is the 2026-10-08 contracts analysis (items S2–S7).
 
-This document was written with the PR that adds the contract, the client topology `v14`, the tooling and the batteries. **Nothing is registered yet.** The sakura registration and the `/devnet` cut-over are a later PR; `.env.devnet` stays on v13 until then. The PR lands after the SDK bump to 5.0.0-beta.3 (`chore/sdk-5.0.0-beta.3`): the 5.0.0-beta.2 SDK cannot parse v14.
+This document was written with the PR that adds the contract, the client topology `v14`, the tooling and the batteries. **Nothing is registered yet.** The sakura registration and the `/devnet` cut-over are a later PR; `.env.devnet` stays on v13 until then. It needs the 5.0.0-beta.3 SDK (#700): the 5.0.0-beta.2 SDK cannot parse v14.
 
 | # | Decision (user-approved) | What changes |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ This document was written with the PR that adds the contract, the client topolog
 | Serialized (beta.3 rs-dpp) | 17,868 B (v13: 18,717 B) |
 | Signed create (estimate: serialized + 107 B, calibrated on v12 and v13) | **~17,975 B**: 849 B smaller than v13's ~18,824 B, 2,025 B under the 20,000 B budget and 2,505 B under the 20,480 B cap. The interim is one enum, so mainnet's rendering is the same size. |
 | Document types | 12, as v13 |
-| Parses | rs-dpp at the `v5.0.0-beta.3` tag, protocol version 14, with and without full validation. The repo validator (`validate-contract-offline.mjs`) runs the 5.0.0-beta.2 wasm packages today, which refuse `countPresent`, `deleteConstraints` and the derived skip property; it is re-run once the SDK bump is merged. |
+| Parses | `validate-contract-offline.mjs --network mainnet --cost --strict-size` on the 5.0.0-beta.3 wasm-sdk and wasm-dpp2 (full validation, meta-schema, node-rule audit): OK, ~17,975 B signed; also rs-dpp at the `v5.0.0-beta.3` tag, with and without full validation |
 
 The ~17.6 KB of the analysis assumed S1 (dropping the four `tokenCost` blocks, −316 B). v14 keeps them, because YAPP is unpaused instead.
 
@@ -103,13 +103,13 @@ The two are merged by id, so a reply that reaches me both ways (a nested reply t
 
 ## Costs
 
-The repo's `--cost` estimator runs on the beta.2 wasm SDK, which cannot parse v14. Rules store nothing and index nothing, so it was run on two beta.2-parseable renderings of v14 that are fee-identical for the writes they price: v13's rule forms in place of the `countPresent` ones, no `deleteConstraints`, and the derived skip property handled by hand (the top-level reply priced without `parentOwnerRecent`, which skips it; the nested reply with it, unskipped, since a nested reply always has a value there). Every non-reply write prices exactly as on v13. Cents are at $60/DASH (1M credits = 0.06¢); the estimator overstates the live fee by about 30%.
+`node scripts/validate-contract-offline.mjs <file> --cost` on the 5.0.0-beta.3 SDK, v13 and v14 side by side. Every non-reply write prices exactly as on v13. Cents are at $60/DASH (1M credits = 0.06¢); the estimator overstates the live fee by about 30%. (Before the SDK bump, a beta.2 rendering of v14 with the rules swapped back and the skip handled by hand gave the same deltas within 0.1M.)
 
 | Write | v13, first / later | **v14, first / later** | Δ |
 | --- | ---: | ---: | ---: |
-| reply, 140 characters | 106.0M (6.36¢) / 50.8M (3.05¢) | **104.1M (6.24¢) / 48.8M (2.93¢)** | −1.9M / −2.0M |
+| reply, 140 characters | 106.0M (6.36¢) / 50.8M (3.05¢) | **104.2M (6.25¢) / 48.9M (2.94¢)** | −1.8M / −1.9M |
 | reply to a reply | 108.8M (6.53¢) / 51.8M (3.11¢) | **107.4M (6.44¢) / 50.5M (3.03¢)** | −1.4M / −1.3M |
-| reply, one image | 115.7M (6.94¢) / 60.5M (3.63¢) | **113.7M (6.82¢) / 58.5M (3.51¢)** | −2.0M / −2.0M |
+| reply, one image | 115.7M (6.94¢) / 60.5M (3.63¢) | **113.8M (6.83¢) / 58.6M (3.52¢)** | −1.9M / −1.9M |
 | post, like, reply like, report, bookmark, follow | as [SOCIAL_V13.md](SOCIAL_V13.md#costs) | **the same** | 0 |
 
 - A reply stores 64 B less (two identifiers). A top-level reply writes one window entry, as on v13; a nested one writes two, but the second is a ttl'd window entry, cheaper than the stored bytes it replaces.
@@ -126,13 +126,14 @@ The repo's `--cost` estimator runs on the beta.2 wasm SDK, which cannot parse v1
 
 ### Validation done for this PR
 
-The 5.0.0-beta.3 npm packages are not published yet, so nothing in the repo can parse v14. Instead:
+On the 5.0.0-beta.3 SDK (#700):
 
-- an offline validator built from rs-dpp at the `v5.0.0-beta.3` tag (protocol version 14) parses the file with and without full validation, and measured the size above;
-- the same build judged every v14 constraint and delete case above (114 of 114 as recorded), and each `wasm`-level probe above was first measured with it;
-- the client's unit tests pin the topology against the JSON (`lib/contract-topology.test.ts`).
+- `node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v14.json --network mainnet --cost --strict-size`: OK, ~17,975 B signed, meta-schema v3 clean, no node-rule problem;
+- `--probes`: every probe and `where` case behaves as recorded (185), the v14 ones included;
+- `--constraints`: every case of every file as recorded (336), among them v14's 108 write and 6 delete cases;
+- `node scripts/social-shapes.mjs --self-test`, `verify-v10.mjs --self-test`, `prove-merged-counts.mjs --dry-run` and `measure-social-fees.mjs --dry-run` with `--contract-file contracts/yappr-social-contract-v14.json`: pass.
 
-Once the SDK bump is merged: `node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v14.json --network mainnet --cost --strict-size`, `--probes`, `--constraints` and `node scripts/social-shapes.mjs --self-test`.
+Before the SDK bump, the same cases were judged by an offline build of rs-dpp at the `v5.0.0-beta.3` tag (114 of 114 as recorded), and the 85 post and report cases shared with v13 gave identical outcomes against v13's rules. The client's unit tests pin the topology against the JSON (`lib/contract-topology.test.ts`).
 
 ## Client: topology `v14`
 
@@ -141,5 +142,4 @@ Once the SDK bump is merged: `node scripts/validate-contract-offline.mjs contrac
 ## Open items
 
 - **Register and prove live** (the cut-over PR): register on sakura, run `verify-v10` and `prove-merged-counts` against it, broadcast the 40147 and the YAPP-payment paths, measure live fees (including the derived-property reads), then cut `/devnet` over.
-- **Re-run the repo validator** (`--probes`, `--constraints`, `--cost`) with the beta.3 SDK.
 - **YAPP on testnet and mainnet** depends on the Platform fix above.
