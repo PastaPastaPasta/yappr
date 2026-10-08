@@ -233,6 +233,9 @@ export function releaseNonce(ownerId: string, contractId: string, entry: Pending
   }
 }
 
+/** A write's precondition no longer held under the write lock: nothing was reserved or sent. */
+export const WRITE_PRECONDITION_FAILED = 'This was not sent: what it depended on changed.';
+
 /** Whether `error` shows the transition will not execute later (see {@link withSdkSignedWrite}). */
 function isVerdict(error: unknown): boolean {
   if (isIdentityNonceConflictError(error)) return isNonceSpentRefusal(error);
@@ -262,13 +265,20 @@ function isVerdict(error: unknown): boolean {
  * pending entry, so that {@link settleSupersededReplaces} can later prove it
  * can no longer execute. `scope` is stored with it too (see
  * {@link PendingTransition.scope}). Neither changes anything else.
+ *
+ * `precondition`, when given, is the last word on whether to send: it runs
+ * under the lock, after every earlier transition has settled and before a
+ * nonce is reserved, so nothing this browser signs can land between the check
+ * and the write. When it resolves false the write fails with
+ * {@link WRITE_PRECONDITION_FAILED} and nothing is reserved or sent.
  */
 export async function withSdkSignedWrite<T>(
   ownerId: string,
   contractId: string,
   write: () => Promise<T>,
   replaces?: DocumentReplace,
-  scope?: string
+  scope?: string,
+  precondition?: () => Promise<boolean>
 ): Promise<T> {
   return withIdentityWriteLock(ownerId, contractId, async () => {
     const sdk = await getEvoSdk();
@@ -283,6 +293,7 @@ export async function withSdkSignedWrite<T>(
       await new Promise((resolve) => setTimeout(resolve, PENDING_POLL_MS));
       current = await sdk.identities.contractNonce(ownerId, contractId);
     }
+    if (precondition && !(await precondition())) throw new Error(WRITE_PRECONDITION_FAILED);
     try { await sdk.wasm.refreshIdentityNonce(new Identifier(ownerId)); } catch { /* best effort */ }
     const entry = reserveNonce(ownerId, contractId, null, current, replaces, scope);
     try {

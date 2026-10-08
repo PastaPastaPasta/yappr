@@ -946,7 +946,9 @@ class StateTransitionService {
     contractId: string,
     documentType: string,
     documentId: string,
-    ownerId: string
+    ownerId: string,
+    /** Re-checked under the write lock right before sending (see withSdkSignedWrite). */
+    precondition?: () => Promise<boolean>
   ): Promise<StateTransitionResult> {
     try {
       this.assertUnpricedAction(contractId, documentType, 'delete');
@@ -981,7 +983,7 @@ class StateTransitionService {
         identityKey
       );
 
-      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }));
+      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }), undefined, undefined, precondition);
       logger.debug('Document deletion submitted successfully');
 
       return {

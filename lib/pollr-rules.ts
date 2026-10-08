@@ -4,7 +4,7 @@
  * ballot writes. No SDK, no network — the services and the poll editor call in.
  */
 
-export type PollrTopology = 'v3' | 'v4' | 'v5'
+export type PollrTopology = 'v3' | 'v4' | 'v5' | 'v6'
 
 export const POLL_MIN_OPTIONS = 2
 export const POLL_MAX_OPTIONS = 10
@@ -51,9 +51,9 @@ interface PollLimits {
   endsAtRequired: boolean
 }
 
-/** What each topology's `poll` schema accepts. */
+/** What each topology's `poll` schema accepts (v6 keeps v5's poll). */
 export function pollLimits(topology: PollrTopology): PollLimits {
-  if (topology === 'v5') {
+  if (topology === 'v5' || topology === 'v6') {
     return { questionMaxChars: 280, questionMaxBytes: 560, optionMaxChars: 80, optionMaxBytes: 160, uniqueOptions: true, endsAtRequired: true }
   }
   // v3/v4: option0..option9 strings, 1-100 characters, and a 512-character question.

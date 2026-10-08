@@ -859,6 +859,12 @@ const PROBES = [
     const rule = types(s).vote.propertyConstraints.multiChoiceIsSlot.anyOf;
     for (let n = 1; n <= 9; n++) rule.push({ lessThan: ['slot', n] });
   } },
+  // Pollr v6 (5.0.0-beta.3): a deleteConstraints countOf total needs a plain countable index
+  // whose properties are exactly the filter's keys. byPollChoice [pollId, choice] is not one.
+  { label: 'pollr v6: noBallots counting vote by pollId without byPoll', file: 'contracts/pollr-contract.json', expect: 'wasm', why: /no countable index/i, mutate: (s) => {
+    const vote = types(s).vote;
+    vote.indices = vote.indices.filter((index) => index.name !== 'byPoll');
+  } },
 ];
 
 /**

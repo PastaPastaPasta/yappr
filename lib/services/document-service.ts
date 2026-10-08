@@ -256,34 +256,29 @@ export abstract class BaseDocumentService<T> {
    */
   async get(documentId: string): Promise<T | null> {
     try {
-      // Check cache
-      const cached = this.cache.get(documentId);
-      if (cached !== undefined) return cached;
-
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.get(
-        this.contractId,
-        this.documentType,
-        documentId
-      );
-
-      if (!response) {
-        return null;
-      }
-
-      // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
-      const docData = documentToPlainObject(response);
-      const transformed = this.transformDocument(docData);
-
-      // Cache the result
-      this.cache.set(documentId, transformed);
-
-      return transformed;
+      return await this.getOrThrow(documentId);
     } catch (error) {
       logger.error(`Error getting ${this.documentType} document:`, error);
       return null;
     }
+  }
+
+  /**
+   * {@link get} without the catch: null only when Platform says the document
+   * does not exist, and a failed read throws.
+   */
+  protected async getOrThrow(documentId: string): Promise<T | null> {
+    const cached = this.cache.get(documentId);
+    if (cached !== undefined) return cached;
+
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.get(this.contractId, this.documentType, documentId);
+    if (!response) return null;
+
+    // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
+    const transformed = this.transformDocument(documentToPlainObject(response));
+    this.cache.set(documentId, transformed);
+    return transformed;
   }
 
   /**

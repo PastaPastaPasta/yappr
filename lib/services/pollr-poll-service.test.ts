@@ -2,18 +2,28 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // What createPoll writes per topology and how a poll document reads back, at
 // an in-memory boundary. No network.
-const mocks = vi.hoisted(() => ({ createDocument: vi.fn(), settle: vi.fn() }));
-vi.mock('./state-transition-service', () => ({ stateTransitionService: { createDocument: mocks.createDocument } }));
+const mocks = vi.hoisted(() => ({
+  createDocument: vi.fn(), deleteDocument: vi.fn(), settle: vi.fn(), count: vi.fn(), get: vi.fn(), mayExecute: vi.fn(),
+}));
+// Whether an own ballot write may still land; the real rules have their own spec.
+vi.mock('./pollr-pending-writes', async (load) => ({
+  ...(await load<typeof import('./pollr-pending-writes')>()),
+  pollrWriteMayStillExecute: mocks.mayExecute,
+}));
+vi.mock('./state-transition-service', () => ({
+  stateTransitionService: { createDocument: mocks.createDocument, deleteDocument: mocks.deleteDocument },
+}));
 vi.mock('./identity-nonce', async (load) => ({
   ...(await load<typeof import('./identity-nonce')>()),
   settleSupersededReplaces: mocks.settle,
 }));
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({}) }));
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { count: mocks.count, get: mocks.get } }) }));
 
 const OWNER = '11111111111111111111111111111111';
+const OTHER = '22222222222222222222222222222222';
 const DAY = 24 * 60 * 60 * 1000;
 
-async function loadService(topology: 'v3' | 'v5') {
+async function loadService(topology: 'v3' | 'v5' | 'v6') {
   vi.stubEnv('NEXT_PUBLIC_POLLR_TOPOLOGY', topology);
   return (await import('./pollr-poll-service')).pollrPollService;
 }
@@ -29,6 +39,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.createDocument.mockResolvedValue({ success: true, document: { $id: 'doc', $ownerId: OWNER } });
   mocks.settle.mockResolvedValue(0);
+  mocks.mayExecute.mockResolvedValue(false);
 });
 afterEach(() => vi.unstubAllEnvs());
 
@@ -110,5 +121,164 @@ describe('readPollOptions', () => {
     const { readPollOptions } = await import('./pollr-poll-service');
     expect(readPollOptions({ options: ['a', 'b', 'c'] })).toEqual(['a', 'b', 'c']);
     expect(readPollOptions({ option0: 'a', option1: 'b', option3: 'gap' })).toEqual(['a', 'b']);
+  });
+});
+
+describe('deleting a poll (v6)', () => {
+  const poll = { id: 'poll-1', ownerId: OWNER, createdAt: new Date(0), question: 'q', options: ['a', 'b'], optionCount: 2, multiChoice: false, endsAt: 5 };
+
+  it('counts every ballot off byPoll, then deletes a poll nobody voted on', async () => {
+    const service = await loadService('v6');
+    // Count trees do not materialise an empty branch: no ballots is an empty map.
+    mocks.count.mockResolvedValue(new Map());
+    mocks.deleteDocument.mockResolvedValue({ success: true });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'deleted' });
+    // Landed ballot replaces are released first, as before a create.
+    expect(mocks.settle).toHaveBeenCalledTimes(1);
+    expect(mocks.count).toHaveBeenCalledWith(expect.objectContaining({ documentTypeName: 'vote', where: [['pollId', '==', 'poll-1']] }));
+    // With the precondition the write lock re-checks before sending.
+    expect(mocks.deleteDocument).toHaveBeenCalledWith(expect.any(String), 'poll', 'poll-1', OWNER, expect.any(Function));
+  });
+
+  it('refuses without a write once any ballot names the poll, withdrawn ones included', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map([['', 1n]]));
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('reports a ballot that landed after the count (40147) as voted', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map());
+    mocks.deleteDocument.mockResolvedValue({
+      success: false,
+      error: 'Document poll-1 of type "poll" can not be deleted: it breaks its deleteConstraints rule "noBallots": 1 != 0 (code=40147)',
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+  });
+
+  it('keeps a poll proven voted non-deletable, even when a lagging node later counts 0', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map());
+    mocks.deleteDocument.mockResolvedValue({ success: false, error: 'rejected: code=40147' });
+    expect(service.hasBallots(poll.id)).toBe(false);
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(service.hasBallots(poll.id)).toBe(true);
+
+    // The reload's count lags at 0; the poll still stays permanent, with no second paid refusal.
+    mocks.count.mockClear();
+    mocks.deleteDocument.mockClear();
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.count).not.toHaveBeenCalled();
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('holds back, writing nothing, while an own ballot write on the poll may still land', async () => {
+    const service = await loadService('v6');
+    // An unconfirmed first vote from another card: its create reservation is still out.
+    mocks.mayExecute.mockResolvedValue(true);
+    mocks.count.mockResolvedValue(new Map());
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
+    expect(mocks.mayExecute).toHaveBeenCalledWith(OWNER, poll.id);
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+    // It proves no ballot: nothing is marked for good.
+    expect(service.hasBallots(poll.id)).toBe(false);
+
+    // An unreadable reservation store fails closed the same way.
+    mocks.mayExecute.mockRejectedValue(new Error('store unreadable'));
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('re-checks under the write lock, so a first vote that lands while the delete waits stops it', async () => {
+    const service = await loadService('v6');
+    const { WRITE_PRECONDITION_FAILED } = await import('./identity-nonce');
+    // The preflight counts 0; the owner's first vote, queued ahead under the
+    // lock, then lands, and the count inside the lock sees it.
+    mocks.count.mockResolvedValueOnce(new Map()).mockResolvedValue(new Map([['', 1n]]));
+    // As the real deleteDocument does: the precondition decides, under the lock, before anything is sent.
+    mocks.deleteDocument.mockImplementation(async (...args: unknown[]) => {
+      const precondition = args[4] as () => Promise<boolean>;
+      return (await precondition()) ? { success: true } : { success: false, error: WRITE_PRECONDITION_FAILED };
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.count).toHaveBeenCalledTimes(2);
+    // The positive count is remembered for good.
+    expect(service.hasBallots(poll.id)).toBe(true);
+  });
+
+  it('re-checks pending own writes under the write lock too, reporting them as pending', async () => {
+    const service = await loadService('v6');
+    const { WRITE_PRECONDITION_FAILED } = await import('./identity-nonce');
+    mocks.count.mockResolvedValue(new Map());
+    // Nothing pending at the preflight; a ballot write of the owner's is out by the time the lock is held.
+    mocks.mayExecute.mockResolvedValueOnce(false).mockResolvedValue(true);
+    mocks.deleteDocument.mockImplementation(async (...args: unknown[]) => {
+      const precondition = args[4] as () => Promise<boolean>;
+      return (await precondition()) ? { success: true } : { success: false, error: WRITE_PRECONDITION_FAILED };
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'pending' });
+    expect(mocks.mayExecute).toHaveBeenCalledTimes(2);
+    // Pending proves no ballot: nothing is marked for good.
+    expect(service.hasBallots(poll.id)).toBe(false);
+  });
+
+  it('re-checks the known ballots after its count, so evidence seen meanwhile stops the delete', async () => {
+    const service = await loadService('v6');
+    const { markPollHasBallots } = await import('./pollr-known-ballots');
+    // Another card reads a ballot while this delete's count is out; the count then lags at 0.
+    mocks.count.mockImplementation(async () => {
+      markPollHasBallots(poll.id);
+      return new Map();
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
+  it('remembers a positive ballot count', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map([['', 2n]]));
+    expect(await service.countBallots(poll.id)).toBe(2);
+    expect(service.hasBallots(poll.id)).toBe(true);
+    expect(service.hasBallots('other-poll')).toBe(false);
+  });
+
+  it('passes any other refusal through, and throws when the ballots cannot be counted', async () => {
+    const service = await loadService('v6');
+    mocks.count.mockResolvedValue(new Map());
+    mocks.deleteDocument.mockResolvedValue({ success: false, error: 'Insufficient balance' });
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'failed', error: 'Insufficient balance' });
+
+    mocks.count.mockRejectedValue(new Error('offline'));
+    await expect(service.deletePoll(poll, OWNER)).rejects.toThrow('offline');
+  });
+
+  it('never deletes before v6 or for anyone but the owner', async () => {
+    const v5 = await loadService('v5');
+    expect((await v5.deletePoll(poll, OWNER)).status).toBe('failed');
+    vi.resetModules();
+    const v6 = await loadService('v6');
+    expect((await v6.deletePoll(poll, OTHER)).status).toBe('failed');
+    expect(mocks.count).not.toHaveBeenCalled();
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe('fetchPoll', () => {
+  it('reads a missing poll as null but lets a failed read throw', async () => {
+    const service = await loadService('v6');
+    mocks.get.mockResolvedValue(undefined);
+    expect(await service.fetchPoll('gone')).toBeNull();
+
+    mocks.get.mockRejectedValue(new Error('timeout'));
+    await expect(service.fetchPoll('other')).rejects.toThrow('timeout');
+    // getPoll keeps swallowing it, as before.
+    expect(await service.getPoll('other')).toBeNull();
   });
 });

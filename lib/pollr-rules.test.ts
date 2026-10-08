@@ -163,3 +163,9 @@ describe('choices and tallies', () => {
     expect(applyChoiceDelta([1, 1], [5], [])).toEqual({ counts: [1, 1], total: 2 })
   })
 })
+
+describe('v6', () => {
+  it('keeps v5’s poll limits', () => {
+    expect(pollLimits('v6')).toEqual(v5)
+  })
+})
