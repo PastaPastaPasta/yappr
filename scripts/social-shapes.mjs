@@ -1,7 +1,7 @@
 /**
  * The social documents the Node scripts write, built for the cut a contract
- * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V13.md). Every switch reads
- * the schemas, never the file's name, so one builder serves v10 to v13 and a
+ * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V14.md). Every switch reads
+ * the schemas, never the file's name, so one builder serves v10 to v14 and a
  * v10–v12 document comes out exactly as the scripts wrote it before v13:
  *
  *   - `live` (v13): every post that is not a tombstone carries `live: true`, a
@@ -9,6 +9,10 @@
  *     $createdAt]` (skipIfAbsent), so its reads pin `live == true` first;
  *   - `reply.rootOwnerId` (v13): the root post's owner, `where`-bound to it;
  *     a top-level reply's `parentOwnerId` must be that owner (`parentIsRoot`);
+ *   - no stored reply owners (v14): a reply names only `rootPostId` and
+ *     `replyToReplyId`; its notification windows read the owners off the
+ *     referenced documents (`rootPostId.$ownerId`, `replyToReplyId.$ownerId`),
+ *     so `parentOwnerId` and `rootOwnerId` are dropped whatever the caller passes;
  *   - `likeReply.replyAuthor` (v10–v12 only): v13 likes a reply by its id;
  *   - media: v10–v12 carry one `mediaUrl` with its `mediaHash` and
  *     `mediaFingerprint`; v13 carries 1–4 items as `mediaUrls`, `mediaDigests`
@@ -83,6 +87,7 @@ export function socialShapes(contract) {
   const cut = Object.freeze({
     liveMarker: declares('post', 'live'),
     rootOwner: declares('reply', 'rootOwnerId'),
+    storedReplyOwners: declares('reply', 'parentOwnerId'),
     replyAuthor: declares('likeReply', 'replyAuthor'),
     mediaArrays: declares('post', 'mediaUrls'),
     profileReports: declares('report', 'about'),
@@ -97,9 +102,11 @@ export function socialShapes(contract) {
    * `parentOwnerId` and (v13) `rootOwnerId` are the same identity and either
    * names both. A nested reply names its parent reply's owner in
    * `parentOwnerId` and, on v13, the root post's owner in `rootOwnerId`. A
-   * forged pair (a refusal probe) is passed through as given.
+   * forged pair (a refusal probe) is passed through as given. On v14 a reply
+   * stores no owner: both are dropped, so a caller written for any cut works.
    */
   const reply = ({ rootPostId, rootOwnerId, replyToReplyId, parentOwnerId, ...rest }) => {
+    if (!cut.storedReplyOwners) return { ...rest, ...defined({ rootPostId, replyToReplyId }) };
     const topLevel = replyToReplyId === undefined || replyToReplyId === null;
     const parent = parentOwnerId ?? (topLevel ? rootOwnerId : undefined);
     if (parent === undefined) {
@@ -244,7 +251,21 @@ export const BLOCK_TYPES = ['block', 'blockFilter', 'blockFollow'];
 // ---- Self-test ------------------------------------------------------------------
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13'];
+const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14'];
+
+/** The cut flags each social cut declares. */
+function expectedCut(version) {
+  const from = (first) => SOCIAL_CUTS.indexOf(version) >= SOCIAL_CUTS.indexOf(first);
+  return {
+    liveMarker: from('v13'),
+    rootOwner: version === 'v13',
+    storedReplyOwners: !from('v14'),
+    replyAuthor: !from('v13'),
+    mediaArrays: from('v13'),
+    profileReports: from('v13'),
+    blocksInSocial: !from('v13'),
+  };
+}
 const readContract = (file) => JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
 
 /**
@@ -295,6 +316,9 @@ function writesFor(shapes) {
       ['post without live', 'post', { content: 'no live' }, 'live'],
     );
   }
+  if (!cut.storedReplyOwners) {
+    writes.push(['reply (nested, its owners left to the windows)', 'reply', shapes.reply({ content: 'nested', rootPostId: root, replyToReplyId: parentReply }), null]);
+  }
   if (cut.rootOwner) {
     writes.push(['reply (forged: top-level parent other than the root owner)', 'reply', shapes.reply({ content: 'forged', rootPostId: root, rootOwnerId: author, parentOwnerId: liker }), 'parentIsRoot']);
   }
@@ -314,26 +338,29 @@ function builderExpectations(shapes, version) {
   const { cut } = shapes;
   const id = new Uint8Array(32).fill(6);
   const throws = (fn) => { try { fn(); return false; } catch { return true; } };
-  const v13 = version === 'v13';
+  // v14 keeps every v13 shape but its replies.
+  const v14 = version === 'v14';
+  const fromV13 = version === 'v13' || v14;
   const item = { url: 'ipfs://bafy', sha256: new Uint8Array(32), fingerprint: new Uint8Array(8) };
   return [
-    ['the cut flags are all v13 or all earlier', Object.entries(cut).every(([flag, on]) => (['blocksInSocial', 'replyAuthor'].includes(flag) ? on !== v13 : on === v13))],
-    ['a nested reply without its root owner throws on v13 only', throws(() => shapes.reply({ rootPostId: id, replyToReplyId: id, parentOwnerId: id })) === v13],
-    ['a reply like without its author throws up to v12 only', throws(() => shapes.likeReply({ replyId: id })) === !v13],
-    ['two media items throw up to v12 only', throws(() => shapes.media([item, item])) === !v13],
+    ['the cut flags are the ones this cut declares', JSON.stringify(cut) === JSON.stringify(expectedCut(version))],
+    ['a nested reply without its root owner throws on v13 only', throws(() => shapes.reply({ rootPostId: id, replyToReplyId: id, parentOwnerId: id })) === (version === 'v13')],
+    ['a reply stores no owner on v14 only', (shapes.reply({ rootPostId: id, parentOwnerId: id }).parentOwnerId === undefined) === v14],
+    ['a reply like without its author throws up to v12 only', throws(() => shapes.likeReply({ replyId: id })) === !fromV13],
+    ['two media items throw up to v12 only', throws(() => shapes.media([item, item])) === !fromV13],
     ['five media items always throw', throws(() => shapes.media([item, item, item, item, item]))],
-    ['a profile report throws up to v12 only', throws(() => shapes.report({ about: 1, targetOwnerId: id })) === !v13],
+    ['a profile report throws up to v12 only', throws(() => shapes.report({ about: 1, targetOwnerId: id })) === !fromV13],
     ['a tombstone stays without live', shapes.post({ deleted: true }).live === undefined],
-    ['the author timeline pins live first on v13 only',
+    ['the author timeline pins live first from v13',
       JSON.stringify(shapes.ownerPosts({ where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] }))
-        === JSON.stringify(v13
+        === JSON.stringify(fromV13
           ? { where: [['live', '==', true], ['$ownerId', '==', 'A']], orderBy: [['live', 'asc'], ['$ownerId', 'asc'], ['$createdAt', 'desc']] }
           : { where: [['$ownerId', '==', 'A']], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] })],
     ['an order on $createdAt alone is left as it is', JSON.stringify(shapes.ownerPostsOrderBy([['$createdAt', 'asc']])) === '[["$createdAt","asc"]]'],
-    ['blocks resolve to the social contract up to v12, to the blocks contract on v13',
-      shapes.contractFor('block', { social: 'S', blocks: 'B' }) === (v13 ? 'B' : 'S') && shapes.contractFor('follow', { social: 'S', blocks: 'B' }) === 'S'],
-    ['v13 blocks without a blocks contract throw', throws(() => shapes.contractFor('blockFollow', { social: 'S' })) === v13],
-    ['a report pays an action fee on v13 only (50M credits to the moderators)', v13 ? shapes.actionFee('report')?.moderators === 50_000_000n : shapes.actionFee('report') === null],
+    ['blocks resolve to the social contract up to v12, to the blocks contract from v13',
+      shapes.contractFor('block', { social: 'S', blocks: 'B' }) === (fromV13 ? 'B' : 'S') && shapes.contractFor('follow', { social: 'S', blocks: 'B' }) === 'S'],
+    ['blocks without a blocks contract throw from v13', throws(() => shapes.contractFor('blockFollow', { social: 'S' })) === fromV13],
+    ['a report pays an action fee from v13 (50M credits to the moderators)', fromV13 ? shapes.actionFee('report')?.moderators === 50_000_000n : shapes.actionFee('report') === null],
   ];
 }
 
@@ -363,9 +390,16 @@ async function selfTest() {
     const file = `yappr-social-contract-${version}.json`;
     const source = readContract(file);
     const shapes = socialShapes(source);
-    const contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: source.documentSchemas, config: source.config, tokens: source.tokens }, true, platformVersion);
     console.log(`\n${file}: ${JSON.stringify(shapes.cut)}`);
     for (const [label, ok] of builderExpectations(shapes, version)) report(ok, `${version} ${label}`);
+    let contract;
+    try {
+      contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: source.documentSchemas, config: source.config, tokens: source.tokens }, true, platformVersion);
+    } catch (e) {
+      // v14 needs the 5.0.0-beta.3 SDK (countPresent, deleteConstraints, a derived skip property).
+      report(false, `${version} parses with the installed SDK`, String(e?.message ?? e).slice(0, 160));
+      continue;
+    }
     for (const [label, docType, data, expected] of writesFor(shapes)) {
       const problems = shapes.check(docType, data);
       let violation = null;

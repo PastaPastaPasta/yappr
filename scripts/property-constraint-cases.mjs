@@ -324,6 +324,109 @@ CONSTRAINT_CASES['yappr-social-contract-v13.json'] = [
   ['report: a resolution with no status', 'report', { ...baseReport(), resolution: 'looked at it' }, 'resolvedStatus', { replace: true }],
 ];
 
+// Social v14 (5.0.0-beta.3) keeps v13's rule names and behaviour, rewritten with `countPresent`
+// (S2-S5 in docs/SOCIAL_V14.md): `private` and `embed` are "0 or all 3 present", `blankTombstone`
+// is "none of the content paths present", `live` is "exactly one of deleted and live", `notEmpty`
+// is "text, or at least one of six paths", and report `oneTarget` is "exactly one of postId,
+// replyId and about". A reply no longer stores `parentOwnerId`/`rootOwnerId` (S7: its
+// notification windows derive the owners), so `parentIsRoot` is gone. The cases below walk every
+// countPresent boundary: each count a rule accepts, and the counts on either side of it.
+DECLARED_RULES['yappr-social-contract-v14.json'] = {
+  ...DECLARED_RULES['yappr-social-contract-v13.json'],
+  reply: DECLARED_RULES['yappr-social-contract-v13.json'].reply.filter((rule) => rule !== 'parentIsRoot'),
+};
+/** A v14 reply: its thread root alone; the owners are read off the referenced documents. */
+const v14Reply = () => ({ content: 'constraint probe', rootPostId: id() });
+/** Every subset of `fields` of exactly `n` entries. */
+const subsetsOf = (fields, n) => (n === 0 ? [{}] : Object.keys(fields).flatMap((key, i) =>
+  subsetsOf(Object.fromEntries(Object.entries(fields).slice(i + 1)), n - 1).map((rest) => ({ [key]: fields[key], ...rest }))));
+/** Cases for an all-or-none rule: 0 and all present are accepted, every partial subset breaks `rule`. */
+const allOrNoneCases = (docType, base, rule, fields) => Object.keys(fields).flatMap((_, k, keys) => {
+  const n = keys.length - k; // n = all, all - 1, … 1
+  return subsetsOf(fields, n).map((subset) => [
+    `${docType}: ${rule} with ${n} of ${keys.length} (${Object.keys(subset).join(', ')})`, docType, { ...base, ...subset }, n === keys.length ? null : rule,
+  ]);
+});
+/** Post content paths a tombstone must leave out, one value each. */
+const v14PostTombstoneFields = () => ({
+  content: 'still here', ...v13Media(1), sensitive: true, ...privateFields(), ...embed(),
+  mentionedUserId: id(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id(),
+});
+const v14ReplyTombstoneFields = () => ({ content: 'still here', ...v13Media(1), sensitive: true, ...privateFields(), mentionedUserId: id() });
+CONSTRAINT_CASES['yappr-social-contract-v14.json'] = [
+  // Every v13 post and report case still holds (same names, same behaviour).
+  ...CONSTRAINT_CASES['yappr-social-contract-v13.json'].filter(([, docType]) => docType !== 'reply'),
+  // private / embed: countPresent in [0, 3].
+  ...allOrNoneCases('post', v13Post(), 'private', privateFields()),
+  ...allOrNoneCases('post', v13Post(), 'embed', embed()),
+  ...allOrNoneCases('reply', v14Reply(), 'private', privateFields()),
+  ['post: no encryption field at all (countPresent 0)', 'post', v13Post(), null],
+  // live: exactly one of deleted and live.
+  ['post: live and not deleted (1 of 2)', 'post', v13Post(), null],
+  ['post: a tombstone without live (1 of 2)', 'post', { deleted: true }, null],
+  ['post: neither deleted nor live (0 of 2)', 'post', { content: 'constraint probe' }, 'live'],
+  ['post: deleted and live (2 of 2)', 'post', { deleted: true, live: true }, 'live'],
+  // notEmpty: text, or at least one of encryptedContent, mediaUrls, embedId, quotedPostId,
+  // quotedReplyId, deleted (each alone is enough; a quote needs its owner for quoteOwner).
+  ['post: notEmpty met by text alone', 'post', v13Post(), null],
+  ['post: notEmpty met by ciphertext alone (no teaser)', 'post', { live: true, ...privateFields() }, null],
+  ['post: notEmpty met by media alone', 'post', { live: true, ...v13Media(1) }, null],
+  ['post: notEmpty met by an embed alone', 'post', { live: true, ...embed() }, null],
+  ['post: notEmpty met by a quoted post alone', 'post', { live: true, quotedPostId: id(), quotedPostOwnerId: id() }, null],
+  ['post: notEmpty met by a quoted reply alone', 'post', { live: true, quotedReplyId: id(), quotedPostOwnerId: id() }, null],
+  ['post: notEmpty met by deleted alone (a tombstone)', 'post', { deleted: true }, null],
+  ['post: notEmpty with an empty text and none of the six (countPresent 0)', 'post', { live: true, content: '' }, 'notEmpty'],
+  ['post: notEmpty with only a hashtag, the sensitive flag and a mention', 'post', { live: true, hashtag: 'dash', sensitive: true, mentionedUserId: id() }, 'notEmpty'],
+  // blankTombstone: a tombstone holds none of its content paths (countPresent = 0); each one alone breaks it.
+  ['post: a blank tombstone keeping only its hashtag', 'post', { deleted: true, hashtag: 'kept' }, null],
+  ...Object.entries(v14PostTombstoneFields()).map(([path, value]) => [`post: a tombstone keeping ${path} (countPresent 1)`, 'post', { deleted: true, [path]: value }, 'blankTombstone']),
+  ['post: a tombstone keeping every content path (countPresent 15)', 'post', { deleted: true, ...v14PostTombstoneFields() }, 'blankTombstone'],
+  // Replies: no stored owners.
+  ['reply: a top-level reply (its root alone)', 'reply', v14Reply(), null],
+  ['reply: a nested reply', 'reply', { ...v14Reply(), replyToReplyId: id() }, null],
+  ['reply: a private reply carrying media', 'reply', { ...v14Reply(), ...privateFields(), ...v13Media(1) }, 'privateNoMedia'],
+  ['reply: two images', 'reply', { ...v14Reply(), ...v13Media(2) }, null],
+  ['reply: three URLs, two digests', 'reply', { ...v14Reply(), ...v13Media(3, { digests: 2 }) }, 'media'],
+  ['reply: a blank tombstone (the linkage kept)', 'reply', { ...drop(v14Reply(), 'content'), deleted: true }, null],
+  ['reply: a nested blank tombstone', 'reply', { ...drop(v14Reply(), 'content'), replyToReplyId: id(), deleted: true }, null],
+  ...Object.entries(v14ReplyTombstoneFields()).map(([path, value]) => [`reply: a tombstone keeping ${path} (countPresent 1)`, 'reply', { ...drop(v14Reply(), 'content'), deleted: true, [path]: value }, 'blankTombstone']),
+  // report oneTarget: exactly one of postId, replyId, about.
+  ['report: oneTarget with all three targets (countPresent 3)', 'report', { ...baseReport(), replyId: id(), about: 1 }, 'oneTarget'],
+];
+
+/**
+ * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
+ * {@link DECLARED_RULES}: rules the STORED document must meet for its owner to
+ * delete it, refused with 40147 `DocumentDeleteConstraintViolatedError` (paid).
+ * Moderator deletes and ttl expiry are not judged.
+ */
+export const DECLARED_DELETE_RULES = {
+  // S6: a report can be withdrawn only while no moderator has resolved it (`status` absent).
+  'yappr-social-contract-v14.json': { report: ['pending'] },
+};
+
+/**
+ * [label, docType, the stored document's data, the delete rule its owner's
+ * delete breaks or null] — judged offline by `runConstraintCases` and
+ * broadcast by verify-v10 r2 (a resolved report's withdrawal is 40147).
+ */
+export const DELETE_CASES = {
+  'yappr-social-contract-v14.json': [
+    ['report: withdrawing an open report (no status)', 'report', baseReport(), null],
+    ['report: withdrawing an open profile report', 'report', { ...drop(baseReport(), 'postId'), about: 1 }, null],
+    ...[1, 2, 3].map((status) => [`report: withdrawing a report resolved with status ${status}`, 'report', { ...baseReport(), status }, 'pending']),
+    ['report: withdrawing a resolved report that carries a resolution', 'report', { ...baseReport(), status: 2, resolution: 'post removed' }, 'pending'],
+  ],
+};
+
+/**
+ * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule
+ * `rule`: Drive's DocumentDeleteConstraintViolatedError Display, naming the
+ * rule ('… can not be deleted: it breaks its deleteConstraints rule "<rule>": …').
+ */
+export const deleteConstraintViolation = (rule) =>
+  new RegExp(`breaks its deleteConstraints rule \\\\?"${rule}\\\\?":`, 'i');
+
 /**
  * The rejection a live write breaking `rule` must produce: the node's 10422
  * `DocumentPropertyConstraintViolatedError` message naming exactly this rule
@@ -395,6 +498,52 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
       if (!ok) failures += 1;
       const outcome = violation === null ? 'accepted' : `10422 "${violation.rule}": ${String(violation.message).slice(0, 100)}`;
       console.log(`${ok ? 'PASS' : 'FAIL'}  ${file.replace(/\.json$/, '')}: ${label} — ${outcome}${ok ? '' : ` (expected ${rule === null ? 'accepted' : `10422 on "${rule}"`})`}`);
+    }
+  }
+  return failures + await runDeleteCases({ loadContractSource, parseContract, platformVersion, Document, owner });
+}
+
+/**
+ * The `deleteConstraints` cases, offline. No package exposes a delete check,
+ * but the rules are written in the `propertyConstraints` grammar and judged by
+ * the same evaluator, so each file is parsed once more with every type's
+ * `propertyConstraints` replaced by its `deleteConstraints`, and the STORED
+ * document is judged with `checkDocumentPropertyConstraints`.
+ */
+async function runDeleteCases({ loadContractSource, parseContract, platformVersion, Document, owner }) {
+  let failures = 0;
+  console.log('\ndeleteConstraints cases (the stored document an owner\'s delete is judged on; 40147 when a rule breaks):');
+  for (const [file, cases] of Object.entries(DELETE_CASES)) {
+    const source = loadContractSource(`contracts/${file}`);
+    for (const [docType, rules] of Object.entries(DECLARED_DELETE_RULES[file] ?? {})) {
+      const declared = Object.keys(source.documentSchemas[docType]?.deleteConstraints ?? {}).sort();
+      if (JSON.stringify(declared) !== JSON.stringify([...rules].sort())) {
+        failures += 1;
+        console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares delete rules ${declared.join(', ')}, DECLARED_DELETE_RULES says ${rules.join(', ')}`);
+      }
+    }
+    const asWriteRules = structuredClone(source);
+    for (const schema of Object.values(asWriteRules.documentSchemas)) {
+      if (!schema.deleteConstraints) continue;
+      schema.propertyConstraints = schema.deleteConstraints;
+      delete schema.deleteConstraints;
+    }
+    const contract = parseContract(asWriteRules, platformVersion);
+    for (const [label, docType, data, rule] of cases) {
+      let violation = null;
+      try {
+        const document = Document.fromObject({
+          $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
+          $revision: 1n, $createdAt: CASE_NOW, $updatedAt: CASE_NOW, ...data,
+        }, platformVersion);
+        violation = contract.checkDocumentPropertyConstraints(document) ?? null;
+      } catch (e) {
+        violation = { rule: null, message: String(e?.message ?? e) };
+      }
+      const ok = rule === null ? violation === null : violation?.rule === rule;
+      if (!ok) failures += 1;
+      const outcome = violation === null ? 'deletable' : `40147 "${violation.rule}": ${String(violation.message).slice(0, 100)}`;
+      console.log(`${ok ? 'PASS' : 'FAIL'}  ${file.replace(/\.json$/, '')}: ${label} — ${outcome}${ok ? '' : ` (expected ${rule === null ? 'deletable' : `40147 on "${rule}"`})`}`);
     }
   }
   return failures;
