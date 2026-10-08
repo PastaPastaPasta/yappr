@@ -208,7 +208,8 @@ class PollrPollService extends BaseDocumentService<Poll> {
     // back until its reservation expires (as createPoll does). A no-op when
     // nothing is pending.
     await settlePendingPollrReplaces(ownerId);
-    if ((await this.countBallots(poll.id)) > 0) return { status: 'voted' };
+    // Re-checked after the awaits: another card may have seen a ballot meanwhile.
+    if ((await this.countBallots(poll.id)) > 0 || this.hasBallots(poll.id)) return { status: 'voted' };
 
     const result = await stateTransitionService.deleteDocument(this.contractId, this.documentType, poll.id, ownerId);
     // Even a reported failure may have landed (a timed-out wait), so the next

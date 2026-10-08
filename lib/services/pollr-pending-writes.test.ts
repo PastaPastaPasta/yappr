@@ -45,6 +45,19 @@ const replaceRecord = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('uncertain ballot replaces', () => {
+  it('record the replaced ballot as evidence for the v6 delete, even once the replace settles', async () => {
+    const { pollrWriteMayStillExecute, recordBallotReplace } = await import('./pollr-pending-writes');
+    const { pollHasKnownBallots } = await import('./pollr-known-ballots');
+    // A fresh session: the persisted record of a replace that has since landed.
+    recordBallotReplace(OWNER, replaceRecord({ pollId: 'poll-settled' }));
+    mocks.getDocument.mockResolvedValue({ $revision: 3 });
+
+    expect(await pollrWriteMayStillExecute(OWNER, 'poll-settled')).toBe(false);
+    // The record is gone, but the ballot it replaced exists for good.
+    expect(pollHasKnownBallots('poll-settled')).toBe(true);
+    expect(pollHasKnownBallots('poll-never-voted')).toBe(false);
+  });
+
   it('keep a replace pending past its reservation’s lifetime until the ballot reaches its revision', async () => {
     const { pollrWriteMayStillExecute, recordBallotReplace } = await import('./pollr-pending-writes');
     recordBallotReplace(OWNER, replaceRecord());

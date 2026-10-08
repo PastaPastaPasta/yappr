@@ -489,8 +489,10 @@ it the moment the owner votes, even if a count read before the vote comes back
 later. A poll once known to have a ballot is never offered again in the
 session (`lib/services/pollr-known-ballots.ts`): the services record the
 evidence where they see it, as a positive count, a 40147, a tallied selection,
-any own ballot document read (a withdrawn one included), or a confirmed ballot
-write, even when a later write of the same vote fails. A vote refused before
+any own ballot document read (a withdrawn one included), a recorded ballot
+replace (it targets a ballot read off the chain), or a confirmed ballot write,
+even when a later write of the same vote fails. `deletePoll` re-checks the set
+after its count, so evidence seen meanwhile still stops the write. A vote refused before
 any write, or left unconfirmed, proves nothing, so the next load counts again;
 a write that is really out keeps its reservation, which reads as a pending
 (or, if the read fails, unreadable) ballot state and holds the delete back

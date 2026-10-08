@@ -4,6 +4,7 @@ import { NONCE_STORE_ERROR, extractErrorMessage } from '@/lib/error-utils';
 import { scopedKey } from '@/lib/storage-scope';
 import { getEvoSdk } from './evo-sdk-service';
 import { loadReservation, settleSupersededReplaces, stillPending } from './identity-nonce';
+import { markPollHasBallots } from './pollr-known-ballots';
 import { documentToPlainObject } from './sdk-helpers';
 
 /**
@@ -101,6 +102,10 @@ async function uncertainReplaceMayLand(ownerId: string, pollId: string): Promise
       kept.push(entry);
       continue;
     }
+    // A replace targets a ballot read off the chain, and ballots are never
+    // deleted: one names this poll for good (v6 noBallots), whatever a later
+    // lagging read shows.
+    markPollHasBallots(pollId);
     let revision: number | null = null;
     try {
       const sdk = await getEvoSdk();

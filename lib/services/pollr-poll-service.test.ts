@@ -169,6 +169,19 @@ describe('deleting a poll (v6)', () => {
     expect(mocks.deleteDocument).not.toHaveBeenCalled();
   });
 
+  it('re-checks the known ballots after its count, so evidence seen meanwhile stops the delete', async () => {
+    const service = await loadService('v6');
+    const { markPollHasBallots } = await import('./pollr-known-ballots');
+    // Another card reads a ballot while this delete's count is out; the count then lags at 0.
+    mocks.count.mockImplementation(async () => {
+      markPollHasBallots(poll.id);
+      return new Map();
+    });
+
+    expect(await service.deletePoll(poll, OWNER)).toEqual({ status: 'voted' });
+    expect(mocks.deleteDocument).not.toHaveBeenCalled();
+  });
+
   it('remembers a positive ballot count', async () => {
     const service = await loadService('v6');
     mocks.count.mockResolvedValue(new Map([['', 2n]]));
