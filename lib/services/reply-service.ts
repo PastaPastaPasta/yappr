@@ -454,6 +454,11 @@ class ReplyService extends BaseDocumentService<Reply> {
    *
    * Consensus derives both keys from the referenced documents, so nothing here
    * can be forged and no root needs re-reading. A failed read rejects.
+   *
+   * The root window holds every reply of the user's threads, so a busy thread
+   * fills it: each window read stops at `NOTIFICATION_WINDOW_MAX_PAGES` pages
+   * (notification-windows.ts), in id order, and past that top-level replies
+   * can be missed (docs/SOCIAL_V14.md).
    */
   private async repliesToMeOnV14(userId: string, since: number): Promise<Reply[]> {
     const toMyReplies = notificationWindowFor('reply');
@@ -467,6 +472,8 @@ class ReplyService extends BaseDocumentService<Reply> {
       ...nested.map((doc) => this.transformDocument(doc)),
       ...thread.map((doc) => this.transformDocument(doc)).filter((reply) => !reply.replyToReplyId),
     ];
+    // The two sources cannot overlap (one holds only nested replies, the other
+    // keeps only top-level ones); the id check is a guard, not a merge.
     const seen = new Set<string>();
     return toMe.filter((reply) => {
       if (seen.has(reply.id)) return false;

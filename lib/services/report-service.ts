@@ -157,7 +157,9 @@ class ReportService {
    * again first, since a moderator may have resolved it after the reporter's
    * screen loaded, and a resolved one is refused here with
    * {@link REPORT_RESOLVED_MESSAGE} before anything is signed. A report the
-   * read does not find goes on to the delete, which reports it gone (40101).
+   * read does not find goes on to the delete, which reports it gone (40101);
+   * only a node lagging behind a resolution it has not seen yet can still let
+   * a paid 40147 through.
    */
   async withdrawReport(reporterId: string, reportId: string): Promise<StateTransitionResult> {
     if (!contractTakesReports()) return { success: false, error: 'This contract takes no reports' };

@@ -137,7 +137,9 @@ export interface WithdrawReportVars {
  * to have landed brings the report back ("Couldn't withdraw your report").
  * It shares the report's key: one write per target at a time. A report
  * already gone (`REPORT_GONE`) says so in a neutral toast; the viewer's
- * report is read again.
+ * report is read again. So does one the moderators resolved meanwhile (v14,
+ * `REPORT_RESOLVED`): the network keeps it, and the fresh read offers no
+ * Withdraw.
  */
 export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
   key: ({ target }) => `report:${target.id}`,
@@ -157,14 +159,20 @@ export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
     queryClient.setQueryData(queryKeys.post.ownReport(target.id), null);
   },
   // Already gone: no report to show (the undo put it back), even with no sheet on screen to read it again.
+  // Resolved meanwhile: the undo put back a copy that still offers Withdraw, so read it again.
   onFailed: (ticket, { target }) => {
-    if (ticket.error?.code !== 'REPORT_GONE') return;
+    const code = ticket.error?.code;
+    if (code !== 'REPORT_GONE' && code !== 'REPORT_RESOLVED') return;
     const key = queryKeys.post.ownReport(target.id);
-    queryClient.setQueryData(key, null);
+    if (code === 'REPORT_GONE') queryClient.setQueryData(key, null);
     queryClient.invalidateQueries({ queryKey: key }).catch(() => undefined);
   },
-  failureText: (ticket) => (ticket.error?.code === 'REPORT_GONE' ? copy.toast.reportGone : null),
-  failureNeutral: (ticket) => ticket.error?.code === 'REPORT_GONE',
+  failureText: (ticket) => {
+    if (ticket.error?.code === 'REPORT_GONE') return copy.toast.reportGone;
+    if (ticket.error?.code === 'REPORT_RESOLVED') return copy.toast.reportResolved;
+    return null;
+  },
+  failureNeutral: (ticket) => ticket.error?.code === 'REPORT_GONE' || ticket.error?.code === 'REPORT_RESOLVED',
   failureMessage: copy.toast.withdrawFailed,
 };
 

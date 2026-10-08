@@ -44,6 +44,7 @@ export const copy = {
     reportCopied: 'Report address copied. Send it from any email app.',
     reportWithdrawn: 'Report withdrawn',
     reportGone: 'This report was already closed.',
+    reportResolved: "The moderators already resolved this report, so it can't be withdrawn.",
     withdrawFailed: "Couldn't withdraw your report. Try again.",
   },
   blocked: {

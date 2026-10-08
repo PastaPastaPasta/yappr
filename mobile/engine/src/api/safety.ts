@@ -150,7 +150,7 @@ export function createSafetyModule(tickets: TicketStore) {
       }
       // v14: resolved since the sheet read it (refused before signing, or a paid 40147).
       if (!result.success && isReportResolvedError(result.error)) {
-        return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'RULE_VIOLATION') }
+        return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'REPORT_RESOLVED') }
       }
       return fromTransitionResult(result)
     },
@@ -255,7 +255,7 @@ export function createSafetyModule(tickets: TicketStore) {
      * moderators never see it again. A report that is already gone fails
      * `REPORT_GONE`, with web's message. On v14 only an unresolved report can
      * be withdrawn (`ownReport().withdrawable`): one resolved meanwhile fails
-     * `RULE_VIOLATION`, with web's message. Gated by `capabilities.reports`.
+     * `REPORT_RESOLVED`, with web's message. Gated by `capabilities.reports`.
      */
     async withdrawReport(target: TargetRef, reportId: string): Promise<WriteTicket> {
       assertTarget(target)
