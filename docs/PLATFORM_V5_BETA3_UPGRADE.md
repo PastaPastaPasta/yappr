@@ -6,7 +6,7 @@ The previous upgrade is [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE
 
 | PR | What |
 | --- | --- |
-| `chore/sdk-5.0.0-beta.3` | `@dashevo/evo-sdk`, `wasm-sdk` and `wasm-dpp2` 5.0.0-beta.3 in lockstep; the beta.3 document meta-schema v3 vendored (sha256 `7d4ddb30…`); consensus error 40147 mapped; this record. Merges only once sakura runs beta.3. |
+| `chore/sdk-5.0.0-beta.3` | `@dashevo/evo-sdk`, `wasm-sdk` and `wasm-dpp2` 5.0.0-beta.3 in lockstep (with `package-lock.json` and the mobile `licenses.json` regenerated); the beta.3 document meta-schema v3 vendored (sha256 `7d4ddb30…`); consensus error 40147 mapped; this record. Merges only once sakura runs beta.3. |
 | `fix/credits-while-yapp-locked` | pays credits while YAPP is paused, and maps 40711 (below) |
 | pollr v6, social v14 | re-cuts that adopt `deleteConstraints` / `countPresent`; contract JSON and topology change only there |
 
@@ -22,7 +22,7 @@ Social v13's YAPP has `startAsPaused: true` and can never be unpaused. Yet post,
 
 | Keyword or rule | What it does | Yappr |
 | --- | --- | --- |
-| `deleteConstraints` | Rules the stored document must meet for its **owner** to delete it, in the `propertyConstraints` grammar, refused with **40147** `DocumentDeleteConstraintViolatedError` (a paid state error). Its budget is separate from `propertyConstraints`: 16 rules of 32 nodes, reading 4 distinct totals. Moderator deletes, `ttl` expiry, restore and `consume` are not judged. It is refused on `canBeDeleted: false` / `"onlyWhenConsumed"`, on `indexOnly`, and on a type a consuming `refersTo` targets. Rules are fixed at creation. | 40147 is mapped here: `isDeleteConstraintError`, copy "This can't be deleted anymore.", permanent, never retried. The mobile engine classifies it as `RULE_VIOLATION`. Pollr v6 ("no delete after votes") and social v14 adopt it. |
+| `deleteConstraints` | Rules the stored document must meet for its **owner** to delete it, in the `propertyConstraints` grammar, refused with **40147** `DocumentDeleteConstraintViolatedError` (a paid state error). Its budget is separate from `propertyConstraints`: 16 rules of 32 nodes, reading 4 distinct totals. Moderator deletes, `ttl` expiry, restore and `consume` are not judged. It is refused on `canBeDeleted: false` / `"onlyWhenConsumed"`, on `indexOnly`, and on a type a consuming `refersTo` targets. Rules are fixed at creation. | 40147 is mapped here: `isDeleteConstraintError`, copy "This can't be deleted anymore.", permanent, never retried. The mobile engine classifies it as `RULE_VIOLATION`. Pollr v6 ("no delete after votes") and social v14 adopt it. **Before a type the client deletes adopts it**, the delete paths must carry the refusal through: `postService.deletePost` and `replyService.deleteReply` answer a bare `false` (so web shows "Please try again"), and the engine's `fromDeleteBoolean` turns that into a retryable `UNKNOWN`. |
 | `$id` as a `countOf` / `sumOf` filter value | Counts the documents that point at this one: `{ "noVotes": { "equal": [{ "countOf": ["vote", { "pollId": "$id" }] }, 0] } }` | The pollr v6 rule |
 | `countPresent` | How many of two or more paths a document holds. It costs **1 + n** nodes against a rule's 32-node budget. Errors still report as 10422. | Candidate for report's "exactly one target" rule in social v14 |
 | `skipIfAbsent` on derived index properties | An index skips a document whose reference, or referenced field, is absent | Not used yet |
@@ -64,7 +64,7 @@ None of these is fixed in beta.3. Each was checked against the tag.
 
 Private ops directories (mode 0700; never print a key-bearing file):
 
-- `~/.local/share/yappr-sakura-20261008`: the beta.3 ops runtime. It has its own `package.json` and `node_modules` (the beta.3 SDKs) and symlinks the key material read-only into `../yappr-sakura-20261006`. Its `RECOVERY.md` lists what is linked.
+- `~/.local/share/yappr-sakura-20261008`: the beta.3 ops runtime. It has its own `package.json`, and `node_modules` installs the beta.3 SDKs there once they are published. It symlinks the key material read-only into `../yappr-sakura-20261006`, and its `RECOVERY.md` lists what is linked. The pinned `scripts/`, `contracts/` and `ops/` (patched for 40711) arrive with the battery run. Until then the `ops/*.mjs` below live in `../yappr-sakura-20261007/ops`.
 - `~/.local/share/yappr-sakura-20261006` and `-20261007` stay on the beta.2 runtime, as the rollback.
 
 **In place** (contracts, identities, DPNS, the group and the E1 contest survive):

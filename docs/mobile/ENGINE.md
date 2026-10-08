@@ -914,7 +914,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 | 1 | `isModerationBarredError` :457 | `MODERATION_BARRED` | no |
 | 2 | `isModerationNotYetSeatedError` :745 | `MODERATION_NOT_SEATED` | no |
 | 3 | `isPropertyMaxBytesError` :630 | `TOO_LONG` | no |
-| 4 | `isPropertyNotDistinctError` :664, then `isDocumentPropertyRuleError` :653, then `isDeleteConstraintError` (40147, 5.0.0-beta.3 `deleteConstraints`) | `RULE_VIOLATION` | no |
+| 4 | `isPropertyNotDistinctError` :752, then `isDocumentPropertyRuleError` :674, then `isDeleteConstraintError` :693 (40147, 5.0.0-beta.3 `deleteConstraints`) | `RULE_VIOLATION` | no |
 | 5 | `isOncePerIdentityAlreadyClaimedError` :614 | `ALREADY_CLAIMED` | no |
 | 6 | `isReferencedDocumentTooYoungError` :712 | `PARENT_TOO_YOUNG` | yes |
 | 7 | `isGasSponsorShortError` :580, then `isGasPayerError` :497 | `FEE_UNPAYABLE` | no |

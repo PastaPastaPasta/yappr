@@ -321,7 +321,7 @@ describe('4.2.0-beta.4 rejections', () => {
   it('words a deleteConstraints refusal (40147) as final and not free', () => {
     // Transcribed from rs-dpp's `#[error(...)]` at tag v5.0.0-beta.3.
     for (const message of [
-      'Document 8Xv3 of type "poll" can not be deleted: it breaks its deleteConstraints rule "noVotes": 3 != 0',
+      'Document 8Xv3 of type "poll" can not be deleted: it breaks its deleteConstraints rule "noVotes": it does not hold',
       'rejected: code=40147',
     ]) {
       const error = new Error(message)
