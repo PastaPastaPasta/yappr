@@ -561,8 +561,9 @@ async function caseS23Categories(ctx) {
   const newest = await battery.queryDocs('store', { ...newestStores(), limit: 100 });
   const descending = newest.every((row, i) => i === 0 || Number(newest[i - 1].$createdAt) >= Number(row.$createdAt));
   battery.check('s23a byStatus pages active stores only, newest first', newest.length > 0 && descending && newest.every((row) => row.status === 'active'), `rows=${newest.length}`);
-  // Bounded at our own $createdAt, so the store is on the first page however many are newer.
-  const fromOurs = await battery.queryDocs('store', { ...newestStores({ before: createdAt }), limit: 5 });
+  // Bounded at our own $createdAt, so the store is on the first page however many are newer. Stores made in one
+  // block share a $createdAt (the seed opens all seven in one), so the page reaches past every tie.
+  const fromOurs = await battery.queryDocs('store', { ...newestStores({ before: createdAt }), limit: 100 });
   battery.check('s23a2 a byStatus page starting at our store holds it first in line', fromOurs.some(isOurs), `rows=${fromOurs.length}`);
   battery.workingShapes.push({ label: 'newest active stores', shape: { documentTypeName: 'store', ...newestStores() } });
   const inCategory = await battery.queryDocs('store', { ...newestStores({ category, before: createdAt }), limit: 5 });
