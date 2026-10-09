@@ -77,6 +77,19 @@ E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
   npx playwright test --project=write --trace=off dm-v5
 ```
 
+The storefront v7 spec (`e2e/write/storefront-variants.spec.ts`) is local-only
+too. Its seller creates a store (once per identity) and a variant listing from
+Node, with the action fees the app agrees to (1,000M and 50M credits). Its
+buyer then picks a combination, checks out, and the seller reads the order
+with its SKU. It uses pool slots 7 and 8. `E2E_STOREFRONT_SLOTS=<seller>,<buyer>`
+picks others in a smaller pool:
+
+```bash
+npm run build:devnet
+E2E_BASE_PATH=/devnet E2E_ENV_FILE=.env.devnet NETWORK=devnet \
+  npx playwright test --project=write --trace=off storefront-variants
+```
+
 The devnet CI command disables Playwright traces because authentication fixture
 arguments include a private key. Screenshots and the HTML report remain available.
 This job is nonblocking: inspect the test results rather than treating the job's

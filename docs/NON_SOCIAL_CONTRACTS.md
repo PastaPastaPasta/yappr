@@ -73,7 +73,9 @@ table instead of a JSON string, and up to 12 image URLs per item
 that also carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638), was
 registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk` after
 the 2026-10-08 beta.3 wipe ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md));
-its stores and items are abandoned with the v7 cut (no migration).
+its stores and items are abandoned with the v7 cut (no migration). v7 is live
+on sakura as `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz` (maker nonce 12,
+2026-10-09) and serves `/devnet`.
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
