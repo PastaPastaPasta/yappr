@@ -1807,6 +1807,23 @@ describe('Message settings (DM-12)', () => {
     expect(screen.queryByTestId('dm-retention')).toBeNull();
   });
 
+  // Signing in keeps every tab's stack, so the screen can turn legacy while another
+  // screen covers it: it must leave once it is shown again, not stay blank.
+  it('leaves on legacy once it is shown again, when it turned legacy in the background', async () => {
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
+    fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy' }));
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
+    await renderAt('/settings/messages');
+    expect(pathname()).toBe('/settings/messages');
+    await act(async () => router.push('/block/someone'));
+
+    await act(async () => signIn());
+    expect(pathname()).toBe('/block/someone');
+
+    await act(async () => router.back());
+    expect(pathname()).toBe('/messages');
+  });
+
   it('offers plain retention choices with the privacy caveat, never fee accounting (#14)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ retention: '30d' }));

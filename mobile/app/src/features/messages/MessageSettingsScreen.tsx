@@ -1,6 +1,6 @@
 import type { DmRetention, DmStatusDTO } from '@engine/api';
-import { router, Stack, useNavigation } from 'expo-router';
-import { useEffect, useRef } from 'react';
+import { router, Stack, useFocusEffect, useNavigation } from 'expo-router';
+import { useCallback, useRef } from 'react';
 import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -119,19 +119,26 @@ function BlockedList({ ids }: { ids: string[] }) {
  * render-time `isRoot` comparison: that comparison looked at the nav state's
  * top-level `routes[0]`, which does not reflect the current tab's own stack
  * under a nested navigator and could leave the redirect armed after a real
- * back target existed. The ref keeps the one-shot effect from firing twice:
- * once for the mount, and again if `navigation` changes identity before the
- * pop or replace completes.
+ * back target existed.
+ *
+ * It leaves when the screen is focused, not merely mounted: a retained screen
+ * can turn into this one in the background (signing in from signed out keeps
+ * every tab's stack), and leaving from there would pop a stack the user is
+ * not looking at. A focus effect waits until the screen is shown again. The
+ * ref keeps it one-shot: a second focus, or `navigation` changing identity
+ * before the pop or replace completes, must not leave twice.
  */
 function LeaveForInbox() {
   const navigation = useNavigation();
   const left = useRef(false);
-  useEffect(() => {
-    if (left.current || !navigation.isFocused()) return;
-    left.current = true;
-    if (navigation.canGoBack()) navigation.goBack();
-    else router.replace('/messages');
-  }, [navigation]);
+  useFocusEffect(
+    useCallback(() => {
+      if (left.current) return;
+      left.current = true;
+      if (navigation.canGoBack()) navigation.goBack();
+      else router.replace('/messages');
+    }, [navigation]),
+  );
   return null;
 }
 
