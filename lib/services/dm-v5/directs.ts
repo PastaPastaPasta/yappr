@@ -13,6 +13,7 @@ import type { IdentityId } from '@/lib/dm/types'
 import type { DirectConv } from './conversation'
 import { attachDirect, directConv, isMe, requirePeerKey, type DmContext } from './context'
 import { sendInvite } from './invites'
+import type { BeforeBroadcast } from './types'
 
 /** Open (or find) the 1:1 with `peer` without writing anything. */
 export async function openDirect(ctx: DmContext, peer: IdentityId): Promise<DirectConv> {
@@ -29,12 +30,12 @@ export async function openDirect(ctx: DmContext, peer: IdentityId): Promise<Dire
  * Make sure the 1:1 exists on chain before its first message: one invite if
  * no conversation with the peer is known yet, then an immediate self-state
  * save. Known conversations (including one found from the peer's own invite)
- * write nothing.
+ * write nothing. `beforeBroadcast` runs just before the invite is broadcast.
  */
-export async function ensureStarted(ctx: DmContext, conv: DirectConv, options: { save?: boolean } = {}): Promise<void> {
+export async function ensureStarted(ctx: DmContext, conv: DirectConv, options: { save?: boolean; beforeBroadcast?: BeforeBroadcast } = {}): Promise<void> {
   if (!conv.draft) return
   if (!ctx.store.findDirect(conv.peer)) {
-    await sendInvite(ctx, conv.peer)
+    await sendInvite(ctx, conv.peer, options.beforeBroadcast)
     ctx.store.addDirect(conv.entry)
   }
   conv.entry = ctx.store.resolve(conv.entry)

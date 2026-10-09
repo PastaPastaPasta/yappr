@@ -1,12 +1,12 @@
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
 import { NoSymbolIcon, UserIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
 import { useEngineQuery } from '~/data/queries';
 import { useCapabilities, useSession } from '~/data/session';
-import { sendWrite } from '~/data/writes';
+import { recheckWrite, useWrite } from '~/data/writes';
 import { errorMessage } from '~/engine/logs';
 import { useDmStatus } from '~/features/messages/dm-data';
 import { Avatar } from '~/ui/Avatar';
@@ -20,7 +20,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { monoFont, useColors } from '~/ui/tokens';
 
-import { blockWrite, useAuthorBlocked, useBlockBusy } from './block-state';
+import { blockWrite, useAuthorBlocked, useBlockBusy, useBlockTicket } from './block-state';
 import { findCachedUser } from './cached';
 import { copy } from './copy';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
@@ -32,9 +32,12 @@ export const BLOCK_NOTE_MAX = 280;
  * Block or unblock an account (PRD SAFE-01, SAFE-02; UX_SPEC §4.39), from a
  * post's, profile's or conversation's menu. A block is a public, paid
  * document, so it asks first, with an optional public note behind "Add a
- * note". On "Block" the account's posts leave every list at once (on DM v5
- * Messages blocks them too) and the sheet closes; the toast follows the
- * write. An account already blocked offers "Unblock".
+ * note". On "Block" the account's posts leave every list at once, and the
+ * sheet stays, its button "Blocking…", until the block is confirmed: then
+ * it closes with "Blocked @x" (on DM v5 Messages block them too). One not
+ * confirmed yet says so, with "Check again"; one that fails brings
+ * everything back and says so. Closed meanwhile, the block goes on, and
+ * the toast still follows it. An account already blocked offers "Unblock".
  */
 export function BlockScreen() {
   const { userId = '' } = useLocalSearchParams<{ userId?: string }>();
@@ -49,6 +52,15 @@ export function BlockScreen() {
   const blocked = useAuthorBlocked(userId, profile.data?.viewer?.blocks);
   // A block or unblock still on its way: the button says so, and the opposite action waits for it.
   const busy = useBlockBusy(userId);
+  const write = useWrite(blockWrite);
+  // Not confirmed yet, and no check has proved it absent: the app checks it, and says so.
+  const landing = useBlockTicket(userId);
+  const unconfirmed = landing?.state === 'unconfirmed';
+  const [checking, setChecking] = useState(false);
+  // Confirmed: done (the toast says so, `blockWrite.onConfirmed`).
+  useEffect(() => {
+    if (write.status === 'confirmed') closeSheet();
+  }, [write.status]);
   const [note, setNote] = useState('');
   const [noteOpen, setNoteOpen] = useState(false);
   const c = useColors();
@@ -108,17 +120,21 @@ export function BlockScreen() {
     mediumImpact();
     const message = note.trim();
     const row = user ? { username: user.username, displayName: user.displayName, avatar: user.avatar } : undefined;
-    sendWrite(
-      blockWrite,
-      { viewerId: ownViewerId, userId, block: true, message: message || undefined, user: row },
-      copy.toast.blocked(handle),
-    );
-    closeSheet();
+    write.send({ viewerId: ownViewerId, userId, block: true, message: message || undefined, user: row, handle }).catch(() => undefined);
   };
   const unblock = () => {
-    sendWrite(blockWrite, { viewerId: ownViewerId, userId, block: false }, copy.toast.unblocked(handle));
-    closeSheet();
+    write.send({ viewerId: ownViewerId, userId, block: false, handle }).catch(() => undefined);
   };
+  const checkAgain = () => {
+    if (!landing || checking) return;
+    setChecking(true);
+    recheckWrite(landing.id)
+      .catch(() => null)
+      .finally(() => setChecking(false));
+  };
+  // While a write may still land, the sheet shows what it asks for as not done yet: "Block @x?" with "Blocking…".
+  const shownBlocked = busy === 'blocking' ? false : busy === 'unblocking' ? true : blocked;
+  const busyLabel = busy === 'blocking' ? copy.block.blocking : busy === 'unblocking' ? copy.block.unblocking : null;
 
   return (
     <>
@@ -141,11 +157,11 @@ export function BlockScreen() {
           <View className="items-center py-6" testID="block-loading">
             <Spinner />
           </View>
-        ) : blocked ? (
+        ) : shownBlocked ? (
           <>
             <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.blockedTitle(handle)} body={copy.block.blockedBody} />
             <Button
-              label={busy === 'blocking' ? copy.block.blocking : busy === 'unblocking' ? copy.block.unblocking : copy.block.unblock}
+              label={busyLabel ?? copy.block.unblock}
               size="block"
               icon={UserIcon}
               accessibilityLabel={busy ? undefined : `Unblock ${handle}`}
@@ -157,7 +173,7 @@ export function BlockScreen() {
         ) : (
           <>
             <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.title(handle)} body={copy.block.body(bodyFor)} />
-            {noteOpen ? (
+            {busy ? null : noteOpen ? (
               <View className="gap-1">
                 <TextField
                   label={copy.block.note}
@@ -182,7 +198,7 @@ export function BlockScreen() {
               />
             )}
             <Button
-              label={busy === 'blocking' ? copy.block.blocking : busy === 'unblocking' ? copy.block.unblocking : copy.block.confirm}
+              label={busyLabel ?? copy.block.confirm}
               variant="destructive"
               size="block"
               icon={NoSymbolIcon}
@@ -193,7 +209,20 @@ export function BlockScreen() {
             />
           </>
         )}
-        <Button label={copy.cancel} variant="ghost" size="block" onPress={closeSheet} testID="block-cancel" />
+        {busy && unconfirmed ? (
+          <View className="flex-row flex-wrap items-center gap-x-2 gap-y-1" testID="block-unconfirmed">
+            <Text variant="subhead" tone="secondary">
+              {copy.block.unconfirmed(busy === 'blocking')}
+            </Text>
+            {checking ? (
+              <Spinner size="sm" testID="block-checking" />
+            ) : (
+              <LinkText label={copy.block.checkAgain} role="button" onPress={checkAgain} testID="block-check-again" />
+            )}
+          </View>
+        ) : null}
+        {/* While it is on its way this only closes the sheet: the block goes on. */}
+        <Button label={busy ? copy.close : copy.cancel} variant="ghost" size="block" onPress={closeSheet} testID="block-cancel" />
       </SheetBody>
     </>
   );

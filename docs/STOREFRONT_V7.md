@@ -202,3 +202,21 @@ other fields and no action fee, so these are network fees only:
 
 A real `storeItem` create adds the 50M (3¢) action fee and its other fields.
 s25 measures the registered contract's fees.
+
+## Registered (sakura, 2026-10-09)
+
+Storefront v7 is live on sakura as `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz`, at maker nonce 12 in the devnet
+contract group, and serves `/devnet` ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)). It is pinned to this file
+at sha256 `dac95112a0ffe7fa083484faf21452af923f84f1692d45d4f51ea42519afed0b`: 17,767 B signed, 17,661 B on chain.
+The create cost 51,687,225,460 credits (about 3,101¢).
+
+The storefront seed wrote 246 documents on it: 7 stores, 51 items and 28 orders, including the seller's
+14-combination toy and a 5-axis × 100-combination cube. All 155 checks of `scripts/verify-storefront.mjs` pass on it,
+s14 and s23 after a re-run. All of s25 passes, and every v7 rule case in s20 is refused with 10422. Measured by s25
+on the registered contract (action fee included):
+
+| Write | Credits |
+| --- | --- |
+| create, 14 combinations (stock, SKU, weight, image) | 107.32M (6.44¢) |
+| create, 5 axes × 100 combinations | 161.06M (9.66¢) |
+| replace every stock cell of the 14-combination item | 4.89M (0.29¢) |

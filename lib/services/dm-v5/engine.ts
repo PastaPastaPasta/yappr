@@ -32,7 +32,7 @@ import { recoverLostState, type RecoveryProgress } from './recovery'
 import type { Scheduler } from './self-state-store'
 import { sendContent } from './sender'
 import { SWEEP_INTERVAL_MS, sweep } from './sweep'
-import type { DmChain, KeyValueStore } from './types'
+import type { BeforeBroadcast, DmChain, KeyValueStore } from './types'
 import { hexId, pointerKey, splitText, type Exclusive } from './util'
 
 export const BACKGROUND_POLL_MS = 30_000
@@ -457,17 +457,36 @@ export class DmEngine {
     return conv.key
   }
 
-  /** Send text, split into messages of at most one size class (§5.7). */
-  async send(key: string, text: string): Promise<void> {
+  /**
+   * Send text, split into messages of at most one size class (§5.7).
+   * `beforeBroadcast` runs just before each of this send's broadcasts (a new
+   * conversation's invite, each message broadcast), never before another
+   * operation's; throwing refuses that broadcast and fails the send.
+   * `afterSettled` runs once each of them is settled (the conversation
+   * started, a message held), with how many of this send's messages are held
+   * so far: until it does, the latest broadcast may still land. A send that
+   * fails with every broadcast settled sent its first `held` messages, and
+   * none of the rest.
+   */
+  async send(
+    key: string,
+    text: string,
+    options: { beforeBroadcast?: BeforeBroadcast; afterSettled?: (held: number) => void } = {}
+  ): Promise<void> {
     const conv = this.convByKey(key)
     const pieces = splitText(text.trim())
     if (pieces.length === 0) return
+    const { beforeBroadcast, afterSettled } = options
     await this.run(async () => {
       if (conv.kind === 'direct') {
         if (this.ctx.store.isBlocked(conv.peer)) throw new Error('Unblock this person to message them.')
-        await ensureStarted(this.ctx, conv)
+        await ensureStarted(this.ctx, conv, { beforeBroadcast })
+        afterSettled?.(0)
       }
-      for (const text of pieces) await sendContent(this.ctx, conv, { type: 'text', text })
+      for (const [index, text] of pieces.entries()) {
+        await sendContent(this.ctx, conv, { type: 'text', text }, beforeBroadcast)
+        afterSettled?.(index + 1)
+      }
     })
   }
 
@@ -483,8 +502,13 @@ export class DmEngine {
     this.saveNow('the deleted conversation')
   }
 
-  setBlocked(peerId: string, blocked: boolean): void {
-    const entry = this.ctx.store.setBlocked(bs58.decode(peerId), blocked, this.ctx.chain.now())
+  /**
+   * Block or unblock `peerId`, stamped no earlier than `notBefore` (e.g. the
+   * account block this follows, read with a clock ahead of this one), so a
+   * later choice here is stamped after it.
+   */
+  setBlocked(peerId: string, blocked: boolean, notBefore = 0): void {
+    const entry = this.ctx.store.setBlocked(bs58.decode(peerId), blocked, Math.max(this.ctx.chain.now(), notBefore))
     this.ctx.cache.noteBlock({ id: hexId(entry.id), blocked: entry.blocked, changedAt: entry.changedAt })
     this.emit()
     this.saveNow(blocked ? 'the block' : 'the unblock')

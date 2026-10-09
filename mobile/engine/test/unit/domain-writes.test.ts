@@ -121,6 +121,7 @@ const { createGraphWrites } = await import('../../src/api/graph')
 const { createPostWrites } = await import('../../src/api/posts')
 const { createProfileWrites } = await import('../../src/api/profiles')
 const { createSafetyModule } = await import('../../src/api/safety')
+const { onOwnBlocks } = await import('../../src/api/own-blocks')
 const { createNotificationsModule } = await import('../../src/api/notifications')
 const { useSettingsStore } = await import('@/lib/store')
 const { useNotificationStore } = await import('@/lib/stores/notification-store')
@@ -380,6 +381,19 @@ describe('graph and safety writes', () => {
     expect(await outcome(safety.unblock(AUTHOR))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED', outcome: 'local' } })
   })
 
+  it('fails a block or unblock whose lookup of the block failed as not sent and retryable, never confirmed', async () => {
+    const { tickets, outcome, safety } = engine()
+    m.blockService.unblockUser.mockResolvedValue({ success: false, error: 'no available addresses to retry', lookupFailed: true })
+    const unblock = await outcome(safety.unblock(AUTHOR))
+    expect(unblock).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent', retryable: true } })
+    // Nothing was deleted: no provenance read, no STILL_BLOCKED, and checking never confirms it.
+    expect(m.blockService.getBlockProvenance).not.toHaveBeenCalled()
+    expect(await tickets.check(unblock.id)).toMatchObject({ state: 'failed' })
+
+    m.blockService.blockUser.mockResolvedValue({ success: false, error: 'Request timeout', lookupFailed: true })
+    expect(await outcome(safety.block(AUTHOR))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'TIMEOUT', outcome: 'not-sent' } })
+  })
+
   it('re-reads the blocked list after a block or unblock lands, on every page, and rejects an unreadable list', async () => {
     const { outcome, safety } = engine()
     const many = (count: number) => Array.from({ length: count }, (_, n) => ({ blockedId: id(`B${n + 1}`) }))
@@ -412,6 +426,20 @@ describe('graph and safety writes', () => {
 
     m.blockService.getUserBlocks.mockRejectedValue(new Error('no available addresses to retry'))
     await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  it('tells every whole read of the blocked list to its listeners (DM v5 Messages), and never a failed one', async () => {
+    const { safety } = engine()
+    const heard = vi.fn()
+    const stop = onOwnBlocks(heard)
+    m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, $createdAt: 1000 }, { blockedId: '', $createdAt: 2000 }, { blockedId: id('Other'), $createdAt: 3000 }])
+    await safety.blocked()
+    expect(heard).toHaveBeenCalledExactlyOnceWith(VIEWER, [{ blockedId: AUTHOR, createdAt: 1000 }, { blockedId: id('Other'), createdAt: 3000 }])
+
+    m.blockService.getUserBlocks.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(heard).toHaveBeenCalledTimes(1)
+    stop()
   })
 
   it('tells an own block from one only a followed block list makes', async () => {
@@ -542,6 +570,20 @@ describe('profiles.update', () => {
     const ticket = await profiles.update({ bio: 'b', pronouns: 'she/her' })
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed', progress: { done: 1, total: 2 } })
     expect(seen).toEqual([{ done: 0, total: 2 }, { done: 1, total: 2 }])
+  })
+
+  it('never reports a save lib could not confirm as saved: it is unconfirmed until a check finds it (RC16-A-01)', async () => {
+    const { tickets, profiles } = engine()
+    m.profileService.updateProfile.mockImplementation(async (_owner: string, _update: unknown, options: { onUnconfirmed: () => void }) => {
+      // The document went out; its confirmation wait timed out.
+      options.onUnconfirmed()
+      return {}
+    })
+    const ticket = await profiles.update({ bio: 'new bio' })
+    expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+
+    m.profileService.getProfile.mockResolvedValue({ bio: 'new bio', displayName: 'Ann' })
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
   })
 
   it('reports lib\'s own plan refusals as not sent, and checks an edit by reading the profile back', async () => {

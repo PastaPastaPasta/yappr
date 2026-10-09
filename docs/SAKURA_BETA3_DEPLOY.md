@@ -19,7 +19,7 @@ One publisher registered the whole `/devnet` set at maker nonces 1–11, after u
 
 **The contract group is registered by the first create** (key backup, nonce 1), not by social as on v12. A group is a named, enumerable family of contracts and the scope of group-bound keys; nothing in a contract, the client or the tooling depends on which create registers it, and its id is `contractGroupId(maker, 1)` either way. Registering it on nonce 1 let the nine unchanged contracts publish while social v14 and pollr v6 were still in review. No contract embeds another's id; social's only cross-contract reference is DashPay's `profile`, a system contract that survived the wipe.
 
-Group `Cxxdiq5bBMFr2j8H1ug4hKaDqv7CcVYMt8PPvopj2rDF`, 11 members.
+Group `Cxxdiq5bBMFr2j8H1ug4hKaDqv7CcVYMt8PPvopj2rDF`, 12 members (storefront v7 joined on 2026-10-09, below).
 
 | Nonce | Contract | Id | Source sha256 | Signed create | Cost |
 | ---: | --- | --- | --- | ---: | ---: |
@@ -29,13 +29,16 @@ Group `Cxxdiq5bBMFr2j8H1ug4hKaDqv7CcVYMt8PPvopj2rDF`, 11 members.
 | 4 | auth vault | `AfkTRtNUfAuF2CckhNE5CYEEhGsBBQGfMEBGm82wbh5g` | testnet snapshot | 2,219 B | 17.1e9 ($10.28) |
 | 5 | blocks | `2huLPRT5KsC3gmbCtQ2EdWNaP697owVNCforoxDpPnXx` | `45f04cba…` | 1,428 B | 19.1e9 ($11.47) |
 | 6 | blog v7 | `4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` | `a04df915…` | 7,009 B | 29.3e9 ($17.60) |
-| 7 | storefront v6 | `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk` | `c6c9c678…` | 17,209 B | 51.7e9 ($31.00) |
+| 7 | storefront v6 (retired by v7) | `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk` | `c6c9c678…` | 17,209 B | 51.7e9 ($31.00) |
 | 8 | DM v4 | `8a1p5yGq5rJMpWyEm25PEnDcC3kTNWGq3t8au25vC2EX` | `7a86b1d2…` | 2,737 B | 20.2e9 ($12.09) |
 | 9 | DM v5 | `4PU6mxANMUXaApgkUNq7VzmftMmbk8p2fUeFoiqRS79D` | `82c03a3c…` | 3,673 B | 22.2e9 ($13.31) |
 | 10 | social v14 | `6GrRBNDe7r5JXZFr9XgUETKACzvrUZjHdfgKCYCMcc9y` | `b18f7c82…` (staging `5552f4de`, #702) | 17,974 B | 91.8e9 ($55.08) |
 | 11 | pollr v6 | `Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` | `fa081adf…` (#701, merged `c653d322`; the file is unchanged since `dc846d95`) | 4,256 B | 19.2e9 ($11.51) |
+| 12 | storefront v7 | `2P2KqWzZXqULWMD1e2tL1dr67YAjNqUTP8cyNGkekzdz` | `dac95112…` (#707, merged `e06d0994`) | 17,767 B | 51.7e9 ($31.01) |
 
 The eleven creates cost the maker 330.8e9 credits (about 3.3 DASH, $198). Social v14 published at 17,974 B against the doc's ~17,975 B estimate.
+
+**Storefront v7** ([STOREFRONT_V7.md](STOREFRONT_V7.md): variants as a typed table) was published on 2026-10-09 at 13:25Z by the same publisher, as a held entry pinned to the merged file's sha256. It went in at nonce 12 after an unsigned and a signed dry run, cost 51,687,225,460 credits (about 3,101¢), and its read-back reports 0 problems: the on-chain bytes (17,661 B) equal the pin, and all nine storeItem rules are present. It replaces v6 on `/devnet`. v6's stores and items stay on chain unused, with no migration.
 
 - **Moderation.** Social, blog and storefront registered with the files' elected declarations (7-day join, 3-day vote, a contestable seat with a 30-day cool-down, `maxAddedModerators: 10`, `ownerProtected`, `contractOwner` interim). The maker moderates as the interim owner until a team is seated.
 - **YAPP** (social token 0) is `AMrtbchVQGGhgJR5CrGyn8qFZdfPoY3C4CqweA7qM9Jw`: **unpaused** and unpriced. A direct purchase is refused 40721 and nothing moves.

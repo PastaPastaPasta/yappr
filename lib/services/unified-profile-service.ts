@@ -174,6 +174,12 @@ export interface UpdateProfileOptions {
    * document and reports nothing.
    */
   onProgress?: (progress: ProfileSaveProgress) => void;
+  /**
+   * Called when a profile document was sent but its confirmation wait timed
+   * out: the save may still land, or may never execute. Without it a
+   * resolved save cannot be told from a confirmed one.
+   */
+  onUnconfirmed?: () => void;
 }
 
 // Avatar configuration
@@ -870,9 +876,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Create user profile
    */
-  async createProfile(ownerId: string, data: CreateUnifiedProfileData): Promise<User> {
+  async createProfile(ownerId: string, data: CreateUnifiedProfileData, options: UpdateProfileOptions = {}): Promise<User> {
     if (profileExtensionSource()) {
-      return this.saveV10Profile(ownerId, data);
+      return this.saveV10Profile(ownerId, data, options);
     }
 
     const documentData: Record<string, unknown> = {
@@ -904,6 +910,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     const written = asCreated(withCreationTime(result.document, startedAt));
     // Only a create known to have landed stands in for reads that miss it (one whose wait timed out may never execute).
     if (result.confirmed !== false) this.rememberWrite('base', ownerId, written);
+    else options.onUnconfirmed?.();
     const user = this.transformDocument(written);
     if (typeof result.confirmed === 'boolean') {
       (user as unknown as Record<string, unknown>).__createConfirmed = result.confirmed;
@@ -919,7 +926,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   async updateProfile(ownerId: string, updates: UpdateUnifiedProfileData, options: UpdateProfileOptions = {}): Promise<User | null> {
     if (profileExtensionSource()) {
       try {
-        return await this.saveV10Profile(ownerId, updates, options.onProgress);
+        return await this.saveV10Profile(ownerId, updates, options);
       } catch (error) {
         logger.error('UnifiedProfileService: Error updating profile:', error);
         throw error;
@@ -933,7 +940,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       if (!rawProfile) {
         // A profile is optional, so the first edit creates it.
         const displayName = updates.displayName?.trim() || await this.defaultDisplayName(ownerId);
-        return await this.createProfile(ownerId, { ...updates, displayName });
+        return await this.createProfile(ownerId, { ...updates, displayName }, options);
       }
 
       const docId = rawProfile.$id;
@@ -1018,6 +1025,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       const written = { $createdAt: rawProfile.$createdAt, ...result.document };
       // Only a write known to have landed stands in for older reads (one whose wait timed out may never execute).
       if (result.confirmed !== false) this.rememberWrite('base', ownerId, written);
+      else options.onUnconfirmed?.();
       return this.transformDocument(written);
     } catch (error) {
       logger.error('UnifiedProfileService: Error updating profile:', error);
@@ -1100,7 +1108,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   private async saveV10Profile(
     ownerId: string,
     data: UpdateUnifiedProfileData,
-    onProgress?: UpdateProfileOptions['onProgress']
+    { onProgress, onUnconfirmed }: UpdateProfileOptions = {}
   ): Promise<User> {
     cacheManager.invalidateByTag(`user:${ownerId}`);
 
@@ -1142,6 +1150,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       // a create whose wait timed out must be visible before the extension goes.
       if (!stored.base && !written.confirmed) await this.waitForDashpayProfile(ownerId);
       if (written.confirmed || !stored.base) landed('base', base);
+      else onUnconfirmed?.();
     }
     let extension = stored.extension;
     if (plan.extension) {
@@ -1149,6 +1158,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       const written = await this.writeProfileDocument('extension', ownerId, stored.extension, plan.extension);
       extension = written.document;
       if (written.confirmed) landed('extension', extension);
+      else onUnconfirmed?.();
     }
 
     cacheManager.invalidateByTag(`user:${ownerId}`);

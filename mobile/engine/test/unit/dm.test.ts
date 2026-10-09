@@ -13,11 +13,13 @@ import type { Conversation, DirectMessage } from '@/lib/types'
 import type { AuthorDTO } from '../../src/api/dto'
 import type { LegacyDmService, LegacyReads } from '../../src/dm/legacy'
 import type { DmEvents, MessageDTO } from '../../src/dm/types'
-import type { WriteTicket } from '../../src/writes/types'
+import type { TicketDocument, WriteTicket } from '../../src/writes/types'
+import type { WriteResult } from '../../src/writes/tickets'
 import type { SessionEvents } from '../../src/api/session'
+import type { OwnBlocksListener } from '../../src/api/own-blocks'
 
 // The settle before each v5 write reads lib's nonce reservations; here it only records its calls.
-const settleSupersededReplaces = vi.hoisted(() => vi.fn(async () => 0))
+const settleSupersededReplaces = vi.hoisted(() => vi.fn<(ownerId: string, contractId: string) => Promise<number>>(async () => 0))
 vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settleSupersededReplaces }))
 
 // lib/store's persisted settings (read receipts) need the engine's storage before lib loads.
@@ -29,8 +31,9 @@ const { useSettingsStore } = await import('@/lib/store')
 const { createDmModule } = await import('../../src/api/dm')
 const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
-const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
+const { ABSENCE_AFTER_MS, NotSentError, WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { RpcError } = await import('../../src/protocol/envelope')
+const { BLOCK_SETTLING_MS, SEND_BUDGET_MS, SEND_REATTEMPT_PAUSE_MS } = await import('../../src/dm/v5')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
 type MemoryLedger = InstanceType<typeof MemoryLedger>
 
@@ -60,6 +63,35 @@ function ledgerNow(): MemoryLedger {
   return ledger
 }
 
+/**
+ * The account's own block list on the chain, as `dm` reads it (`refresh`):
+ * `blocked` is what a read returns, `madeAt` when each block was made
+ * (unknown when unset), `ids` each block's `$id`, and `failing` makes every read reject.
+ */
+function accountOn(blocked: string[] = []) {
+  const listeners = new Set<OwnBlocksListener>()
+  const account = {
+    blocked,
+    madeAt: new Map<string, number>(),
+    /** Each block's `$id`, when a test names it (one made again gets a new one). */
+    ids: new Map<string, string>(),
+    failing: false,
+    refresh: vi.fn(async (identityId: string) => {
+      if (account.failing) throw new RpcError('The block list could not be read', 'NETWORK')
+      const blocks = account.blocked.map(blockedId => ({ blockedId, id: account.ids.get(blockedId) ?? `block-${blockedId}`, createdAt: account.madeAt.get(blockedId) ?? Number.NaN }))
+      for (const listener of listeners) listener(identityId, blocks)
+    }),
+    subscribe: (listener: OwnBlocksListener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+  return account
+}
+
+/** The block document a confirmed block write made. */
+const blockDocument = (id: string): TicketDocument => ({ contractId: 'blocks', type: 'block', id, action: 'create', confirmed: true })
+
 type Event = { event: string; payload: unknown }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 const cleanups: (() => Promise<void>)[] = []
@@ -73,16 +105,28 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
   ({ session: { identityId, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })
 
 /** One user's engine: a dm module over a ticket store, signed in as `me`. */
-/** `kv`: the device's DM v5 store, kept across a relaunch (else a fresh device). */
-function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}, kv?: InstanceType<typeof MapKv>) {
+/**
+ * `kv`: the device's DM v5 store, kept across a relaunch (else a fresh
+ * device); `device`, its ticket and plain storage, kept the same way, the
+ * account's block list on the chain (else an empty one), and the ticket
+ * store's clock (else the one `Date.now` held when it was made).
+ */
+function userOn(
+  ledger: MemoryLedger,
+  me: string,
+  extra: Partial<Parameters<typeof createDmModule>[0]> = {},
+  kv?: InstanceType<typeof MapKv>,
+  device: { storage?: ReturnType<typeof memoryStorage>; local?: ReturnType<typeof memoryStorage>; account?: ReturnType<typeof accountOn>; now?: () => number } = {},
+) {
   const events: Event[] = []
-  const storage = memoryStorage()
+  const storage = device.storage ?? memoryStorage()
   /** The engine's plain storage, where DM v5 keeps its per-device state. */
-  const local = memoryStorage()
+  const local = device.local ?? memoryStorage()
+  const account = device.account ?? accountOn()
   const emit = (event: string, payload: unknown) => { events.push({ event, payload }) }
   let signedIn: string | null = me
   const keyRequired = vi.fn()
-  const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true, onKeyRequired: keyRequired })
+  const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true, onKeyRequired: keyRequired, now: device.now })
   const engines = new Map<string, DmEngine>()
   let locked = false
   const source = {
@@ -100,11 +144,11 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
     release: vi.fn(),
   }
   const authors = vi.fn(async (ids: string[]) => new Map(ids.map(id => [id, authorOf(id)])))
-  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, storage: local, ...extra })
+  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, storage: local, accountBlocks: account, ...extra })
   dm.hooks.sessionChanged(started(me))
   cleanups.push(() => dm.hooks.stop())
   return {
-    dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired,
+    dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired, account,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
     /** Signs in as `id` without a sign-out (`hooks.sessionChanged` starts its messages). */
@@ -454,8 +498,8 @@ describe('dm on DM v5: 1:1', () => {
     const engine = a.engine()
     const send = engine.send.bind(engine)
     // The message goes out, then the device locks before the run reads it back (NO_KEY).
-    vi.spyOn(engine, 'send').mockImplementation(async (conversation, text) => {
-      await send(conversation, text)
+    vi.spyOn(engine, 'send').mockImplementation(async (conversation, text, options) => {
+      await send(conversation, text, options)
       a.setLocked(true)
     })
     const ticket = await a.settled(await a.dm.send(key, 'delivered'))
@@ -483,9 +527,17 @@ describe('dm on DM v5: 1:1', () => {
     await a.settled(await a.dm.send(key, 'first'))
     const chain = a.engine().ctx.chain as MemoryChain
     const written = ledger.messages.length
-    vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(new Error('transport error: grpc error: Failed to fetch'))
-    const ticket = await a.settled(await a.dm.send(key, 'second'))
+    // The connection stays down for the send's own second try too (RC16-A-05).
+    const down = new Error('transport error: grpc error: Failed to fetch')
+    const read = vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(down).mockRejectedValueOnce(down)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const sent = await a.dm.send(key, 'second')
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(SEND_REATTEMPT_PAUSE_MS)
+    const ticket = await a.settled(sent)
+    vi.useRealTimers()
     expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+    expect(read).toHaveBeenCalledTimes(2)
     expect(ledger.messages).toHaveLength(written)
     await a.tickets.retry(ticket.id)
     expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
@@ -502,8 +554,8 @@ describe('dm on DM v5: 1:1', () => {
     const send = engine.send.bind(engine)
     const written = ledger.messages.length
     // lib throws after the message was broadcast and held (saving its cache, say).
-    vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text) => {
-      await send(conversation, text)
+    vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text, options) => {
+      await send(conversation, text, options)
       throw new Error('The quota has been exceeded')
     })
     expect(await a.settled(await a.dm.send(key, 'once'))).toMatchObject({ state: 'confirmed', error: null })
@@ -542,15 +594,19 @@ describe('dm on DM v5: 1:1', () => {
     const createMessage = chain.createMessage.bind(chain)
     let clear: () => void = () => undefined
     const stalled = new Promise<void>(resolve => { clear = resolve })
-    const broadcast = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+    const broadcast = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (tag, body, options) => {
+      options?.beforeBroadcast?.()
       await stalled
-      return createMessage(...args)
+      return createMessage(tag, body)
     })
     const pollOwn = vi.spyOn(engine, 'pollOwn')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const ticket = await a.dm.send(key, 'through a stall')
     await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(1))
-    await vi.advanceTimersByTimeAsync(60_000)
+    // Past the send's budget, its message may still land: never given up as not sent (RC16-A-03).
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(a.tickets.get(ticket.id)?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(60_000 - SEND_BUDGET_MS)
     expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
     // Check again answers at once (a read queued behind the hung send would not), and cannot
     // prove it absent while the call runs: still sending, no Retry beside it.
@@ -562,6 +618,353 @@ describe('dm on DM v5: 1:1', () => {
     await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
     expect(broadcast).toHaveBeenCalledTimes(1)
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['through a stall'])
+  })
+
+  /**
+   * Counts the messages `chain` broadcasts: its `hook` runs past `beforeBroadcast`, so a broadcast
+   * refused there is not counted (a `createMessage` spy would count the call).
+   */
+  function broadcastsOf(chain: MemoryChain) {
+    const count = { messages: 0 }
+    chain.hook = method => {
+      if (method === 'createMessage') count.messages += 1
+      return null
+    }
+    return count
+  }
+
+  /** A DM v5 pair where every read of Alice's chain hangs until `clear` (a DAPI stall, as an iptables DROP makes). */
+  async function stalledReads() {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    const read = chain.messagesByTags.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const reads = vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+      await stalled
+      return read(tags)
+    })
+    return { ledger, a, chain, key, reads, broadcasts: broadcastsOf(chain), written: ledger.messages.length, clear }
+  }
+
+  it('gives up a send stalled before its broadcast within 30 s as not delivered, retryably, and never sends it later (RC16-A-03)', async () => {
+    const { ledger, a, key, reads, broadcasts, written, clear } = await stalledReads()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const stuck = await a.dm.send(key, 'stuck')
+    // A second send waits behind the first, and is given up as well, without ever starting.
+    const behind = await a.dm.send(key, 'behind')
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1))
+    // (vi.waitFor moves fake time on a little as it polls.)
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS - 1_000)
+    expect(a.tickets.get(stuck.id)?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(1_000)
+    const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
+    expect(await a.settled(stuck)).toMatchObject(notSent)
+    expect(await a.settled(behind)).toMatchObject(notSent)
+    vi.useRealTimers()
+
+    // The stall clears: lib's call given up goes on, and its broadcast is refused before it goes
+    // out. A send after it, queued behind it, goes out alone.
+    clear()
+    expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
+    expect(broadcasts.messages).toBe(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect(await a.settled(stuck)).toMatchObject(notSent)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['after', 'first'])
+  })
+
+  /** A DM v5 pair with a conversation already started (no invite to write), and its message broadcasts counted. */
+  async function talking() {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    return { ledger, a, key, chain, broadcasts: broadcastsOf(chain), written: ledger.messages.length }
+  }
+
+  it("gives up a send whose write stalls inside lib's createDocument before its broadcast, and never broadcasts it later (RC16-A-03)", async () => {
+    const { ledger, a, key, chain, broadcasts, written } = await talking()
+    // createDocument's reads (identity, nonce) hang before it broadcasts: the chain's write was
+    // called, but nothing went out. Counting the call as a broadcast would never give it up.
+    const createMessage = chain.createMessage.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const writes = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+      await stalled
+      return createMessage(...args)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'stuck')
+    await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
+    expect(await a.settled(ticket)).toMatchObject(notSent)
+    vi.useRealTimers()
+
+    // The reads answer: its broadcast is refused at the boundary, and the next send goes out alone.
+    clear()
+    expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
+    expect(broadcasts.messages).toBe(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect(await a.settled(ticket)).toMatchObject(notSent)
+  })
+
+  it("tries once more after a connection failure inside lib's createDocument before its broadcast, and sends it once (RC16-A-05)", async () => {
+    const { ledger, a, key, chain, broadcasts, written } = await talking()
+    // createDocument's identity read fails on a dead connection, before any broadcast: lib turns it
+    // into a refused outcome (as SdkDmChain does), and nothing went out.
+    const writes = vi.spyOn(chain, 'createMessage').mockResolvedValueOnce({ ok: false, failure: 'transport', error: 'transport error: Failed to fetch' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'back online')
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+      expect(a.tickets.get(ticket.id)?.state).toBe('confirmed')
+    })
+    vi.useRealTimers()
+    expect(writes).toHaveBeenCalledTimes(2)
+    expect(broadcasts.messages).toBe(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+  })
+
+  it("counts the settle of pending replaces in the send's budget: a send held by the write lock is given up at 30 s and never broadcast", async () => {
+    const { withIdentityWriteLock } = await import('@/lib/identity-write-lock')
+    const { YAPPR_DM_V5_CONTRACT_ID } = await import('@/lib/constants')
+    const actual = await vi.importActual<typeof import('@/lib/services/identity-nonce')>('@/lib/services/identity-nonce')
+    const { ledger, a, key, broadcasts, written } = await talking()
+    // A write in progress (a stalled roster save) holds the account's write lock; the settle before
+    // the send waits for it.
+    settleSupersededReplaces.mockImplementation(actual.settleSupersededReplaces)
+    let release: () => void = () => undefined
+    const held = new Promise<void>(resolve => { release = resolve })
+    let holding = false
+    const lock = withIdentityWriteLock(alice, YAPPR_DM_V5_CONTRACT_ID, async () => {
+      holding = true
+      await held
+    })
+    await vi.waitFor(() => expect(holding).toBe(true))
+    try {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const ticket = await a.dm.send(key, 'held')
+      await vi.waitFor(() => expect(settleSupersededReplaces).toHaveBeenCalledWith(alice, YAPPR_DM_V5_CONTRACT_ID))
+      await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+      const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
+      expect(await a.settled(ticket)).toMatchObject(notSent)
+      vi.useRealTimers()
+
+      // The lock is released: the send given up never goes on to lib's send.
+      const sends = vi.spyOn(a.engine(), 'send')
+      release()
+      await lock
+      expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
+      expect(sends).toHaveBeenCalledTimes(1)
+      expect(broadcasts.messages).toBe(1)
+      expect(ledger.messages).toHaveLength(written + 1)
+      expect(await a.settled(ticket)).toMatchObject(notSent)
+    } finally {
+      release()
+      settleSupersededReplaces.mockImplementation(async () => 0)
+    }
+  })
+
+  it('never refuses a group grant stalled before its broadcast when a send behind it is given up (RC16-A-03)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const c = await ready(userOn(ledger, carol))
+    const { key: team } = await a.engine().createGroup('Team', [bob])
+    await a.engine().tick()
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    // Carol's grant stalls inside createDocument, before its broadcast (a DAPI stall), holding lib's
+    // queue; the send behind it times out and is given up.
+    const chain = a.engine().ctx.chain as MemoryChain
+    const createMessage = chain.createMessage.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const grant = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+      await stalled
+      return createMessage(...args)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const add = await a.dm.addMember(team, carol)
+    await vi.waitFor(() => expect(grant).toHaveBeenCalledTimes(1))
+    const send = await a.dm.send(key, 'stuck')
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(await a.settled(send)).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+    vi.useRealTimers()
+
+    // The stall clears: the grant broadcasts (the send's refusal was never its), and the send never does.
+    clear()
+    expect(await a.settled(add)).toMatchObject({ state: 'confirmed' })
+    expect(await a.settled(send)).toMatchObject({ state: 'failed' })
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['first'])
+    await c.engine().tick()
+    expect((await c.dm.conversations()).find(conv => conv.key === team)?.flags.unreadable).toBe(false)
+  })
+
+  it("refuses only the given-up send's own writes: group writes queued beside it still go out (RC16-A-03)", async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const c = await ready(userOn(ledger, carol))
+    const { key: team } = await a.engine().createGroup('Team', [bob])
+    const { key: club } = await b.engine().createGroup('Club', [alice])
+    await a.engine().tick()
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    // A rename hangs on its roster write (a DAPI stall), holding lib's queue: the group writes
+    // and the send behind it all wait for it.
+    const chain = a.engine().ctx.chain as MemoryChain
+    const replace = chain.replaceGroupDoc.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const hung = vi.spyOn(chain, 'replaceGroupDoc').mockImplementationOnce(async (...args) => {
+      await stalled
+      return replace(...args)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const rename = await a.dm.renameGroup(team, 'Dream team')
+    await vi.waitFor(() => expect(hung).toHaveBeenCalledTimes(1))
+    // A re-key grant (and a new member's invite and grant), and a leave: all written on the
+    // account's chain while the send is in progress, and none of them the send's.
+    const resend = await a.dm.resendKeys(team, bob)
+    const add = await a.dm.addMember(team, carol)
+    const leave = await a.dm.leaveGroup(club)
+    const send = await a.dm.send(key, 'stuck')
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(await a.settled(send)).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+    vi.useRealTimers()
+
+    clear()
+    for (const ticket of [rename, resend, add, leave]) expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+    expect(await a.settled(send)).toMatchObject({ state: 'failed' })
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['first'])
+    // Carol got the key (her grant was not counted as, or refused with, the send).
+    await c.engine().tick()
+    expect((await c.dm.conversations()).find(conv => conv.key === team)?.flags.unreadable).toBe(false)
+  })
+
+  it('never gives up a long send as not sent once a part is out: it reads "still sending" and lands whole (RC16-A-03)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'hi'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    let broadcasts = 0
+    chain.hook = method => {
+      if (method === 'createMessage') broadcasts += 1
+      return null
+    }
+    // Part 1 goes out and is held; part 2's read before its broadcast hangs (a DAPI stall).
+    const read = chain.messagesByTags.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const reads = vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+      if (broadcasts === 1) await stalled
+      return read(tags)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, `${'a'.repeat(4081)}${'b'.repeat(100)}`)
+    await vi.waitFor(() => expect(broadcasts).toBe(1))
+    await vi.waitFor(() => expect(reads).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(a.tickets.get(ticket.id)?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(60_000 - SEND_BUDGET_MS)
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
+    vi.useRealTimers()
+
+    clear()
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
+    expect(broadcasts).toBe(2)
+    await b.engine().tick()
+    const [conversation] = await b.dm.conversations()
+    await b.engine().pollOwn(conversation.key)
+    await b.dm.open(conversation.key)
+    expect((await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()).toEqual(['h', 'a', 'b'])
+  })
+
+  it('never tries a send once more after its invite was written, and reads it as not sent only once the invite settled with no message out (RC16-A-05, SR-18)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    const engine = a.engine()
+    const chain = engine.ctx.chain as MemoryChain
+    let invited = false
+    chain.hook = method => {
+      if (method === 'createInvite') invited = true
+      return null
+    }
+    // The invite goes out; the read before the first message then fails on the connection.
+    const read = chain.messagesByTags.bind(chain)
+    let failed = false
+    vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+      if (invited && !failed) {
+        failed = true
+        throw new Error('no available addresses to use')
+      }
+      return read(tags)
+    })
+    const sends = vi.spyOn(engine, 'send')
+    const broadcasts = vi.spyOn(chain, 'createMessage')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'hello')
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).not.toBe('pending'))
+    await vi.advanceTimersByTimeAsync(SEND_REATTEMPT_PAUSE_MS * 2)
+    vi.useRealTimers()
+    expect(failed).toBe(true)
+    expect(ledger.invites).toHaveLength(1)
+    expect(sends).toHaveBeenCalledTimes(1)
+    expect(broadcasts).not.toHaveBeenCalled()
+    // The conversation is started and no message went out: the text is not sent, and a retry sends no second invite.
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+  })
+
+  it('sends a send given up on a stall exactly once on retry, even while the call given up still runs (RC16-A-03)', async () => {
+    const { ledger, a, key, reads, written, clear } = await stalledReads()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'once')
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(await a.settled(ticket)).toMatchObject({ state: 'failed', retryable: true })
+    // Retried before the stall clears: it waits for the call given up, which can no longer send.
+    await a.tickets.retry(ticket.id)
+    vi.useRealTimers()
+    clear()
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['once', 'first'])
+  })
+
+  it('tries a send once more on its own when its first read after the network came back fails, and sends it once (RC16-A-05)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    const written = ledger.messages.length
+    // The first request after the stall fails at once, on connections the stall left dead.
+    const read = vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(new Error('no available addresses to use'))
+    const broadcasts = vi.spyOn(chain, 'createMessage')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'back online')
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+      expect(a.tickets.get(ticket.id)?.state).toBe('confirmed')
+    })
+    vi.useRealTimers()
+    expect(read.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(broadcasts).toHaveBeenCalledTimes(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect(a.events.filter(e => e.event === 'write.status').map(e => (e.payload as WriteTicket)).filter(t => t.id === ticket.id).map(t => t.state)).not.toContain('failed')
   })
 
   it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {
@@ -619,35 +1022,136 @@ describe('dm on DM v5: 1:1', () => {
       const { a, b, key } = await sending()
       const engine = a.engine()
       const send = engine.send.bind(engine)
-      vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, parts) => {
-        await send(conversation, parts)
+      vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, parts, options) => {
+        await send(conversation, parts, options)
         throw new Error('The quota has been exceeded')
       })
       expect(await a.settled(await a.dm.send(key, text))).toMatchObject({ state: 'confirmed', error: null })
       expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
     })
 
-    it('fails a part whose read before its broadcast failed as not sent, and retries the rest', async () => {
-      const { a, b, key, chain } = await sending()
-      let broadcasts = 0
+    /** Fails the first message-slot read once `when()` holds: the read before a part's broadcast. */
+    function failReadOnce(chain: MemoryChain, when: () => boolean) {
       let failed = false
-      chain.hook = method => {
-        if (method === 'createMessage') broadcasts += 1
-        return null
-      }
       const read = chain.messagesByTags.bind(chain)
-      vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
-        if (broadcasts === 1 && !failed) {
+      return vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+        if (when() && !failed) {
           failed = true
           throw new Error('transport error: grpc error: Failed to fetch')
         }
         return read(tags)
       })
+    }
+
+    it('retries only the rest of a long send whose next part failed before its broadcast, once the first was held', async () => {
+      const { ledger, a, b, key, chain } = await sending()
+      let broadcasts = 0
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      failReadOnce(chain, () => broadcasts === 1)
+      const written = ledger.messages.length
+      // Part 1 is out and part 2 never left: the rest is not sent, and may be sent again.
       const ticket = await a.settled(await a.dm.send(key, text))
-      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, progress: { done: 1, total: 3 }, error: expect.objectContaining({ code: 'NETWORK' }) })
+      expect(ledger.messages).toHaveLength(written + 1)
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed', error: null })
+      // Only the rest went out: three messages in all, each once.
+      expect(broadcasts).toBe(3)
+      expect(ledger.messages).toHaveLength(written + 3)
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('retries only the last part when the read before it failed', async () => {
+      const { ledger, a, b, key, chain } = await sending()
+      let broadcasts = 0
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      failReadOnce(chain, () => broadcasts === 2)
+      const written = ledger.messages.length
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, progress: { done: 2, total: 3 } })
       await a.tickets.retry(ticket.id)
       expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(ledger.messages).toHaveLength(written + 3)
       expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('never sends again a part whose broadcast may have landed: it stays unknown', async () => {
+      const { ledger, a, b, key, chain } = await sending()
+      let writes = 0
+      const create = chain.createMessage.bind(chain)
+      // Part 2 lands, and its answer is lost.
+      vi.spyOn(chain, 'createMessage').mockImplementation(async (tag, body, options) => {
+        const outcome = await create(tag, body, options)
+        return ++writes === 2 ? { ok: false, failure: 'transport', error: 'Request timeout after 8000ms' } : outcome
+      })
+      const written = ledger.messages.length
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ outcome: 'unknown' }) })
+      // A check finds part 3 missing: still unknown, and never offered as a retry.
+      expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      await expect(a.tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+      expect(writes).toBe(2)
+      expect(ledger.messages).toHaveLength(written + 2)
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b'])
+    })
+
+    it('sends the whole text again when the read before its first part failed, after the conversation started', async () => {
+      const ledger = ledgerNow()
+      const a = await ready(userOn(ledger, alice))
+      const b = await ready(userOn(ledger, bob))
+      const key = await a.dm.startDirect(bob)
+      const chain = a.engine().ctx.chain as MemoryChain
+      let invites = 0
+      chain.hook = method => {
+        if (method === 'createInvite') invites += 1
+        return null
+      }
+      failReadOnce(chain, () => invites === 1)
+      // The invite is out, no part is: nothing of the text went, so it is not sent.
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+      expect(ledger.messages).toHaveLength(0)
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(invites).toBe(1)
+      expect(ledger.invites).toHaveLength(1)
+      await b.engine().tick()
+      const [conversation] = await b.dm.conversations()
+      await b.engine().pollOwn(conversation.key)
+      await b.dm.open(conversation.key)
+      expect((await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()).toEqual(['a', 'b', 'c'])
+    })
+
+    it('sends nothing again after a restart: the rest of a long send is left to the user', async () => {
+      const ledger = ledgerNow()
+      const kv = new MapKv()
+      const first = await ready(userOn(ledger, alice, {}, kv))
+      await ready(userOn(ledger, bob))
+      const key = await first.dm.startDirect(bob)
+      await first.settled(await first.dm.send(key, 'hi'))
+      const chain = first.engine().ctx.chain as MemoryChain
+      let broadcasts = 0
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      failReadOnce(chain, () => broadcasts === 1)
+      const ticket = await first.settled(await first.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true })
+      const written = ledger.messages.length
+      await first.hooks.stop()
+
+      // The text was never stored: the restored ticket cannot send it, so nothing goes out twice.
+      const relaunched = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local }))
+      expect(relaunched.tickets.list().find(t => t.id === ticket.id)).toMatchObject({ state: 'failed', retryable: false })
+      await expect(relaunched.tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+      expect(ledger.messages).toHaveLength(written)
     })
   })
 
@@ -758,6 +1262,481 @@ describe('dm on DM v5: blocks asked for before they can apply (PRD SAFE-01)', ()
     await user.hooks.stop()
     user.hooks.forget(alice)
     expect(user.local.getItem(pendingKey)).toBeNull()
+  })
+})
+
+describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-02)', () => {
+  const followedKey = `yappr_engine_dm_account_blocks:${alice}`
+  const blockedNow = async (user: ReturnType<typeof userOn>) => [...(await user.dm.status()).blocked].sort()
+
+  it('blocks in Messages, at the next start, someone the account blocked while the app was closed', async () => {
+    const user = userOn(ledgerNow(), alice, {}, undefined, { account: accountOn([bob]) })
+    await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ ready: true, blocked: [bob] }))
+    expect(user.account.refresh).toHaveBeenCalledWith(alice)
+    expect(user.account.refresh).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: `local:block-${bob}` })
+  })
+
+  it('blocks in Messages once a block the app was killed during is confirmed after the relaunch', async () => {
+    const ledger = ledgerNow()
+    const kv = new MapKv()
+    const first = await ready(userOn(ledger, alice, {}, kv))
+    // The block is sent, and the app is killed before its answer.
+    first.tickets.register<{ targetId: string }>('block', { persistArgs: true, deadlineMs: null, run: () => new Promise(() => {}) })
+    first.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } })
+    await first.hooks.stop()
+
+    // Relaunched: the list read at the start does not show the block yet (a lagging node).
+    const account = accountOn([])
+    const user = userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account })
+    user.tickets.register<{ targetId: string }>('block', { persistArgs: true, run: async () => ({ state: 'confirmed' }), probe: async () => ({ state: 'applied' }) })
+    await ready(user)
+    await vi.waitFor(() => expect(account.refresh).toHaveBeenCalledWith(alice))
+    const [interrupted] = user.tickets.list()
+    expect(interrupted).toMatchObject({ op: 'block', state: 'unconfirmed', target: { identityId: bob } })
+    expect(await blockedNow(user)).toEqual([])
+
+    expect(await user.tickets.check(interrupted.id)).toMatchObject({ state: 'confirmed' })
+    expect(await blockedNow(user)).toEqual([bob])
+    // A stale read still missing it, this soon after it landed, does not lift it.
+    await account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: 'local:' })
+  })
+
+  it('lifts only the blocks it made for the account, and never on a failed read', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    // Blocked in Messages alone (web's conversation menu): the account's list never lifts it.
+    expect(await user.dm.setBlocked(carol, true)).toBe(true)
+    user.account.blocked = [bob]
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob, carol].sort())
+
+    user.account.blocked = []
+    user.account.failing = true
+    await expect(user.account.refresh(alice)).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(await blockedNow(user)).toEqual([bob, carol].sort())
+
+    // A read missing bob this soon after Messages blocked him may come from a node behind: it lifts nothing.
+    user.account.failing = false
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob, carol].sort())
+
+    ledger.time += BLOCK_SETTLING_MS + 1000
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([carol])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({})
+  })
+
+  it('leaves unblocked someone Messages unblocked after the account blocked them, on a device that never followed it', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    // Blocked and unblocked in Messages (here, or on another device whose saved state this one loaded).
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    const unblockedAt = ledger.time
+
+    // The account's block is older than that unblock: the unblock stands.
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, unblockedAt - 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt - 60_000 })
+
+    // Blocked again since: Messages follow the newer block.
+    user.account.madeAt.set(bob, unblockedAt + 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt + 60_000 })
+  })
+
+  it('leaves unblocked in Messages someone unblocked there whom the account still blocks', async () => {
+    const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { account: accountOn([bob]) }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    // Message settings' Unblock: Messages only.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('blocks again, after a restart, someone unblocked in Messages whose followed account block was made again since', async () => {
+    const ledger = ledgerNow()
+    const kv = new MapKv()
+    const account = accountOn([bob])
+    const madeAt = ledger.time - 60_000
+    account.madeAt.set(bob, madeAt)
+    const first = await ready(userOn(ledger, alice, {}, kv, { account }))
+    await vi.waitFor(async () => expect(await blockedNow(first)).toEqual([bob]))
+    expect(JSON.parse(first.local.getItem(followedKey) as string)).toEqual({ [bob]: madeAt })
+    // Message settings' Unblock: Messages only. The account's (older) block leaves it standing.
+    expect(await first.dm.setBlocked(bob, false)).toBe(true)
+    const unblockedAt = ledger.time
+    await account.refresh(alice)
+    expect(await blockedNow(first)).toEqual([])
+    await first.hooks.stop()
+
+    // While the app is closed, another device removes the account's block and makes it again.
+    account.madeAt.set(bob, unblockedAt + 60_000)
+    ledger.time = unblockedAt + BLOCK_SETTLING_MS + 60_000
+    const user = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt + 60_000 })
+  })
+
+  it.each([
+    ['its id', 'block-1'],
+    ['no id (read as a block not followed yet)', undefined],
+  ])('blocks again, after a restart, someone unblocked in Messages just after a block confirmed here, with %s, was made again before its age was read', async (_, documentId) => {
+    // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
+    const now = () => Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const confirmedAt = Date.now()
+    const ledger = ledgerNow()
+    const kv = new MapKv()
+    const account = accountOn()
+    const first = await ready(userOn(ledger, alice, {}, kv, { account, now }))
+    const documents = documentId ? [blockDocument(documentId)] : undefined
+    first.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed', documents }) })
+    await first.settled(first.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(first)).toEqual([bob])
+    expect(JSON.parse(first.local.getItem(followedKey) as string)).toEqual({ [bob]: `local:${documentId ?? ''}` })
+    // A second later, Message settings' Unblock, before this device has read when that block was made.
+    vi.setSystemTime(confirmedAt + 1000)
+    ledger.time = Date.now()
+    expect(await first.dm.setBlocked(bob, false)).toBe(true)
+    expect(await blockedNow(first)).toEqual([])
+    await first.hooks.stop()
+
+    // While the app is closed, another device removes the account's block and makes it again a minute in.
+    const remadeAt = confirmedAt + 60_000
+    account.blocked = [bob]
+    account.ids.set(bob, 'block-2')
+    account.madeAt.set(bob, remadeAt)
+    vi.setSystemTime(confirmedAt + BLOCK_SETTLING_MS + 60_000)
+    ledger.time = Date.now()
+    const user = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account, now }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: remadeAt })
+  })
+
+  it('reads the followed people an earlier build kept, as blocks followed here at an unknown time', async () => {
+    const ledger = ledgerNow()
+    const local = memoryStorage()
+    local.setItem(followedKey, JSON.stringify([bob]))
+    const account = accountOn([bob])
+    const madeAt = ledger.time + 60 * 60_000
+    account.madeAt.set(bob, madeAt)
+    // Their Messages unblock (made then) stands: the block read is the one followed, now with its age.
+    const user = await ready(userOn(ledger, alice, {}, undefined, { local, account }))
+    await vi.waitFor(() => expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: madeAt }))
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('lifts a followed block the account removed as of now, so an older Messages block from another device arriving later loses, whatever the DM clock', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const start = Date.now()
+    const minutes = (n: number) => start + n * 60_000
+    const ledger = ledgerNow()
+    const account = accountOn([bob])
+    account.madeAt.set(bob, start)
+    const here = await ready(userOn(ledger, alice, {}, undefined, { account }))
+    const other = await ready(userOn(ledger, alice))
+    await vi.waitFor(async () => expect(await blockedNow(here)).toEqual([bob]))
+
+    // Another device saves a Messages block of bob at T+12m (not read here yet), then removes the account's block.
+    ledger.time = minutes(12)
+    other.engine().setBlocked(bob, true, minutes(12))
+    await other.engine().flush()
+    account.blocked = []
+
+    // Here, at T+14m, the latest DM read is from T+11m: the read without bob lifts the block it followed.
+    ledger.time = minutes(11)
+    vi.setSystemTime(minutes(14))
+    await account.refresh(alice)
+    expect(await blockedNow(here)).toEqual([])
+    expect(JSON.parse(here.local.getItem(followedKey) as string)).toEqual({})
+
+    // The other device's older block arrives: the lift, made later, stands.
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([])
+    await here.engine().flush()
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([])
+  })
+
+  it('never lifts a Messages block another device changed lately by the DM clock, though this device\'s clock runs ahead', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const start = Date.now()
+    const ledger = ledgerNow()
+    const account = accountOn([bob])
+    account.madeAt.set(bob, start - 30 * 60_000)
+    const here = await ready(userOn(ledger, alice, {}, undefined, { account }))
+    const other = await ready(userOn(ledger, alice))
+    await vi.waitFor(async () => expect(await blockedNow(here)).toEqual([bob]))
+    // Another device blocks bob in Messages again just now; this device reads it.
+    other.engine().setBlocked(bob, true, start)
+    await other.engine().flush()
+    await here.engine().tick()
+
+    // A minute on by the DM clock, a read without bob: this device's clock says 15 minutes.
+    account.blocked = []
+    ledger.time = start + 60_000
+    vi.setSystemTime(start + 15 * 60_000)
+    await account.refresh(alice)
+    expect(await blockedNow(here)).toEqual([bob])
+  })
+
+  it('keeps a Messages unblock made while the DM clock is behind the account block it followed', async () => {
+    const ledger = ledgerNow()
+    const account = accountOn([bob])
+    // The account's list was read from a node ahead of the latest DM read.
+    account.madeAt.set(bob, ledger.time + 60_000)
+    const user = await ready(userOn(ledger, alice, {}, undefined, { account }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    // Message settings' Unblock, before the DM clock catches up with that block.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    expect(ledger.time).toBeLessThan(account.madeAt.get(bob) as number)
+    await account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('keeps a Messages unblock made while the DM clock is behind a block confirmed here', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    user.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed', documents: [blockDocument('block-1')] }) })
+    // The latest DM read is a minute old; the block lands on the chain now.
+    ledger.time = Date.now() - 60_000
+    const confirmedAt = Date.now()
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([bob])
+    // Message settings' Unblock, before the DM clock catches up with that block.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    expect(ledger.time).toBeLessThan(confirmedAt)
+
+    // Once the block has settled, a full read shows that block (its id), made by the chain's clock after the unblock.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(confirmedAt + BLOCK_SETTLING_MS + 60_000)
+    user.account.blocked = [bob]
+    user.account.ids.set(bob, 'block-1')
+    user.account.madeAt.set(bob, confirmedAt + 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('keeps a Messages unblock, made while the DM clock is behind, of a Messages block an account block adopted', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    // Blocked in Messages alone first (web's conversation menu).
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    // The account's block, read from a node ahead of the latest DM read: Messages adopt the standing block.
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, ledger.time + 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+    // Message settings' Unblock, before the DM clock catches up with that block.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    expect(ledger.time).toBeLessThan(user.account.madeAt.get(bob) as number)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+    await user.hooks.stop()
+
+    // Nor does a device that never followed that block, once it has loaded the saved Messages state.
+    const reads = user.account.refresh.mock.calls.length
+    const other = await ready(userOn(ledger, alice, {}, undefined, { account: user.account }))
+    await vi.waitFor(() => expect(user.account.refresh).toHaveBeenCalledTimes(reads + 1))
+    expect(await blockedNow(other)).toEqual([])
+  })
+
+  it('keeps a Messages unblock made here, while the DM clock is behind, after an account block from another device not read yet', async () => {
+    const ledger = ledgerNow()
+    const now = ledger.time
+    const user = await ready(userOn(ledger, alice))
+    // Blocked in Messages alone, with the latest DM read minutes old.
+    ledger.time = now - 200_000
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    // A minute ago another device blocked bob on the account; now Message settings' Unblock here.
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, now - 60_000)
+    ledger.time = now - 120_000
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it.each([
+    ['someone not blocked in Messages yet', false],
+    ['a Messages block it adopts', true],
+  ])('keeps following a newer account block, for %s, when an older Messages unblock from another device arrives after', async (_, standing) => {
+    const ledger = ledgerNow()
+    const startedAt = ledger.time
+    const here = await ready(userOn(ledger, alice))
+    const other = await ready(userOn(ledger, alice))
+    if (standing) {
+      here.engine().setBlocked(bob, true)
+      await here.engine().flush()
+    }
+    // The other device (web's conversation menu) blocks and unblocks bob in Messages, saved before this one reads it.
+    ledger.time = startedAt + 10_000
+    other.engine().setBlocked(bob, true)
+    ledger.time = startedAt + 30_000
+    other.engine().setBlocked(bob, false)
+    await other.engine().flush()
+
+    // Here, with the latest DM read older than both, the account's list shows a block made after them.
+    ledger.time = startedAt
+    here.account.blocked = [bob]
+    here.account.madeAt.set(bob, startedAt + 60_000)
+    await here.account.refresh(alice)
+    expect(await blockedNow(here)).toEqual([bob])
+    await here.engine().flush()
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([bob])
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([bob])
+  })
+
+  it.each([
+    ['someone not blocked in Messages yet', false],
+    ['someone already blocked in Messages', true],
+  ])('keeps a block confirmed here, for %s, when an older Messages unblock from another device arrives after', async (_, standing) => {
+    const ledger = ledgerNow()
+    const confirmedAt = ledger.time
+    const here = await ready(userOn(ledger, alice))
+    const other = await ready(userOn(ledger, alice))
+    here.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed', documents: [blockDocument('block-1')] }) })
+    if (standing) {
+      ledger.time = confirmedAt - 200_000
+      other.engine().setBlocked(bob, true)
+      await other.engine().flush()
+      await here.engine().tick()
+      expect(await blockedNow(here)).toEqual([bob])
+    }
+    // The other device blocks and unblocks bob in Messages a minute or so before the block lands.
+    ledger.time = confirmedAt - 90_000
+    other.engine().setBlocked(bob, true)
+    ledger.time = confirmedAt - 60_000
+    other.engine().setBlocked(bob, false)
+    await other.engine().flush()
+
+    // The block is confirmed here while the latest DM read is two minutes old.
+    ledger.time = confirmedAt - 120_000
+    await here.settled(here.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(here)).toEqual([bob])
+    await here.engine().flush()
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([bob])
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([bob])
+  })
+
+  it('keeps an unblock confirmed here when an older Messages block from another device arrives after', async () => {
+    // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
+    const now = () => Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const unblockedAt = Date.now()
+    const ledger = ledgerNow()
+    const here = await ready(userOn(ledger, alice, {}, undefined, { now }))
+    const other = await ready(userOn(ledger, alice))
+    here.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed', documents: [blockDocument('block-1')] }) })
+    here.tickets.register<{ targetId: string }>('unblock', { run: async () => ({ state: 'confirmed' }) })
+    // The account's block, confirmed here five minutes earlier.
+    vi.setSystemTime(unblockedAt - 300_000)
+    ledger.time = Date.now()
+    await here.settled(here.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    await here.engine().flush()
+    await other.engine().tick()
+    // A minute before the unblock, the other device blocks bob in Messages again (web's conversation menu).
+    ledger.time = unblockedAt - 60_000
+    other.engine().setBlocked(bob, true)
+    await other.engine().flush()
+
+    // The unblock is confirmed here while the latest DM read is two minutes old.
+    vi.setSystemTime(unblockedAt)
+    ledger.time = unblockedAt - 120_000
+    await here.settled(here.tickets.submit({ op: 'unblock', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(here)).toEqual([])
+    await here.engine().flush()
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([])
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([])
+  })
+
+  it('follows a later block from another device once a block here was proved never to land', async () => {
+    // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
+    const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { now: () => Date.now() }))
+    user.tickets.register<{ targetId: string }>('block', {
+      run: async () => ({ state: 'unconfirmed' }),
+      probe: async () => ({ state: 'not-applied' }),
+    })
+    const sent = await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(sent).toMatchObject({ state: 'unconfirmed' })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + ABSENCE_AFTER_MS + 1000)
+    expect(await user.tickets.check(sent.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
+    expect(await blockedNow(user)).toEqual([])
+
+    // Well after, the account blocks bob from another device.
+    vi.setSystemTime(Date.now() + BLOCK_SETTLING_MS + 60_000)
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, Date.now() - 1000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+  })
+
+  it('follows a block and unblock confirmed here, and an unblock a followed list overrides, over stale reads', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    let unblocked: WriteResult = { state: 'confirmed' }
+    user.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed' }) })
+    user.tickets.register<{ targetId: string }>('unblock', { run: async () => unblocked })
+
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([bob])
+    // A read from before the block landed does not lift it.
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+
+    await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([])
+    // Nor does one from before the unblock landed block them again.
+    user.account.blocked = [bob]
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+
+    // The own block on carol deleted, but a block list alice follows still blocks carol: Messages let her write.
+    user.account.blocked = []
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: carol }, target: { identityId: carol } }))
+    unblocked = { state: 'failed', error: new RpcError('A block list you follow still blocks them', 'STILL_BLOCKED') }
+    expect(await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: carol }, target: { identityId: carol } })))
+      .toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('keeps Messages blocked when an unblock sent nothing because its read of the block failed', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    user.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed' }) })
+    user.tickets.register<{ targetId: string }>('unblock', {
+      run: async () => { throw new NotSentError(new RpcError('no available addresses to retry', 'NETWORK')) },
+    })
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([bob])
+
+    expect(await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: bob }, target: { identityId: bob } })))
+      .toMatchObject({ state: 'failed', retryable: true, error: { outcome: 'not-sent' } })
+    expect(await blockedNow(user)).toEqual([bob])
+  })
+
+  it('ignores a read of another account\'s list, and forgets what it followed at sign-out', async () => {
+    const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { account: accountOn([bob]) }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    user.account.blocked = [carol]
+    await user.account.refresh(bob)
+    expect(await blockedNow(user)).toEqual([bob])
+
+    await user.hooks.stop()
+    user.hooks.forget(alice)
+    expect(user.local.getItem(followedKey)).toBeNull()
   })
 })
 

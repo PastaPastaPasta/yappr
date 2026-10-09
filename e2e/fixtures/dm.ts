@@ -308,7 +308,7 @@ interface Signing {
 const signing = new Map<number, Promise<Signing>>()
 
 /** The CRITICAL auth key of a pool identity, as a Node signer. */
-function signingFor(bot: DmBot): Promise<Signing> {
+export function signingFor(bot: DmBot): Promise<Signing> {
   let found = signing.get(bot.index)
   if (!found) {
     found = (async () => {

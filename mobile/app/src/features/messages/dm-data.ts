@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { useEngineEvent } from '~/data/events';
 import { queryKeys } from '~/data/keys';
-import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
+import { useEngineInfiniteQuery, useEngineQuery, type EngineRemote } from '~/data/queries';
 import { lastIdentity, useCapabilities, useSession } from '~/data/session';
 import { errorCode } from '~/data/writes';
 import { engine } from '~/engine';
@@ -57,8 +57,30 @@ export function useDmStatus(enabled: boolean) {
 }
 
 /** `dm.conversations`: every conversation, hidden ones flagged. */
+/** Reads of the inbox begun so far, and the newest of them that has answered. */
+let inboxReadsBegun = 0;
+let inboxReadAnswered = 0;
+
+/** How many reads of the inbox have begun: one numbered above this begins after now. */
+export function inboxReadsSoFar(): number {
+  return inboxReadsBegun;
+}
+
+/** The newest read of the inbox that has answered, by its number ({@link inboxReadsSoFar}). */
+export function inboxReadHeld(): number {
+  return inboxReadAnswered;
+}
+
+/** `dm.conversations`, numbered: what it answers is Messages as they stood when it began. */
+async function readInbox(api: EngineRemote): Promise<ConversationDTO[]> {
+  const read = ++inboxReadsBegun;
+  const rows = await api.dm.conversations();
+  inboxReadAnswered = Math.max(inboxReadAnswered, read);
+  return rows;
+}
+
 export function useConversations(enabled: boolean, legacyPolling = false) {
-  return useEngineQuery<ConversationDTO[]>(queryKeys.dm.conversations, (api) => api.dm.conversations(), {
+  return useEngineQuery<ConversationDTO[]>(queryKeys.dm.conversations, readInbox, {
     enabled,
     retry: retryDm,
     retryDelay,

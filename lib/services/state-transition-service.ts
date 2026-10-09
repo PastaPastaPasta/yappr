@@ -79,6 +79,22 @@ export function ownerBalanceOf(result: unknown): bigint | null {
   return typeof value === 'bigint' ? value : null;
 }
 
+/** A create's `beforeBroadcast` refused it: nothing was reserved or sent. */
+class BroadcastRefusedError extends Error {
+  constructor(refusal: unknown) {
+    super(extractErrorMessage(refusal));
+  }
+}
+
+/** Run a create's `beforeBroadcast`; a throw refuses the broadcast. */
+function checkBeforeBroadcast(beforeBroadcast: (() => void) | undefined): void {
+  try {
+    beforeBroadcast?.();
+  } catch (error) {
+    throw new BroadcastRefusedError(error);
+  }
+}
+
 /** Cache the owner balance a wait result carried, when it carried one. */
 function recordOwnerBalance(ownerId: string, result: unknown): void {
   const ownerBalance = ownerBalanceOf(result);
@@ -544,6 +560,16 @@ class StateTransitionService {
       confirmation?: 'strict' | 'affectedState';
       /** Stored with the nonce reservation: what this create writes (see `PendingTransition.scope`). */
       reservationScope?: string;
+      /**
+       * Called just before the transition is broadcast (each time it is):
+       * after every read and build that comes first (the identity, its nonce,
+       * the payment), and before its nonce is reserved or its bytes cached.
+       * Throwing refuses the create: nothing is sent, and the create fails
+       * with the hook's message.
+       * Lets a caller count only what was really broadcast, and stop a write
+       * it gave up on while it waited for the lock or a read.
+       */
+      beforeBroadcast?: () => void;
     }
   ): Promise<StateTransitionResult> {
     return withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
@@ -639,6 +665,7 @@ class StateTransitionService {
         }
 
         // Not confirmed yet — rebroadcast the same ST
+        checkBeforeBroadcast(options?.beforeBroadcast);
         logger.debug(`Rebroadcasting cached ST for ${documentId}...`);
         try {
           const cachedST = StateTransition.fromBytes(cachedBytes);
@@ -709,6 +736,7 @@ class StateTransitionService {
         identityKey,
       });
       logger.debug('StateTransition built and signed');
+      checkBeforeBroadcast(options?.beforeBroadcast);
 
       // Cache the signed ST bytes BEFORE broadcasting (strict mode only — the
       // replay flow depends on get-by-id probes affectedState mode cannot make;
@@ -850,6 +878,7 @@ class StateTransitionService {
 
       return { success: true, transactionHash: documentId, document: resultDocument, confirmed: true };
     } catch (error) {
+      if (error instanceof BroadcastRefusedError) return { success: false, error: error.message };
       // The epoch multiplier outran the tolerance the agreement allowed: the
       // known value is stale, so the next write re-reads it. Not retried here
       // (a paid refusal bumped the nonce; the caller decides).

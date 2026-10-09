@@ -29,6 +29,7 @@ import { bytesToBase64QueryOperand, documentToPlainObject, type DocumentWhereCla
 import { chunk } from '../pagination-utils'
 import { classifyWriteFailure } from './write-failure'
 import type {
+  BroadcastOptions,
   ChainGroupDoc,
   ChainInvite,
   ChainMessage,
@@ -235,20 +236,39 @@ export class SdkDmChain implements DmChain {
     return outcome
   }
 
-  private create(type: string, data: Record<string, unknown>): Promise<WriteOutcome> {
-    return stateTransitionService.createDocument(this.contractId, type, this.me, data).then(fromResult).then((o) => this.afterWrite(o))
+  /**
+   * `beforeBroadcast` runs inside `createDocument`, just before its broadcast
+   * (after the write lock, the identity and nonce reads and the build), and
+   * its refusal is rethrown as is: nothing was sent.
+   */
+  private async create(type: string, data: Record<string, unknown>, options: BroadcastOptions = {}): Promise<WriteOutcome> {
+    const { beforeBroadcast } = options
+    if (!beforeBroadcast) return this.afterWrite(fromResult(await stateTransitionService.createDocument(this.contractId, type, this.me, data)))
+    const refused: { error?: unknown } = {}
+    const result = await stateTransitionService.createDocument(this.contractId, type, this.me, data, {
+      beforeBroadcast: () => {
+        try {
+          beforeBroadcast()
+        } catch (error) {
+          refused.error = error
+          throw error
+        }
+      },
+    })
+    if ('error' in refused) throw refused.error
+    return this.afterWrite(fromResult(result))
   }
 
-  createMessage(tag: Uint8Array, body: Uint8Array): Promise<WriteOutcome> {
-    return this.create('dmMessage', { tag, body })
+  createMessage(tag: Uint8Array, body: Uint8Array, options?: BroadcastOptions): Promise<WriteOutcome> {
+    return this.create('dmMessage', { tag, body }, options)
   }
 
   async deleteMessage(id: string): Promise<WriteOutcome> {
     return this.afterWrite(fromResult(await stateTransitionService.deleteDocument(this.contractId, 'dmMessage', id, this.me)))
   }
 
-  createInvite(invite: DmInvite): Promise<WriteOutcome> {
-    return this.create('dmInvite', { bucket: invite.bucket, epk: invite.epk, check: invite.check })
+  createInvite(invite: DmInvite, options?: BroadcastOptions): Promise<WriteOutcome> {
+    return this.create('dmInvite', { bucket: invite.bucket, epk: invite.epk, check: invite.check }, options)
   }
 
   createGroupDoc(handle: Uint8Array, blob: Uint8Array): Promise<WriteOutcome> {

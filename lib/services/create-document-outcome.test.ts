@@ -5,6 +5,7 @@
  * only be called failed on proof, never on a lagging read. The SDK is mocked;
  * every test counts the transitions broadcast.
  */
+import bs58 from 'bs58'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const sdk = vi.hoisted(() => ({
@@ -31,7 +32,7 @@ vi.mock('@/lib/manual-batch', () => ({
 }))
 vi.mock('./document-builder-service', () => ({ documentBuilderService: { buildDocumentForCreate: async () => ({}) } }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true, key: { keyId: 1, securityLevel: 1 }, match: { keyId: 1, securityLevel: 1 } }) }))
-vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
+vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif', hasPrivateKey: () => true }))
 vi.mock('../auth-utils', () => ({ promptForAuthKey: () => undefined }))
 vi.mock('./token-service', () => ({ tokenService: {} }))
 vi.mock('./identity-service', () => ({ identityService: {} }))
@@ -47,6 +48,7 @@ vi.stubGlobal('localStorage', {
 vi.stubGlobal('window', {})
 
 import { CREATE_NOT_RECORDED_ERROR, isIdentityNonceConflictError } from '@/lib/error-utils'
+import { SdkDmChain } from './dm-v5/sdk-chain'
 import { classifyWriteFailure } from './dm-v5/write-failure'
 import { loadReservation, stillPending } from './identity-nonce'
 import { stateTransitionService } from './state-transition-service'
@@ -197,5 +199,71 @@ describe('createDocument with an inconclusive outcome', () => {
 
     expect(first).toMatchObject({ success: true, confirmed: false, transactionHash: 'doc-101' })
     expect(second).toMatchObject({ success: true, confirmed: true, transactionHash: 'doc-102' })
+  })
+})
+
+describe('createDocument beforeBroadcast (DM v5 counts a send at its broadcast)', () => {
+  const ME = new Uint8Array(32).fill(7)
+  const me = bs58.encode(ME)
+  const chain = () => new SdkDmChain(ME, CONTRACT)
+  const tag = new Uint8Array([1])
+  const body = new Uint8Array([2])
+
+  it('runs after the reads and the build, just before the broadcast', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    const beforeBroadcast = vi.fn()
+
+    const outcome = await chain().createMessage(tag, body, { beforeBroadcast })
+
+    expect(outcome).toMatchObject({ ok: true, id: 'doc-101', confirmed: true })
+    expect(beforeBroadcast).toHaveBeenCalledTimes(1)
+    const at = beforeBroadcast.mock.invocationCallOrder[0]
+    expect(sdk.identities.fetch.mock.invocationCallOrder[0]).toBeLessThan(at)
+    expect(sdk.identities.contractNonce.mock.invocationCallOrder[0]).toBeLessThan(at)
+    expect(sdk.stateTransitions.broadcastStateTransition.mock.invocationCallOrder[0]).toBeGreaterThan(at)
+  })
+
+  it('is never called when a read before the broadcast fails, and the failure is a transport one, not a refusal', async () => {
+    sdk.identities.fetch.mockRejectedValue(new Error('transport error: Failed to fetch'))
+    const beforeBroadcast = vi.fn()
+
+    const outcome = await chain().createMessage(tag, body, { beforeBroadcast })
+
+    expect(beforeBroadcast).not.toHaveBeenCalled()
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+    expect(outcome).toMatchObject({ ok: false, failure: 'transport' })
+  })
+
+  it('waits while a read before the broadcast stalls', async () => {
+    let answer: (nonce: bigint) => void = () => undefined
+    sdk.identities.contractNonce.mockReturnValue(new Promise<bigint>((resolve) => { answer = resolve }))
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    const beforeBroadcast = vi.fn()
+
+    const pending = chain().createMessage(tag, body, { beforeBroadcast })
+    await vi.waitFor(() => expect(sdk.identities.contractNonce).toHaveBeenCalled())
+    expect(beforeBroadcast).not.toHaveBeenCalled()
+    answer(n(100))
+
+    expect(await pending).toMatchObject({ ok: true })
+    expect(beforeBroadcast).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses the create when it throws: rethrown as is, nothing broadcast, and its nonce never held', async () => {
+    sdk.stateTransitions.broadcastStateTransition.mockResolvedValue(undefined)
+    sdk.stateTransitions.waitForResponse.mockResolvedValue({})
+    const refusal = new Error('given up')
+
+    await expect(chain().createInvite({ bucket: 0, epk: new Uint8Array(33), check: new Uint8Array(4) }, { beforeBroadcast: () => { throw refusal } })).rejects.toBe(refusal)
+    expect(sdk.stateTransitions.broadcastStateTransition).not.toHaveBeenCalled()
+    expect(loadReservation(me, CONTRACT)).toBeNull()
+    // Nor were its signed bytes kept for a rebroadcast.
+    expect([...storage.keys()].filter((key) => key.includes('pending-st'))).toEqual([])
+
+    // The next create signs the same nonce: nothing of the refused one is pending.
+    const next = await stateTransitionService.createDocument(CONTRACT, 'post', me, { text: 'next' })
+    expect(next).toMatchObject({ success: true, confirmed: true, transactionHash: 'doc-101' })
   })
 })
