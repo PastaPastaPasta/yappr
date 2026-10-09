@@ -107,6 +107,26 @@ describe('cart inventory', () => {
     expect(await cartService.validateItems([cartItem(line)])).toMatchObject([{ reason: 'Selected option is no longer available' }])
   })
 
+  it('on v7 keeps one line per canonical variant id through renames and axis reorders', async () => {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v7')
+    vi.resetModules()
+    try {
+      const { cartService: v7Cart } = await import('./cart-service')
+      const { renameOption, moveAxis } = await import('@/lib/storefront/variant-codec')
+      v7Cart.clearCart()
+      const table = variantsFromRows(['Color', 'Size'], [{ optionNames: ['Red', 'S'], price: 100, stock: 3 }, { optionNames: ['Blue', 'S'], price: 100, stock: 3 }]).variants as ItemVariants
+      const listing = (variants: ItemVariants) => product({ basePrice: undefined, stockQuantity: undefined, variants })
+      v7Cart.addStoreItem(listing(table), '1.2')
+      v7Cart.addStoreItem(listing(renameOption(table, 1, 'Crimson')), '1.2')
+      v7Cart.addStoreItem(listing(moveAxis(table, 1, 0)), '1.2')
+      expect(v7Cart.getItems().map(line => [line.variantId, line.quantity])).toEqual([['1.2', 3]])
+      expect(() => v7Cart.addStoreItem(listing(renameOption(table, 1, 'Crimson')), '1.2')).toThrow('Only 3 available')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
   it('drops lines saved before variants had ids, and keeps the rest', async () => {
     const lines = [cartItem(), { ...cartItem({ itemId: 'old' }), variantKey: 'Blue|L' }, cartItem({ itemId: 'v', variantId: '1', variantLabel: 'S' })]
     localStorage.setItem(scopedKey('yappr_cart'), JSON.stringify({ items: lines, updatedAt: 0 }))

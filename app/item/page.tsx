@@ -160,9 +160,7 @@ function ItemDetailContent() {
     ? (variants ? combination?.stock !== undefined : storeItemService.hasInventoryTracking(item))
     : false
 
-  const quantityInCart = cartService.getItems().find(
-    cartItem => cartItem.itemId === item?.id && cartItem.variantId === variantId
-  )?.quantity ?? 0
+  const quantityInCart = item ? cartService.quantityInCart(cartService.lineIdentity(item, variantId)) : 0
   const remainingStock = Math.max(0, currentStock - quantityInCart)
 
   useEffect(() => {

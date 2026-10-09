@@ -7,7 +7,7 @@ import { BuildingStorefrontIcon, ExclamationTriangleIcon } from '@heroicons/reac
 import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
-import { cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
+import { cartLineKey, cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
 import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
 import { useAuth } from '@/contexts/auth-context'
 import type { BlockSource } from '@/lib/services/block-service'
@@ -106,10 +106,10 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
         <AnimatePresence mode="popLayout">
           {items.map((item) => (
             <CartItemRow
-              key={`${item.itemId}-${item.variantId ?? ''}`}
+              key={cartLineKey(item)}
               item={item}
               isCheckingAvailability={isCheckingAvailability}
-              availability={availability.find(result => result.item.itemId === item.itemId && result.item.variantId === item.variantId)}
+              availability={availability.find(result => cartLineKey(result.item) === cartLineKey(item))}
               onQuantityChange={(qty) => handleQuantityChange(item, qty)}
               onRemove={() => handleRemoveItem(item)}
             />

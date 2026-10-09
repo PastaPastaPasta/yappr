@@ -10,6 +10,7 @@ import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
 import { combinationImageUrl, variantOptionNames } from '../storefront/variant-codec';
+import { storefrontVariantsAreTyped } from '../constants';
 import { scopedKey } from '@/lib/storage-scope';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
@@ -44,11 +45,21 @@ function withFulfillment(line: CartItem, fulfillment: CartItem['fulfillment']): 
 /** Lines that must be shipped: everything not explicitly digital. */
 export const shippableItems = (items: readonly CartItem[]) => items.filter(item => item.fulfillment !== 'digital');
 
-/** What makes a cart line one line: item, variant id and (v1–v6 ids follow option order) its option names. */
-type LineIdentity = Pick<CartItem, 'itemId' | 'variantId' | 'variantOptions'>;
-const lineKey = (line: LineIdentity) => JSON.stringify([line.itemId, line.variantId ?? null, line.variantOptions ?? null]);
+/** What identifies a cart line (see {@link cartLineKey}). */
+export type CartLineIdentity = Pick<CartItem, 'itemId' | 'variantId' | 'variantOptions'>;
+/**
+ * The one key every surface uses for a cart line (adding, stock counts,
+ * quantity changes, removal, availability, list keys). On v7 the canonical
+ * variant id is stable through renames and reorders, so it is the identity.
+ * On v1–v6 ids follow option order, so the exact option names join it.
+ */
+export function cartLineKey(line: CartLineIdentity): string {
+  return JSON.stringify(storefrontVariantsAreTyped()
+    ? [line.itemId, line.variantId ?? null]
+    : [line.itemId, line.variantId ?? null, line.variantOptions ?? null]);
+}
 /** Whether a stored line is the line `other` names. */
-const isLine = (line: LineIdentity, other: LineIdentity) => lineKey(line) === lineKey(other);
+const isLine = (line: CartLineIdentity, other: CartLineIdentity) => cartLineKey(line) === cartLineKey(other);
 
 class CartService {
   private cart: Cart | null = null;
@@ -191,6 +202,21 @@ class CartService {
     this.saveCart();
   }
 
+  /** The line choosing `variantId` of `storeItem` would be. */
+  lineIdentity(storeItem: StoreItem, variantId?: string): CartLineIdentity {
+    const combination = storeItemService.getCombination(storeItem, variantId);
+    return {
+      itemId: storeItem.id,
+      ...(combination ? { variantId: combination.id } : {}),
+      ...(combination && storeItem.variants ? { variantOptions: variantOptionNames(storeItem.variants, combination) } : {}),
+    };
+  }
+
+  /** How many of that line the cart holds already. */
+  quantityInCart(line: CartLineIdentity): number {
+    return this.getItems().find(item => isLine(item, line))?.quantity ?? 0;
+  }
+
   /**
    * Add item from StoreItem with variant selection (`variantId`, the
    * canonical id of the chosen combination; required on a variant item).
@@ -198,8 +224,8 @@ class CartService {
   addStoreItem(storeItem: StoreItem, variantId?: string, quantity: number = 1): void {
     const stock = storeItemService.getStock(storeItem, variantId);
     const combination = storeItemService.getCombination(storeItem, variantId);
-    const variantOptions = combination && storeItem.variants ? variantOptionNames(storeItem.variants, combination) : undefined;
-    const existingQuantity = this.getItems().find(item => isLine(item, { itemId: storeItem.id, variantId: combination?.id, variantOptions }))?.quantity ?? 0;
+    const { variantOptions } = this.lineIdentity(storeItem, variantId);
+    const existingQuantity = this.quantityInCart(this.lineIdentity(storeItem, variantId));
     if (storeItem.status !== 'active' || (storeItem.variants && !combination)) {
       throw new Error('This item is no longer available');
     }
@@ -236,7 +262,7 @@ class CartService {
   /**
    * Update item quantity
    */
-  updateQuantity(line: LineIdentity, quantity: number): void {
+  updateQuantity(line: CartLineIdentity, quantity: number): void {
     const cart = this.getCart();
     const index = cart.items.findIndex(i => isLine(i, line));
 
@@ -254,7 +280,7 @@ class CartService {
   /**
    * Remove item from cart
    */
-  removeItem(line: LineIdentity): void {
+  removeItem(line: CartLineIdentity): void {
     const cart = this.getCart();
     cart.items = cart.items.filter(i => !isLine(i, line));
     this.saveCart();
