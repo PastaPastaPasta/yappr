@@ -37,7 +37,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { generationOf, quoteTargetOf } from '@/lib/feed/resolve-quoted-posts';
+import { generationOf, quoteTargetOf } from '@/lib/feed/quote-targets';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
