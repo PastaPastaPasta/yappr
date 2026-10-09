@@ -124,7 +124,7 @@ export function SettingsScreen() {
             label={copy.sections.messages}
             icon={EnvelopeIcon}
             iconTint={colors.yappr500}
-            onPress={go('/messages/settings')}
+            onPress={go('/settings/messages')}
             testID="settings-messages"
           />
         ) : null}

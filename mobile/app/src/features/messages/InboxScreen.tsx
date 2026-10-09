@@ -31,7 +31,7 @@ import { UnlockSheet } from './UnlockSheet';
 
 const openNew = () => router.push('/messages/new');
 const openNewGroup = () => router.push('/messages/new-group');
-const openSettings = () => router.push('/messages/settings');
+const openSettings = () => router.push('/settings/messages');
 const retry = () => {
   pollDm().catch(() => undefined);
 };

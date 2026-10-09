@@ -621,11 +621,11 @@ Lead decision (2026-10-01): the app uses **idiomatic expo-router routes with dyn
 | `/messages/[conversationId]` | — | push (hides the tab bar) | 4.20 |
 | `/messages/[conversationId]/info` | — | push | 4.22 |
 | `/messages/new`, `/messages/new-group` | `with?` (identity id, prefills the 1:1 picker) | modal | 4.21 |
-| `/messages/settings` | — | push | 4.23 |
 | `/bookmarks` | — | push | 4.24 |
 | `/settings` | — | push (from Profile) | 4.25 |
 | `/settings/account`, `/settings/accounts`, `/settings/app-lock`, `/settings/privacy`, `/settings/blocked`, `/settings/appearance`, `/settings/feed-language`, `/settings/about`, `/settings/diagnostics` | — | push | 4.26 – 4.32 |
 | `/settings/notifications` | — | push in the current tab (shared route): from Settings on Profile, and from the Notifications gear (4.18) on Notifications, so Back returns to the Notifications list. A launch link (`/settings?section=notifications`) opens it on Profile. *Proposed in QA wave B (D-L4a-004 / D-L4i-005), pending lead sign-off; before, it was Profile-only and the gear switched tabs.* | 4.27 |
+| `/settings/messages` | — | push in the current tab (shared route): from Settings on Profile, so Back returns to Settings, and from the inbox gear (4.19) on Messages. *RC16-I-03: it was `/messages/settings`, Messages-only, so Settings switched tabs and, with the Messages stack not opened yet, left it as that tab's only screen.* | 4.23 |
 | `/lockdown` | — | root modal, replaces the content | 4.33 |
 | `/media` | `postId`, `index` | root transparent modal | 4.35 |
 | `/__gallery` | — | dev builds only | component gallery |
@@ -1232,10 +1232,10 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 
 ### 4.23 Message settings
 
-- **Route** `/messages/settings` · **Story** DM-12.
+- **Route** `/settings/messages` (shared; opened from Settings and from the inbox gear) · **Story** DM-12.
 - Section "Delete old sent messages": radio rows "Never", "After 30 days", "After 90 days", "After 1 year"; the footer below (copy 5.8 `dm.retention.footer`), which keeps the privacy caveat. Never called "disappearing messages".
 - Section "Blocked": rows with "Unblock"; empty: "No blocked accounts" with the caption "Messages and group invites from people you block are ignored."
-- **Legacy (testnet):** nothing to set; a link here goes to the inbox.
+- **Legacy (testnet):** nothing to set; the screen goes back to the one underneath, or to the inbox when a link opened it on its own.
 
 ### 4.24 Bookmarks
 

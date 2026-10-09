@@ -1,5 +1,6 @@
 import type { DmRetention, DmStatusDTO } from '@engine/api';
-import { Redirect, Stack } from 'expo-router';
+import { Redirect, Stack, useNavigation, useRoute } from 'expo-router';
+import { useEffect } from 'react';
 import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -108,9 +109,25 @@ function BlockedList({ ids }: { ids: string[] }) {
 }
 
 /**
+ * Back to the screen underneath (Settings or the inbox: this screen is pushed
+ * on the current tab), or to the inbox for a link that opened it on its own.
+ * Never a jump to the Messages tab from another tab's stack, which would leave
+ * this screen on top of that stack.
+ */
+function LeaveForInbox() {
+  const navigation = useNavigation();
+  const { key } = useRoute();
+  const isRoot = navigation.getState()?.routes[0]?.key === key;
+  useEffect(() => {
+    if (!isRoot) navigation.goBack();
+  }, [isRoot, navigation]);
+  return isRoot ? <Redirect href="/messages" /> : null;
+}
+
+/**
  * Message settings (UX_SPEC §4.23, PRD DM-12): v5 "Delete old sent messages"
- * and the people blocked in Messages. Legacy (testnet) has none (DM-11): a
- * link here goes to the inbox; its read receipts are in Settings (SET-04).
+ * and the people blocked in Messages. Legacy (testnet) has none (DM-11): it
+ * goes back, or to the inbox; its read receipts are in Settings (SET-04).
  */
 export function MessageSettingsScreen() {
   const { signedIn } = useDmViewer();
@@ -127,8 +144,8 @@ export function MessageSettingsScreen() {
     );
   }
 
-  // Nothing to set on legacy messages: a stale link goes to the inbox (#23).
-  if (backend === 'legacy') return <Redirect href="/messages" />;
+  // Nothing to set on legacy messages (#23).
+  if (backend === 'legacy') return <LeaveForInbox />;
 
   if (status.isError && !status.data) {
     return (

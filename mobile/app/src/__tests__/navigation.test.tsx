@@ -9,6 +9,8 @@ import { engineNetworkKey } from '~/engine';
 import { useAccounts } from '~/features/auth/accounts';
 import { useOnboarding } from '~/features/auth/onboarding';
 import { acceptTerms } from '~/features/auth/terms';
+import { openConversationScreen } from '~/features/messages/dm-actions';
+import { openOnItsTab } from '~/navigation/tab-routes';
 
 // Resolved against Jest's cwd, mobile/app.
 const APP_DIR = './src/app';
@@ -122,6 +124,80 @@ describe('app shell', () => {
     expect(app.getPathname()).toBe('/settings');
   });
 
+  // RC16-I-03: Settings → Messages used to push the Messages tab's own route, switching
+  // tabs; with that stack not opened yet, the settings screen became its only screen,
+  // with no Back and no inbox under it.
+  it('keeps message settings under Settings on the Profile tab, and the Messages tab on the inbox', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Profile'));
+    act(() => router.push('/settings'));
+    act(() => router.push('/settings/messages'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'settings', 'messages']);
+
+    fireEvent.press(tab('Messages'));
+    expect(app.getPathname()).toBe('/messages');
+    expect(app.getSegments()).toEqual(['(tabs)', '(messages)', 'messages']);
+
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/settings/messages');
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/settings');
+  });
+
+  it('opens message settings from the inbox on the Messages tab and goes back to the inbox (DM-12)', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Messages'));
+    act(() => router.push('/settings/messages'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(messages)', 'settings', 'messages']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/messages');
+  });
+
+  // The same trap for a screen only one tab has: "Message" on a profile opened on another
+  // tab, before Messages was opened, left the conversation as that stack's only screen.
+  it('opens a conversation from another tab with the inbox underneath', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Profile'));
+    act(() => router.push('/user/abc123'));
+    act(() => openConversationScreen('c1'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(messages)', 'messages', '[conversationId]']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/messages');
+    fireEvent.press(tab('Profile'));
+    expect(app.getPathname()).toBe('/user/abc123');
+  });
+
+  it("opens the viewer's Settings from another tab with Profile underneath", async () => {
+    const app = await renderApp('/');
+
+    act(() => router.push('/user/abc123'));
+    act(() => openOnItsTab('/settings'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'settings']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/profile');
+    fireEvent.press(tab('Home'));
+    expect(app.getPathname()).toBe('/user/abc123');
+  });
+
+  it('pushes a tab-only screen onto that tab when its stack is already open', async () => {
+    const app = await renderApp('/');
+
+    fireEvent.press(tab('Profile'));
+    act(() => router.push('/settings'));
+    fireEvent.press(tab('Home'));
+    act(() => openOnItsTab('/settings/accounts'));
+    expect(app.getSegments()).toEqual(['(tabs)', '(profile)', 'settings', 'accounts']);
+
+    act(() => router.back());
+    expect(app.getPathname()).toBe('/settings');
+  });
+
   it('opens cold links to shared screens in Home, with Home underneath', async () => {
     const app = await renderApp(`/user/${ID}/followers`);
 
@@ -160,7 +236,6 @@ describe('app shell', () => {
     ['/explore/search/people?q=dash', null],
     ['/notifications', null],
     ['/messages', null],
-    ['/messages/settings', null],
     ['/messages/c1', null],
     ['/messages/c1/info', null],
     ['/messages/new', null],
@@ -179,6 +254,7 @@ describe('app shell', () => {
     ['/settings/accounts', null],
     ['/settings/app-lock', null],
     ['/settings/notifications', null],
+    ['/settings/messages', null],
     ['/settings/privacy', null],
     ['/settings/blocked', null],
     ['/settings/appearance', null],

@@ -1,5 +1,4 @@
 import type { ConversationDTO, WriteTicket } from '@engine/api';
-import { router } from 'expo-router';
 import { AppState } from 'react-native';
 import { create } from 'zustand';
 
@@ -9,15 +8,16 @@ import { useSessionStore } from '~/data/session';
 import { writeTicketOf } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { queryClient } from '~/state/query-client';
 import { errorFeedback, lightImpact } from '~/ui/haptics';
 import { toast } from '~/ui/toast';
 
 import { readErrorMessage, refreshDm } from './dm-data';
 
-/** Opens a conversation on the Messages tab's stack. */
+/** Opens a conversation on the Messages tab's stack, with the inbox underneath. */
 export function openConversationScreen(key: string): void {
-  router.push({ pathname: '/messages/[conversationId]', params: { conversationId: key } });
+  openOnItsTab({ pathname: '/messages/[conversationId]', params: { conversationId: key } });
 }
 
 function failed(what: string, error: unknown): void {

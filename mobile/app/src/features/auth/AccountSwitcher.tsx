@@ -1,5 +1,4 @@
 import type { AccountDTO } from '@engine/api';
-import { router } from 'expo-router';
 import { Pressable, View } from 'react-native';
 import { EllipsisHorizontalIcon, PlusIcon } from 'react-native-heroicons/outline';
 import { create } from 'zustand';
@@ -7,6 +6,7 @@ import { create } from 'zustand';
 import { useSession, useSessionStore } from '~/data/session';
 import { isSessionExpired } from '~/data/session-expiry';
 import { cn } from '~/lib-allowlist';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { showActionSheet } from '~/ui/action-sheet';
 import { confirmAlert } from '~/ui/Dialog';
 import { IconButton } from '~/ui/IconButton';
@@ -157,7 +157,7 @@ export function AccountSwitcherSheet() {
         accessibilityRole="button"
         onPress={() => {
           close();
-          router.push('/settings/accounts');
+          openOnItsTab('/settings/accounts');
         }}
         className="min-h-11 items-center justify-center"
         testID="account-switcher-manage"

@@ -135,6 +135,13 @@ describe('toAppRoute: cold vs warm links', () => {
     expect(toAppRoute('https://yap.pr/settings?section=privacy', cold)).toBe('/settings/privacy');
   });
 
+  it('pins message settings to Profile for a dev launch link, as Settings opens it there', () => {
+    expect(toAppRoute('yappr-dev:///settings/messages', { ...dev, initial: true })).toBe('/(profile)/settings/messages');
+    expect(toAppRoute('yappr-dev:///settings/messages', dev)).toBe('/settings/messages');
+    // The old Messages-tab route is gone: not a conversation id either.
+    expect(resolveLink('yappr://messages/settings', release).kind).toBe('unsupported');
+  });
+
   it('leaves tab roots and conversations alone', () => {
     expect(toAppRoute('yappr://explore', cold)).toBe('/explore');
     expect(toAppRoute(`yappr://messages/${CONVO}`, cold)).toBe(`/messages/${CONVO}`);

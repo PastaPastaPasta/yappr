@@ -24,6 +24,7 @@ import { PostItem } from '~/features/post/PostItem';
 import { blockWrite, useAuthorBlocked, useBlockBusy } from '~/features/safety/block-state';
 import { copy as safetyCopy } from '~/features/safety/copy';
 import { cn } from '~/lib-allowlist';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { Button } from '~/ui/Button';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -343,10 +344,11 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
     });
   const onMenu = (id: string) => {
     if (!profileId) return;
-    if (id === 'bookmarks') router.push('/bookmarks');
-    else if (id === 'blocked') router.push('/settings/blocked');
-    else if (id === 'settings') router.push('/settings');
-    else if (id === 'switch') router.push('/settings/accounts');
+    // The own-profile menu, also shown on the viewer's profile opened in another tab.
+    if (id === 'bookmarks') openOnItsTab('/bookmarks');
+    else if (id === 'blocked') openOnItsTab('/settings/blocked');
+    else if (id === 'settings') openOnItsTab('/settings');
+    else if (id === 'switch') openOnItsTab('/settings/accounts');
     else if (id === 'share') shareProfile(profileId, name);
     else if (id === 'copy') copyProfileLink(profileId);
     else if (id === 'block')
@@ -361,7 +363,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
           icon={Cog6ToothIcon}
           overBanner={overBanner}
           accessibilityLabel="Settings"
-          onPress={() => router.push('/settings')}
+          onPress={() => openOnItsTab('/settings')}
           testID="profile-settings"
         />
       ) : null}

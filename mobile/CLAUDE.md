@@ -89,13 +89,21 @@ before you change anything here.
   colors, and labels shown on both platforms.
 - `src/app/(tabs)/(home,explore,notifications,messages,profile)/` holds the
   detail screens every tab can push: `post/[id]`, `post/[id]/engagements`,
-  `user/[id]` and its `followers` / `following`, `hashtag/[tag]`, and
+  `user/[id]` and its `followers` / `following`, `hashtag/[tag]`,
   `settings/notifications` (Settings opens it on Profile, the Notifications
-  gear on Notifications). They open on the current tab's stack, so Back
+  gear on Notifications) and `settings/messages` (Settings on Profile, the
+  inbox gear on Messages). They open on the current tab's stack, so Back
   returns to where the user came from (a profile opened from a conversation
-  goes back to it).
+  goes back to it). A screen two tabs open belongs here: pushing a route only
+  one tab has switches tabs, and Back then leaves the screen the user was on.
+- To open a screen only one tab has from another tab (a conversation from a
+  profile, Settings from the viewer's profile on Home), use `openOnItsTab`
+  (`src/navigation/tab-routes.ts`). A plain push into a tab whose stack has
+  not been opened yet makes the screen that stack's only one, with no Back
+  and the tab stuck on it (RC16-I-03); `openOnItsTab` puts the tab's root
+  underneath.
 - `+native-intent` pins only the launch link: detail screens to `(home)`,
-  `settings/notifications` to `(profile)` (`pinColdRoute` in
+  `settings/notifications` and `settings/messages` to `(profile)` (`pinColdRoute` in
   `src/navigation/deep-links.ts`; a new shared route needs an entry there, or
   a cold link lands on Explore, the first group alphabetically). Links that
   arrive while the app is open push onto the current tab.
@@ -103,10 +111,10 @@ before you change anything here.
   - `(home)/index`;
   - `(explore)/explore/` (with `search` and `search/[kind]`);
   - `(notifications)/notifications`;
-  - `(messages)/messages/` (the inbox, `settings`, `[conversationId]` and
+  - `(messages)/messages/` (the inbox, `[conversationId]` and
     `[conversationId]/info`);
   - `(profile)/profile`, `bookmarks` and `settings/*` (except the shared
-    `settings/notifications`).
+    `settings/notifications` and `settings/messages`).
 - Root modals: `compose`, `sign-in/*`, `welcome`, `terms-gate`, `lockdown`,
   `media`, `profile/edit`, `messages/new`, `messages/new-group`, and
   `block/[userId]` and `report/[postId]` (from a post's menu).
