@@ -154,7 +154,8 @@ export const profiles = {
    * and, signed in, the viewer's follow and block status. An identity
    * without a profile document is named by its DPNS label (#605). Rejects
    * when the profile or a name read failed rather than reporting "no
-   * profile" or "no name" (QA rc17 D-010). `null` when the identity does not
+   * profile" or "no name" (QA rc17 D-010), or the viewer's follow read failed
+   * rather than reporting "not following". `null` when the identity does not
    * exist, or when DPNS answered that no identity owns the name.
    */
   async get(identityIdOrName: string): Promise<ProfileDTO | null> {
@@ -170,7 +171,8 @@ export const profiles = {
       unifiedProfileService.getProfile(id),
       // The batch leaves out an identity whose names it could not read; getAllUsernamesSorted would say "none".
       dpnsService.getAllUsernamesSortedBatch([id]),
-      other ? followService.isFollowing(id, other) : false,
+      // isFollowing answers a failed read as "not following", which would offer to follow again.
+      other ? followService.getFollowing(other, { throwOnError: true }).then(follows => follows.some(follow => follow.followingId === id)) : false,
       // The block status decorates the header; an unreadable block list is `null`, not a failed profile.
       other ? blockService.getBlockProvenance(id, other).catch(() => null) : NOT_BLOCKED,
     ])
