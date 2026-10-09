@@ -8,6 +8,7 @@ import { hidePost, useRemovedPosts } from '~/data/optimistic';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine } from '~/data/testing/fake-engine';
+import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/production-retry';
 import { queryClient } from '~/state/query-client';
 import { useToastStore } from '~/ui/toast';
 import { AUTHORS, VIEWER_ID, fixturePost } from '~/ui/post/fixtures';
@@ -388,6 +389,42 @@ describe('ThreadScreen', () => {
     expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '2 Quotes');
     expect(screen.queryByTestId('count-reposts')).toBeNull();
     expect(screen.getByTestId('repost-btn-root')).toHaveAccessibleName('Repost or quote, 0 reposts, 2 quotes');
+  });
+
+  it('splits the quote list afresh through a retry when a refresh moves its count (D-L4a-009)', async () => {
+    withProductionRetry();
+    try {
+      fakeEngine.method('posts.thread').mockResolvedValue(threadOf([]));
+      const counts = fakeEngine.method('posts.engagementCounts');
+      counts.mockResolvedValue({ likes: 2, reposts: 0, quotes: 1, truncated: false });
+      renderThread();
+      await act(async () => {});
+      expect(counts.mock.calls).toEqual([[{ id: 'root', kind: 'post' }, false]]);
+
+      // Someone quoted the post since; the re-split's first read fails, and TanStack's retry must read afresh too.
+      jest.useFakeTimers();
+      const quoted = { ...root, stats: { ...root.stats, quotes: 2 } };
+      fakeEngine.method('posts.thread').mockResolvedValue(threadOf([], { focus: quoted }));
+      counts.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+      counts.mockResolvedValue({ likes: 2, reposts: 0, quotes: 2, truncated: false });
+      await act(async () => {
+        screen.getByTestId('thread-list').props.refreshControl.props.onRefresh();
+      });
+      await waitOutRetry();
+      expect(counts.mock.calls.slice(1)).toEqual([
+        [{ id: 'root', kind: 'post' }, true],
+        [{ id: 'root', kind: 'post' }, true],
+      ]);
+      expect(screen.getByTestId('count-quotes')).toHaveProp('accessibilityLabel', '2 Quotes');
+
+      // Settled, later reads use the engine's cached split again.
+      await act(async () => {
+        await queryClient.refetchQueries({ queryKey: queryKeys.post.engagementCounts('root') });
+      });
+      expect(counts).toHaveBeenLastCalledWith({ id: 'root', kind: 'post' }, false);
+    } finally {
+      withoutRetry();
+    }
   });
 
   it("falls back to the post's own counts when the split cannot be read (D-L4a-009)", async () => {
