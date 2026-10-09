@@ -405,6 +405,34 @@ describe('dm on DM v5: 1:1', () => {
     expect(a.authors).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps a peer\'s last loaded name through a failed read after its ten minutes, and reads it again (QA rc17 D-010)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.dm.open(key)
+    const peer = async () => (await a.dm.conversations()).find(c => c.key === key)?.peer
+    expect(await peer()).toEqual(authorOf(bob))
+    expect(a.authors).toHaveBeenCalledTimes(1)
+
+    // Ten minutes on, the name is read again, and that read fails: a fallback, then no answer at all.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + 11 * 60_000)
+    const stalled: AuthorDTO = { ...authorOf(bob), displayName: authorOf(bob).username as string, resolved: false }
+    a.authors.mockImplementationOnce(async (ids: string[]) => new Map(ids.map(id => [id, stalled])))
+    expect(await peer()).toEqual({ ...authorOf(bob), resolved: false })
+    a.authors.mockRejectedValueOnce(new Error('Request timed out'))
+    expect(await peer()).toEqual({ ...authorOf(bob), resolved: false })
+    expect(a.authors).toHaveBeenCalledTimes(3)
+
+    // A failed read is never kept: the next read asks again, and keeps what it loads.
+    const renamed: AuthorDTO = { ...authorOf(bob), displayName: 'Bob Renamed' }
+    a.authors.mockImplementationOnce(async (ids: string[]) => new Map(ids.map(id => [id, renamed])))
+    expect(await peer()).toEqual(renamed)
+    expect(await peer()).toEqual(renamed)
+    expect(a.authors).toHaveBeenCalledTimes(4)
+  })
+
   it('shows a confirmed send as sent at once, and one held on trust as pending until a poll reads it back', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))

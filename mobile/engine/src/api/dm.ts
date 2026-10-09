@@ -236,6 +236,8 @@ export function createDmModule(options: DmModuleOptions) {
     backend.followAccountBlocks(identityId, new Map(blocks.map(({ blockedId, id, createdAt }) => [blockedId, { id, createdAt }])))
   })
   const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
+  /** The last name and avatar loaded for each peer, by id. Unlike `authors` they never expire: they stand in when a later read fails. */
+  const knownAuthors = new Map<string, AuthorDTO>()
   const fetchAuthors = options.authors ?? loadAuthors
 
   /** The signed-in identity, with its backend started (a no-op once it runs; retried while locked). */
@@ -477,19 +479,25 @@ export function createDmModule(options: DmModuleOptions) {
 
   /**
    * Conversations with their peers' names and avatars. Only a peer whose
-   * reads all answered is kept for the session; one read while the network
+   * reads all answered is kept, for ten minutes; one read while the network
    * stalls (its handle standing in for its display name, QA rc16 A-06) is
-   * shown this once and read again next time.
+   * read again next time. Meanwhile it shows the name and avatar loaded last,
+   * still `resolved: false`, so a stall after the ten minutes never loses them.
    */
   async function withPeers(rows: ConversationRow[]): Promise<ConversationDTO[]> {
     authors.prune()
     const missing = Array.from(new Set(rows.flatMap(row => (row.peerId && !authors.has(row.peerId) ? [row.peerId] : []))))
     const found = missing.length > 0 ? await fetchAuthors(missing).catch(() => new Map<string, AuthorDTO>()) : new Map<string, AuthorDTO>()
-    for (const [id, author] of found) if (author.resolved) authors.set(id, author)
-    return rows.map(({ peerId, ...row }) => ({
-      ...row,
-      peer: peerId ? authors.get(peerId) ?? found.get(peerId) ?? placeholderAuthor(peerId) : null,
-    }))
+    for (const [id, author] of found) {
+      if (!author.resolved) continue
+      authors.set(id, author)
+      knownAuthors.set(id, author)
+    }
+    const peerOf = (id: string): AuthorDTO => {
+      const known = knownAuthors.get(id)
+      return authors.get(id) ?? (known ? { ...known, resolved: false } : found.get(id) ?? placeholderAuthor(id))
+    }
+    return rows.map(({ peerId, ...row }) => ({ ...row, peer: peerId ? peerOf(peerId) : null }))
   }
 
   const api = {
