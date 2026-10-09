@@ -169,6 +169,18 @@ scrub_maestro_home() {
   while IFS= read -r -d '' d; do redact_tree "$d"; done \
     < <(find "$HOME/.maestro/tests" -mindepth 1 -maxdepth 1 -type d -newer "$marker" -print0)
 }
+# On iOS every maestro call leaves a ~225 MB copy of its XCTest runner in $TMPDIR and never removes
+# it; a few runs fill the disk. Remove the copies made since the last snapshot (not another run's).
+maestro_tmp_dirs() {
+  find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'maestro_xctestrunner_xcodebuild_output*' 2>/dev/null | sort
+}
+maestro_tmp_before=""
+prune_maestro_tmp() {
+  local d
+  comm -13 <(printf '%s\n' "$maestro_tmp_before") <(maestro_tmp_dirs) | while IFS= read -r d; do
+    [ -n "$d" ] && rm -rf "$d"
+  done
+}
 # On every exit (Ctrl-C and CI cancels included). Signals are held off meanwhile, so a second
 # one can't cut the scrub short. What Maestro wrote is scrubbed first (a CI cancel kills the
 # job about 10 s after its SIGINT); the services may take longer (the peer deletes its posts).
@@ -177,7 +189,7 @@ finish() {
   trap '' INT TERM
   stop_maestro
   [ -n "$art" ] && redact_tree "$art"
-  scrub_maestro_home; redact_tree "$out/junit"
+  scrub_maestro_home; redact_tree "$out/junit"; prune_maestro_tmp
   # The flows' logs now; the services' only once they stopped (a scrub replaces the file,
   # and a service still writing would keep writing to the old one).
   local f
@@ -320,6 +332,7 @@ for flow in "${flows[@]}"; do
   art="$out/artifacts/$name"
   reinstall=(--no-reinstall-driver); [ $first = 1 ] && reinstall=(); first=0
   start=$(date +%s)
+  maestro_tmp_before="$(maestro_tmp_dirs)"
   redact <"$fifo" >"$out/logs/$name.log" &
   redact_pid=$!
   "$maestro" --device "$device" test "${reinstall[@]+"${reinstall[@]}"}" --format junit --output "$out/junit/$name.xml" \
@@ -329,7 +342,7 @@ for flow in "${flows[@]}"; do
   wait "$redact_pid"
   maestro_pid="" redact_pid=""
   secs=$(( $(date +%s) - start ))
-  redact_tree "$art"; redact_tree "$out/junit"; scrub_maestro_home
+  redact_tree "$art"; redact_tree "$out/junit"; scrub_maestro_home; prune_maestro_tmp
   # Screenshots the flow took, plus Maestro's failure screenshot.
   while IFS= read -r -d '' shot; do
     cp "$shot" "$out/screenshots/$platform-$name-$(basename "$shot")"
