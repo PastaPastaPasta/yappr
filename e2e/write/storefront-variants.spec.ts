@@ -103,7 +103,9 @@ test('the order carries the combination, and the seller reads it with its SKU', 
     await pending.first().waitFor({ timeout: 15_000 }).catch(() => undefined)
     for (let i = 0; i < await pending.count(); i++) {
       await pending.nth(i).click()
-      if (await sellerPage.getByText(listing.title).first().waitFor({ timeout: 10_000 }).then(() => true, () => false)) return true
+      // Rows render already decrypted: once the open order's lines mount, the title is there or not at all.
+      await sellerPage.getByText('Items', { exact: true }).first().waitFor({ timeout: 10_000 }).catch(() => undefined)
+      if (await sellerPage.getByText(listing.title).count() > 0) return true
     }
     return false
   }
