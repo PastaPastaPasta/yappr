@@ -415,7 +415,7 @@ export function createV5Backend(options: V5BackendOptions) {
     const pending = readPendingBlocks(storage(), identityId)
     storage().removeItem(blocksKey(identityId))
     for (const [peerId, { blocked, changedAt }] of Object.entries(pending)) {
-      if (savedBlockChange(running, peerId) < changedAt) applyBlock(running, peerId, blocked)
+      if (savedBlockChange(running, peerId) < changedAt) applyBlock(running, peerId, blocked, changedAt)
     }
   }
 
@@ -462,11 +462,11 @@ export function createV5Backend(options: V5BackendOptions) {
     if (changed) storage().setItem(followedKey(identityId), JSON.stringify([...followed]))
   }
 
-  /** `setBlocked`: now when the saved state has loaded, else kept for when it has. */
-  function blockInMessages(identityId: string, peerId: string, blocked: boolean): boolean {
+  /** `setBlocked`: now when the saved state has loaded, else kept for when it has; stamped no earlier than `notBefore`. */
+  function blockInMessages(identityId: string, peerId: string, blocked: boolean, notBefore = 0): boolean {
     const running = engineOf(identityId)
-    if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked)
-    const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: Date.now() } }
+    if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked, notBefore)
+    const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: Math.max(Date.now(), notBefore) } }
     storage().setItem(blocksKey(identityId), JSON.stringify(pending))
     return true
   }
@@ -605,7 +605,7 @@ export function createV5Backend(options: V5BackendOptions) {
      * Messages while they are locked here. Returns whether it changed
      * anything (kept for later counts as a change).
      */
-    setBlocked: blockInMessages,
+    setBlocked: (identityId: string, peerId: string, blocked: boolean): boolean => blockInMessages(identityId, peerId, blocked),
 
     /**
      * The account's own block list as just read, whole (never a failed or
@@ -627,7 +627,9 @@ export function createV5Backend(options: V5BackendOptions) {
      * there for the account.
      */
     followAccountBlock(identityId: string, peerId: string, blocked: boolean): void {
-      blockInMessages(identityId, peerId, blocked)
+      // The block was made no later than now (its `$createdAt` is not known here): stamped
+      // no earlier, even with the DM clock behind, so a later Messages unblock is the newer change.
+      blockInMessages(identityId, peerId, blocked, blocked ? Date.now() : 0)
       const followed = readFollowed(storage(), identityId)
       if (blocked) followed.add(peerId)
       else followed.delete(peerId)

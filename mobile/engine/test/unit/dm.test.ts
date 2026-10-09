@@ -1272,6 +1272,28 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     expect(await blockedNow(user)).toEqual([])
   })
 
+  it('keeps a Messages unblock made while the DM clock is behind a block confirmed here', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    user.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed' }) })
+    // The latest DM read is a minute old; the block lands on the chain now.
+    ledger.time = Date.now() - 60_000
+    const confirmedAt = Date.now()
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([bob])
+    // Message settings' Unblock, before the DM clock catches up with that block.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    expect(ledger.time).toBeLessThan(confirmedAt)
+
+    // Once the block has settled, a full read shows it, made when it was confirmed.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(confirmedAt + BLOCK_SETTLING_MS + 60_000)
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, confirmedAt)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
   it('follows a block and unblock confirmed here, and an unblock a followed list overrides, over stale reads', async () => {
     const user = await ready(userOn(ledgerNow(), alice))
     let unblocked: WriteResult = { state: 'confirmed' }
