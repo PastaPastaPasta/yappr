@@ -31,6 +31,7 @@ const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
 const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { RpcError } = await import('../../src/protocol/envelope')
+const { SEND_BUDGET_MS } = await import('../../src/dm/v5')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
 type MemoryLedger = InstanceType<typeof MemoryLedger>
 
@@ -533,7 +534,10 @@ describe('dm on DM v5: 1:1', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const ticket = await a.dm.send(key, 'through a stall')
     await vi.waitFor(() => expect(broadcast).toHaveBeenCalledTimes(1))
-    await vi.advanceTimersByTimeAsync(60_000)
+    // Past the send's budget, its message may still land: never given up as not sent (RC16-A-03).
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(a.tickets.get(ticket.id)?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(60_000 - SEND_BUDGET_MS)
     expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
     // Check again answers at once (a read queued behind the hung send would not), and cannot
     // prove it absent while the call runs: still sending, no Retry beside it.
@@ -545,6 +549,66 @@ describe('dm on DM v5: 1:1', () => {
     await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
     expect(broadcast).toHaveBeenCalledTimes(1)
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['through a stall'])
+  })
+
+  /** A DM v5 pair where every read of Alice's chain hangs until `clear` (a DAPI stall, as an iptables DROP makes). */
+  async function stalledReads() {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    const read = chain.messagesByTags.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const reads = vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+      await stalled
+      return read(tags)
+    })
+    const broadcasts = vi.spyOn(chain, 'createMessage')
+    return { ledger, a, key, reads, broadcasts, written: ledger.messages.length, clear }
+  }
+
+  it('gives up a send stalled before its broadcast within 30 s as not delivered, retryably, and never sends it later (RC16-A-03)', async () => {
+    const { ledger, a, key, reads, broadcasts, written, clear } = await stalledReads()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const stuck = await a.dm.send(key, 'stuck')
+    // A second send waits behind the first, and is given up as well, without ever starting.
+    const behind = await a.dm.send(key, 'behind')
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1))
+    // (vi.waitFor moves fake time on a little as it polls.)
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS - 1_000)
+    expect(a.tickets.get(stuck.id)?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(1_000)
+    const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
+    expect(await a.settled(stuck)).toMatchObject(notSent)
+    expect(await a.settled(behind)).toMatchObject(notSent)
+    vi.useRealTimers()
+
+    // The stall clears: lib's call given up goes on to its broadcast, which is refused.
+    clear()
+    await vi.waitFor(() => expect(broadcasts).toHaveBeenCalledTimes(1))
+    await settle()
+    expect(ledger.messages).toHaveLength(written)
+    expect(await a.settled(stuck)).toMatchObject(notSent)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['first'])
+  })
+
+  it('sends a send given up on a stall exactly once on retry, even while the call given up still runs (RC16-A-03)', async () => {
+    const { ledger, a, key, reads, written, clear } = await stalledReads()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'once')
+    await vi.waitFor(() => expect(reads).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(await a.settled(ticket)).toMatchObject({ state: 'failed', retryable: true })
+    // Retried before the stall clears: it waits for the call given up, which can no longer send.
+    await a.tickets.retry(ticket.id)
+    vi.useRealTimers()
+    clear()
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['once', 'first'])
   })
 
   it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {

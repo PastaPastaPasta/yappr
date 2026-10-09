@@ -3,6 +3,7 @@ import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
 import type { Conv } from '@/lib/services/dm-v5/conversation'
 import { GroupError } from '@/lib/services/dm-v5/groups'
+import type { WriteOutcome } from '@/lib/services/dm-v5/types'
 import { isTimeoutError } from '@/lib/error-utils'
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
@@ -107,11 +108,30 @@ function readPendingRetention(storage: KeyValueArea, identityId: string): Pendin
   return null
 }
 
-/** A send in progress: its broadcasts, and my messages the conversation held at the latest one. */
+/**
+ * How long a send may take before it is given up as not sent, unless one of
+ * its messages is on its way then. A send is about four DAPI round trips
+ * (about 2 s); this allows three consecutive 8 s SDK timeouts
+ * (`evo-sdk-service` `timeoutMs`). It stays under the 45 s a send may take
+ * to get its ticket (`SEND_SUBMIT_DEADLINE_MS`) and the 60 s after which a
+ * ticket reads "still sending" (`PENDING_DEADLINE_MS`) or the app gives the
+ * text back (`UNTICKETED_WAIT_MS`): a send that never got out reads "Not
+ * delivered" with a retry, not a lasting "Sending" (RC16-A-03).
+ */
+export const SEND_BUDGET_MS = 30_000
+
+const SEND_GAVE_UP = 'Sending took too long, so it was not sent. Try again.'
+
+/**
+ * A send in progress: its broadcasts, my messages the conversation held at
+ * the latest one, and whether it was given up as not sent (it may broadcast
+ * nothing from then on).
+ */
 interface SendAttempt {
   key: string
   broadcasts: number
   heldAtBroadcast: number
+  abandoned: boolean
 }
 
 /** One engine's sends, run one at a time, and the one in progress. */
@@ -121,6 +141,42 @@ interface SendLane {
 }
 
 const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
+
+/** Whether none of the attempt's messages may still land: none broadcast, or the latest is held (it landed). */
+const nothingOnItsWay = (engine: DmEngine, attempt: SendAttempt): boolean =>
+  attempt.broadcasts === 0 || ownMessages(engine, attempt.key) > attempt.heldAtBroadcast
+
+/** The refusal a given-up send gets for a broadcast it tries after all: lib throws it, nothing goes out. */
+const REFUSED_AFTER_GIVING_UP: WriteOutcome = { ok: false, failure: 'other', error: SEND_GAVE_UP }
+
+/**
+ * `turn`'s outcome, or, `SEND_BUDGET_MS` after the send started with none of
+ * its messages on its way, a retryable not-sent failure (`NETWORK`): the
+ * attempt is given up, so lib's call, which runs on until its own requests
+ * end, can broadcast nothing more. A message on its way then may land: the
+ * send waits for its answer, and its ticket reads "still sending" in the
+ * meantime (`PENDING_DEADLINE_MS`).
+ */
+function withinBudget(turn: Promise<void>, engine: DmEngine, attempt: SendAttempt): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (!nothingOnItsWay(engine, attempt)) return
+      attempt.abandoned = true
+      turn.catch(error => logger.debug('DM send: a send given up as not sent has ended:', error))
+      reject(new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK')))
+    }, SEND_BUDGET_MS)
+    turn.then(
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
 
 /** My messages in `key` held on trust and not read back yet (`MessageView.pending`), counted without building the views. */
 function pendingIn(engine: DmEngine, key: string): number {
@@ -229,6 +285,8 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     chain.createMessage = (tag, body) => {
       const { attempt } = lane
       if (attempt) {
+        // Given up as not sent: nothing may go out after all.
+        if (attempt.abandoned) return Promise.resolve(REFUSED_AFTER_GIVING_UP)
         attempt.broadcasts += 1
         attempt.heldAtBroadcast = ownMessages(running, attempt.key)
       }
@@ -494,21 +552,24 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const running = engine(identityId)
       const lane = laneOf(running)
+      const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0, abandoned: false }
       const turn = lane.queue.then(async () => {
-        const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0 }
+        // Given up while it waited behind an earlier send: never started.
+        if (current.abandoned) throw new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK'))
         lane.attempt = current
         try {
           await running.send(key, text)
         } catch (error) {
           // No broadcast at all, or the part last broadcast is held (it landed) and the next failed before its own.
-          if (current.broadcasts === 0 || ownMessages(running, key) > current.heldAtBroadcast) throw new NotSentError(error)
+          if (nothingOnItsWay(running, current)) throw new NotSentError(error)
           throw error
         } finally {
           if (lane.attempt === current) lane.attempt = null
         }
       })
+      // The lane stays busy until lib's call ends, even one given up: the next send never starts beside it.
       lane.queue = turn.catch(() => undefined)
-      await turn
+      await withinBudget(turn, running, current)
       return { state: 'confirmed' }
     },
 
