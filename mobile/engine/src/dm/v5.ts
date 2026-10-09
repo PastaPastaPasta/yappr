@@ -125,13 +125,16 @@ function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<st
 }
 
 /**
- * Block or unblock `peerId` unless that already stands (an unblock of
- * someone never blocked writes nothing). Returns whether it changed anything.
+ * Block or unblock `peerId` in Messages as a choice made at `at` (ms): set,
+ * or when it already stands, stamped again, unless the saved state holds a
+ * newer change for them (from any device). So a change synchronized later
+ * from another device wins only when it was made after `at`, whatever this
+ * device's DM clock says (lib stamps no earlier than its own `now`). Returns
+ * whether it saved anything.
  */
-/** Block or unblock `peerId` in Messages unless they already are, stamped no earlier than `notBefore`. */
-function applyBlock(running: DmEngine, peerId: string, blocked: boolean, notBefore = 0): boolean {
-  if (running.getSnapshot().blocked.includes(peerId) === blocked) return false
-  running.setBlocked(peerId, blocked, notBefore)
+function applyBlock(running: DmEngine, peerId: string, blocked: boolean, at: number): boolean {
+  if (savedBlockChange(running, peerId) >= at && running.getSnapshot().blocked.includes(peerId) === blocked) return false
+  running.setBlocked(peerId, blocked, at)
   return true
 }
 
@@ -479,6 +482,8 @@ export function createV5Backend(options: V5BackendOptions) {
         // and made again since, on another device), or one whose id this device never learnt, is new.
         if (isFollowedBlock(seen, id)) {
           if (madeAt !== null) {
+            // Its Messages block (a choice made here since aside) counts as made no earlier than it.
+            if (standing.has(peerId)) applyBlock(running, peerId, true, madeAt)
             followed.set(peerId, madeAt)
             changed = true
           }
@@ -488,29 +493,30 @@ export function createV5Backend(options: V5BackendOptions) {
         // The account block already followed: a choice made in Messages since stands.
         continue
       }
-      // Not followed here yet (an unknown age counts as the newest): Messages block them,
-      // unless Messages lifted their block after it was made (on another device, or here since).
-      if (madeAt === null || standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) {
-        applyBlock(running, peerId, true)
-      }
+      // Not followed here yet (an unknown age counts as the newest): Messages block them, as of
+      // when it was made, unless Messages lifted their block after that (on another device, or here
+      // since). Stamped so, an older change synchronized later from another device never undoes it.
+      if (madeAt === null) applyBlock(running, peerId, true, Date.now())
+      else if (standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) applyBlock(running, peerId, true, madeAt)
       followed.set(peerId, madeAt ?? localMark(id))
       changed = true
     }
     const lately = running.ctx.chain.now() - BLOCK_SETTLING_MS
     for (const peerId of [...followed.keys()]) {
       if (blocked.has(peerId) || settling.has(peerId) || savedBlockChange(running, peerId) > lately) continue
-      applyBlock(running, peerId, false)
+      // When the block went is not known: stamped now (after the Messages block that followed it).
+      applyBlock(running, peerId, false, 0)
       followed.delete(peerId)
       changed = true
     }
     if (changed) writeFollowed(storage(), identityId, followed)
   }
 
-  /** `setBlocked`: now when the saved state has loaded, else kept for when it has; stamped no earlier than `notBefore`. */
-  function blockInMessages(identityId: string, peerId: string, blocked: boolean, notBefore = 0): boolean {
+  /** `applyBlock` at `at`: now when the saved state has loaded, else kept for when it has. */
+  function blockInMessages(identityId: string, peerId: string, blocked: boolean, at: number): boolean {
     const running = engineOf(identityId)
-    if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked, notBefore)
-    const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: Math.max(Date.now(), notBefore) } }
+    if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked, at)
+    const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: at } }
     storage().setItem(blocksKey(identityId), JSON.stringify(pending))
     return true
   }
@@ -650,10 +656,12 @@ export function createV5Backend(options: V5BackendOptions) {
      * anything (kept for later counts as a change).
      */
     setBlocked(identityId: string, peerId: string, blocked: boolean): boolean {
-      // Stamped after the account block followed here, whatever the DM clock says, so
-      // another device that has not followed it yet reads this choice as the newer one.
+      const snapshot = engineOf(identityId)?.getSnapshot()
+      if (snapshot?.ready && snapshot.blocked.includes(peerId) === blocked) return false
+      // Stamped now, and after the account block followed here, whatever the DM clock (the latest DM
+      // read) says: an account block read later, or on another device, counts as older only if it is.
       const seen = readFollowed(storage(), identityId).get(peerId)
-      return blockInMessages(identityId, peerId, blocked, seen === undefined ? 0 : typeof seen === 'string' ? Date.now() : seen + 1)
+      return blockInMessages(identityId, peerId, blocked, Math.max(Date.now(), typeof seen === 'number' ? seen + 1 : 0))
     },
 
     /**
@@ -676,7 +684,9 @@ export function createV5Backend(options: V5BackendOptions) {
      * there for the account, and which block (`documentId`, when known).
      */
     followAccountBlock(identityId: string, peerId: string, blocked: boolean, documentId?: string): void {
-      blockInMessages(identityId, peerId, blocked)
+      // As of now (it was just confirmed), even when it already stands: a change synchronized later
+      // from another device wins only when made after it.
+      blockInMessages(identityId, peerId, blocked, Date.now())
       const followed = readFollowed(storage(), identityId)
       if (blocked) followed.set(peerId, localMark(documentId))
       else followed.delete(peerId)

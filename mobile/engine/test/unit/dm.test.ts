@@ -1375,6 +1375,121 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     expect(await blockedNow(other)).toEqual([])
   })
 
+  it('keeps a Messages unblock made here, while the DM clock is behind, after an account block from another device not read yet', async () => {
+    const ledger = ledgerNow()
+    const now = ledger.time
+    const user = await ready(userOn(ledger, alice))
+    // Blocked in Messages alone, with the latest DM read minutes old.
+    ledger.time = now - 200_000
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    // A minute ago another device blocked bob on the account; now Message settings' Unblock here.
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, now - 60_000)
+    ledger.time = now - 120_000
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it.each([
+    ['someone not blocked in Messages yet', false],
+    ['a Messages block it adopts', true],
+  ])('keeps following a newer account block, for %s, when an older Messages unblock from another device arrives after', async (_, standing) => {
+    const ledger = ledgerNow()
+    const startedAt = ledger.time
+    const here = await ready(userOn(ledger, alice))
+    const other = await ready(userOn(ledger, alice))
+    if (standing) {
+      here.engine().setBlocked(bob, true)
+      await here.engine().flush()
+    }
+    // The other device (web's conversation menu) blocks and unblocks bob in Messages, saved before this one reads it.
+    ledger.time = startedAt + 10_000
+    other.engine().setBlocked(bob, true)
+    ledger.time = startedAt + 30_000
+    other.engine().setBlocked(bob, false)
+    await other.engine().flush()
+
+    // Here, with the latest DM read older than both, the account's list shows a block made after them.
+    ledger.time = startedAt
+    here.account.blocked = [bob]
+    here.account.madeAt.set(bob, startedAt + 60_000)
+    await here.account.refresh(alice)
+    expect(await blockedNow(here)).toEqual([bob])
+    await here.engine().flush()
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([bob])
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([bob])
+  })
+
+  it.each([
+    ['someone not blocked in Messages yet', false],
+    ['someone already blocked in Messages', true],
+  ])('keeps a block confirmed here, for %s, when an older Messages unblock from another device arrives after', async (_, standing) => {
+    const ledger = ledgerNow()
+    const confirmedAt = ledger.time
+    const here = await ready(userOn(ledger, alice))
+    const other = await ready(userOn(ledger, alice))
+    here.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed', documents: [blockDocument('block-1')] }) })
+    if (standing) {
+      ledger.time = confirmedAt - 200_000
+      other.engine().setBlocked(bob, true)
+      await other.engine().flush()
+      await here.engine().tick()
+      expect(await blockedNow(here)).toEqual([bob])
+    }
+    // The other device blocks and unblocks bob in Messages a minute or so before the block lands.
+    ledger.time = confirmedAt - 90_000
+    other.engine().setBlocked(bob, true)
+    ledger.time = confirmedAt - 60_000
+    other.engine().setBlocked(bob, false)
+    await other.engine().flush()
+
+    // The block is confirmed here while the latest DM read is two minutes old.
+    ledger.time = confirmedAt - 120_000
+    await here.settled(here.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(here)).toEqual([bob])
+    await here.engine().flush()
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([bob])
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([bob])
+  })
+
+  it('keeps an unblock confirmed here when an older Messages block from another device arrives after', async () => {
+    // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
+    const now = () => Date.now()
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const unblockedAt = Date.now()
+    const ledger = ledgerNow()
+    const here = await ready(userOn(ledger, alice, {}, undefined, { now }))
+    const other = await ready(userOn(ledger, alice))
+    here.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed', documents: [blockDocument('block-1')] }) })
+    here.tickets.register<{ targetId: string }>('unblock', { run: async () => ({ state: 'confirmed' }) })
+    // The account's block, confirmed here five minutes earlier.
+    vi.setSystemTime(unblockedAt - 300_000)
+    ledger.time = Date.now()
+    await here.settled(here.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    await here.engine().flush()
+    await other.engine().tick()
+    // A minute before the unblock, the other device blocks bob in Messages again (web's conversation menu).
+    ledger.time = unblockedAt - 60_000
+    other.engine().setBlocked(bob, true)
+    await other.engine().flush()
+
+    // The unblock is confirmed here while the latest DM read is two minutes old.
+    vi.setSystemTime(unblockedAt)
+    ledger.time = unblockedAt - 120_000
+    await here.settled(here.tickets.submit({ op: 'unblock', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(here)).toEqual([])
+    await here.engine().flush()
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([])
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([])
+  })
+
   it('follows a later block from another device once a block here was proved never to land', async () => {
     // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
     const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { now: () => Date.now() }))
