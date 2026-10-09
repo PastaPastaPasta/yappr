@@ -73,6 +73,12 @@ describe('profiles.get', () => {
     await expect(profiles.get(ALICE)).rejects.toThrow()
   })
 
+  it('rejects NETWORK when the profile read failed but a profile exists (one v10 document read failed)', async () => {
+    // lib answers a profile with an unreadable document as null; the strict read finds one.
+    m.profileExists.mockResolvedValue(true)
+    await expect(profiles.get(ALICE)).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
   it("rejects when the viewer's follow read fails, rather than offering to follow again", async () => {
     m.viewer = BOB
     m.getFollowing.mockResolvedValueOnce([{ followingId: ALICE }])

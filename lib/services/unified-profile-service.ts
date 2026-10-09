@@ -24,6 +24,8 @@ import {
 } from '../profile/v10-profile';
 
 type PlainDocument = Record<string, unknown>;
+/** One request for a profile document: its document (null: proved absent), or the failed query's error. */
+type RoleWaiter = { resolve: (doc: PlainDocument | null) => void; reject: (error: unknown) => void };
 
 /** A document's revision, as a read (`$revision`) or an older plain object (`revision`) carries it. */
 function documentRevision(record: PlainDocument): number {
@@ -211,8 +213,9 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   // DataLoader-style batching for raw profile documents: every profile
   // lookup (getProfile, getProfilesByIdentityIds, avatar URLs) funnels
   // through loadProfileDoc so concurrent requests share one 'in' query per
-  // profile document type.
-  private pendingProfileRequests: Record<ProfileRole, Map<string, Array<(doc: PlainDocument | null) => void>>> = {
+  // profile document type. A waiter is answered with its document (null:
+  // proved absent) or failed with the query's error.
+  private pendingProfileRequests: Record<ProfileRole, Map<string, Array<RoleWaiter>>> = {
     base: new Map(),
     extension: new Map(),
   };
@@ -449,6 +452,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
   /**
    * Load a user's profile document(s) with DataLoader-style batching and
    * merge them into one profile (v10: the DashPay profile and the extension).
+   * Rejects when any role's read failed, so a profile missing one of its
+   * documents is never merged, shown or cached as the whole profile.
    */
   private async loadProfileDoc(ownerId: string): Promise<UnifiedProfileDocument | null> {
     const roles = profileSources();
@@ -463,6 +468,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
    * Concurrent requests within the batch window share a single 'in' query.
    * Found documents are cached; misses are negative-cached briefly so users
    * without a profile document don't trigger a fresh query on every render.
+   * A failed query rejects, uncached, so the next request retries.
    */
   private loadRoleRecord(role: ProfileRole, ownerId: string): Promise<PlainDocument | null> {
     const caches = this.ROLE_CACHES[role];
@@ -474,13 +480,14 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       return Promise.resolve(null);
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const pending = this.pendingProfileRequests[role];
+      const waiter = { resolve, reject };
       const existing = pending.get(ownerId);
       if (existing) {
-        existing.push(resolve);
+        existing.push(waiter);
       } else {
-        pending.set(ownerId, [resolve]);
+        pending.set(ownerId, [waiter]);
       }
       this.scheduleBatch();
     });
@@ -508,7 +515,11 @@ class UnifiedProfileService extends BaseDocumentService<User> {
     if (batch.size === 0) return;
 
     const resolveId = (ownerId: string, doc: PlainDocument | null) => {
-      batch.get(ownerId)?.forEach(resolve => resolve(doc));
+      batch.get(ownerId)?.forEach(waiter => waiter.resolve(doc));
+      batch.delete(ownerId);
+    };
+    const failId = (ownerId: string, error: unknown) => {
+      batch.get(ownerId)?.forEach(waiter => waiter.reject(error));
       batch.delete(ownerId);
     };
 
@@ -543,6 +554,7 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       for (let i = 0; i < validIds.length; i += 100) {
         const chunk = validIds.slice(i, i + 100);
         const found = new Map<string, PlainDocument>();
+        let failure: { error: unknown } | null = null;
         try {
           const response = await sdk.documents.query({
             dataContractId: source.contractId,
@@ -564,18 +576,24 @@ class UnifiedProfileService extends BaseDocumentService<User> {
             }
           }
         } catch (error) {
-          // Resolve this chunk with null (matching single-fetch error
-          // behavior) but skip negative caching so the next request retries.
+          // Fail this chunk's waiters, uncached, so the next request retries:
+          // a failed read is not a missing profile.
           logger.error('UnifiedProfileService: Error batch-fetching profiles:', error);
+          failure = { error };
         }
 
         for (const ownerId of chunk) {
-          resolveId(ownerId, found.get(ownerId) || null);
+          if (failure) failId(ownerId, failure.error);
+          else resolveId(ownerId, found.get(ownerId) || null);
         }
       }
+    } catch (error) {
+      // An unexpected failure (the SDK never loaded): every waiter left fails.
+      Array.from(batch.keys()).forEach(ownerId => failId(ownerId, error));
     } finally {
-      // Safety net: never leave a caller hanging on an unexpected failure
-      batch.forEach(resolvers => resolvers.forEach(resolve => resolve(null)));
+      // Safety net: never leave a caller hanging.
+      const unanswered = new Error('Profile read was not answered');
+      Array.from(batch.keys()).forEach(ownerId => failId(ownerId, unanswered));
     }
   }
 
@@ -600,7 +618,13 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       return cached;
     }
 
-    const doc = await this.loadProfileDoc(ownerId);
+    let doc: UnifiedProfileDocument | null;
+    try {
+      doc = await this.loadProfileDoc(ownerId);
+    } catch {
+      // A failed read (logged by the batch) shows the default avatar this once, uncached, so the next request retries.
+      return this.getDefaultAvatarUrl(ownerId);
+    }
     const url = doc
       ? this.parseAvatarField(doc.avatar, ownerId)
       : this.getDefaultAvatarUrl(ownerId);
@@ -1232,7 +1256,8 @@ class UnifiedProfileService extends BaseDocumentService<User> {
       if (identityIds.length === 0) return [];
 
       const uniqueIds = Array.from(new Set(identityIds));
-      const docs = await Promise.all(uniqueIds.map(id => this.loadProfileDoc(id)));
+      // A profile whose read failed (logged by the batch) is left out, as one with no profile is; the rest still answer.
+      const docs = await Promise.all(uniqueIds.map(id => this.loadProfileDoc(id).catch(() => null)));
       return docs.filter((doc): doc is UnifiedProfileDocument => doc !== null);
     } catch (error) {
       logger.error('UnifiedProfileService: Error getting profiles by identity IDs:', error);

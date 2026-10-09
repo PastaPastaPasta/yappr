@@ -54,6 +54,31 @@ describe('v10 profile reads', () => {
     expect((await profiles.getProfile(ownerId))?.displayName).toBe('Ava');
   });
 
+  it('reads no profile, and caches none, when one document type\'s query fails', async () => {
+    const profiles = await service();
+    const failing = (contractId: string) => query.mockImplementation(async ({ dataContractId }: { dataContractId: string }) => {
+      if (dataContractId === contractId) throw new Error('DAPI timeout');
+      return stored[dataContractId] ?? [];
+    });
+
+    // The DashPay profile answers, the extension's query fails: no DashPay-only profile stands in for it.
+    failing(YAPPR_CONTRACT_ID);
+    expect(await profiles.getProfile(ownerId)).toBeNull();
+    expect(profiles.hasCachedProfile(ownerId)).toBe(false);
+    expect(await profiles.getProfilesByIdentityIds([ownerId])).toEqual([]);
+    expect(await profiles.getAvatarUrl(ownerId)).toBe(profiles.getDefaultAvatarUrl(ownerId));
+    // Nor the other way round (a fresh service: this one has the DashPay profile cached).
+    const fresh = await service();
+    failing(DASHPAY_CONTRACT_ID);
+    expect(await fresh.getProfile(ownerId)).toBeNull();
+
+    // Nothing partial was kept: the next read queries again and gets the whole profile.
+    query.mockClear().mockImplementation(async ({ dataContractId }: { dataContractId: string }) => stored[dataContractId] ?? []);
+    expect(await profiles.getProfile(ownerId)).toMatchObject({ displayName: 'Ava', location: 'Lisbon', avatar: 'dicebear:bottts:s' });
+    expect(query).toHaveBeenCalledWith(expect.objectContaining({ dataContractId: YAPPR_CONTRACT_ID }));
+    expect(await profiles.getAvatarUrl(ownerId)).toBe('dicebear:bottts:s');
+  });
+
   it('counts either document as an existing profile, and rejects rather than reporting none', async () => {
     const profiles = await service();
     stored[YAPPR_CONTRACT_ID] = [];
