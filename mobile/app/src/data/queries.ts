@@ -192,26 +192,30 @@ export function useFetchNextPageAfterRefetch<R extends { hasNextPage: boolean; i
 }
 
 /**
- * A pull to refresh's ask for a fresh read, good for the one fetch it
- * triggers. Call `raise()` just before that refetch; the read spreads
- * `take()` into its engine query, which gives `{ refresh: true }` once and
- * `{}` to every other read. So the refresh skips the engine's minute-long
- * ranked cache, and a post deleted on another device drops out at once,
- * while background refetches keep using the cache.
+ * A pull to refresh's ask for a fresh read. `during(refetch)` runs the
+ * refresh's refetch; until it settles (TanStack's retries of a failed read
+ * included), the read spreads `params()` into its engine query, which gives
+ * `{ refresh: true }`, and `{}` at any other time. So the refresh skips the
+ * engine's minute-long ranked cache, and a post deleted on another device
+ * drops out at once, while background refetches keep using the cache.
  */
 export function usePullToRefresh() {
-  const raised = useRef(false);
+  const running = useRef(0);
   return useMemo(
     () => ({
-      raise: () => {
-        raised.current = true;
+      during: async <T,>(refetch: () => Promise<T>): Promise<T> => {
+        running.current += 1;
+        try {
+          return await refetch();
+        } finally {
+          running.current -= 1;
+        }
       },
-      take: (): { refresh?: true } => {
-        if (!raised.current) return {};
-        raised.current = false;
-        return { refresh: true };
-      },
+      params: (): { refresh?: true } => (running.current > 0 ? { refresh: true } : {}),
     }),
     [],
   );
 }
+
+/** {@link usePullToRefresh}'s handle. */
+export type PullToRefresh = ReturnType<typeof usePullToRefresh>;

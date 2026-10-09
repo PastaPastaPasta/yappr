@@ -95,7 +95,7 @@ export function ExploreScreen() {
   const freshTop = usePullToRefresh();
   const top = useEngineQuery(
     queryKeys.explore.topPosts(topWindow),
-    (api) => api.explore.topPosts({ window: topWindow, ...freshTop.take() }),
+    (api) => api.explore.topPosts({ window: topWindow, ...freshTop.params() }),
     { persist: true, enabled: segment === 'top' },
   );
   const creators = useEngineQuery(
@@ -125,9 +125,8 @@ export function ExploreScreen() {
       return;
     }
     setRefreshing(true);
-    if (segment === 'top') freshTop.raise();
-    active
-      .refetch()
+    // Top reads its page afresh rather than the engine's minute-old copy.
+    (segment === 'top' ? freshTop.during(() => top.refetch()) : active.refetch())
       .then((result) => {
         if (result.isError && rows.length > 0) {
           toast.error(readErrorMessage(result.error) ?? 'Something went wrong. Try again.');

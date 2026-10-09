@@ -33,14 +33,16 @@ export function quoteTargetOf(post: Post): { id: string; where: 'post' | 'reply'
   return null;
 }
 
-// Bumped per id by `forgetQuotedPosts`. A lookup that started before a forget
-// carries the generation it saw at start; if the id's generation has moved on
-// by the time the lookup resolves, its result is stale and must not overwrite
-// a cache a forget already cleared (or a newer lookup already repopulated).
+// Set per id by `forgetQuotedPosts`, to the forget's place in one sequence
+// shared by every id. A lookup that started before a forget carries the
+// generation it saw at start; if the id's generation has moved on by the time
+// the lookup resolves, its result is stale and must not overwrite a cache a
+// forget already cleared (or a newer lookup already repopulated).
 const quoteGenerations = new Map<string, number>();
+let lastForget = 0;
 
 /**
- * The current generation of a quote target: bumped every time
+ * The current generation of a quote target: moved on every time
  * `forgetQuotedPosts` is given this id. Callers that cache an already hydrated
  * `quotedPost` outside `resolve-quoted-posts`' own cache (the ranked "Top"
  * surfaces' hydrated-page cache in `ranked-likes.ts`) snapshot this at cache
@@ -50,7 +52,17 @@ export function generationOf(id: string): number {
   return quoteGenerations.get(id) ?? 0;
 }
 
+/**
+ * The latest generation any target has: taken as a read starts, it tells,
+ * for targets the read only learns of later, whether one was forgotten while
+ * it ran (`generationOf(id) > mark`).
+ */
+export function latestGeneration(): number {
+  return lastForget;
+}
+
 /** Mark this target's earlier lookups and cached copies stale. */
 export function bumpGeneration(id: string): void {
-  quoteGenerations.set(id, generationOf(id) + 1);
+  lastForget += 1;
+  quoteGenerations.set(id, lastForget);
 }

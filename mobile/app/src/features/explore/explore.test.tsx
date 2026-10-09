@@ -16,6 +16,7 @@ import { startReadRetry } from '~/data/read-retry';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/production-retry';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
@@ -113,6 +114,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   queryClient.clear();
+  withoutRetry();
   jest.useRealTimers();
 });
 
@@ -268,17 +270,24 @@ describe('Explore', () => {
 
   // A post deleted on another device must show as deleted after a pull to refresh,
   // not wait out the engine's minute-long Top posts page (RC16-I-04).
-  it('reads Top posts afresh on a pull to refresh, and only then', async () => {
+  it('reads Top posts afresh on a pull to refresh, retry included, and only then', async () => {
+    withProductionRetry();
     useExplorePrefs.setState({ segment: 'top' });
-    fakeEngine.method('explore.topPosts').mockResolvedValue([post('t1', 'most liked post')]);
+    const topPosts = fakeEngine.method('explore.topPosts');
+    topPosts.mockResolvedValue([post('t1', 'stale post')]);
     await renderAt('/explore');
-    expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all' });
+    expect(topPosts).toHaveBeenLastCalledWith({ window: 'all' });
 
+    // The refresh's first read fails; TanStack's retry must read afresh too.
+    topPosts.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    topPosts.mockResolvedValue([post('t2', 'fresh post')]);
+    const calls = topPosts.mock.calls.length;
     await act(async () => {
       screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
     });
-    await act(async () => {});
-    expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all', refresh: true });
+    await waitOutRetry();
+    expect(topPosts.mock.calls.slice(calls)).toEqual([[{ window: 'all', refresh: true }], [{ window: 'all', refresh: true }]]);
+    expect(screen.getByText('fresh post')).toBeTruthy();
 
     // Any other read after it (here a plain refetch) keeps the engine's page.
     await act(async () => {
@@ -572,19 +581,25 @@ describe('Hashtag page', () => {
     expect(screen.getByTestId('hashtag-window')).toBeTruthy();
   });
 
-  it('reads the tag’s Top afresh on a pull to refresh, and only then (RC16-I-04)', async () => {
-    fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'tagged #mobile')]));
+  it('reads the tag’s Top afresh on a pull to refresh, retry included, and only then (RC16-I-04)', async () => {
+    withProductionRetry();
+    const hashtag = fakeEngine.method('feed.hashtag');
+    hashtag.mockResolvedValue(page([post('h1', 'stale post')]));
     await renderAt('/hashtag/mobile');
     fireEvent(screen.getByTestId('hashtag-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
     await act(async () => {});
     const top = { tag: 'mobile', sort: 'top', window: 'all', cursor: null };
-    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith(top);
+    expect(hashtag).toHaveBeenLastCalledWith(top);
 
+    hashtag.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    hashtag.mockResolvedValue(page([post('h2', 'fresh post')]));
+    const calls = hashtag.mock.calls.length;
     await act(async () => {
       screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
     });
-    await act(async () => {});
-    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith({ ...top, refresh: true });
+    await waitOutRetry();
+    expect(hashtag.mock.calls.slice(calls)).toEqual([[{ ...top, refresh: true }], [{ ...top, refresh: true }]]);
+    expect(screen.getByText('fresh post')).toBeTruthy();
 
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: queryKeys.feed.hashtag({ tag: 'mobile', sort: 'top', window: 'all' }) });

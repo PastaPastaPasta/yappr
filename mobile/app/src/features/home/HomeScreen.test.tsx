@@ -10,6 +10,7 @@ import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { engineModule, fakeEngine } from '~/data/testing/fake-engine';
+import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/production-retry';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
@@ -117,6 +118,7 @@ afterAll(() => queryClient.clear());
 // After the tree unmounts: a read left pending (the skeleton test) otherwise keeps Jest from exiting.
 afterEach(() => {
   queryClient.clear();
+  withoutRetry();
   resetOwnPosts();
   fakeEngine.setStatus({ state: 'ready' });
 });
@@ -283,17 +285,24 @@ describe('Home', () => {
 
   // A post deleted on another device must leave Top on a pull to refresh,
   // not wait out the engine's minute-long ranked page (RC16-I-04).
-  it('reads Top afresh on a pull to refresh, and only then', async () => {
+  it('reads Top afresh on a pull to refresh, retry included, and only then', async () => {
+    withProductionRetry();
     useHomePrefsStore.setState({ accounts: { 'signed-out': { tab: 'forYou', sort: 'top', window: 'all' } } });
-    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    home().mockResolvedValue(page([post('p1', 'stale post', 1)]));
     await renderHome();
-    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'all', cursor: null });
+    const top = { tab: 'forYou', sort: 'top', window: 'all', cursor: null };
+    expect(home()).toHaveBeenLastCalledWith(top);
 
+    // The refresh's first read fails; TanStack's retry must read afresh too.
+    home().mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    home().mockResolvedValue(page([post('p2', 'fresh post', 1)]));
+    const calls = home().mock.calls.length;
     await act(async () => {
       screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
     });
-    await act(async () => {});
-    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'all', cursor: null, refresh: true });
+    await waitOutRetry();
+    expect(home().mock.calls.slice(calls)).toEqual([[{ ...top, refresh: true }], [{ ...top, refresh: true }]]);
+    expect(screen.getByText('fresh post')).toBeTruthy();
 
     // Any other read after it (here a plain refetch) keeps the engine's page.
     await act(async () => {

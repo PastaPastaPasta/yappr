@@ -42,7 +42,7 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
   const fresh = usePullToRefresh();
   const feed = useEngineInfiniteQuery(
     key,
-    (api, cursor) => api.feed.home({ tab, sort, window, cursor, ...fresh.take() }),
+    (api, cursor) => api.feed.home({ tab, sort, window, cursor, ...fresh.params() }),
     { persist: true, enabled, staleTime: Infinity },
   );
 
@@ -68,8 +68,7 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
     await queryClient.cancelQueries({ queryKey, exact: true });
     const before = queryClient.getQueryData<FeedData>(queryKey);
     queryClient.setQueryData<FeedData>(queryKey, keepFirstPage);
-    if (sort === 'top') fresh.raise();
-    const result = await refetch();
+    const result = await (sort === 'top' ? fresh.during(refetch) : refetch());
     if (result.error && before) queryClient.setQueryData<FeedData>(queryKey, before);
     return result.error;
   };

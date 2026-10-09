@@ -4,7 +4,7 @@ import { hashKey, useIsRestoring, type InfiniteData, type QueryKey } from '@tans
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import { RefreshControl, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native';
 
-import { useEngineInfiniteQuery } from '~/data/queries';
+import { useEngineInfiniteQuery, type PullToRefresh } from '~/data/queries';
 import { PostItem } from '~/features/post/PostItem';
 import { queryClient } from '~/state/query-client';
 import { Button } from '~/ui/Button';
@@ -59,8 +59,8 @@ export interface PagedPostListProps {
   loadingLabel: string;
   empty: { title: string; description?: string; icon?: IconComponent };
   offline: boolean;
-  /** Runs as a pull to refresh starts, just before its refetch. */
-  onPullToRefresh?: () => void;
+  /** Given, a pull to refresh's refetch runs through it (a fresh read, `usePullToRefresh`). */
+  pullToRefresh?: PullToRefresh;
   testID: string;
 }
 
@@ -70,7 +70,7 @@ export interface PagedPostListProps {
  * more posts" pill, and the loading, empty and error states (PRD FEED-06,
  * FEED-07, EXPL-07).
  */
-export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, onPullToRefresh, testID }: PagedPostListProps) {
+export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, pullToRefresh, testID }: PagedPostListProps) {
   const c = useColors();
   const [refreshing, setRefreshing] = useState(false);
   // Automatic paging pauses after MAX_AUTO_PAGES until the reader asks for more.
@@ -94,9 +94,8 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
     setPaused(false);
     // A refetch re-reads every page it holds: start again from the first.
     queryClient.setQueryData<PagedData>(queryKey, firstPageOnly);
-    onPullToRefresh?.();
-    query
-      .refetch()
+    const refetch = () => query.refetch();
+    (pullToRefresh ? pullToRefresh.during(refetch) : refetch())
       .then((result) => {
         if (result.isError && query.items.length > 0) {
           toast.error(readErrorMessage(result.error) ?? 'Something went wrong. Try again.');

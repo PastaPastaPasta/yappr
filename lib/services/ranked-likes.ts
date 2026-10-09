@@ -37,7 +37,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { generationOf, quoteTargetOf } from '@/lib/feed/quote-targets';
+import { generationOf, latestGeneration, quoteTargetOf } from '@/lib/feed/quote-targets';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
@@ -291,6 +291,14 @@ interface HydratedCacheEntry {
 const hydratedCache = new TtlMap<string, HydratedCacheEntry>(60_000);
 
 /**
+ * Per cache key, the latest read under way: only it may fill the key, so a
+ * slower read that started earlier (a background refetch overtaken by a pull
+ * to refresh, say) never overwrites a newer page with its older one.
+ */
+const latestReads = new Map<string, number>();
+let readCount = 0;
+
+/**
  * Each hydrated post's quote target id mapped to its generation right now.
  * Posts here already carry `quotedPost` from the composite proof that
  * hydrated them (never from `resolve-quoted-posts`' own cache), so a forget
@@ -387,7 +395,8 @@ export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsBy
 
 /**
  * Serve a hydrated ranking from the 60-second cache, or run `rank` and
- * hydrate its result. `force` bypasses the cache read but still refills it.
+ * hydrate its result. `force` drops the cached page and reads afresh, which
+ * refills it.
  * Keys carry the page size, so callers asking for different limits never
  * share (and truncate) each other's page. `rank` must reject failed reads so
  * fail-soft callers cannot cache an empty or partial page for strict callers.
@@ -411,18 +420,35 @@ async function hydrateRankedCached(
   const { getCurrentUserId } = await import('./sdk-helpers');
   const currentUserId = getCurrentUserId() ?? undefined;
   const viewerKey = `${currentUserId ?? 'anonymous'}:${cacheKey}`;
-  const cached = force ? undefined : hydratedCache.get(viewerKey);
+  // A forced read means the caller knows the cached page is out of date, so it
+  // goes: should this read fail, nothing after it (its retry, a later
+  // background read) falls back to that page.
+  if (force) hydratedCache.delete(viewerKey);
+  const cached = hydratedCache.get(viewerKey);
   if (cached && !quoteGenerationsStale(cached.quoteGenerations)) return cached.posts;
 
+  const read = ++readCount;
+  latestReads.set(viewerKey, read);
+  // Taken now, not after hydration: a target forgotten while this read ran
+  // would otherwise be snapshotted at its new generation and pass as current.
+  const quotesAsOf = latestGeneration();
   try {
     const ranked = await rank();
     const posts = await hydrateRankedPosts(ranked, currentUserId);
-    hydratedCache.set(viewerKey, { posts, quoteGenerations: quoteGenerationSnapshot(posts) });
+    const quoteGenerations = quoteGenerationSnapshot(posts);
+    // The page still answers this caller; it is cached only if no later read
+    // of it started and none of its quote targets was forgotten meanwhile.
+    const quotesForgotten = Array.from(quoteGenerations.values()).some((generation) => generation > quotesAsOf);
+    if (latestReads.get(viewerKey) === read && !quotesForgotten) {
+      hydratedCache.set(viewerKey, { posts, quoteGenerations });
+    }
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);
     if (throwOnError) throw error;
     return [];
+  } finally {
+    if (latestReads.get(viewerKey) === read) latestReads.delete(viewerKey);
   }
 }
 

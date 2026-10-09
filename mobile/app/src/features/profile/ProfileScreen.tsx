@@ -121,15 +121,15 @@ function ProfileTabList({
   const fresh = usePullToRefresh();
   const posts = useEngineInfiniteQuery<ProfileItem>(
     queryKeys.profile.posts(profileId, tab),
-    (api, cursor) => api.profiles.posts({ id: profileId, tab, cursor, ...fresh.take() }),
+    (api, cursor) => api.profiles.posts({ id: profileId, tab, cursor, ...fresh.params() }),
     { persist: true },
   );
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = () => {
     setRefreshing(true);
     // Top reads the author's ranking afresh rather than the engine's minute-old copy.
-    if (tab === 'top') fresh.raise();
-    Promise.all([onRefreshProfile(), posts.refetch()])
+    const refetch = () => posts.refetch();
+    Promise.all([onRefreshProfile(), tab === 'top' ? fresh.during(refetch) : refetch()])
       .catch(() => undefined)
       .finally(() => setRefreshing(false));
   };

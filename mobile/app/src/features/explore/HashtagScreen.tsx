@@ -44,7 +44,7 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
   const fresh = usePullToRefresh();
   const posts = useEngineInfiniteQuery<PostDTO>(
     key,
-    (api, cursor) => api.feed.hashtag({ tag: storage, sort, window: rankWindow, cursor, ...fresh.take() }),
+    (api, cursor) => api.feed.hashtag({ tag: storage, sort, window: rankWindow, cursor, ...fresh.params() }),
     { persist: true, enabled: storage !== '' },
   );
 
@@ -86,7 +86,7 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
           icon: tag.display.startsWith('$') ? CurrencyDollarIcon : HashtagIcon,
         }}
         offline={offline}
-        onPullToRefresh={sort === 'top' ? fresh.raise : undefined}
+        pullToRefresh={sort === 'top' ? fresh : undefined}
         testID="hashtag-posts"
       />
     </Screen>
