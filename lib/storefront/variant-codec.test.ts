@@ -256,6 +256,13 @@ describe('validation', () => {
     expect(problems(hundredCombinations())).toEqual([])
   })
 
+  it('caps a combination\'s stock at v7\'s 4,294,967,295 only where the typed table stores it', () => {
+    const big = updateCombination(shirt(), '1.2', { stock: 5_000_000_000 })
+    expect(problems(big)).toContain('Stock must be a whole number of 0 or more.')
+    expect(variantProblems(big, { imageCount: 0, legacy: true })).toEqual([])
+    expect(variantProblems(updateCombination(shirt(), '1.2', { stock: Number.MAX_SAFE_INTEGER + 1 }), { imageCount: 0, legacy: true })).toEqual(['Stock must be a whole number of 0 or more.'])
+  })
+
   it('refuses what the contract would, in words for the seller', () => {
     const table = shirt()
     expect(problems(emptyVariants())[0]).toMatch(/at least one option type/)

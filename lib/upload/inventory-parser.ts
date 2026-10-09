@@ -622,12 +622,6 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
   const warnings: string[] = []
 
   const { images: allImages, tooLong } = collectImages(rows)
-  // v1–v6 keep a combination's own photo in the table, so only v7 (and an item
-  // image on v4–v6) loses one that is too long for the listing's images.
-  const lostImages = tooLong.filter((url) => storefrontVariantsAreTyped() || rows.some((row) => row.imageUrls.includes(url)))
-  if (lostImages.length > 0) {
-    warnings.push(`"${title}": left out ${lostImages.length} image${lostImages.length === 1 ? '' : 's'} whose address is longer than ${LIST_LIMITS.storeImageUrls.maxLength} characters.`)
-  }
   const imageLimit = itemImageLimit()
   if (allImages.length > imageLimit) warnings.push(`"${title}": kept the first ${imageLimit} of ${allImages.length} images.`)
   const imageUrls = allImages.slice(0, imageLimit)
@@ -655,6 +649,15 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
   }
 
   const plan = planAxes(rows, columns, title)
+  // A row's own image is its Image URL, else (older files) its first image.
+  const ownImage = (row: ParsedInventoryRow) => (columns.fields.image !== undefined ? row.image : row.imageUrls[0])
+  // An address too long for the listing's images is lost unless a v1–v6
+  // combination keeps it as its own photo; say so rather than drop it quietly.
+  const keptAsOwnPhoto = (url: string) => plan !== null && !storefrontVariantsAreTyped() && rows.some((row) => ownImage(row) === url)
+  const lostImages = tooLong.filter((url) => !keptAsOwnPhoto(url))
+  if (lostImages.length > 0) {
+    warnings.push(`"${title}": left out ${lostImages.length} image${lostImages.length === 1 ? '' : 's'} whose address is longer than ${LIST_LIMITS.storeImageUrls.maxLength} characters.`)
+  }
   if (!plan) {
     if (rows.length > 1) {
       errors.push(`"${title}" has ${rows.length} rows but no options to tell them apart. Give each row its own option, or its own group.`)
@@ -700,8 +703,6 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
   if (!perCombinationWeight) item.weight = weights.find((weight) => weight !== undefined)
   if (weightsDiffer && !perCombinationWeight) warnings.push(`"${title}": the rows have different weights, but this store keeps one weight per product, so the first one was used.`)
 
-  // A row's own image is its Image URL, else (older files) its first image.
-  const ownImage = (row: ParsedInventoryRow) => (columns.fields.image !== undefined ? row.image : row.imageUrls[0])
   const variantRows: VariantRow[] = rows.map((row, index) => {
     const imageIndex = imageUrls.indexOf(ownImage(row) ?? '') + 1
     return {

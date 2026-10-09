@@ -306,6 +306,16 @@ describe('rows become combinations', () => {
     expect(v7.warnings).toContain('"Toy": left out 2 images whose address is longer than 512 characters.')
   })
 
+  it('reports a long photo of a product without options on v4–v6, where nothing can keep it', async () => {
+    const long = `https://x.test/${'p'.repeat(600)}.jpg`
+    for (const csv of [`Item Name,Price,Image URL\nMug,9.00,${long}`, `Title,Option1 Name,Option1 Value,Price,Image URL\nMug,Title,Default Title,9.00,${long}`]) {
+      const [v6] = (await parseUnder('v6', csv)).items
+      expect(v6.variants).toBeUndefined()
+      expect(v6.warnings).toEqual(['"Mug": left out 1 image whose address is longer than 512 characters.'])
+      expect(parseInventoryCSV(csv).items[0].imageUrls).toEqual([long])
+    }
+  })
+
   it('on v1–v6 keeps a combination photo past the gallery cap as its own URL, and round-trips it', async () => {
     const rows = ['Red', 'Orange', 'Yellow', 'Green', 'Blue'].map((color) => `g,Toy,${color},1.00,https://x.test/${color}.jpg`)
     const csv = ['Group,Item Name,Color,Price,Image URL', ...rows].join('\n')

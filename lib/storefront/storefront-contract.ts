@@ -58,6 +58,14 @@ export const VARIANT_LIMITS = {
 } as const
 
 /**
+ * The most stock one combination can hold: v7's typed `stocks` are capped at
+ * 4,294,967,295, while the v1–v6 JSON holds any whole number (safe integer).
+ * Every check and input on a combination's stock goes through this, so a
+ * v1–v6 table past the v7 cap stays editable.
+ */
+export const combinationStockCap = (legacy: boolean): number => (legacy ? Number.MAX_SAFE_INTEGER : VARIANT_LIMITS.maxStock)
+
+/**
  * Most product images the editor lets a listing carry: the contract's 12 on
  * v7 (a variant names one by index), and 4 before it, as the editor always
  * allowed (v1–v3 store the list as one capped JSON string).

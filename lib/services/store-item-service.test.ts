@@ -4,6 +4,7 @@ const { get, query, updateDocument } = vi.hoisted(() => ({ get: vi.fn(), query: 
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
 import { storeItemService } from './store-item-service';
+import { updateCombination } from '../storefront/variant-codec';
 
 /** `value`, failing the test when it is missing. */
 function defined<T>(value: T | null | undefined): T {
@@ -242,6 +243,17 @@ describe('storefront v7 typed variants', () => {
     expect(storeItemService.getStock(item)).toBe(0);
     await storeItemService.updateItem('item', 'owner', storeId, { status: 'paused' });
     expect(updateDocument.mock.calls[0][4].variants).toBe(ten);
+  });
+
+  it('on v1 edits a combination beside one whose stock is past the v7 cap, which the JSON holds', async () => {
+    const legacy = JSON.stringify({ axes: [{ name: 'Size', options: ['S', 'L'] }], combinations: [{ key: 'S', price: 100, stock: 5_000_000_000 }, { key: 'L', price: 100, stock: 3 }] });
+    get.mockResolvedValue({ ...raw, basePrice: undefined, stockQuantity: undefined, variants: legacy });
+    const item = defined(await storeItemService.getById('item'));
+    const restocked = updateCombination(defined(item.variants), '2', { stock: 4 });
+    await storeItemService.updateItem('item', 'owner', storeId, { variants: restocked }, 4);
+    expect(JSON.parse(updateDocument.mock.calls[0][4].variants).combinations.map((combination: { stock?: number }) => combination.stock)).toEqual([5_000_000_000, 4]);
+    await storeItemService.updateItem('item', 'owner', storeId, { title: 'Renamed' });
+    expect(updateDocument).toHaveBeenCalledTimes(2);
   });
 
   it('on v1 writes the table as the JSON string, a combination image as its URL', async () => {

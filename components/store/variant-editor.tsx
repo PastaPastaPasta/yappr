@@ -5,7 +5,7 @@ import { ArrowDownIcon, ArrowLeftIcon, ArrowRightIcon, ArrowUpIcon, PlusIcon, Tr
 import { Button } from '@/components/ui/button'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import type { ItemVariants, VariantAxis, VariantCombination } from '@/lib/types'
-import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
+import { VARIANT_LIMITS, combinationStockCap } from '@/lib/storefront/storefront-contract'
 import {
   CombinationLimitError, addAxis, addOption, findOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
   restoreCombinations, sameName, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
@@ -168,7 +168,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   // A target removed since it was chosen falls back to every combination.
   const bulkScope = bulkOptionName === undefined ? undefined : bulkOptionId
   const bulkPriceValue = parsePriceInput(bulkPrice, currency)
-  const bulkStockValue = parseCountInput(bulkStock, VARIANT_LIMITS.maxStock)
+  const bulkStockValue = parseCountInput(bulkStock, combinationStockCap(legacy))
   const missing = missingCombinationCount(variants)
   // A v1–v6 combination can keep its own photo outside the listing's images.
   const showImages = imageUrls.length > 0 || variants.combinations.some((combination) => combination.imageUrl)
@@ -570,7 +570,7 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
                 onUpdate({ stock: undefined })
                 return true
               }
-              const stock = parseCountInput(text, VARIANT_LIMITS.maxStock)
+              const stock = parseCountInput(text, combinationStockCap(legacy))
               if (stock === undefined) return false
               onUpdate({ stock })
               return true

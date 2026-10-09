@@ -12,7 +12,7 @@
  */
 import { normalizeBytes } from '@/lib/bytes'
 import type { ItemVariants, VariantAxis, VariantCombination, VariantOption } from '@/lib/types'
-import { VARIANT_LIMITS } from './storefront-contract'
+import { VARIANT_LIMITS, combinationStockCap } from './storefront-contract'
 
 /** The table as storefront v7 stores it: parallel typed lists, aligned by consensus. */
 export interface StoredVariants {
@@ -342,7 +342,7 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
     if (seen.has(combination.id)) add('A combination is listed twice.')
     seen.add(combination.id)
     if (!Number.isSafeInteger(combination.price) || combination.price < 0 || combination.price > limits.maxPrice) add('Every combination needs a valid price.')
-    if (combination.stock !== undefined && (!Number.isSafeInteger(combination.stock) || combination.stock < 0 || combination.stock > limits.maxStock)) add('Stock must be a whole number of 0 or more.')
+    if (combination.stock !== undefined && (!Number.isSafeInteger(combination.stock) || combination.stock < 0 || combination.stock > combinationStockCap(legacy))) add('Stock must be a whole number of 0 or more.')
     if (capped && combination.sku !== undefined && tooLong(combination.sku, limits.skuLength, limits.skuBytes)) add(`SKUs can be at most ${limits.skuLength} characters.`)
     if (combination.weight !== undefined) {
       if (legacy) add('Per-combination weights are not available for this store.')

@@ -21,7 +21,7 @@ import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { storefrontVariantsAreTyped } from '@/lib/constants'
 import { StaleRevisionError } from '@/lib/services/document-service'
-import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
+import { VARIANT_LIMITS, combinationStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
 /** What a stock edit changed on an item, for the page to merge into its copy. */
@@ -57,9 +57,13 @@ function totalStock(item: StoreItem, drafts: StockDrafts = {}): number {
   return stocks.reduce<number>((sum, stock) => sum + (stock ?? 0), 0)
 }
 
-/** A typed stock count, or null when it is not a whole number the contract stores (0 to 4,294,967,295). */
-function parseStock(value: string): number | null {
-  return parseCountInput(value, VARIANT_LIMITS.maxStock) ?? null
+/**
+ * A typed stock count, or null when it is not a whole number the store keeps:
+ * a product's own stock is 0 to 4,294,967,295; a combination's follows
+ * {@link combinationStockCap}.
+ */
+function parseStock(value: string, combination: boolean): number | null {
+  return parseCountInput(value, combination ? combinationStockCap(!storefrontVariantsAreTyped()) : VARIANT_LIMITS.maxStock) ?? null
 }
 
 export function InventoryTable({
@@ -323,13 +327,13 @@ export function InventoryTable({
         setStockDraft(item, editingStock.variantId, null)
         return
       }
-      const stock = parseStock(editingStock.value)
+      const stock = parseStock(editingStock.value, true)
       if (stock !== null) setStockDraft(item, editingStock.variantId, stock)
       return
     }
 
     // A product without options saves at once; an empty entry stops tracking its stock.
-    const stockQuantity = editingStock.value.trim() === '' ? undefined : parseStock(editingStock.value)
+    const stockQuantity = editingStock.value.trim() === '' ? undefined : parseStock(editingStock.value, false)
     if (stockQuantity === null || stockQuantity === item.stockQuantity) return
     try {
       const updated = await storeItemService.updateItem(item.id, ownerId, storeId, { stockQuantity })
