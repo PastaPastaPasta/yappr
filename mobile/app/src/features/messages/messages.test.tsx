@@ -678,11 +678,65 @@ describe('Conversation (DM-03, DM-04)', () => {
       }
     });
 
-    it('leaves the box to measure itself on Android', async () => {
+    it('grows the box by its own laid-out text on Android, capped at 5 of its drawn lines (QA rc16 A-08)', async () => {
       await onAndroid(async () => {
         await typeHello();
+        const style = () => StyleSheet.flatten(composer().props.style);
+        const lines = () => screen.getByTestId('dm-composer-lines', { includeHiddenElements: true });
+        const contentSize = (height: number) =>
+          fireEvent(composer(), 'contentSizeChange', { nativeEvent: { contentSize: { width: 300, height } } });
         expect(screen.queryByTestId('dm-composer-mirror', { includeHiddenElements: true })).toBeNull();
-        expect(StyleSheet.flatten(composer().props.style).height).toBeUndefined();
+        // Android draws typed text at the font's own spacing: the box is given no line height, and
+        // its cap is 5 of those lines, measured.
+        expect(style().lineHeight).toBeUndefined();
+        expect(StyleSheet.flatten(lines().props.style)).toMatchObject({ fontSize: 16, opacity: 0 });
+        expect(StyleSheet.flatten(lines().props.style).lineHeight).toBeUndefined();
+        expect(lines().props.children).toBe('\u200b\n\u200b\n\u200b\n\u200b\n\u200b');
+        expect(style().height).toBeUndefined();
+        fireEvent(lines(), 'layout', { nativeEvent: { layout: { height: 18.75 * 5 } } });
+        expect(style().maxHeight).toBe(94 + 18);
+        expect(style().minHeight).toBe(40);
+
+        // The field's text layout and padding, as it reports them.
+        contentSize(18.75 * 3 + 18);
+        expect(style().height).toBe(75);
+        contentSize(18.75 * 9 + 18);
+        expect(style().height).toBe(style().maxHeight);
+
+        // A larger text size: the field keeps the height its text has, under the new cap once
+        // the lines are measured again, instead of the one empty line Fabric measures until the
+        // next keystroke.
+        const initial = Dimensions.get('window').fontScale;
+        const setFontScale = (fontScale: number) =>
+          act(() =>
+            Dimensions.set({
+              window: { ...Dimensions.get('window'), fontScale },
+              screen: { ...Dimensions.get('screen'), fontScale },
+            }),
+          );
+        setFontScale(1.3);
+        try {
+          expect(style().height).toBe(112);
+          fireEvent(lines(), 'layout', { nativeEvent: { layout: { height: 24.4 * 5 } } });
+          expect(style().maxHeight).toBe(122 + 18);
+          contentSize(24.4 * 9 + 18);
+          expect(style().height).toBe(140);
+        } finally {
+          setFontScale(initial);
+        }
+        fireEvent(lines(), 'layout', { nativeEvent: { layout: { height: 18.75 * 5 } } });
+
+        // The fresh box after Send is sized by its own report, not the sent text's: not even by a
+        // late one from the box it replaced.
+        fireEvent.press(screen.getByTestId('dm-send'));
+        await act(async () => {});
+        expect(style().height).toBeUndefined();
+        fireEvent(screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true }), 'contentSizeChange', {
+          nativeEvent: { contentSize: { width: 300, height: 18.75 * 2 + 18 } },
+        });
+        expect(style().height).toBeUndefined();
+        contentSize(18.75 + 18);
+        expect(style().height).toBe(40);
       });
     });
 
