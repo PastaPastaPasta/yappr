@@ -20,7 +20,7 @@ import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { monoFont, useColors } from '~/ui/tokens';
 
-import { blockWrite, useAuthorBlocked } from './block-state';
+import { blockWrite, useAuthorBlocked, useBlockBusy } from './block-state';
 import { findCachedUser } from './cached';
 import { copy } from './copy';
 import { SheetBody, SheetHeading, SheetLoading, SheetMessage, closeSheet, signInAction } from './SafetySheet';
@@ -47,6 +47,8 @@ export function BlockScreen() {
     persist: true,
   });
   const blocked = useAuthorBlocked(userId, profile.data?.viewer?.blocks);
+  // A block or unblock still on its way: the button says so, and the opposite action waits for it.
+  const busy = useBlockBusy(userId);
   const [note, setNote] = useState('');
   const [noteOpen, setNoteOpen] = useState(false);
   const c = useColors();
@@ -143,10 +145,11 @@ export function BlockScreen() {
           <>
             <SheetHeading icon={NoSymbolIcon} iconColor={c.destructive} title={copy.block.blockedTitle(handle)} body={copy.block.blockedBody} />
             <Button
-              label={copy.block.unblock}
+              label={busy === 'blocking' ? copy.block.blocking : busy === 'unblocking' ? copy.block.unblocking : copy.block.unblock}
               size="block"
               icon={UserIcon}
-              accessibilityLabel={`Unblock ${handle}`}
+              accessibilityLabel={busy ? undefined : `Unblock ${handle}`}
+              disabled={busy !== null}
               onPress={unblock}
               testID="unblock-confirm"
             />
@@ -179,11 +182,12 @@ export function BlockScreen() {
               />
             )}
             <Button
-              label={copy.block.confirm}
+              label={busy === 'blocking' ? copy.block.blocking : busy === 'unblocking' ? copy.block.unblocking : copy.block.confirm}
               variant="destructive"
               size="block"
               icon={NoSymbolIcon}
-              accessibilityLabel={`Block ${handle}`}
+              accessibilityLabel={busy ? undefined : `Block ${handle}`}
+              disabled={busy !== null}
               onPress={block}
               testID="block-confirm"
             />

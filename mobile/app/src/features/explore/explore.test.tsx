@@ -2,8 +2,10 @@ import type { CapabilitiesDTO, Page, PostDTO, RankedUserDTO, SessionDTO, TagDTO,
 import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { Stack } from 'expo-router';
+import { render } from '@testing-library/react-native';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
-import { ActionSheetIOS, RefreshControl } from 'react-native';
+import { useState } from 'react';
+import { ActionSheetIOS, RefreshControl, Text } from 'react-native';
 
 import HashtagRoute from '~/app/(tabs)/(home,explore,notifications,messages,profile)/hashtag/[tag]';
 import SearchResultsRoute from '~/app/(tabs)/(explore)/explore/search/[kind]';
@@ -20,6 +22,7 @@ import { useToastStore } from '~/ui/toast';
 
 import { ExploreScreen } from './ExploreScreen';
 import { useExplorePrefs } from './explore-prefs';
+import { SearchField } from './SearchField';
 import { addRecent, clearRecent, getRecent, startRecentSearchCleanup } from './recent-searches';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
@@ -124,6 +127,92 @@ beforeEach(() => {
   clearRecent('signed-out');
   clearRecent(viewer.identityId);
   jest.mocked(NetInfo.useNetInfo).mockReturnValue({ isConnected: true } as ReturnType<typeof NetInfo.useNetInfo>);
+});
+
+
+describe('SearchField', () => {
+  it('hands the focus on at the first Clear after it opened, before its focus was reported (QA rc12 c9)', () => {
+    function Search() {
+      const [text, setText] = useState('');
+      return (
+        <>
+          <SearchField value={text} onChangeText={setText} autoFocus />
+          <Text testID="held">{text}</Text>
+        </>
+      );
+    }
+    render(<Search />);
+    const input = () => screen.getByTestId('search-input');
+    // Typed straight away, fast: abc, three deletes, abc, rendered once; no focus event yet.
+    const late = input().props.onChangeText as (text: string) => void;
+    act(() => {
+      for (const text of ['a', 'ab', 'abc', 'ab', 'a', '', 'a', 'ab', 'abc']) fireEvent.changeText(input(), text);
+    });
+    fireEvent.press(screen.getByTestId('search-clear'));
+    // A fresh input (the old one's text can't survive a native clear it drops), taking the focus.
+    expect(input()).toHaveDisplayValue('');
+    expect(input().props.autoFocus).toBe(true);
+    expect(screen.queryByTestId('search-clear')).toBeNull();
+    act(() => late('abcz'));
+    expect(screen.getByTestId('held')).toHaveTextContent('');
+    fireEvent.changeText(input(), 'z');
+    expect(screen.getByTestId('held')).toHaveTextContent('z');
+  });
+
+  it('ignores a late event of the input Clear replaced, and keeps what is typed or pasted after (QA rc7 review)', () => {
+    function Search() {
+      const [text, setText] = useState('');
+      return (
+        <>
+          <SearchField value={text} onChangeText={setText} />
+          <Text testID="held">{text}</Text>
+        </>
+      );
+    }
+    render(<Search />);
+    const input = () => screen.getByTestId('search-input');
+    fireEvent(input(), 'focus');
+    fireEvent.changeText(input(), 'abc');
+    const late = input().props.onChangeText as (text: string) => void;
+    fireEvent.press(screen.getByTestId('search-clear'));
+    // A keystroke the old input reports after Clear (or after a native clear it dropped).
+    act(() => late('abcx'));
+    expect(screen.getByTestId('held')).toHaveTextContent('');
+    expect(input()).toHaveDisplayValue('');
+    expect(screen.queryByTestId('search-clear')).toBeNull();
+    // The fresh input took over: kept hidden only until it has the focus.
+    expect(screen.getByTestId('search-input').props.autoFocus).toBe(true);
+    fireEvent(input(), 'focus');
+    fireEvent.changeText(input(), 'd');
+    expect(screen.getByTestId('held')).toHaveTextContent('d');
+    fireEvent.changeText(input(), 'abc pasted');
+    expect(screen.getByTestId('held')).toHaveTextContent('abc pasted');
+    expect(input()).toHaveDisplayValue('abc pasted');
+  });
+
+  it('clears on Clear even right after a delete and retype that rendered once (QA rc7 review)', () => {
+    // a, '', a reach the field before the search's one render with "a": a Clear's '' is not a late echo.
+    function Search() {
+      const [text, setText] = useState('');
+      return (
+        <>
+          <SearchField value={text} onChangeText={setText} />
+          <Text testID="held">{text}</Text>
+        </>
+      );
+    }
+    render(<Search />);
+    const input = () => screen.getByTestId('search-input');
+    fireEvent(input(), 'focus');
+    act(() => {
+      for (const text of ['a', '', 'a']) fireEvent.changeText(input(), text);
+    });
+    expect(input()).toHaveDisplayValue('a');
+    fireEvent.press(screen.getByTestId('search-clear'));
+    expect(input()).toHaveDisplayValue('');
+    expect(screen.getByTestId('held')).toHaveTextContent('');
+    expect(screen.queryByTestId('search-clear')).toBeNull();
+  });
 });
 
 describe('Explore', () => {
@@ -428,7 +517,7 @@ describe('Search', () => {
     // Tapping a recent query searches it again.
     fireEvent.press(screen.getByTestId('recent-first'));
     await settle();
-    expect(screen.getByTestId('search-input').props.value).toBe('first');
+    expect(screen.getByTestId('search-input')).toHaveDisplayValue('first');
 
     fireEvent.press(screen.getByTestId('search-clear'));
     fireEvent.press(screen.getByTestId('recent-clear'));

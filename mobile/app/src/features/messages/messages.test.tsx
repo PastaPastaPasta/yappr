@@ -1,9 +1,10 @@
-import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO } from '@engine/api';
+import type { ConversationDTO, DmStatusDTO, MessageDTO, Page, SessionDTO, WriteTicket } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, renderHook, screen, within } from '@testing-library/react-native';
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react-native';
 import {
   Alert,
   AppState,
+  Dimensions,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -22,8 +23,11 @@ import { resetWriteTracking } from '~/data/writes';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
+import { RETIRE_MS } from '~/ui/native-text';
+import { hostViewAbove } from '~/ui/testing/native-parent';
 import { useToastStore } from '~/ui/toast';
 
+import { Composer } from './Composer';
 import { ConversationScreen } from './ConversationScreen';
 import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
@@ -510,6 +514,256 @@ describe('Conversation (DM-03, DM-04)', () => {
     });
   });
 
+  it('leaves the message text to the input while typing, and clears it once sent (QA rc7 D-2)', async () => {
+    // A `value` composer pushed each keystroke's text back from the draft store, and under load
+    // that echo dropped the keys typed meanwhile.
+    await openConversation();
+    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    const composer = () => screen.getByTestId('dm-composer');
+    fireEvent(composer(), 'focus');
+    for (const text of ['s', 'se', 'see', 'see ', 'see y', 'see yo', 'see you']) fireEvent.changeText(composer(), text);
+    expect(composer().props.value).toBeUndefined();
+    expect(composer().props.defaultValue).toBe('');
+    expect(screen.getByTestId('dm-send')).toBeEnabled();
+
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    expect(fakeEngine.method('dm.send')).toHaveBeenCalledWith(KEY, 'see you');
+    // A send empties the box with a fresh input, which takes the focus (QA rc9 c2).
+    expect(composer()).toHaveDisplayValue('');
+    expect(composer().props.autoFocus).toBe(true);
+    // The next message's typing is the input's own again: nothing is put in over it.
+    fireEvent.changeText(composer(), 'and');
+    expect(composer()).toHaveDisplayValue('and');
+    expect(composer().props.defaultValue).toBe('');
+    expect(screen.getByTestId('dm-send')).toBeEnabled();
+  });
+
+  describe('typing right after Send (QA rc9 c2)', () => {
+    /** The conversation's draft as the store holds it ('' when none). */
+    const draftNow = () => Object.values(useDrafts.getState().byKey).join('|');
+    const composer = () => screen.getByTestId('dm-composer');
+    async function typeHello() {
+      await openConversation();
+      fakeEngine.method('dm.send').mockResolvedValue(ticket({ op: 'dm.send', target: { conversationKey: KEY } }));
+      fireEvent(composer(), 'focus');
+      fireEvent.changeText(composer(), 'hello');
+    }
+    const sentTexts = () => fakeEngine.method('dm.send').mock.calls.map((call) => call[1]);
+    /** The change handler of the input in the box now, to deliver its events late. */
+    const changeHandlerNow = (): ((text: string) => void) => composer().props.onChangeText;
+
+    it('never brings the sent text back with a keystroke the old field reports late', async () => {
+      // The field still held "hello" when "x" went in (Android dropped the clear: its event count was
+      // behind the keystroke), and reported "hellox" after the send.
+      await typeHello();
+      const sentField = composer();
+      const lateChange = changeHandlerNow();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      act(() => lateChange('hellox'));
+      await act(async () => {});
+      expect(composer()).not.toBe(sentField);
+      expect(composer()).toHaveDisplayValue('');
+      expect(draftNow()).toBe('');
+      // The fresh box keeps the keyboard, and takes what is typed next.
+      expect(composer().props.autoFocus).toBe(true);
+      fireEvent.changeText(composer(), 'y');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(sentTexts()).toEqual(['hello', 'y']);
+    });
+
+    it('does the same when the late report reaches the app before the emptied draft renders', async () => {
+      await typeHello();
+      const lateChange = changeHandlerNow();
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('dm-send'));
+        lateChange('hellox');
+      });
+      expect(composer()).toHaveDisplayValue('');
+      expect(draftNow()).toBe('');
+      expect(sentTexts()).toEqual(['hello']);
+    });
+
+    it('keeps the old input, hidden, until the fresh one has the focus, so the keyboard stays up (QA rc11 c3)', async () => {
+      await typeHello();
+      const live = composer();
+      const liveProps = { style: live.props.style, editable: live.props.editable, multiline: live.props.multiline };
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      // Both mounted: the fresh box, taking the focus, and the one that held "hello", out of sight.
+      const retiring = screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true });
+      // The same input (never a new native view), and nothing on it that would make iOS resign it
+      // (QA rc12 c1): no pointerEvents, no change to its style or editability. Its slot hides it.
+      expect(retiring).toBe(live);
+      expect(retiring.props.pointerEvents).toBeUndefined();
+      expect({ style: retiring.props.style, editable: retiring.props.editable, multiline: retiring.props.multiline }).toEqual(liveProps);
+      const slot = hostViewAbove(retiring);
+      expect(slot?.props.collapsable).toBe(false);
+      expect(slot?.props.accessibilityElementsHidden).toBe(true);
+      expect(StyleSheet.flatten(slot?.props.style)).toMatchObject({ position: 'absolute', height: 0, overflow: 'hidden', opacity: 0 });
+      expect(composer().props.autoFocus).toBe(true);
+      expect(composer()).toHaveDisplayValue('');
+      // Its late events, and its blur as the focus moves, change nothing.
+      fireEvent.changeText(retiring, 'hellox');
+      fireEvent(retiring, 'blur');
+      expect(draftNow()).toBe('');
+      // The fresh box has the focus: only now does the old one go.
+      fireEvent(composer(), 'focus');
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+      fireEvent.changeText(composer(), 'y');
+      expect(draftNow()).toBe('y');
+    });
+
+    it('lets the old input go anyway if the fresh one never says it has the focus', async () => {
+      await typeHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      expect(screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeTruthy();
+      act(() => {
+        jest.advanceTimersByTime(RETIRE_MS);
+      });
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+    });
+
+    it('swaps straight away when the box did not have the focus', async () => {
+      await openConversation();
+      fakeEngine.method('dm.send').mockResolvedValue(ticket({ op: 'dm.send', target: { conversationKey: KEY } }));
+      fireEvent.changeText(composer(), 'hello');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+      expect(composer()).toHaveDisplayValue('');
+    });
+
+    it('grows the box a line at a time up to 5 lines on iOS, then back to one after Send (QA rc13 c6)', async () => {
+      // iOS sizes an uncontrolled input that mounted empty by its empty text: the height comes from a mirror.
+      await typeHello();
+      const style = () => StyleSheet.flatten(composer().props.style);
+      const mirror = () => screen.getByTestId('dm-composer-mirror', { includeHiddenElements: true });
+      fireEvent.changeText(composer(), 'line one\nline two\nline three');
+      expect(mirror().props.children).toBe('line one\nline two\nline three');
+      // A line on screen: the cap is 5 of them plus the padding.
+      const lineHeight = ((style().maxHeight as number) - 18) / 5;
+      fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight * 3 } } });
+      expect(style().height).toBe(Math.ceil(lineHeight * 3) + 18);
+      // Past 5 lines it stays at its maximum, and scrolls.
+      fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight * 9 } } });
+      expect(style().height).toBe(style().maxHeight);
+
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(mirror().props.children).toBe('\u200b');
+      fireEvent(mirror(), 'layout', { nativeEvent: { layout: { height: lineHeight } } });
+      // One line (40 at the default text size).
+      expect(style().height).toBe(style().minHeight);
+    });
+
+    it.each([1, 1.12])('caps the box at exactly 5 full lines at font scale %s (QA rc14 c3)', (fontScale) => {
+      const dimensions = jest.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale });
+      try {
+        render(<Composer value="" onChangeText={jest.fn()} onSend={() => false} />);
+        const style = () => StyleSheet.flatten(composer().props.style);
+        const mirror = screen.getByTestId('dm-composer-mirror', { includeHiddenElements: true });
+        // Given unscaled, as the text's own size is: on screen a line is 22 × the font scale.
+        expect(style().lineHeight).toBe(22);
+        expect(StyleSheet.flatten(mirror.props.style).lineHeight).toBe(22);
+        const line = 22 * fontScale;
+        expect(style().minHeight).toBe(Math.max(40, line + 18));
+        expect(style().maxHeight).toBe(line * 5 + 18);
+        fireEvent(mirror, 'layout', { nativeEvent: { layout: { height: line * 5 } } });
+        // Five lines laid out: the full height of five, within the cap.
+        expect(style().height).toBe(Math.min(line * 5 + 18, Math.ceil(line * 5) + 18));
+      } finally {
+        dimensions.mockRestore();
+      }
+    });
+
+    it('leaves the box to measure itself on Android', async () => {
+      await onAndroid(async () => {
+        await typeHello();
+        expect(screen.queryByTestId('dm-composer-mirror', { includeHiddenElements: true })).toBeNull();
+        expect(StyleSheet.flatten(composer().props.style).height).toBeUndefined();
+      });
+    });
+
+    /** Send "hello" with the engine's answer held back; returns the refusal to deliver later. */
+    async function sendHeldBack() {
+      await openConversation();
+      let refuse: (error: Error) => void = () => undefined;
+      fakeEngine.method('dm.send').mockImplementationOnce(() => new Promise<WriteTicket>((_, reject) => (refuse = reject)));
+      fireEvent(composer(), 'focus');
+      fireEvent.changeText(composer(), 'hello');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      return () => refuse(Object.assign(new Error('Unblock this person to message them.'), { code: 'BAD_REQUEST' }));
+    }
+
+    it('shows a failed message put back in the box, though the box last held that text (QA rc7 review)', async () => {
+      // "hello" pasted and deleted in the fresh box before the screen re-rendered: a late render of
+      // it is an echo, but the message put back is not.
+      const refuse = await sendHeldBack();
+      fireEvent(composer(), 'focus');
+      act(() => {
+        fireEvent.changeText(composer(), 'hello');
+        fireEvent.changeText(composer(), '');
+      });
+      expect(draftNow()).toBe('');
+      await act(async () => refuse());
+      expect(draftNow()).toBe('hello');
+      expect(composer()).toHaveDisplayValue('hello');
+      fireEvent.changeText(composer(), 'hello!');
+      expect(draftNow()).toBe('hello!');
+    });
+
+    it('hands the keyboard on to the message put back when Send fails before the fresh box has the focus', async () => {
+      const refuse = await sendHeldBack();
+      // The box that held "hello" still has the keyboard; the fresh one has not said it took it.
+      const holding = screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true });
+      await act(async () => refuse());
+      expect(composer()).toHaveDisplayValue('hello');
+      expect(composer().props.autoFocus).toBe(true);
+      // The input holding the keyboard stays until the box with the message takes it.
+      expect(screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBe(holding);
+      fireEvent(composer(), 'focus');
+      expect(screen.queryByTestId('dm-composer-retiring', { includeHiddenElements: true })).toBeNull();
+    });
+
+    it('keeps a paste right after Send whole, even one that starts with the message sent', async () => {
+      // One change event for the whole paste (or an IME's whole-text insert): nothing is taken off it.
+      await typeHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      fireEvent.changeText(composer(), 'hello again');
+      expect(composer()).toHaveDisplayValue('hello again');
+      expect(draftNow()).toBe('hello again');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(sentTexts()).toEqual(['hello', 'hello again']);
+    });
+
+    it('keeps a message typed afresh that starts like the one sent', async () => {
+      await typeHello();
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      for (const text of ['h', 'he', 'hel', 'hell', 'hello', 'hello ', 'hello again']) fireEvent.changeText(composer(), text);
+      expect(draftNow()).toBe('hello again');
+      expect(composer()).toHaveDisplayValue('hello again');
+    });
+
+    it('keeps a failed message put back in the box, and what is typed after it', async () => {
+      await openConversation();
+      fakeEngine
+        .method('dm.send')
+        .mockRejectedValue(Object.assign(new Error('Unblock this person to message them.'), { code: 'BAD_REQUEST' }));
+      fireEvent.changeText(composer(), 'hello?');
+      fireEvent.press(screen.getByTestId('dm-send'));
+      await act(async () => {});
+      expect(composer()).toHaveDisplayValue('hello?');
+      fireEvent.changeText(composer(), 'hello?!');
+      expect(draftNow()).toBe('hello?!');
+      expect(composer()).toHaveDisplayValue('hello?!');
+    });
+  });
+
   it('sends: a "Sending…" bubble at once, then the engine’s own message with "Sent"', async () => {
     await openConversation();
     const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
@@ -521,7 +775,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByText('Sending…')).toBeTruthy();
     await act(async () => {});
     expect(fakeEngine.method('dm.send')).toHaveBeenCalledWith(KEY, 'on my way');
-    expect(screen.getByTestId('dm-composer').props.value).toBe('');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('');
 
     // Confirmed: the engine now holds the message; it shows once, with "Sent".
     fakeEngine
@@ -669,7 +923,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     fireEvent.changeText(screen.getByTestId('dm-composer'), 'hello?');
     fireEvent.press(screen.getByTestId('dm-send'));
     await act(async () => {});
-    expect(screen.getByTestId('dm-composer').props.value).toBe('hello?');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('hello?');
     expect(useToastStore.getState().current?.message).toBe('Unblock this person to message them.');
   });
 
@@ -875,14 +1129,14 @@ describe('Conversation (DM-03, DM-04)', () => {
     // Each check reads the engine's tickets (to adopt the send's, then to look for it).
     expect(fakeEngine.method('writes.list')).toHaveBeenCalledTimes(4);
     expect(screen.getByText('Sending…')).toBeTruthy();
-    expect(screen.getByTestId('dm-composer').props.value).toBe('');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('');
     expect(useToastStore.getState().current).toBeNull();
 
     // The 80 s check, still no ticket: it never went out.
     await act(async () => {
       await jest.advanceTimersByTimeAsync(60_000);
     });
-    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('did it go?');
     expect(screen.queryByText('Sending…')).toBeNull();
     expect(useToastStore.getState().current?.message).toBe("Message not sent. It's back in the message box.");
   });
@@ -914,7 +1168,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     await act(async () => {
       await jest.advanceTimersByTimeAsync(130_000);
     });
-    expect(screen.getByTestId('dm-composer').props.value).toBe('did it go?');
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('did it go?');
   });
 
   it('puts back only the parts a long send did not deliver when it fails part way (SR-18)', async () => {
@@ -939,7 +1193,7 @@ describe('Conversation (DM-03, DM-04)', () => {
     await act(async () => {});
     fireEvent.press(screen.getByText('Not delivered · Tap to edit'));
     await act(async () => {});
-    expect(screen.getByTestId('dm-composer').props.value).toBe(rest);
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue(rest);
   });
 
   it('shows the empty conversation copy', async () => {
@@ -1077,7 +1331,7 @@ describe('New message (DM-05)', () => {
     expect(fakeEngine.method('dm.startDirect')).toHaveBeenCalledTimes(1);
     expect(useToastStore.getState().current?.message).toBe('No user found with this identity ID');
     expect(screen.queryByTestId('new-message-opening')).toBeNull();
-    expect(screen.getByTestId('picker-search').props.value).toBe(BOB_ID);
+    expect(screen.getByTestId('picker-search')).toHaveDisplayValue(BOB_ID);
   });
 
   it('says why when the person has no encryption key, not that nobody was found (SR-40)', async () => {
@@ -1096,6 +1350,17 @@ describe('New message (DM-05)', () => {
     expect(screen.getByTestId('picker-invalid')).toHaveTextContent('Invalid identity ID');
     expect(screen.queryByText(/Check your connection/)).toBeNull();
     expect(fakeEngine.method('profiles.get')).not.toHaveBeenCalled();
+  });
+
+  it('leaves the search text to the input while typing, and Clear still empties it (QA rc7 D-2)', async () => {
+    // A `value` search pushed each keystroke's text back, and under the searches' renders that
+    // echo dropped the keys typed meanwhile ('lucia' searched as 'luc').
+    await renderAt('/messages/new');
+    for (const text of ['l', 'lu', 'luc', 'luci', 'lucia']) fireEvent.changeText(screen.getByTestId('picker-search'), text);
+    expect(screen.getByTestId('picker-search').props.value).toBeUndefined();
+    fireEvent.press(screen.getByRole('button', { name: 'Clear search' }));
+    expect(screen.getByTestId('picker-search')).toHaveDisplayValue('');
+    expect(screen.queryByRole('button', { name: 'Clear search' })).toBeNull();
   });
 
   it("refuses to message yourself without asking the engine", async () => {

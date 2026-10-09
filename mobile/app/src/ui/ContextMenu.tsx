@@ -11,6 +11,8 @@ export interface MenuItem {
   /** iOS: an SF Symbol (`link`, `trash`, ...). Android menus show titles only. */
   systemImage?: string;
   destructive?: boolean;
+  /** Shown but not selectable (an action still on its way: "Blocking…"). */
+  disabled?: boolean;
 }
 
 export interface ContextMenuProps {
@@ -38,14 +40,16 @@ export function ContextMenu({ items, onSelect, children, testID }: ContextMenuPr
         // The native menu wraps and hyphenates long titles: never inside a handle.
         title: keepHandlesWhole(item.title),
         image: Platform.OS === 'ios' ? item.systemImage : undefined,
-        attributes: item.destructive ? { destructive: true } : undefined,
+        attributes: item.destructive || item.disabled ? { destructive: item.destructive, disabled: item.disabled } : undefined,
       })),
     [items],
   );
   return (
     <MenuView
       actions={actions}
-      onPressAction={({ nativeEvent }) => onSelect(nativeEvent.event)}
+      onPressAction={({ nativeEvent }) => {
+        if (!items.find((item) => item.id === nativeEvent.event)?.disabled) onSelect(nativeEvent.event);
+      }}
       themeVariant={dark ? 'dark' : 'light'}
       testID={testID}
     >

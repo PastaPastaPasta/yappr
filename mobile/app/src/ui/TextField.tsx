@@ -1,16 +1,27 @@
-import { useState } from 'react';
+import { useImperativeHandle, useState, type Ref } from 'react';
 import { TextInput, View, useWindowDimensions, type TextInputProps } from 'react-native';
 import { EyeIcon, EyeSlashIcon } from 'react-native-heroicons/outline';
 
 import { cn } from '~/lib-allowlist';
 
 import { IconButton } from './IconButton';
+import { GrowMirror, useGrowHeight } from './grow';
+import { INPUT_SLOT, InputSlot } from './InputSlot';
+import { useNativeText, type TextResetHandle } from './native-text';
 import { Text } from './Text';
 import { tw, useColors } from './tokens';
 
 /** The counter shows once the text is this close to `maxLength` (UX_SPEC §2.11). */
 const COUNTER_WITHIN = 20;
+/** The multi-line input's text, as its `GrowMirror` lays it out. */
 const BODY_LINE_HEIGHT = 24;
+/**
+ * A multi-line field's text: the body line height as given, which React
+ * Native scales with the font as it does the font size, so a line is
+ * `BODY_LINE_HEIGHT * fontScale` tall on screen; its 3-to-8-line bounds are
+ * measured in that (QA rc14 c2). Its `GrowMirror` lays out the same.
+ */
+const MULTILINE_TEXT = { fontSize: 16, lineHeight: BODY_LINE_HEIGHT };
 /** Secrets never reach autofill, the keyboard's dictionary or autocorrect. */
 const SECURE_INPUT: TextInputProps = {
   autoCorrect: false,
@@ -30,12 +41,19 @@ export interface TextFieldProps extends Omit<TextInputProps, 'multiline' | 'secu
   /** Show the `maxLength` counter from the first character ("0 / 500"), not only near the limit. */
   alwaysCount?: boolean;
   className?: string;
+  /** `reset(value)`: sets the text for an action of the user's (Clear, Randomize), before the caller's value follows. */
+  ref?: Ref<TextResetHandle>;
 }
 
 /**
  * Text field and text area (components/ui/input.tsx, textarea.tsx): a
  * `border.strong` outline that turns into a 2 pt `accent` ring on focus (the
  * web's purple ring is not used, ADR E3), `error` border and message below.
+ *
+ * `value` and `onChangeText` work as on a TextInput, but the native input is
+ * uncontrolled so no keystroke is lost (`useNativeText`): a `value` other
+ * than the typed text (a reset) is put in, while `value` echoing the typing
+ * never is. Keeping the old `value` does not refuse a keystroke.
  */
 export function TextField({
   label,
@@ -45,22 +63,67 @@ export function TextField({
   alwaysCount = false,
   maxLength,
   value,
+  onChangeText,
   editable = true,
   className,
   onFocus,
   onBlur,
+  autoFocus,
+  ref,
   ...props
 }: TextFieldProps) {
   const c = useColors();
-  const [focused, setFocused] = useState(false);
+  const { key: inputKey, attach, reset, inputProps, retiring, focused } = useNativeText({
+    value,
+    onChangeText,
+    onFocus,
+    onBlur,
+    autoFocus,
+    editable,
+  });
+  useImperativeHandle(ref, () => ({ reset }), [reset]);
   const [revealed, setRevealed] = useState(false);
   const line = BODY_LINE_HEIGHT * useWindowDimensions().fontScale;
   const length = value?.length ?? 0;
   const showCounter = maxLength !== undefined && (alwaysCount || maxLength - length <= COUNTER_WITHIN);
+  // Multi-line: min 3 lines, grows to 8, then scrolls; iOS needs the measured height (`useGrowHeight`).
+  const grow = useGrowHeight({ min: line * 3 + 20, max: line * 8 + 20, padding: 20 });
+  const inputStyle = multiline
+    ? {
+        ...MULTILINE_TEXT,
+        minHeight: line * 3 + 20,
+        maxHeight: line * 8 + 20,
+        height: grow.height,
+        paddingVertical: 10,
+        textAlignVertical: 'top' as const,
+      }
+    : { fontSize: 16, minHeight: Math.max(42, line + 18), paddingVertical: 0 };
   let borderColor: string = tw.borderStrong;
   if (error) borderColor = 'border-red-600 dark:border-red-400';
   else if (focused) borderColor = 'border-yappr-500';
 
+  /** The live input and the one a reset replaced: the same input, but for its handlers, text and test id. */
+  const field = (fieldProps: TextInputProps, live: boolean) => (
+    <TextInput
+      ref={live ? attach : undefined}
+      accessibilityLabel={label}
+      accessibilityHint={error}
+      maxLength={maxLength}
+      editable={editable}
+      multiline={multiline}
+      secureTextEntry={secure && !revealed}
+      placeholderTextColor={c.textPlaceholder}
+      cursorColor={c.accent}
+      selectionColor={c.accent}
+      {...(secure ? SECURE_INPUT : null)}
+      {...props}
+      testID={live ? props.testID : undefined}
+      {...fieldProps}
+      // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
+      className="text-gray-900 dark:text-gray-100"
+      style={inputStyle}
+    />
+  );
   return (
     <View className={cn('gap-1.5', className)}>
       {label ? <Text variant="subheadStrong">{label}</Text> : null}
@@ -78,41 +141,16 @@ export function TextField({
           !editable && 'opacity-50',
         )}
       >
-        <TextInput
-          accessibilityLabel={label}
-          accessibilityHint={error}
-          value={value}
-          maxLength={maxLength}
-          editable={editable}
-          multiline={multiline}
-          secureTextEntry={secure && !revealed}
-          placeholderTextColor={c.textPlaceholder}
-          cursorColor={c.accent}
-          selectionColor={c.accent}
-          onFocus={(e) => {
-            setFocused(true);
-            onFocus?.(e);
-          }}
-          onBlur={(e) => {
-            setFocused(false);
-            onBlur?.(e);
-          }}
-          {...(secure ? SECURE_INPUT : null)}
-          {...props}
-          // fontSize without text-base's lineHeight: iOS mis-lays out single-line inputs with one.
-          className="flex-1 text-gray-900 dark:text-gray-100"
-          style={
-            multiline
-              ? {
-                  fontSize: 16,
-                  minHeight: line * 3 + 20,
-                  maxHeight: line * 8 + 20,
-                  paddingVertical: 10,
-                  textAlignVertical: 'top',
-                }
-              : { fontSize: 16, minHeight: Math.max(42, line + 18), paddingVertical: 0 }
-          }
-        />
+        {retiring ? (
+          // The input a reset replaced, until the fresh one has the focus: hidden by its slot alone.
+          <InputSlot key={retiring.key} retired>
+            {field(retiring.inputProps, false)}
+          </InputSlot>
+        ) : null}
+        <InputSlot key={inputKey} style={INPUT_SLOT}>
+          {field(inputProps, true)}
+          {multiline ? <GrowMirror text={value ?? ''} style={MULTILINE_TEXT} onLayout={grow.onMirrorLayout} /> : null}
+        </InputSlot>
         {secure ? (
           <IconButton
             icon={revealed ? EyeSlashIcon : EyeIcon}

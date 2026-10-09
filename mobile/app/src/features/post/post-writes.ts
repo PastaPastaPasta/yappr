@@ -1,6 +1,6 @@
 import type { PostDTO, TargetRef, WriteTicket } from '@engine/api';
 
-import { applyFollowing, dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState } from '~/data/optimistic';
+import { applyFollowing, dropFromLists, hidePost, markPostDeleted, setFollowing, setViewerState, showPost } from '~/data/optimistic';
 import { errorCode, type WriteSpec } from '~/data/writes';
 
 /**
@@ -28,6 +28,8 @@ export function targetOf(post: PostDTO): TargetRef {
 export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
   key: ({ post }) => `like:${post.id}`,
   submit: (api, { post, like }) => (like ? api.engage.like(targetOf(post)) : api.engage.unlike(targetOf(post))),
+  // Its change is the query cache's alone, which the chain read repairs (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: ({ post, like }) => setViewerState(post.id, { liked: like }),
   intent: ({ like }) => like,
   matches: ticketOnPost('like', 'unlike', ({ like }: { post: PostDTO; like: boolean }) => like),
@@ -45,6 +47,8 @@ export const repostWrite: WriteSpec<RepostVars> = {
   key: ({ post }) => `repost:${post.id}`,
   submit: (api, { post, repost }) => (repost ? api.engage.repost(targetOf(post)) : api.engage.unrepost(targetOf(post))),
   // Undoing a v10 repost deletes the bare quote, which frees the slot.
+  // Its change is the query cache's alone, which the chain read repairs (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: ({ post, repost }) =>
     setViewerState(post.id, repost ? { reposted: true } : { reposted: false, ownQuoteId: null, ownQuoteBare: false }),
   intent: ({ repost }) => repost,
@@ -61,6 +65,8 @@ export const bookmarkWrite: WriteSpec<{ post: PostDTO; bookmark: boolean }> = {
   key: ({ post }) => `bookmark:${post.id}`,
   submit: (api, { post, bookmark }) =>
     bookmark ? api.engage.bookmark(targetOf(post)) : api.engage.unbookmark(targetOf(post)),
+  // Its change is the query cache's alone, which the chain read repairs (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: ({ post, bookmark }) => setViewerState(post.id, { bookmarked: bookmark }),
   intent: ({ bookmark }) => bookmark,
   matches: ticketOnPost('bookmark', 'unbookmark', ({ bookmark }: { post: PostDTO; bookmark: boolean }) => bookmark),
@@ -71,6 +77,8 @@ export const bookmarkWrite: WriteSpec<{ post: PostDTO; bookmark: boolean }> = {
 export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
   key: ({ authorId }) => `follow:${authorId}`,
   submit: (api, { authorId, follow }) => (follow ? api.graph.follow(authorId) : api.graph.unfollow(authorId)),
+  // Its change is the query cache's alone, which the chain read repairs (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: ({ authorId, follow }) => setFollowing(authorId, follow),
   // A profile reopened while the write is on its way reads the chain before it lands.
   reapply: ({ authorId, follow }, queries) => {
@@ -93,6 +101,8 @@ export const followWrite: WriteSpec<{ authorId: string; follow: boolean }> = {
 export const deleteWrite: WriteSpec<{ target: TargetRef; quotedPostId?: string }> = {
   key: ({ target }) => `delete:${target.id}`,
   submit: (api, { target }) => api.posts.delete(target),
+  // Hidden in the removed-posts store, outside the query cache: shown again, and the chain read says if it is gone.
+  reconcile: ({ target }) => showPost(target.id),
   optimistic: ({ target, quotedPostId }) => {
     const unhide = hidePost(target.id);
     // Deleting the viewer's quote frees their slot on the quoted post, and takes it out of its count.

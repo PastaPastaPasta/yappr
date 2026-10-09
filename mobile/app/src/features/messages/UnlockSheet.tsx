@@ -11,6 +11,7 @@ import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { Sheet } from '~/ui/Sheet';
+import { useNativeText } from '~/ui/native-text';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
@@ -73,6 +74,14 @@ function UnlockBody({
   const [key, setKey] = useState('');
   useBlockScreenCapture('secret');
   const [error, setError] = useState<string | null>(null);
+  // Uncontrolled (`useNativeText`), so a long pasted or typed key keeps every character.
+  const { key: inputKey, attach, inputProps } = useNativeText({
+    value: key,
+    onChangeText: (text) => {
+      setKey(text);
+      setError(null);
+    },
+  });
 
   useEffect(() => {
     let current = true;
@@ -157,11 +166,9 @@ function UnlockBody({
             )}
           >
             <BottomSheetTextInput
-              value={key}
-              onChangeText={(text) => {
-                setKey(text);
-                setError(null);
-              }}
+              key={inputKey}
+              ref={attach}
+              {...inputProps}
               placeholder="Paste your encryption key"
               placeholderTextColor={c.textPlaceholder}
               accessibilityLabel="Encryption key"

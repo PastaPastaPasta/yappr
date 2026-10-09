@@ -12,6 +12,7 @@ import { toast, type ToastAction } from '~/ui/toast';
 
 import { isOffline } from './connectivity';
 import { onEngineEvent } from './events';
+import { queryKeys } from './keys';
 import type { EngineRemote } from './queries';
 import { recheck, reconcile, resetReconciler, stopReconciling, ticketJob } from './reconcile';
 import { promptSignIn } from './require-auth';
@@ -20,7 +21,7 @@ import { SESSION_EXPIRED_MESSAGE, failedForSession, markSessionExpired, signInAg
 
 /** Writes: tickets, rollback and toasts. The rules are in src/data/README.md ("Writes"). */
 
-export interface WriteSpec<V> {
+interface WriteSpecBase<V> {
   /** Submit the write and resolve with its ticket: `(api, target) => api.engage.like(target)`. */
   submit: (api: EngineRemote, vars: V) => Promise<WriteTicket>;
   /**
@@ -29,8 +30,15 @@ export interface WriteSpec<V> {
    * latest write for a key.
    */
   key?: (vars: V) => string;
-  /** Apply the optimistic change and return its undo (`setViewerState` and friends). */
-  optimistic?: (vars: V) => () => void;
+  /**
+   * One write for the key at a time, never queued: while one may still land
+   * (its call runs, or it is unconfirmed with no check proving it absent),
+   * another that asks for something else is refused with this neutral
+   * sentence, and one that asks for the same is dropped (`intent`). The key
+   * can then never be contested. The screens show the write as busy
+   * (`useLandingIntent`); this is the tracker's own guard.
+   */
+  serial?: (vars: V) => string;
   /**
    * Apply the change again, to the queries named only (by hash): a read that
    * landed while the write was on its way (queued, or its call still running)
@@ -97,6 +105,26 @@ export interface WriteSpec<V> {
   onRejected?: (error: unknown, vars: V) => boolean;
 }
 
+/**
+ * A write's optimistic change, and what replaces its undo when the key's
+ * writes overlapped (`readChain`). Then no undo runs and every engine query
+ * is read back from the chain, which repairs what the change did in the
+ * query cache. `reconcile` repairs what it did outside it (a store of its
+ * own, a write it made elsewhere) from the authoritative source, never from
+ * what the change found: a spec with an optimistic change must say, `null`
+ * when the change touches nothing but the query cache.
+ */
+type OptimisticSpec<V> =
+  | { optimistic?: undefined; reconcile?: undefined }
+  | {
+      /** Apply the optimistic change and return its undo (`setViewerState` and friends). */
+      optimistic: (vars: V) => () => void;
+      /** Repair what `optimistic` changed outside the query cache, from the authoritative source; `null` if nothing. */
+      reconcile: ((vars: V) => void) | null;
+    };
+
+export type WriteSpec<V> = WriteSpecBase<V> & OptimisticSpec<V>;
+
 interface Tracked {
   spec: WriteSpec<unknown>;
   vars: unknown;
@@ -134,6 +162,7 @@ const followed = new Set<string>();
 function track(id: string, entry: Tracked): void {
   tracked.set(id, entry);
   followed.add(id);
+  noteActivity();
 }
 
 /** Whether a write of this session follows, or followed, ticket `id`. */
@@ -141,6 +170,40 @@ export function isFollowedWrite(id: string): boolean {
   return followed.has(id);
 }
 const latestByKey = new Map<string, string>();
+/**
+ * Keys with writes that overlapped: one was sent while another for the key
+ * may still have landed. Their optimistic changes are stacked on each other,
+ * so undoing one can put back another that never landed, or take away one
+ * that did: a failure among them reads the chain instead (`readChain`).
+ * Cleared once no write for the key may still land, and the chain has been
+ * read back into the cache (`repairFromChain`).
+ */
+const contested = new Set<string>();
+/** Keys whose chain read (`repairFromChain`) is still on its way, with how many. */
+const repairing = new Map<string, number>();
+/**
+ * Per key, every cached query its writes' optimistic changes (and their
+ * `reapply`) wrote, recorded as they write it, whatever the helper: a
+ * profile by id or by name, the viewer's own, an author inside a feed or a
+ * post. Kept while a write for the key may land or the key is contested;
+ * `repairFromChain` takes them.
+ */
+const touched = new Map<string, Set<string>>();
+
+/** Runs an optimistic change (or a `reapply`) for `key`, recording each query it writes. */
+function touching<T>(key: string | undefined, change: () => T): T {
+  if (key === undefined) return change();
+  const hashes = touched.get(key) ?? new Set<string>();
+  touched.set(key, hashes);
+  const stop = queryClient.getQueryCache().subscribe((event) => {
+    if (event.type === 'updated' && event.action.type === 'success' && event.action.manual) hashes.add(event.query.queryHash);
+  });
+  try {
+    return change();
+  } finally {
+    stop();
+  }
+}
 
 /** A write, as the queue and the tracker hold it. */
 interface WriteOf {
@@ -153,15 +216,39 @@ interface WriteOf {
  * Each call marks its key with its own token and clears only that mark: a
  * queued write released while the call settles marks the key itself.
  */
-const submitting = new Map<string, WriteOf & { token: symbol }>();
+const submitting = new Map<string, WriteOf & { token: symbol; retryOf?: string; since?: number }>();
 
-/** Marks `key` busy for one call; the result clears the mark if it is still that call's. */
-function markSubmitting(key: string | undefined, write: WriteOf): () => void {
+/**
+ * The call marked for `key` whose outcome is still unknown: a submit (it has
+ * no ticket yet), or a Retry whose ticket has not settled since the Retry
+ * began (or runs on, `STILL_SENDING`). A Retry whose attempt the engine has
+ * already reported settled is not on its way while its call answers: its
+ * change is not put back on reads, nothing queues behind it, and it no
+ * longer may land.
+ */
+function callOnItsWay(key: string) {
+  const call = submitting.get(key);
+  if (!call || call.retryOf === undefined) return call;
+  const ticket = useWriteTickets.getState().byId[call.retryOf];
+  if (!ticket || time(ticket.updatedAt) <= (call.since ?? 0)) return call;
+  return stillRunning(ticket) ? call : undefined;
+}
+
+/**
+ * Marks `key` busy for one call; the result clears the mark if it is still
+ * that call's. `retryOf` names the ticket a Retry call is for: that call is
+ * the ticket's own, not a newer write. `since` is when that ticket last
+ * changed before the Retry, to tell its new attempt's outcome from the old.
+ */
+function markSubmitting(key: string | undefined, write: WriteOf, retryOf?: string, since?: number): () => void {
   if (key === undefined) return () => undefined;
   const token = Symbol(key);
-  submitting.set(key, { ...write, token });
+  submitting.set(key, { ...write, token, retryOf, since });
+  noteActivity();
   return () => {
-    if (submitting.get(key)?.token === token) submitting.delete(key);
+    if (submitting.get(key)?.token !== token) return;
+    submitting.delete(key);
+    noteActivity();
   };
 }
 
@@ -184,7 +271,10 @@ const ORPHAN_SKEW_MS = 5_000;
 const OUTCOME_UNKNOWN = new Set(['ENGINE_RESTARTED', 'ENGINE_DISCONNECTED', 'ENGINE_TIMEOUT', 'RPC_TIMEOUT']);
 
 /** Every ticket this app has seen, by id. */
-const useWriteTickets = create<{ byId: Record<string, WriteTicket> }>()(() => ({ byId: {} }));
+const useWriteTickets = create<{ byId: Record<string, WriteTicket>; activity: number }>()(() => ({ byId: {}, activity: 0 }));
+
+/** A write's call started or ended, or it was tracked: what `useLandingIntent` reads may have changed. */
+const noteActivity = () => useWriteTickets.setState(({ activity }) => ({ activity: activity + 1 }));
 
 const MAX_TICKETS = 200;
 
@@ -291,6 +381,15 @@ function fail(message: string, action?: ToastAction): void {
 
 /** Acts on a ticket's state once per change. */
 function settle(ticket: WriteTicket): void {
+  const key = tracked.get(ticket.id)?.key;
+  settleTicket(ticket);
+  if (key === undefined || ticket.state === 'pending') return;
+  endContest(key);
+  // Nothing for the key may land or be repaired: a plain undo is right again, and its copies need no repair.
+  if (!contested.has(key) && !landingFor(key)) touched.delete(key);
+}
+
+function settleTicket(ticket: WriteTicket): void {
   const entry = tracked.get(ticket.id);
   if (!entry) return;
   const signature = `${ticket.state}:${ticket.retryable}:${time(ticket.updatedAt)}:${time(ticket.lastCheckedAt)}`;
@@ -328,29 +427,41 @@ function settle(ticket: WriteTicket): void {
       }
       // Final unless the engine allows a retry.
       if (!ticket.retryable || sessionFailed) tracked.delete(ticket.id);
+      const say = () => {
+        if (sessionFailed) {
+          failSessionExpired(signerOf(ticket));
+          return;
+        }
+        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
+        if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
+        else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
+      };
+      if (isContested(entry)) {
+        readChain(ticket, entry, say);
+        return;
+      }
       // An older intent's failure: a newer write for this key decides the state, and says its own outcome.
       if (!latest) return;
       undo(entry);
       spec.onFailed?.(ticket, entry.vars);
-      if (sessionFailed) {
-        failSessionExpired(signerOf(ticket));
-      } else {
-        logFailure(ticket);
-        const text = spec.failureText?.(ticket, entry.vars) ?? writeFailureText(ticket.error, failureSentence(spec, entry.vars));
-        if (spec.failureNeutral?.(ticket, entry.vars)) toast(text);
-        else fail(text, spec.failureAction?.(ticket, entry.vars) ?? action);
-      }
+      if (!sessionFailed) logFailure(ticket);
+      say();
       // The undo restored what a queued write (the opposite toggle) asked for.
       release(entry.key, false);
       return;
     }
     case 'unconfirmed':
+      if (ticket.retryable && isContested(entry)) {
+        readChain(ticket, entry, () => fail(absentText(ticket, entry), retryOf(ticket)));
+        return;
+      }
       if (!latest) return;
       if (ticket.retryable) {
         // A check proved it did not land: the same sentence as a refusal.
         logFailure(ticket);
         undo(entry);
-        fail(spec.failureText?.(ticket, entry.vars) ?? failureSentence(spec, entry.vars), retry);
+        spec.onFailed?.(ticket, entry.vars);
+        fail(absentText(ticket, entry), retryOf(ticket));
         release(entry.key, false);
       } else if (!stillRunning(ticket)) {
         // It may have landed (PRD G-3): nothing to say, the reconciler checks it (`watch`). Send the
@@ -359,6 +470,226 @@ function settle(ticket: WriteTicket): void {
         release(entry.key, true);
       }
   }
+}
+
+const retryOf = (ticket: WriteTicket): ToastAction => ({ label: 'Retry', onPress: () => retryWrite(ticket.id) });
+
+/** A write a check proved absent: the same sentence as a refusal. */
+const absentText = (ticket: WriteTicket, entry: Tracked) =>
+  entry.spec.failureText?.(ticket, entry.vars) ?? failureSentence(entry.spec, entry.vars);
+
+/** A write that may still land: on its way, or unconfirmed with no check proving it absent. */
+const mayLand = (ticket: WriteTicket | undefined) =>
+  ticket?.state === 'pending' || (ticket?.state === 'unconfirmed' && !ticket.retryable);
+
+/**
+ * Whether a write for `key` other than ticket `except` may still land (or is
+ * on its way), or the cache is still being read back from the chain for it:
+ * until then it may show a change no write made, which a new write's undo
+ * would capture.
+ */
+function landingFor(key: string, except?: string): boolean {
+  if (callOnItsWay(key) || repairing.has(key) || orphans.some((orphan) => orphan.key === key)) return true;
+  const byId = useWriteTickets.getState().byId;
+  for (const [id, entry] of tracked) {
+    if (id !== except && entry.key === key && mayLand(byId[id])) return true;
+  }
+  return false;
+}
+
+/** The write for `key` that may still land: its call runs, it was cut short, or it is unconfirmed with no check proving it absent. */
+function landingWrite(key: string): WriteOf | undefined {
+  const call = callOnItsWay(key);
+  if (call) return call;
+  const orphan = orphans.find((o) => o.key === key);
+  if (orphan) return orphan;
+  const byId = useWriteTickets.getState().byId;
+  for (const [id, entry] of tracked) {
+    if (entry.key === key && mayLand(byId[id])) return entry;
+  }
+  return undefined;
+}
+
+/**
+ * What the write that may still land for `key` asks for (its spec's
+ * `intent`), live; undefined when none may. For a screen that shows such a
+ * write as busy ("Blocking…") and holds back the opposite action.
+ */
+export function useLandingIntent(key: string | undefined): unknown {
+  return useWriteTickets(() => {
+    const write = key === undefined ? undefined : landingWrite(key);
+    return write ? (write.spec.intent?.(write.vars) ?? true) : undefined;
+  });
+}
+
+/** A write for `key` is about to be sent: if another may still land, the key's writes overlap. */
+function contest(key: string | undefined, except?: string): void {
+  if (key !== undefined && landingFor(key, except)) contested.add(key);
+}
+
+function endContest(key: string): void {
+  if (!landingFor(key)) contested.delete(key);
+}
+
+const isContested = (entry: Tracked) => entry.key !== undefined && contested.has(entry.key);
+
+/**
+ * When a chain read that did not succeed (it failed, or an optimistic change
+ * cancelled it) is tried again; after these, the app's own next read of it
+ * (focus, reconnect, NET-03's retry, the screen shown again) still counts.
+ */
+export const REPAIR_RETRY_MS: readonly number[] = [2_000, 5_000, 15_000];
+
+/** What `resetWriteTracking` stops: every chain read still waited for. */
+const repairs = new Set<() => void>();
+
+/**
+ * Reads every engine query again for a contested key, and keeps the key
+ * contested until each query on screen has been read successfully since: a
+ * failed read leaves the optimistic data in place, so it repairs nothing,
+ * and neither does a read an optimistic change cancelled (`updateCache`) or
+ * a manual `setQueryData`. Such reads are tried again (`REPAIR_RETRY_MS`,
+ * not while offline); meanwhile a write on the key is reconciled by reading
+ * the chain, never by its captured snapshot. A query dropped from the cache
+ * needs no repair. Every copy the key's writes changed (`touched`) that no
+ * screen shows is dropped first: nothing would read it back, and a later
+ * write's undo could take its never-landed change as the state to restore.
+ */
+function repairFromChain(key: string | undefined): void {
+  if (key !== undefined) repairing.set(key, (repairing.get(key) ?? 0) + 1);
+  const cache = queryClient.getQueryCache();
+  // A copy the key's writes changed that no screen shows would never be read back: it goes, so it is
+  // read afresh when next shown, and can never hand a later write's undo a change that never landed.
+  const copies = key === undefined ? undefined : touched.get(key);
+  if (key !== undefined) touched.delete(key);
+  for (const hash of copies ?? []) {
+    const copy = cache.get(hash);
+    if (copy && copy.getObserversCount() === 0) queryClient.removeQueries({ queryKey: copy.queryKey, exact: true });
+  }
+  const outstanding = new Set(
+    cache
+      .findAll({ queryKey: queryKeys.all })
+      .filter((query) => query.getObserversCount() > 0)
+      .map((query) => query.queryHash),
+  );
+  let over = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  // A read a write on its way put its change back over is not the chain's: still to repair.
+  const listener = (queryHash: string, news: RepairNews) => {
+    if (news === 'reapplied') return;
+    outstanding.delete(queryHash);
+    if (outstanding.size === 0) finish();
+  };
+  startWriteTracking();
+  repairListeners.add(listener);
+  const stopWatching = () => {
+    repairListeners.delete(listener);
+  };
+  /** Stops this repair; `release` also lets the key's contest end (not on an account reset). */
+  const stop = (release: boolean) => {
+    if (over) return;
+    over = true;
+    clearTimeout(timer);
+    stopWatching();
+    repairs.delete(abandon);
+    if (!release || key === undefined) return;
+    const left = (repairing.get(key) ?? 1) - 1;
+    if (left > 0) repairing.set(key, left);
+    else repairing.delete(key);
+    endContest(key);
+  };
+  function finish() {
+    stop(true);
+  }
+  function abandon() {
+    stop(false);
+  }
+  repairs.add(abandon);
+  const retry = (attempt: number) => {
+    if (over) return;
+    if (outstanding.size === 0) {
+      finish();
+      return;
+    }
+    const delay = REPAIR_RETRY_MS[attempt];
+    if (delay === undefined) return;
+    timer = setTimeout(() => {
+      if (over) return;
+      const read = isOffline()
+        ? Promise.resolve()
+        : queryClient.refetchQueries({ queryKey: queryKeys.all, predicate: (query) => outstanding.has(query.queryHash) });
+      read.catch(() => undefined).then(() => retry(attempt + 1)).catch(() => undefined);
+    }, delay);
+  };
+  queryClient
+    .invalidateQueries({ queryKey: queryKeys.all })
+    .catch(() => undefined)
+    .then(() => retry(0))
+    .catch(() => undefined);
+}
+
+/**
+ * A write's own change is to be taken back with no ticket to settle: its
+ * call was refused, its Retry was refused, or it was queued and dropped.
+ * When the key's writes overlap, its undo is taken against a state another
+ * may have changed (a write proved absent while this one was being sent):
+ * every engine query is read again instead (`repairFromChain`), and true
+ * says so. Called once the write's own call is no longer marked, so the key
+ * can stop being contested once that read is done.
+ */
+function readsChain(key: string | undefined, write: WriteOf): boolean {
+  if (key === undefined || !contested.has(key)) return false;
+  discardUndos(key);
+  reconcileOutsideCache(write);
+  repairFromChain(key);
+  return true;
+}
+
+/**
+ * Every tracked write for `key` loses its undo, and has what its change did
+ * outside the query cache repaired (`reconcile`): the chain read that
+ * follows repairs the cache.
+ */
+function discardUndos(key: string | undefined): void {
+  if (key === undefined) return;
+  for (const other of tracked.values()) {
+    if (other.key !== key) continue;
+    other.undo = null;
+    reconcileOutsideCache(other);
+  }
+}
+
+/** A write's `reconcile`: what its optimistic change did outside the query cache, put right from the authoritative source. */
+function reconcileOutsideCache({ spec, vars }: WriteOf): void {
+  try {
+    spec.reconcile?.(vars);
+  } catch (error) {
+    appendLog('warn', 'host', `Reconciling a write failed: ${errorMessage(error)}`);
+  }
+}
+
+/**
+ * A write whose key's writes overlapped failed, or was proved absent. No
+ * undo of any of them runs (nor `onFailed`): each was taken against a state
+ * another may have changed. Every query is read again instead, so the screen
+ * shows the chain (lib keeps a confirmed own write over a read from a node
+ * behind; a read landing while a write's call still runs gets that write's
+ * change back, `reapply`). Only the user's latest action for the key says
+ * anything: its failure, with its Retry, which applies its change again on
+ * top of what the chain shows.
+ */
+function readChain(ticket: WriteTicket, entry: Tracked, say: () => void): void {
+  discardUndos(entry.key);
+  entry.undo = null;
+  reconcileOutsideCache(entry);
+  logFailure(ticket);
+  repairFromChain(entry.key);
+  // A newer write's call still runs (not this ticket's own Retry): that one is the latest action.
+  const call = entry.key === undefined ? undefined : callOnItsWay(entry.key);
+  const latestAction = isLatest(ticket.id, entry) && (call === undefined || call.retryOf === ticket.id);
+  if (!latestAction) return;
+  say();
+  release(entry.key, false);
 }
 
 /**
@@ -395,13 +726,26 @@ function watch(ticket: WriteTicket): void {
   });
 }
 
-/** The pending write for `key` settled: send the write queued behind it, or drop it. */
+/**
+ * The pending write for `key` settled: send the write queued behind it, or
+ * drop it. A dropped write's change was applied over the pending one's, so
+ * neither undo can be trusted to restore what the chain holds (a profile
+ * undo leaves a copy another change has moved on): the key is contested,
+ * and the chain read back (`repairFromChain`).
+ */
 function release(key: string | undefined, send: boolean): void {
   if (key === undefined) return;
   const next = queued.get(key);
   if (!next) return;
   queued.delete(key);
-  if (send) runQueued(next).catch(() => undefined);
+  if (send) {
+    runQueued(next).catch(() => undefined);
+  } else if (next.undo) {
+    contested.add(key);
+    discardUndos(key);
+    reconcileOutsideCache(next);
+    repairFromChain(key);
+  }
 }
 
 /**
@@ -414,7 +758,7 @@ function dropQueued(key: string | undefined): void {
   const next = key === undefined ? undefined : queued.get(key);
   if (!next || key === undefined) return;
   queued.delete(key);
-  next.undo?.();
+  if (!readsChain(key, next)) next.undo?.();
   fail(failureSentence(next.spec, next.vars));
 }
 
@@ -467,7 +811,7 @@ function receive(ticket: WriteTicket, from: 'event' | 'call'): WriteTicket {
  * call still runs.
  */
 function onItsWay(key: string): WriteOf | undefined {
-  const waiting = queued.get(key) ?? submitting.get(key);
+  const waiting = queued.get(key) ?? callOnItsWay(key);
   if (waiting) return waiting;
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
@@ -481,14 +825,26 @@ function onItsWay(key: string): WriteOf | undefined {
  * behind it, would otherwise read as followed again when the profile is
  * reopened, until a read after both.
  */
-function keepChangesOverRead(hash: string): void {
+function keepChangesOverRead(hash: string): boolean {
   const keys = new Set([...queued.keys(), ...submitting.keys(), ...latestByKey.keys()]);
   const only = new Set([hash]);
+  const read = () => queryClient.getQueryCache().get(hash)?.state.data;
+  const before = read();
   for (const key of keys) {
     const write = onItsWay(key);
-    write?.spec.reapply?.(write.vars, only);
+    if (write?.spec.reapply) touching(key, () => write.spec.reapply?.(write.vars, only));
   }
+  return read() !== before;
 }
+
+/**
+ * What each chain repair (`repairFromChain`) hears of a query, from the one
+ * listener that also puts changes back over reads: `read` when a fetch
+ * landed as the chain says, `reapplied` when a write on its way put its
+ * change back over it (that read repaired nothing), `removed`.
+ */
+type RepairNews = 'read' | 'reapplied' | 'removed';
+const repairListeners = new Set<(queryHash: string, news: RepairNews) => void>();
 
 let stopTracking: (() => void) | null = null;
 
@@ -501,9 +857,15 @@ export function startWriteTracking(): () => void {
   if (!stopTracking) {
     const stopTickets = onEngineEvent('write.status', (ticket) => receive(ticket, 'event'));
     const stopReads = queryClient.getQueryCache().subscribe((event) => {
+      const hash = event.query.queryHash;
+      if (event.type === 'removed') {
+        repairListeners.forEach((listener) => listener(hash, 'removed'));
+        return;
+      }
       // A fetch's result; `setQueryData` (an optimistic change itself) is `manual`.
       if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
-      keepChangesOverRead(event.query.queryHash);
+      const news: RepairNews = keepChangesOverRead(hash) ? 'reapplied' : 'read';
+      repairListeners.forEach((listener) => listener(hash, news));
     });
     stopTracking = () => {
       stopTickets();
@@ -525,11 +887,15 @@ export function resetWriteTracking(): void {
   tracked.clear();
   followed.clear();
   latestByKey.clear();
+  contested.clear();
+  for (const abandon of [...repairs]) abandon();
+  repairing.clear();
+  touched.clear();
   // A call of the old account still running reapplies nothing to the next one's reads (its answer clears only its own mark).
   submitting.clear();
   queued.clear();
   orphans = [];
-  useWriteTickets.setState({ byId: {} });
+  useWriteTickets.setState(({ activity }) => ({ byId: {}, activity: activity + 1 }));
   resetReconciler();
 }
 
@@ -537,7 +903,7 @@ const NO_INTENT = Symbol('no intent');
 
 /** What the write pending for `key` asks for, `NO_INTENT` when none is pending. */
 function pendingIntent(key: string): unknown {
-  const marked = submitting.get(key);
+  const marked = callOnItsWay(key);
   if (marked) return marked.spec.intent?.(marked.vars);
   const id = latestByKey.get(key);
   const entry = id === undefined ? undefined : tracked.get(id);
@@ -560,10 +926,17 @@ export async function runWrite<V>(spec: WriteSpec<V>, vars: V): Promise<WriteRes
     return { status: 'refused', error: Object.assign(new Error(OFFLINE_MESSAGE), { code: 'OFFLINE' }) };
   }
   const key = spec.key?.(vars);
+  const landing = key !== undefined && spec.serial ? landingWrite(key) : undefined;
+  if (landing && spec.serial) {
+    // One at a time, never queued (`serial`): the same ask is already on its way, anything else waits for it.
+    if (spec.intent && landing.spec.intent?.(landing.vars) === spec.intent(vars)) return { status: 'queued' };
+    toast(spec.serial(vars));
+    return { status: 'refused', error: Object.assign(new Error('An earlier change is still on its way'), { code: 'BUSY' }) };
+  }
   if (key !== undefined) {
     const pending = pendingIntent(key);
     if (pending !== NO_INTENT) {
-      const undoQueued = spec.optimistic?.(vars) ?? null;
+      const undoQueued = touching(key, () => spec.optimistic?.(vars) ?? null);
       if (spec.intent && pending !== undefined && spec.intent(vars) === pending) {
         // Back to what the pending write asks for: nothing more to send.
         queued.delete(key);
@@ -585,10 +958,11 @@ async function send(waiting: Waiting): Promise<WriteResult> {
   const { spec, vars, key } = waiting;
   // A ticket the call made is no older than the call (a timeout answers long after the engine made it).
   const calledAt = Date.now();
+  contest(key);
   const done = markSubmitting(key, { spec, vars });
   let revert = waiting.undo;
   try {
-    revert ??= spec.optimistic?.(vars) ?? null;
+    revert ??= touching(key, () => spec.optimistic?.(vars) ?? null);
     const ticket = await spec.submit(engine.api, vars);
     track(ticket.id, { spec, vars, key, undo: revert, handled: '' });
     if (key !== undefined) latestByKey.set(key, ticket.id);
@@ -604,9 +978,9 @@ async function send(waiting: Waiting): Promise<WriteResult> {
       dropQueued(key);
       return { status: 'unknown', error };
     }
-    revert?.();
     done();
     release(key, false);
+    if (!readsChain(key, { spec, vars })) revert?.();
     if (errorCode(error) === 'NOT_SIGNED_IN') {
       promptSignIn();
     } else if (errorCode(error) === 'KEY_REVOKED') {
@@ -687,16 +1061,25 @@ export async function retryWrite(ticketId: string): Promise<WriteTicket | null> 
   const { key } = entry;
   // A stale Retry (a newer write for its key decides the state, or one is on its way): nothing to do.
   if (!isLatest(ticketId, entry) || (key !== undefined && inFlight(key))) return null;
+  const landing = key !== undefined && entry.spec.serial ? landingWrite(key) : undefined;
+  if (landing && landing !== entry && entry.spec.serial) {
+    toast(entry.spec.serial(entry.vars));
+    return null;
+  }
   if (isOffline()) {
     toast(OFFLINE_MESSAGE);
     return null;
   }
-  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars });
+  contest(key, ticketId);
+  const done = markSubmitting(key, { spec: entry.spec, vars: entry.vars }, ticketId, time(writeTicketOf(ticketId)?.updatedAt));
   try {
-    if (!entry.undo && entry.spec.optimistic) entry.undo = entry.spec.optimistic(entry.vars);
+    const { optimistic } = entry.spec;
+    if (!entry.undo && optimistic) entry.undo = touching(key, () => optimistic(entry.vars));
     return receive(await engine.api.writes.retry(ticketId), 'call');
   } catch (error) {
-    undo(entry);
+    done();
+    if (readsChain(key, entry)) entry.undo = null;
+    else undo(entry);
     appendLog('warn', 'host', `Retry refused: ${errorMessage(error)}`);
     fail(failureSentence(entry.spec, entry.vars));
     return null;

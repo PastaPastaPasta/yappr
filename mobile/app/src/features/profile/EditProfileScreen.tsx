@@ -54,7 +54,12 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   // gone. Re-enabling the fields in the render that closes it would move the inputs between
   // native parents inside a screen Android has started to animate out, which crashes the app.
   const closing = save.status === 'confirmed' || save.status === 'unconfirmed';
-  const saving = save.status === 'pending' || closing;
+  // From the tap: until the engine answers with a ticket the status is still idle, and a second
+  // Save would be queued behind the first with its change shown, one save the user never meant.
+  const [sending, setSending] = useState(false);
+  // A second tap before the re-render that disables Save.
+  const sendingNow = useRef(false);
+  const saving = sending || save.status === 'pending' || closing;
   const creating = !profile.hasProfile;
   const patch = patchOf(initial, form, creating);
   const errors = validateForm(form, limits);
@@ -88,11 +93,12 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
     [navigation, dirty],
   );
 
-  // Unconfirmed may still have landed (PRD G-3: it counts as done): leave rather than invite a
-  // second save of the same change. The reconciler checks it, and says so only if it proves absent.
+  // Unconfirmed may still have landed (PRD G-3: it counts as done, and the profile already shows
+  // it): it closes as a confirmed save does, rather than inviting a second save of the same change.
+  // The reconciler checks it, and only a check that proves it absent says otherwise (and undoes it).
   useEffect(() => {
     if (save.status !== 'confirmed' && save.status !== 'unconfirmed') return;
-    if (save.status === 'confirmed') toast.success('Profile updated!');
+    toast.success('Profile updated!');
     leaving.current = true;
     // Opened on its own (a cold link), with nothing under it: the profile it edited.
     if (router.canGoBack()) router.back();
@@ -100,8 +106,17 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   }, [save.status]);
 
   const onSave = () => {
-    if (!canSave) return;
-    save.send({ viewerId, patch }).catch(() => undefined);
+    if (!canSave || sendingNow.current) return;
+    const avatar = patch.avatar === undefined ? undefined : avatarDtoOf(form.avatar, viewerId, defaultStyle);
+    sendingNow.current = true;
+    setSending(true);
+    save
+      .send({ viewerId, patch, avatar })
+      .catch(() => undefined)
+      .finally(() => {
+        sendingNow.current = false;
+        setSending(false);
+      });
   };
 
   const nameField = (

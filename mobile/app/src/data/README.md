@@ -125,7 +125,8 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     (**Get YAPP** when YAPP is short), unless the spec's `failureAction`
     has a better action for it. `failureNeutral` makes the toast neutral
     (no haptic, no action) for a failure that needs no fix. `onFailed` runs
-    after the undo, for a failure that changed state anyway. A `failed`
+    after the undo, for a failure that changed state anyway (also when a
+    check proves an unconfirmed write absent). A `failed`
     ticket whose outcome is `unknown` (it may have landed) is treated as
     unconfirmed: kept, and nothing said.
   - `unconfirmed`: the write may have landed, so the change stays and
@@ -149,14 +150,55 @@ export const likeWrite: WriteSpec<{ post: PostDTO; like: boolean }> = {
     never while another is in flight: a stale Retry does nothing, quietly.
     A failure of an older write for a key says nothing: the newer write
     decides the state.
+  - **Writes that overlap read the chain.** A write sent for a key while
+    another for it may still land (unconfirmed, or a call cut short) stacks
+    its optimistic change on that one's, so undoing either could put back a
+    change that never landed or take away one that did. Once that happens,
+    a failure or a proved absence of any of them runs no undo and no
+    `onFailed`: each discarded write's `reconcile` puts right what its
+    optimistic change did outside the query cache, from the authoritative
+    source (a delete shows the post again), and every engine query is read
+    again, and the screen shows what
+    the chain says (lib keeps a confirmed own write over a read from a node
+    behind, and a read that lands while a write's call still runs gets that
+    write's change back, `reapply`). Only the user's latest action for the
+    key says anything (a ticket's own Retry call is that ticket's, not a
+    newer write), with its Retry, which applies its change again over
+    what the chain shows. The same goes for a change taken back with no
+    ticket to settle: a call refused before a ticket, a refused Retry, a
+    queued write dropped. The key goes back to plain undo once none of its
+    writes may still land and every query on screen has been read
+    successfully since (a failed or cancelled read repairs nothing: it is
+    tried again 2, 5 and 15 s on, not while offline, and after that the
+    app's own next read counts). An account change ends it too. Every
+    cached copy the key's optimistic changes wrote is recorded as they
+    write it; when the chain is read, the ones no screen shows are dropped
+    from the cache (read afresh when next shown), so none can hand a later
+    write's undo a change that never landed.
+- **`serial` writes never overlap.** A spec with `serial` (block and
+  unblock) sends one write for its key at a time and never queues: while
+  one may still land (its call runs, or it is unconfirmed with no check
+  proving it absent), the same ask is dropped and the opposite one is
+  refused with the spec's sentence. Its key can never be contested.
+  `useLandingIntent(key)` says what the write that may still land asks for,
+  so screens show it as busy ("Blocking…", `useBlockBusy`) and hold the
+  opposite action back. That lasts until it is confirmed, refused or
+  checked: normally within about two minutes, longer only while Dash
+  Platform can't be read.
+- **A spec with `optimistic` must declare `reconcile`** (the type requires
+  it): a function for a change that reaches outside the query cache (a
+  store, a write elsewhere), or `null` when the cache is all it touches.
 - **One write per key at a time.** A write made while one with its key is
   pending is queued with its optimistic change shown at once (only the latest
   queued write is kept). It is sent when the pending one confirms, or might
   have landed (not while its call still runs: a ticket unconfirmed by the
   engine's one-minute deadline, `STILL_SENDING`, keeps its key busy until the
   call answers; a queued write lives in memory, so quitting the app first
-  drops it), and dropped when the pending one fails, since that failure's
-  undo restored the very state a toggle back asked for. It is also dropped,
+  drops it), and dropped when the pending one fails. Its change was shown
+  over the failed one's, so neither undo can be trusted to restore the
+  chain (a profile undo leaves a copy another change moved on): the key
+  is contested and read back from the chain, as for writes that overlap
+  (below). It is also dropped,
   undone and announced when the pending one's call is cut short (below). With `intent` on the
   spec, a queued write that asks for what the pending one asked is dropped
   too, so a like, unlike, like run sends one like.
@@ -210,6 +252,14 @@ covered without registering it.
   `reapply`).
 - `setAuthorBlocked(authorId, blocked)` sets `viewer.authorBlocked` on the
   author's cached posts and quotes, so a block survives a relaunch.
+- `setProfileChange(identityId, change)` edits every cached copy of a
+  profile (`ProfileDTO`, not user rows); `applyProfileChange` is the same
+  without an undo, optionally to some queries only. Copies (by identity, by
+  name) can be at different versions: the undo puts each query's copy back
+  to what it had itself, and marks it stale without refetching it (a refetch
+  under an open Edit profile form could swap the form for its loading
+  state); a copy with no snapshot of its own (read or cached since) is read
+  again, never given another copy's values.
 - `hidePost(id)` removes a post from every `PostItem` at once.
   `markPostDeleted(id)` turns every cached copy into the "deleted" line, and
   `dropFromLists(id)` takes it out of cached lists (not threads).
@@ -219,7 +269,7 @@ covered without registering it.
   change touched and to copies cached after it (a detail screen seeded from
   a patched card); `setViewerState`'s leaves a copy that already read that
   way alone (by object, so even one in a query it changed) and puts back the
-  slot a changed copy had. It also refetches the post's (or the author's profile's)
+  slot each query's changed copy had itself. It also refetches the post's (or the author's profile's)
   detail family, so a copy that was already right comes back right.
 - **Patches don't disturb queries.** Untouched objects keep their identity,
   so memoized cells don't re-render. A patched query keeps its age, so stale

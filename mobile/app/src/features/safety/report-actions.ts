@@ -156,6 +156,8 @@ function withdrawFailureText(ticket: WriteTicket): string | null {
 export const withdrawReportWrite: WriteSpec<WithdrawReportVars> = {
   key: ({ target }) => `report:${target.id}`,
   submit: (api, { target, reportId }) => api.safety.withdrawReport(target, reportId),
+  // Its change is the query cache's alone, which the chain read repairs (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: ({ target }) => {
     const key = queryKeys.post.ownReport(target.id);
     const before = queryClient.getQueryData(key);

@@ -1,5 +1,5 @@
 import type { ProfileDTO, SessionDTO, TargetRef, WriteTicket } from '@engine/api';
-import { defaultScheduler, notifyManager } from '@tanstack/react-query';
+import { defaultScheduler, notifyManager, QueryObserver } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react-native';
 
 import * as WebBrowser from 'expo-web-browser';
@@ -17,7 +17,7 @@ import { queryKeys } from './keys';
 import { isExhausted, ticketJob } from './reconcile';
 import { advance, fakeEngine, ticket } from './testing/fake-engine';
 import { useSessionStore } from './session';
-import { adoptRestoredWrites, OFFLINE_MESSAGE, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
+import { adoptRestoredWrites, OFFLINE_MESSAGE, REPAIR_RETRY_MS, resetWriteTracking, retryWrite, runWrite, submitWrite, useWrite, type WriteSpec } from './writes';
 
 jest.mock('~/engine', () => jest.requireActual('~/data/testing/fake-engine').engineModule);
 let mockOffline = false;
@@ -35,6 +35,7 @@ const spec: WriteSpec<TargetRef> = {
   key: (t) => `like:${t.id}`,
   submit: (api, t) => api.engage.like(t),
   optimistic: apply,
+  reconcile: null,
   failureMessage: "Couldn't like this post. Try again.",
   onConfirmed: confirmed,
 };
@@ -242,6 +243,302 @@ describe('submitWrite', () => {
     expect(currentToast()).toBeNull();
   });
 
+  describe('writes that overlap on a key read the chain when one fails', () => {
+    const absentCheck = (t: WriteTicket) =>
+      advance(t, {
+        state: 'unconfirmed',
+        retryable: true,
+        error: { code: 'NOT_RECORDED', consensusCode: null, outcome: 'not-recorded', retryable: true, userMessage: 'Checked.' },
+      });
+    const refused = { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: true, userMessage: 'Refused.' } as const;
+    const notSent = { code: 'PENDING_WRITE', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Held.' } as const;
+    /** Every toast shown from here. */
+    function toasts() {
+      const shown: string[] = [];
+      const stop = useToastStore.subscribe((state) => {
+        if (state.current) shown.push(state.current.message);
+      });
+      return { shown, stop };
+    }
+    /** Whether every engine query was marked for reading again since the last call. */
+    let invalidate: jest.SpyInstance;
+    const readAgain = () => invalidate.mock.calls.some(([filters]) => JSON.stringify(filters?.queryKey) === JSON.stringify(queryKeys.all));
+    beforeEach(() => {
+      invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+    });
+    afterEach(() => invalidate.mockRestore());
+
+    /** A write that may have landed, then a second one for the key sent over it. */
+    async function overlapping() {
+      const first = await submitPending();
+      const maybe = advance(first, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      const second = await submitPending();
+      undo.mockClear();
+      invalidate.mockClear();
+      return { first, maybe, second };
+    }
+
+    it('undoes neither when the newer one is refused: reads the chain, with its one toast and Retry', async () => {
+      const { second } = await overlapping();
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: refused })));
+      stop();
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      answer('writes.retry', advance(second, { state: 'pending', retryable: false, error: null }));
+      await act(async () => currentToast()?.action?.onPress());
+      expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(second.id);
+    });
+
+    it('reads the chain again, quietly, when the older one is proved absent after the newer one failed', async () => {
+      // The usual order: an absence is proved only ~130 s on, a refusal comes in seconds.
+      const { maybe, second } = await overlapping();
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: refused })));
+      invalidate.mockClear();
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      stop();
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(shown).toEqual([]);
+    });
+
+    it('says nothing for the older one proved absent while the newer one is still being sent, then once for the newer one', async () => {
+      // QA rc7 review finding 2: the newer write's change was applied before its ticket came back.
+      const first = await submitPending();
+      const maybe = advance(first, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      const second = ticket();
+      let answerSend: (t: WriteTicket) => void = () => undefined;
+      fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise<WriteTicket>((resolve) => (answerSend = resolve)));
+      const sending = submitWrite(spec, target);
+      undo.mockClear();
+      invalidate.mockClear();
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(shown).toEqual([]);
+
+      await act(async () => {
+        answerSend(second);
+        await sending;
+      });
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: notSent })));
+      stop();
+      expect(undo).not.toHaveBeenCalled();
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+    });
+
+    it('takes nothing back when the newer one is refused before a ticket, after the older one was proved absent', async () => {
+      // The newer write's own undo would put back the older one's change, which never landed.
+      const first = await submitPending();
+      const maybe = advance(first, { state: 'unconfirmed' });
+      act(() => fakeEngine.emit('write.status', maybe));
+      let refuse: (error: Error) => void = () => undefined;
+      fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise<WriteTicket>((_, reject) => (refuse = reject)));
+      const sending = submitWrite(spec, target);
+      undo.mockClear();
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      invalidate.mockClear();
+
+      await act(async () => {
+        refuse(Object.assign(new Error('Not allowed'), { code: 'BAD_REQUEST' }));
+        await sending;
+      });
+      stop();
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      // Nothing may land any more: a later failure is undone plainly again.
+      const next = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(next, { state: 'failed', retryable: true, error: refused })));
+      expect(undo).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes nothing back when the newer one’s Retry is refused while the older one may still land', async () => {
+      const { second } = await overlapping();
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: true, error: refused })));
+      const retry = currentToast()?.action;
+      undo.mockClear();
+      invalidate.mockClear();
+      fakeEngine.method('writes.retry').mockRejectedValueOnce(Object.assign(new Error('No'), { code: 'NOT_RETRYABLE' }));
+      await act(async () => retry?.onPress());
+      expect(undo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+    });
+
+    it('reports a Retry that fails before its call answers, once, with a Retry that works', async () => {
+      // The ticket's own Retry call is not a newer write: its failure is the latest action's.
+      const { second } = await overlapping();
+      const failed = advance(second, { state: 'failed', retryable: true, error: refused });
+      act(() => fakeEngine.emit('write.status', failed));
+      const firstRetry = currentToast()?.action;
+      act(() => useToastStore.setState({ current: null }));
+
+      const failedAgain = advance(failed, { state: 'failed', retryable: true, error: refused });
+      fakeEngine.method('writes.retry').mockImplementationOnce(async () => {
+        // The engine reports the failure before it answers the call.
+        fakeEngine.emit('write.status', failedAgain);
+        return failedAgain;
+      });
+      const { shown, stop } = toasts();
+      await act(async () => firstRetry?.onPress());
+      stop();
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+      expect(undo).not.toHaveBeenCalled();
+      answer('writes.retry', advance(failedAgain, { state: 'pending', retryable: false, error: null }));
+      await act(async () => currentToast()?.action?.onPress());
+      expect(fakeEngine.method('writes.retry')).toHaveBeenCalledTimes(2);
+    });
+
+    it('reads the chain when a queued write is dropped because the one before it failed', async () => {
+      // The queued change sits on the failed one's: neither undo can be trusted to restore the chain.
+      const queuedUndo = jest.fn();
+      const later: WriteSpec<TargetRef> = { ...spec, optimistic: () => queuedUndo };
+      const first = await submitPending();
+      await expect(runWrite(later, target)).resolves.toEqual({ status: 'queued' });
+      invalidate.mockClear();
+      act(() => fakeEngine.emit('write.status', advance(first, { state: 'failed', retryable: true, error: refused })));
+      expect(queuedUndo).not.toHaveBeenCalled();
+      expect(readAgain()).toBe(true);
+      expect(fakeEngine.method('engage.like')).toHaveBeenCalledTimes(1);
+      // And the key is contested: a write over it now is reconciled by reading the chain too.
+      const next = await submitPending();
+      undo.mockClear();
+      act(() => fakeEngine.emit('write.status', advance(next, { state: 'failed', retryable: true, error: refused })));
+      expect(undo).not.toHaveBeenCalled();
+    });
+
+    it('undoes none of a like, unlike, like run when the last fails, with one toast', async () => {
+      const writes: WriteTicket[] = [];
+      for (let i = 0; i < 3; i += 1) {
+        const t = await submitPending();
+        writes.push(t);
+        if (i < 2) act(() => fakeEngine.emit('write.status', advance(t, { state: 'unconfirmed' })));
+      }
+      undo.mockClear();
+      const { shown, stop } = toasts();
+      act(() => fakeEngine.emit('write.status', advance(writes[2], { state: 'failed', retryable: true, error: refused })));
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(writes[0], { state: 'unconfirmed' }))));
+      act(() => fakeEngine.emit('write.status', absentCheck(advance(writes[1], { state: 'unconfirmed' }))));
+      stop();
+      expect(undo).not.toHaveBeenCalled();
+      expect(shown).toEqual(["Couldn't like this post. Try again."]);
+    });
+
+    it('stays contested while the chain read fails, and ends once a retried read succeeds', async () => {
+      // A failed read leaves the optimistic data in place: it repairs nothing.
+      jest.useFakeTimers();
+      const fails = { current: true };
+      const read = jest.fn(async () => {
+        if (fails.current) throw new Error('offline');
+        return 'chain';
+      });
+      const observer = new QueryObserver(queryClient, { queryKey: queryKeys.post.detail('shown'), queryFn: read, retry: false });
+      const unsubscribe = observer.subscribe(() => undefined);
+      try {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        const { maybe, second } = await overlapping();
+        act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
+        act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        expect(read).toHaveBeenCalled();
+
+        // Nothing may land any more, but the read failed: a new write's failure still reads the chain.
+        const third = await submitPending();
+        act(() => fakeEngine.emit('write.status', advance(third, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
+        expect(undo).not.toHaveBeenCalled();
+
+        // The retried read succeeds: the contest ends, and the next failure is undone plainly.
+        fails.current = false;
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(REPAIR_RETRY_MS[0]);
+        });
+        expect(observer.getCurrentResult().data).toBe('chain');
+        const fourth = await submitPending();
+        act(() => fakeEngine.emit('write.status', advance(fourth, { state: 'failed', retryable: true, error: refused })));
+        expect(undo).toHaveBeenCalledTimes(1);
+      } finally {
+        unsubscribe();
+        jest.useRealTimers();
+      }
+    });
+
+    it('does not count a chain read a write still on its way put its change back over as the repair', async () => {
+      jest.useFakeTimers();
+      const read = jest.fn(async () => 'chain');
+      const observer = new QueryObserver(queryClient, { queryKey: queryKeys.post.detail('shown'), queryFn: read, retry: false });
+      const unsubscribe = observer.subscribe(() => undefined);
+      // This write keeps its change on reads while its call runs (as follow and profile edits do).
+      const keeping: WriteSpec<TargetRef> = {
+        ...spec,
+        reapply: (_vars, queries) => {
+          for (const hash of queries) {
+            const query = queryClient.getQueryCache().get(hash);
+            if (query) queryClient.setQueryData(query.queryKey, 'mine');
+          }
+        },
+      };
+      try {
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        const first = ticket();
+        fakeEngine.method('engage.like').mockResolvedValueOnce(first);
+        await act(async () => {
+          await runWrite(keeping, target);
+        });
+        const maybe = advance(first, { state: 'unconfirmed' });
+        act(() => fakeEngine.emit('write.status', maybe));
+        // The second write's call runs on while the first is proved absent and the chain read back.
+        const second = ticket();
+        let answerSend: (t: WriteTicket) => void = () => undefined;
+        fakeEngine.method('engage.like').mockImplementationOnce(() => new Promise<WriteTicket>((resolve) => (answerSend = resolve)));
+        const sending = runWrite(keeping, target);
+        act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+        await act(async () => {
+          await jest.advanceTimersByTimeAsync(0);
+        });
+        expect(read).toHaveBeenCalled();
+        expect(observer.getCurrentResult().data).toBe('mine');
+
+        // The second confirms: nothing may land, but the read the repair saw was not the chain's.
+        await act(async () => {
+          answerSend(second);
+          await sending;
+        });
+        act(() => fakeEngine.emit('write.status', advance(second, { state: 'confirmed' })));
+        undo.mockClear();
+        const third = await submitPending();
+        act(() => fakeEngine.emit('write.status', advance(third, { state: 'failed', retryable: true, error: refused })));
+        expect(undo).not.toHaveBeenCalled();
+      } finally {
+        unsubscribe();
+        jest.useRealTimers();
+      }
+    });
+
+    it('goes back to undoing a failed write once none of the overlapping ones may still land', async () => {
+      const { maybe, second } = await overlapping();
+      act(() => fakeEngine.emit('write.status', advance(second, { state: 'failed', retryable: false, error: { ...refused, retryable: false } })));
+      act(() => fakeEngine.emit('write.status', absentCheck(maybe)));
+      // And the chain has been read back.
+      await act(async () => {});
+      undo.mockClear();
+      const third = await submitPending();
+      act(() => fakeEngine.emit('write.status', advance(third, { state: 'failed', retryable: true, error: refused })));
+      expect(undo).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('acts on a status that overtook the call’s answer', async () => {
     const pending = ticket();
     fakeEngine.method('engage.like').mockImplementationOnce(async () => {
@@ -259,6 +556,7 @@ describe('submitWrite', () => {
       key: ({ target: t }) => `like:${t.id}`,
       submit: (api, { target: t, on }) => (on ? api.engage.like(t) : api.engage.unlike(t)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: "Couldn't like this post. Try again.",
     };
@@ -308,6 +606,7 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: 'x',
     };
@@ -339,6 +638,7 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: 'x',
     };
@@ -560,6 +860,7 @@ describe('submitWrite', () => {
       key: () => `like:${target.id}`,
       submit: (api, { on }) => (on ? api.engage.like(target) : api.engage.unlike(target)),
       optimistic: apply,
+      reconcile: null,
       intent: ({ on }) => on,
       failureMessage: 'x',
     };

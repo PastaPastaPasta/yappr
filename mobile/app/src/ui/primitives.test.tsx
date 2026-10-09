@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { createRef, useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { AccessibilityInfo, Alert, StyleSheet } from 'react-native';
+import { AccessibilityInfo, Alert, Dimensions, StyleSheet, Text as RNText } from 'react-native';
 import { EllipsisHorizontalIcon } from 'react-native-heroicons/outline';
 import { FullWindowOverlay } from 'react-native-screens';
 
@@ -19,6 +20,7 @@ import { RadioGroup } from './RadioGroup';
 import { SwitchRow } from './Switch';
 import { FilterChips, TopTabs } from './Tabs';
 import { Text } from './Text';
+import { RENDER_LAG_MS, type TextResetHandle } from './native-text';
 import { TextField } from './TextField';
 import { colors } from './tokens';
 import { toast, toastDuration, useToastStore } from './toast';
@@ -177,7 +179,10 @@ describe('TextField', () => {
     // The box dims while a form saves. Were it flattenable, the input would move out of it when
     // the save ends, and on Android that move crashed the app inside a closing modal.
     const { rerender } = render(<TextField label="Name" value="Jana" editable={false} onChangeText={jest.fn()} />);
-    const box = () => hostViewAbove(screen.getByLabelText('Name'));
+    // The input's own slot (`InputSlot`, never flattened), then the box.
+    const slot = () => hostViewAbove(screen.getByLabelText('Name'));
+    const box = () => hostViewAbove(slot()!);
+    expect(slot()?.props.collapsable).toBe(false);
     expect(box()?.props.className).toContain('opacity-50');
     expect(box()?.props.collapsable).toBe(false);
     rerender(<TextField label="Name" value="Jana" onChangeText={jest.fn()} />);
@@ -185,9 +190,240 @@ describe('TextField', () => {
     expect(box()?.props.collapsable).toBe(false);
   });
 
+  it('grows a multi-line field with its text on iOS, between 3 and 8 lines (QA rc13 c6)', () => {
+    render(<TextField label="Bio" multiline value={'one\ntwo\nthree\nfour'} onChangeText={jest.fn()} />);
+    const input = screen.getByLabelText('Bio');
+    const style = () => StyleSheet.flatten(screen.getByLabelText('Bio').props.style);
+    const mirror = screen.UNSAFE_getAllByType(RNText).find((node) => node.props.accessibilityElementsHidden === true);
+    expect(mirror).toBeTruthy();
+    expect(style().height).toBeUndefined();
+    fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: 100 } } });
+    expect(style().height).toBe(Math.min(style().maxHeight as number, Math.max(style().minHeight as number, 120)));
+    fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: 1 } } });
+    expect(style().height).toBe(style().minHeight);
+    expect(input).toBeTruthy();
+  });
+
+  it.each([1, 1.3])('bounds a multi-line field at 3 and 8 lines of its own line height, at font scale %s (QA rc14 c2)', (fontScale) => {
+    const dimensions = jest.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 3, fontScale });
+    try {
+      render(<TextField label="Bio" multiline value="" onChangeText={jest.fn()} />);
+      const style = StyleSheet.flatten(screen.getByLabelText('Bio').props.style);
+      // Given unscaled: React Native scales it with the font, so a line is this tall on screen.
+      expect(style.lineHeight).toBe(24);
+      const line = 24 * fontScale;
+      expect(style.minHeight).toBe(line * 3 + 20);
+      expect(style.maxHeight).toBe(line * 8 + 20);
+      const mirror = screen.UNSAFE_getAllByType(RNText).find((node) => node.props.accessibilityElementsHidden === true);
+      expect(StyleSheet.flatten(mirror!.props.style)).toMatchObject({ fontSize: 16, lineHeight: 24 });
+      // Eight lines laid out: exactly the maximum; more scrolls.
+      fireEvent(mirror!, 'layout', { nativeEvent: { layout: { height: line * 8 } } });
+      expect(StyleSheet.flatten(screen.getByLabelText('Bio').props.style).height).toBe(line * 8 + 20);
+    } finally {
+      dimensions.mockRestore();
+    }
+  });
+
   it('hides the counter far from the limit', () => {
     render(<TextField label="Bio" value="short" maxLength={160} onChangeText={jest.fn()} />);
     expect(screen.queryByText(/\/ 160/)).toBeNull();
+  });
+
+  describe('typing (QA rc7 D-2)', () => {
+    /** A form field as screens use it: the parent holds the text, and can reset or replace it. */
+    function Form({ initial = '' }: { initial?: string }) {
+      const [name, setName] = useState(initial);
+      return (
+        <>
+          <TextField label="Name" value={name} onChangeText={setName} />
+          <Button label="Clear" onPress={() => setName('')} />
+          <Button label="Randomize" onPress={() => setName('k3x9')} />
+          <Text testID="held">{name}</Text>
+        </>
+      );
+    }
+    const input = () => screen.getByLabelText('Name');
+
+    it('leaves the text to the native input, which JS never writes back while typing', () => {
+      // A `value` input has JS push each keystroke's text back; landing late, that echo dropped
+      // the keystrokes typed meanwhile ('notalink' saved as 'nota').
+      render(<Form initial="Taipei" />);
+      for (const text of ['Taipei ', 'Taipei T', 'Taipei Ta', 'Taipei Tai']) fireEvent.changeText(input(), text);
+      expect(screen.getByTestId('held')).toHaveTextContent('Taipei Tai');
+      expect(input().props.value).toBeUndefined();
+      expect(input().props.defaultValue).toBe('Taipei');
+    });
+
+    it('ignores a render from before the latest keystrokes reached the parent', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="rc" onChangeText={onChangeText} />);
+      fireEvent.changeText(input(), 'rc7');
+      fireEvent.changeText(input(), 'rc7i');
+      // The parent re-renders with a text the input has typed past.
+      rerender(<TextField label="Name" value="rc7" onChangeText={onChangeText} />);
+      expect(input().props.value).toBeUndefined();
+      expect(input().props.defaultValue).toBe('rc');
+      rerender(<TextField label="Name" value="rc7i" onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('rc');
+      expect(onChangeText).toHaveBeenLastCalledWith('rc7i');
+    });
+
+    it('empties the input in place when the parent clears it: no remount, no blur or focus', () => {
+      const onFocus = jest.fn();
+      const onBlur = jest.fn();
+      function Cleared() {
+        const [name, setName] = useState('');
+        return (
+          <>
+            <TextField label="Name" value={name} onChangeText={setName} onFocus={onFocus} onBlur={onBlur} />
+            <Button label="Clear" onPress={() => setName('')} />
+          </>
+        );
+      }
+      render(<Cleared />);
+      fireEvent(input(), 'focus');
+      fireEvent.changeText(input(), 'luc');
+      const before = input();
+      fireEvent.press(screen.getByRole('button', { name: 'Clear' }));
+      expect(input()).toHaveDisplayValue('');
+      // The same input: its text was cleared, it was not mounted afresh.
+      expect(input()).toBe(before);
+      expect(input().props.defaultValue).toBe('');
+      expect(input().props.autoFocus).toBeUndefined();
+      expect(onFocus).toHaveBeenCalledTimes(1);
+      expect(onBlur).not.toHaveBeenCalled();
+      // Typing goes on in it.
+      fireEvent.changeText(input(), 'l');
+      expect(input()).toHaveDisplayValue('l');
+    });
+
+    it('puts any other value the parent sets in, keeping the focus', () => {
+      render(<Form />);
+      fireEvent(input(), 'focus');
+      fireEvent.changeText(input(), 'l');
+      fireEvent.press(screen.getByRole('button', { name: 'Randomize' }));
+      expect(input()).toHaveDisplayValue('k3x9');
+      expect(input().props.autoFocus).toBe(true);
+      // The same reset again after more typing still lands.
+      fireEvent.changeText(input(), 'k3x9z');
+      fireEvent.press(screen.getByRole('button', { name: 'Randomize' }));
+      expect(input()).toHaveDisplayValue('k3x9');
+      expect(screen.getByTestId('held')).toHaveTextContent('k3x9');
+    });
+
+    it('does not remount for late renders that bring back a text typed twice (a, ab, a)', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+      for (const text of ['a', 'ab', 'a']) fireEvent.changeText(input(), text);
+      // The parent's renders for each keystroke arrive only now, in order.
+      for (const value of ['a', 'ab', 'a']) rerender(<TextField label="Name" value={value} onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('');
+      expect(input()).toHaveDisplayValue('a');
+    });
+
+    it('does not remount for late renders when a repeated text was typed on past (a, ab, a, ac)', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+      for (const text of ['a', 'ab', 'a', 'ac']) fireEvent.changeText(input(), text);
+      // The first late 'a' must not consume the history the late 'ab' still needs.
+      for (const value of ['a', 'ab', 'a', 'ac']) rerender(<TextField label="Name" value={value} onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('');
+      expect(input()).toHaveDisplayValue('ac');
+    });
+
+    it('drops the history a batched render skipped, so a later set to one of those texts is put in', () => {
+      const onChangeText = jest.fn();
+      const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+      for (const text of ['a', 'ab', 'abc']) fireEvent.changeText(input(), text);
+      // React batched the keystrokes: one render, straight to the latest text.
+      rerender(<TextField label="Name" value="abc" onChangeText={onChangeText} />);
+      expect(input().props.defaultValue).toBe('');
+      // A programmatic set to a text typed past is put in, not taken for a late render.
+      rerender(<TextField label="Name" value="ab" onChangeText={onChangeText} />);
+      expect(input()).toHaveDisplayValue('ab');
+      expect(input().props.defaultValue).toBe('ab');
+    });
+
+    it('keeps the history only as long as a render can lag', () => {
+      const now = jest.spyOn(performance, 'now').mockReturnValue(1_000_000);
+      try {
+        const onChangeText = jest.fn();
+        const { rerender } = render(<TextField label="Name" value="" onChangeText={onChangeText} />);
+        for (const text of ['a', 'ab', 'a']) fireEvent.changeText(input(), text);
+        // A batched render to the latest 'a' cannot tell which 'a' it is: 'ab' stays pending a while.
+        rerender(<TextField label="Name" value="a" onChangeText={onChangeText} />);
+        now.mockReturnValue(1_000_000 + RENDER_LAG_MS);
+        rerender(<TextField label="Name" value="ab" onChangeText={onChangeText} />);
+        expect(input().props.defaultValue).toBe('ab');
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('sets the text its parent resets it to, even a text a late render would show (Randomize, Clear)', () => {
+      const field = createRef<TextResetHandle>();
+      function Seed() {
+        const [seed, setSeed] = useState('');
+        return (
+          <>
+            <TextField ref={field} label="Name" value={seed} onChangeText={setSeed} />
+            <Button
+              label="Back to a"
+              onPress={() => {
+                field.current?.reset('a');
+                setSeed('a');
+              }}
+            />
+          </>
+        );
+      }
+      render(<Seed />);
+      fireEvent(input(), 'focus');
+      act(() => {
+        for (const text of ['a', 'ab', 'a', 'ab']) fireEvent.changeText(input(), text);
+      });
+      fireEvent.press(screen.getByRole('button', { name: 'Back to a' }));
+      expect(input()).toHaveDisplayValue('a');
+      expect(input().props.autoFocus).toBe(true);
+    });
+
+    it('ignores a late event of the input a reset replaced, and keeps what is typed after', () => {
+      const field = createRef<TextResetHandle>();
+      function Cleared() {
+        const [name, setName] = useState('');
+        return (
+          <>
+            <TextField ref={field} label="Name" value={name} onChangeText={setName} />
+            <Button
+              label="Clear"
+              onPress={() => {
+                field.current?.reset('');
+                setName('');
+              }}
+            />
+            <Text testID="held">{name}</Text>
+          </>
+        );
+      }
+      render(<Cleared />);
+      fireEvent(input(), 'focus');
+      fireEvent.changeText(input(), 'luc');
+      const late = input().props.onChangeText as (text: string) => void;
+      fireEvent.press(screen.getByRole('button', { name: 'Clear' }));
+      act(() => late('lucx'));
+      expect(screen.getByTestId('held')).toHaveTextContent('');
+      expect(input()).toHaveDisplayValue('');
+      fireEvent.changeText(input(), 'lucia');
+      expect(screen.getByTestId('held')).toHaveTextContent('lucia');
+    });
+
+    it('does not hand the focus back to a locked field it resets (a sign-in going through)', () => {
+      const { rerender } = render(<TextField label="Name" value="key" onChangeText={jest.fn()} />);
+      fireEvent(input(), 'focus');
+      rerender(<TextField label="Name" value="other" editable={false} onChangeText={jest.fn()} />);
+      expect(input()).toHaveDisplayValue('other');
+      expect(input().props.autoFocus).toBe(false);
+    });
   });
 
   it('hides a secret until asked, with autofill off', () => {

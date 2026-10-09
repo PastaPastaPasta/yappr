@@ -1,7 +1,7 @@
 import type { AuthorDTO, ProfileDTO, UserSummaryDTO } from '@engine/api';
 import { keepPreviousData } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Keyboard, Platform, Pressable, ScrollView, TextInput, View, type KeyboardEvent, type LayoutChangeEvent } from 'react-native';
+import { Keyboard, Platform, Pressable, ScrollView, TextInput, View, type KeyboardEvent, type LayoutChangeEvent, type TextInputProps } from 'react-native';
 import { CheckCircleIcon, MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
 
 import { queryKeys } from '~/data/keys';
@@ -9,6 +9,8 @@ import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
 import { cn } from '~/lib-allowlist';
 import { Avatar } from '~/ui/Avatar';
 import { handleOf } from '~/ui/handle';
+import { INPUT_SLOT, InputSlot } from '~/ui/InputSlot';
+import { useNativeText } from '~/ui/native-text';
 import { RowSkeleton } from '~/ui/Skeleton';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, monoFont, tw, useColors } from '~/ui/tokens';
@@ -224,6 +226,8 @@ export function usePickerReveal() {
   };
 }
 
+const PICKER_SEARCH_TEXT = { fontSize: 16, minHeight: 40, paddingVertical: 0 } as const;
+
 /**
  * The person picker (PRD DM-05, DM-06): "Search by username..." (3+
  * characters, or a pasted identity ID) and, before typing, the viewer's
@@ -244,6 +248,8 @@ export function UserPicker({
   const c = useColors();
   const focusHandlers = useRevealOnFocus(onSearchFocus, onSearchBlur);
   const [query, setQuery] = useState(initialQuery);
+  // Uncontrolled, so a busy render (each key searches) never drops a keystroke (QA rc7 D-2).
+  const { key: inputKey, attach, reset, inputProps, retiring } = useNativeText({ value: query, onChangeText: setQuery, autoFocus, ...focusHandlers });
   const text = useDebounced(query.trim(), SEARCH_DEBOUNCE_MS);
   const typing = query.trim() !== text;
   const byId = isIdentityIdText(text);
@@ -316,35 +322,48 @@ export function UserPicker({
     else body = search.isPlaceholderData || typing ? <Loading label="Searching…" /> : <Hint text={`No users found for "${text}"`} />;
   }
 
+  /** The live input and the one a reset replaced: the same input, but for its handlers, text and test id. */
+  const field = (fieldProps: TextInputProps, live: boolean) => (
+    <TextInput
+      ref={live ? attach : undefined}
+      {...fieldProps}
+      placeholder="Search by username..."
+      placeholderTextColor={c.textPlaceholder}
+      accessibilityLabel="Search by username"
+      autoCapitalize="none"
+      autoCorrect={false}
+      autoComplete="off"
+      returnKeyType="search"
+      cursorColor={c.accent}
+      selectionColor={c.accent}
+      className="text-gray-900 dark:text-gray-100"
+      style={PICKER_SEARCH_TEXT}
+      testID={live ? 'picker-search' : undefined}
+    />
+  );
   return (
     <View>
       <View className="px-4 pb-2 pt-1">
         <View className={cn('min-h-10 flex-row items-center gap-2 rounded-[10px] px-3', tw.bgMuted)}>
           <MagnifyingGlassIcon size={16} color={c.textSecondary} />
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            placeholder="Search by username..."
-            placeholderTextColor={c.textPlaceholder}
-            accessibilityLabel="Search by username"
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoComplete="off"
-            autoFocus={autoFocus}
-            {...focusHandlers}
-            returnKeyType="search"
-            cursorColor={c.accent}
-            selectionColor={c.accent}
-            className="flex-1 text-gray-900 dark:text-gray-100"
-            style={{ fontSize: 16, minHeight: 40, paddingVertical: 0 }}
-            testID="picker-search"
-          />
+          {retiring ? (
+            // The input a reset replaced, until the fresh one has the focus: hidden by its slot alone.
+            <InputSlot key={retiring.key} retired>
+              {field(retiring.inputProps, false)}
+            </InputSlot>
+          ) : null}
+          <InputSlot key={inputKey} style={INPUT_SLOT}>
+            {field(inputProps, true)}
+          </InputSlot>
           {query.length > 0 ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Clear search"
               hitSlop={hitSlopFor(20)}
-              onPress={() => setQuery('')}
+              onPress={() => {
+                reset('');
+                setQuery('');
+              }}
             >
               <XCircleIcon size={18} color={c.textSecondary} />
             </Pressable>

@@ -3,7 +3,7 @@ import { useNetInfo } from '@react-native-community/netinfo';
 import { FlashList } from '@shopify/flash-list';
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, RefreshControl, TextInput, View } from 'react-native';
+import { Platform, Pressable, RefreshControl, TextInput, View, type TextInputProps } from 'react-native';
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { ChatBubbleLeftRightIcon, Cog6ToothIcon, PencilSquareIcon } from 'react-native-heroicons/outline';
 import { MagnifyingGlassIcon, XCircleIcon } from 'react-native-heroicons/solid';
@@ -17,6 +17,8 @@ import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { useBlockScreenCapture } from '~/ui/screen-capture';
 import { toast } from '~/ui/toast';
+import { INPUT_SLOT, InputSlot } from '~/ui/InputSlot';
+import { useNativeText } from '~/ui/native-text';
 import { colors, hitSlopFor, tw, useColors } from '~/ui/tokens';
 
 import { ConversationRow } from './ConversationRow';
@@ -74,8 +76,31 @@ function HeaderActions({ v5 }: { v5: boolean }) {
   );
 }
 
+const INBOX_SEARCH_TEXT = { fontSize: 16, minHeight: 36, paddingVertical: 0 } as const;
+
+/** Uncontrolled (`useNativeText`), so no keystroke is lost; Clear is put in. */
 function SearchBox({ value, onChange }: { value: string; onChange: (text: string) => void }) {
   const c = useColors();
+  const { key: inputKey, attach, reset, inputProps, retiring } = useNativeText({ value, onChangeText: onChange });
+  /** The live input and the one a reset replaced: the same input, but for its handlers, text and test id. */
+  const field = (fieldProps: TextInputProps, live: boolean) => (
+    <TextInput
+      ref={live ? attach : undefined}
+      {...fieldProps}
+      placeholder="Search messages"
+      placeholderTextColor={c.textPlaceholder}
+      accessibilityLabel="Search messages"
+      accessibilityRole="search"
+      autoCapitalize="none"
+      autoCorrect={false}
+      returnKeyType="search"
+      cursorColor={c.accent}
+      selectionColor={c.accent}
+      className="text-gray-900 dark:text-gray-100"
+      style={INBOX_SEARCH_TEXT}
+      testID={live ? 'messages-search' : undefined}
+    />
+  );
   return (
     <View className="px-4 pb-2 pt-1">
       <View
@@ -86,24 +111,25 @@ function SearchBox({ value, onChange }: { value: string; onChange: (text: string
         )}
       >
         <MagnifyingGlassIcon size={16} color={c.textSecondary} />
-        <TextInput
-          value={value}
-          onChangeText={onChange}
-          placeholder="Search messages"
-          placeholderTextColor={c.textPlaceholder}
-          accessibilityLabel="Search messages"
-          accessibilityRole="search"
-          autoCapitalize="none"
-          autoCorrect={false}
-          returnKeyType="search"
-          cursorColor={c.accent}
-          selectionColor={c.accent}
-          className="flex-1 text-gray-900 dark:text-gray-100"
-          style={{ fontSize: 16, minHeight: 36, paddingVertical: 0 }}
-          testID="messages-search"
-        />
+        {retiring ? (
+          // The input a reset replaced, until the fresh one has the focus: hidden by its slot alone.
+          <InputSlot key={retiring.key} retired>
+            {field(retiring.inputProps, false)}
+          </InputSlot>
+        ) : null}
+        <InputSlot key={inputKey} style={INPUT_SLOT}>
+          {field(inputProps, true)}
+        </InputSlot>
         {value ? (
-          <Pressable accessibilityRole="button" accessibilityLabel="Clear search" hitSlop={hitSlopFor(20)} onPress={() => onChange('')}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Clear search"
+            hitSlop={hitSlopFor(20)}
+            onPress={() => {
+              reset('');
+              onChange('');
+            }}
+          >
             <XCircleIcon size={18} color={c.textSecondary} />
           </Pressable>
         ) : null}

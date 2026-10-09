@@ -16,6 +16,7 @@ import type { EngineStatus } from '~/engine/supervisor';
 import { ActionButton, Row, Section, type Tone } from '~/engine/ui';
 import { clearAccountCache, persistedCacheBytes } from '~/state/query-client';
 import { Screen } from '~/ui/Screen';
+import { useNativeText } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
 import { toast } from '~/ui/toast';
 import { useColors } from '~/ui/tokens';
@@ -201,6 +202,8 @@ function confirm(title: string, message: string, action: string, run: () => void
  */
 function DevSignIn() {
   const [key, setKey] = useState('');
+  // Uncontrolled (`useNativeText`); the field cleared after each call is put in.
+  const { key: inputKey, attach, inputProps } = useNativeText({ value: key, onChangeText: setKey });
   const [session, setSession] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -228,8 +231,9 @@ function DevSignIn() {
       <View className="gap-3 p-4">
         <Row label="Signed in as" value={session ?? 'nobody'} />
         <TextInput
-          value={key}
-          onChangeText={setKey}
+          key={inputKey}
+          ref={attach}
+          {...inputProps}
           placeholder="Private key (WIF or hex)"
           secureTextEntry
           autoCapitalize="none"

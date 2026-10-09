@@ -2,7 +2,7 @@ import type { PostDTO, TagDTO, UserSummaryDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { router, Stack } from 'expo-router';
-import { useState, type ReactElement } from 'react';
+import { useRef, useState, type ReactElement } from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { ArrowLeftIcon, ClockIcon, HashtagIcon, MagnifyingGlassIcon, UserIcon, XMarkIcon } from 'react-native-heroicons/outline';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -16,6 +16,7 @@ import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { hitSlopFor, tw, useColors } from '~/ui/tokens';
+import type { TextResetHandle } from '~/ui/native-text';
 
 import { FollowableUserRow } from './FollowableUserRow';
 import { recentKey, useRecentSearches, type RecentSearch } from './recent-searches';
@@ -152,7 +153,10 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
   const settled = submitted !== null && submitted === text ? submitted : debounced;
   const { q, people, hashtags, posts, enabled } = useSearch(text.trim() ? settled : '');
 
+  const field = useRef<TextResetHandle>(null);
   const search = (query: string) => {
+    // A recent search tapped: put in as such, never taken for a late render of typing.
+    field.current?.reset(query);
     setText(query);
     setSubmitted(query);
   };
@@ -352,6 +356,7 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
           />
         )}
         <SearchField
+          ref={field}
           value={text}
           onChangeText={(next) => {
             setText(next);

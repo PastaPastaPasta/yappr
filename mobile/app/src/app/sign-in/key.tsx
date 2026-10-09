@@ -17,6 +17,7 @@ import { Spinner } from '~/ui/Spinner';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { useColors } from '~/ui/tokens';
+import type { TextResetHandle } from '~/ui/native-text';
 
 /** UX_SPEC §4.6: validation runs this long after typing stops. */
 const CHECK_DELAY_MS = 400;
@@ -59,6 +60,7 @@ export default function KeySignInScreen() {
   const activeId = useSessionStore((s) => s.session?.identityId ?? null);
   const activeUsername = useSessionStore((s) => s.session?.username ?? null);
   const [key, setKey] = useState('');
+  const keyField = useRef<TextResetHandle>(null);
   const [check, setCheck] = useState<Check>({ state: 'idle' });
   useBlockScreenCapture('secret', useIsFocused());
   const [signingIn, setSigningIn] = useState(false);
@@ -139,6 +141,7 @@ export default function KeySignInScreen() {
       <Stack.Screen options={{ title: copy.key.title, headerShadowVisible: false }} />
       <SignInBody testID="sign-in-key">
         <TextField
+          ref={keyField}
           secure
           value={key}
           onChangeText={onChangeKey}
@@ -177,6 +180,7 @@ export default function KeySignInScreen() {
               testID="key-add-account"
               onPress={() => {
                 // The add flow opens its own sign-in on top: the key typed here is not left behind it.
+                keyField.current?.reset('');
                 onChangeKey('');
                 addAccount().catch(() => undefined);
               }}

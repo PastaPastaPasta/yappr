@@ -7,7 +7,7 @@ import { queryKeys } from '~/data/keys';
 import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
 import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
-import { sendWrite, type WriteSpec } from '~/data/writes';
+import { sendWrite, useLandingIntent, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { setBlockedInMessages, syncMessagesBlock } from '~/features/messages/dm-actions';
@@ -216,6 +216,7 @@ export interface BlockVars {
   user?: Pick<BlockedUserDTO, 'username' | 'displayName' | 'avatar'>;
 }
 
+
 /** Per user, the latest change made in Messages: an older change's undo never overrides a newer one. */
 const messagesChanges = new Map<string, symbol>();
 
@@ -224,7 +225,10 @@ const messagesChanges = new Map<string, symbol>();
  * and an Unblock lifts it (PRD SAFE-01, SAFE-02), so one Block covers
  * Messages too. Legacy DMs follow the account's blocks by themselves.
  * Returns the undo, which reverts only what this call changed (a block in
- * Messages made before, on web, stays) and only while it is the latest.
+ * Messages made before, on web, stays) and only while it is the latest: the
+ * undo waits for the Messages call to answer, which can come after a newer
+ * change (a followed list's `STILL_BLOCKED`, a new block). Block writes
+ * themselves never overlap (`blockWrite.serial`).
  */
 function blockInMessages(userId: string, block: boolean): () => void {
   if (getCapabilities()?.dm !== 'v5') return () => undefined;
@@ -240,7 +244,8 @@ function blockInMessages(userId: string, block: boolean): () => void {
   };
 }
 
-function applyBlock({ viewerId, userId, block, message, user }: BlockVars): () => void {
+function applyBlock(vars: BlockVars): () => void {
+  const { viewerId, userId, block, message, user } = vars;
   const before = useBlockDecisions.getState().byKey[decisionKey(viewerId, userId)];
   const row: BlockedUserDTO | undefined =
     block && user ? { ...user, id: userId, resolved: true, message: message ?? null } : undefined;
@@ -275,11 +280,32 @@ function handleOf({ userId, user }: BlockVars): string | null {
  * posts stay hidden, the Blocked list drops the own block that is gone (and
  * Messages with it), and the toast says why.
  */
+const blockKey = (userId: string) => `block:${userId}`;
+
+/**
+ * Whether a block or unblock of `userId` may still land: `'blocking'`,
+ * `'unblocking'`, or null. While it may, the screens show it as busy and hold
+ * back the opposite action (`blockWrite.serial`). It settles once confirmed,
+ * refused, or checked: normally within about two minutes, longer only while
+ * Dash Platform can't be read.
+ */
+export function useBlockBusy(userId: string | undefined): 'blocking' | 'unblocking' | null {
+  const intent = useLandingIntent(userId ? blockKey(userId) : undefined);
+  if (intent === true) return 'blocking';
+  if (intent === false) return 'unblocking';
+  return null;
+}
+
 export const blockWrite: WriteSpec<BlockVars> = {
-  key: ({ userId }) => `block:${userId}`,
+  key: ({ userId }) => blockKey(userId),
+  // A block and an unblock of one user never overlap: the opposite action waits until the first can't land.
+  // Its key is never contested, so nothing has to be reconciled from the chain afterwards (Messages included).
+  serial: (vars) => (vars.block ? copy.toast.stillUnblocking(handleOf(vars)) : copy.toast.stillBlocking(handleOf(vars))),
   submit: (api, { userId, block, message }) =>
     block ? api.safety.block(userId, message ? { message } : null) : api.safety.unblock(userId),
   optimistic: applyBlock,
+  // Never reached for a serial key; if it were, this device's decision would outrank the status read back.
+  reconcile: ({ viewerId, userId }) => decide(viewerId, userId, undefined),
   intent: ({ block }) => block,
   matches: (ticket, { userId, block }) => ticket.op === (block ? 'block' : 'unblock') && targetIdentity(ticket) === userId,
   onConfirmed: (_ticket, { block }) => refetchFiltered(block),

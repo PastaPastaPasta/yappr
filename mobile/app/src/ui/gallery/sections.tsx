@@ -221,6 +221,7 @@ function InputsSection() {
           label="Username"
           value="al"
           error="Usernames are at least 3 characters"
+          editable={false}
           onChangeText={noop}
         />
         <TextField label="Private key" secure value={secret} onChangeText={setSecret} />

@@ -24,6 +24,8 @@ interface DraftsState {
   set: (identityId: string, key: string, text: string) => void;
   /** Puts a failed send's text back, ahead of anything typed since. */
   restore: (identityId: string, key: string, text: string) => void;
+  /** How many times each conversation's draft was restored: the composer puts a restored draft in (`resetToken`). */
+  restores: Record<string, number>;
   /** Drops every draft from memory (the account changed); what was typed is saved first. */
   clearAll: () => void;
 }
@@ -154,6 +156,7 @@ function noteCleared(identityId: string, key: string, isCleared: boolean): void 
 
 export const useDrafts = create<DraftsState>()((set) => ({
   byKey: {},
+  restores: {},
   set: (identityId, key, text) => {
     noteCleared(identityId, key, !text);
     set(({ byKey }) => {
@@ -166,9 +169,13 @@ export const useDrafts = create<DraftsState>()((set) => ({
   },
   restore: (identityId, key, text) => {
     noteCleared(identityId, key, false);
-    set(({ byKey }) => {
-      const current = byKey[slot(identityId, key)]?.trim();
-      return { byKey: { ...byKey, [slot(identityId, key)]: current ? `${text.trim()}\n${current}` : text.trim() } };
+    set(({ byKey, restores }) => {
+      const at = slot(identityId, key);
+      const current = byKey[at]?.trim();
+      return {
+        byKey: { ...byKey, [at]: current ? `${text.trim()}\n${current}` : text.trim() },
+        restores: { ...restores, [at]: (restores[at] ?? 0) + 1 },
+      };
     });
     changed(identityId);
   },
@@ -220,6 +227,11 @@ export function takeDraft(identityId: string, key: string): string {
     flushDmDrafts();
   }
   return text;
+}
+
+/** How many times the conversation's draft was restored (a failed send put back): the composer's `resetToken`. */
+export function useDraftRestores(identityId: string | null, key: string): number {
+  return useDrafts((s) => (identityId ? (s.restores[slot(identityId, key)] ?? 0) : 0));
 }
 
 /** The conversation's unsent text, with the account's saved drafts read in on first use. */

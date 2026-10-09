@@ -456,6 +456,8 @@ export const publishWrite: WriteSpec<PublishVars> = {
     if (!entry) return Promise.reject(new Error('This post is no longer pending'));
     return retry && entry.ticketId ? api.writes.retry(entry.ticketId) : api.posts.publish(entry.draft);
   },
+  // The target's reply or quote count, in the query cache only (`WriteSpec.reconcile`).
+  reconcile: null,
   optimistic: ({ localId }) => bumpTarget(getEntry(localId)),
   failureMessage: POST_FAILED,
   failureText: (ticket, { localId }) => failureTextFor(ticket, getEntry(localId)),

@@ -1,5 +1,5 @@
 import { Image } from 'expo-image';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -11,6 +11,7 @@ import { SegmentedControl } from '~/ui/Tabs';
 import { Text } from '~/ui/Text';
 import { TextField } from '~/ui/TextField';
 import { tw } from '~/ui/tokens';
+import type { TextResetHandle } from '~/ui/native-text';
 
 import { isMediaUrl, randomSeed, type AvatarChoice } from './edit-profile-form';
 
@@ -70,6 +71,7 @@ function LinkPreview({ url }: { url: string }) {
  * bottom sheets (mounted at the root) would sit underneath.
  */
 export function AvatarPicker({ open, identityId, value, avatarStyles, onClose, onChoose }: AvatarPickerProps) {
+  const seedField = useRef<TextResetHandle>(null);
   const insets = useSafeAreaInsets();
   const initialRecipe = value && 'dicebear' in value ? value.dicebear : null;
   const [mode, setMode] = useState<Mode>(value && 'uri' in value ? 'link' : 'generated');
@@ -129,6 +131,7 @@ export function AvatarPicker({ open, identityId, value, avatarStyles, onClose, o
             <>
               <View className="flex-row items-end gap-3">
                 <TextField
+                  ref={seedField}
                   label="Seed"
                   value={seed}
                   onChangeText={setSeed}
@@ -142,7 +145,11 @@ export function AvatarPicker({ open, identityId, value, avatarStyles, onClose, o
                   label="Randomize"
                   variant="secondary"
                   size="sm"
-                  onPress={() => setSeed(randomSeed(seedMax))}
+                  onPress={() => {
+                    const next = randomSeed(seedMax);
+                    seedField.current?.reset(next);
+                    setSeed(next);
+                  }}
                   layoutStyle={{ marginBottom: 6 }}
                   testID="avatar-randomize"
                 />

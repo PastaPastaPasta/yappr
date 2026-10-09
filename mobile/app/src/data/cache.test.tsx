@@ -8,12 +8,14 @@ import { AUTHORS, POSTS, fixturePost } from '~/ui/post/fixtures';
 
 import { queryKeys } from './keys';
 import {
+  applyProfileChange,
   dropFromLists,
   hidePost,
   holdOwnQuote,
   markPostDeleted,
   setAuthorBlocked,
   setFollowing,
+  setProfileChange,
   setViewerState,
   useRemovedPosts,
 } from './optimistic';
@@ -163,6 +165,22 @@ describe('setViewerState', () => {
     });
   });
 
+  it('puts back the slot each copy had itself, when the copies were at different versions', () => {
+    // The detail was read after the viewer's quote q2 replaced the bare repost q1; the stats copy before.
+    const slot = (ownQuoteId: string, ownQuoteBare: boolean) =>
+      fixturePost({
+        id: 'v',
+        stats: { likes: 0, reposts: 0, replies: 0, quotes: 3 },
+        viewer: { ...target.viewer!, reposted: true, ownQuoteId, ownQuoteBare },
+      });
+    queryClient.setQueryData(queryKeys.post.stats('v'), slot('q1', true));
+    queryClient.setQueryData(queryKeys.post.detail('v'), slot('q2', false));
+    const undo = setViewerState('v', { reposted: false, ownQuoteId: null, ownQuoteBare: false });
+    undo();
+    expect(queryClient.getQueryData(queryKeys.post.stats('v'))).toMatchObject({ viewer: { ownQuoteId: 'q1', ownQuoteBare: true } });
+    expect(queryClient.getQueryData(queryKeys.post.detail('v'))).toMatchObject({ viewer: { ownQuoteId: 'q2', ownQuoteBare: false } });
+  });
+
   it('counts a repost made here in reposts until it is read back (v2, or v10 before a read)', () => {
     queryClient.setQueryData(queryKeys.post.detail('fresh'), fixturePost({ id: 'fresh' }));
     setViewerState('fresh', { reposted: true });
@@ -267,6 +285,71 @@ describe('setFollowing', () => {
 
     undo();
     expect(queryClient.getQueryData(queryKeys.profile.detail(author))).toMatchObject({ stats: { followers: 10 } });
+  });
+});
+
+describe('setProfileChange', () => {
+  const me = 'me';
+  const profile: ProfileDTO = {
+    id: me,
+    username: 'jana',
+    usernames: ['jana'],
+    displayName: 'Jana',
+    avatar: { uri: null, dicebear: { style: 'thumbs', seed: me } },
+    hasProfile: true,
+    pronouns: 'she/her',
+    stats: { posts: 1, followers: 3, following: 7 },
+  };
+  const byId = () => queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail(me));
+  const byName = () => queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail('jana'));
+
+  it('edits every cached copy of the profile, not user rows, and the undo puts back what it changed', () => {
+    const row = { id: me, displayName: 'Jana' } as Partial<UserSummaryDTO>;
+    queryClient.setQueryData(queryKeys.profile.detail(me), profile);
+    queryClient.setQueryData(queryKeys.profile.detail('jana'), profile);
+    queryClient.setQueryData(queryKeys.profile.followers('someone'), page([row]));
+
+    const undo = setProfileChange(me, { displayName: 'Jana A.', pronouns: undefined, bio: 'Film.' });
+    expect(byId()).toMatchObject({ displayName: 'Jana A.', bio: 'Film.' });
+    expect(byId()).not.toHaveProperty('pronouns');
+    expect(byName()).toMatchObject({ displayName: 'Jana A.' });
+    expect(queryClient.getQueryData<Page<UserSummaryDTO>>(queryKeys.profile.followers('someone'))!.items[0]).toBe(row);
+
+    undo();
+    expect(byId()).toEqual(profile);
+    expect(byName()).toEqual(profile);
+    // Marked stale for the next screen that shows it, without a refetch under an open form.
+    expect(queryClient.getQueryState(queryKeys.profile.detail(me))?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(queryKeys.profile.detail(me))?.fetchStatus).toBe('idle');
+  });
+
+  it('leaves a copy read since alone, and reads again one the change was put back on', () => {
+    queryClient.setQueryData(queryKeys.profile.detail(me), profile);
+    const undo = setProfileChange(me, { displayName: 'Jana A.' });
+    // A read from before the write landed over the change, which `reapply` puts back.
+    queryClient.setQueryData(queryKeys.profile.detail('jana'), profile);
+    applyProfileChange(me, { displayName: 'Jana A.' }, new Set([queryClient.getQueryCache().find({ queryKey: queryKeys.profile.detail('jana') })!.queryHash]));
+    expect(byName()?.displayName).toBe('Jana A.');
+    // Another device renamed the profile since.
+    queryClient.setQueryData(queryKeys.profile.detail(me), { ...profile, displayName: 'J.' });
+
+    undo();
+    // No snapshot of its own (it was cached after the change): read again, never given another copy's.
+    expect(queryClient.getQueryState(queryKeys.profile.detail('jana'))?.isInvalidated).toBe(true);
+    expect(byId()?.displayName).toBe('J.');
+  });
+
+  it('puts each copy back to what it had itself, when the copies were at different versions (QA rc7 review)', () => {
+    // The copy by name was read before another device's rename; the one by identity after it.
+    queryClient.setQueryData(queryKeys.profile.detail('jana'), { ...profile, displayName: 'Jana A' });
+    queryClient.setQueryData(queryKeys.profile.detail(me), { ...profile, displayName: 'Jana B' });
+    const undo = setProfileChange(me, { displayName: 'Jana C' });
+    expect(byName()?.displayName).toBe('Jana C');
+    expect(byId()?.displayName).toBe('Jana C');
+
+    undo();
+    expect(byName()?.displayName).toBe('Jana A');
+    expect(byId()?.displayName).toBe('Jana B');
   });
 });
 

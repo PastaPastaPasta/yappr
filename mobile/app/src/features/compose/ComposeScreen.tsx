@@ -28,6 +28,7 @@ import { successFeedback } from '~/ui/haptics';
 import { IconButton } from '~/ui/IconButton';
 import { LinkText } from '~/ui/LinkText';
 import { useMediaUrls } from '~/ui/media-url';
+import { useNativeText } from '~/ui/native-text';
 import { PostCard } from '~/ui/post/PostCard';
 import { PostStub } from '~/ui/post/PostStub';
 import { QuoteEmbed, QuoteSkeleton } from '~/ui/post/QuoteEmbed';
@@ -130,6 +131,31 @@ function TargetUnread({ onRetry, inset = true }: { onRetry: () => void; inset?: 
   );
 }
 
+/**
+ * The image link field. Uncontrolled (`useNativeText`), so no keystroke is
+ * lost; it mounts with the panel, so it opens with the link as it stands.
+ */
+function MediaLinkField({ value, onChangeText, valid }: { value: string; onChangeText: (text: string) => void; valid: boolean }) {
+  const c = useColors();
+  const { key: inputKey, attach, inputProps } = useNativeText({ value, onChangeText });
+  return (
+    <TextInput
+      key={inputKey}
+      ref={attach}
+      {...inputProps}
+      placeholder="Paste an image link"
+      placeholderTextColor={c.textPlaceholder}
+      autoCapitalize="none"
+      autoCorrect={false}
+      keyboardType="url"
+      accessibilityLabel="Image link"
+      className={cn('min-h-11 rounded-lg border px-3 text-base', valid ? tw.borderStrong : 'border-red-600 dark:border-red-400')}
+      style={{ color: c.textPrimary }}
+      testID="compose-media-url"
+    />
+  );
+}
+
 function useKeyboardShown(): boolean {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -190,7 +216,6 @@ interface ComposerProps {
 }
 
 function Composer({ identityId, username, context }: ComposerProps) {
-  const c = useColors();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const keyboardShown = useKeyboardShown();
@@ -507,22 +532,7 @@ function Composer({ identityId, username, context }: ComposerProps) {
           ))}
           {mediaOpen ? (
             <View className="mb-3 pl-[60px] pr-4" testID="compose-media">
-              <TextInput
-                value={mediaUrl}
-                onChangeText={setMediaUrl}
-                placeholder="Paste an image link"
-                placeholderTextColor={c.textPlaceholder}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                accessibilityLabel="Image link"
-                className={cn(
-                  'min-h-11 rounded-lg border px-3 text-base',
-                  mediaValid ? tw.borderStrong : 'border-red-600 dark:border-red-400',
-                )}
-                style={{ color: c.textPrimary }}
-                testID="compose-media-url"
-              />
+              <MediaLinkField value={mediaUrl} onChangeText={setMediaUrl} valid={mediaValid} />
               {!mediaValid ? (
                 <Text variant="caption" tone="error" className="mt-1" testID="compose-media-error">
                   {mediaTooLong ? 'That link is too long.' : "That doesn't look like an image link."}
