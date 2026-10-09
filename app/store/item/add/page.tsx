@@ -116,6 +116,13 @@ function AddItemPage() {
   // A v7 listing saved with options keeps them: its option-id counter lives in
   // the table, and a new table would give carts' and kits' old ids to other options.
   const [keepVariants, setKeepVariants] = useState(false)
+  /** The listing's revision this form's edits start from (the last one read or written here). */
+  const [sourceRevision, setSourceRevision] = useState<number | undefined>(undefined)
+  /** A table was sent: the listing keeps its options from now on (and they stay ticked). */
+  const keepSentVariants = useCallback(() => {
+    setKeepVariants(true)
+    setHasVariants(true)
+  }, [])
   const [variants, setVariantsState] = useState<ItemVariants>(emptyVariants)
   /**
    * Every table this form holds keeps the highest `nextOptionId` it has seen,
@@ -177,6 +184,7 @@ function AddItemPage() {
         const itemCurrency = item.currency || 'USD'
         const decimals = getCurrencyDecimals(itemCurrency)
 
+        setSourceRevision(item.$revision)
         setTitle(item.title || '')
         setDescription(item.description || '')
         setCurrency(itemCurrency)
@@ -424,15 +432,20 @@ function AddItemPage() {
         }
       }
 
+      /** The revision this edit starts from: the form's own, else (a create found later) the listing's now. */
+      const revisionOf = async (id: string) => sourceRevision ?? (await storeItemService.getManyFresh([id]))[0]?.$revision
+
       let savedItemId: string
       if (targetItemId && effectiveStoreId) {
-        await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData)
-        if (itemData.variants && variantsAreTyped) setKeepVariants(true)
+        const updated = await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData, await revisionOf(targetItemId))
+        setSourceRevision(updated.$revision)
+        if (itemData.variants && variantsAreTyped) keepSentVariants()
         savedItemId = targetItemId
       } else if (effectiveStoreId) {
         const created = await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
         // Broadcast (confirmed or not) with a table: from here it keeps its options.
-        if (itemData.variants && variantsAreTyped) setKeepVariants(true)
+        if (itemData.variants && variantsAreTyped) keepSentVariants()
+        setSourceRevision(created.$revision ?? 1)
         setLoadedStoreId(effectiveStoreId)
         // Broadcast but not seen: the kit cannot reference it yet, and the form
         // must not turn into an edit of a listing that may never exist.
@@ -457,7 +470,7 @@ function AddItemPage() {
     } catch (err) {
       logger.error(`Failed to ${editingItemId ? 'update' : 'create'} item:`, err)
       // A write that failed after it was sent may still land with its table.
-      if (!(err instanceof ListLimitError) && hasVariants && variantsAreTyped) setKeepVariants(true)
+      if (!(err instanceof ListLimitError) && hasVariants && variantsAreTyped) keepSentVariants()
       setError(err instanceof ListLimitError ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
@@ -684,7 +697,7 @@ function AddItemPage() {
                 <input
                   type="checkbox"
                   checked={hasVariants}
-                  disabled={keepVariants}
+                  disabled={keepVariants || isSubmitting}
                   onChange={(e) => {
                     // A fresh table starts empty; one edited before unticking comes back as it was.
                     if (e.target.checked && variants.axes.length === 0) setVariants({ ...emptyVariants(), nextOptionId: variants.nextOptionId })

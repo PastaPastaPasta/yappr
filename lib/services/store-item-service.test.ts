@@ -118,7 +118,7 @@ describe('storefront v7 typed variants', () => {
       get.mockResolvedValue(variantItem);
       const item = defined(await service.getById('item'));
       const restocked = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination) => ({ ...combination, stock: 3 })) };
-      await service.updateItem('item', 'owner', storeId, { variants: restocked });
+      await service.updateItem('item', 'owner', storeId, { variants: restocked }, 4);
       expect(updateDocument).toHaveBeenCalledTimes(1);
       const sent = updateDocument.mock.calls[0][4];
       expect(sent.variants).toMatchObject({ axes: table.axes, optionIds: table.optionIds, stocks: [3, 3, 3, 3], prices: table.prices });
@@ -136,10 +136,25 @@ describe('storefront v7 typed variants', () => {
       get.mockResolvedValue(variantItem);
       const item = defined(await service.getById('item'));
       const broken = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination, index) => (index === 0 ? { ...combination, stock: undefined } : combination)) };
-      await expect(service.updateItem('item', 'owner', storeId, { variants: broken })).rejects.toThrow(/every combination or for none/);
+      await expect(service.updateItem('item', 'owner', storeId, { variants: broken }, 4)).rejects.toThrow(/every combination or for none/);
       await expect(service.updateItem('item', 'owner', storeId, { basePrice: 5 })).rejects.toThrow(/priced and stocked per combination/);
       await expect(service.createItem('owner', storeId, { title: 'T', currency: 'USD', variants: item.variants, stockQuantity: 3 })).rejects.toThrow(/per combination/);
       expect(updateDocument).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
+  it('refuses a table edited from an older revision, and needs one to write a table at all', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue(variantItem);
+      const item = defined(await service.getById('item'));
+      // Another editor saved revision 5 meanwhile; this table was edited from 4.
+      get.mockResolvedValue({ ...variantItem, $revision: 5 });
+      await expect(service.updateItem('item', 'owner', storeId, { variants: item.variants }, 4)).rejects.toThrow(/changed somewhere else/);
+      await expect(service.updateItem('item', 'owner', storeId, { variants: item.variants })).rejects.toThrow(/revision/);
+      expect(updateDocument).not.toHaveBeenCalled();
+      await service.updateItem('item', 'owner', storeId, { variants: item.variants }, 5);
+      expect(updateDocument).toHaveBeenCalledTimes(1);
     } finally { restore(); }
   });
 
@@ -149,7 +164,7 @@ describe('storefront v7 typed variants', () => {
       get.mockResolvedValue(variantItem);
       const item = defined(await service.getById('item'));
       const pictured = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination) => ({ ...combination, image: 2 })) };
-      await expect(service.updateItem('item', 'owner', storeId, { variants: pictured, imageUrls: ['https://a/1.png', 'https://a/1.png', 'https://a/2.png'] })).rejects.toThrow(/same image is in this listing twice/);
+      await expect(service.updateItem('item', 'owner', storeId, { variants: pictured, imageUrls: ['https://a/1.png', 'https://a/1.png', 'https://a/2.png'] }, 4)).rejects.toThrow(/same image is in this listing twice/);
       expect(updateDocument).not.toHaveBeenCalled();
     } finally { restore(); }
   });
@@ -171,7 +186,7 @@ describe('storefront v7 typed variants', () => {
     const item = defined(await storeItemService.getById('item'));
     expect(item.variants?.combinations[0]).toMatchObject({ id: '1', price: 1000, image: 2 });
     const repointed = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination) => ({ ...combination, image: 1 })) };
-    await storeItemService.updateItem('item', 'owner', storeId, { variants: repointed });
+    await storeItemService.updateItem('item', 'owner', storeId, { variants: repointed }, 4);
     expect(JSON.parse(updateDocument.mock.calls[0][4].variants).combinations).toEqual([
       { key: 'S', price: 1000, imageUrl: 'https://a/1.png' }, { key: 'M', price: 1500, imageUrl: 'https://a/1.png' },
     ]);
@@ -247,7 +262,7 @@ describe('product edits (QA D-09, D-11, D-22)', () => {
 
   it('unticking variants removes them so the base price applies', async () => {
     get.mockResolvedValue({ ...raw, variants: JSON.stringify(variants) });
-    const result = await storeItemService.updateItem('item', 'owner', storeId, { basePrice: 999, variants: undefined });
+    const result = await storeItemService.updateItem('item', 'owner', storeId, { basePrice: 999, variants: undefined }, 4);
     expect(updateDocument.mock.calls[0][4]).not.toHaveProperty('variants');
     expect(storeItemService.getPriceRange(result)).toEqual({ min: 999, max: 999 });
   });

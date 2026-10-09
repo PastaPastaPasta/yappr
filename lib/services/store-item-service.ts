@@ -270,12 +270,24 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       sku: string;
       variants: ItemVariants;
       fulfillment: ItemFulfillment;
-    }>
+    }>,
+    /**
+     * The revision the edit started from. Required to write `variants`: a
+     * table edited from an older revision could hand an option id another
+     * editor already gave out (and carts and kits name) to a different option,
+     * so it is refused rather than written over the newer one.
+     */
+    baseRevision?: number
   ): Promise<StoreItem> {
-    // Fetch existing item to preserve required fields
+    if ('variants' in data && baseRevision === undefined) throw new Error('updateItem: writing variants needs the revision they were edited from');
+    // Fetch existing item to preserve required fields (fresh when the edit must match it)
+    if (baseRevision !== undefined) this.cache.delete(itemId);
     const existing = await this.get(itemId);
     if (!existing) {
       throw new Error('Item not found');
+    }
+    if (baseRevision !== undefined && existing.$revision !== undefined && existing.$revision !== baseRevision) {
+      throw new ListLimitError('This product was changed somewhere else since you opened it. Reload it and make your changes again.');
     }
 
     const documentData: Record<string, unknown> = {

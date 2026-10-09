@@ -23,7 +23,8 @@ import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
 /** What a stock edit changed on an item, for the page to merge into its copy. */
-export type InventoryItemChanges = Partial<Pick<StoreItem, 'stockQuantity' | 'variants'>>
+/** What a save changed, with the revision it wrote (the next variant save must start from it). */
+export type InventoryItemChanges = Partial<Pick<StoreItem, 'stockQuantity' | 'variants' | '$revision'>>
 
 interface InventoryTableProps {
   items: StoreItem[]
@@ -281,8 +282,8 @@ export function InventoryTable({
     )
     setSavingItemId(item.id)
     try {
-      await storeItemService.updateItem(item.id, ownerId, storeId, { variants })
-      onItemUpdated?.(item.id, { variants })
+      const updated = await storeItemService.updateItem(item.id, ownerId, storeId, { variants }, item.$revision)
+      onItemUpdated?.(item.id, { variants, $revision: updated.$revision })
       // Only the edits this write carried: one typed while it was pending stays unsaved.
       setStockDrafts((prev) => {
         const left = Object.fromEntries(Object.entries(prev[item.id] ?? {}).filter(([variantId, stock]) => drafts[variantId] !== stock))
@@ -318,8 +319,8 @@ export function InventoryTable({
     const stockQuantity = editingStock.value.trim() === '' ? undefined : parseStock(editingStock.value)
     if (stockQuantity === null || stockQuantity === item.stockQuantity) return
     try {
-      await storeItemService.updateItem(item.id, ownerId, storeId, { stockQuantity })
-      onItemUpdated?.(item.id, { stockQuantity })
+      const updated = await storeItemService.updateItem(item.id, ownerId, storeId, { stockQuantity })
+      onItemUpdated?.(item.id, { stockQuantity, $revision: updated.$revision })
     } catch (err) {
       logger.error('Failed to update stock:', err)
       toast.error(err instanceof ListLimitError ? err.message : 'Stock could not be saved. Please try again.')
@@ -349,6 +350,8 @@ export function InventoryTable({
   ) => {
     const isEditing = editingStock?.itemId === item.id && editingStock?.variantId === variantId
     const edited = variantId !== undefined && stockDrafts[item.id]?.[variantId] !== undefined
+    // Edits wait for this item's save: one made meanwhile could be lost or undone by it.
+    const isSaving = savingItemId === item.id
 
     if (isEditing) {
       return (
@@ -379,6 +382,7 @@ export function InventoryTable({
     return (
       <button
         onClick={() => handleStockEdit(item.id, stock, variantId)}
+        disabled={isSaving}
         title={edited ? 'Not saved yet' : undefined}
         className={`text-right hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-1 rounded transition-colors ${edited ? 'ring-1 ring-yappr-500' : ''}`}
       >
@@ -393,7 +397,7 @@ export function InventoryTable({
         )}
       </button>
     )
-  }, [editingStock, stockDrafts, handleStockEdit, handleStockSave])
+  }, [editingStock, stockDrafts, savingItemId, handleStockEdit, handleStockSave])
 
   const SortButton = useCallback(({ field, children }: { field: SortField; children: React.ReactNode }) => (
     <button
