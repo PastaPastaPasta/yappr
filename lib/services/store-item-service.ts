@@ -285,8 +285,12 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     baseRevision?: number
   ): Promise<StoreItem> {
     if ('variants' in data && baseRevision === undefined) throw new Error('updateItem: writing variants needs the revision they were edited from');
-    // Fetch existing item to preserve required fields (fresh when the edit must match it)
-    if (baseRevision !== undefined) this.cache.delete(itemId);
+    // The table is re-encoded whenever the images change too: on v1–v6 a
+    // combination's image is stored as its URL, not an index.
+    const writesTable = 'variants' in data || 'imageUrls' in data;
+    // Fetch existing item to preserve required fields (fresh when the edit must match it,
+    // or when it rewrites the table, which it then writes only over that same revision)
+    if (baseRevision !== undefined || writesTable) this.cache.delete(itemId);
     const existing = await this.get(itemId);
     if (!existing) {
       throw new Error('Item not found');
@@ -315,9 +319,6 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('weight' in data) documentData.weight = data.weight;
     if ('stockQuantity' in data) documentData.stockQuantity = data.stockQuantity;
     if ('sku' in data) documentData.sku = data.sku;
-    // The table is re-encoded whenever the images change too: on v1–v6 a
-    // combination's image is stored as its URL, not an index.
-    const writesTable = 'variants' in data || 'imageUrls' in data;
     const imageUrls = 'imageUrls' in data ? data.imageUrls : existing.imageUrls;
     const variants = 'variants' in data ? data.variants : existing.variants;
     if (writesTable) documentData.variants = variants && storedVariants(variants, imageUrls);
@@ -329,7 +330,9 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     const merged: Record<string, unknown> = { ...this.extractContentFields(existing), ...documentData };
     for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
     assertStorable(merged, writesTable ? variants : undefined, imageUrls);
-    return this.update(itemId, ownerId, documentData, baseRevision);
+    // A table rewritten from `existing` (an image-only edit) is bound to the
+    // revision it was read at, as an explicit edit is to its base revision.
+    return this.update(itemId, ownerId, documentData, baseRevision ?? (writesTable ? existing.$revision : undefined));
   }
 
   /**

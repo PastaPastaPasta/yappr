@@ -113,9 +113,10 @@ const GENERIC_VARIANT_HEADERS = new Set(['variant', 'option', 'option1', 'sub va
 /** Specific headers whose axis name is spelled differently from the header. */
 const AXIS_NAME_OF_HEADER: Record<string, string> = { color: 'Color', colour: 'Color' }
 
-const SHOPIFY_OPTION_HEADER = /^option[\s_]*([1-5])[\s_]*(name|value)$/
+const SHOPIFY_OPTION_HEADER = /^option[\s_]*([1-9]\d?)[\s_]*(name|value)$/
 const IMAGE_HEADER = /^(?:image|img|picture|photo)[\s_]*(\d{1,2})$/
-const MAX_OPTION_COLUMNS = 5
+/** How many `OptionN` column pairs the file has (every one is read; v7's cap of 5 is checked, not cut). */
+const optionColumnCount = (columns: ColumnMap) => Math.max(columns.optionNames.length, columns.optionValues.length)
 
 interface ColumnMap {
   fields: Partial<Record<Column, number>>
@@ -518,7 +519,7 @@ interface AxisPlan {
  * is a single product without options.
  */
 function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string): AxisPlan | null {
-  const shopifySlots = Array.from({ length: MAX_OPTION_COLUMNS }, (_, slot) => slot)
+  const shopifySlots = Array.from({ length: optionColumnCount(columns) }, (_, slot) => slot)
     .filter((slot) => rows.some((row) => row.options[slot]?.value))
   if (shopifySlots.length > 0) {
     // Shopify writes a product without options as Title: "Default Title".
@@ -543,7 +544,8 @@ function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string)
     if (rows.some((row) => row.variant && looksCompound(row.variant))) {
       const splits = rows.map((row) => splitCompound(row.variant ?? ''))
       const first = splits[0]
-      const consistent = first !== null && first.names.length <= VARIANT_LIMITS.axes && !hasDuplicateName(first.names)
+      // v7 caps option types at 5 (validation reports more); v1–v6 take any number.
+      const consistent = first !== null && (!storefrontVariantsAreTyped() || first.names.length <= VARIANT_LIMITS.axes) && !hasDuplicateName(first.names)
         && splits.every((split) => split !== null && sameNames(split.names, first.names))
       if (consistent) {
         parts.push({ names: first.names, values: (_, index) => splits[index]?.values ?? [] })
@@ -784,7 +786,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     const shippingCostStr = getValue('shippingCost')
     const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, currency) : undefined
 
-    const options = Array.from({ length: MAX_OPTION_COLUMNS }, (_, slot) => ({
+    const options = Array.from({ length: optionColumnCount(columns) }, (_, slot) => ({
       name: cell(columns.optionNames[slot]) || undefined,
       value: cell(columns.optionValues[slot]) || undefined,
     }))

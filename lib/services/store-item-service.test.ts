@@ -168,6 +168,10 @@ describe('storefront v7 typed variants', () => {
       get.mockResolvedValueOnce(variantItem).mockResolvedValueOnce({ ...variantItem, $revision: 5 });
       await expect(service.updateItem('item', 'owner', storeId, { variants: item.variants }, 4)).rejects.toThrow(/changed somewhere else/);
       expect(updateDocument).not.toHaveBeenCalled();
+      // An image-only edit rewrites the table too, so it is bound to the revision it read.
+      get.mockResolvedValueOnce(variantItem).mockResolvedValueOnce({ ...variantItem, $revision: 5 });
+      await expect(service.updateItem('item', 'owner', storeId, { imageUrls: ['https://a/1.png', 'https://a/2.png', 'https://a/3.png'] })).rejects.toThrow(/changed somewhere else/);
+      expect(updateDocument).not.toHaveBeenCalled();
     } finally { restore(); }
   });
 
