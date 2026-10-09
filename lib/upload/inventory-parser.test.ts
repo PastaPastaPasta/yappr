@@ -155,6 +155,14 @@ describe('option types from Shopify-style columns', () => {
     expect(item.basePrice).toBe(900)
   })
 
+  it('keeps a real option whose value is "Default Title", through an export and back', async () => {
+    const { variants } = onlyVariants('Title,Option1 Name,Option1 Value,Price\nPoster,Format,Default Title,9.00')
+    expect(axesOf(variants)).toEqual([['Format', ['Default Title']]])
+    const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
+    const { csv } = inventoryToCsv([{ id: 'p', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Poster', variants }], 'USD')
+    expect(axesOf(onlyVariants(csv).variants)).toEqual([['Format', ['Default Title']]])
+  })
+
   it('takes Shopify option columns over the variant column', () => {
     const { variants } = onlyVariants('Group,Item Name,Variant,Option1 Name,Option1 Value,Price\ng,Cap,ignored,Size,M,5.00\ng,Cap,ignored too,Size,L,5.00')
     expect(axesOf(variants)).toEqual([['Size', ['M', 'L']]])

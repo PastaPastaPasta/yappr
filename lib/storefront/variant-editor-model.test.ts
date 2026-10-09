@@ -3,7 +3,7 @@ import type { ItemVariants } from '@/lib/types'
 import { addAxis, emptyVariants, removeCombination, updateCombination } from './variant-codec'
 import {
   convertPrices, defaultCombinationPrice, formatPriceInput, fullGridSize, missingCombinationCount, parseCountInput, parsePriceInput,
-  shiftImagesAfterRemoval, splitOptionNames, tidyNames, variantGrowthProblem,
+  shiftImagesAfterRemoval, splitOptionNames, tidyNames, tooManyCombinations, variantGrowthProblem,
 } from './variant-editor-model'
 import { VARIANT_LIMITS } from './storefront-contract'
 
@@ -126,15 +126,17 @@ describe('variantGrowthProblem', () => {
 
   it('refuses more combinations than a product can offer', () => {
     const half = Array.from({ length: 16 }, (_, index) => `A${index}`)
-    const big = addAxis(addAxis(emptyVariants(), 'One', half, { price: 1 }), 'Two', [...half, 'extra'], { price: 1 })
-    expect(big.combinations.length).toBeGreaterThan(VARIANT_LIMITS.combinations)
-    expect(variantGrowthProblem(big)).toContain(`at most ${VARIANT_LIMITS.combinations}`)
+    // addAxis itself refuses this grid (CombinationLimitError); a table read as stored can still hold it.
+    const one = addAxis(emptyVariants(), 'One', half, { price: 1 })
+    const big = { ...one, combinations: Array.from({ length: VARIANT_LIMITS.combinations + 1 }, (_, index) => one.combinations[index % half.length]) }
+    expect(variantGrowthProblem(big)).toBe(tooManyCombinations(VARIANT_LIMITS.combinations + 1))
+    expect(tooManyCombinations(272)).toContain(`272 combinations, and a product can offer at most ${VARIANT_LIMITS.combinations}`)
   })
 
   it('refuses more options than a product can have', () => {
     const names = Array.from({ length: VARIANT_LIMITS.options + 1 }, (_, index) => `O${index}`)
     expect(variantGrowthProblem(addAxis(emptyVariants(), 'Many', names, { price: 1 }))).toContain(`at most ${VARIANT_LIMITS.options} options`)
-    // v1–v6 cap no option count.
+    // v1–v6 allow up to the 254 option ids.
     expect(variantGrowthProblem(addAxis(emptyVariants(), 'Many', names, { price: 1 }), true)).toBeUndefined()
   })
 })

@@ -377,8 +377,25 @@ function dataOf(combination: VariantCombination): CombinationData {
 const defaultData = (defaults: CombinationDefaults): CombinationData =>
   (defaults.stock === undefined ? { price: defaults.price } : { price: defaults.price, stock: defaults.stock })
 
-/** Every way to pick one of each list (the cartesian product). */
+/**
+ * An edit would offer `size` combinations, more than a product may
+ * (`VARIANT_LIMITS.combinations`). Thrown before the grid is built, since it
+ * can be huge (five option types of 50 options is 6,250,000).
+ */
+export class CombinationLimitError extends Error {
+  constructor(readonly size: number) {
+    super(`${size} combinations is more than a product can offer`)
+    this.name = 'CombinationLimitError'
+  }
+}
+
+function assertGridFits(size: number): void {
+  if (size > VARIANT_LIMITS.combinations) throw new CombinationLimitError(size)
+}
+
+/** Every way to pick one of each list (the cartesian product); refused past the combination cap. */
 function product(lists: number[][]): number[][] {
+  assertGridFits(lists.reduce((size, list) => size * list.length, 1))
   return lists.reduce<number[][]>((rows, list) => rows.flatMap((row) => list.map((value) => [...row, value])), [[]])
 }
 
@@ -404,9 +421,11 @@ function allocate(variants: ItemVariants, names: readonly string[]): { variants:
  * per new option. With a single new option a combination keeps everything
  * (stock and SKU included); with several, each copy keeps the price, image
  * and weight, starting stock at the default and with no SKU, since one
- * product's stock and SKU cannot belong to several.
+ * product's stock and SKU cannot belong to several. Throws
+ * {@link CombinationLimitError} when that would pass the combination cap.
  */
 export function addAxis(variants: ItemVariants, name: string, optionNames: readonly string[], defaults: CombinationDefaults): ItemVariants {
+  if (variants.axes.length > 0) assertGridFits(variants.combinations.length * optionNames.length)
   const { variants: allocated, options } = allocate(variants, optionNames)
   const axes = [...allocated.axes, { name, options }]
   if (allocated.axes.length === 0) {
@@ -459,7 +478,9 @@ export function moveAxis(variants: ItemVariants, from: number, to: number): Item
 /**
  * Add an option named `name` to axis `axisIndex`. It is offered with every
  * pattern of the other axes the table already offers (so combinations the
- * seller removed stay removed), each at the defaults.
+ * seller removed stay removed), each at the defaults. When it offers none, the
+ * option comes with every pattern, which throws {@link CombinationLimitError}
+ * past the combination cap.
  */
 export function addOption(variants: ItemVariants, axisIndex: number, name: string, defaults: CombinationDefaults): ItemVariants {
   const { variants: allocated, options: [option] } = allocate(variants, [name])
@@ -537,7 +558,7 @@ export function removeCombination(variants: ItemVariants, variantId: string): It
   return { ...variants, combinations: variants.combinations.filter((combination) => combination.id !== variantId) }
 }
 
-/** The combinations of the current options the table does not offer, as option ids in axis order. */
+/** The combinations of the current options the table does not offer, as option ids in axis order; throws {@link CombinationLimitError} past the cap. */
 export function missingCombinations(variants: ItemVariants): number[][] {
   if (variants.axes.length === 0) return []
   const offered = new Set(variants.combinations.map((combination) => combination.id))

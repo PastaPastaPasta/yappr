@@ -530,8 +530,10 @@ function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string)
   const shopifySlots = columns.options.map((_, slot) => slot)
     .filter((slot) => rows.some((row) => row.options[slot]?.value))
   if (shopifySlots.length > 0) {
-    // Shopify writes a product without options as Title: "Default Title".
-    const onlyDefault = rows.length === 1 && shopifySlots.length === 1 && rows[0].options[shopifySlots[0]]?.value?.toLowerCase() === 'default title'
+    // Shopify writes a product without options as the pair Title: "Default
+    // Title"; any other option type with that value is a real option.
+    const only = rows.length === 1 && shopifySlots.length === 1 ? rows[0].options[shopifySlots[0]] : undefined
+    const onlyDefault = only?.name?.trim().toLowerCase() === 'title' && only.value?.trim().toLowerCase() === 'default title'
     if (onlyDefault) return null
     // Shopify names an option type on the group's first row only: carry it down.
     const names = shopifySlots.map((slot, index) => rows.map((row) => row.options[slot]?.name).find(Boolean) ?? genericAxisName(index))

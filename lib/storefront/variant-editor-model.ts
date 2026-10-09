@@ -103,10 +103,13 @@ export function variantGrowthProblem(variants: ItemVariants, legacy = false): st
   // v7 caps options at 64; v1–v6 at the 254 option ids every listing has (a
   // table past 256 combinations cannot fit their JSON either).
   if (optionCount > (legacy ? VARIANT_LIMITS.maxOptionId : VARIANT_LIMITS.options)) return `A product can have at most ${legacy ? VARIANT_LIMITS.maxOptionId : VARIANT_LIMITS.options} options in all.`
-  if (variants.combinations.length > VARIANT_LIMITS.combinations) {
-    return `That would make ${variants.combinations.length} combinations, and a product can offer at most ${VARIANT_LIMITS.combinations}. Use fewer options, or split it into several listings.`
-  }
+  if (variants.combinations.length > VARIANT_LIMITS.combinations) return tooManyCombinations(variants.combinations.length)
   return undefined
+}
+
+/** Why an edit making `size` combinations is refused. */
+export function tooManyCombinations(size: number): string {
+  return `That would make ${size} combinations, and a product can offer at most ${VARIANT_LIMITS.combinations}. Use fewer options, or split it into several listings.`
 }
 
 /**

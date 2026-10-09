@@ -7,12 +7,12 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import type { ItemVariants, VariantAxis, VariantCombination } from '@/lib/types'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import {
-  addAxis, addOption, findOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
+  CombinationLimitError, addAxis, addOption, findOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
   restoreCombinations, sameName, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
   type CombinationData, type CombinationDefaults,
 } from '@/lib/storefront/variant-codec'
 import {
-  formatPriceInput, fullGridSize, missingCombinationCount, parseCountInput, parsePriceInput, splitOptionNames, variantGrowthProblem,
+  formatPriceInput, missingCombinationCount, parseCountInput, parsePriceInput, splitOptionNames, tooManyCombinations, variantGrowthProblem,
 } from '@/lib/storefront/variant-editor-model'
 
 interface VariantEditorProps {
@@ -98,8 +98,20 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   const [bulkPrice, setBulkPrice] = useState('')
   const [bulkStock, setBulkStock] = useState('')
 
-  /** Apply an edit unless it makes the table larger than a product may be; whether it was applied. */
-  const apply = (next: ItemVariants): boolean => {
+  /**
+   * Build and apply an edit that can grow the table, unless it makes the table
+   * larger than a product may be; whether it was applied. The codec refuses a
+   * grid past the cap before building it.
+   */
+  const grow = (build: () => ItemVariants): boolean => {
+    let next: ItemVariants
+    try {
+      next = build()
+    } catch (error) {
+      if (!(error instanceof CombinationLimitError)) throw error
+      setNotice(tooManyCombinations(error.size))
+      return false
+    }
     const problem = variantGrowthProblem(next, legacy)
     if (problem) {
       setNotice(problem)
@@ -117,7 +129,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
       setNotice('This product has used all its option numbers. To offer more options, list it again as a new product.')
       return false
     }
-    return apply(add())
+    return grow(add)
   }
 
   const handleRemoveAxis = (axisIndex: number) => {
@@ -159,13 +171,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   const bulkStockValue = parseCountInput(bulkStock, VARIANT_LIMITS.maxStock)
   const missing = missingCombinationCount(variants)
   const handleRestore = () => {
-    // Refuse a grid too large to offer before building it, since it can be very large.
-    const size = fullGridSize(variants)
-    if (size > VARIANT_LIMITS.combinations) {
-      setNotice(`Offering every combination would make ${size}, and a product can offer at most ${VARIANT_LIMITS.combinations}. Remove some options first.`)
-      return
-    }
-    apply(restoreCombinations(variants, defaults))
+    grow(() => restoreCombinations(variants, defaults))
   }
   const setBulkPrices = () => {
     if (bulkPriceValue === undefined) return

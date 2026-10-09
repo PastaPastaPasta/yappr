@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ItemVariants } from '@/lib/types'
 import {
-  addAxis, addOption, clampImages, combinationForSelection, combinationImageUrl, decodeVariants, emptyVariants, encodeVariants,
+  CombinationLimitError, addAxis, addOption, clampImages, combinationForSelection, combinationImageUrl, decodeVariants, emptyVariants, encodeVariants,
   findCombination, missingCombinations, moveAxis, moveOption, optionIdsLeft, orderLineVariantLabel, priceRange, removeAxis, removeCombination, removeOption, renameAxis,
   renameOption, restoreCombinations, selectableOptionIds, setStockTracking, tracksStock, updateCombination,
   updateCombinations, variantIdOf, variantLabel, variantProblems, variantsFromRows, type VariantRow,
@@ -194,6 +194,24 @@ describe('editing', () => {
       ['1.2', 900, undefined], ['1.3', 1500, 2], ['2.4', 900, undefined], ['3.4', 1500, 2],
     ])
     expect(tracksStock(setStockTracking(table, false))).toBe(false)
+  })
+
+  it('refuses an edit past the combination cap before building the grid', () => {
+    // Five option types of 50 options, none offered: one more option would mean 50^4 combinations.
+    const axes = Array.from({ length: 5 }, (_, a) => ({ name: `T${a}`, options: Array.from({ length: 50 }, (_, o) => ({ id: a * 50 + o + 1, name: `o${o}` })) }))
+    const bare: ItemVariants = { axes, combinations: [], nextOptionId: 251 }
+    const limitOf = (edit: () => unknown) => {
+      try {
+        edit()
+      } catch (error) {
+        return error instanceof CombinationLimitError ? error.size : -1
+      }
+      return 0
+    }
+    expect(limitOf(() => addOption(bare, 0, 'new', DEFAULTS))).toBe(50 ** 4)
+    expect(limitOf(() => restoreCombinations(bare, DEFAULTS))).toBe(50 ** 5)
+    expect(limitOf(() => addAxis(shirt(), 'Pack', Array.from({ length: 65 }, (_, n) => `p${n}`), DEFAULTS))).toBe(4 * 65)
+    expect(limitOf(() => addAxis(shirt(), 'Pack', ['one', 'two'], DEFAULTS))).toBe(0)
   })
 
   it('never reuses an id: once the 254 run out, no option can be added', () => {
