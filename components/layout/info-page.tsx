@@ -95,7 +95,7 @@ export function Prose({ children, className }: { children: ReactNode; className?
   return <div className={cn('text-gray-600 dark:text-gray-400 leading-relaxed', className)}>{children}</div>
 }
 
-/** The amber "this is testnet" box at the top of the legal pages. */
+/** The networks that are not mainnet. */
 type TestNetwork = 'testnet' | 'devnet'
 
 /** The test network this build runs on, or null on mainnet. The legal pages' copy follows it (D-013). */
@@ -109,7 +109,7 @@ const NOTICE: Record<TestNetwork, { title: string; where: string }> = {
   devnet: { title: 'Devnet Notice', where: 'a Dash Platform devnet' },
 }
 
-/** The amber notice naming the test network this build runs on; nothing on mainnet. */
+/** The amber box atop the legal pages naming the test network this build runs on; nothing on mainnet. */
 export function NetworkNotice({ children }: { children: (network: { name: TestNetwork; where: string }) => ReactNode }) {
   const name = testNetwork()
   if (!name) return null
