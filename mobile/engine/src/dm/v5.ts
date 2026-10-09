@@ -3,7 +3,6 @@ import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
 import type { Conv } from '@/lib/services/dm-v5/conversation'
 import { GroupError } from '@/lib/services/dm-v5/groups'
-import type { WriteOutcome } from '@/lib/services/dm-v5/types'
 import { isTimeoutError } from '@/lib/error-utils'
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
@@ -110,8 +109,8 @@ function readPendingRetention(storage: KeyValueArea, identityId: string): Pendin
 }
 
 /**
- * How long a send may take before it is given up as not sent, unless one of
- * its messages is on its way then. A send is about four DAPI round trips
+ * How long a send may take before it is given up as not sent, unless it has
+ * written something by then (an invite or a message). A send is about four DAPI round trips
  * (about 2 s); this allows three consecutive 8 s SDK timeouts
  * (`evo-sdk-service` `timeoutMs`). It stays under the 45 s a send may take
  * to get its ticket (`SEND_SUBMIT_DEADLINE_MS`) and the 60 s after which a
@@ -129,36 +128,20 @@ export const SEND_BUDGET_MS = 30_000
  */
 export const SEND_REATTEMPT_PAUSE_MS = 2_000
 
-const SEND_GAVE_UP = 'Sending took too long, so it was not sent. Try again.'
+/** A send given up before anything went out: the same words wherever a send takes too long. */
+export const SEND_GAVE_UP = "Sending took too long, so it wasn't sent. Try again."
 
 /**
- * A send in progress: its broadcasts, the writes it made (its broadcasts and
- * a new conversation's invite), my messages the conversation held at the
- * latest broadcast, and whether it was given up as not sent (it may
- * broadcast nothing from then on).
+ * A send in progress: how many writes it made (its conversation's invite,
+ * each broadcast of a message, counted just before each goes out), and
+ * whether it was given up as not sent (it may write nothing from then on).
+ * Only this send's own writes count: lib runs group grants, leaves and
+ * re-keys through the same chain, and none of them is this send's.
  */
 interface SendAttempt {
-  key: string
-  broadcasts: number
   writes: number
-  heldAtBroadcast: number
   abandoned: boolean
 }
-
-/** One engine's sends, run one at a time, and the one in progress. */
-interface SendLane {
-  queue: Promise<unknown>
-  attempt: SendAttempt | null
-}
-
-const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
-
-/** Whether none of the attempt's messages may still land: none broadcast, or the latest is held (it landed). */
-const nothingOnItsWay = (engine: DmEngine, attempt: SendAttempt): boolean =>
-  attempt.broadcasts === 0 || ownMessages(engine, attempt.key) > attempt.heldAtBroadcast
-
-/** The refusal a given-up send gets for a broadcast it tries after all: lib throws it, nothing goes out. */
-const REFUSED_AFTER_GIVING_UP: WriteOutcome = { ok: false, failure: 'other', error: SEND_GAVE_UP }
 
 /**
  * Whether a send that failed before writing anything tries once more: the
@@ -175,19 +158,18 @@ function reattempts(error: unknown, attempt: SendAttempt): boolean {
 const pause = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
 
 /**
- * `turn`'s outcome, or, `SEND_BUDGET_MS` after the send started with none of
- * its messages on its way, a retryable not-sent failure (`NETWORK`): the
- * attempt is given up, so lib's call, which runs on until its own requests
- * end, can broadcast nothing more. A message on its way then may land: the
- * send waits for its answer, and its ticket reads "still sending" in the
- * meantime (`PENDING_DEADLINE_MS`).
+ * `turn`'s outcome, or, `SEND_BUDGET_MS` after the send started with nothing
+ * written, a retryable not-sent failure (`NETWORK`): the attempt is given
+ * up, so lib's call, which runs on until its own requests end, writes
+ * nothing more (`beforeWrite` refuses). Once anything was written, part of
+ * the send may land: this stops timing and waits for lib's answer, and the
+ * ticket reads "still sending" in the meantime (`PENDING_DEADLINE_MS`).
  */
-function withinBudget(turn: Promise<void>, engine: DmEngine, attempt: SendAttempt): Promise<void> {
+function withinBudget(turn: Promise<void>, attempt: SendAttempt): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
-      if (!nothingOnItsWay(engine, attempt)) return
+      if (attempt.writes > 0) return
       attempt.abandoned = true
-      turn.catch(error => logger.debug('DM send: a send given up as not sent has ended:', error))
       reject(new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK')))
     }, SEND_BUDGET_MS)
     turn.then(
@@ -288,43 +270,11 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
   /** Saves still running for engines already stopped: their end rewrites lib's cache. */
   const flushes = new Map<string, Promise<unknown>>()
   /**
-   * Each engine's sends, one at a time, so a broadcast seen during one is its
-   * own (or, harmlessly, a group write's). Per engine: a send hanging on an
-   * old account's engine never holds up the next account's.
+   * Each engine's sends, one at a time, so a send that tries once more
+   * (RC16-A-05) never lets a later one overtake it. Per engine: a send
+   * hanging on an old account's engine never holds up the next account's.
    */
-  const lanes = new WeakMap<DmEngine, SendLane>()
-
-  /**
-   * The engine's send lane, which counts `createMessage` broadcasts on its
-   * chain for the send in progress. lib sends a long text part by part inside
-   * one call and reports a failure without saying whether the failing part
-   * was broadcast; this tells (SR-17).
-   */
-  function laneOf(running: DmEngine): SendLane {
-    const known = lanes.get(running)
-    if (known) return known
-    const lane: SendLane = { queue: Promise.resolve(), attempt: null }
-    lanes.set(running, lane)
-    const { chain } = running.ctx
-    const createMessage = chain.createMessage.bind(chain)
-    chain.createMessage = (tag, body) => {
-      const { attempt } = lane
-      if (attempt) {
-        // Given up as not sent: nothing may go out after all.
-        if (attempt.abandoned) return Promise.resolve(REFUSED_AFTER_GIVING_UP)
-        attempt.broadcasts += 1
-        attempt.writes += 1
-        attempt.heldAtBroadcast = ownMessages(running, attempt.key)
-      }
-      return createMessage(tag, body)
-    }
-    const createInvite = chain.createInvite.bind(chain)
-    chain.createInvite = invite => {
-      if (lane.attempt) lane.attempt.writes += 1
-      return createInvite(invite)
-    }
-    return lane
-  }
+  const lanes = new WeakMap<DmEngine, Promise<unknown>>()
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
   function engineOf(identityId: string): DmEngine | null {
@@ -576,39 +526,44 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      * `DmEngine.send` settles uncertain broadcasts itself (it reads the slot
      * back), so a resolve is `confirmed` and a reject is classified
      * (ENGINE.md §7.1). Long text goes out as several messages (§5.7). A
-     * failure before the failing part was broadcast (a read, the group's
-     * state) is a `NotSentError`: nothing of that part can land, so it is
-     * failed, not "maybe sent".
+     * failure before the send wrote anything (a read, the group's state) is
+     * a `NotSentError`: nothing of it can land, so it is failed, not "maybe
+     * sent". After any write (the invite, an earlier part), it never is.
      */
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const running = engine(identityId)
-      const lane = laneOf(running)
-      const current: SendAttempt = { key, broadcasts: 0, writes: 0, heldAtBroadcast: 0, abandoned: false }
-      const turn = lane.queue.then(async () => {
+      const current: SendAttempt = { writes: 0, abandoned: false }
+      // Counts this send's own writes, and refuses them once it was given up.
+      const beforeWrite = () => {
+        if (current.abandoned) throw new RpcError(SEND_GAVE_UP, 'NETWORK')
+        current.writes += 1
+      }
+      const turn = (lanes.get(running) ?? Promise.resolve()).then(async () => {
         // Given up while it waited behind an earlier send: never started.
         if (current.abandoned) throw new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK'))
-        lane.attempt = current
         try {
           try {
-            await running.send(key, text)
+            await running.send(key, text, { beforeWrite })
           } catch (error) {
             if (!reattempts(error, current)) throw error
             logger.debug('DM send: the connection failed before anything went out; trying once more:', error)
             await pause(SEND_REATTEMPT_PAUSE_MS)
             if (current.abandoned) throw error
-            await running.send(key, text)
+            await running.send(key, text, { beforeWrite })
           }
         } catch (error) {
-          // No broadcast at all, or the part last broadcast is held (it landed) and the next failed before its own.
-          if (nothingOnItsWay(running, current)) throw new NotSentError(error)
+          // Nothing written (no invite, no broadcast): nothing of it can land. After any write, a
+          // part may have gone out, so the failure is "may have been sent" and is checked.
+          if (current.writes === 0) throw new NotSentError(error)
           throw error
-        } finally {
-          if (lane.attempt === current) lane.attempt = null
         }
       })
-      // The lane stays busy until lib's call ends, even one given up: the next send never starts beside it.
-      lane.queue = turn.catch(() => undefined)
-      await withinBudget(turn, running, current)
+      // The lane stays busy until lib's call ends, even one given up: the next send never starts
+      // beside it. A part that stalls after an earlier part was written is never given up (it may
+      // land), so it holds this lane, and lib's queue, until lib answers; only the ticket's 60 s
+      // deadline ("still sending", PENDING_DEADLINE_MS) covers that wait.
+      lanes.set(running, turn.catch(() => undefined))
+      await withinBudget(turn, current)
       return { state: 'confirmed' }
     },
 

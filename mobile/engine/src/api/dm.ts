@@ -17,7 +17,7 @@ import { badCursor, cursorInt, cursorString, decodeCursor } from '../dto/cursor'
 import { loadUserSummaries, notSupported } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
 import { createLegacyBackend, type LegacyDmService, type LegacyReads } from '../dm/legacy'
-import { createV5Backend, type DmEngineSource } from '../dm/v5'
+import { createV5Backend, SEND_GAVE_UP, type DmEngineSource } from '../dm/v5'
 import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
@@ -474,7 +474,7 @@ export function createDmModule(options: DmModuleOptions) {
       // What is already mine, so "check again" never mistakes an earlier identical message for this one.
       const before = (await backend.messages(identityId, conversation)).filter(m => m.own).map(m => m.id)
       assertStill(identityId)
-      if (Date.now() - calledAt > SEND_SUBMIT_DEADLINE_MS) throw new RpcError('Sending took too long, so nothing was sent. Try again.', 'NETWORK')
+      if (Date.now() - calledAt > SEND_SUBMIT_DEADLINE_MS) throw new RpcError(SEND_GAVE_UP, 'NETWORK')
       return options.tickets.submit<SendArgs>({ op: 'dm.send', args: { identityId, key: conversation, text, before }, target: { conversationKey: conversation } })
     },
 

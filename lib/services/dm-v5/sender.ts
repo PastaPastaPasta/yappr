@@ -20,7 +20,7 @@ import { currentEpoch, newestOwn, stream, type Conv, type HeldMessage, type Stre
 import { curWeek, type DmContext } from './context'
 import { applyGroups, isFresh } from './group-apply'
 import { fetchWants, historyWants, receive, streamWants } from './poller'
-import type { ChainMessage } from './types'
+import type { BeforeWrite, ChainMessage } from './types'
 import { MAX_LOOKBACK_WEEKS, STALE_WINDOW_MS, hexId, pointerKey } from './util'
 import { withNonceRetry } from './write-failure'
 
@@ -75,8 +75,8 @@ async function slotAfter(ctx: DmContext, tag: Uint8Array, body: Uint8Array): Pro
   return { state: bytesEqual(doc.ownerId, ctx.me.id) && bytesEqual(doc.body, body) ? 'landed' : 'taken', doc }
 }
 
-/** Write one message of `content` on my stream. Returns what was held for it. */
-export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent): Promise<HeldMessage> {
+/** Write one message of `content` on my stream. Returns what was held for it. `beforeWrite` runs before each broadcast. */
+export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent, beforeWrite?: BeforeWrite): Promise<HeldMessage> {
   if (conv.kind === 'group') {
     // Never send on an old epoch: a refresh that did not reach the chain leaves the group as it
     // was, and a member removed since could read the message. The text stays in the composer.
@@ -105,7 +105,10 @@ export async function sendContent(ctx: DmContext, conv: Conv, content: DmContent
     const { tag, body } = sealed
     // A nonce clash with my other device writes nothing: the same slot is retried after a backoff
     // (with a fresh nonce); if its message took the slot, the 40105 path below moves on.
-    const outcome = await withNonceRetry(() => ctx.chain.createMessage(tag, body), ctx.sleep)
+    const outcome = await withNonceRetry(() => {
+      beforeWrite?.()
+      return ctx.chain.createMessage(tag, body)
+    }, ctx.sleep)
     const pointer = { w, j, b: epoch.b, r: epoch.r }
     if (outcome.ok && outcome.confirmed) return hold(ctx, conv, st, pointer, outcome.id, content, prev)
     // A refusal other than a taken slot ends the send, unless an earlier uncertain broadcast of this

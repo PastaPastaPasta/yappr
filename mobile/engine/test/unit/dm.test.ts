@@ -438,8 +438,8 @@ describe('dm on DM v5: 1:1', () => {
     const engine = a.engine()
     const send = engine.send.bind(engine)
     // The message goes out, then the device locks before the run reads it back (NO_KEY).
-    vi.spyOn(engine, 'send').mockImplementation(async (conversation, text) => {
-      await send(conversation, text)
+    vi.spyOn(engine, 'send').mockImplementation(async (conversation, text, options) => {
+      await send(conversation, text, options)
       a.setLocked(true)
     })
     const ticket = await a.settled(await a.dm.send(key, 'delivered'))
@@ -494,8 +494,8 @@ describe('dm on DM v5: 1:1', () => {
     const send = engine.send.bind(engine)
     const written = ledger.messages.length
     // lib throws after the message was broadcast and held (saving its cache, say).
-    vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text) => {
-      await send(conversation, text)
+    vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, text, options) => {
+      await send(conversation, text, options)
       throw new Error('The quota has been exceeded')
     })
     expect(await a.settled(await a.dm.send(key, 'once'))).toMatchObject({ state: 'confirmed', error: null })
@@ -594,13 +594,132 @@ describe('dm on DM v5: 1:1', () => {
     expect(await a.settled(behind)).toMatchObject(notSent)
     vi.useRealTimers()
 
-    // The stall clears: lib's call given up goes on to its broadcast, which is refused.
+    // The stall clears: lib's call given up goes on, and its broadcast is refused before it goes
+    // out. A send after it, queued behind it, goes out alone.
     clear()
-    await vi.waitFor(() => expect(broadcasts).toHaveBeenCalledTimes(1))
-    await settle()
-    expect(ledger.messages).toHaveLength(written)
+    expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
+    expect(broadcasts).toHaveBeenCalledTimes(1)
+    expect(ledger.messages).toHaveLength(written + 1)
     expect(await a.settled(stuck)).toMatchObject(notSent)
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['after', 'first'])
+  })
+
+  it("refuses only the given-up send's own writes: group writes queued beside it still go out (RC16-A-03)", async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const c = await ready(userOn(ledger, carol))
+    const { key: team } = await a.engine().createGroup('Team', [bob])
+    const { key: club } = await b.engine().createGroup('Club', [alice])
+    await a.engine().tick()
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    // A rename hangs on its roster write (a DAPI stall), holding lib's queue: the group writes
+    // and the send behind it all wait for it.
+    const chain = a.engine().ctx.chain as MemoryChain
+    const replace = chain.replaceGroupDoc.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const hung = vi.spyOn(chain, 'replaceGroupDoc').mockImplementationOnce(async (...args) => {
+      await stalled
+      return replace(...args)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const rename = await a.dm.renameGroup(team, 'Dream team')
+    await vi.waitFor(() => expect(hung).toHaveBeenCalledTimes(1))
+    // A re-key grant (and a new member's invite and grant), and a leave: all written on the
+    // account's chain while the send is in progress, and none of them the send's.
+    const resend = await a.dm.resendKeys(team, bob)
+    const add = await a.dm.addMember(team, carol)
+    const leave = await a.dm.leaveGroup(club)
+    const send = await a.dm.send(key, 'stuck')
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(await a.settled(send)).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+    vi.useRealTimers()
+
+    clear()
+    for (const ticket of [rename, resend, add, leave]) expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+    expect(await a.settled(send)).toMatchObject({ state: 'failed' })
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['first'])
+    // Carol got the key (her grant was not counted as, or refused with, the send).
+    await c.engine().tick()
+    expect((await c.dm.conversations()).find(conv => conv.key === team)?.flags.unreadable).toBe(false)
+  })
+
+  it('never gives up a long send as not sent once a part is out: it reads "still sending" and lands whole (RC16-A-03)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    const b = await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'hi'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    let broadcasts = 0
+    chain.hook = method => {
+      if (method === 'createMessage') broadcasts += 1
+      return null
+    }
+    // Part 1 goes out and is held; part 2's read before its broadcast hangs (a DAPI stall).
+    const read = chain.messagesByTags.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const reads = vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+      if (broadcasts === 1) await stalled
+      return read(tags)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, `${'a'.repeat(4081)}${'b'.repeat(100)}`)
+    await vi.waitFor(() => expect(broadcasts).toBe(1))
+    await vi.waitFor(() => expect(reads).toHaveBeenCalled())
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(a.tickets.get(ticket.id)?.state).toBe('pending')
+    await vi.advanceTimersByTimeAsync(60_000 - SEND_BUDGET_MS)
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'STILL_SENDING' } })
+    vi.useRealTimers()
+
+    clear()
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
+    expect(broadcasts).toBe(2)
+    await b.engine().tick()
+    const [conversation] = await b.dm.conversations()
+    await b.engine().pollOwn(conversation.key)
+    await b.dm.open(conversation.key)
+    expect((await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()).toEqual(['h', 'a', 'b'])
+  })
+
+  it('never tries a send once more after its invite was written, and never reads it as not sent (RC16-A-05)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    const engine = a.engine()
+    const chain = engine.ctx.chain as MemoryChain
+    let invited = false
+    chain.hook = method => {
+      if (method === 'createInvite') invited = true
+      return null
+    }
+    // The invite goes out; the read before the first message then fails on the connection.
+    const read = chain.messagesByTags.bind(chain)
+    let failed = false
+    vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+      if (invited && !failed) {
+        failed = true
+        throw new Error('no available addresses to use')
+      }
+      return read(tags)
+    })
+    const sends = vi.spyOn(engine, 'send')
+    const broadcasts = vi.spyOn(chain, 'createMessage')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'hello')
+    await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).not.toBe('pending'))
+    await vi.advanceTimersByTimeAsync(SEND_REATTEMPT_PAUSE_MS * 2)
+    vi.useRealTimers()
+    expect(failed).toBe(true)
+    expect(ledger.invites).toHaveLength(1)
+    expect(sends).toHaveBeenCalledTimes(1)
+    expect(broadcasts).not.toHaveBeenCalled()
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ outcome: 'unknown' }) })
   })
 
   it('sends a send given up on a stall exactly once on retry, even while the call given up still runs (RC16-A-03)', async () => {
@@ -698,15 +817,15 @@ describe('dm on DM v5: 1:1', () => {
       const { a, b, key } = await sending()
       const engine = a.engine()
       const send = engine.send.bind(engine)
-      vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, parts) => {
-        await send(conversation, parts)
+      vi.spyOn(engine, 'send').mockImplementationOnce(async (conversation, parts, options) => {
+        await send(conversation, parts, options)
         throw new Error('The quota has been exceeded')
       })
       expect(await a.settled(await a.dm.send(key, text))).toMatchObject({ state: 'confirmed', error: null })
       expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
     })
 
-    it('fails a part whose read before its broadcast failed as not sent, and retries the rest', async () => {
+    it('never reads a long send as not sent once a part is out, even when the next failed before its broadcast', async () => {
       const { a, b, key, chain } = await sending()
       let broadcasts = 0
       let failed = false
@@ -722,11 +841,11 @@ describe('dm on DM v5: 1:1', () => {
         }
         return read(tags)
       })
+      // Part 1 is out: the send may have been sent, so it is checked, never failed with a Retry beside it.
       const ticket = await a.settled(await a.dm.send(key, text))
-      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
-      await a.tickets.retry(ticket.id)
-      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
-      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+      expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ outcome: 'unknown' }) })
+      expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+      expect(await bobReads(b)).toEqual(['h', 'a'])
     })
   })
 

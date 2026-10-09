@@ -15,7 +15,7 @@ import { bucketLevels, createInvite, isInviteForMe } from '@/lib/dm/invite'
 import type { IdentityId } from '@/lib/dm/types'
 import { logger } from '@/lib/logger'
 import { attachDirect, directConv, requirePeerKey, type DmContext } from './context'
-import type { ChainInvite } from './types'
+import type { BeforeWrite, ChainInvite } from './types'
 import { hexId, runNow, type Exclusive } from './util'
 import { withNonceRetry } from './write-failure'
 
@@ -65,10 +65,13 @@ export async function scanInvites(ctx: DmContext): Promise<void> {
  * one invite exists per started pair. The bucket level is the sender's own
  * estimate (§5.1.2); recipients scan every level.
  */
-export async function sendInvite(ctx: DmContext, peer: IdentityId): Promise<void> {
+export async function sendInvite(ctx: DmContext, peer: IdentityId, beforeWrite?: BeforeWrite): Promise<void> {
   const peerPub = await requirePeerKey(ctx, peer)
   const invite = createInvite({ recipientPublicKey: peerPub, recipientId: peer, senderId: ctx.me.id, bucketLevel: ctx.cache.bucketLevel() })
-  const outcome = await withNonceRetry(() => ctx.chain.createInvite(invite), ctx.sleep)
+  const outcome = await withNonceRetry(() => {
+    beforeWrite?.()
+    return ctx.chain.createInvite(invite)
+  }, ctx.sleep)
   if (!outcome.ok) throw new Error(outcome.error)
 }
 

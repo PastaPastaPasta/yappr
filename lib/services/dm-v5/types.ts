@@ -95,6 +95,14 @@ export interface DmChain {
   contacts(): Promise<IdentityId[]>
 }
 
+/**
+ * Called just before each write one send makes (its conversation's invite,
+ * each broadcast of a message); throwing refuses that write, and the send
+ * fails with the error. Lets a caller count only its own send's writes, or
+ * stop a send it gave up on, while other writes (group grants, leaves) go on.
+ */
+export type BeforeWrite = () => void
+
 /** The signed-in user as DM v5 sees them. */
 export interface DmIdentity {
   id: IdentityId
