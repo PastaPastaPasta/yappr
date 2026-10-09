@@ -301,6 +301,9 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
   /** v7's caps: the typed table's lists, lengths and id range. */
   const capped = !legacy
   const { axes, combinations } = variants
+  // v7 refuses names that differ only in case; the v1–v6 JSON keys a
+  // combination by its exact option names, so only an exact repeat clashes.
+  const same = legacy ? (a: string, b: string) => a.trim() === b.trim() : sameName
 
   if (axes.length === 0) add('Add at least one option type, such as Size or Color.')
   // Identity bounds (every topology): at most 5 option types and option ids 1–254
@@ -314,14 +317,14 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
     const axisName = axis.name.trim()
     if (!axisName) add('Give every option type a name.')
     else if (capped && tooLong(axisName, limits.axisNameLength, limits.axisNameBytes)) add(`Option type names can be at most ${limits.axisNameLength} characters ("${axisName.slice(0, 20)}…" is longer).`)
-    if (axes.some((other, otherIndex) => otherIndex < axisIndex && sameName(other.name, axis.name))) add(`Two option types are both called "${axisName}". Give each a different name.`)
+    if (axes.some((other, otherIndex) => otherIndex < axisIndex && same(other.name, axis.name))) add(`Two option types are both called "${axisName}". Give each a different name.`)
     if (axis.options.length === 0) add(`Add at least one option to "${axisName || 'each option type'}".`)
     for (const [optionIndex, option] of axis.options.entries()) {
       const name = option.name.trim()
       if (!name) add(`Every option in "${axisName}" needs a name.`)
       else if (capped && tooLong(name, limits.optionNameLength, limits.optionNameBytes)) add(`Option names can be at most ${limits.optionNameLength} characters ("${name.slice(0, 20)}…" is longer).`)
       if (legacy && name.includes('|')) add(`Option names cannot contain "|" ("${name.slice(0, 20)}").`)
-      if (axis.options.some((other, otherIndex) => otherIndex < optionIndex && sameName(other.name, option.name))) add(`"${axisName}" lists "${name}" twice.`)
+      if (axis.options.some((other, otherIndex) => otherIndex < optionIndex && same(other.name, option.name))) add(`"${axisName}" lists "${name}" twice.`)
       const badId = !Number.isInteger(option.id) || option.id < 1 || ids.has(option.id) || option.id >= variants.nextOptionId || option.id > limits.maxOptionId
       if (badId) add('Some options are numbered incorrectly. Remove the variants and add them again.')
       ids.add(option.id)

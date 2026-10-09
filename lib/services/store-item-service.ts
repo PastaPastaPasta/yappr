@@ -12,7 +12,7 @@ import { stateTransitionService } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants';
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
-import { itemImageLimit, itemSizeError } from '../storefront/storefront-contract';
+import { LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
 import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
@@ -104,6 +104,16 @@ function assertStorable(fields: Record<string, unknown>, table: ItemVariants | u
   if (typed && fields.variants !== undefined && (fields.basePrice !== undefined || fields.stockQuantity !== undefined)) {
     throw new ListLimitError('A product with options is priced and stocked per combination. Clear its single price and stock first.');
   }
+  if (typeof fields.stockQuantity === 'number' && fields.stockQuantity > itemStockCap()) {
+    throw new ListLimitError(`Stock can be at most ${itemStockCap().toLocaleString()}.`);
+  }
+  // v1–v3 keep the image addresses and tags as JSON strings, each capped as a whole.
+  if (typeof fields.imageUrls === 'string' && fields.imageUrls.length > LEGACY_STRING_LIST_CAPS.imageUrls) {
+    throw new ListLimitError('The image addresses are too long to store together. Remove an image, or use shorter addresses.');
+  }
+  if (typeof fields.tags === 'string' && fields.tags.length > LEGACY_STRING_LIST_CAPS.tags) {
+    throw new ListLimitError('The tags are too long to store together. Remove some tags.');
+  }
   const sizeError = itemSizeError(fields);
   if (sizeError) throw new ListLimitError(sizeError);
 }
@@ -126,9 +136,14 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (Array.isArray(fields.tags)) fields.tags = storedList(fields.tags as string[], TAG_LIMITS);
     if (Array.isArray(fields.imageUrls)) fields.imageUrls = storedList(fields.imageUrls as string[], imageLimits());
     delete fields.unreadableVariants;
+    delete fields.unreadableImageUrls;
     if (doc.variants) fields.variants = storedVariants(doc.variants, doc.imageUrls);
-    // A table this client cannot read goes back exactly as it was stored.
-    else if (doc.unreadableVariants !== undefined) fields.variants = doc.unreadableVariants;
+    // A table this client cannot read goes back exactly as it was stored, with
+    // the gallery it may name by position.
+    else if (doc.unreadableVariants !== undefined) {
+      fields.variants = doc.unreadableVariants;
+      fields.imageUrls = doc.unreadableImageUrls;
+    }
     return fields;
   }
 
@@ -158,7 +173,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity: data.stockQuantity,
       sku: data.sku,
       variants,
-      ...(data.variants !== undefined && data.variants !== null && !variants ? { unreadableVariants: data.variants } : {}),
+      ...(data.variants !== undefined && data.variants !== null && !variants ? { unreadableVariants: data.variants, unreadableImageUrls: data.imageUrls } : {}),
       fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined
     };
   }

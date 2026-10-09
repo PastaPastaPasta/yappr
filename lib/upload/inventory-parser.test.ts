@@ -316,6 +316,15 @@ describe('rows become combinations', () => {
     }
   })
 
+  it('refuses on v1 image addresses too long to store together, and on v6 a stock past 4,294,967,295', async () => {
+    const images = Array.from({ length: 4 }, (_, n) => `https://x.test/${n}${'p'.repeat(600)}.jpg`)
+    const [v1] = parseInventoryCSV(`Item Name,Price,Image1,Image2,Image3,Image4\nMug,9.00,${images.join(',')}`).items
+    expect(v1.errors).toEqual(['"Mug": its image addresses are too long to store together. Use fewer images, or shorter addresses.'])
+    const big = 'Item Name,Price,Quantity\nMug,9.00,5000000000'
+    expect((await parseUnder('v6', big)).items[0].errors).toEqual(['"Mug": stock can be at most 4,294,967,295.'])
+    expect(parseInventoryCSV(big).items[0]).toMatchObject({ errors: [], stockQuantity: 5_000_000_000 })
+  })
+
   it('on v1–v6 keeps a combination photo past the gallery cap as its own URL, and round-trips it', async () => {
     const rows = ['Red', 'Orange', 'Yellow', 'Green', 'Blue'].map((color) => `g,Toy,${color},1.00,https://x.test/${color}.jpg`)
     const csv = ['Group,Item Name,Color,Price,Image URL', ...rows].join('\n')

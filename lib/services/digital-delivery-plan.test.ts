@@ -352,6 +352,23 @@ describe('lineProblems', () => {
     expect(check([line(EBOOK_ID, 1, { itemTitle: 'X', unitPrice: 5 })], listed([EBOOK_ID])).every((p) => !p.blocking)).toBe(true)
   })
 
+  it('on v1–v6 checks a variant line by its name too, since option ids follow the options\' order there', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6')
+    try {
+      const legacy = await import('./digital-delivery-plan')
+      const checkLegacy = (items: OrderItem[]) => legacy.lineProblems({ items, currency: 'USD' }, 'store', formats)
+      // The order bought "Deluxe" as id 1; the seller has since moved Deluxe after PDF.
+      expect(checkLegacy([line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'Deluxe', unitPrice: 100 })]).map((p) => p.text)).toEqual(['"EBOOK" has no option "Deluxe" any more.'])
+      expect(checkLegacy([line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'PDF', unitPrice: 100 })])).toEqual([])
+      // v7 ids are fixed, so the id alone decides there.
+      expect(check([line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'Renamed', unitPrice: 100 })], formats)).toEqual([])
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
   it('checks a variant line against its price as the listing has it now', () => {
     const repriced = withVariants(EBOOK_ID, { ...FORMATS, combinations: [{ id: '1', optionIds: [1], price: 150 }, { id: '2', optionIds: [2], price: 900 }] })
     expect(check([line(EBOOK_ID, 1, { variantId: '1' })], repriced)).toHaveLength(1)

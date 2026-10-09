@@ -45,6 +45,11 @@ describe('the v1–v6 variants JSON', () => {
     expect(encodeLegacyVariants(table, IMAGES)).toBe(json)
   })
 
+  it('reads a negative or fractional stock as whole units, at least 0, as the old client sold it', () => {
+    const json = JSON.stringify({ axes: [{ name: 'Size', options: ['S', 'M', 'L'] }], combinations: [{ key: 'S', price: 1, stock: -4 }, { key: 'M', price: 1, stock: 2.7 }, { key: 'L', price: 1, stock: 5_000_000_000 }] })
+    expect(defined(decodeLegacyVariants(json)).combinations.map((combination) => combination.stock)).toEqual([0, 2, 5_000_000_000])
+  })
+
   it('reads a table past the identity bounds (6 option types, or more than 254 options) as none', () => {
     const six = JSON.stringify({ axes: ['A', 'B', 'C', 'D', 'E', 'F'].map((name) => ({ name, options: ['x'] })), combinations: [{ key: 'x|x|x|x|x|x', price: 1 }] })
     expect(decodeLegacyVariants(six)).toBeUndefined()

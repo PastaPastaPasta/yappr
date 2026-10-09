@@ -35,6 +35,7 @@ function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: st
   if (isOwnStore(store, viewerId)) return OWN_STORE_ORDER_MESSAGE
   if (item.status === 'sold_out') return 'This item is sold out'
   if (item.status !== 'active') return 'This item is no longer available'
+  if (item.unreadableVariants !== undefined) return "This item can't be bought right now"
   if (store && store.status !== 'active') return `This store is ${store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders`
   return null
 }

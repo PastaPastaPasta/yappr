@@ -21,7 +21,7 @@ import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { storefrontVariantsAreTyped } from '@/lib/constants'
 import { StaleRevisionError } from '@/lib/services/document-service'
-import { VARIANT_LIMITS, combinationStockCap } from '@/lib/storefront/storefront-contract'
+import { combinationStockCap, itemStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
 /** What a stock edit changed on an item, for the page to merge into its copy. */
@@ -59,11 +59,11 @@ function totalStock(item: StoreItem, drafts: StockDrafts = {}): number {
 
 /**
  * A typed stock count, or null when it is not a whole number the store keeps:
- * a product's own stock is 0 to 4,294,967,295; a combination's follows
- * {@link combinationStockCap}.
+ * a combination's follows {@link combinationStockCap}, a product's own
+ * {@link itemStockCap}.
  */
 function parseStock(value: string, combination: boolean): number | null {
-  return parseCountInput(value, combination ? combinationStockCap(!storefrontVariantsAreTyped()) : VARIANT_LIMITS.maxStock) ?? null
+  return parseCountInput(value, combination ? combinationStockCap(!storefrontVariantsAreTyped()) : itemStockCap()) ?? null
 }
 
 export function InventoryTable({

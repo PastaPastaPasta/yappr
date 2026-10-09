@@ -222,6 +222,30 @@ describe('storefront v7 typed variants', () => {
     } finally { restore(); }
   });
 
+  it('writes an unreadable table back with its gallery exactly as stored', async () => {
+    try {
+      const service = await v7();
+      const gallery = ['https://a/1.png', 'https://a/1.png ', 'https://a/2.png'];
+      const unreadable = { ...table, selectors: [Uint8Array.of(1, 9)], prices: [1], stocks: undefined, images: [3] };
+      get.mockResolvedValue({ ...variantItem, imageUrls: gallery, variants: unreadable });
+      const item = defined(await service.getById('item'));
+      expect(item.unreadableVariants).toBeDefined();
+      await service.updateItem('item', 'owner', storeId, { status: 'paused' });
+      const sent = updateDocument.mock.calls[0][4];
+      expect(sent.imageUrls).toEqual(gallery);
+      expect(sent.variants).toEqual(unreadable);
+    } finally { restore(); }
+  });
+
+  it('refuses a product stock past v6\'s 4,294,967,295 before signing', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue({ ...raw, variants: undefined });
+      await expect(service.updateItem('item', 'owner', storeId, { stockQuantity: 5_000_000_000 })).rejects.toThrow(/at most 4,294,967,295/);
+      expect(updateDocument).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
   it('stores up to 12 images on v7', async () => {
     try {
       const service = await v7();
@@ -254,6 +278,14 @@ describe('storefront v7 typed variants', () => {
     expect(JSON.parse(updateDocument.mock.calls[0][4].variants).combinations.map((combination: { stock?: number }) => combination.stock)).toEqual([5_000_000_000, 4]);
     await storeItemService.updateItem('item', 'owner', storeId, { title: 'Renamed' });
     expect(updateDocument).toHaveBeenCalledTimes(2);
+  });
+
+  it('on v1 keeps a product stock past 4,294,967,295 and refuses image addresses too long to store together', async () => {
+    get.mockResolvedValue({ ...raw, variants: undefined });
+    await storeItemService.updateItem('item', 'owner', storeId, { stockQuantity: 5_000_000_000 });
+    expect(updateDocument.mock.calls[0][4].stockQuantity).toBe(5_000_000_000);
+    const long = Array.from({ length: 4 }, (_, n) => `https://a/${n}${'x'.repeat(600)}.png`);
+    await expect(storeItemService.updateItem('item', 'owner', storeId, { imageUrls: long })).rejects.toThrow(/too long to store together/);
   });
 
   it('on v1 writes the table as the JSON string, a combination image as its URL', async () => {

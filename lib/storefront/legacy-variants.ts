@@ -67,7 +67,9 @@ export function decodeLegacyVariants(json: unknown, imageUrls: readonly string[]
     if (seen.has(id)) continue
     seen.add(id)
     const combination: VariantCombination = { id, optionIds: ids, price: legacy.price }
-    if (typeof legacy.stock === 'number' && Number.isSafeInteger(legacy.stock) && legacy.stock >= 0) combination.stock = legacy.stock
+    // The old client sold none at 0 or below (an import formula could write a
+    // negative or fractional count): read those as whole units, at least 0.
+    if (typeof legacy.stock === 'number' && Number.isFinite(legacy.stock)) combination.stock = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.floor(legacy.stock)))
     if (typeof legacy.sku === 'string' && legacy.sku) combination.sku = legacy.sku
     const image = typeof legacy.imageUrl === 'string' ? imageUrls.indexOf(legacy.imageUrl) + 1 : 0
     if (image > 0) combination.image = image

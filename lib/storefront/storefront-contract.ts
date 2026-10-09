@@ -65,6 +65,12 @@ export const VARIANT_LIMITS = {
  */
 export const combinationStockCap = (legacy: boolean): number => (legacy ? Number.MAX_SAFE_INTEGER : VARIANT_LIMITS.maxStock)
 
+/** The most stock a product without options can hold: v6 caps `stockQuantity` at 4,294,967,295; v1–v5 at any safe integer. */
+export const itemStockCap = (): number => (storefrontIsV6() ? VARIANT_LIMITS.maxStock : Number.MAX_SAFE_INTEGER)
+
+/** v1–v3 keep `imageUrls` and `tags` as JSON strings, each capped as a whole. */
+export const LEGACY_STRING_LIST_CAPS = { imageUrls: 2100, tags: 500 } as const
+
 /**
  * Most product images the editor lets a listing carry: the contract's 12 on
  * v7 (a variant names one by index), and 4 before it, as the editor always

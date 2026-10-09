@@ -502,7 +502,13 @@ export function lineProblems(
     // but never released without the seller looking (bulk holds any problem).
     if (listing.status !== undefined && listing.status !== 'active') problem(`"${listing.title}" is not on sale right now (${listing.status}).`)
     if (listing.title !== line.itemTitle) problem(`The order calls "${listing.title}" "${line.itemTitle}".`)
-    const combination = findCombination(listing.variants, line.variantId)
+    // Before v7 option ids follow the options' order on every read, so an id
+    // alone can name another combination after the seller reorders: the name
+    // the order carries must match too.
+    const found = findCombination(listing.variants, line.variantId)
+    const combination = found && listing.variants && !storefrontVariantsAreTyped() && line.variantLabel && variantLabel(listing.variants, found) !== line.variantLabel
+      ? undefined
+      : found
     if (line.variantId && !combination) {
       // Stock and price are only judged for an option the listing still offers.
       problem(line.variantLabel

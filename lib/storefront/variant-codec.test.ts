@@ -263,6 +263,12 @@ describe('validation', () => {
     expect(variantProblems(updateCombination(shirt(), '1.2', { stock: Number.MAX_SAFE_INTEGER + 1 }), { imageCount: 0, legacy: true })).toEqual(['Stock must be a whole number of 0 or more.'])
   })
 
+  it('on v1–v6 tells names apart exactly, as their keys do; v7 refuses names differing only in case', () => {
+    const cased = defined(variantsFromRows(['Color'], [{ optionNames: ['Red'], price: 1 }, { optionNames: ['red'], price: 1 }]).variants)
+    expect(variantProblems(cased, { imageCount: 0, legacy: true })).toEqual([])
+    expect(problems(cased)).toContain('"Color" lists "red" twice.')
+  })
+
   it('refuses what the contract would, in words for the seller', () => {
     const table = shirt()
     expect(problems(emptyVariants())[0]).toMatch(/at least one option type/)

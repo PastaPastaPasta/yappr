@@ -15,7 +15,7 @@ import type { ItemVariants } from '../types'
 import { storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants'
 import { toSmallestUnit } from '../utils/format'
 import { LIST_LIMITS } from '../typed-array-codecs'
-import { VARIANT_LIMITS, itemImageLimit } from '../storefront/storefront-contract'
+import { LEGACY_STRING_LIST_CAPS, VARIANT_LIMITS, itemImageLimit, itemStockCap } from '../storefront/storefront-contract'
 import { variantProblems, variantsFromRows, type VariantRow } from '../storefront/variant-codec'
 
 /** The single-valued columns the parser reads, by internal name. */
@@ -648,6 +648,14 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
     warnings,
   }
 
+  // v1–v3 keep the image addresses and tags as JSON strings, each capped as a whole.
+  if (!storefrontArraysAreTyped() && JSON.stringify(imageUrls).length > LEGACY_STRING_LIST_CAPS.imageUrls) {
+    errors.push(`"${title}": its image addresses are too long to store together. Use fewer images, or shorter addresses.`)
+  }
+  if (!storefrontArraysAreTyped() && tags.length > 0 && JSON.stringify(tags).length > LEGACY_STRING_LIST_CAPS.tags) {
+    errors.push(`"${title}": its tags are too long to store together. Use fewer tags.`)
+  }
+
   const plan = planAxes(rows, columns, title)
   // A row's own image is its Image URL, else (older files) its first image.
   const ownImage = (row: ParsedInventoryRow) => (columns.fields.image !== undefined ? row.image : row.imageUrls[0])
@@ -665,6 +673,7 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
     }
     item.sku = firstRow.sku
     item.stockQuantity = firstRow.quantity
+    if (firstRow.quantity !== undefined && firstRow.quantity > itemStockCap()) errors.push(`"${title}": stock can be at most ${itemStockCap().toLocaleString()}.`)
     item.weight = firstRow.weight
     if (firstRow.quantityFormula !== undefined && firstRow.quantity === undefined) {
       warnings.push(`"${title}": the quantity formula on row ${firstRow.rowNumber} could not be worked out, so stock is not tracked.`)

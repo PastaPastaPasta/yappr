@@ -179,6 +179,12 @@ export interface StoreItem {
    * edited here. Never set together with `variants`.
    */
   unreadableVariants?: unknown
+  /**
+   * The gallery exactly as stored, kept beside `unreadableVariants`: that
+   * table may name images by position, so a replace writes both back as they
+   * were (the readable `imageUrls` is trimmed and deduplicated).
+   */
+  unreadableImageUrls?: unknown
   fulfillment?: ItemFulfillment
   // Enriched fields
   storeName?: string

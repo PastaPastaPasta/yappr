@@ -33,9 +33,9 @@ import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePay
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
 import { StaleRevisionError } from '@/lib/services/document-service'
-import { itemImageLimit, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
+import { itemImageLimit, itemStockCap, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { clampImages, emptyVariants, variantProblems } from '@/lib/storefront/variant-codec'
-import { convertPrices, defaultCombinationPrice, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
+import { convertPrices, defaultCombinationPrice, parseCountInput, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
 import { VariantEditor } from '@/components/store/variant-editor'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 
@@ -126,6 +126,12 @@ function AddItemPage() {
   }, [])
   const [variants, setVariantsState] = useState<ItemVariants>(emptyVariants)
   /**
+   * The listing's options could not be read: its details can be edited, but
+   * its price, stock, currency, options and images are left as they are
+   * (they may depend on the table), so none of them is shown or sent.
+   */
+  const [optionsUnreadable, setOptionsUnreadable] = useState(false)
+  /**
    * Every table this form holds keeps the highest `nextOptionId` it has seen,
    * so no edit, reset or retry can hand an old option id (named by carts and
    * kits) to a different option.
@@ -202,6 +208,7 @@ function AddItemPage() {
           setStockQuantity(item.stockQuantity.toString())
         }
 
+        setOptionsUnreadable(item.unreadableVariants !== undefined)
         // Load variants (the service hands back the same table on every storefront version)
         if (item.variants && item.variants.axes.length > 0) {
           setHasVariants(true)
@@ -348,6 +355,11 @@ function AddItemPage() {
       setError('Enter a valid price.')
       return
     }
+    const stockInput = stockQuantity.trim() ? parseCountInput(stockQuantity, itemStockCap()) : undefined
+    if (!hasVariants && !optionsUnreadable && stockQuantity.trim() && stockInput === undefined) {
+      setError(`Enter a stock quantity from 0 to ${itemStockCap().toLocaleString()}, or leave it blank for unlimited.`)
+      return
+    }
 
     // With variants on, the table must be storable as it is; off, any stored table is removed.
     let savedVariants: ItemVariants | undefined
@@ -367,14 +379,17 @@ function AddItemPage() {
       const itemData = {
         title: title.trim(),
         description: description.trim() || undefined,
-        basePrice: hasVariants ? undefined : priceInSmallestUnit,
-        currency: currency || undefined,
-        imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
         category: category.trim() || undefined,
-        stockQuantity: hasVariants ? undefined : (stockQuantity ? parseInt(stockQuantity, 10) : undefined),
         // No status: an edit keeps a paused or sold-out product so, and a create defaults to active.
-        // variants is always named, so unticking "has variants" removes the stored ones.
-        variants: savedVariants,
+        // variants is always named, so unticking "has variants" removes the stored ones;
+        // a listing whose options could not be read keeps all of these as stored.
+        ...(optionsUnreadable ? {} : {
+          basePrice: hasVariants ? undefined : priceInSmallestUnit,
+          currency: currency || undefined,
+          imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
+          stockQuantity: hasVariants ? undefined : stockInput,
+          variants: savedVariants,
+        }),
         // Only named on v6, which is the first cut that has the property.
         ...(supportsDigital ? { fulfillment } : {})
       }
@@ -614,7 +629,14 @@ function AddItemPage() {
               </fieldset>
             )}
 
+            {optionsUnreadable && (
+              <p role="status" className="p-3 rounded-lg bg-gray-100 dark:bg-gray-900 text-sm text-gray-600 dark:text-gray-400">
+                This product&apos;s options can&apos;t be shown here, so its price, stock, options and photos stay as they are. You can still change its details. To change the rest, list it again as a new product.
+              </p>
+            )}
+
             {/* Images */}
+            {!optionsUnreadable && (
             <div>
               <p className="block text-sm font-medium mb-2">Product Images (max {imageLimit})</p>
 
@@ -679,6 +701,7 @@ function AddItemPage() {
                 </details>
               )}
             </div>
+            )}
 
             {/* Category */}
             <div>
@@ -694,6 +717,7 @@ function AddItemPage() {
               />
             </div>
 
+            {!optionsUnreadable && (<>
             {/* Variants Toggle */}
             <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
               <label className="flex items-center gap-3 cursor-pointer">
@@ -794,6 +818,7 @@ function AddItemPage() {
                 </select>
               </div>
             )}
+            </>)}
 
             {/* Digital delivery content */}
             {isDigital && user?.identityId && (
