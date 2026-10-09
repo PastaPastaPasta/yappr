@@ -162,7 +162,7 @@ const STORES = [
 /**
  * The toy store's variant listings. `variants` is [axis names, rows], one row per offered combination: the option
  * name on each axis, then price, stock and SKU (and optionally weight in grams and a 1-based image index). Options
- * get ids in first-seen order, as the app's CSV import does, so a combination's id is stable across runs.
+ * get ids axis by axis in first-seen order (see `variantTable`), so a combination's id is stable across runs.
  */
 const SQUISHY_COLORS = ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'Pink'];
 const SQUISHY_PACKS = [['Single Piece', 100, 45], ['4 Pack', 353, 180]];
