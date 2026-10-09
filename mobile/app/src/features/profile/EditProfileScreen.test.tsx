@@ -360,6 +360,33 @@ describe('EditProfileScreen', () => {
     expect(router.back).toHaveBeenCalled();
   });
 
+  it('says a save whose call still runs is still saving, with nothing to check, until its answer confirms it', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-pronouns'), 'she/her');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+
+    // Past the engine's deadline with its call still running (STILL_SENDING).
+    const stillSending = advance(pending, {
+      state: 'unconfirmed',
+      error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: 'Still sending.' },
+    });
+    act(() => fakeEngine.emit('write.status', stillSending));
+    expect(screen.getByTestId('edit-unconfirmed')).toHaveTextContent('Still saving your changes…');
+    expect(screen.queryByTestId('edit-check-again')).toBeNull();
+    expect(screen.getByTestId('edit-checking')).toBeTruthy();
+    expect(screen.getByTestId('edit-pronouns').props.editable).toBe(false);
+    expect(screen.getByTestId('edit-save')).toBeDisabled();
+
+    act(() => fakeEngine.emit('write.status', advance(stillSending, { state: 'confirmed', error: null })));
+    await flush();
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'success', message: 'Profile updated!' });
+    expect(router.back).toHaveBeenCalled();
+  });
+
   it('gives an unconfirmed save its edits back to save again once a check proves it never landed (RC16-A-01)', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });

@@ -60,6 +60,9 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   // app checks; "Check again" checks now. A check that finds it saved closes the form as a
   // confirmed save does; one that proves it absent unlocks the form, edits intact, to save again.
   const unsure = save.status === 'unconfirmed' && save.ticket?.retryable !== true;
+  // Its call still runs past the engine's deadline (the network is slow): it is still saving, and
+  // its own answer settles it, so there is nothing to check yet.
+  const stillSaving = unsure && save.ticket?.error?.code === 'STILL_SENDING';
   const [checking, setChecking] = useState(false);
   // From the tap: until the engine answers with a ticket the status is still idle, and a second
   // Save would be queued behind the first with its change shown, one save the user never meant.
@@ -244,9 +247,9 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
           {unsure ? (
             <View accessibilityLiveRegion="polite" className="gap-1 px-4 py-3" testID="edit-unconfirmed">
               <Text variant="subhead" tone="secondary">
-                {"Your changes haven't been confirmed yet. We'll keep checking."}
+                {stillSaving ? 'Still saving your changes…' : "Your changes haven't been confirmed yet. We'll keep checking."}
               </Text>
-              {checking ? (
+              {checking || stillSaving ? (
                 <Spinner size="sm" testID="edit-checking" />
               ) : (
                 <LinkText label="Check again" role="button" onPress={onCheck} testID="edit-check-again" />
