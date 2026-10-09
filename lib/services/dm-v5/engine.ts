@@ -489,8 +489,13 @@ export class DmEngine {
     this.saveNow('the deleted conversation')
   }
 
-  setBlocked(peerId: string, blocked: boolean): void {
-    const entry = this.ctx.store.setBlocked(bs58.decode(peerId), blocked, this.ctx.chain.now())
+  /**
+   * Block or unblock `peerId`, stamped no earlier than `notBefore` (e.g. the
+   * account block this follows, read with a clock ahead of this one), so a
+   * later choice here is stamped after it.
+   */
+  setBlocked(peerId: string, blocked: boolean, notBefore = 0): void {
+    const entry = this.ctx.store.setBlocked(bs58.decode(peerId), blocked, Math.max(this.ctx.chain.now(), notBefore))
     this.ctx.cache.noteBlock({ id: hexId(entry.id), blocked: entry.blocked, changedAt: entry.changedAt })
     this.emit()
     this.saveNow(blocked ? 'the block' : 'the unblock')

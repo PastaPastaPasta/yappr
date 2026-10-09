@@ -98,9 +98,10 @@ function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<st
  * Block or unblock `peerId` unless that already stands (an unblock of
  * someone never blocked writes nothing). Returns whether it changed anything.
  */
-function applyBlock(running: DmEngine, peerId: string, blocked: boolean): boolean {
+/** Block or unblock `peerId` in Messages unless they already are, stamped no earlier than `notBefore`. */
+function applyBlock(running: DmEngine, peerId: string, blocked: boolean, notBefore = 0): boolean {
   if (running.getSnapshot().blocked.includes(peerId) === blocked) return false
-  running.setBlocked(peerId, blocked)
+  running.setBlocked(peerId, blocked, notBefore)
   return true
 }
 
@@ -445,7 +446,9 @@ export function createV5Backend(options: V5BackendOptions) {
       const unknown = followed.has(peerId) ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY
       const madeAt = Number.isFinite(createdAt) ? createdAt : unknown
       if (!standing.has(peerId) && savedBlockChange(running, peerId) > madeAt) continue
-      applyBlock(running, peerId, true)
+      // Stamped no earlier than the account's block, even with the DM clock behind the
+      // account read: a Messages unblock after this is then always the newer change.
+      applyBlock(running, peerId, true, Number.isFinite(createdAt) ? createdAt : 0)
       followed.add(peerId)
       changed = true
     }

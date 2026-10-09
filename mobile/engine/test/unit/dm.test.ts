@@ -1258,6 +1258,20 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
   })
 
+  it('keeps a Messages unblock made while the DM clock is behind the account block it followed', async () => {
+    const ledger = ledgerNow()
+    const account = accountOn([bob])
+    // The account's list was read from a node ahead of the latest DM read.
+    account.madeAt.set(bob, ledger.time + 60_000)
+    const user = await ready(userOn(ledger, alice, {}, undefined, { account }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    // Message settings' Unblock, before the DM clock catches up with that block.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    expect(ledger.time).toBeLessThan(account.madeAt.get(bob) as number)
+    await account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
   it('follows a block and unblock confirmed here, and an unblock a followed list overrides, over stale reads', async () => {
     const user = await ready(userOn(ledgerNow(), alice))
     let unblocked: WriteResult = { state: 'confirmed' }
