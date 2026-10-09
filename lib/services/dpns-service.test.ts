@@ -1,12 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { query, dpns, identities, epoch } = vi.hoisted(() => ({
+const { query, composite, dpns, identities, epoch, topology } = vi.hoisted(() => ({
   query: vi.fn(),
+  composite: vi.fn(),
   dpns: { isValidUsername: vi.fn(), isContestedUsername: vi.fn(), isNameAvailable: vi.fn(), registerName: vi.fn(), convertToHomographSafe: vi.fn(), resolveName: vi.fn() },
   identities: { fetch: vi.fn() },
   epoch: { current: vi.fn() },
+  topology: { indexOnly: false },
 }));
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query }, dpns, identities, epoch }) }));
+vi.mock('./evo-sdk-service', () => ({
+  getEvoSdk: async () => ({ documents: { query, composite }, dpns, identities, epoch }),
+  evoSdkService: { isConnectionError: (error: Error) => /quorum not found in cache/i.test(error.message) },
+}));
+vi.mock('@/lib/contract-topology', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/contract-topology')>()),
+  likesAreIndexOnly: () => topology.indexOnly,
+}));
 vi.mock('./signer-service', () => ({ signerService: {} }));
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: false, reason: 'no-match' }) }));
 import { describeDpnsRegistrationError, dpnsService, formatCreditsAsDash, minimumContestFundCredits } from './dpns-service';
@@ -15,6 +24,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   dpnsService.clearCache();
   query.mockReset().mockResolvedValue([]);
+  composite.mockReset();
+  topology.indexOnly = false;
 });
 afterEach(() => vi.useRealTimers());
 
@@ -179,6 +190,49 @@ describe('DPNS names registered for another identity', () => {
   it('drops forged names from search results', async () => {
     query.mockResolvedValue([forged, own]);
     expect(await dpnsService.searchUsernamesWithDetails('a')).toEqual([{ username: 'victim.dash', ownerId: victim }]);
+  });
+});
+
+describe('DPNS name reads that fail', () => {
+  const owner = '111111111';
+  const alice = { $ownerId: owner, records: { identity: owner }, label: 'alice', normalizedParentDomainName: 'dash' };
+
+  beforeEach(() => {
+    dpns.convertToHomographSafe.mockReset().mockImplementation(async (label: string) => label);
+  });
+
+  it('rejects a failed prefix search strictly, and finds nothing softly', async () => {
+    query.mockRejectedValue(new Error('Request timed out after 8000ms'));
+    await expect(dpnsService.findUsernamesByPrefix('ali')).rejects.toThrow(/timed out/);
+    expect(await dpnsService.searchUsernamesWithDetails('ali')).toEqual([]);
+  });
+
+  it('rejects a failed name resolution strictly, and resolves nobody softly', async () => {
+    query.mockRejectedValue(new Error('invalid quorum: Quorum not found in cache for hash: 00ab'));
+    await expect(dpnsService.findIdentityByName('alice')).rejects.toThrow(/quorum/);
+    expect(await dpnsService.resolveIdentity('alice')).toBeNull();
+  });
+
+  it('answers null only when DPNS answered that nobody owns the name', async () => {
+    expect(await dpnsService.findIdentityByName('nobody')).toBeNull();
+    query.mockResolvedValue([alice]);
+    expect(await dpnsService.findIdentityByName('Alice.dash')).toBe(owner);
+  });
+
+  it('does not repeat a composite search that hit a stale quorum or a deadline as an ordinary one', async () => {
+    topology.indexOnly = true;
+    for (const message of ['invalid quorum: Quorum not found in cache for hash: 00ab', 'deadline exceeded']) {
+      composite.mockRejectedValueOnce(new Error(message));
+      await expect(dpnsService.findUsernamesByPrefix('ali')).rejects.toThrow(message);
+    }
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the ordinary search when the composite search is refused for another reason', async () => {
+    topology.indexOnly = true;
+    composite.mockRejectedValueOnce(new Error('composite queries are not supported'));
+    query.mockResolvedValue([alice]);
+    expect(await dpnsService.findUsernamesByPrefix('ali')).toEqual([{ username: 'alice.dash', ownerId: owner }]);
   });
 });
 

@@ -443,6 +443,63 @@ describe('Search', () => {
     expect(screen.queryByTestId('search-retry-people')).toBeNull();
   });
 
+  // D-006: a failed people search (a stale quorum, a deadline) once read as "No results".
+  const timedOut = () => Object.assign(new Error('Request timed out after 8000ms'), { code: 'TIMEOUT' });
+
+  it('offers a retry when only the people search fails, never "No results"', async () => {
+    fakeEngine.method('explore.searchUsers').mockRejectedValueOnce(timedOut()).mockResolvedValue([user('bob')]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    await renderAt('/explore/search?q=bob');
+    await settle();
+
+    expect(screen.getByText("Couldn't search people right now.")).toBeTruthy();
+    expect(screen.queryByTestId('search-no-results')).toBeNull();
+    fireEvent.press(screen.getByTestId('search-retry-people'));
+    await settle();
+    expect(screen.getByText(AUTHORS.bob.displayName)).toBeTruthy();
+    expect(screen.queryByTestId('search-retry-people')).toBeNull();
+  });
+
+  it('says the search failed when every group fails', async () => {
+    fakeEngine.method('explore.searchUsers').mockRejectedValue(timedOut());
+    fakeEngine.method('explore.searchHashtags').mockRejectedValue(timedOut());
+    fakeEngine.method('explore.searchPosts').mockRejectedValue(timedOut());
+    await renderAt('/explore/search?q=bob');
+    await settle();
+
+    expect(screen.getByTestId('search-error')).toBeTruthy();
+    expect(screen.getByText("Couldn't search right now")).toBeTruthy();
+    expect(screen.getByText('Check your connection and try again.')).toBeTruthy();
+    expect(screen.queryByTestId('search-no-results')).toBeNull();
+  });
+
+  it('offers a retry when a pasted id finds no one because its lookup failed', async () => {
+    const id = AUTHORS.carol.id.padEnd(44, 'x').slice(0, 44).replace(/[0OIl]/g, 'x');
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    fakeEngine.method('profiles.batch').mockRejectedValue(timedOut());
+    await renderAt(`/explore/search?q=${id}`);
+    await settle();
+
+    expect(screen.getByTestId('search-retry-people')).toBeTruthy();
+    expect(screen.queryByTestId('search-no-results')).toBeNull();
+  });
+
+  it('shows See all people failing as a failure, not as no results', async () => {
+    fakeEngine.method('explore.searchUsers').mockRejectedValueOnce(timedOut()).mockResolvedValue([user('bob')]);
+    await renderAt('/explore/search/people?q=bob');
+    await settle();
+
+    expect(screen.getByTestId('search-results-error')).toBeTruthy();
+    expect(screen.getByText("Couldn't search people right now")).toBeTruthy();
+    expect(screen.queryByTestId('search-results-empty')).toBeNull();
+    fireEvent.press(screen.getByText('Try again'));
+    await settle();
+    expect(screen.getByText(AUTHORS.bob.displayName)).toBeTruthy();
+  });
+
   it('reads follows once a cold start has restored the session', async () => {
     useSessionStore.setState({ status: 'unknown', session: null, accounts: [] });
     fakeEngine.method('explore.searchUsers').mockResolvedValue([user('bob')]);

@@ -21,7 +21,7 @@ import type { TextResetHandle } from '~/ui/native-text';
 import { FollowableUserRow } from './FollowableUserRow';
 import { recentKey, useRecentSearches, type RecentSearch } from './recent-searches';
 import { SearchField } from './SearchField';
-import { OfflineBanner, readErrorMessage, SectionHeader, useOffline } from './states';
+import { OfflineBanner, searchFailedMessage, searchFailedTitle, SectionHeader, useOffline } from './states';
 import { TagRow } from './TagRow';
 import { tagDisplay } from './tags';
 import {
@@ -213,7 +213,8 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
     else if (running.every((query) => query.isError)) {
       body = (
         <ErrorState
-          message={readErrorMessage(posts.error, offline)}
+          title={searchFailedTitle()}
+          message={searchFailedMessage(offline)}
           onRetry={() => running.forEach((query) => query.refetch().catch(() => undefined))}
           retrying={running.some((query) => query.isRetrying)}
           testID="search-error"
@@ -311,11 +312,11 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
         return (
           <View className="flex-row items-center justify-between gap-3 px-4 py-3">
             <Text variant="subhead" tone="secondary" className="flex-1">
-              Couldn&apos;t load {SEARCH_TITLES[row.kind].toLowerCase()}.
+              {searchFailedTitle(SEARCH_TITLES[row.kind].toLowerCase())}.
             </Text>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Try loading ${SEARCH_TITLES[row.kind].toLowerCase()} again`}
+              accessibilityLabel={`Try searching ${SEARCH_TITLES[row.kind].toLowerCase()} again`}
               hitSlop={hitSlopFor(20)}
               onPress={row.retry}
               testID={`search-retry-${row.kind}`}

@@ -43,11 +43,17 @@ export function useDebounced<T>(value: T, ms: number): T {
 /**
  * People by DPNS name prefix (an exact name resolves too, in the engine),
  * plus the identity itself when the query is a pasted identity id, with the
- * viewer's follow of each.
+ * viewer's follow of each. A failed name search rejects; a failed id lookup
+ * rejects only when the name search found no one, so a failure never reads
+ * as "No results".
  */
 async function searchPeople(api: EngineRemote, q: string): Promise<UserSummaryDTO[]> {
-  const [byName, byId] = await Promise.all([api.explore.searchUsers(q), IDENTITY_ID.test(q) ? findById(api, q) : []]);
-  const users = [...byId, ...byName.filter((user) => !byId.some((found) => found.id === user.id))];
+  const [byName, byId] = await Promise.all([
+    api.explore.searchUsers(q),
+    IDENTITY_ID.test(q) ? findById(api, q) : { users: [] },
+  ]);
+  if ('error' in byId && byName.length === 0) throw byId.error;
+  const users = [...byId.users, ...byName.filter((user) => !byId.users.some((found) => found.id === user.id))];
   const status = await readFollowStatus(api, users.map((user) => user.id));
   return users.map((user) => withFollowStatus(user, status));
 }
@@ -55,15 +61,17 @@ async function searchPeople(api: EngineRemote, q: string): Promise<UserSummaryDT
 /**
  * The identity a pasted id names. `profiles.batch` answers for any id, so a
  * row with no name, profile name or bio (a mistyped id, or an identity with
- * nothing to show) is left out; a failed read just finds no one.
+ * nothing to show) is left out. A failed read finds no one, with its error.
  */
-async function findById(api: EngineRemote, id: string): Promise<UserSummaryDTO[]> {
+async function findById(api: EngineRemote, id: string): Promise<{ users: UserSummaryDTO[]; error?: unknown }> {
   try {
     const users = await api.profiles.batch([id]);
-    return users.filter((user) => user.username !== null || user.bio || user.displayName !== `User ${id.slice(-6)}`);
+    return {
+      users: users.filter((user) => user.username !== null || user.bio || user.displayName !== `User ${id.slice(-6)}`),
+    };
   } catch (error) {
     appendLog('warn', 'host', `Identity lookup failed: ${errorMessage(error)}`);
-    return [];
+    return { users: [], error };
   }
 }
 

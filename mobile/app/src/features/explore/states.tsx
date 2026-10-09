@@ -27,6 +27,11 @@ export function readErrorMessage(error: unknown, offline = false): string | unde
   return isTemporaryReadFailure(error) ? UNAVAILABLE_MESSAGE : undefined;
 }
 
+/** A search that failed (D-006): never "No results", which would say no one matched. */
+export const searchFailedTitle = (what?: string) => (what ? `Couldn't search ${what} right now` : "Couldn't search right now");
+
+export const searchFailedMessage = (offline: boolean) => (offline ? OFFLINE_MESSAGE : 'Check your connection and try again.');
+
 /** True when the OS reports no connectivity (PRD G-1); unknown counts as online. */
 export function useOffline(): boolean {
   return useNetInfo().isConnected === false;
