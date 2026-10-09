@@ -104,19 +104,19 @@ export function useMessages(key: string, enabled: boolean) {
   );
 }
 
-/** A name read earlier, by id: shown over a fallback a later read fell back to. */
-function loadedPeople(): Map<string, UserSummaryDTO> {
-  const reads = queryClient.getQueriesData<UserSummaryDTO[]>({ queryKey: queryKeys.dm.peopleAll });
-  return new Map(reads.flatMap(([, users]) => (users ?? []).filter((user) => user.resolved).map((user) => [user.id, user])));
-}
+/**
+ * The last name and avatar loaded for each person, by id: shown over the
+ * fallback of a later read that failed, however many fail in a row.
+ */
+const knownPeople = new Map<string, UserSummaryDTO>();
 
 /**
  * Names and avatars for member ids (`profiles.batch`, at most 100), by id.
  * A name or profile read that failed comes back `resolved: false` with a
  * fallback name (the handle): it shows, unless an earlier read loaded the
  * name, which shows instead. Either way the row stays `resolved: false`, so
- * the people are read again next time rather than kept for ten minutes, and
- * a name kept that way never counts as loaded (QA rc17 D-010).
+ * the people are read again next time rather than kept for ten minutes
+ * (QA rc17 D-010).
  */
 export function usePeople(ids: readonly string[], enabled = true) {
   const sorted = useMemo(() => Array.from(new Set(ids)).sort().slice(0, 100), [ids]);
@@ -124,13 +124,14 @@ export function usePeople(ids: readonly string[], enabled = true) {
     queryKeys.dm.people(sorted),
     async (api) => {
       const users = await api.profiles.batch(sorted);
-      const loaded = users.every((user) => user.resolved) ? null : loadedPeople();
-      return loaded
-        ? users.map((user) => {
-            const earlier = user.resolved ? undefined : loaded.get(user.id);
-            return earlier ? { ...earlier, resolved: false } : user;
-          })
-        : users;
+      return users.map((user) => {
+        if (user.resolved) {
+          knownPeople.set(user.id, user);
+          return user;
+        }
+        const known = knownPeople.get(user.id);
+        return known ? { ...known, resolved: false } : user;
+      });
     },
     {
       enabled: enabled && sorted.length > 0,

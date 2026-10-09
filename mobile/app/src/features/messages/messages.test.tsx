@@ -1652,6 +1652,36 @@ describe('usePeople (group sender names)', () => {
     expect(reopened.name()).toBe('Robert Builder');
     reopened.unmount();
   });
+
+  it('keeps a loaded name through failed reads in a row, and still reads again each time (QA rc17 D-010)', async () => {
+    // Dave, so no other test's read holds a loaded copy of him.
+    const DAVE_ID = 'DaveId111111111111111111111111111111111111111';
+    const batch = fakeEngine.method('profiles.batch');
+    batch.mockResolvedValueOnce([person(DAVE_ID, 'Dave Diver', true)]);
+    const loaded = nameOf([DAVE_ID], DAVE_ID);
+    await act(async () => {});
+    expect(loaded.name()).toBe('Dave Diver');
+    loaded.unmount();
+
+    // His name is kept for ten minutes; a refresh reads it again, and that read fails.
+    queryClient.invalidateQueries({ queryKey: queryKeys.dm.people([DAVE_ID]) }).catch(() => undefined);
+    // Two failed reads in a row: the second is read again on its own (a failed read is never final), and his name stays.
+    for (const reads of [2, 3]) {
+      batch.mockResolvedValueOnce([person(DAVE_ID, 'dave', false)]);
+      const failed = nameOf([DAVE_ID], DAVE_ID);
+      await act(async () => {});
+      expect(batch).toHaveBeenCalledTimes(reads);
+      expect(failed.name()).toBe('Dave Diver');
+      failed.unmount();
+    }
+
+    // The last failed read stays stale: the next open reads again.
+    batch.mockResolvedValueOnce([person(DAVE_ID, 'Dave Diver', true)]);
+    const recovered = nameOf([DAVE_ID], DAVE_ID);
+    await act(async () => {});
+    expect(batch).toHaveBeenCalledTimes(4);
+    recovered.unmount();
+  });
 });
 
 const BOB = { id: BOB_ID, username: 'bob', displayName: 'Bob Builder', avatar: { uri: null, dicebear: null }, resolved: true };
