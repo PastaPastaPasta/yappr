@@ -2,6 +2,7 @@ import { act, render, screen } from '@testing-library/react-native';
 import { Dimensions, Platform } from 'react-native';
 
 import { remeasureProps } from './font-scale';
+import { GrowMirror, LinesMirror } from './grow';
 import { Text } from './Text';
 
 /** Dimensions as React Native reports them, at `fontScale`. */
@@ -61,6 +62,26 @@ describe('Text and the system font scale (D-rc5a-001, QA rc16 I-01)', () => {
     expect(after).not.toBe(before);
     expect(after).toHaveTextContent('Following');
     expect(after.props.dynamicTypeRamp).toBeUndefined();
+  });
+
+  it('measures the composer mirrors afresh when the font scale changes, so their heights are the new size\'s', () => {
+    const onLayout = jest.fn();
+    // The mirrors are hidden from accessibility, as from sight.
+    const mirror = (testID: string) => screen.getByTestId(testID, { includeHiddenElements: true });
+    setOS('android');
+    render(<LinesMirror lines={5} style={{ fontSize: 16 }} onLayout={onLayout} testID="lines" />);
+    const lines = mirror('lines');
+    setFontScale(larger);
+    expect(mirror('lines')).not.toBe(lines);
+    expect(mirror('lines').props.dynamicTypeRamp).toBeDefined();
+
+    setOS('ios');
+    render(<GrowMirror text="hello" style={{ fontSize: 16 }} onLayout={onLayout} testID="grow" />);
+    const grow = mirror('grow');
+    setFontScale(initial);
+    expect(mirror('grow')).not.toBe(grow);
+    expect(mirror('grow')).toHaveTextContent('hello');
+    expect(mirror('grow').props.dynamicTypeRamp).toBeUndefined();
   });
 
   it('gives each of 11 changes in a row its own key, and none before the first or on iOS', () => {

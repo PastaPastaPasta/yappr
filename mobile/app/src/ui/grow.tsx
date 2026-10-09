@@ -7,6 +7,7 @@ import {
   type TextInputContentSizeChangeEventData,
   type TextStyle,
 } from 'react-native';
+import { remeasureProps, useFontScaleChanges } from './font-scale';
 
 /**
  * Multi-line inputs grow with their text on iOS (QA rc13 c6).
@@ -38,25 +39,19 @@ export function useGrowHeight({ min, max, padding }: { min: number; max: number;
 /** Out of sight, reach and accessibility, at the input's width (it sits beside it, in its slot). */
 const MIRROR: TextStyle = { position: 'absolute', left: 0, right: 0, top: 0, opacity: 0 };
 
+type MirrorProps = { style: TextStyle; onLayout: (event: LayoutChangeEvent) => void; testID?: string };
+
 /**
- * The invisible copy of an input's text that `useGrowHeight` measures, iOS
- * only. A trailing line break counts as a line, as it does in the input.
+ * Invisible text measured for a height. Like the app's `Text`, it mounts anew
+ * (and on Android takes a fresh size-cache key) when the font scale changes
+ * while it is on screen, so its height is the one at the new size.
  */
-export function GrowMirror({
-  text,
-  style,
-  onLayout,
-  testID,
-}: {
-  text: string;
-  style: TextStyle;
-  onLayout: (event: LayoutChangeEvent) => void;
-  testID?: string;
-}) {
-  if (Platform.OS !== 'ios') return null;
-  const shown = text === '' || text.endsWith('\n') ? `${text}​` : text;
+function Mirror({ style, onLayout, testID, children }: MirrorProps & { children: string }) {
+  const fontScaleChanges = useFontScaleChanges();
   return (
     <Text
+      key={fontScaleChanges}
+      {...remeasureProps(fontScaleChanges)}
       style={[style, MIRROR]}
       onLayout={onLayout}
       accessibilityElementsHidden
@@ -64,9 +59,18 @@ export function GrowMirror({
       pointerEvents="none"
       testID={testID}
     >
-      {shown}
+      {children}
     </Text>
   );
+}
+
+/**
+ * The invisible copy of an input's text that `useGrowHeight` measures, iOS
+ * only. A trailing line break counts as a line, as it does in the input.
+ */
+export function GrowMirror({ text, ...props }: MirrorProps & { text: string }) {
+  if (Platform.OS !== 'ios') return null;
+  return <Mirror {...props}>{text === '' || text.endsWith('\n') ? `${text}​` : text}</Mirror>;
 }
 
 /**
@@ -107,28 +111,7 @@ export function useContentGrowHeight({ min, max, input }: { min: number; max: nu
  * `lineHeight` it is given, which only Fabric's measuring copy carries, so a
  * capped input there is given none, and its lines are measured here.)
  */
-export function LinesMirror({
-  lines,
-  style,
-  onLayout,
-  testID,
-}: {
-  lines: number;
-  style: TextStyle;
-  onLayout: (event: LayoutChangeEvent) => void;
-  testID?: string;
-}) {
+export function LinesMirror({ lines, ...props }: MirrorProps & { lines: number }) {
   if (Platform.OS !== 'android') return null;
-  return (
-    <Text
-      style={[style, MIRROR]}
-      onLayout={onLayout}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      pointerEvents="none"
-      testID={testID}
-    >
-      {Array.from({ length: lines }, () => '\u200b').join('\n')}
-    </Text>
-  );
+  return <Mirror {...props}>{Array.from({ length: lines }, () => '\u200b').join('\n')}</Mirror>;
 }
