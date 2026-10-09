@@ -31,7 +31,7 @@ const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
 const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { RpcError } = await import('../../src/protocol/envelope')
-const { SEND_BUDGET_MS } = await import('../../src/dm/v5')
+const { SEND_BUDGET_MS, SEND_REATTEMPT_PAUSE_MS } = await import('../../src/dm/v5')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
 type MemoryLedger = InstanceType<typeof MemoryLedger>
 
@@ -467,9 +467,17 @@ describe('dm on DM v5: 1:1', () => {
     await a.settled(await a.dm.send(key, 'first'))
     const chain = a.engine().ctx.chain as MemoryChain
     const written = ledger.messages.length
-    vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(new Error('transport error: grpc error: Failed to fetch'))
-    const ticket = await a.settled(await a.dm.send(key, 'second'))
+    // The connection stays down for the send's own second try too (RC16-A-05).
+    const down = new Error('transport error: grpc error: Failed to fetch')
+    const read = vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(down).mockRejectedValueOnce(down)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const sent = await a.dm.send(key, 'second')
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(SEND_REATTEMPT_PAUSE_MS)
+    const ticket = await a.settled(sent)
+    vi.useRealTimers()
     expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) })
+    expect(read).toHaveBeenCalledTimes(2)
     expect(ledger.messages).toHaveLength(written)
     await a.tickets.retry(ticket.id)
     expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
@@ -609,6 +617,30 @@ describe('dm on DM v5: 1:1', () => {
     await vi.waitFor(() => expect(a.tickets.get(ticket.id)?.state).toBe('confirmed'))
     expect(ledger.messages).toHaveLength(written + 1)
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['once', 'first'])
+  })
+
+  it('tries a send once more on its own when its first read after the network came back fails, and sends it once (RC16-A-05)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    const written = ledger.messages.length
+    // The first request after the stall fails at once, on connections the stall left dead.
+    const read = vi.spyOn(chain, 'messagesByTags').mockRejectedValueOnce(new Error('no available addresses to use'))
+    const broadcasts = vi.spyOn(chain, 'createMessage')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'back online')
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+      expect(a.tickets.get(ticket.id)?.state).toBe('confirmed')
+    })
+    vi.useRealTimers()
+    expect(read.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(broadcasts).toHaveBeenCalledTimes(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect(a.events.filter(e => e.event === 'write.status').map(e => (e.payload as WriteTicket)).filter(t => t.id === ticket.id).map(t => t.state)).not.toContain('failed')
   })
 
   it('runs each account\'s sends on their own: a send hanging on the old account never holds up the next', async () => {

@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
+import { classify } from '../writes/classify'
 import { NotSentError, type ProbeResult, type WriteResult } from '../writes/tickets'
 import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit, type DmView } from './changes'
 import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
@@ -120,16 +121,26 @@ function readPendingRetention(storage: KeyValueArea, identityId: string): Pendin
  */
 export const SEND_BUDGET_MS = 30_000
 
+/**
+ * The pause before a send whose read before its broadcast failed on the
+ * connection tries once more: the SDK rebuilds its connection in the
+ * background after such a failure, and `getSdk` waits for the rebuild
+ * (RC16-A-05).
+ */
+export const SEND_REATTEMPT_PAUSE_MS = 2_000
+
 const SEND_GAVE_UP = 'Sending took too long, so it was not sent. Try again.'
 
 /**
- * A send in progress: its broadcasts, my messages the conversation held at
- * the latest one, and whether it was given up as not sent (it may broadcast
- * nothing from then on).
+ * A send in progress: its broadcasts, the writes it made (its broadcasts and
+ * a new conversation's invite), my messages the conversation held at the
+ * latest broadcast, and whether it was given up as not sent (it may
+ * broadcast nothing from then on).
  */
 interface SendAttempt {
   key: string
   broadcasts: number
+  writes: number
   heldAtBroadcast: number
   abandoned: boolean
 }
@@ -148,6 +159,20 @@ const nothingOnItsWay = (engine: DmEngine, attempt: SendAttempt): boolean =>
 
 /** The refusal a given-up send gets for a broadcast it tries after all: lib throws it, nothing goes out. */
 const REFUSED_AFTER_GIVING_UP: WriteOutcome = { ok: false, failure: 'other', error: SEND_GAVE_UP }
+
+/**
+ * Whether a send that failed before writing anything tries once more: the
+ * connection failed (`NETWORK`) or a read timed out (`TIMEOUT`), typically
+ * the first request after the network came back, on connections the stall
+ * left dead. Nothing was written, so it cannot duplicate.
+ */
+function reattempts(error: unknown, attempt: SendAttempt): boolean {
+  if (attempt.writes > 0 || attempt.abandoned) return false
+  const { code } = classify(error)
+  return code === 'NETWORK' || code === 'TIMEOUT'
+}
+
+const pause = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
 
 /**
  * `turn`'s outcome, or, `SEND_BUDGET_MS` after the send started with none of
@@ -288,9 +313,15 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
         // Given up as not sent: nothing may go out after all.
         if (attempt.abandoned) return Promise.resolve(REFUSED_AFTER_GIVING_UP)
         attempt.broadcasts += 1
+        attempt.writes += 1
         attempt.heldAtBroadcast = ownMessages(running, attempt.key)
       }
       return createMessage(tag, body)
+    }
+    const createInvite = chain.createInvite.bind(chain)
+    chain.createInvite = invite => {
+      if (lane.attempt) lane.attempt.writes += 1
+      return createInvite(invite)
     }
     return lane
   }
@@ -552,13 +583,21 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const running = engine(identityId)
       const lane = laneOf(running)
-      const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0, abandoned: false }
+      const current: SendAttempt = { key, broadcasts: 0, writes: 0, heldAtBroadcast: 0, abandoned: false }
       const turn = lane.queue.then(async () => {
         // Given up while it waited behind an earlier send: never started.
         if (current.abandoned) throw new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK'))
         lane.attempt = current
         try {
-          await running.send(key, text)
+          try {
+            await running.send(key, text)
+          } catch (error) {
+            if (!reattempts(error, current)) throw error
+            logger.debug('DM send: the connection failed before anything went out; trying once more:', error)
+            await pause(SEND_REATTEMPT_PAUSE_MS)
+            if (current.abandoned) throw error
+            await running.send(key, text)
+          }
         } catch (error) {
           // No broadcast at all, or the part last broadcast is held (it landed) and the next failed before its own.
           if (nothingOnItsWay(running, current)) throw new NotSentError(error)
