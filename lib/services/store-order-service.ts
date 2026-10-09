@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6, storefrontOrdersCarryStoreStatus } from '../constants';
 import { storeService } from './store-service';
+import { storeItemService } from './store-item-service';
 import { OWN_STORE_ORDER_MESSAGE, orderPayloadSizeError } from '../storefront/storefront-contract';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
 import { privateFeedCryptoService } from './private-feed-crypto-service';
@@ -19,7 +20,8 @@ import type {
   CartItem,
   ShippingAddress,
   BuyerContact,
-  OrderItem
+  OrderItem,
+  StoreItem
 } from '../../types';
 
 class StoreOrderService extends BaseDocumentService<StoreOrder> {
@@ -151,7 +153,9 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   }
 
   /**
-   * Helper to build order payload from cart items
+   * The order payload for `cartItems`. Each line keeps its variant's id and
+   * name, and its SKU when `storeItems` (the listings by id, as checkout last
+   * read them) holds its item, so the order reads without the listing.
    */
   buildOrderPayload(
     cartItems: CartItem[],
@@ -161,17 +165,25 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     paymentUri: string,
     currency: string,
     notes?: string,
-    refundAddress?: string
+    refundAddress?: string,
+    storeItems: ReadonlyMap<string, StoreItem> = new Map()
   ): OrderPayload {
-    const orderItems: OrderItem[] = cartItems.map(item => ({
-      itemId: item.itemId,
-      itemTitle: item.title,
-      variantKey: item.variantKey,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      imageUrl: item.imageUrl,
-      ...(item.fulfillment === 'digital' ? { fulfillment: 'digital' as const } : {})
-    }));
+    const orderItems: OrderItem[] = cartItems.map(item => {
+      const storeItem = storeItems.get(item.itemId);
+      const variantLabel = item.variantLabel ?? (storeItem && storeItemService.getVariantLabel(storeItem, item.variantId));
+      const sku = storeItem && storeItemService.getSku(storeItem, item.variantId);
+      return {
+        itemId: item.itemId,
+        itemTitle: item.title,
+        ...(item.variantId ? { variantId: item.variantId } : {}),
+        ...(variantLabel ? { variantLabel } : {}),
+        ...(sku ? { sku } : {}),
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        imageUrl: item.imageUrl,
+        ...(item.fulfillment === 'digital' ? { fulfillment: 'digital' as const } : {})
+      };
+    });
 
     const subtotal = cartItems.reduce(
       (sum, item) => sum + item.unitPrice * item.quantity,

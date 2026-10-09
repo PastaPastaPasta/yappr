@@ -1,18 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CartItem, StoreItem } from '@/lib/types'
-
-vi.mock('./store-item-service', () => ({
-  storeItemService: {
-    query: vi.fn(),
-    getPrice: (item: StoreItem) => item.basePrice,
-    getStock: (item: StoreItem, key?: string) => key
-      ? item.variants?.combinations.find(combo => combo.key === key)?.stock ?? Infinity
-      : item.stockQuantity ?? Infinity,
-    getCombination: (item: StoreItem, key: string) => item.variants?.combinations.find(combo => combo.key === key)
-  }
-}))
+import type { CartItem, ItemVariants, StoreItem } from '@/lib/types'
+import { variantsFromRows, type VariantRow } from '@/lib/storefront/variant-codec'
 import { storeItemService } from './store-item-service'
 import { cartService, getCartCurrency } from './cart-service'
+
+/** A one-axis table; option ids run 1, 2, … in row order, so variant ids are '1', '2', … */
+const sizes = (rows: Array<Omit<VariantRow, 'optionNames'> & { name: string }>): ItemVariants =>
+  variantsFromRows(['Size'], rows.map(({ name, ...data }) => ({ optionNames: [name], ...data }))).variants as ItemVariants
 
 const product = (overrides: Partial<StoreItem> = {}): StoreItem => ({
   id: 'item', storeId: 'store', ownerId: 'seller', createdAt: new Date(),
@@ -28,7 +22,8 @@ const respond = (item: StoreItem | null) => vi.mocked(storeItemService.query).mo
 beforeEach(() => {
   const data = new Map<string, string>()
   vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) })
-  vi.clearAllMocks()
+  vi.restoreAllMocks()
+  vi.spyOn(storeItemService, 'query').mockResolvedValue({ documents: [] })
   cartService.clearCart()
 })
 
@@ -46,16 +41,38 @@ describe('cart inventory', () => {
   })
 
   it('keeps per-variant additions within their own stock', () => {
-    const item = product({ variants: { axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 100, stock: 1 }, { key: 'M', price: 100, stock: 2 }] } })
-    cartService.addStoreItem(item, 'S')
-    cartService.addStoreItem(item, 'M', 2)
-    expect(() => cartService.addStoreItem(item, 'S')).toThrow('Only 1 available')
+    const item = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'S', price: 100, stock: 1 }, { name: 'M', price: 120, stock: 2 }]) })
+    cartService.addStoreItem(item, '1')
+    cartService.addStoreItem(item, '2', 2)
+    expect(() => cartService.addStoreItem(item, '1')).toThrow('Only 1 available')
     expect(cartService.getItemCount()).toBe(3)
+    expect(cartService.getItems().map(line => [line.variantId, line.variantLabel, line.unitPrice])).toEqual([['1', 'S', 100], ['2', 'M', 120]])
   })
 
-  it('rejects removed variants before adding them', () => {
-    expect(() => cartService.addStoreItem(product({ variants: { axes: [], combinations: [] } }), 'removed')).toThrow('no longer available')
+  it('names a line by its variant id and shows the variant image', () => {
+    const variants = sizes([{ name: 'S', price: 100, image: 2 }, { name: 'M', price: 100 }])
+    const item = product({ basePrice: undefined, stockQuantity: undefined, imageUrls: ['https://a/hero.png', 'https://a/small.png'], variants })
+    cartService.addStoreItem(item, '1')
+    cartService.addStoreItem(item, '2')
+    expect(cartService.getItems().map(line => line.imageUrl)).toEqual(['https://a/small.png', 'https://a/hero.png'])
+    cartService.updateQuantity('item', '1', 4)
+    cartService.removeItem('item', '2')
+    expect(cartService.getItems()).toMatchObject([{ variantId: '1', quantity: 4 }])
+  })
+
+  it('rejects removed variants, and a variant item named without one, before adding them', () => {
+    const item = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'S', price: 100 }]) })
+    expect(() => cartService.addStoreItem(item, '9')).toThrow('no longer available')
+    expect(() => cartService.addStoreItem(item)).toThrow('no longer available')
     expect(cartService.getItems()).toHaveLength(0)
+  })
+
+  it('weighs each shipped line by its variant, else by its item', async () => {
+    const item = product({ weight: 500, basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Single', price: 100 }, { name: '4-pack', price: 353, weight: 1800 }]) })
+    vi.spyOn(storeItemService, 'get').mockResolvedValue(item)
+    cartService.addStoreItem(item, '1', 2)
+    cartService.addStoreItem(item, '2')
+    expect(await cartService.getTotalWeight()).toBe(2 * 500 + 1800)
   })
 
   it('returns a maximum for a cart already at available stock', async () => {
@@ -82,8 +99,15 @@ describe('cart inventory', () => {
   })
 
   it('does not mistake a removed option for unlimited inventory', async () => {
-    respond(product({ stockQuantity: undefined, variants: { axes: [], combinations: [] } }))
-    expect(await cartService.validateItems([cartItem({ variantKey: 'old' })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'S', price: 100 }]) }))
+    expect(await cartService.validateItems([cartItem({ variantId: '7' })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem()])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+  })
+
+  it('checks a variant line against that variant\'s stock', async () => {
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'S', price: 100, stock: 1 }, { name: 'M', price: 100, stock: 0 }]) }))
+    expect(await cartService.validateItems([cartItem({ variantId: '1', quantity: 1 })])).toEqual([])
+    expect(await cartService.validateItems([cartItem({ variantId: '2', quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Out of stock' }])
   })
 
   it('preserves the cart through a failed lookup and permits a successful retry', async () => {

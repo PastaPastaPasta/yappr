@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import * as Dialog from '@radix-ui/react-dialog'
 import {
@@ -18,13 +18,15 @@ import { formatPrice } from '@/lib/utils/format'
 import {
   parseInventoryCSV,
   toStoreItemData,
-  generateCSVTemplate,
   type GroupedInventoryItem,
   type InventoryParseError
 } from '@/lib/upload/inventory-parser'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 import { storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
+import { inventoryCsvTemplate, optionTypesSummary } from '@/lib/storefront/inventory-csv'
+import { priceRange, tracksStock } from '@/lib/storefront/variant-codec'
+import { ListLimitError } from '@/lib/typed-array-codecs'
 
 interface InventoryUploadModalProps {
   isOpen: boolean
@@ -39,6 +41,30 @@ type UploadStep = 'select' | 'preview' | 'uploading' | 'complete'
 
 /** What one new listing pays into the fee pots on storefront v6 (null before v6). */
 const listingFeeCredits = storefrontCreateFeeCredits('storeItem')
+
+const plural = (count: number, noun: string) => `${count} ${noun}${count === 1 ? '' : 's'}`
+
+/** A product's message without the leading product name, which its row already shows. */
+function messageFor(item: GroupedInventoryItem, message: string): string {
+  const prefix = `"${item.title}": `
+  if (!message.startsWith(prefix)) return message
+  const rest = message.slice(prefix.length)
+  return rest.charAt(0).toUpperCase() + rest.slice(1)
+}
+
+/** The price a product preview shows: one price, or the lowest to the highest. */
+function previewPrice(item: GroupedInventoryItem, currency: string): string {
+  if (!item.variants) return formatPrice(item.basePrice, currency)
+  const { min, max } = priceRange(item.variants)
+  return min === max ? formatPrice(min, currency) : `${formatPrice(min, currency)} – ${formatPrice(max, currency)}`
+}
+
+/** The stock a product preview shows: the units in all, or "Not tracked". */
+function previewStock(item: GroupedInventoryItem): string {
+  if (!item.variants) return item.stockQuantity === undefined ? 'Not tracked' : String(item.stockQuantity)
+  if (!tracksStock(item.variants)) return 'Not tracked'
+  return String(item.variants.combinations.reduce((sum, combination) => sum + (combination.stock ?? 0), 0))
+}
 
 export function InventoryUploadModal({
   isOpen,
@@ -59,6 +85,9 @@ export function InventoryUploadModal({
   const [uploadProgress, setUploadProgress] = useState(0)
   const [uploadedCount, setUploadedCount] = useState(0)
   const [uploadErrors, setUploadErrors] = useState<string[]>([])
+  // Products with problems are left out; the rest upload.
+  const readyItems = useMemo(() => items.filter((item) => item.errors.length === 0), [items])
+  const blockedCount = items.length - readyItems.length
 
   const resetState = useCallback(() => {
     setStep('select')
@@ -109,7 +138,7 @@ export function InventoryUploadModal({
   const handleUpload = useCallback(async () => {
     // Re-entry guard to prevent concurrent uploads
     if (isUploadingRef.current) return
-    if (items.length === 0) return
+    if (readyItems.length === 0) return
 
     isUploadingRef.current = true
 
@@ -122,18 +151,20 @@ export function InventoryUploadModal({
       const newErrors: string[] = []
       let successCount = 0
 
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]
+      for (let i = 0; i < readyItems.length; i++) {
+        const item = readyItems[i]
         try {
           const data = toStoreItemData(item)
           await storeItemService.createItem(ownerId, storeId, data)
           successCount++
         } catch (err) {
           logger.error(`Failed to upload item ${item.title}:`, err)
-          newErrors.push(`${item.title}: ${err instanceof Error ? err.message : 'Upload failed'}`)
+          // A listing too large to save says why, in words for the seller.
+          const reason = err instanceof ListLimitError ? err.message : 'It could not be saved. Please try again.'
+          newErrors.push(`${item.title}: ${reason}`)
         }
 
-        setUploadProgress(Math.round(((i + 1) / items.length) * 100))
+        setUploadProgress(Math.round(((i + 1) / readyItems.length) * 100))
         setUploadedCount(successCount)
       }
 
@@ -143,10 +174,10 @@ export function InventoryUploadModal({
     } finally {
       isUploadingRef.current = false
     }
-  }, [items, ownerId, storeId, onComplete])
+  }, [readyItems, ownerId, storeId, onComplete])
 
   const handleDownloadTemplate = useCallback(() => {
-    const csv = generateCSVTemplate()
+    const csv = inventoryCsvTemplate()
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
@@ -253,10 +284,10 @@ export function InventoryUploadModal({
                 <ul className="list-disc list-inside space-y-1 pl-2">
                   <li><strong>Item Name</strong> (required) - Product title</li>
                   <li><strong>Price</strong> (required) - Price in {currency} (e.g., 9.99)</li>
-                  <li><strong>Group</strong> - Group ID to link variants together</li>
-                  <li><strong>Variant / Sub Variant</strong> - Variant options (e.g., Color, Size)</li>
-                  <li><strong>Quantity</strong> - Stock count or formula (e.g., &quot;(SKU-NAME)*5&quot;)</li>
-                  <li><strong>SKU, Category, Tags, Images</strong> - Optional fields</li>
+                  <li><strong>Group</strong> - Rows with the same group become one product, one row per combination of options</li>
+                  <li><strong>Option1 Name / Option1 Value</strong> (up to Option5) - Option types and their options (e.g., Color: Red, Size: Large). A Variant column works too, such as &quot;Color: Red · Size: Large&quot;</li>
+                  <li><strong>Quantity</strong> - Stock count or formula (e.g., &quot;(SKU-NAME)*5&quot;). Leave it empty on every row to not track stock</li>
+                  <li><strong>SKU, Category, Tags, Weight, Image1, Image URL</strong> - Optional fields</li>
                 </ul>
               </div>
             </div>
@@ -270,7 +301,7 @@ export function InventoryUploadModal({
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{fileName}</p>
                   <p className="text-sm text-gray-500">
-                    {items.length} item{items.length !== 1 ? 's' : ''} found
+                    {plural(items.length, 'product')} found
                   </p>
                 </div>
                 <Button
@@ -294,7 +325,7 @@ export function InventoryUploadModal({
                   <ul className="text-sm text-red-700 dark:text-red-300 space-y-1">
                     {errors.slice(0, 5).map((error, i) => (
                       <li key={i}>
-                        Row {error.row}: {error.message}
+                        {error.row > 0 ? `Row ${error.row}: ` : ''}{error.message}
                       </li>
                     ))}
                     {errors.length > 5 && (
@@ -316,7 +347,7 @@ export function InventoryUploadModal({
                   <ul className="text-sm text-yellow-700 dark:text-yellow-300 space-y-1">
                     {warnings.slice(0, 3).map((warning, i) => (
                       <li key={i}>
-                        Row {warning.row}: {warning.message}
+                        {warning.row > 0 ? `Row ${warning.row}: ` : ''}{warning.message}
                       </li>
                     ))}
                     {warnings.length > 3 && (
@@ -329,54 +360,49 @@ export function InventoryUploadModal({
               {/* Items Preview */}
               {items.length > 0 && (
                 <div>
-                  <h3 className="font-medium mb-3">Items to Upload</h3>
+                  <h3 className="font-medium mb-3">Products to Upload</h3>
+                  {blockedCount > 0 && (
+                    <p className="text-sm text-red-700 dark:text-red-300 mb-2">
+                      {blockedCount === 1 ? '1 product has a problem and will be skipped.' : `${blockedCount} products have problems and will be skipped.`}
+                      {' '}Fix the file and upload it again to add {blockedCount === 1 ? 'it' : 'them'}.
+                    </p>
+                  )}
                   <div className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                    <div className="max-h-64 overflow-y-auto">
+                    <div className="max-h-80 overflow-y-auto">
                       <table className="w-full text-sm">
                         <thead className="bg-gray-50 dark:bg-gray-800 sticky top-0">
                           <tr>
-                            <th className="text-left px-3 py-2 font-medium">Item</th>
-                            <th className="text-left px-3 py-2 font-medium">Variants</th>
+                            <th className="text-left px-3 py-2 font-medium">Product</th>
                             <th className="text-right px-3 py-2 font-medium">Price</th>
                             <th className="text-right px-3 py-2 font-medium">Stock</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                           {items.map((item, i) => (
-                            <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                            <tr key={i} className="align-top hover:bg-gray-50 dark:hover:bg-gray-800/50">
                               <td className="px-3 py-2">
-                                <div className="font-medium truncate max-w-[200px]">{item.title}</div>
+                                <div className="font-medium truncate max-w-[280px]">{item.title}</div>
                                 {item.category && (
                                   <div className="text-xs text-gray-500">{item.category}</div>
                                 )}
-                              </td>
-                              <td className="px-3 py-2 text-gray-500">
-                                {item.variants ? (
-                                  <span>{item.variants.combinations.length} variants</span>
-                                ) : (
-                                  <span>-</span>
+                                {item.variants && (
+                                  <div className="text-xs text-gray-600 dark:text-gray-400">{optionTypesSummary(item.variants)}</div>
                                 )}
+                                {item.errors.map((message, j) => (
+                                  <div key={`error-${j}`} className="flex items-start gap-1 mt-1 text-xs text-red-700 dark:text-red-300">
+                                    <ExclamationCircleIcon className="h-4 w-4 flex-shrink-0" />
+                                    <span>{messageFor(item, message)}</span>
+                                  </div>
+                                ))}
+                                {item.warnings.map((message, j) => (
+                                  <div key={`warning-${j}`} className="flex items-start gap-1 mt-1 text-xs text-yellow-700 dark:text-yellow-300">
+                                    <ExclamationTriangleIcon className="h-4 w-4 flex-shrink-0" />
+                                    <span>{messageFor(item, message)}</span>
+                                  </div>
+                                ))}
                               </td>
-                              <td className="px-3 py-2 text-right">
-                                {item.variants ? (
-                                  <span>
-                                    {formatPrice(Math.min(...item.variants.combinations.map(c => c.price)), currency)}
-                                    {' - '}
-                                    {formatPrice(Math.max(...item.variants.combinations.map(c => c.price)), currency)}
-                                  </span>
-                                ) : (
-                                  formatPrice(item.basePrice, currency)
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-right">
-                                {item.variants ? (
-                                  <span>
-                                    {item.variants.combinations.reduce((sum, c) => sum + (c.stock ?? 0), 0)}
-                                  </span>
-                                ) : (
-                                  item.stockQuantity ?? '-'
-                                )}
-                              </td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">{previewPrice(item, currency)}</td>
+                              <td className="px-3 py-2 text-right whitespace-nowrap">{previewStock(item)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -418,9 +444,9 @@ export function InventoryUploadModal({
                   <span className="text-2xl font-bold">{uploadProgress}%</span>
                 </div>
               </div>
-              <p className="text-lg font-medium mb-2">Uploading Items...</p>
+              <p className="text-lg font-medium mb-2">Uploading Products...</p>
               <p className="text-gray-500">
-                {uploadedCount} of {items.length} items uploaded
+                {uploadedCount} of {plural(readyItems.length, 'product')} uploaded
               </p>
             </div>
           )}
@@ -430,13 +456,13 @@ export function InventoryUploadModal({
               <CheckCircleIcon className="h-16 w-16 text-green-500 mx-auto mb-4" />
               <h3 className="text-xl font-bold mb-2">Upload Complete</h3>
               <p className="text-gray-500 mb-4">
-                Successfully uploaded {uploadedCount} of {items.length} items
+                Uploaded {uploadedCount} of {plural(readyItems.length, 'product')}
               </p>
 
               {uploadErrors.length > 0 && (
                 <div className="p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-left mb-4">
                   <p className="font-medium text-red-800 dark:text-red-200 mb-2">
-                    {uploadErrors.length} item{uploadErrors.length !== 1 ? 's' : ''} failed to upload:
+                    {uploadErrors.length === 1 ? '1 product was' : `${uploadErrors.length} products were`} not uploaded:
                   </p>
                   <ul className="text-sm text-red-700 dark:text-red-300 space-y-1">
                     {uploadErrors.slice(0, 5).map((error, i) => (
@@ -453,9 +479,9 @@ export function InventoryUploadModal({
         </div>
 
         {/* v6 charges an action fee on every new listing. */}
-        {step === 'preview' && items.length > 0 && listingFeeCredits !== null && (
+        {step === 'preview' && readyItems.length > 0 && listingFeeCredits !== null && (
           <p className="px-4 pb-2 text-xs text-gray-500">
-            {items.length} new listing{items.length !== 1 ? 's' : ''} pay about {formatCreditsAsDash(listingFeeCredits * BigInt(items.length))} DASH in moderation fees, plus network fees.
+            {readyItems.length} new listing{readyItems.length !== 1 ? 's' : ''} pay about {formatCreditsAsDash(listingFeeCredits * BigInt(readyItems.length))} DASH in moderation fees, plus network fees.
           </p>
         )}
 
@@ -483,9 +509,9 @@ export function InventoryUploadModal({
               <Button
                 className="flex-1"
                 onClick={handleUpload}
-                disabled={items.length === 0 || errors.length > 0}
+                disabled={readyItems.length === 0 || errors.length > 0}
               >
-                Upload {items.length} Item{items.length !== 1 ? 's' : ''}
+                Upload {plural(readyItems.length, 'Product')}
               </Button>
             </>
           )}

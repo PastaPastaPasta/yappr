@@ -75,25 +75,48 @@ export interface Store {
   reviewCount?: number
 }
 
-// Variant axis definition (e.g., Color, Size)
+/**
+ * One option on a variant axis ("Red" on "Color"). Its id (1–254) is stable
+ * for the life of the listing and never reused, so a renamed or reordered
+ * option keeps every cart line, order and kit that names it.
+ */
+export interface VariantOption {
+  id: number
+  name: string
+}
+
+// Variant axis definition (e.g., Color, Size), its options in display order
 export interface VariantAxis {
   name: string
-  options: string[]
+  options: VariantOption[]
 }
 
-// Individual variant combination
+/**
+ * One purchasable combination: exactly one option per axis. `id` is the
+ * canonical variant id, the combination's option ids sorted ascending and
+ * joined with "." ("3.9"); carts, orders and digital kits name it.
+ */
 export interface VariantCombination {
-  key: string // e.g., "Blue|Large"
-  price: number // Price in smallest currency unit
-  stock?: number // Optional - if undefined, inventory is not tracked (unlimited)
+  id: string
+  /** One option id per axis, in axis order. */
+  optionIds: number[]
+  /** Price in the item currency's smallest unit. */
+  price: number
+  /** Units in stock; undefined when the item does not track inventory (every combination or none). */
+  stock?: number
   sku?: string
-  imageUrl?: string
+  /** Weight in grams; undefined means the item's own weight. */
+  weight?: number
+  /** 1-based index into the item's imageUrls; undefined means the item's first image. */
+  image?: number
 }
 
-// Full variants structure stored in item
+/** A listing's variants table (storefront v7 stores it as typed lists, docs/STOREFRONT_V7.md). */
 export interface ItemVariants {
   axes: VariantAxis[]
   combinations: VariantCombination[]
+  /** The next option id to hand out; ids below it are never reused. */
+  nextOptionId: number
 }
 
 // Store item document (from platform)
@@ -117,7 +140,8 @@ export interface StoreItemDocument {
   weight?: number
   stockQuantity?: number
   sku?: string
-  variants?: string // JSON string of ItemVariants
+  /** v7: the typed table (lib/storefront/variant-codec.ts); v1–v6: a JSON string (lib/storefront/legacy-variants.ts). */
+  variants?: unknown
   fulfillment?: ItemFulfillment // storefront v6
 }
 
@@ -216,7 +240,10 @@ export interface CartItem {
   itemId: string
   storeId: string
   title: string
-  variantKey?: string // e.g., "Blue|Large"
+  /** The canonical variant id ("3.9"); absent for an item without variants. */
+  variantId?: string
+  /** The variant's name when it was added ("Red / Large"), for display only. */
+  variantLabel?: string
   quantity: number
   unitPrice: number
   imageUrl?: string
@@ -251,7 +278,12 @@ export interface BuyerContact {
 export interface OrderItem {
   itemId: string
   itemTitle: string
-  variantKey?: string
+  /** The canonical variant id ("3.9"); absent for an item without variants. */
+  variantId?: string
+  /** The variant's name at checkout ("Red / Large"), so the order reads without the listing. */
+  variantLabel?: string
+  /** The variant's (or item's) SKU at checkout, for the seller. */
+  sku?: string
   quantity: number
   unitPrice: number
   imageUrl?: string
@@ -449,8 +481,9 @@ export interface SavedAddressDocument {
  * is encrypted in the browser with its own random key and the ciphertext
  * pinned to IPFS, so the public CID reveals nothing; whoever holds `key` (the
  * seller, then each buyer it is delivered to) can fetch and decrypt it.
- * `variantKey` limits an asset to one variant of the item; absent means every
- * variant.
+ * `optionIds` limits an asset to the variants that carry every one of those
+ * options (one id: every "Red" variant; one per axis: exactly one variant);
+ * absent means every variant.
  */
 export type DigitalAsset =
   | {
@@ -463,7 +496,7 @@ export type DigitalAsset =
       url: string
       /** Base64 of the 32-byte file key. */
       key: string
-      variantKey?: string
+      optionIds?: number[]
     }
   | {
       kind: 'link'
@@ -471,13 +504,13 @@ export type DigitalAsset =
       url: string
       /** Access code or password the link asks for. */
       code?: string
-      variantKey?: string
+      optionIds?: number[]
     }
   | {
       kind: 'code'
       label: string
       code: string
-      variantKey?: string
+      optionIds?: number[]
     }
 
 /** When the seller's "deliver ready orders" action may fulfil an order. */
@@ -523,11 +556,11 @@ export interface DeliveredItem {
   itemId: string
   itemTitle: string
   /**
-   * Which variant this fulfils, as a fixed-size reference (`variantRef()`),
-   * not the variant key itself: a receipt's size must not depend on the
+   * Which variant this fulfils: its canonical id ("3.9"). Ids are short and
+   * bounded (at most five numbers), so a receipt's size never depends on the
    * listing's variant names, which can change after the kit was checked.
    */
-  variantRef?: string
+  variantId?: string
   /** The variant's name for display, cut to a fixed length. */
   variantLabel?: string
   assets: DigitalAsset[]

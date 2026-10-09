@@ -24,7 +24,8 @@ import { cartService } from '@/lib/services/cart-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storefrontIsV2 } from '@/lib/constants'
 import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
-import type { Store, StoreItem, ItemRatingSummary } from '@/lib/types'
+import { combinationForSelection, combinationImageUrl, isInStock, selectableOptionIds } from '@/lib/storefront/variant-codec'
+import type { Store, StoreItem, ItemRatingSummary, ItemVariants } from '@/lib/types'
 
 /**
  * Why `item` cannot be bought, or null when it can: the viewer's own store, a
@@ -36,6 +37,16 @@ function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: st
   if (item.status !== 'active') return 'This item is no longer available'
   if (store && store.status !== 'active') return `This store is ${store.status === 'closed' ? 'closed' : 'paused'} and is not accepting orders`
   return null
+}
+
+/** The picker's starting choice, one entry per axis: an axis with a single option starts on it. */
+function initialSelection(variants: ItemVariants | undefined): Array<number | undefined> {
+  return variants?.axes.map((axis) => (axis.options.length === 1 ? axis.options[0].id : undefined)) ?? []
+}
+
+/** One price, or the lowest and highest when they differ. */
+function formatPriceRange({ min, max }: { min: number; max: number }, currency: string | undefined): string {
+  return min === max ? formatPrice(min, currency) : `${formatPrice(min, currency)} – ${formatPrice(max, currency)}`
 }
 
 function LoadingFallback() {
@@ -66,7 +77,8 @@ function ItemDetailContent() {
   const [rating, setRating] = useState<ItemRatingSummary | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [quantity, setQuantity] = useState(1)
-  const [variantSelections, setVariantSelections] = useState<Record<string, string>>({})
+  // One option id per axis of item.variants, in axis order; undefined where nothing is chosen.
+  const [selection, setSelection] = useState<Array<number | undefined>>([])
   const [addedToCart, setAddedToCart] = useState(false)
   const [cartError, setCartError] = useState<string | null>(null)
   const [cartItemCount, setCartItemCount] = useState(0)
@@ -105,6 +117,7 @@ function ItemDetailContent() {
         setIsLoading(true)
         const itemData = await storeItemService.get(itemId)
         setItem(itemData)
+        setSelection(initialSelection(itemData?.variants))
 
         if (itemData) {
           const [storeData, ratingData] = await Promise.all([
@@ -119,17 +132,6 @@ function ItemDetailContent() {
           ])
           setStore(storeData)
           setRating(ratingData)
-
-          // Initialize variant selections with first available option
-          if (itemData.variants?.axes) {
-            const initialSelections: Record<string, string> = {}
-            for (const axis of itemData.variants.axes) {
-              if (axis.options.length > 0) {
-                initialSelections[axis.name] = axis.options[0]
-              }
-            }
-            setVariantSelections(initialSelections)
-          }
         }
       } catch (error) {
         logger.error('Failed to load item:', error)
@@ -141,99 +143,52 @@ function ItemDetailContent() {
     loadItem().catch((error) => logger.error(error))
   }, [sdkReady, itemId])
 
-  // Get available options for each axis based on selections
-  const axes = useMemo(() => {
-    if (!item?.variants?.axes) return []
+  const variants = item?.variants
 
-    const allAxes = item.variants.axes
-    return allAxes.map((axis, index) => {
-      // For first axis, all options are available
-      // For subsequent axes, filter based on prior selections
-      const priorSelections: Record<string, string> = {}
-      for (let i = 0; i < index; i++) {
-        const priorAxis = allAxes[i]
-        if (variantSelections[priorAxis.name]) {
-          priorSelections[priorAxis.name] = variantSelections[priorAxis.name]
-        }
-      }
+  // The combination every axis's choice makes; undefined until all are chosen
+  // or when the seller does not offer that combination.
+  const combination = useMemo(
+    () => (variants ? combinationForSelection(variants, selection) : undefined),
+    [variants, selection]
+  )
+  const variantId = combination?.id
+  const isFullySelected = Boolean(variants) && variants?.axes.length === selection.length && selection.every((optionId) => optionId !== undefined)
 
-      const availableOptions = storeItemService.getAxisOptions(item, axis.name, priorSelections)
+  // Each axis with the options a buyer can pick given the choices on the others.
+  const axes = useMemo(
+    () => variants?.axes.map((axis, axisIndex) => ({ ...axis, selectable: selectableOptionIds(variants, axisIndex, selection) })) ?? [],
+    [variants, selection]
+  )
 
-      return {
-        ...axis,
-        availableOptions
-      }
-    })
-  }, [item, variantSelections])
-
-  // Build current variant key
-  const variantKey = useMemo(() => {
-    if (!item?.variants?.axes) return undefined
-    return storeItemService.buildVariantKey(variantSelections, item.variants.axes)
-  }, [item, variantSelections])
-
-  // Get current combination
-  const currentCombination = useMemo(() => {
-    if (!item || !variantKey) return null
-    return storeItemService.getCombination(item, variantKey)
-  }, [item, variantKey])
-
-  // Get current price and stock
-  const currentPrice = useMemo(() => {
-    if (!item) return 0
-    return storeItemService.getPrice(item, variantKey)
-  }, [item, variantKey])
-
-  const currentStock = useMemo(() => {
-    if (!item) return 0
-    return storeItemService.getStock(item, variantKey)
-  }, [item, variantKey])
-
-  const hasInventoryTracking = useMemo(() => {
-    if (!item) return false
-    return storeItemService.hasInventoryTracking(item, variantKey)
-  }, [item, variantKey])
+  const currentStock = item ? storeItemService.getStock(item, variantId) : 0
+  const hasInventoryTracking = item
+    ? (variants ? combination?.stock !== undefined : storeItemService.hasInventoryTracking(item))
+    : false
 
   const quantityInCart = cartService.getItems().find(
-    cartItem => cartItem.itemId === item?.id && cartItem.variantKey === variantKey
+    cartItem => cartItem.itemId === item?.id && cartItem.variantId === variantId
   )?.quantity ?? 0
   const remainingStock = Math.max(0, currentStock - quantityInCart)
 
   useEffect(() => {
     setQuantity(value => Math.max(1, Math.min(value, remainingStock)))
     setCartError(null)
-  }, [remainingStock, variantKey])
+  }, [remainingStock, variantId])
 
-  // Get current image (variant-specific or default)
+  // The chosen combination's image first, then the rest of the item's.
   const images = useMemo(() => {
-    if (!item) return []
-    const baseImages = item.imageUrls || []
+    const baseImages = item?.imageUrls ?? []
+    const shown = combination && combinationImageUrl(baseImages, combination)
+    return shown ? [shown, ...baseImages.filter(url => url !== shown)] : baseImages
+  }, [item, combination])
 
-    // If variant has specific image, add it first
-    if (currentCombination?.imageUrl) {
-      return [currentCombination.imageUrl, ...baseImages.filter(url => url !== currentCombination.imageUrl)]
-    }
-
-    return baseImages
-  }, [item, currentCombination])
-
-  const handleVariantSelect = (axisName: string, value: string) => {
-    setVariantSelections(prev => {
-      const newSelections = { ...prev, [axisName]: value }
-
-      // Reset subsequent axis selections if they're no longer valid
-      if (item?.variants?.axes) {
-        const axisIndex = item.variants.axes.findIndex(a => a.name === axisName)
-        for (let i = axisIndex + 1; i < item.variants.axes.length; i++) {
-          const nextAxis = item.variants.axes[i]
-          const availableOptions = storeItemService.getAxisOptions(item, nextAxis.name, newSelections)
-          if (!availableOptions.includes(newSelections[nextAxis.name])) {
-            newSelections[nextAxis.name] = availableOptions[0] || ''
-          }
-        }
-      }
-
-      return newSelections
+  // Choosing the selected option again clears it, so another choice on a
+  // different axis can open up.
+  const handleVariantSelect = (axisIndex: number, optionId: number) => {
+    setSelection(previous => {
+      const next = variants?.axes.map((axis, index) => previous[index]) ?? []
+      next[axisIndex] = previous[axisIndex] === optionId ? undefined : optionId
+      return next
     })
   }
 
@@ -241,7 +196,7 @@ function ItemDetailContent() {
     if (!item) return
 
     try {
-      cartService.addStoreItem(item, variantKey, quantity)
+      cartService.addStoreItem(item, variantId, quantity)
       setCartError(null)
       setAddedToCart(true)
     } catch (err) {
@@ -277,8 +232,14 @@ function ItemDetailContent() {
     )
   }
 
-  const isOutOfStock = hasInventoryTracking && currentStock === 0
+  const isOutOfStock = variants
+    ? (combination ? !isInStock(combination) : storeItemService.isOutOfStock(item))
+    : hasInventoryTracking && currentStock === 0
   const unavailableReason = unavailableReasonFor(item, store, user?.identityId)
+  const unchosenAxis = axes.find((axis, index) => selection[index] === undefined)
+  // Every axis chosen, but the seller does not offer that combination.
+  const combinationMissing = isFullySelected && !combination
+  const needsChoice = Boolean(variants) && !combination
 
   return (
     <>
@@ -337,9 +298,16 @@ function ItemDetailContent() {
               </div>
             )}
 
-            <p className="text-2xl font-bold text-yappr-600">
-              {formatPrice(currentPrice, item.currency)}
-            </p>
+            <div>
+              <p className="text-2xl font-bold text-yappr-600">
+                {combination
+                  ? formatPrice(combination.price, item.currency)
+                  : variants
+                    ? formatPriceRange(storeItemService.getPriceRange(item), item.currency)
+                    : formatPrice(storeItemService.getPrice(item), item.currency)}
+              </p>
+              {combination?.sku && <p className="text-xs text-gray-400 mt-1">SKU {combination.sku}</p>}
+            </div>
 
             {item.fulfillment === 'digital' && (
               <div className="flex items-start gap-2 p-3 bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 rounded-lg text-sm text-sky-800 dark:text-sky-200">
@@ -357,44 +325,55 @@ function ItemDetailContent() {
               </div>
             )}
 
-            {/* Variant Selectors */}
+            {/* Variant Selectors: one choice per option type */}
             {axes.length > 0 && (
               <div className="space-y-4">
-                {axes.map((axis) => (
-                  <div key={axis.name}>
-                    <label className="block text-sm font-medium mb-2">
-                      {axis.name}: <span className="font-normal">{variantSelections[axis.name]}</span>
-                    </label>
-                    <div className="flex flex-wrap gap-2">
-                      {axis.options.map((option) => {
-                        const isSelected = variantSelections[axis.name] === option
-                        const isAvailable = axis.availableOptions.includes(option)
+                {axes.map((axis, axisIndex) => {
+                  const chosen = axis.options.find((option) => option.id === selection[axisIndex])
+                  const labelId = `variant-axis-${axisIndex}`
+                  return (
+                    <div key={axisIndex}>
+                      <p id={labelId} className="block text-sm font-medium mb-2">
+                        {axis.name}{chosen && <>: <span className="font-normal">{chosen.name}</span></>}
+                      </p>
+                      <div role="group" aria-labelledby={labelId} className="flex flex-wrap gap-2">
+                        {axis.options.map((option) => {
+                          const isSelected = chosen?.id === option.id
+                          const isSelectable = axis.selectable.has(option.id)
 
-                        return (
-                          <button
-                            key={option}
-                            onClick={() => isAvailable && handleVariantSelect(axis.name, option)}
-                            disabled={!isAvailable}
-                            className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
-                              isSelected
-                                ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20 text-yappr-600'
-                                : isAvailable
-                                  ? 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
-                                  : 'border-gray-200 dark:border-gray-700 opacity-40 cursor-not-allowed line-through'
-                            }`}
-                          >
-                            {option}
-                          </button>
-                        )
-                      })}
+                          return (
+                            <button
+                              key={option.id}
+                              type="button"
+                              onClick={() => handleVariantSelect(axisIndex, option.id)}
+                              disabled={!isSelectable && !isSelected}
+                              aria-pressed={isSelected}
+                              className={`px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                                isSelected
+                                  ? 'border-yappr-500 bg-yappr-50 dark:bg-yappr-900/20 text-yappr-600'
+                                  : isSelectable
+                                    ? 'border-gray-200 dark:border-gray-700 hover:border-gray-300'
+                                    : 'border-gray-200 dark:border-gray-700 opacity-40 cursor-not-allowed line-through'
+                              }`}
+                            >
+                              {option.name}
+                              {!isSelectable && <span className="sr-only"> (unavailable)</span>}
+                            </button>
+                          )
+                        })}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
 
+            {combinationMissing && (
+              <p role="status" className="text-sm text-red-600">This combination is not available. Try a different option.</p>
+            )}
+
             {/* Stock Status */}
-            {hasInventoryTracking && (
+            {(hasInventoryTracking || isOutOfStock) && (
               <div className={`text-sm ${isOutOfStock ? 'text-red-500' : 'text-green-600'}`}>
                 {isOutOfStock ? 'Out of stock' : `${currentStock} in stock`}
                 {quantityInCart > 0 && ` · ${quantityInCart} in your cart`}
@@ -404,7 +383,7 @@ function ItemDetailContent() {
             {unavailableReason && <p role="status" className="text-sm text-red-600">{unavailableReason}</p>}
 
             {/* Quantity */}
-            {!isOutOfStock && !unavailableReason && (
+            {!isOutOfStock && !unavailableReason && !needsChoice && (
               <div className="flex items-center gap-4">
                 <span className="text-sm font-medium">Quantity</span>
                 <QuantityControl
@@ -422,7 +401,7 @@ function ItemDetailContent() {
             <Button
               className="w-full"
               size="lg"
-              disabled={Boolean(unavailableReason) || isOutOfStock || remainingStock === 0}
+              disabled={Boolean(unavailableReason) || isOutOfStock || needsChoice || remainingStock === 0}
               onClick={handleAddToCart}
             >
               {unavailableReason ? (
@@ -438,6 +417,10 @@ function ItemDetailContent() {
                 </motion.span>
               ) : isOutOfStock ? (
                 'Out of Stock'
+              ) : combinationMissing ? (
+                'Unavailable'
+              ) : needsChoice ? (
+                unchosenAxis ? `Choose ${unchosenAxis.name}` : 'Choose options'
               ) : remainingStock === 0 ? (
                 'Maximum quantity in cart'
               ) : (

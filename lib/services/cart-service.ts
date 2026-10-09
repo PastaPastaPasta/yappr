@@ -9,6 +9,7 @@ import { logger } from '@/lib/logger';
 import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
+import { combinationImageUrl } from '../storefront/variant-codec';
 import { scopedKey } from '@/lib/storage-scope';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
@@ -42,6 +43,10 @@ function withFulfillment(line: CartItem, fulfillment: CartItem['fulfillment']): 
 
 /** Lines that must be shipped: everything not explicitly digital. */
 export const shippableItems = (items: readonly CartItem[]) => items.filter(item => item.fulfillment !== 'digital');
+
+/** Whether a stored line is this item and variant (one line per item and variant). */
+const isLine = (line: CartItem, itemId: string, variantId: string | undefined) =>
+  line.itemId === itemId && line.variantId === variantId;
 
 class CartService {
   private cart: Cart | null = null;
@@ -155,7 +160,8 @@ class CartService {
     itemId: string;
     storeId: string;
     title: string;
-    variantKey?: string;
+    variantId?: string;
+    variantLabel?: string;
     quantity: number;
     unitPrice: number;
     imageUrl?: string;
@@ -164,10 +170,8 @@ class CartService {
   }): void {
     const cart = this.getCart();
 
-    // Check if item already exists (same itemId + variantKey)
-    const existingIndex = cart.items.findIndex(
-      i => i.itemId === item.itemId && i.variantKey === item.variantKey
-    );
+    // One line per item and variant: adding the same again raises its quantity.
+    const existingIndex = cart.items.findIndex(i => isLine(i, item.itemId, item.variantId));
 
     if (existingIndex >= 0) {
       // Update quantity
@@ -181,14 +185,14 @@ class CartService {
   }
 
   /**
-   * Add item from StoreItem with variant selection
+   * Add item from StoreItem with variant selection (`variantId`, the
+   * canonical id of the chosen combination; required on a variant item).
    */
-  addStoreItem(storeItem: StoreItem, variantKey?: string, quantity: number = 1): void {
-    const stock = storeItemService.getStock(storeItem, variantKey);
-    const existingQuantity = this.getItems().find(
-      item => item.itemId === storeItem.id && item.variantKey === variantKey
-    )?.quantity ?? 0;
-    if (storeItem.status !== 'active' || (storeItem.variants && !storeItemService.getCombination(storeItem, variantKey || ''))) {
+  addStoreItem(storeItem: StoreItem, variantId?: string, quantity: number = 1): void {
+    const stock = storeItemService.getStock(storeItem, variantId);
+    const existingQuantity = this.getItems().find(item => isLine(item, storeItem.id, variantId))?.quantity ?? 0;
+    const combination = storeItemService.getCombination(storeItem, variantId);
+    if (storeItem.status !== 'active' || (storeItem.variants && !combination)) {
       throw new Error('This item is no longer available');
     }
     if (existingQuantity + quantity > stock) {
@@ -203,26 +207,16 @@ class CartService {
       throw new Error(`Your cart has items from this store priced in ${storeCurrency ?? 'other currencies'}. Check out or remove them before adding one priced in ${currency}.`);
     }
 
-    const price = storeItemService.getPrice(storeItem, variantKey);
-    const imageUrl = storeItem.imageUrls?.[0];
-
-    // Get variant-specific image if available
-    let variantImageUrl = imageUrl;
-    if (variantKey && storeItem.variants) {
-      const combo = storeItemService.getCombination(storeItem, variantKey);
-      if (combo?.imageUrl) {
-        variantImageUrl = combo.imageUrl;
-      }
-    }
-
+    const variantLabel = storeItemService.getVariantLabel(storeItem, variantId);
     this.addItem({
       itemId: storeItem.id,
       storeId: storeItem.storeId,
       title: storeItem.title,
-      variantKey,
+      ...(combination ? { variantId: combination.id } : {}),
+      ...(variantLabel ? { variantLabel } : {}),
       quantity,
-      unitPrice: price,
-      imageUrl: variantImageUrl,
+      unitPrice: storeItemService.getPrice(storeItem, variantId),
+      imageUrl: combinationImageUrl(storeItem.imageUrls, combination),
       currency,
       ...(storeItem.fulfillment === 'digital' ? { fulfillment: 'digital' as const } : {})
     });
@@ -231,11 +225,9 @@ class CartService {
   /**
    * Update item quantity
    */
-  updateQuantity(itemId: string, variantKey: string | undefined, quantity: number): void {
+  updateQuantity(itemId: string, variantId: string | undefined, quantity: number): void {
     const cart = this.getCart();
-    const index = cart.items.findIndex(
-      i => i.itemId === itemId && i.variantKey === variantKey
-    );
+    const index = cart.items.findIndex(i => isLine(i, itemId, variantId));
 
     if (index >= 0) {
       if (quantity <= 0) {
@@ -251,11 +243,9 @@ class CartService {
   /**
    * Remove item from cart
    */
-  removeItem(itemId: string, variantKey?: string): void {
+  removeItem(itemId: string, variantId?: string): void {
     const cart = this.getCart();
-    cart.items = cart.items.filter(
-      i => !(i.itemId === itemId && i.variantKey === variantKey)
-    );
+    cart.items = cart.items.filter(i => !isLine(i, itemId, variantId));
     this.saveCart();
   }
 
@@ -292,7 +282,8 @@ class CartService {
   }
 
   /**
-   * Get total weight (for shipping calculation). Digital lines weigh nothing.
+   * Get total weight (for shipping calculation): each line's variant weight,
+   * else its item's. Digital lines weigh nothing.
    * Note: This requires fetching items from the service
    */
   async getTotalWeight(storeId?: string): Promise<number> {
@@ -301,8 +292,9 @@ class CartService {
 
     for (const cartItem of items) {
       const item = await storeItemService.get(cartItem.itemId);
-      if (item?.weight) {
-        totalWeight += item.weight * cartItem.quantity;
+      const weight = item ? storeItemService.getWeight(item, cartItem.variantId) : undefined;
+      if (weight) {
+        totalWeight += weight * cartItem.quantity;
       }
     }
 
@@ -340,12 +332,12 @@ class CartService {
         if (!item || item.status !== 'active') {
           return { item: cartItem, maxQuantity: 0, reason: 'Item is no longer available' };
         }
-        if (item.variants && !storeItemService.getCombination(item, cartItem.variantKey || '')) {
+        if (item.variants && !storeItemService.getCombination(item, cartItem.variantId)) {
           return { item: cartItem, maxQuantity: 0, reason: 'Selected option is no longer available' };
         }
         const synced = withFulfillment(cartItem, item.fulfillment === 'digital' ? 'digital' : undefined);
         if (synced !== cartItem) this.syncFulfillment(synced);
-        const stock = storeItemService.getStock(item, cartItem.variantKey);
+        const stock = storeItemService.getStock(item, cartItem.variantId);
         // A digital line is delivered for at most MAX_LINE_QUANTITY units: refuse more before payment.
         if (synced.fulfillment === 'digital' && cartItem.quantity > MAX_LINE_QUANTITY && stock >= cartItem.quantity) {
           return { item: synced, maxQuantity: MAX_LINE_QUANTITY, reason: `At most ${MAX_LINE_QUANTITY} per order` };
@@ -377,14 +369,6 @@ class CartService {
   /** Validate a checkout snapshot, including only the selected store's items. */
   async validateItems(items: CartItem[] = this.getItems()): Promise<CartItemAvailability[]> {
     return (await this.getAvailability(items)).filter(result => result.reason);
-  }
-
-  /**
-   * Get variant display string
-   */
-  getVariantDisplay(variantKey?: string): string {
-    if (!variantKey) return '';
-    return variantKey.replace(/\|/g, ' / ');
   }
 }
 

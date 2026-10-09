@@ -445,7 +445,7 @@ function SellerOrdersPage() {
           kits: toKitPayloads(kitsNow),
           listings: now.listings,
         })
-        const plan = payload && stillReady ? planDelivery(payload, toKitPayloads(currentKits)) : null
+        const plan = payload && stillReady ? planDelivery(payload, toKitPayloads(currentKits), now.listings) : null
         if (!payload || !plan) {
           skipped.push(formatOrderId(order.id))
         } else {
@@ -592,7 +592,7 @@ function SellerOrdersPage() {
                 const isDigitalOrder = supportsDigital && hasDigitalLines(payload)
                 const orderDeliveries = deliveries.get(order.id) ?? []
                 const lastDelivery = orderDeliveries[orderDeliveries.length - 1]
-                const missingKits = isDigitalOrder && payload ? planDelivery(payload, kitPayloads).missingKits : []
+                const missingKits = isDigitalOrder && payload ? planDelivery(payload, kitPayloads, listings).missingKits : []
 
                 return (
                   <motion.div
@@ -678,6 +678,7 @@ function SellerOrdersPage() {
                               subtotal={payload.subtotal}
                               shippingCost={payload.shippingCost}
                               total={payload.total}
+                              showSku
                             />
 
                             {/* Shipping Address */}

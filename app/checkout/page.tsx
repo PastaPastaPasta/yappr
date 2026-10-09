@@ -21,6 +21,7 @@ import { useSdk } from '@/contexts/sdk-context'
 import { cartService, getCartCurrency, shippableItems } from '@/lib/services/cart-service'
 import { isDigitalLine } from '@/lib/services/digital-delivery-plan'
 import { storeService } from '@/lib/services/store-service'
+import { storeItemService } from '@/lib/services/store-item-service'
 import { shippingZoneService } from '@/lib/services/shipping-zone-service'
 import { storeOrderService } from '@/lib/services/store-order-service'
 import { ORDER_PAYMENT_FIELD_LIMITS, OWN_STORE_ORDER_MESSAGE, isOwnStore, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
@@ -31,7 +32,7 @@ import { parseStorePolicies } from '@/lib/utils/policies'
 import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
-import type { Store, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
+import type { Store, StoreItem, CartItem, ShippingAddress, BuyerContact, ParsedPaymentUri, ShippingZone, StorePolicy, SavedAddress } from '@/lib/types'
 import { normalizeBytes } from '@/lib/bytes'
 
 const SHIPPING_UNAVAILABLE_MESSAGE = 'We cannot ship to this address. Please check your shipping address.'
@@ -69,6 +70,21 @@ type CheckoutReadinessState = {
   buyerEncryptionPrivateKey: Uint8Array | null
 }
 
+/**
+ * The listings `itemIds` name, by id, for what an order line snapshots from
+ * them (the SKU). A listing that cannot be read is left out: its lines go
+ * without a SKU rather than holding up the order.
+ */
+async function readListings(itemIds: string[]): Promise<Map<string, StoreItem>> {
+  try {
+    const listings = await storeItemService.getMany(itemIds)
+    return new Map(listings.map((listing) => [listing.id, listing]))
+  } catch (error) {
+    logger.warn('Failed to read listings for the order:', error)
+    return new Map()
+  }
+}
+
 function getCheckoutReadinessMessage(blocker: CheckoutReadinessBlocker | null): string | null {
   if (!blocker) return null
 
@@ -96,6 +112,7 @@ function CheckoutPage() {
 
   const [store, setStore] = useState<Store | null>(null)
   const [cartItems, setCartItems] = useState<CartItem[]>([])
+  const [listings, setListings] = useState<Map<string, StoreItem>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [orderCreated, setOrderCreated] = useState(false)
@@ -341,6 +358,18 @@ function CheckoutPage() {
     loadData().catch((error) => logger.error(error))
   }, [sdkReady, storeId, router, validateCheckoutReadiness, validateCartAvailability])
 
+  // The listings the order lines snapshot (their SKUs), so the size check counts them.
+  const listingIds = Array.from(new Set(cartItems.map((item) => item.itemId))).sort().join(',')
+  useEffect(() => {
+    if (!sdkReady || !listingIds) return
+    let cancelled = false
+    // Keyed by the set of items, so a quantity change does not read them again.
+    readListings(listingIds.split(','))
+      .then((read) => { if (!cancelled) setListings(read) })
+      .catch((error) => logger.error(error))
+    return () => { cancelled = true }
+  }, [sdkReady, listingIds])
+
   // Load saved addresses
   useEffect(() => {
     if (!sdkReady || !user?.identityId) return
@@ -484,10 +513,13 @@ function CheckoutPage() {
       buyerContact,
       shippingCost,
       selectedPaymentUri?.uri ?? '',
-      currency
+      currency,
+      undefined,
+      undefined,
+      listings
     )
     return orderPaymentBudgetError(draft, (store.paymentUris ?? []).map((payment) => payment.uri))
-  }, [store, cartItems, includeShipping, shippingAddress, buyerContact, shippingCost, selectedPaymentUri, currency])
+  }, [store, cartItems, includeShipping, shippingAddress, buyerContact, shippingCost, selectedPaymentUri, currency, listings])
 
   const handleDetailsSubmit = () => {
     if (checkoutReadiness.blocker === 'store-unavailable') {
@@ -760,7 +792,8 @@ function CheckoutPage() {
         selectedPaymentUri.uri,
         currency,
         notes || undefined,
-        refundAddress || undefined
+        refundAddress || undefined,
+        await readListings(cartItems.map((item) => item.itemId))
       )
 
       // Add txid if provided

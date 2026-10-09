@@ -11,9 +11,11 @@ interface OrderItemsListProps {
   subtotal: number
   shippingCost: number
   total: number
+  /** The seller's view: each line's SKU, when the order recorded one. */
+  showSku?: boolean
 }
 
-export function OrderItemsList({ items, currency, subtotal, shippingCost, total }: OrderItemsListProps) {
+export function OrderItemsList({ items, currency, subtotal, shippingCost, total, showSku = false }: OrderItemsListProps) {
   return (
     <div className="p-3 bg-gray-50 dark:bg-gray-950 rounded-lg">
       <p className="text-sm font-medium mb-2">Items</p>
@@ -22,9 +24,10 @@ export function OrderItemsList({ items, currency, subtotal, shippingCost, total 
           <div key={idx} className="flex justify-between text-sm">
             <span>
               {item.itemTitle}
-              {item.variantKey && <span className="text-gray-500"> ({item.variantKey.replace(/\|/g, ' / ')})</span>}
+              {item.variantLabel && <span className="text-gray-500"> ({item.variantLabel})</span>}
               <span className="text-gray-500"> x{item.quantity}</span>
               {item.fulfillment === 'digital' && <DigitalBadge className="ml-2 align-middle" />}
+              {showSku && item.sku && <span className="block text-xs text-gray-400">SKU {item.sku}</span>}
             </span>
             <span>{formatPrice(item.unitPrice * item.quantity, currency)}</span>
           </div>

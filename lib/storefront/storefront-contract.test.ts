@@ -114,23 +114,33 @@ describe('the order payload budget, checked before payment (v6)', () => {
   })
 })
 
-describe('size guards (v6 caps)', () => {
-  const variantsOf = (bytes: number) => ({ axes: [{ name: 'Size', options: ['x'.repeat(bytes)] }], combinations: [] })
+describe('size guards (item transition budget, legacy variants JSON caps)', () => {
+  const item = (variants: unknown) => ({ storeId: new Uint8Array(32), title: 'Tee', status: 'active', currency: 'USD', variants })
 
-  it('refuses variants past 5,120 bytes on v6 and lets them through before it', async () => {
-    const v6 = await load('v6')
-    expect(v6.ITEM_VARIANTS_MAX_BYTES).toBe(5120)
-    expect(v6.variantsSizeError(undefined)).toBeNull()
-    expect(v6.variantsSizeError(variantsOf(100))).toBeNull()
-    expect(v6.variantsSizeError(variantsOf(5200))).toMatch(/more than the 5,120 a listing can store/)
-    const v5 = await load('v5')
-    expect(v5.variantsSizeError(variantsOf(5200))).toBeNull()
+  it('reads the v7 variants limits off the contract', async () => {
+    const { VARIANT_LIMITS, itemImageLimit } = await load('v7')
+    expect(VARIANT_LIMITS).toMatchObject({ axes: 5, options: 64, combinations: 256, maxOptionId: 254, skuLength: 32, maxImageIndex: 12 })
+    expect(itemImageLimit()).toBe(12)
+    expect((await load('v6')).itemImageLimit()).toBe(4)
   })
 
-  it('counts variants in UTF-8 bytes, not characters', async () => {
-    const { variantsSizeError } = await load('v6')
+  it('refuses a v6 variants JSON past 5,120 UTF-8 bytes, and v1–v5 past 10,000 characters', async () => {
+    const v6 = await load('v6')
+    expect(v6.itemSizeError(item('x'.repeat(100)))).toBeNull()
     // 2,000 three-byte characters: ~6,000 bytes, well under 5,120 characters.
-    expect(variantsSizeError({ axes: [{ name: 'Size', options: ['€'.repeat(2000)] }], combinations: [] })).not.toBeNull()
+    expect(v6.itemSizeError(item('€'.repeat(2000)))).toMatch(/variants are too large/)
+    const v1 = await load('v1')
+    expect(v1.itemSizeError(item('€'.repeat(2000)))).toBeNull()
+    expect(v1.itemSizeError(item('x'.repeat(10_001)))).toMatch(/variants are too large/)
+  })
+
+  it('refuses any listing past the whole-transition budget, on every cut', async () => {
+    for (const topology of ['v7', 'v1']) {
+      const { itemSizeError, ITEM_TRANSITION_BUDGET, STATE_TRANSITION_CAP } = await load(topology)
+      expect(ITEM_TRANSITION_BUDGET).toBeLessThan(STATE_TRANSITION_CAP)
+      expect(itemSizeError({ ...item(undefined), description: 'x'.repeat(2000) })).toBeNull()
+      expect(itemSizeError({ ...item(undefined), imageUrls: Array(40).fill('x'.repeat(500)) })).toMatch(/too large to save as one listing/)
+    }
   })
 
   it('refuses an encrypted order payload past 5,120 bytes on v6 only', async () => {

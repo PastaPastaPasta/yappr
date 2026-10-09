@@ -5,6 +5,12 @@ vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument } }));
 import { storeItemService } from './store-item-service';
 
+/** `value`, failing the test when it is missing. */
+function defined<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error('expected a value')
+  return value
+}
+
 const storeId = '11111111111111111111111111111111';
 const raw = {
   $id: 'item', $ownerId: 'owner', $revision: 4, $createdAt: 1700000000000,
@@ -73,6 +79,93 @@ describe('the replace merge re-encodes parsed fields (docs/SOCIAL_V9.md TODO 20)
       vi.unstubAllEnvs();
       vi.resetModules();
     }
+  });
+});
+
+describe('storefront v7 typed variants', () => {
+  /** Two colours × two sizes; option ids Red=1 S=2 L=3 Blue=4. */
+  const table = {
+    axes: ['Color', 'Size'], options: ['Red', 'Blue', 'S', 'L'], optionIds: [1, 4, 2, 3], optionAxes: [0, 0, 1, 1], nextOptionId: 5,
+    selectors: [Uint8Array.of(1, 2), Uint8Array.of(1, 3), Uint8Array.of(4, 2), Uint8Array.of(4, 3)], prices: [100, 120, 100, 120], stocks: [5, 0, 2, 9],
+  };
+  const variantItem = { ...raw, basePrice: undefined, stockQuantity: undefined, currency: 'USD', imageUrls: ['https://a/1.png', 'https://a/2.png'], variants: table };
+
+  async function v7() {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v7');
+    vi.resetModules();
+    return (await import('./store-item-service')).storeItemService;
+  }
+  const restore = () => { vi.unstubAllEnvs(); vi.resetModules(); };
+
+  it('reads the stored table and answers by variant id', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue(variantItem);
+      const item = defined(await service.getById('item'));
+      expect(item.variants?.combinations.map((combination) => combination.id)).toEqual(['1.2', '1.3', '2.4', '3.4']);
+      expect(service.getVariantLabel(item, '3.4')).toBe('Blue / L');
+      expect(service.getStock(item, '1.3')).toBe(0);
+      expect(service.getStock(item, '9.9')).toBe(0);
+      expect(service.getPrice(item, '1.3')).toBe(120);
+      expect(service.getPriceRange(item)).toEqual({ min: 100, max: 120 });
+      expect(service.isOutOfStock(item)).toBe(false);
+    } finally { restore(); }
+  });
+
+  it('a stock edit re-sends the table as typed lists, one replace for every combination', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue(variantItem);
+      const item = defined(await service.getById('item'));
+      const restocked = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination) => ({ ...combination, stock: 3 })) };
+      await service.updateItem('item', 'owner', storeId, { variants: restocked });
+      expect(updateDocument).toHaveBeenCalledTimes(1);
+      const sent = updateDocument.mock.calls[0][4];
+      expect(sent.variants).toMatchObject({ axes: table.axes, optionIds: table.optionIds, stocks: [3, 3, 3, 3], prices: table.prices });
+      expect(sent.variants.selectors[3]).toEqual(Uint8Array.of(4, 3));
+      expect(sent).not.toHaveProperty('basePrice');
+      // A title edit re-encodes the stored table unchanged.
+      await service.updateItem('item', 'owner', storeId, { title: 'Renamed' });
+      expect(updateDocument.mock.calls[1][4].variants).toMatchObject({ stocks: table.stocks, optionAxes: table.optionAxes });
+    } finally { restore(); }
+  });
+
+  it('refuses, before signing, a table or price the contract would refuse', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue(variantItem);
+      const item = defined(await service.getById('item'));
+      const broken = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination, index) => (index === 0 ? { ...combination, stock: undefined } : combination)) };
+      await expect(service.updateItem('item', 'owner', storeId, { variants: broken })).rejects.toThrow(/every combination or for none/);
+      await expect(service.updateItem('item', 'owner', storeId, { basePrice: 5 })).rejects.toThrow(/priced and stocked per combination/);
+      await expect(service.createItem('owner', storeId, { title: 'T', currency: 'USD', variants: item.variants, stockQuantity: 3 })).rejects.toThrow(/per combination/);
+      expect(updateDocument).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
+  it('stores up to 12 images on v7', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue({ ...raw, imageUrls: [] });
+      const twelve = Array.from({ length: 12 }, (_, index) => `https://a/${index}.png`);
+      await service.updateItem('item', 'owner', storeId, { imageUrls: twelve });
+      expect(updateDocument.mock.calls[0][4].imageUrls).toEqual(twelve);
+      await expect(service.updateItem('item', 'owner', storeId, { imageUrls: [...twelve, 'https://a/x.png'] })).rejects.toThrow(/At most 12/);
+    } finally { restore(); }
+  });
+
+  it('on v1 writes the table as the JSON string, a combination image as its URL', async () => {
+    const legacy = JSON.stringify({ axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 1000, imageUrl: 'https://a/2.png' }, { key: 'M', price: 1500 }] });
+    get.mockResolvedValue({ ...raw, basePrice: undefined, imageUrls: '["https://a/1.png","https://a/2.png"]', variants: legacy });
+    const item = defined(await storeItemService.getById('item'));
+    expect(item.variants?.combinations[0]).toMatchObject({ id: '1', price: 1000, image: 2 });
+    const repointed = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination) => ({ ...combination, image: 1 })) };
+    await storeItemService.updateItem('item', 'owner', storeId, { variants: repointed });
+    expect(JSON.parse(updateDocument.mock.calls[0][4].variants).combinations).toEqual([
+      { key: 'S', price: 1000, imageUrl: 'https://a/1.png' }, { key: 'M', price: 1500, imageUrl: 'https://a/1.png' },
+    ]);
+    // Dropping an image a combination still shows is refused, not silently re-pointed.
+    await expect(storeItemService.updateItem('item', 'owner', storeId, { imageUrls: ['https://a/2.png'] })).rejects.toThrow(/image the listing no longer has/);
   });
 });
 

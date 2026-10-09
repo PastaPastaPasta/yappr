@@ -121,10 +121,10 @@ function DeliveryBody({ payload }: { payload: OrderDeliveryPayload }) {
   return (
     <div className="space-y-3">
       {payload.items.map((item, index) => (
-        <div key={`${item.itemId}-${item.variantRef ?? ''}-${index}`} className="space-y-2">
+        <div key={`${item.itemId}-${item.variantId ?? ''}-${index}`} className="space-y-2">
           <p className="text-sm font-medium">
             {item.itemTitle}
-            {item.variantLabel && <span className="text-gray-500 font-normal"> ({item.variantLabel.replace(/\|/g, ' / ')})</span>}
+            {item.variantLabel && <span className="text-gray-500 font-normal"> ({item.variantLabel})</span>}
           </p>
           {item.assets.length > 0 && (
             <ul className="space-y-2">

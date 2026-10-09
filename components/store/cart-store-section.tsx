@@ -42,11 +42,11 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
     const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
-      cartService.updateQuantity(item.itemId, item.variantKey, newQuantity)
+      cartService.updateQuantity(item.itemId, item.variantId, newQuantity)
     }
 
     const handleRemoveItem = (item: CartItem) => {
-      cartService.removeItem(item.itemId, item.variantKey)
+      cartService.removeItem(item.itemId, item.variantId)
     }
 
     const handleCheckout = () => {
@@ -106,10 +106,10 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
         <AnimatePresence mode="popLayout">
           {items.map((item) => (
             <CartItemRow
-              key={`${item.itemId}-${item.variantKey || ''}`}
+              key={`${item.itemId}-${item.variantId ?? ''}`}
               item={item}
               isCheckingAvailability={isCheckingAvailability}
-              availability={availability.find(result => result.item.itemId === item.itemId && result.item.variantKey === item.variantKey)}
+              availability={availability.find(result => result.item.itemId === item.itemId && result.item.variantId === item.variantId)}
               onQuantityChange={(qty) => handleQuantityChange(item, qty)}
               onRemove={() => handleRemoveItem(item)}
             />

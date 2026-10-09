@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import { TrashIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { QuantityControl } from './quantity-control'
 import { formatPrice } from '@/lib/utils/format'
-import { cartService, type CartItemAvailability } from '@/lib/services/cart-service'
+import type { CartItemAvailability } from '@/lib/services/cart-service'
 import type { CartItem } from '@/lib/types'
 import { DigitalBadge } from './digital-badge'
 
@@ -54,10 +54,8 @@ export const CartItemRow = forwardRef<HTMLDivElement, CartItemRowProps>(
       <div className="flex-1 min-w-0">
         <h3 className="font-medium truncate">{item.title}</h3>
         {item.fulfillment === 'digital' && <DigitalBadge className="mt-0.5" />}
-        {item.variantKey && (
-          <p className="text-sm text-gray-500">
-            {cartService.getVariantDisplay(item.variantKey)}
-          </p>
+        {item.variantLabel && (
+          <p className="text-sm text-gray-500">{item.variantLabel}</p>
         )}
         <p className="text-yappr-600 font-medium mt-1">
           {formatPrice(item.unitPrice, item.currency)}

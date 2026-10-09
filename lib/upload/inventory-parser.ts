@@ -1,42 +1,30 @@
 /**
  * Inventory CSV Parser
  *
- * Parses inventory CSV files with support for:
- * - Group-based variant grouping (items with same group ID become variants of one listing)
- * - Formula-based quantity calculations (e.g., "(green-10)*5" references another SKU's quantity)
- * - Standard CSV parsing with proper escaping handling
+ * Turns an inventory CSV into listings:
+ * - Rows sharing a group ID (or Shopify handle) become one listing, each row
+ *   one combination of its variants table (docs/STOREFRONT_V7.md). The option
+ *   types come from Shopify-style `Option1 Name`/`Option1 Value` columns, else
+ *   the `variant`/`subVariant` columns, whose values may carry compound labels
+ *   ("Primary color: Red · Pack Size: Single Piece").
+ * - Quantities may be formulas that reference another SKU's quantity, e.g. "(green-10)*5".
+ * - Standard CSV quoting.
  */
 
-import type { ItemVariants, VariantAxis, VariantCombination } from '../types'
+import type { ItemVariants } from '../types'
+import { storefrontVariantsAreTyped } from '../constants'
 import { toSmallestUnit } from '../utils/format'
 import { LIST_LIMITS } from '../typed-array-codecs'
-import { variantsSizeError } from '../storefront/storefront-contract'
+import { VARIANT_LIMITS, itemImageLimit } from '../storefront/storefront-contract'
+import { variantProblems, variantsFromRows, type VariantRow } from '../storefront/variant-codec'
 
-// CSV column mapping to internal field names
-export interface InventoryCSVColumns {
-  group?: string           // Group ID for variant grouping
-  section?: string         // Product section
-  category?: string        // Product category
-  subcategory?: string     // Product subcategory
-  itemName: string         // Item name/title (required)
-  description?: string     // Item description
-  sku?: string             // SKU
-  tags?: string            // Tags (comma-separated)
-  variant?: string         // Primary variant (e.g., "Blue")
-  subVariant?: string      // Secondary variant (e.g., "Large")
-  price: string            // Price (required)
-  quantity?: string        // Stock quantity (can be formula)
-  shippingCost?: string    // Per-item shipping cost
-  combine?: string         // Shipping combine flag ("free", "yes", "no", "$0.05", etc.)
-  weight?: string          // Item weight
-  image1?: string          // Image URL 1
-  image2?: string          // Image URL 2
-  image3?: string          // Image URL 3
-  image4?: string          // Image URL 4
-}
+/** The single-valued columns the parser reads, by internal name. */
+type Column =
+  | 'group' | 'section' | 'category' | 'subcategory' | 'itemName' | 'description' | 'sku' | 'tags'
+  | 'variant' | 'subVariant' | 'price' | 'quantity' | 'shippingCost' | 'combine' | 'weight' | 'image'
 
 // Parsed inventory row before grouping
-export interface ParsedInventoryRow {
+interface ParsedInventoryRow {
   group?: string
   section?: string
   category?: string
@@ -47,14 +35,19 @@ export interface ParsedInventoryRow {
   tags: string[]
   variant?: string
   subVariant?: string
+  /** Shopify-style `OptionN Name`/`OptionN Value`, index N-1, as given on this row. */
+  options: { name?: string; value?: string }[]
   price: number           // Price in the currency's smallest unit (cents, duffs, or satoshis)
-  quantity?: number | string  // Number or formula string
-  quantityFormula?: string    // Original formula if quantity was a formula
+  quantity?: number       // Stock; set from the formula once it is worked out
+  quantityFormula?: string
   shippingCost?: number
   combineShipping?: 'free' | 'extra' | 'no'
   combineShippingExtra?: number
   weight?: number
+  /** The listing's images named on this row (`Image1`, `Image2`, …). */
   imageUrls: string[]
+  /** This row's own image (`Image URL`), shown when its combination is picked. */
+  image?: string
   rowNumber: number       // Original CSV row number for error reporting
 }
 
@@ -68,13 +61,16 @@ export interface GroupedInventoryItem {
   subcategory?: string
   tags: string[]
   imageUrls: string[]
-  basePrice: number       // Lowest price among variants, or single price
+  basePrice: number       // Lowest combination price, or the single price
   currency: string
-  sku?: string            // SKU of base item or first variant
-  stockQuantity?: number  // Stock for non-variant items
+  sku?: string            // SKU of an item without variants
+  stockQuantity?: number  // Stock for an item without variants
   weight?: number
-  variants?: ItemVariants // Populated if item has variants
-  rows: ParsedInventoryRow[]  // Original rows that make up this item
+  variants?: ItemVariants // Populated if the item has variants
+  /** Why this product cannot be uploaded; the others still can. */
+  errors: string[]
+  /** What the import changed or guessed for this product. */
+  warnings: string[]
 }
 
 // Validation error
@@ -87,32 +83,51 @@ export interface InventoryParseError {
 // Parse result
 export interface InventoryParseResult {
   items: GroupedInventoryItem[]
+  /** Problems with the file or a row, which hold the whole upload. Product problems are on each item. */
   errors: InventoryParseError[]
   warnings: InventoryParseError[]
 }
 
-// Default column headers (case-insensitive matching)
-const COLUMN_ALIASES: Record<keyof InventoryCSVColumns, string[]> = {
-  group: ['group', 'group_id', 'groupid', 'listing_id', 'listingid'],
+// Column headers, matched case-insensitively
+const COLUMN_ALIASES: Record<Column, string[]> = {
+  group: ['group', 'group_id', 'groupid', 'listing_id', 'listingid', 'handle'],
   section: ['section'],
   category: ['category', 'cat'],
   subcategory: ['subcategory', 'subcat', 'sub_category'],
   itemName: ['item name', 'item_name', 'itemname', 'name', 'title', 'product', 'product name'],
   description: ['description', 'desc', 'details'],
-  sku: ['sku', 'item_sku', 'product_sku'],
+  sku: ['sku', 'item_sku', 'product_sku', 'variant sku'],
   tags: ['tags', 'keywords'],
-  variant: ['variant', 'option', 'option1', 'color', 'type'],
+  variant: ['variant', 'option', 'option1', 'color', 'colour', 'type'],
   subVariant: ['sub variant', 'sub_variant', 'subvariant', 'option2', 'size'],
-  price: ['price', 'cost', 'amount'],
-  quantity: ['quantity', 'qty', 'stock', 'inventory'],
+  price: ['price', 'cost', 'amount', 'variant price'],
+  quantity: ['quantity', 'qty', 'stock', 'inventory', 'variant inventory qty'],
   shippingCost: ['shipping cost', 'shipping_cost', 'shippingcost', 'shipping'],
   combine: ['combine', 'combine_shipping', 'combineshipping'],
   weight: ['weight', 'wt'],
-  image1: ['image1', 'image 1', 'image_1', 'img1', 'picture1', 'photo1'],
-  image2: ['image2', 'image 2', 'image_2', 'img2', 'picture2', 'photo2'],
-  image3: ['image3', 'image 3', 'image_3', 'img3', 'picture3', 'photo3'],
-  image4: ['image4', 'image 4', 'image_4', 'img4', 'picture4', 'photo4'],
+  image: ['image url', 'image_url', 'imageurl', 'variant image', 'variant image url'],
 }
+
+/** Headers that say nothing about the option type, so its axis is just "Option". */
+const GENERIC_VARIANT_HEADERS = new Set(['variant', 'option', 'option1', 'sub variant', 'sub_variant', 'subvariant', 'option2'])
+/** Specific headers whose axis name is spelled differently from the header. */
+const AXIS_NAME_OF_HEADER: Record<string, string> = { color: 'Color', colour: 'Color' }
+
+const SHOPIFY_OPTION_HEADER = /^option[\s_]*([1-5])[\s_]*(name|value)$/
+const IMAGE_HEADER = /^(?:image|img|picture|photo)[\s_]*(\d{1,2})$/
+const MAX_OPTION_COLUMNS = 5
+
+interface ColumnMap {
+  fields: Partial<Record<Column, number>>
+  /** Header text of the variant / subVariant columns, for naming their axes. */
+  headers: Partial<Record<Column, string>>
+  optionNames: (number | undefined)[]
+  optionValues: (number | undefined)[]
+  /** Item image columns, in their number order. */
+  images: number[]
+}
+
+const normalizeHeader = (header: string) => header.toLowerCase().trim().replace(/\s+/g, ' ')
 
 /**
  * Parse CSV content into an array of string arrays
@@ -181,21 +196,36 @@ function parseCSV(content: string): string[][] {
 /**
  * Map CSV headers to column indices
  */
-function mapHeaders(headers: string[]): Record<keyof InventoryCSVColumns, number> {
-  const mapping: Partial<Record<keyof InventoryCSVColumns, number>> = {}
+function mapHeaders(headers: string[]): ColumnMap {
+  const map: ColumnMap = { fields: {}, headers: {}, optionNames: [], optionValues: [], images: [] }
+  const imageColumns: { number: number; index: number }[] = []
 
   for (let i = 0; i < headers.length; i++) {
-    const header = headers[i].toLowerCase().trim()
+    const header = normalizeHeader(headers[i])
 
-    for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
-      if (aliases.includes(header) && mapping[field as keyof InventoryCSVColumns] === undefined) {
-        mapping[field as keyof InventoryCSVColumns] = i
+    const option = SHOPIFY_OPTION_HEADER.exec(header)
+    if (option) {
+      const list = option[2] === 'name' ? map.optionNames : map.optionValues
+      const slot = Number(option[1]) - 1
+      if (list[slot] === undefined) list[slot] = i
+      continue
+    }
+    const image = IMAGE_HEADER.exec(header)
+    if (image) {
+      imageColumns.push({ number: Number(image[1]), index: i })
+      continue
+    }
+    for (const [field, aliases] of Object.entries(COLUMN_ALIASES) as [Column, string[]][]) {
+      if (aliases.includes(header) && map.fields[field] === undefined) {
+        map.fields[field] = i
+        map.headers[field] = header
         break
       }
     }
   }
 
-  return mapping as Record<keyof InventoryCSVColumns, number>
+  map.images = imageColumns.sort((a, b) => a.number - b.number).map((column) => column.index)
+  return map
 }
 
 /**
@@ -258,64 +288,42 @@ function parseCombineShipping(value: string, currency: string): { type: 'free' |
   return { type: 'no' }
 }
 
+const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
+/** An image URL a listing can store (http(s) or ipfs, not too long), else undefined. */
+const imageUrlOf = (value: string): string | undefined =>
+  value && value.length <= LIST_LIMITS.storeImageUrls.maxLength && IMAGE_URL_PATTERN.test(value) ? value : undefined
+
 /**
- * Evaluate formula-based quantities
- * Formulas can reference other SKUs only when wrapped in parentheses: (SKU-NAME)*5
+ * Work out formula quantities. A formula references another row's quantity
+ * by its SKU in parentheses: "(SKU-NAME)*5". A formula may reference a SKU
+ * whose quantity is itself a formula; one that cannot be worked out keeps no
+ * quantity.
  */
-export function evaluateQuantityFormulas(items: GroupedInventoryItem[]): void {
-  // Build SKU -> quantity map
-  const skuQuantities: Record<string, number> = {}
-
-  for (const item of items) {
-    for (const row of item.rows) {
-      if (row.sku && typeof row.quantity === 'number') {
-        skuQuantities[row.sku.toLowerCase()] = row.quantity
-      }
-    }
+function evaluateQuantityFormulas(rows: ParsedInventoryRow[]): void {
+  const known = new Map<string, number>()
+  for (const row of rows) {
+    if (row.sku && row.quantity !== undefined) known.set(row.sku.toLowerCase(), row.quantity)
   }
 
-  // Evaluate formulas
-  for (const item of items) {
-    for (const row of item.rows) {
-      if (row.quantityFormula) {
-        const evaluated = evaluateSingleFormula(row.quantityFormula, skuQuantities)
-        if (evaluated !== null) {
-          row.quantity = evaluated
-        }
-      }
-    }
-  }
-
-  // Update item stock quantities based on evaluated rows
-  for (const item of items) {
-    if (!item.variants && item.rows.length === 1) {
-      const qty = item.rows[0].quantity
-      if (typeof qty === 'number') {
-        item.stockQuantity = qty
-      }
-    } else if (item.variants) {
-      // Update variant combination stocks
-      for (const combo of item.variants.combinations) {
-        const matchingRow = item.rows.find(r => {
-          if (r.variant && r.subVariant) {
-            return combo.key === `${r.variant}|${r.subVariant}`
-          } else if (r.variant) {
-            return combo.key === r.variant
-          }
-          return false
-        })
-        if (matchingRow && typeof matchingRow.quantity === 'number') {
-          combo.stock = matchingRow.quantity
-        }
-      }
-    }
+  let pending = rows.filter((row) => row.quantityFormula !== undefined)
+  let progress = true
+  while (pending.length > 0 && progress) {
+    progress = false
+    pending = pending.filter((row) => {
+      const value = evaluateSingleFormula(row.quantityFormula ?? '', known)
+      if (value === null) return true
+      row.quantity = Math.max(0, value)
+      if (row.sku) known.set(row.sku.toLowerCase(), row.quantity)
+      progress = true
+      return false
+    })
   }
 }
 
 /**
  * Evaluate a single formula string
  */
-function evaluateSingleFormula(formula: string, skuQuantities: Record<string, number>): number | null {
+function evaluateSingleFormula(formula: string, skuQuantities: ReadonlyMap<string, number>): number | null {
   // Replace SKU references with their quantities
   // Format: (SKU-NAME) only
   let expression = formula
@@ -325,7 +333,7 @@ function evaluateSingleFormula(formula: string, skuQuantities: Record<string, nu
   if (parenMatches) {
     for (const match of parenMatches) {
       const sku = match.slice(1, -1).toLowerCase().trim()
-      const qty = skuQuantities[sku]
+      const qty = skuQuantities.get(sku)
       if (qty !== undefined) {
         expression = expression.replace(match, String(qty))
       }
@@ -459,131 +467,244 @@ function tokenize(expr: string): string[] | null {
   return tokens
 }
 
+// ---- option types ------------------------------------------------------------
+
+/** Separators between the parts of a compound label: a middle dot, "|" or ";". */
+const COMPOUND_SEPARATOR = /\s*[·|;]\s*/
+/** One part of a compound label: "Pack Size: Single Piece". */
+const COMPOUND_PART = /^(.{1,32}?):\s*(.+)$/
+
+/** A compound label's option types and values, or null when it is not one. */
+function splitCompound(value: string): { names: string[]; values: string[] } | null {
+  const names: string[] = []
+  const values: string[] = []
+  for (const part of value.split(COMPOUND_SEPARATOR).map((piece) => piece.trim())) {
+    const match = part ? COMPOUND_PART.exec(part) : null
+    const name = match?.[1].trim()
+    const option = match?.[2].trim()
+    if (!name || !option) return null
+    names.push(name)
+    values.push(option)
+  }
+  return names.length > 0 ? { names, values } : null
+}
+
+const looksCompound = (value: string) => COMPOUND_SEPARATOR.test(value) || COMPOUND_PART.test(value)
+const sameNames = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((name, index) => name.toLowerCase() === b[index].toLowerCase())
+const hasDuplicateName = (names: readonly string[]) => new Set(names.map((name) => name.toLowerCase())).size !== names.length
+
+/** An option type taken from a column: its name, or null for a generic header that names nothing. */
+function axisNameOfHeader(header: string | undefined): string | null {
+  if (!header || GENERIC_VARIANT_HEADERS.has(header)) return null
+  return AXIS_NAME_OF_HEADER[header] ?? header.charAt(0).toUpperCase() + header.slice(1)
+}
+
+/** "Option", "Option 2", … for option types the file does not name. */
+const genericAxisName = (index: number) => (index === 0 ? 'Option' : `Option ${index + 1}`)
+
+/** A group's option types and, per row, its option on each (in axis order). */
+interface AxisPlan {
+  names: string[]
+  rowOptions: string[][]
+  warning?: string
+}
+
+/**
+ * The option types of one product group, in priority order: Shopify-style
+ * `OptionN` columns, then the variant / subVariant columns (a variant value
+ * may be a compound label naming several option types). Null when the group
+ * is a single product without options.
+ */
+function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string): AxisPlan | null {
+  const shopifySlots = Array.from({ length: MAX_OPTION_COLUMNS }, (_, slot) => slot)
+    .filter((slot) => rows.some((row) => row.options[slot]?.value))
+  if (shopifySlots.length > 0) {
+    // Shopify writes a product without options as Title: "Default Title".
+    const onlyDefault = rows.length === 1 && shopifySlots.length === 1 && rows[0].options[shopifySlots[0]]?.value?.toLowerCase() === 'default title'
+    if (onlyDefault) return null
+    // Shopify names an option type on the group's first row only: carry it down.
+    const names = shopifySlots.map((slot, index) => rows.map((row) => row.options[slot]?.name).find(Boolean) ?? genericAxisName(index))
+    return { names, rowOptions: rows.map((row) => shopifySlots.map((slot) => row.options[slot]?.value ?? '')) }
+  }
+
+  const hasVariant = rows.some((row) => row.variant)
+  const hasSubVariant = rows.some((row) => row.subVariant)
+  if (!hasVariant && !hasSubVariant) return null
+
+  // Each column is one option type, named after its header; a variant value
+  // that is a compound label names several.
+  type ColumnAxes = { names: (string | null)[]; values: (row: ParsedInventoryRow, index: number) => string[] }
+  const parts: ColumnAxes[] = []
+  let warning: string | undefined
+  if (hasVariant) {
+    const plain: ColumnAxes = { names: [axisNameOfHeader(columns.headers.variant)], values: (row) => [row.variant ?? ''] }
+    if (rows.some((row) => row.variant && looksCompound(row.variant))) {
+      const splits = rows.map((row) => splitCompound(row.variant ?? ''))
+      const first = splits[0]
+      const consistent = first !== null && first.names.length <= VARIANT_LIMITS.axes && !hasDuplicateName(first.names)
+        && splits.every((split) => split !== null && sameNames(split.names, first.names))
+      if (consistent) {
+        parts.push({ names: first.names, values: (_, index) => splits[index]?.values ?? [] })
+      } else {
+        parts.push(plain)
+        warning = `"${title}": the variant names could not be split into option types, so they were kept whole.`
+      }
+    } else {
+      parts.push(plain)
+    }
+  }
+  if (hasSubVariant) parts.push({ names: [axisNameOfHeader(columns.headers.subVariant)], values: (row) => [row.subVariant ?? ''] })
+
+  let generic = 0
+  const names = parts.flatMap((part) => part.names).map((name) => name ?? genericAxisName(generic++))
+  return { names, rowOptions: rows.map((row, index) => parts.flatMap((part) => part.values(row, index))), warning }
+}
+
+// ---- grouping ----------------------------------------------------------------
+
+/** Every image the group names, deduplicated in order (item images before a row's own). */
+function collectImages(rows: ParsedInventoryRow[]): string[] {
+  const images: string[] = []
+  for (const row of rows) {
+    for (const url of [...row.imageUrls, row.image]) {
+      if (url && !images.includes(url)) images.push(url)
+    }
+  }
+  return images
+}
+
+/** The quantity the import gives a variant row: tracked rows without one start at 0. */
+function rowStock(row: ParsedInventoryRow, tracked: boolean): number | undefined {
+  if (!tracked) return undefined
+  return row.quantity ?? 0
+}
+
+/** A SKU cut to what a combination can store. */
+function fitSku(sku: string): string {
+  let fitted = [...sku].slice(0, VARIANT_LIMITS.skuLength).join('')
+  while (new TextEncoder().encode(fitted).length > VARIANT_LIMITS.skuLength * 2) fitted = [...fitted].slice(0, -1).join('')
+  return fitted
+}
+
+/** Build one product from its rows. */
+function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], columns: ColumnMap, currency: string): GroupedInventoryItem {
+  const firstRow = rows[0]
+  const title = firstRow.itemName
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  const allImages = collectImages(rows)
+  const imageLimit = itemImageLimit()
+  if (allImages.length > imageLimit) warnings.push(`"${title}": kept the first ${imageLimit} of ${allImages.length} images.`)
+  const imageUrls = allImages.slice(0, imageLimit)
+
+  const tags: string[] = []
+  for (const row of rows) {
+    for (const tag of row.tags) {
+      if (!tags.includes(tag)) tags.push(tag)
+    }
+  }
+
+  const item: GroupedInventoryItem = {
+    groupId,
+    title,
+    description: firstRow.description,
+    section: firstRow.section,
+    category: firstRow.category,
+    subcategory: firstRow.subcategory,
+    tags,
+    imageUrls,
+    basePrice: firstRow.price,
+    currency,
+    errors,
+    warnings,
+  }
+
+  const plan = planAxes(rows, columns, title)
+  if (!plan) {
+    if (rows.length > 1) {
+      errors.push(`"${title}" has ${rows.length} rows but no options to tell them apart. Give each row its own option, or its own group.`)
+      return item
+    }
+    item.sku = firstRow.sku
+    item.stockQuantity = firstRow.quantity
+    item.weight = firstRow.weight
+    if (firstRow.quantityFormula !== undefined && firstRow.quantity === undefined) {
+      warnings.push(`"${title}": the quantity formula on row ${firstRow.rowNumber} could not be worked out, so stock is not tracked.`)
+    }
+    return item
+  }
+  if (plan.warning) warnings.push(plan.warning)
+
+  for (const [index, options] of plan.rowOptions.entries()) {
+    const missing = options.findIndex((option) => !option)
+    if (missing >= 0) errors.push(`"${title}": row ${rows[index].rowNumber} is missing a value for "${plan.names[missing]}".`)
+  }
+  if (errors.length > 0) return item
+
+  // v7 tracks stock for every combination or for none.
+  const tracked = rows.some((row) => row.quantity !== undefined || row.quantityFormula !== undefined)
+  if (tracked) {
+    const unresolved = rows.filter((row) => row.quantityFormula !== undefined && row.quantity === undefined)
+    for (const row of unresolved) warnings.push(`"${title}": the quantity formula on row ${row.rowNumber} could not be worked out, so it was set to 0.`)
+    const blank = rows.filter((row) => row.quantity === undefined && row.quantityFormula === undefined).length
+    if (blank > 0) warnings.push(`"${title}": ${blank} row${blank === 1 ? ' has' : 's have'} no quantity, so ${blank === 1 ? 'it was' : 'they were'} set to 0.`)
+  }
+
+  const longSkus = rows.filter((row) => row.sku && fitSku(row.sku) !== row.sku).length
+  if (longSkus > 0) warnings.push(`"${title}": ${longSkus} SKU${longSkus === 1 ? ' is' : 's are'} longer than ${VARIANT_LIMITS.skuLength} characters, so ${longSkus === 1 ? 'it was' : 'they were'} shortened.`)
+
+  // A weight per combination only when the rows differ (and the store keeps one per combination).
+  const weights = rows.map((row) => row.weight)
+  const weightsDiffer = weights.some((weight) => weight !== weights[0])
+  const perCombinationWeight = weightsDiffer && storefrontVariantsAreTyped()
+  if (!perCombinationWeight) item.weight = weights.find((weight) => weight !== undefined)
+  if (weightsDiffer && !perCombinationWeight) warnings.push(`"${title}": the rows have different weights, but this store keeps one weight per product, so the first one was used.`)
+
+  // A row's own image is its Image URL, else (older files) its first image.
+  const ownImage = (row: ParsedInventoryRow) => (columns.fields.image !== undefined ? row.image : row.imageUrls[0])
+  const variantRows: VariantRow[] = rows.map((row, index) => {
+    const imageIndex = imageUrls.indexOf(ownImage(row) ?? '') + 1
+    return {
+      optionNames: plan.rowOptions[index],
+      price: row.price,
+      stock: rowStock(row, tracked),
+      sku: row.sku ? fitSku(row.sku) : undefined,
+      weight: perCombinationWeight && row.weight !== undefined ? Math.round(row.weight) : undefined,
+      image: imageIndex > 0 ? imageIndex : undefined,
+    }
+  })
+
+  const { variants, duplicate } = variantsFromRows(plan.names, variantRows)
+  if (!variants) {
+    errors.push(`"${title}" lists "${duplicate}" more than once. Keep one row for each combination.`)
+    return item
+  }
+  item.variants = variants
+  item.basePrice = Math.min(...variants.combinations.map((combination) => combination.price))
+  for (const problem of variantProblems(variants, { imageCount: imageUrls.length, legacy: !storefrontVariantsAreTyped() })) {
+    errors.push(`"${title}": ${problem}`)
+  }
+  return item
+}
+
 /**
  * Group parsed rows into inventory items based on group ID
  */
-function groupRows(rows: ParsedInventoryRow[]): GroupedInventoryItem[] {
+function groupRows(rows: ParsedInventoryRow[], columns: ColumnMap, currency: string): GroupedInventoryItem[] {
   const groups = new Map<string, ParsedInventoryRow[]>()
   let ungroupedIndex = 0
 
   for (const row of rows) {
     const groupId = row.group || `__ungrouped_${ungroupedIndex++}`
-    let group = groups.get(groupId)
-    if (!group) {
-      group = []
-      groups.set(groupId, group)
-    }
-    group.push(row)
+    const group = groups.get(groupId)
+    if (group) group.push(row)
+    else groups.set(groupId, [row])
   }
 
-  const items: GroupedInventoryItem[] = []
-
-  groups.forEach((groupRowsArr: ParsedInventoryRow[], groupId: string) => {
-    const isUngrouped = groupId.startsWith('__ungrouped_')
-    const firstRow = groupRowsArr[0]
-
-    // Collect all unique images from the group
-    const allImages: string[] = []
-    for (const row of groupRowsArr) {
-      for (const img of row.imageUrls) {
-        if (!allImages.includes(img)) {
-          allImages.push(img)
-        }
-      }
-    }
-
-    // Collect all unique tags
-    const allTags: string[] = []
-    for (const row of groupRowsArr) {
-      for (const tag of row.tags) {
-        if (!allTags.includes(tag)) {
-          allTags.push(tag)
-        }
-      }
-    }
-
-    // Determine if this is a variant item
-    const hasVariants = groupRowsArr.length > 1 || (firstRow.variant && groupRowsArr.length === 1)
-
-    if (hasVariants) {
-      // Build variant structure
-      const variantValues = new Set<string>()
-      const subVariantValues = new Set<string>()
-
-      for (const row of groupRowsArr) {
-        if (row.variant) variantValues.add(row.variant)
-        if (row.subVariant) subVariantValues.add(row.subVariant)
-      }
-
-      const axes: VariantAxis[] = []
-      if (variantValues.size > 0) {
-        axes.push({ name: 'Option', options: Array.from(variantValues) })
-      }
-      if (subVariantValues.size > 0) {
-        axes.push({ name: 'Size', options: Array.from(subVariantValues) })
-      }
-
-      const combinations: VariantCombination[] = groupRowsArr.map((row: ParsedInventoryRow) => {
-        let key: string
-        if (row.variant && row.subVariant) {
-          key = `${row.variant}|${row.subVariant}`
-        } else if (row.variant) {
-          key = row.variant
-        } else {
-          key = 'Default'
-        }
-
-        return {
-          key,
-          price: row.price,
-          stock: typeof row.quantity === 'number' ? row.quantity : undefined,
-          sku: row.sku,
-          imageUrl: row.imageUrls[0]
-        }
-      })
-
-      // Find lowest price for basePrice
-      const prices = groupRowsArr.map((r: ParsedInventoryRow) => r.price)
-      const basePrice = Math.min(...prices)
-
-      items.push({
-        groupId: isUngrouped ? undefined : groupId,
-        title: firstRow.itemName,
-        description: firstRow.description,
-        section: firstRow.section,
-        category: firstRow.category,
-        subcategory: firstRow.subcategory,
-        tags: allTags,
-        imageUrls: allImages.slice(0, 4),
-        basePrice,
-        currency: 'USD',
-        sku: firstRow.sku,
-        weight: firstRow.weight,
-        variants: { axes, combinations },
-        rows: groupRowsArr
-      })
-    } else {
-      // Single item without variants
-      items.push({
-        groupId: isUngrouped ? undefined : groupId,
-        title: firstRow.itemName,
-        description: firstRow.description,
-        section: firstRow.section,
-        category: firstRow.category,
-        subcategory: firstRow.subcategory,
-        tags: allTags,
-        imageUrls: allImages.slice(0, 4),
-        basePrice: firstRow.price,
-        currency: 'USD',
-        sku: firstRow.sku,
-        stockQuantity: typeof firstRow.quantity === 'number' ? firstRow.quantity : undefined,
-        weight: firstRow.weight,
-        rows: groupRowsArr
-      })
-    }
-  })
-
-  return items
+  return Array.from(groups, ([groupId, groupRowsArr]) =>
+    buildItem(groupId.startsWith('__ungrouped_') ? undefined : groupId, groupRowsArr, columns, currency))
 }
 
 /**
@@ -600,14 +721,13 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     return { items: [], errors, warnings }
   }
 
-  const headers = csvRows[0]
-  const columnMap = mapHeaders(headers)
+  const columns = mapHeaders(csvRows[0])
 
   // Check for required columns
-  if (columnMap.itemName === undefined) {
+  if (columns.fields.itemName === undefined) {
     errors.push({ row: 1, message: 'Missing required column: Item Name (or name, title, product)' })
   }
-  if (columnMap.price === undefined) {
+  if (columns.fields.price === undefined) {
     errors.push({ row: 1, message: 'Missing required column: Price' })
   }
 
@@ -616,21 +736,23 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
   }
 
   const parsedRows: ParsedInventoryRow[] = []
+  // A group's title, for its later rows (Shopify names a product on its first row only).
+  const groupTitles = new Map<string, string>()
 
   for (let i = 1; i < csvRows.length; i++) {
     const row = csvRows[i]
     const rowNumber = i + 1 // 1-indexed for user display
 
-    const getValue = (column: keyof InventoryCSVColumns): string => {
-      const idx = columnMap[column]
-      return idx !== undefined && row[idx] !== undefined ? row[idx] : ''
-    }
+    const cell = (index: number | undefined): string => (index !== undefined ? row[index] ?? '' : '')
+    const getValue = (column: Column): string => cell(columns.fields[column])
 
-    const itemName = getValue('itemName')
+    const group = getValue('group') || undefined
+    const itemName = getValue('itemName') || (group ? groupTitles.get(group) ?? '' : '')
     if (!itemName) {
       warnings.push({ row: rowNumber, column: 'itemName', message: 'Empty item name, skipping row' })
       continue
     }
+    if (group && !groupTitles.has(group)) groupTitles.set(group, itemName)
 
     const priceStr = getValue('price')
     const price = parsePrice(priceStr, currency)
@@ -645,13 +767,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     const tagsStr = getValue('tags')
     const tags = tagsStr ? tagsStr.split(',').map(t => t.trim()).filter(t => t) : []
 
-    const imageUrls: string[] = []
-    for (const key of ['image1', 'image2', 'image3', 'image4'] as const) {
-      const url = getValue(key)
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        imageUrls.push(url)
-      }
-    }
+    const imageUrls = columns.images.map((index) => imageUrlOf(cell(index))).filter((url): url is string => url !== undefined)
 
     const weightStr = getValue('weight')
     const weight = weightStr ? parseFloat(weightStr.replace(/[^\d.]/g, '')) : undefined
@@ -659,8 +775,13 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     const shippingCostStr = getValue('shippingCost')
     const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, currency) : undefined
 
+    const options = Array.from({ length: MAX_OPTION_COLUMNS }, (_, slot) => ({
+      name: cell(columns.optionNames[slot]) || undefined,
+      value: cell(columns.optionValues[slot]) || undefined,
+    }))
+
     parsedRows.push({
-      group: getValue('group') || undefined,
+      group,
       section: getValue('section') || undefined,
       category: getValue('category') || undefined,
       subcategory: getValue('subcategory') || undefined,
@@ -670,58 +791,48 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
       tags,
       variant: getValue('variant') || undefined,
       subVariant: getValue('subVariant') || undefined,
+      options,
       price,
-      quantity: quantityResult.value ?? quantityResult.formula ?? undefined,
+      quantity: quantityResult.value ?? undefined,
       quantityFormula: quantityResult.formula ?? undefined,
       shippingCost: shippingCost ?? undefined,
       combineShipping: combineResult.type,
       combineShippingExtra: combineResult.extra,
-      weight: weight && !isNaN(weight) ? weight : undefined,
+      weight: weight !== undefined && !isNaN(weight) ? weight : undefined,
       imageUrls,
+      image: imageUrlOf(getValue('image')),
       rowNumber
     })
   }
 
-  // Group rows and build items
-  const items = groupRows(parsedRows)
+  // Formulas resolve across the whole file, before rows become combinations.
+  evaluateQuantityFormulas(parsedRows)
 
-  // Set currency on all items
-  for (const item of items) {
-    item.currency = currency
-  }
+  const items = groupRows(parsedRows, columns, currency)
 
   // The merged tag list must fit what storefront v4 stores (32 tags of at most
   // 64 characters). Trim to fit and say so, rather than build a save the
-  // contract refuses. (Images are already http(s)-only and capped at 4 above.)
+  // contract refuses.
   const tagLimits = LIST_LIMITS.storeTags
   for (const item of items) {
     const tooLong = item.tags.filter((tag) => [...tag].length > tagLimits.maxLength)
     if (tooLong.length > 0) {
       item.tags = item.tags.filter((tag) => [...tag].length <= tagLimits.maxLength)
-      warnings.push({ row: 0, column: 'tags', message: `"${item.title}": dropped ${tooLong.length} tag(s) longer than ${tagLimits.maxLength} characters` })
+      item.warnings.push(`"${item.title}": dropped ${tooLong.length} tag(s) longer than ${tagLimits.maxLength} characters`)
     }
     if (item.tags.length > tagLimits.maxItems) {
-      warnings.push({ row: 0, column: 'tags', message: `"${item.title}": kept the first ${tagLimits.maxItems} of ${item.tags.length} tags` })
+      item.warnings.push(`"${item.title}": kept the first ${tagLimits.maxItems} of ${item.tags.length} tags`)
       item.tags = item.tags.slice(0, tagLimits.maxItems)
     }
-  }
-
-  // Evaluate quantity formulas
-  evaluateQuantityFormulas(items)
-
-  // Storefront v6 caps the stored variants JSON: a listing past it cannot be
-  // saved, so it is an error (which holds the upload) rather than a refusal
-  // after signing.
-  for (const item of items) {
-    const tooLarge = variantsSizeError(item.variants)
-    if (tooLarge) errors.push({ row: item.rows[0]?.rowNumber ?? 0, column: 'variants', message: `"${item.title}": ${tooLarge}` })
   }
 
   return { items, errors, warnings }
 }
 
 /**
- * Convert a grouped inventory item to a StoreItem creation payload
+ * Convert a grouped inventory item to a StoreItem creation payload. A product
+ * with options is priced and stocked per combination, so it carries no single
+ * price, stock or SKU.
  */
 export function toStoreItemData(item: GroupedInventoryItem): {
   title: string
@@ -739,6 +850,7 @@ export function toStoreItemData(item: GroupedInventoryItem): {
   sku?: string
   variants?: ItemVariants
 } {
+  const single = !item.variants
   return {
     title: item.title,
     description: item.description,
@@ -747,52 +859,12 @@ export function toStoreItemData(item: GroupedInventoryItem): {
     subcategory: item.subcategory,
     tags: item.tags.length > 0 ? item.tags : undefined,
     imageUrls: item.imageUrls.length > 0 ? item.imageUrls : undefined,
-    basePrice: item.basePrice,
+    basePrice: single ? item.basePrice : undefined,
     currency: item.currency,
     status: 'active',
     weight: item.weight,
-    stockQuantity: item.stockQuantity,
-    sku: item.sku,
+    stockQuantity: single ? item.stockQuantity : undefined,
+    sku: single ? item.sku : undefined,
     variants: item.variants
   }
-}
-
-/**
- * Generate a sample CSV template
- */
-export function generateCSVTemplate(): string {
-  const headers = [
-    'Group',
-    'Section',
-    'Category',
-    'Subcategory',
-    'Item Name',
-    'Description',
-    'SKU',
-    'Tags',
-    'Variant',
-    'Sub Variant',
-    'Price',
-    'Quantity',
-    'Weight',
-    'Image1',
-    'Image2',
-    'Image3',
-    'Image4'
-  ]
-
-  const sampleRows = [
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-BLUE-1', 'catan,roads,blue', 'Blue', 'Single', '0.69', '100', '5', 'https://example.com/road-blue.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-BLUE-10', 'catan,roads,blue', 'Blue', '10-Pack', '5.99', '50', '50', 'https://example.com/road-blue-10.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-1', 'catan,roads,green', 'Green', 'Single', '0.69', '100', '5', 'https://example.com/road-green.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-10', 'catan,roads,green', 'Green', '10-Pack', '5.99', '50', '50', 'https://example.com/road-green-10.jpg', '', '', ''],
-    ['CATAN-ROADS', 'Games', 'Board Games', 'Catan', 'Catan Roads', 'Replacement roads for Catan', 'C-ROAD-GREEN-50', 'catan,roads,green', 'Green', '50-Pack', '24.99', '(C-ROAD-GREEN-10)*5', '250', 'https://example.com/road-green-50.jpg', '', '', ''],
-    ['', 'Games', 'Board Games', 'Catan', 'Catan Base Set - Red', 'Complete red player set', 'C-BASE-RED', 'catan,set,red', '', '', '6.50', '25', '100', 'https://example.com/base-red.jpg', '', '', ''],
-  ]
-
-  return [headers.join(','), ...sampleRows.map(row => row.map(cell =>
-    cell.includes(',') || cell.includes('"') || cell.includes('\n')
-      ? `"${cell.replace(/"/g, '""')}"`
-      : cell
-  ).join(','))].join('\n')
 }

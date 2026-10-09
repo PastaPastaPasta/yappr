@@ -14,12 +14,13 @@ import { RightSidebar } from '@/components/layout/right-sidebar'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { InventoryUploadModal, InventoryTable } from '@/components/store'
+import type { InventoryItemChanges } from '@/components/store/inventory-table'
 import { withAuth, useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
 import { storeItemService } from '@/lib/services/store-item-service'
-import { fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
-import type { Store, StoreItem, VariantCombination } from '@/lib/types'
+import { inventoryToCsv } from '@/lib/storefront/inventory-csv'
+import type { Store, StoreItem } from '@/lib/types'
 import { PageHeader } from '@/components/layout/page-shell'
 
 function InventoryPage() {
@@ -109,29 +110,8 @@ function InventoryPage() {
     toast.success('Item deleted')
   }, [])
 
-  const handleStockUpdate = useCallback((itemId: string, newStock: number, variantKey?: string) => {
-    setItems(prev => prev.map(item => {
-      if (item.id !== itemId) return item
-
-      if (variantKey && item.variants) {
-        return {
-          ...item,
-          variants: {
-            ...item.variants,
-            combinations: item.variants.combinations.map((c: VariantCombination) =>
-              c.key === variantKey
-                ? { ...c, stock: newStock === Infinity ? undefined : newStock }
-                : c
-            )
-          }
-        }
-      }
-
-      return {
-        ...item,
-        stockQuantity: newStock === Infinity ? undefined : newStock
-      }
-    }))
+  const handleItemUpdated = useCallback((itemId: string, changes: InventoryItemChanges) => {
+    setItems(prev => prev.map(item => item.id === itemId ? { ...item, ...changes } : item))
   }, [])
 
   const handleExportCSV = useCallback(() => {
@@ -140,91 +120,8 @@ function InventoryPage() {
       return
     }
 
-    const headers = [
-      'Group',
-      'Section',
-      'Category',
-      'Subcategory',
-      'Item Name',
-      'Description',
-      'SKU',
-      'Tags',
-      'Variant',
-      'Sub Variant',
-      'Price',
-      'Quantity',
-      'Weight',
-      'Image1',
-      'Image2',
-      'Image3',
-      'Image4'
-    ]
-
-    const rows: string[][] = []
-
-    for (const item of items) {
-      const itemCurrency = item.currency || store?.defaultCurrency || 'USD'
-      const formatCSVPrice = (price: number) => fromSmallestUnit(price, itemCurrency).toFixed(getCurrencyDecimals(itemCurrency))
-      if (item.variants && item.variants.combinations.length > 0) {
-        // Export each variant as a row
-        for (const combo of item.variants.combinations) {
-          const [variant, subVariant] = combo.key.split('|')
-          rows.push([
-            item.id, // Use item ID as group
-            item.section || '',
-            item.category || '',
-            item.subcategory || '',
-            item.title,
-            item.description || '',
-            combo.sku || '',
-            item.tags?.join(', ') || '',
-            variant || '',
-            subVariant || '',
-            formatCSVPrice(combo.price),
-            combo.stock?.toString() || '',
-            item.weight?.toString() || '',
-            combo.imageUrl || item.imageUrls?.[0] || '',
-            item.imageUrls?.[1] || '',
-            item.imageUrls?.[2] || '',
-            item.imageUrls?.[3] || ''
-          ])
-        }
-      } else {
-        // Export single item
-        rows.push([
-          '',
-          item.section || '',
-          item.category || '',
-          item.subcategory || '',
-          item.title,
-          item.description || '',
-          item.sku || '',
-          item.tags?.join(', ') || '',
-          '',
-          '',
-          formatCSVPrice(item.basePrice || 0),
-          item.stockQuantity?.toString() || '',
-          item.weight?.toString() || '',
-          item.imageUrls?.[0] || '',
-          item.imageUrls?.[1] || '',
-          item.imageUrls?.[2] || '',
-          item.imageUrls?.[3] || ''
-        ])
-      }
-    }
-
-    // Escape CSV values
-    const escapeCSV = (value: string) => {
-      if (value.includes(',') || value.includes('"') || value.includes('\n')) {
-        return `"${value.replace(/"/g, '""')}"`
-      }
-      return value
-    }
-
-    const csv = [
-      headers.join(','),
-      ...rows.map(row => row.map(escapeCSV).join(','))
-    ].join('\n')
+    // One row per combination; the file uploads again to the same products.
+    const csv = inventoryToCsv(items, store?.defaultCurrency || 'USD')
 
     // Download
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -324,7 +221,7 @@ function InventoryPage() {
               currency={store.defaultCurrency || 'USD'}
               onEditItem={handleEditItem}
               onItemDeleted={handleItemDeleted}
-              onStockUpdate={handleStockUpdate}
+              onItemUpdated={handleItemUpdated}
             />
           </div>
         </main>

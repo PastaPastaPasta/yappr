@@ -1,6 +1,5 @@
 import { LockClosedIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { formatPrice } from '@/lib/utils/format'
-import { cartService } from '@/lib/services/cart-service'
 import { DigitalBadge } from '@/components/store/digital-badge'
 import type { CartItem, ShippingAddress, Store } from '@/lib/types'
 import { IpfsImage } from '@/components/ui/ipfs-image'
@@ -46,7 +45,7 @@ export function OrderReview({
       {/* Items */}
       <div className="border border-gray-200 dark:border-gray-800 rounded-lg divide-y divide-gray-200 dark:divide-gray-800">
         {items.map((item) => (
-          <div key={`${item.itemId}-${item.variantKey}`} className="p-3 flex items-center gap-3">
+          <div key={`${item.itemId}-${item.variantId ?? ''}`} className="p-3 flex items-center gap-3">
             <div className="w-12 h-12 bg-gray-100 dark:bg-gray-800 rounded overflow-hidden">
               {item.imageUrl ? (
                 <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
@@ -59,9 +58,7 @@ export function OrderReview({
             <div className="flex-1 min-w-0">
               <p className="font-medium truncate">{item.title}</p>
               {item.fulfillment === 'digital' && <DigitalBadge className="mt-0.5" />}
-              {item.variantKey && (
-                <p className="text-sm text-gray-500">{cartService.getVariantDisplay(item.variantKey)}</p>
-              )}
+              {item.variantLabel && <p className="text-sm text-gray-500">{item.variantLabel}</p>}
             </div>
             <div className="text-right">
               <p className="font-medium">{formatPrice(item.unitPrice * item.quantity, currency)}</p>

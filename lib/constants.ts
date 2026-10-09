@@ -139,7 +139,12 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // derived `orderId.$ownerId` indexes), item ratings only per store
 // (`storeItemRating`), smaller encrypted payloads and variants (5,120 B),
 // and an order's seller can never be its buyer.
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'] as const
+// `v7` (docs/STOREFRONT_V7.md) is v6 with `storeItem.variants` as a typed
+// table instead of a JSON string: options with stable ids, one byte-array
+// selector per combination, and aligned price, stock, SKU, weight and image
+// lists, kept aligned by consensus (10422); up to 12 image URLs. v1–v6 keep
+// the JSON string (lib/storefront/legacy-variants.ts).
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -153,6 +158,8 @@ export const storefrontArraysAreTyped = () => storefrontTopologyAtLeast('v4')
 export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5')
 /** True on v6 and later: the mainnet re-cut's fees, indexes and write shapes (see above). */
 export const storefrontIsV6 = () => storefrontTopologyAtLeast('v6')
+/** True on v7 and later: `storeItem.variants` is the typed table, not a JSON string. */
+export const storefrontVariantsAreTyped = () => storefrontTopologyAtLeast('v7')
 /** True on v6 and later: items can be digital, and sellers deliver them on chain. */
 export const storefrontSupportsDigital = () => storefrontIsV6()
 /** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
