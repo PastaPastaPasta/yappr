@@ -66,6 +66,14 @@ describe('inventory CSV export', () => {
     expect(shapeOf(capBack.variants)).toEqual(shapeOf(untracked.variants))
   })
 
+  it('writes a v1–v6 combination image that is not in the gallery', () => {
+    const item = toy()
+    const variants = defined(item.variants)
+    const first = { ...variants.combinations[0], image: undefined, imageUrl: 'https://x.test/fifth.jpg' }
+    const csv = inventoryToCsv([{ ...item, variants: { ...variants, combinations: [first, ...variants.combinations.slice(1)] } }], 'USD')
+    expect(csv).toMatch(/,https:\/\/x\.test\/fifth\.jpg\n/)
+  })
+
   it('writes prices in the item currency', () => {
     const coin = storeItem({ id: 'c', title: 'Coin', currency: 'DASH', basePrice: 12345678 })
     expect(inventoryToCsv([coin], 'USD').split('\n')[1]).toContain(',0.12345678,')

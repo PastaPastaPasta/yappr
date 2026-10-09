@@ -113,6 +113,9 @@ function AddItemPage() {
 
   // Variant state: the option types and the combinations offered (saved only while hasVariants is on).
   const [hasVariants, setHasVariants] = useState(false)
+  // A v7 listing saved with options keeps them: its option-id counter lives in
+  // the table, and a new table would give carts' and kits' old ids to other options.
+  const [keepVariants, setKeepVariants] = useState(false)
   const [variants, setVariants] = useState<ItemVariants>(emptyVariants)
 
   // Resolve the store default before the new-product form becomes editable.
@@ -183,6 +186,7 @@ function AddItemPage() {
         if (item.variants && item.variants.axes.length > 0) {
           setHasVariants(true)
           setVariants(item.variants)
+          setKeepVariants(storefrontVariantsAreTyped())
         }
       } catch (err) {
         logger.error('Failed to load item:', err)
@@ -241,6 +245,11 @@ function AddItemPage() {
     // storefront v4 stores only http(s):// and ipfs:// image URLs (the contract's pattern).
     if (!IMAGE_URL_PATTERN.test(url)) {
       setError('Image URLs must start with https://, http:// or ipfs://')
+      return
+    }
+    // A combination names an image by position, and the stored list keeps one of each URL.
+    if (imageUrls.includes(url)) {
+      setError('That image is already in this listing.')
       return
     }
     setError(null)
@@ -603,7 +612,7 @@ function AddItemPage() {
                 <ProfileImageUpload
                   onUpload={(ipfsUrl) => {
                     const gatewayUrl = ipfsToGatewayUrl(ipfsUrl)
-                    setImageUrls(prev => [...prev, gatewayUrl].slice(0, imageLimit))
+                    setImageUrls(prev => (prev.includes(gatewayUrl) ? prev : [...prev, gatewayUrl].slice(0, imageLimit)))
                   }}
                   aspectRatio="square"
                   label=""
@@ -659,6 +668,7 @@ function AddItemPage() {
                 <input
                   type="checkbox"
                   checked={hasVariants}
+                  disabled={keepVariants}
                   onChange={(e) => {
                     // A fresh table starts empty; one edited before unticking comes back as it was.
                     if (e.target.checked && variants.axes.length === 0) setVariants(emptyVariants())
@@ -668,6 +678,9 @@ function AddItemPage() {
                 />
                 <span className="font-medium">This product has variants (e.g., size, color)</span>
               </label>
+              {keepVariants && (
+                <p className="mt-2 text-sm text-gray-500">A product keeps its options once it has been saved with them. To sell it without options, list it again as a new product.</p>
+              )}
             </div>
 
             {hasVariants ? (
@@ -678,6 +691,7 @@ function AddItemPage() {
                 defaultPrice={defaultCombinationPrice(basePrice, currency, variants)}
                 imageUrls={imageUrls}
                 showWeight={variantsAreTyped}
+                keepTable={keepVariants}
                 disabled={isSubmitting}
               />
             ) : (

@@ -13,7 +13,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArra
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { itemImageLimit, itemSizeError } from '../storefront/storefront-contract';
-import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabelSnapshot, variantProblems } from '../storefront/variant-codec';
+import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantProblems } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
   StoreItem,
@@ -64,8 +64,14 @@ const readVariants = (stored: unknown, imageUrls: readonly string[] | undefined)
  * item-level price or stock beside a v7 table, or a whole document past the
  * transition budget. `fields` is the document exactly as it will be sent.
  */
-function assertStorable(fields: Record<string, unknown>, table: ItemVariants | undefined, imageCount: number): void {
+function assertStorable(fields: Record<string, unknown>, table: ItemVariants | undefined, imageUrls: readonly string[] | undefined): void {
   const typed = storefrontVariantsAreTyped();
+  const imageCount = imageUrls?.length ?? 0;
+  // The stored list keeps one of each URL, which would move every later image a
+  // combination names by position.
+  if (table?.combinations.some((combination) => combination.image !== undefined) && new Set(imageUrls).size !== imageCount) {
+    throw new ListLimitError('The same image is in this listing twice. Remove the copy and save again.');
+  }
   if (table) {
     const [problem] = variantProblems(table, { imageCount, legacy: !typed });
     if (problem) throw new ListLimitError(problem);
@@ -237,7 +243,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     // Absent means shipped, so a physical product writes exactly what v5 accepts.
     if (data.fulfillment === 'digital') documentData.fulfillment = 'digital';
 
-    assertStorable(documentData, data.variants, data.imageUrls?.length ?? 0);
+    assertStorable(documentData, data.variants, data.imageUrls);
     return this.create(ownerId, documentData);
   }
 
@@ -305,7 +311,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     // a status or stock edit must never be blocked by a stored v1-v6 table.
     const merged: Record<string, unknown> = { ...this.extractContentFields(existing), ...documentData };
     for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
-    assertStorable(merged, writesTable ? variants : undefined, imageUrls?.length ?? 0);
+    assertStorable(merged, writesTable ? variants : undefined, imageUrls);
     return this.update(itemId, ownerId, documentData);
   }
 
@@ -327,10 +333,14 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     return findCombination(item.variants, variantId);
   }
 
-  /** The variant's name for a cart line or order ("Red / Large"), cut to the snapshot length. */
+  /**
+   * The variant's full name for a cart line or order ("Red / Large"). Never
+   * cut: on v1–v6 it is what tells two combinations apart (see
+   * {@link getLineCombination}); the order's size check bounds it.
+   */
   getVariantLabel(item: StoreItem, variantId: string | undefined): string | undefined {
     const combination = this.getCombination(item, variantId);
-    return combination && item.variants ? variantLabelSnapshot(item.variants, combination) : undefined;
+    return combination && item.variants ? variantLabel(item.variants, combination) : undefined;
   }
 
   /** What checkout charges: the variant's price, else the base price, else 0. */
@@ -347,7 +357,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   getLineCombination(item: StoreItem, line: { variantId?: string; variantLabel?: string }): VariantCombination | undefined {
     const combination = this.getCombination(item, line.variantId);
     if (!combination || !item.variants || storefrontVariantsAreTyped()) return combination;
-    return line.variantLabel === variantLabelSnapshot(item.variants, combination) ? combination : undefined;
+    return line.variantLabel === variantLabel(item.variants, combination) ? combination : undefined;
   }
 
   /** The SKU of the variant a line names, else the item's own. */

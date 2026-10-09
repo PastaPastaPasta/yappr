@@ -143,6 +143,17 @@ describe('storefront v7 typed variants', () => {
     } finally { restore(); }
   });
 
+  it('refuses a gallery with the same image twice when a combination names images by position', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue(variantItem);
+      const item = defined(await service.getById('item'));
+      const pictured = { ...defined(item.variants), combinations: defined(item.variants).combinations.map((combination) => ({ ...combination, image: 2 })) };
+      await expect(service.updateItem('item', 'owner', storeId, { variants: pictured, imageUrls: ['https://a/1.png', 'https://a/1.png', 'https://a/2.png'] })).rejects.toThrow(/same image is in this listing twice/);
+      expect(updateDocument).not.toHaveBeenCalled();
+    } finally { restore(); }
+  });
+
   it('stores up to 12 images on v7', async () => {
     try {
       const service = await v7();

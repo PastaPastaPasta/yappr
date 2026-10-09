@@ -76,6 +76,24 @@ describe('cart inventory', () => {
     expect(cartService.getItems()).toHaveLength(0)
   })
 
+  it('a line naming a variant of an item that has none is no longer available', async () => {
+    respond(product())
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantLabel: 'S', quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+  })
+
+  it('on v1–v6 tells combinations apart by their whole name, however long', async () => {
+    const long = 'L'.repeat(60)
+    // Two combinations whose names agree for their first 120 characters.
+    const variants = variantsFromRows(['A', 'B', 'Size'], [{ optionNames: [long, long, 'S'], price: 100 }, { optionNames: [long, long, 'L'], price: 200 }]).variants as ItemVariants
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants }))
+    // The S line was added as '1.2.3'; the seller moved L first, so that id is now L.
+    const moved = { ...variants, axes: variants.axes.map((axis, index) => (index === 2 ? { ...axis, options: [...axis.options].reverse() } : axis)) }
+    const reread = variantsFromRows(['A', 'B', 'Size'], moved.axes[2].options.map((option) => ({ optionNames: [long, long, option.name], price: 1 }))).variants as ItemVariants
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: reread }))
+    expect(await cartService.validateItems([cartItem({ variantId: '1.2.3', variantLabel: `${long} / ${long} / S`, quantity: 1 })])).toMatchObject([{ reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem({ variantId: '1.2.3', variantLabel: `${long} / ${long} / L`, quantity: 1 })])).toEqual([])
+  })
+
   it('drops lines saved before variants had ids, and keeps the rest', async () => {
     const lines = [cartItem(), { ...cartItem({ itemId: 'old' }), variantKey: 'Blue|L' }, cartItem({ itemId: 'v', variantId: '1', variantLabel: 'S' })]
     localStorage.setItem(scopedKey('yappr_cart'), JSON.stringify({ items: lines, updatedAt: 0 }))

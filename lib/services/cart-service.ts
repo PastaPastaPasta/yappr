@@ -338,7 +338,7 @@ class CartService {
         if (!item || item.status !== 'active') {
           return { item: cartItem, maxQuantity: 0, reason: 'Item is no longer available' };
         }
-        if (item.variants && !storeItemService.getLineCombination(item, cartItem)) {
+        if ((item.variants || cartItem.variantId) && !storeItemService.getLineCombination(item, cartItem)) {
           return { item: cartItem, maxQuantity: 0, reason: 'Selected option is no longer available' };
         }
         const synced = withFulfillment(cartItem, item.fulfillment === 'digital' ? 'digital' : undefined);

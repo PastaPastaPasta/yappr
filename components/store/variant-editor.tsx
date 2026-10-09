@@ -25,6 +25,12 @@ interface VariantEditorProps {
   imageUrls: string[]
   /** Per-combination weights (storefront v7 only). */
   showWeight: boolean
+  /**
+   * The listing is saved with this table (v7): it may shrink but never empty,
+   * since its option-id counter lives in it and a new table would hand old ids
+   * (named by carts and kits) to other options.
+   */
+  keepTable?: boolean
   disabled?: boolean
 }
 
@@ -70,7 +76,7 @@ function DraftInput({ value, onDraft, ...props }: { value: string; onDraft: (tex
   )
 }
 
-export function VariantEditor({ variants, onChange, currency, defaultPrice, imageUrls, showWeight, disabled = false }: VariantEditorProps) {
+export function VariantEditor({ variants, onChange, currency, defaultPrice, imageUrls, showWeight, keepTable = false, disabled = false }: VariantEditorProps) {
   // With no combinations there is nothing to read tracking from, so remember the seller's choice.
   const [trackWhenEmpty, setTrackWhenEmpty] = useState(() => tracksStock(variants))
   const trackStock = variants.combinations.length > 0 ? tracksStock(variants) : trackWhenEmpty
@@ -176,6 +182,8 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
           disabled={disabled}
           onRename={(name) => onChange(renameAxis(variants, axisIndex, name))}
           onMove={(to) => onChange(moveAxis(variants, axisIndex, to))}
+          canRemove={!keepTable || variants.axes.length > 1}
+          canRemoveLastOption={!keepTable || variants.axes.length > 1}
           onRemove={() => handleRemoveAxis(axisIndex)}
           onAddOptions={(names) => addOptions(names.length, () => names.reduce((next, name) => addOption(next, axisIndex, name, defaults), variants))}
           onRenameOption={(optionId, name) => onChange(renameOption(variants, optionId, name))}
@@ -390,6 +398,10 @@ interface AxisCardProps {
   disabled: boolean
   onRename: (name: string) => void
   onMove: (to: number) => void
+  /** Whether the option type can go (a kept table keeps one). */
+  canRemove: boolean
+  /** Whether its only option can go (which removes the option type too). */
+  canRemoveLastOption: boolean
   onRemove: () => void
   onAddOptions: (names: string[]) => void
   onRenameOption: (optionId: number, name: string) => void
@@ -397,7 +409,7 @@ interface AxisCardProps {
   onRemoveOption: (optionId: number) => void
 }
 
-function AxisCard({ axis, axisIndex, axisCount, disabled, onRename, onMove, onRemove, onAddOptions, onRenameOption, onMoveOption, onRemoveOption }: AxisCardProps) {
+function AxisCard({ axis, axisIndex, axisCount, disabled, canRemove, canRemoveLastOption, onRename, onMove, onRemove, onAddOptions, onRenameOption, onMoveOption, onRemoveOption }: AxisCardProps) {
   const [newOptions, setNewOptions] = useState('')
   const axisName = axis.name.trim() || `option type ${axisIndex + 1}`
   const names = splitOptionNames(newOptions, axis.options.map((option) => option.name))
@@ -430,7 +442,7 @@ function AxisCard({ axis, axisIndex, axisCount, disabled, onRename, onMove, onRe
           type="button"
           aria-label={`Remove ${axisName}`}
           onClick={onRemove}
-          disabled={disabled}
+          disabled={disabled || !canRemove}
           className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded disabled:opacity-30"
         >
           <TrashIcon className="h-4 w-4" />
@@ -458,7 +470,7 @@ function AxisCard({ axis, axisIndex, axisCount, disabled, onRename, onMove, onRe
               <button type="button" aria-label={`Move ${optionName} later`} onClick={() => onMoveOption(option.id, 1)} disabled={disabled || optionIndex === axis.options.length - 1} className={iconButtonClass}>
                 <ArrowRightIcon className="h-3.5 w-3.5" />
               </button>
-              <button type="button" aria-label={`Remove ${optionName}`} onClick={() => onRemoveOption(option.id)} disabled={disabled} className={iconButtonClass}>
+              <button type="button" aria-label={`Remove ${optionName}`} onClick={() => onRemoveOption(option.id)} disabled={disabled || (axis.options.length === 1 && !canRemoveLastOption)} className={iconButtonClass}>
                 <XMarkIcon className="h-3.5 w-3.5" />
               </button>
             </li>

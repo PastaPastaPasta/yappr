@@ -92,6 +92,10 @@ default weight.
   target another combination's id. A listing that has used all 254 (options
   added over its life, not at once) takes no more options; the seller lists
   the product again.
+- For the same reason a listing saved with options keeps its table: the
+  `nextOptionId` counter lives in it, and a fresh table would start again at
+  1. The seller can remove options and option types down to one option, but
+  not turn options off; to sell the product without them, they list it again.
 
 ## Orders, carts and kits
 

@@ -73,7 +73,7 @@ export function inventoryToCsv(items: readonly StoreItem[], defaultCurrency: str
       }).flat()
       rows.push([
         ...itemCells(item.id), combination.sku ?? '', price(combination.price), text(combination.stock), text(combination.weight ?? item.weight),
-        ...options, ...imageCells(index === 0), combination.image ? images[combination.image - 1] ?? '' : '',
+        ...options, ...imageCells(index === 0), combination.image ? images[combination.image - 1] ?? '' : combination.imageUrl ?? '',
       ])
     }
   }
