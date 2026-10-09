@@ -231,23 +231,23 @@ describe('DmEngine.pollOwn', () => {
   })
 })
 
-describe('DmEngine.send beforeWrite', () => {
+describe('DmEngine.send beforeBroadcast', () => {
   it("runs before the send's own invite and each message, and a throw refuses the write", async () => {
     const ledger = new MemoryLedger()
     const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
     engine(ledger, BOB_ID, BOB_PRIV)
     const key = await alice.startDirect(bob58)
     const refusal = new Error('given up')
-    await expect(alice.send(key, 'never', { beforeWrite: () => { throw refusal } })).rejects.toBe(refusal)
+    await expect(alice.send(key, 'never', { beforeBroadcast: () => { throw refusal } })).rejects.toBe(refusal)
     expect(ledger.invites).toHaveLength(0)
     expect(ledger.messages).toHaveLength(0)
     let writes = 0
-    await alice.send(key, 'hello', { beforeWrite: () => { writes += 1 } })
+    await alice.send(key, 'hello', { beforeBroadcast: () => { writes += 1 } })
     // The invite and the one message.
     expect(writes).toBe(2)
     expect(ledger.invites).toHaveLength(1)
     let refused = 0
-    await expect(alice.send(key, 'again', { beforeWrite: () => { refused += 1; throw refusal } })).rejects.toBe(refusal)
+    await expect(alice.send(key, 'again', { beforeBroadcast: () => { refused += 1; throw refusal } })).rejects.toBe(refusal)
     expect(refused).toBe(1)
     expect(alice.messages(key).map((m) => m.text)).toEqual(['hello'])
   })

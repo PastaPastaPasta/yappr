@@ -32,7 +32,7 @@ import { recoverLostState, type RecoveryProgress } from './recovery'
 import type { Scheduler } from './self-state-store'
 import { sendContent } from './sender'
 import { SWEEP_INTERVAL_MS, sweep } from './sweep'
-import type { BeforeWrite, DmChain, KeyValueStore } from './types'
+import type { BeforeBroadcast, DmChain, KeyValueStore } from './types'
 import { hexId, pointerKey, splitText, type Exclusive } from './util'
 
 export const BACKGROUND_POLL_MS = 30_000
@@ -459,21 +459,21 @@ export class DmEngine {
 
   /**
    * Send text, split into messages of at most one size class (§5.7).
-   * `beforeWrite` runs before each of this send's writes (a new
+   * `beforeBroadcast` runs just before each of this send's broadcasts (a new
    * conversation's invite, each message broadcast), never before another
-   * operation's; throwing refuses the write and fails the send.
+   * operation's; throwing refuses that broadcast and fails the send.
    */
-  async send(key: string, text: string, options: { beforeWrite?: BeforeWrite } = {}): Promise<void> {
+  async send(key: string, text: string, options: { beforeBroadcast?: BeforeBroadcast } = {}): Promise<void> {
     const conv = this.convByKey(key)
     const pieces = splitText(text.trim())
     if (pieces.length === 0) return
-    const { beforeWrite } = options
+    const { beforeBroadcast } = options
     await this.run(async () => {
       if (conv.kind === 'direct') {
         if (this.ctx.store.isBlocked(conv.peer)) throw new Error('Unblock this person to message them.')
-        await ensureStarted(this.ctx, conv, { beforeWrite })
+        await ensureStarted(this.ctx, conv, { beforeBroadcast })
       }
-      for (const text of pieces) await sendContent(this.ctx, conv, { type: 'text', text }, beforeWrite)
+      for (const text of pieces) await sendContent(this.ctx, conv, { type: 'text', text }, beforeBroadcast)
     })
   }
 

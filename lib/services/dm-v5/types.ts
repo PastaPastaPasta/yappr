@@ -82,9 +82,9 @@ export interface DmChain {
   hasWritten(): Promise<boolean>
   /** True when this device holds the signing key. Background writes check it so they never prompt for a key. */
   canWrite(): boolean
-  createMessage(tag: Uint8Array, body: Uint8Array): Promise<WriteOutcome>
+  createMessage(tag: Uint8Array, body: Uint8Array, options?: BroadcastOptions): Promise<WriteOutcome>
   deleteMessage(id: string): Promise<WriteOutcome>
-  createInvite(invite: DmInvite): Promise<WriteOutcome>
+  createInvite(invite: DmInvite, options?: BroadcastOptions): Promise<WriteOutcome>
   createGroupDoc(handle: Uint8Array, blob: Uint8Array): Promise<WriteOutcome>
   replaceGroupDoc(doc: { id: string; revision: number }, handle: Uint8Array, blob: Uint8Array): Promise<WriteOutcome>
   createSelfState(fields: SelfStateFields): Promise<WriteOutcome>
@@ -96,12 +96,19 @@ export interface DmChain {
 }
 
 /**
- * Called just before each write one send makes (its conversation's invite,
- * each broadcast of a message); throwing refuses that write, and the send
- * fails with the error. Lets a caller count only its own send's writes, or
- * stop a send it gave up on, while other writes (group grants, leaves) go on.
+ * Called just before each broadcast one send makes (its conversation's
+ * invite, each message): after every read and build that comes first, so a
+ * write that failed or stalled before it never counts as sent. Throwing
+ * refuses that broadcast (nothing goes out), and the send fails with the
+ * error. Lets a caller count only its own send's broadcasts, or stop a send
+ * it gave up on, while other writes (group grants, leaves) go on.
  */
-export type BeforeWrite = () => void
+export type BeforeBroadcast = () => void
+
+/** A create's `beforeBroadcast` ({@link BeforeBroadcast}); a chain calls it at its broadcast, and rethrows its refusal. */
+export interface BroadcastOptions {
+  beforeBroadcast?: BeforeBroadcast
+}
 
 /** The signed-in user as DM v5 sees them. */
 export interface DmIdentity {
