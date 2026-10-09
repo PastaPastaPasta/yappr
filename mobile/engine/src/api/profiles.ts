@@ -352,8 +352,11 @@ export function createProfileWrites(tickets: TicketStore) {
       const owner = signer(ctx)
       await settleLandedProfileSaves(owner)
         .catch(error => logger.debug('Profile: could not settle an earlier save:', error))
+      // A document sent whose confirmation wait timed out: the save may still land, or never execute.
+      let unconfirmed = false
       try {
         await unifiedProfileService.updateProfile(owner, update, {
+          onUnconfirmed: () => { unconfirmed = true },
           // "Saving… (1 of 2)" (UX_SPEC edit.saving): v10 writes the DashPay profile, then yapprProfile.
           onProgress: ({ step, total }) => {
             try {
@@ -368,8 +371,8 @@ export function createProfileWrites(tickets: TicketStore) {
         if (error instanceof ListLimitError) throw new NotSentError(badRequest(error.message))
         throw error
       }
-      // updateProfile throws on a failure and does not say whether the wait confirmed, as on web.
-      return { state: 'confirmed' }
+      // updateProfile throws on a failure; a save it could not confirm is checked (`probe`), never reported saved.
+      return { state: unconfirmed ? 'unconfirmed' : 'confirmed' }
     },
     async probe(ticket, args, kit) {
       const proved = await proveEdit(ticket, args, kit)

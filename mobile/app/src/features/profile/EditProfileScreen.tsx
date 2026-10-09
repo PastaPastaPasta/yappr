@@ -13,6 +13,7 @@ import { Button } from '~/ui/Button';
 import { confirmAlert } from '~/ui/Dialog';
 import { ErrorState } from '~/ui/EmptyState';
 import { KeyboardAvoider } from '~/ui/KeyboardAvoider';
+import { LinkText } from '~/ui/LinkText';
 import { Screen } from '~/ui/Screen';
 import { Spinner } from '~/ui/Spinner';
 import { SwitchRow } from '~/ui/Switch';
@@ -50,10 +51,16 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   const [form, setForm] = useState<ProfileForm>(initial);
   const [pickerOpen, setPickerOpen] = useState(false);
   const save = useWrite(profileUpdateWrite);
-  // A finished save closes the modal (below), and the form keeps its saving look until it has
+  // A confirmed save closes the modal (below), and the form keeps its saving look until it has
   // gone. Re-enabling the fields in the render that closes it would move the inputs between
   // native parents inside a screen Android has started to animate out, which crashes the app.
-  const closing = save.status === 'confirmed' || save.status === 'unconfirmed';
+  const closing = save.status === 'confirmed';
+  // Sent, but not confirmed (the network stalled, or its answer never came): it may still land,
+  // so it is never called saved (RC16-A-01). The form stays, its edits kept and locked, while the
+  // app checks; "Check again" checks now. A check that finds it saved closes the form as a
+  // confirmed save does; one that proves it absent unlocks the form, edits intact, to save again.
+  const unsure = save.status === 'unconfirmed' && save.ticket?.retryable !== true;
+  const [checking, setChecking] = useState(false);
   // From the tap: until the engine answers with a ticket the status is still idle, and a second
   // Save would be queued behind the first with its change shown, one save the user never meant.
   const [sending, setSending] = useState(false);
@@ -67,15 +74,17 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
   // Edited since the modal opened. Without a profile document the pre-filled name already
   // makes a patch (the first save creates the profile), but leaving then loses nothing.
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
-  const canSave = valid && !isEmptyPatch(patch) && !saving;
+  const canSave = valid && !isEmptyPatch(patch) && !saving && !unsure;
+  const locked = saving || unsure;
   const set = <K extends keyof ProfileForm>(key: K) => (value: ProfileForm[K]) => setForm((f) => ({ ...f, [key]: value }));
 
-  // Leaving with unsaved changes asks first (PRD PROF-06); a confirmed save leaves at once.
+  // Leaving with unsaved changes asks first (PRD PROF-06); a confirmed save leaves at once, and
+  // so does one still being checked: its change is on its way, and nothing is discarded.
   const leaving = useRef(false);
   useEffect(
     () =>
       navigation.addListener('beforeRemove', (event) => {
-        if (leaving.current || !dirty) return;
+        if (leaving.current || !dirty || unsure) return;
         event.preventDefault();
         confirmAlert({
           title: 'Discard changes?',
@@ -90,14 +99,12 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
           })
           .catch(() => undefined);
       }),
-    [navigation, dirty],
+    [navigation, dirty, unsure],
   );
 
-  // Unconfirmed may still have landed (PRD G-3: it counts as done, and the profile already shows
-  // it): it closes as a confirmed save does, rather than inviting a second save of the same change.
-  // The reconciler checks it, and only a check that proves it absent says otherwise (and undoes it).
+  // Only a confirmed save is "Profile updated!": its own answer, or a check that found it landed.
   useEffect(() => {
-    if (save.status !== 'confirmed' && save.status !== 'unconfirmed') return;
+    if (save.status !== 'confirmed') return;
     toast.success('Profile updated!');
     leaving.current = true;
     // Opened on its own (a cold link), with nothing under it: the profile it edited.
@@ -119,6 +126,15 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
       });
   };
 
+  const onCheck = () => {
+    if (checking) return;
+    setChecking(true);
+    save
+      .check()
+      .catch(() => undefined)
+      .finally(() => setChecking(false));
+  };
+
   const nameField = (
     <TextField
       label="Name"
@@ -126,7 +142,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
       onChangeText={set('displayName')}
       maxLength={limits.profileLimits.displayName}
       error={errors.displayName}
-      editable={!saving}
+      editable={!locked}
       testID="edit-name"
     />
   );
@@ -138,7 +154,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
       maxLength={limits.profileLimits.bio}
       error={errors.bio}
       multiline
-      editable={!saving}
+      editable={!locked}
       testID="edit-bio"
     />
   );
@@ -150,7 +166,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         onChangeText={set('pronouns')}
         maxLength={FIXED_LIMITS.pronouns}
         error={errors.pronouns}
-        editable={!saving}
+        editable={!locked}
         testID="edit-pronouns"
       />
       <TextField
@@ -159,7 +175,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         onChangeText={set('location')}
         maxLength={FIXED_LIMITS.location}
         error={errors.location}
-        editable={!saving}
+        editable={!locked}
         testID="edit-location"
       />
       <TextField
@@ -171,7 +187,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         keyboardType="url"
         autoCapitalize="none"
         autoCorrect={false}
-        editable={!saving}
+        editable={!locked}
         testID="edit-website"
       />
       <TextField
@@ -184,7 +200,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         keyboardType="url"
         autoCapitalize="none"
         autoCorrect={false}
-        editable={!saving}
+        editable={!locked}
         testID="edit-banner"
       />
       <SwitchRow
@@ -192,7 +208,7 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         description="Mark your profile as containing adult content"
         value={form.nsfw}
         onValueChange={set('nsfw')}
-        disabled={saving}
+        disabled={locked}
         testID="edit-nsfw"
       />
     </>
@@ -204,9 +220,16 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
         options={{
           title: saving ? 'Saving…' : 'Edit profile',
           // Swipe-down would drop unsaved changes without asking.
-          gestureEnabled: !dirty && !saving,
+          gestureEnabled: (!dirty || unsure) && !saving,
           headerLeft: () => (
-            <Button label="Cancel" variant="link" size="sm" onPress={() => router.back()} disabled={saving} testID="edit-cancel" />
+            <Button
+              label={unsure ? 'Close' : 'Cancel'}
+              variant="link"
+              size="sm"
+              onPress={() => router.back()}
+              disabled={saving}
+              testID="edit-cancel"
+            />
           ),
           headerRight: () =>
             saving ? (
@@ -218,13 +241,25 @@ function EditProfileForm({ profile, viewerId }: { profile: ProfileDTO; viewerId:
       />
       <KeyboardAvoider avoidOnIOS>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerClassName="pb-12" testID="edit-profile">
+          {unsure ? (
+            <View accessibilityLiveRegion="polite" className="gap-1 px-4 py-3" testID="edit-unconfirmed">
+              <Text variant="subhead" tone="secondary">
+                {"Your changes haven't been confirmed yet. We'll keep checking."}
+              </Text>
+              {checking ? (
+                <Spinner size="sm" testID="edit-checking" />
+              ) : (
+                <LinkText label="Check again" role="button" onPress={onCheck} testID="edit-check-again" />
+              )}
+            </View>
+          ) : null}
           <ProfileBanner uri={form.bannerUri.trim() || undefined} height={120} />
           <View className="-mt-11 flex-row items-end gap-3 px-4">
             <Avatar avatar={avatarDtoOf(form.avatar, viewerId, defaultStyle)} identityId={viewerId} size="profile" />
             <Pressable
               accessibilityRole="button"
               onPress={() => setPickerOpen(true)}
-              disabled={saving}
+              disabled={locked}
               className="mb-2 active:opacity-60"
               testID="edit-change-avatar"
             >

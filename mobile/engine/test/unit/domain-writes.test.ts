@@ -544,6 +544,20 @@ describe('profiles.update', () => {
     expect(seen).toEqual([{ done: 0, total: 2 }, { done: 1, total: 2 }])
   })
 
+  it('never reports a save lib could not confirm as saved: it is unconfirmed until a check finds it (RC16-A-01)', async () => {
+    const { tickets, profiles } = engine()
+    m.profileService.updateProfile.mockImplementation(async (_owner: string, _update: unknown, options: { onUnconfirmed: () => void }) => {
+      // The document went out; its confirmation wait timed out.
+      options.onUnconfirmed()
+      return {}
+    })
+    const ticket = await profiles.update({ bio: 'new bio' })
+    expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
+
+    m.profileService.getProfile.mockResolvedValue({ bio: 'new bio', displayName: 'Ann' })
+    expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
   it('reports lib\'s own plan refusals as not sent, and checks an edit by reading the profile back', async () => {
     const { tickets, outcome, profiles } = engine()
     m.profileService.updateProfile.mockRejectedValue(new ListLimitError('Too many links'))

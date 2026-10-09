@@ -306,9 +306,23 @@ describe('EditProfileScreen', () => {
   /** The viewer's profile as the cache holds it (what the profile header shows). */
   const cachedProfile = () => queryClient.getQueryData<ProfileDTO>(queryKeys.profile.detail(VIEWER));
 
-  it('closes an unconfirmed save as done, with the profile already showing it (QA rc7 D-1)', async () => {
-    // A save whose confirmation timed out may well have landed (PRD G-3): it closed with no word
-    // and the header kept the old value, so it looked as if nothing had happened.
+  /** A check that proved a save absent (the reconciler's, 2 minutes on): retryable again. */
+  const provedAbsent = (t: WriteTicket) =>
+    advance(t, {
+      state: 'unconfirmed',
+      retryable: true,
+      error: {
+        code: 'NOT_RECORDED',
+        consensusCode: null,
+        outcome: 'not-recorded',
+        retryable: true,
+        userMessage: 'Checked: this write did not land.',
+      },
+    });
+
+  it('never calls an unconfirmed save saved: it says so, with Check again, until a check finds it (RC16-A-01)', async () => {
+    // A save stalled on the network went unconfirmed after the engine's 60 s deadline, and the form
+    // toasted "Profile updated!" and closed, though nothing was persisted.
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
     fakeEngine.method('profiles.update').mockResolvedValue(pending);
@@ -320,10 +334,52 @@ describe('EditProfileScreen', () => {
     expect(cachedProfile()).toMatchObject({ pronouns: 'she/her', displayName: 'Jana Abara' });
     expect(cachedProfile()).not.toHaveProperty('bio');
 
-    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'unconfirmed' })));
-    expect(router.back).toHaveBeenCalled();
-    expect(useToastStore.getState().current).toMatchObject({ kind: 'success', message: 'Profile updated!' });
+    const unconfirmed = advance(pending, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(router.back).not.toHaveBeenCalled();
+    expect(useToastStore.getState().current).toBeNull();
+    expect(screen.getByTestId('edit-unconfirmed')).toHaveTextContent(/haven't been confirmed yet/);
+    // The edits stay, locked while it may still land; leaving needs no "Discard changes?".
+    expect(screen.getByTestId('edit-pronouns')).toHaveDisplayValue('she/her');
+    expect(screen.getByTestId('edit-pronouns').props.editable).toBe(false);
+    expect(screen.getByTestId('edit-save')).toBeDisabled();
+    expect(screen.getByTestId('screen-title')).toHaveTextContent('Edit profile');
+    expect(tryLeave()).toBe(false);
     expect(cachedProfile()).toMatchObject({ pronouns: 'she/her' });
+
+    // "Check again" checks now: it finds the save landed.
+    fakeEngine.method('writes.check').mockImplementationOnce(async () => {
+      const landed = advance(unconfirmed, { state: 'confirmed' });
+      setTimeout(() => fakeEngine.emit('write.status', landed), 0);
+      return landed;
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('edit-check-again')));
+    await flush();
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'success', message: 'Profile updated!' });
+    expect(router.back).toHaveBeenCalled();
+  });
+
+  it('gives an unconfirmed save its edits back to save again once a check proves it never landed (RC16-A-01)', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
+    const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
+    fakeEngine.method('profiles.update').mockResolvedValue(pending);
+    renderScreen(<EditProfileScreen />);
+    await flush();
+    fireEvent.changeText(screen.getByTestId('edit-name'), 'Jana A.');
+    await act(async () => fireEvent.press(screen.getByTestId('edit-save')));
+    const unconfirmed = advance(pending, { state: 'unconfirmed' });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(screen.getByTestId('edit-save')).toBeDisabled();
+
+    act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
+    expect(useToastStore.getState().current).toMatchObject({ kind: 'error', message: "Couldn't save your profile. Try again." });
+    expect(cachedProfile()?.displayName).toBe('Jana Abara');
+    expect(router.back).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('edit-unconfirmed')).toBeNull();
+    expect(screen.getByTestId('edit-name')).toHaveDisplayValue('Jana A.');
+    expect(screen.getByTestId('edit-name').props.editable).toBe(true);
+    expect(screen.getByTestId('edit-save')).toBeEnabled();
   });
 
   it('undoes the profile change when the save fails, and keeps the form', async () => {
@@ -387,20 +443,6 @@ describe('EditProfileScreen', () => {
     expect(screen.getByTestId('edit-save')).toBeEnabled();
   });
 
-  /** A check that proved a save absent (the reconciler's, 2 minutes on): retryable again. */
-  const provedAbsent = (t: WriteTicket) =>
-    advance(t, {
-      state: 'unconfirmed',
-      retryable: true,
-      error: {
-        code: 'NOT_RECORDED',
-        consensusCode: null,
-        outcome: 'not-recorded',
-        retryable: true,
-        userMessage: 'Checked: this write did not land.',
-      },
-    });
-
   it('keeps what a dev save did write when a check later proves the rest absent', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
     const pending = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
@@ -415,7 +457,7 @@ describe('EditProfileScreen', () => {
     act(() => fakeEngine.emit('write.status', halfway));
     const unconfirmed = advance(halfway, { state: 'unconfirmed' });
     act(() => fakeEngine.emit('write.status', unconfirmed));
-    expect(useToastStore.getState().current?.message).toBe('Profile updated!');
+    expect(useToastStore.getState().current).toBeNull();
 
     act(() => fakeEngine.emit('write.status', provedAbsent(unconfirmed)));
     expect(useToastStore.getState().current).toMatchObject({ kind: 'error', message: "Couldn't save pronouns. Try again." });
@@ -439,7 +481,7 @@ describe('EditProfileScreen', () => {
       error: { code, consensusCode: null, outcome, retryable: true, userMessage: 'No.' } as WriteTicket['error'],
     });
 
-    /** Save 1 (pronouns) goes unconfirmed: "Profile updated!", and the form closes. */
+    /** Save 1 (pronouns) goes unconfirmed, and the form is closed while it is checked. */
     async function firstSaveUnconfirmed(progress?: WriteTicket['progress'], edit: [string, string][] = [['edit-pronouns', 'she/her']]) {
       fakeEngine.method('profiles.get').mockResolvedValue(PROFILE);
       const first = ticket({ op: 'profile.update', target: { identityId: VIEWER } });
