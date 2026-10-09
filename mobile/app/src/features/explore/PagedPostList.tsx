@@ -59,6 +59,8 @@ export interface PagedPostListProps {
   loadingLabel: string;
   empty: { title: string; description?: string; icon?: IconComponent };
   offline: boolean;
+  /** Runs as a pull to refresh starts, just before its refetch. */
+  onPullToRefresh?: () => void;
   testID: string;
 }
 
@@ -68,7 +70,7 @@ export interface PagedPostListProps {
  * more posts" pill, and the loading, empty and error states (PRD FEED-06,
  * FEED-07, EXPL-07).
  */
-export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, testID }: PagedPostListProps) {
+export function PagedPostList({ queryKey, query, header, loadingLabel, empty, offline, onPullToRefresh, testID }: PagedPostListProps) {
   const c = useColors();
   const [refreshing, setRefreshing] = useState(false);
   // Automatic paging pauses after MAX_AUTO_PAGES until the reader asks for more.
@@ -92,6 +94,7 @@ export function PagedPostList({ queryKey, query, header, loadingLabel, empty, of
     setPaused(false);
     // A refetch re-reads every page it holds: start again from the first.
     queryClient.setQueryData<PagedData>(queryKey, firstPageOnly);
+    onPullToRefresh?.();
     query
       .refetch()
       .then((result) => {

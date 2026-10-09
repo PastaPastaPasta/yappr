@@ -281,6 +281,27 @@ describe('Home', () => {
     expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'today', cursor: null });
   });
 
+  // A post deleted on another device must leave Top on a pull to refresh,
+  // not wait out the engine's minute-long ranked page (RC16-I-04).
+  it('reads Top afresh on a pull to refresh, and only then', async () => {
+    useHomePrefsStore.setState({ accounts: { 'signed-out': { tab: 'forYou', sort: 'top', window: 'all' } } });
+    home().mockResolvedValue(page([post('p1', 'first post', 1)]));
+    await renderHome();
+    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'all', cursor: null });
+
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'all', cursor: null, refresh: true });
+
+    // Any other read after it (here a plain refetch) keeps the engine's page.
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.feed.home({ tab: 'forYou', sort: 'top', window: 'all' }) });
+    });
+    expect(home()).toHaveBeenLastCalledWith({ tab: 'forYou', sort: 'top', window: 'all', cursor: null });
+  });
+
   it('has no sort control on a contract without rankings (v2)', async () => {
     fakeEngine.setStatus({ info: { capabilities: { ...CAPABILITIES, rankings: false } } });
     useHomePrefsStore.setState({ accounts: { 'signed-out': { tab: 'forYou', sort: 'top', window: 'all' } } });

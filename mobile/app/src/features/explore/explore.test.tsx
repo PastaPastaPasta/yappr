@@ -572,6 +572,37 @@ describe('Hashtag page', () => {
     expect(screen.getByTestId('hashtag-window')).toBeTruthy();
   });
 
+  it('reads the tag’s Top afresh on a pull to refresh, and only then (RC16-I-04)', async () => {
+    fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'tagged #mobile')]));
+    await renderAt('/hashtag/mobile');
+    fireEvent(screen.getByTestId('hashtag-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
+    await act(async () => {});
+    const top = { tag: 'mobile', sort: 'top', window: 'all', cursor: null };
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith(top);
+
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith({ ...top, refresh: true });
+
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.feed.hashtag({ tag: 'mobile', sort: 'top', window: 'all' }) });
+    });
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith(top);
+  });
+
+  it('does not read the tag’s Latest afresh on a pull to refresh', async () => {
+    fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'tagged #mobile')]));
+    await renderAt('/hashtag/mobile');
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(2);
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith({ tag: 'mobile', sort: 'recent', window: 'all', cursor: null });
+  });
+
   it("keeps G-11's error up, with Retrying…, while NET-03's backoff reads the tag again (NEW-R-A-02)", async () => {
     jest.useFakeTimers();
     const stopRetry = startReadRetry();

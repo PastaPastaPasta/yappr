@@ -39,6 +39,8 @@ export interface HomeQuery {
   /** Top only; default `all`. */
   window?: RankingWindow
   cursor?: string | null
+  /** Top only: a pull to refresh, read afresh past lib's minute-long ranked cache. */
+  refresh?: boolean
 }
 
 export interface HashtagQuery {
@@ -47,6 +49,8 @@ export interface HashtagQuery {
   sort?: 'recent' | 'top'
   window?: RankingWindow
   cursor?: string | null
+  /** Top only: a pull to refresh, read afresh past lib's minute-long ranked cache. */
+  refresh?: boolean
 }
 
 /** `hooks/use-top-feed.ts`: each load-more widens the ranking by a page, up to Drive's query limit. */
@@ -141,8 +145,10 @@ async function top(query: HomeQuery): Promise<Page<PostDTO>> {
   const fields = decodeCursor<{ limit: number; seen: string[] }>(query.cursor, kind)
   const limit = fields ? Math.min(cursorInt(fields.limit) + TOP_PAGE, MAX_RANKED) : TOP_PAGE
   const seen = new Set(fields?.seen ?? [])
-  // A widening bypasses the minute-long ranked cache, as web's load-more does.
-  const options = { limit, window, force: fields !== null, throwOnError: true }
+  // A widening, or a pull to refresh, bypasses the minute-long ranked cache, as
+  // web's load-more and refresh do: a post deleted on another device bumps no
+  // quote generation here, so only a fresh read drops it (RC16-I-04).
+  const options = { limit, window, force: fields !== null || query.refresh === true, throwOnError: true }
   const ranked = query.tab === 'following'
     ? await topLikedPostsByAuthorsHydrated({ ...options, authorIds: await followService.getFollowingIds(requireViewer('The Following feed')) })
     : await topLikedPostsHydrated(options)
@@ -264,7 +270,8 @@ export const feed = {
     if (!tag || tag === CASHTAG_SUFFIX) throw new RpcError('No tag given', 'BAD_REQUEST')
     if (query.sort === 'top') {
       if (!likesAreIndexOnly()) throw notSupported('The Top sort')
-      const ranked = await topLikedPostsHydrated({ hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all' })
+      // A pull to refresh reads past the ranked cache, as the home Top view's does.
+      const ranked = await topLikedPostsHydrated({ hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all', force: query.refresh === true })
       return onePage(await visibleDTOs(ranked))
     }
     return hashtagsAreInline() ? hashtagRecentInline(tag, query.cursor) : hashtagRecentIndexed(tag, query.cursor)

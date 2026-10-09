@@ -1,12 +1,12 @@
 import type { PostDTO, RankedUserDTO, TagDTO } from '@engine/api';
 import { FlashList } from '@shopify/flash-list';
 import { router, Stack } from 'expo-router';
-import { useRef, useState, type ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { Platform, RefreshControl, View } from 'react-native';
 import { FireIcon, HashtagIcon, TrophyIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineQuery } from '~/data/queries';
+import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { openHashtag } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
@@ -92,17 +92,10 @@ export function ExploreScreen() {
     (api) => api.explore.trending({ window: trendingWindow }),
     { persist: true, enabled: segment === 'trending' },
   );
-  // Set by a pull to refresh, taken by the next Top posts read: that read asks the
-  // engine for a fresh page instead of the one it keeps for a minute, so a post
-  // deleted since shows as deleted. Background refetches keep the engine's page.
-  const refreshTop = useRef(false);
+  const freshTop = usePullToRefresh();
   const top = useEngineQuery(
     queryKeys.explore.topPosts(topWindow),
-    (api) => {
-      const refresh = refreshTop.current;
-      refreshTop.current = false;
-      return api.explore.topPosts(refresh ? { window: topWindow, refresh } : { window: topWindow });
-    },
+    (api) => api.explore.topPosts({ window: topWindow, ...freshTop.take() }),
     { persist: true, enabled: segment === 'top' },
   );
   const creators = useEngineQuery(
@@ -132,7 +125,7 @@ export function ExploreScreen() {
       return;
     }
     setRefreshing(true);
-    if (segment === 'top') refreshTop.current = true;
+    if (segment === 'top') freshTop.raise();
     active
       .refetch()
       .then((result) => {

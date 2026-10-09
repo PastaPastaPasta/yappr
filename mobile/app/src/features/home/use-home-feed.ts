@@ -4,7 +4,7 @@ import { hashKey, useIsRestoring } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
+import { useEngineInfiniteQuery, useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { queryClient } from '~/state/query-client';
 
 import {
@@ -39,9 +39,10 @@ export interface HomeFeedQuery {
  */
 export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
   const key = queryKeys.feed.home({ tab, sort, window });
+  const fresh = usePullToRefresh();
   const feed = useEngineInfiniteQuery(
     key,
-    (api, cursor) => api.feed.home({ tab, sort, window, cursor }),
+    (api, cursor) => api.feed.home({ tab, sort, window, cursor, ...fresh.take() }),
     { persist: true, enabled, staleTime: Infinity },
   );
 
@@ -58,6 +59,7 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
 
   /**
    * Reload the first page only (a pull to refresh is at the top anyway).
+   * Top reads its ranking afresh rather than the engine's minute-old copy.
    * Resolves with the error, if it failed; the pages read before stay.
    */
   const refresh = async (): Promise<Error | null> => {
@@ -66,6 +68,7 @@ export function useHomeFeed({ tab, sort, window, enabled }: HomeFeedQuery) {
     await queryClient.cancelQueries({ queryKey, exact: true });
     const before = queryClient.getQueryData<FeedData>(queryKey);
     queryClient.setQueryData<FeedData>(queryKey, keepFirstPage);
+    if (sort === 'top') fresh.raise();
     const result = await refetch();
     if (result.error && before) queryClient.setQueryData<FeedData>(queryKey, before);
     return result.error;

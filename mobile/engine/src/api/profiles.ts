@@ -43,6 +43,8 @@ export interface ProfilePostsQuery {
   /** Top only; default `all`. */
   window?: RankingWindow
   cursor?: string | null
+  /** Top only: a pull to refresh, read afresh past lib's minute-long ranked cache. */
+  refresh?: boolean
 }
 
 /** `app/user/page.tsx` and `hooks/use-profile-replies.ts`. */
@@ -198,7 +200,8 @@ export const profiles = {
       case 'mentions': return mentionsTab(query.id, query.cursor)
       case 'top': {
         if (!likesAreIndexOnly()) throw notSupported('The Top tab')
-        const ranked = await topLikedPostsHydrated({ postAuthor: query.id, limit: TOP_LIMIT, window: query.window ?? 'all' })
+        // A pull to refresh reads past the ranked cache, as the home Top view's does.
+        const ranked = await topLikedPostsHydrated({ postAuthor: query.id, limit: TOP_LIMIT, window: query.window ?? 'all', force: query.refresh === true })
         return onePage(await visibleDTOs(ranked, { dropBlocked: false }))
       }
       default: throw new RpcError(`Unknown profile tab: ${String(query.tab)}`, 'BAD_REQUEST')

@@ -284,11 +284,38 @@ describe('Top sorts', () => {
 
   it('reads Explore\'s Top posts afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
     m.topology = { likesAreIndexOnly: true }
-    m.topLikedPostsHydrated.mockResolvedValue([post('Top1', 1)])
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
     await explore.topPosts({ window: 'today' })
     expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: false })
     await explore.topPosts({ window: 'today', refresh: true })
     expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: true })
+  })
+
+  it('reads Home\'s first Top page afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await feed.home({ tab: 'forYou', sort: 'top' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'all', force: false, throwOnError: true })
+    await feed.home({ tab: 'forYou', sort: 'top', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'all', force: true, throwOnError: true })
+  })
+
+  it('reads a tag\'s Top posts afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await feed.hashtag({ tag: '#Dash', sort: 'top', window: 'today' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: false })
+    await feed.hashtag({ tag: '#Dash', sort: 'top', window: 'today', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: true })
+  })
+
+  it('reads a profile\'s Top tab afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await profiles.posts({ id: AUTHOR, tab: 'top' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: false })
+    await profiles.posts({ id: AUTHOR, tab: 'top', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: true })
   })
 })
 

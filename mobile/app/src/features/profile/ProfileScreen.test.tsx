@@ -2,7 +2,7 @@ import type { CapabilitiesDTO, ProfileDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
-import { ActionSheetIOS, StyleSheet } from 'react-native';
+import { ActionSheetIOS, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
@@ -333,6 +333,28 @@ describe('ProfileScreen', () => {
     renderProfile('not/a valid id');
     await flush();
     expect(screen.getByText('Invalid identity ID')).toBeTruthy();
+  });
+
+  // A post deleted on another device must leave Top on a pull to refresh,
+  // not wait out the engine's minute-long ranked page (RC16-I-04).
+  it('reads the Top tab afresh on a pull to refresh, and only then', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profile());
+    renderProfile();
+    await flush();
+    fireEvent.press(screen.getByTestId('profile-tabs-top'));
+    await flush();
+    expect(fakeEngine.method('profiles.posts')).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null });
+
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await flush();
+    expect(fakeEngine.method('profiles.posts')).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null, refresh: true });
+
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.profile.posts(OTHER, 'top') });
+    });
+    expect(fakeEngine.method('profiles.posts')).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null });
   });
 
   it('loads the tab picked, with each tab’s own empty state', async () => {
