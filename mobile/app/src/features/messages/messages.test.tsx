@@ -1041,10 +1041,59 @@ describe('Conversation (DM-03, DM-04)', () => {
       await act(async () => {
         await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: false, handle: '@bob' });
       });
+      // The engine lifts it in Messages as it confirms the unblock; the conversation follows the unblock at once.
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: false } })]);
       await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
-      // The engine lifts it in Messages, and until they are read again the conversation follows the confirmed unblock.
       expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
       expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+    });
+
+    /** Messages as another device left them, synchronized here: the inbox is read again (`dm.changed`). */
+    async function synchronized(blocked: boolean) {
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked } })]);
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations });
+      });
+    }
+
+    it('shows a conversation unblocked once Messages on another device lift a block the account still has', async () => {
+      await openConversation([theirs]);
+      const pending = ticket({ op: 'block', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.block').mockResolvedValue(pending);
+      await act(async () => {
+        await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: true, handle: '@bob' });
+      });
+      // Confirmed: the engine blocked them in Messages too, and the conversation reads so.
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: true } })]);
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+
+      // Message settings' Unblock on another device: Messages only, the account's block stays.
+      await synchronized(false);
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+      expect(screen.getByTestId('dm-composer')).toBeTruthy();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      const { result } = renderHook(() => useAuthorBlocked(BOB_ID));
+      expect(result.current).toBe(true);
+    });
+
+    it('shows a conversation blocked once Messages on another device block someone the account unblocked', async () => {
+      await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
+      await act(async () => {
+        await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: false, handle: '@bob' });
+      });
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: false } })]);
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+
+      // Blocked in Messages alone on another device: the account's block stays lifted.
+      await synchronized(true);
+      expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      const { result } = renderHook(() => useAuthorBlocked(BOB_ID));
+      expect(result.current).toBe(false);
     });
 
     it('shows a conversation unblocked once Message settings lift a block the account still has', async () => {

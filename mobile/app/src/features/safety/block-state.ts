@@ -1,12 +1,12 @@
 import type { BlockedUserDTO, BlockSourceDTO, ProfileDTO, WriteTicket } from '@engine/api';
-import { type InvalidateQueryFilters } from '@tanstack/react-query';
+import { hashKey, type InvalidateQueryFilters } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 
 import { queryKeys } from '~/data/keys';
 import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
-import { useSessionStore, useViewerId } from '~/data/session';
+import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
 import { sendWrite, useLandingIntent, useLandingTicket, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
@@ -35,12 +35,16 @@ interface Decision {
   user?: BlockedUserDTO;
   /** Blocked only by a followed block list (`STILL_BLOCKED`): no own block to list. */
   listOnly?: boolean;
+  /** Confirmed: on DM v5 the engine has followed it in Messages, and the next read of them shows it. */
+  confirmed?: boolean;
   /**
-   * Blocked or unblocked in Messages alone since (Message settings, a
-   * conversation's Block or Unblock): once this decision has settled,
-   * Messages decide the conversation. The account's block is unchanged.
+   * Once this decision has settled, Messages decide the conversation: they
+   * have been read since it was confirmed, so they show it and anything
+   * changed in Messages alone since, here or on another device (Message
+   * settings, a conversation's Block or Unblock); or such a choice was made
+   * here. The account's block is unchanged.
    */
-  messagesChose?: boolean;
+  messagesDecide?: boolean;
 }
 
 const useBlockDecisions = create<{ byKey: Readonly<Record<string, Decision>> }>()(() => ({ byKey: {} }));
@@ -63,7 +67,23 @@ useSessionStore.subscribe((state, previous) => {
 // A choice made in Messages alone is newer than the decision: the conversation follows Messages from then on.
 onMessagesBlockChosen((viewerId, peerId) => {
   const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, peerId)];
-  if (decided && !decided.messagesChose) decide(viewerId, peerId, { ...decided, messagesChose: true });
+  if (decided && !decided.messagesDecide) decide(viewerId, peerId, { ...decided, messagesDecide: true });
+});
+
+// Messages read after a block or unblock was confirmed already follow it (the engine follows it before it reports
+// the confirmation): from then on they decide, so a choice synchronized from another device shows too (DM v5 only;
+// legacy re-reads the account's blocks on its own time). A read patched here (`setQueryData`) is no read.
+const conversationsHash = hashKey(queryKeys.dm.conversations);
+queryClient.getQueryCache().subscribe((event) => {
+  if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
+  if (event.query.queryHash !== conversationsHash || getCapabilities()?.dm !== 'v5') return;
+  const viewerId = useSessionStore.getState().session?.identityId;
+  if (!viewerId || !event.query.state.data) return;
+  const prefix = decisionKey(viewerId, '');
+  const { byKey } = useBlockDecisions.getState();
+  const read = Object.entries(byKey).filter(([key, d]) => key.startsWith(prefix) && d.confirmed && !d.messagesDecide);
+  if (read.length === 0) return;
+  useBlockDecisions.setState({ byKey: { ...byKey, ...Object.fromEntries(read.map(([key, d]) => [key, { ...d, messagesDecide: true }])) } });
 });
 
 /**
@@ -309,8 +329,10 @@ export function useBlockTicket(userId: string | undefined): WriteTicket | null {
  * composer's banner, the menu's Unblock): this device's block decision when
  * it made one, as the profile and the Blocked list show it, else what
  * Messages say (`flagged`, which on DM v5 also counts a block made only in
- * Messages), and what they say again once a choice made in Messages alone
- * follows a settled decision. A block that fails or never lands takes the
+ * Messages), and what they say again once that decision has settled and
+ * Messages were read since it was confirmed (a choice made in Messages
+ * alone after it then shows, from this device or another), or one was made
+ * here. A block that fails or never lands takes the
  * banner with it, and Messages only follow a block once it is confirmed (`refreshMessages`),
  * so none outlives it (RC16-A-02). An unblock still on its way keeps it:
  * Messages block them until it is confirmed.
@@ -321,7 +343,7 @@ export function useConversationBlocked(peerId: string | undefined, flagged: bool
   const busy = useBlockBusy(peerId);
   if (busy === 'unblocking') return true;
   // Blocked only by a followed list: Messages were lifted with the own block (`onFailed`), so they decide.
-  if (!decided || decided.listOnly || (decided.messagesChose && busy === null)) return flagged;
+  if (!decided || decided.listOnly || (decided.messagesDecide && busy === null)) return flagged;
   return decided.blocked;
 }
 
@@ -338,7 +360,9 @@ export const blockWrite: WriteSpec<BlockVars> = {
   intent: ({ block }) => block,
   matches: (ticket, { userId, block }) => ticket.op === (block ? 'block' : 'unblock') && targetIdentity(ticket) === userId,
   onConfirmed: (_ticket, vars) => {
-    const { block } = vars;
+    const { viewerId, userId, block } = vars;
+    const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, userId)];
+    if (decided?.blocked === block && !decided.listOnly) decide(viewerId, userId, { ...decided, confirmed: true });
     refreshMessages();
     refetchFiltered(block);
     const handle = vars.handle ?? handleOf(vars) ?? 'this account';
