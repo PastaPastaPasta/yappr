@@ -1135,6 +1135,7 @@ Plus `process.env.NODE_ENV` and `process.env.LOG_LEVEL`.
 | Where | What | Duration |
 | --- | --- | --- |
 | Keychain / Keystore (`expo-secure-store`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`) | Each account's `yappr_secure_*` values (§9.2) | At rest, until sign-out |
+| Keychain / Keystore (`expo-secure-store`, `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`, service `pr.yap.app.engine-keys`) | The random AES-256 keys of the encrypted MMKV stores: the engine's `localStorage` mirror and DM drafts. They are not account secrets. Their class matches the default data protection of the app files they encrypt, so a store can still open and flush when the app runs while the device is locked | For the life of the install |
 | WebView JS heap (`MemoryStorage`) | The **active** account's secrets, from `init` until a switch (an engine restart) or sign-out | While the engine runs (ADR E1 accepted cost) |
 | WebView JS heap, transiently | Parsed private keys and wasm `PrivateKey` objects during signing (`state-transition-service.ts`, `signer-service.ts`); key-exchange ephemeral keys, shared secrets and login keys (wiped with `clearSensitiveBytes`); DM v5 `encPriv`-derived roots (`lib/services/dm-v5/context.ts`) | Per operation, or per DM session |
 | RN (Hermes) heap | **Only** in transit: the host reads the secrets from SecureStore and passes them to `init`, and drops the references. RN never parses or uses a key. Exception: the `signInWithKey` argument the user typed, which is cleared from component state once the call resolves. | Per call |
@@ -1357,7 +1358,7 @@ The 1.0 transport is `WebViewTransport`. A Rust engine plugs in as one of two tr
 | O4 | Zero-size WebView timer throttling on iOS | M4 | Measure the DM loop cadence at 0×0; fall back to 1×1 |
 | O5 | **Accepted by the lead 2026-10-01.** Pool slot reservation (personas 90–99) | M7a (lead confirms with sakura ops) | Recorded in `slots.json` |
 | O6 | Filed as #608. Web bug: `isUsernameContested` uses an uninitialised WASM instance (§2.1) | separate web issue | Not a 1.0 dependency |
-| O7 | Web hygiene: `lib/store.ts:4` value-syntax type import | separate web PR | Not a 1.0 dependency; the build guard covers it |
+| O7 | **Fixed 2026-10-08.** Web hygiene: `lib/store.ts:4` value-syntax type import | separate web PR | Both imports in `lib/store.ts` are now `import type`; the build guard also covers it |
 | O8 | Testnet DAPI CORS with `Origin: null` | M2 | Probe discovered testnet nodes |
 | O9 | **Accepted 2026-10-01 (ADR E2 amended).** ADR amendment: React Native takes topology capabilities from `engine.info()` and may use the `lib/contract-topology.ts` predicates only in unit tests, a narrowing of the E2 allowlist (§6.1) | lead | Amend ADR-001 E2, or reject and keep the predicates importable at runtime (which needs the env inlined into the RN bundle too) |
 

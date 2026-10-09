@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import { Post } from './types'
-import { ProgressiveEnrichment } from '@/components/post/post-card'
+import type { Post } from './types'
+import type { ProgressiveEnrichment } from '@/components/post/post-card'
 import type { ReadingMode, FontSizeLevel } from '@/lib/blog/reader-preferences'
 import { scopedKey } from '@/lib/storage-scope'
 
