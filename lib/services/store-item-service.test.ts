@@ -216,6 +216,18 @@ describe('storefront v7 typed variants', () => {
     } finally { restore(); }
   });
 
+  it('on v1 treats a table past the identity bounds as unreadable: unbuyable, kept as stored', async () => {
+    // Ten single-option types would give "1.2.3.4.5.6.7.8.9.10", longer than any id a receipt can carry.
+    const ten = JSON.stringify({ axes: Array.from({ length: 10 }, (_, n) => ({ name: `T${n}`, options: ['x'] })), combinations: [{ key: Array(10).fill('x').join('|'), price: 1 }] });
+    get.mockResolvedValue({ ...raw, basePrice: undefined, stockQuantity: undefined, variants: ten });
+    const item = defined(await storeItemService.getById('item'));
+    expect(item.variants).toBeUndefined();
+    expect(item.unreadableVariants).toBe(ten);
+    expect(storeItemService.getStock(item)).toBe(0);
+    await storeItemService.updateItem('item', 'owner', storeId, { status: 'paused' });
+    expect(updateDocument.mock.calls[0][4].variants).toBe(ten);
+  });
+
   it('on v1 writes the table as the JSON string, a combination image as its URL', async () => {
     const legacy = JSON.stringify({ axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 1000, imageUrl: 'https://a/2.png' }, { key: 'M', price: 1500 }] });
     get.mockResolvedValue({ ...raw, basePrice: undefined, imageUrls: '["https://a/1.png","https://a/2.png"]', variants: legacy });

@@ -88,6 +88,12 @@ default weight.
   - Adding or removing an axis makes a different product grid, so every
     combination gets a new id. A cart line naming an old one reads "Selected
     option is no longer available".
+- Five option types and option ids 1–254 are the app's identity bounds on
+  every topology: they keep a variant id short ("254.254.254.254.254", at
+  most 19 characters) for carts, orders and receipts. A v1–v6 JSON table past
+  them is read as unreadable (it cannot be bought, its options cannot be
+  edited, and other edits write it back as stored). v7's storage caps (name and
+  SKU lengths, 64 options, all-or-none stock) apply to v7 only.
 - Ids are never renumbered, since that would give an old cart line or kit
   target another combination's id. A listing that has used all 254 (options
   added over its life, not at once) takes no more options; the seller lists

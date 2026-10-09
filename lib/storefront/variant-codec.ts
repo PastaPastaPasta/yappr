@@ -311,7 +311,10 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
   const { axes, combinations } = variants
 
   if (axes.length === 0) add('Add at least one option type, such as Size or Color.')
-  if (capped && axes.length > limits.axes) add(`A product can have at most ${limits.axes} option types.`)
+  // Identity bounds (every topology): at most 5 option types and option ids 1–254
+  // keep a variant id short and bounded ("254.254.254.254.254"), which carts,
+  // orders and digital receipts rely on. The rest are v7's storage caps.
+  if (axes.length > limits.axes) add(`A product can have at most ${limits.axes} option types.`)
   const optionCount = axes.reduce((total, axis) => total + axis.options.length, 0)
   if (capped && optionCount > limits.options) add(`A product can have at most ${limits.options} options in all (this one has ${optionCount}).`)
   const ids = new Set<number>()
@@ -327,12 +330,12 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
       else if (capped && tooLong(name, limits.optionNameLength, limits.optionNameBytes)) add(`Option names can be at most ${limits.optionNameLength} characters ("${name.slice(0, 20)}…" is longer).`)
       if (legacy && name.includes('|')) add(`Option names cannot contain "|" ("${name.slice(0, 20)}").`)
       if (axis.options.some((other, otherIndex) => otherIndex < optionIndex && sameName(other.name, option.name))) add(`"${axisName}" lists "${name}" twice.`)
-      const badId = !Number.isInteger(option.id) || option.id < 1 || ids.has(option.id) || option.id >= variants.nextOptionId || (capped && option.id > limits.maxOptionId)
+      const badId = !Number.isInteger(option.id) || option.id < 1 || ids.has(option.id) || option.id >= variants.nextOptionId || option.id > limits.maxOptionId
       if (badId) add('Some options are numbered incorrectly. Remove the variants and add them again.')
       ids.add(option.id)
     }
   }
-  if (capped && variants.nextOptionId > limits.maxOptionId + 1) add('This product has used all its option numbers. To offer more options, list it again as a new product.')
+  if (variants.nextOptionId > limits.maxOptionId + 1) add('This product has used all its option numbers. To offer more options, list it again as a new product.')
 
   if (combinations.length === 0 && axes.length > 0) add('Offer at least one combination of options.')
   if (capped && combinations.length > limits.combinations) add(`A product can offer at most ${limits.combinations} combinations (this one has ${combinations.length}). Remove some options, or split it into several listings.`)

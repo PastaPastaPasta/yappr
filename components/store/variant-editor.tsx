@@ -26,9 +26,10 @@ interface VariantEditorProps {
   /** Per-combination weights (storefront v7 only). */
   showWeight: boolean
   /**
-   * The listing stores the v1–v6 JSON, which has none of v7's per-field caps:
-   * names and SKUs of any length, any number of option types and options, and
-   * each combination's stock tracked on its own (an empty entry stops it).
+   * The listing stores the v1–v6 JSON, which has none of v7's storage caps:
+   * names and SKUs of any length, up to 254 options, and each combination's
+   * stock tracked on its own (an empty entry stops it). The identity bounds
+   * (5 option types, option ids up to 254) apply on every topology.
    */
   legacy?: boolean
   /**
@@ -128,7 +129,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
     onChange(next)
   }
 
-  const canAddAxis = legacy || variants.axes.length < VARIANT_LIMITS.axes
+  const canAddAxis = variants.axes.length < VARIANT_LIMITS.axes
   const handleAddAxis = () => {
     const name = newAxisName.trim()
     const names = splitOptionNames(newAxisOptions)
@@ -202,7 +203,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
       {canAddAxis ? (
         <div className="p-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
           <p className="text-sm text-gray-500 mb-3">
-            Add an option type, such as Size or Color{legacy ? '' : ` (up to ${VARIANT_LIMITS.axes})`}
+            Add an option type, such as Size or Color (up to {VARIANT_LIMITS.axes})
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
             <input

@@ -113,9 +113,9 @@ const GENERIC_VARIANT_HEADERS = new Set(['variant', 'option', 'option1', 'sub va
 /** Specific headers whose axis name is spelled differently from the header. */
 const AXIS_NAME_OF_HEADER: Record<string, string> = { color: 'Color', colour: 'Color' }
 
-const SHOPIFY_OPTION_HEADER = /^option[\s_]*([1-9]\d?)[\s_]*(name|value)$/
+const SHOPIFY_OPTION_HEADER = /^option[\s_]*([1-9]\d*)[\s_]*(name|value)$/
 const IMAGE_HEADER = /^(?:image|img|picture|photo)[\s_]*(\d{1,2})$/
-/** How many `OptionN` column pairs the file has (every one is read; v7's cap of 5 is checked, not cut). */
+/** How many `OptionN` column pairs the file has (every one is read; more than 5 option types is reported, not cut). */
 const optionColumnCount = (columns: ColumnMap) => Math.max(columns.optionNames.length, columns.optionValues.length)
 
 interface ColumnMap {
@@ -544,8 +544,8 @@ function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string)
     if (rows.some((row) => row.variant && looksCompound(row.variant))) {
       const splits = rows.map((row) => splitCompound(row.variant ?? ''))
       const first = splits[0]
-      // v7 caps option types at 5 (validation reports more); v1–v6 take any number.
-      const consistent = first !== null && (!storefrontVariantsAreTyped() || first.names.length <= VARIANT_LIMITS.axes) && !hasDuplicateName(first.names)
+      // A product has at most 5 option types; a label naming more stays whole.
+      const consistent = first !== null && first.names.length <= VARIANT_LIMITS.axes && !hasDuplicateName(first.names)
         && splits.every((split) => split !== null && sameNames(split.names, first.names))
       if (consistent) {
         parts.push({ names: first.names, values: (_, index) => splits[index]?.values ?? [] })

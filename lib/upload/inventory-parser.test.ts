@@ -291,21 +291,15 @@ describe('rows become combinations', () => {
     expect(defined(typed.variants).combinations.every((combination) => combination.imageUrl === undefined)).toBe(true)
   })
 
-  it('reads every OptionN column: six option types round-trip on v1–v6, and v7 reports its cap of 5', async () => {
-    const header = ['Group', 'Item Name', 'Price', ...[1, 2, 3, 4, 5, 6].flatMap((n) => [`Option${n} Name`, `Option${n} Value`])].join(',')
-    const row = (last: string) => ['g', 'Kit', '1.00', ...['A', 'B', 'C', 'D', 'E'].flatMap((axis) => [axis, `${axis}1`]), 'F', last].join(',')
-    const csv = [header, row('F1'), row('F2')].join('\n')
-    const [legacy] = parseInventoryCSV(csv).items
-    expect(legacy.errors).toEqual([])
-    expect(defined(legacy.variants).axes.map((axis) => axis.name)).toEqual(['A', 'B', 'C', 'D', 'E', 'F'])
-    expect(defined(legacy.variants).combinations).toHaveLength(2)
-    const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
-    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Kit', variants: legacy.variants }], 'USD')
-    const [again] = parseInventoryCSV(exported).items
-    expect(defined(again.variants).axes).toHaveLength(6)
-    expect(defined(again.variants).combinations).toHaveLength(2)
-    const [typed] = (await parseUnder('v7', csv)).items
-    expect(typed.errors.join(' ')).toMatch(/at most 5 option types/)
+  it('reads every OptionN column, however many, and refuses more than 5 option types on every topology', async () => {
+    const axes = Array.from({ length: 100 }, (_, n) => n + 1)
+    const header = ['Group', 'Item Name', 'Price', ...axes.flatMap((n) => [`Option${n} Name`, `Option${n} Value`])].join(',')
+    const row = (last: string) => ['g', 'Kit', '1.00', ...axes.flatMap((n) => [`A${n}`, n === 100 ? last : `v${n}`])].join(',')
+    const csv = [header, row('x'), row('y')].join('\n')
+    for (const items of [parseInventoryCSV(csv).items, (await parseUnder('v7', csv)).items]) {
+      expect(items).toHaveLength(1)
+      expect(items[0].errors.join(' ')).toMatch(/at most 5 option types/)
+    }
   })
 
   it('puts one weight on the product when the rows agree', () => {

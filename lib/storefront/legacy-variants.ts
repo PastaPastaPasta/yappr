@@ -11,6 +11,7 @@
  */
 import type { ItemVariants, VariantAxis, VariantCombination } from '@/lib/types'
 import { variantIdOf } from './variant-codec'
+import { VARIANT_LIMITS } from './storefront-contract'
 
 interface LegacyCombination {
   key: string
@@ -73,6 +74,10 @@ export function decodeLegacyVariants(json: unknown, imageUrls: readonly string[]
     else if (typeof legacy.imageUrl === 'string' && legacy.imageUrl) combination.imageUrl = legacy.imageUrl
     combinations.push(combination)
   }
+  // Past the app's identity bounds (5 option types, option ids up to 254) the
+  // table cannot be named safely by carts, orders and receipts: read as none,
+  // which the item service keeps as an unreadable table (unbuyable, kept as stored).
+  if (axes.length > VARIANT_LIMITS.axes || nextOptionId - 1 > VARIANT_LIMITS.maxOptionId) return undefined
   return combinations.length > 0 ? { axes, combinations, nextOptionId } : undefined
 }
 

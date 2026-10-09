@@ -45,6 +45,13 @@ describe('the v1–v6 variants JSON', () => {
     expect(encodeLegacyVariants(table, IMAGES)).toBe(json)
   })
 
+  it('reads a table past the identity bounds (6 option types, or more than 254 options) as none', () => {
+    const six = JSON.stringify({ axes: ['A', 'B', 'C', 'D', 'E', 'F'].map((name) => ({ name, options: ['x'] })), combinations: [{ key: 'x|x|x|x|x|x', price: 1 }] })
+    expect(decodeLegacyVariants(six)).toBeUndefined()
+    const many = JSON.stringify({ axes: [{ name: 'N', options: Array.from({ length: 255 }, (_, i) => `n${i}`) }], combinations: [{ key: 'n0', price: 1 }] })
+    expect(decodeLegacyVariants(many)).toBeUndefined()
+  })
+
   it('reads nothing from a missing or broken value', () => {
     for (const value of [undefined, '', 'not json', 'null', '0', '{"axes":[]}', '{"axes":[{"name":"S","options":[]}],"combinations":[]}', '{"axes":[{"name":"S","options":["a"]}],"combinations":[{"key":"b","price":1}]}']) {
       expect(decodeLegacyVariants(value)).toBeUndefined()
