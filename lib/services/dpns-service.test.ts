@@ -10,7 +10,6 @@ const { query, composite, dpns, identities, epoch, topology } = vi.hoisted(() =>
 }));
 vi.mock('./evo-sdk-service', () => ({
   getEvoSdk: async () => ({ documents: { query, composite }, dpns, identities, epoch }),
-  evoSdkService: { isConnectionError: (error: Error) => /quorum not found in cache/i.test(error.message) },
 }));
 vi.mock('@/lib/contract-topology', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/contract-topology')>()),
@@ -219,13 +218,14 @@ describe('DPNS name reads that fail', () => {
     expect(await dpnsService.findIdentityByName('Alice.dash')).toBe(owner);
   });
 
-  it('does not repeat a composite search that hit a stale quorum or a deadline as an ordinary one', async () => {
+  it('falls back to the ordinary search after a composite search fails, and rejects only when that fails too', async () => {
     topology.indexOnly = true;
-    for (const message of ['invalid quorum: Quorum not found in cache for hash: 00ab', 'deadline exceeded']) {
-      composite.mockRejectedValueOnce(new Error(message));
-      await expect(dpnsService.findUsernamesByPrefix('ali')).rejects.toThrow(message);
-    }
-    expect(query).not.toHaveBeenCalled();
+    composite.mockRejectedValue(new Error('deadline exceeded'));
+    query.mockResolvedValueOnce([alice]);
+    expect(await dpnsService.findUsernamesByPrefix('ali')).toEqual([{ username: 'alice.dash', ownerId: owner }]);
+
+    query.mockRejectedValueOnce(new Error('invalid quorum: Quorum not found in cache for hash: 00ab'));
+    await expect(dpnsService.findUsernamesByPrefix('ali')).rejects.toThrow(/quorum/);
   });
 
   it('falls back to the ordinary search when the composite search is refused for another reason', async () => {

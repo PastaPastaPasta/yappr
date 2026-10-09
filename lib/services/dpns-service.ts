@@ -1,7 +1,7 @@
 import { logger } from '@/lib/logger';
 import { chunk, mapLimit } from './pagination-utils';
 import { TtlMap } from '@/lib/caches/ttl-map';
-import { evoSdkService, getEvoSdk } from './evo-sdk-service';
+import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
 import { CREDITS_PER_DASH, DPNS_CONTRACT_ID, DPNS_DOCUMENT_TYPE, keyNetwork } from '../constants';
 import { documentToPlainObject, identifierToBase58, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
@@ -20,8 +20,6 @@ import {
   isContestFundError,
   isContestedDocumentsNotYetAllowedError,
   isContestNotJoinableError,
-  isRateLimitedError,
-  isTimeoutError,
 } from '@/lib/error-utils';
 
 
@@ -421,8 +419,7 @@ class DpnsService {
           if (sub.kind === 'documents') unifiedProfileService.seedProfileDocuments(sub.documents.map(documentToPlainObject), owners, role);
         });
       } catch (error) {
-        // The ordinary search would hit the same deadline, rate limit or stale SDK.
-        if (isTimeoutError(error) || isRateLimitedError(error) || evoSdkService.isConnectionError(error)) throw error;
+        // As every composite read in lib: the lighter ordinary search may still answer, and rejects if it can't.
         logger.warn('DPNS search composite failed; using ordinary search', error);
       }
     }
