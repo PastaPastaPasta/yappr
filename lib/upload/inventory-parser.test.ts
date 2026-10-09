@@ -211,10 +211,20 @@ describe('rows become combinations', () => {
     expect(hat.variants?.combinations).toHaveLength(1)
   })
 
-  it('sets blank quantities to 0 when some rows have one, and says so', () => {
-    const { variants, warnings } = onlyVariants('Group,Item Name,Size,Price,Quantity\ng,Shirt,S,10.00,4\ng,Shirt,M,10.00,\ng,Shirt,L,10.00,')
-    expect(variants.combinations.map((combination) => combination.stock)).toEqual([4, 0, 0])
-    expect(warnings).toEqual(['"Shirt": 2 rows have no quantity, so they were set to 0.'])
+  it('on v7 sets blank quantities to 0 when some rows have one, and says so', async () => {
+    const [item] = (await parseUnder('v7', 'Group,Item Name,Size,Price,Quantity\ng,Shirt,S,10.00,4\ng,Shirt,M,10.00,\ng,Shirt,L,10.00,')).items
+    expect(defined(item.variants).combinations.map((combination) => combination.stock)).toEqual([4, 0, 0])
+    expect(item.warnings).toEqual(['"Shirt": 2 rows have no quantity, so they were set to 0.'])
+  })
+
+  it('on v1–v6 keeps each row\'s own quantity, a blank one untracked, and round-trips it', async () => {
+    const { variants, warnings } = onlyVariants('Group,Item Name,Size,Price,Quantity\ng,Shirt,S,10.00,4\ng,Shirt,M,10.00,')
+    expect(variants.combinations.map((combination) => combination.stock)).toEqual([4, undefined])
+    expect(warnings).toEqual([])
+    const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
+    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Shirt', variants }], 'USD')
+    const [again] = parseInventoryCSV(exported).items
+    expect(defined(again.variants).combinations.map((combination) => combination.stock)).toEqual([4, undefined])
   })
 
   it('tracks no stock when no row has a quantity', () => {

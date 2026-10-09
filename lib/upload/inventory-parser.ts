@@ -638,11 +638,16 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
   }
   if (errors.length > 0) return item
 
-  // v7 tracks stock for every combination or for none.
-  const tracked = rows.some((row) => row.quantity !== undefined || row.quantityFormula !== undefined)
+  // v7 tracks stock for every combination or for none, so a blank quantity
+  // among tracked rows becomes 0. v1–v6 track each combination on its own: a
+  // blank quantity there stays untracked (unlimited), as the export writes it.
+  const typed = storefrontVariantsAreTyped()
+  const tracked = typed && rows.some((row) => row.quantity !== undefined || row.quantityFormula !== undefined)
+  const unresolved = rows.filter((row) => row.quantityFormula !== undefined && row.quantity === undefined)
+  for (const row of unresolved) {
+    warnings.push(`"${title}": the quantity formula on row ${row.rowNumber} could not be worked out, so ${typed ? 'it was set to 0' : 'its stock is not tracked'}.`)
+  }
   if (tracked) {
-    const unresolved = rows.filter((row) => row.quantityFormula !== undefined && row.quantity === undefined)
-    for (const row of unresolved) warnings.push(`"${title}": the quantity formula on row ${row.rowNumber} could not be worked out, so it was set to 0.`)
     const blank = rows.filter((row) => row.quantity === undefined && row.quantityFormula === undefined).length
     if (blank > 0) warnings.push(`"${title}": ${blank} row${blank === 1 ? ' has' : 's have'} no quantity, so ${blank === 1 ? 'it was' : 'they were'} set to 0.`)
   }
@@ -665,8 +670,8 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
       // The v1–v6 JSON keys a combination by its option names joined with "|".
       optionNames: storefrontVariantsAreTyped() ? plan.rowOptions[index] : plan.rowOptions[index].map((name) => name.replace(/\|/g, '/')),
       price: row.price,
-      // Tracked rows without a quantity start at 0.
-      stock: tracked ? row.quantity ?? 0 : undefined,
+      // v7: tracked rows without a quantity start at 0. v1–v6: each row's own.
+      stock: tracked ? row.quantity ?? 0 : row.quantity,
       sku: row.sku ? fitSku(row.sku) : undefined,
       weight: perCombinationWeight && row.weight !== undefined ? Math.round(row.weight) : undefined,
       image: imageIndex > 0 ? imageIndex : undefined,
