@@ -205,6 +205,22 @@ describe('storefront v7 typed variants', () => {
     } finally { restore(); }
   });
 
+  it('reads the gallery as it is written back, so an unrelated edit keeps each combination on its image', async () => {
+    try {
+      const service = await v7();
+      // Schema-valid: the stored URLs differ by a trailing space, which every write trims away.
+      const images = [3, 2, 1, 0];
+      get.mockResolvedValue({ ...variantItem, imageUrls: ['https://a/1.png', 'https://a/1.png ', 'https://a/2.png'], variants: { ...table, images } });
+      const item = defined(await service.getById('item'));
+      expect(item.imageUrls).toEqual(['https://a/1.png', 'https://a/2.png']);
+      expect(defined(item.variants).combinations.map((combination) => combination.image)).toEqual([2, 1, 1, undefined]);
+      await service.updateItem('item', 'owner', storeId, { status: 'paused' });
+      const sent = updateDocument.mock.calls[0][4];
+      expect(sent.imageUrls).toEqual(['https://a/1.png', 'https://a/2.png']);
+      expect(sent.variants.images).toEqual([2, 1, 1, 0]);
+    } finally { restore(); }
+  });
+
   it('stores up to 12 images on v7', async () => {
     try {
       const service = await v7();

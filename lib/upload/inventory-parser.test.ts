@@ -282,6 +282,30 @@ describe('rows become combinations', () => {
     expect(parseInventoryCSV(csv).items[0].errors).toEqual([])
   })
 
+  it('keeps an image address longer than 512 characters where the store can hold it, and reports it where it cannot', async () => {
+    const long = `https://x.test/${'p'.repeat(600)}.jpg`
+    const ownLong = `https://x.test/${'q'.repeat(600)}.jpg`
+    const csv = ['Group,Item Name,Color,Price,Image1,Image URL', `g,Toy,Red,1.00,${long},${ownLong}`, 'g,Toy,Blue,1.00,,'].join('\n')
+    // v1–v3 keep the whole gallery as one JSON string: both stay, and an export reads back the same.
+    const [v1] = parseInventoryCSV(csv).items
+    expect(v1.warnings).toEqual([])
+    expect(v1.imageUrls).toEqual([long, ownLong])
+    const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
+    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Toy', imageUrls: v1.imageUrls, variants: v1.variants }], 'USD').csv
+    const [again] = parseInventoryCSV(exported).items
+    expect(again.imageUrls).toEqual([long, ownLong])
+    expect(defined(again.variants).combinations.map((combination) => combination.image)).toEqual([2, undefined])
+    // v4–v6 cap each listing image at 512 but keep a combination's own photo in the table.
+    const [v6] = (await parseUnder('v6', csv)).items
+    expect(v6.imageUrls).toEqual([])
+    expect(defined(v6.variants).combinations[0].imageUrl).toBe(ownLong)
+    expect(v6.warnings).toEqual(['"Toy": left out 1 image whose address is longer than 512 characters.'])
+    // v7 names images by position only.
+    const [v7] = (await parseUnder('v7', csv)).items
+    expect(v7.imageUrls).toEqual([])
+    expect(v7.warnings).toContain('"Toy": left out 2 images whose address is longer than 512 characters.')
+  })
+
   it('on v1–v6 keeps a combination photo past the gallery cap as its own URL, and round-trips it', async () => {
     const rows = ['Red', 'Orange', 'Yellow', 'Green', 'Blue'].map((color) => `g,Toy,${color},1.00,https://x.test/${color}.jpg`)
     const csv = ['Group,Item Name,Color,Price,Image URL', ...rows].join('\n')

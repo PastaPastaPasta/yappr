@@ -53,9 +53,33 @@ const listOf = (stored: unknown): string[] | undefined => {
 const storedVariants = (variants: ItemVariants, imageUrls: readonly string[] | undefined) =>
   storefrontVariantsAreTyped() ? encodeVariants(variants) : encodeLegacyVariants(variants, imageUrls);
 
-/** The table a stored item carries, read from whichever shape it was written in. */
-const readVariants = (stored: unknown, imageUrls: readonly string[] | undefined): ItemVariants | undefined =>
-  typeof stored === 'string' ? decodeLegacyVariants(stored, imageUrls) : decodeVariants(stored);
+/**
+ * A stored gallery as every write stores it (trimmed, one of each: see
+ * `encodeStringList`), with where each stored 1-based position landed. A
+ * replace re-encodes the item as read, so reading the gallery in that shape
+ * keeps the positions a v7 table names in step with what is written back.
+ */
+function readGallery(stored: unknown): { imageUrls?: string[]; positionOf: (stored: number) => number | undefined } {
+  const raw = decodeStringList(stored);
+  const imageUrls = uniqueStrings(raw);
+  const positionOf = (position: number) => {
+    const index = imageUrls.indexOf(raw[position - 1]?.trim() ?? '');
+    return index < 0 ? undefined : index + 1;
+  };
+  return { imageUrls: imageUrls.length > 0 ? imageUrls : undefined, positionOf };
+}
+
+/** The table a stored item carries, read from whichever shape it was written in, its images named in the gallery as read. */
+function readVariants(stored: unknown, gallery: ReturnType<typeof readGallery>): ItemVariants | undefined {
+  if (typeof stored === 'string') return decodeLegacyVariants(stored, gallery.imageUrls);
+  const variants = decodeVariants(stored);
+  if (!variants) return undefined;
+  const combinations = variants.combinations.map(({ image, ...combination }) => {
+    const position = image === undefined ? undefined : gallery.positionOf(image);
+    return position === undefined ? combination : { ...combination, image: position };
+  });
+  return { ...variants, combinations };
+}
 
 /**
  * Refuse, with a message for the seller, a listing the contract would refuse
@@ -69,7 +93,7 @@ function assertStorable(fields: Record<string, unknown>, table: ItemVariants | u
   const imageCount = imageUrls?.length ?? 0;
   // The stored list keeps one of each URL, which would move every later image a
   // combination names by position.
-  if (table?.combinations.some((combination) => combination.image !== undefined) && new Set(imageUrls).size !== imageCount) {
+  if (table?.combinations.some((combination) => combination.image !== undefined) && uniqueStrings(imageUrls ?? []).length !== imageCount) {
     throw new ListLimitError('The same image is in this listing twice. Remove the copy and save again.');
   }
   if (table) {
@@ -110,8 +134,9 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
 
   protected transformDocument(doc: Record<string, unknown>): StoreItem {
     const data = (doc.data || doc) as StoreItemDocument;
-    const imageUrls = listOf(data.imageUrls);
-    const variants = readVariants(data.variants, imageUrls);
+    const gallery = readGallery(data.imageUrls);
+    const imageUrls = gallery.imageUrls;
+    const variants = readVariants(data.variants, gallery);
 
     return {
       id: (doc.$id || doc.id) as string,

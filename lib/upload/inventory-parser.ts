@@ -12,7 +12,7 @@
  */
 
 import type { ItemVariants } from '../types'
-import { storefrontVariantsAreTyped } from '../constants'
+import { storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants'
 import { toSmallestUnit } from '../utils/format'
 import { LIST_LIMITS } from '../typed-array-codecs'
 import { VARIANT_LIMITS, itemImageLimit } from '../storefront/storefront-contract'
@@ -299,9 +299,20 @@ function parseCombineShipping(value: string, currency: string): { type: 'free' |
 }
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
-/** An image URL a listing can store (http(s) or ipfs, not too long), else undefined. */
+/** An image URL (http(s) or ipfs), else undefined. Whether it fits where it goes is {@link galleryTakes}'s call. */
 const imageUrlOf = (value: string): string | undefined =>
-  value && value.length <= LIST_LIMITS.storeImageUrls.maxLength && IMAGE_URL_PATTERN.test(value) ? value : undefined
+  value && IMAGE_URL_PATTERN.test(value) ? value : undefined
+
+/**
+ * Whether the listing's images can hold `url`: v4 and later store each
+ * address in a list capped at 512 characters (and bytes); v1–v3 keep the
+ * whole gallery as one JSON string, with no per-address cap.
+ */
+const galleryTakes = (url: string) => {
+  if (!storefrontArraysAreTyped()) return true
+  const { maxLength, maxBytes } = LIST_LIMITS.storeImageUrls
+  return url.length <= maxLength && new TextEncoder().encode(url).length <= maxBytes
+}
 
 /**
  * Work out formula quantities. A formula references another row's quantity
@@ -576,15 +587,22 @@ function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string)
 
 // ---- grouping ----------------------------------------------------------------
 
-/** Every image the group names, deduplicated in order (item images before a row's own). */
-function collectImages(rows: ParsedInventoryRow[]): string[] {
+/**
+ * Every image the group names that the listing's images can hold,
+ * deduplicated in order (item images before a row's own), and the addresses
+ * too long for them.
+ */
+function collectImages(rows: ParsedInventoryRow[]): { images: string[]; tooLong: string[] } {
   const images: string[] = []
+  const tooLong: string[] = []
   for (const row of rows) {
     for (const url of [...row.imageUrls, row.image]) {
-      if (url && !images.includes(url)) images.push(url)
+      if (!url || images.includes(url) || tooLong.includes(url)) continue
+      if (galleryTakes(url)) images.push(url)
+      else tooLong.push(url)
     }
   }
-  return images
+  return { images, tooLong }
 }
 
 /** A SKU cut to what a combination can store. */
@@ -603,7 +621,13 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
   const errors: string[] = []
   const warnings: string[] = []
 
-  const allImages = collectImages(rows)
+  const { images: allImages, tooLong } = collectImages(rows)
+  // v1–v6 keep a combination's own photo in the table, so only v7 (and an item
+  // image on v4–v6) loses one that is too long for the listing's images.
+  const lostImages = tooLong.filter((url) => storefrontVariantsAreTyped() || rows.some((row) => row.imageUrls.includes(url)))
+  if (lostImages.length > 0) {
+    warnings.push(`"${title}": left out ${lostImages.length} image${lostImages.length === 1 ? '' : 's'} whose address is longer than ${LIST_LIMITS.storeImageUrls.maxLength} characters.`)
+  }
   const imageLimit = itemImageLimit()
   if (allImages.length > imageLimit) warnings.push(`"${title}": kept the first ${imageLimit} of ${allImages.length} images.`)
   const imageUrls = allImages.slice(0, imageLimit)
