@@ -251,6 +251,18 @@ describe('DmEngine.send beforeBroadcast', () => {
     expect(refused).toBe(1)
     expect(alice.messages(key).map((m) => m.text)).toEqual(['hello'])
   })
+
+  it('reports each broadcast settled, with how many of its messages are held so far', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    engine(ledger, BOB_ID, BOB_PRIV)
+    const key = await alice.startDirect(bob58)
+    const steps: string[] = []
+    const long = `${'a'.repeat(4081)}${'b'.repeat(10)}`
+    await alice.send(key, long, { beforeBroadcast: () => { steps.push('broadcast') }, afterSettled: (held) => { steps.push(`held ${held}`) } })
+    // The invite (the conversation started, nothing held), then each message.
+    expect(steps).toEqual(['broadcast', 'held 0', 'broadcast', 'held 1', 'broadcast', 'held 2'])
+  })
 })
 
 describe('DmEngine self-state edits across a reload (§5.5)', () => {

@@ -354,7 +354,9 @@ export interface LandedSend {
  * already holds (the same text, mine, not there when it was sent) shows as
  * the engine's message; the rest show as local bubbles after them. A send
  * that failed or is unconfirmed stays a local bubble until every part of it
- * is there. `sending` is true while any send is on its way.
+ * is there, showing only the text its parts there do not cover (a long send
+ * that failed part way: what went out shows as sent). `sending` is true
+ * while any send is on its way.
  */
 export function mergeOutbox(
   messages: readonly TimelineMessage[],
@@ -362,18 +364,20 @@ export function mergeOutbox(
 ): { messages: TimelineMessage[]; sending: boolean; landed: LandedSend[] } {
   const claimed = new Set<string>();
   const shown = new Set<string>();
+  const covers = new Map<string, number>();
   const landed: LandedSend[] = [];
   const sending = entries.some((e) => e.state === 'sending');
   const byClaimOrder = [...entries].sort((a, b) => CLAIM_ORDER[a.state] - CLAIM_ORDER[b.state]);
   for (const entry of byClaimOrder) {
     const before = new Set(entry.before);
-    const { taken, complete } = partsOfSend(
+    const { taken, complete, cursor } = partsOfSend(
       messages.filter(
         (m) => m.own && !m.outbox && !before.has(m.id) && !claimed.has(m.id) && m.at.getTime() >= entry.after,
       ),
       entry.text,
     );
     for (const m of taken) claimed.add(m.id);
+    covers.set(entry.id, cursor);
     if (complete && entry.state !== 'sending') {
       landed.push({ id: entry.id, messageIds: taken.map((m) => m.id) });
     }
@@ -386,7 +390,7 @@ export function mergeOutbox(
     .map((entry) => ({
       id: entry.id,
       sender: entry.identityId,
-      text: entry.text.trim(),
+      text: entry.text.trim().slice(covers.get(entry.id) ?? 0).trim(),
       at: new Date(entry.createdAt),
       own: true,
       pending: entry.state === 'sending',

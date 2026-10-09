@@ -1393,6 +1393,47 @@ describe('Conversation (DM-03, DM-04)', () => {
     expect(screen.getByTestId('dm-composer')).toHaveDisplayValue(rest);
   });
 
+  it('offers to send only the rest of a long send whose next part never went out (SR-18)', async () => {
+    await openConversation();
+    const first = 'a'.repeat(4081);
+    const rest = `${'b'.repeat(4081)}${'c'.repeat(10)}`;
+    const sent = ticket({ op: 'dm.send', target: { conversationKey: KEY } });
+    fakeEngine.method('dm.send').mockResolvedValue(sent);
+    fireEvent.changeText(screen.getByTestId('dm-composer'), `${first}${rest}`);
+    fireEvent.press(screen.getByTestId('dm-send'));
+    await act(async () => {});
+    // The first part landed; the connection failed before the next went out.
+    fakeEngine
+      .method('dm.messages')
+      .mockResolvedValue(page([dmMessage('p1', { text: first, own: true, sender: VIEWER, at: new Date() }), theirs]));
+    await act(async () => {
+      fakeEngine.emit(
+        'write.status',
+        advance(sent, {
+          state: 'failed',
+          retryable: true,
+          progress: { done: 1, total: 3 },
+          error: { code: 'NETWORK', userMessage: 'Network error.' } as never,
+        }),
+      );
+    });
+    await act(async () => {});
+    // What went out shows as sent; only the rest reads as not delivered.
+    expect(screen.getByText(first)).toBeTruthy();
+    expect(screen.getByText(rest)).toBeTruthy();
+    expect(screen.queryByText(`${first}${rest}`)).toBeNull();
+
+    fakeEngine.method('writes.retry').mockImplementation(async () => {
+      const retried = advance(sent, { state: 'pending', retryable: false, updatedAt: new Date(Date.now() + 5000) });
+      fakeEngine.emit('write.status', retried);
+      return retried;
+    });
+    fireEvent.press(screen.getByText('Not delivered · Tap to retry'));
+    await act(async () => {});
+    expect(fakeEngine.method('writes.retry')).toHaveBeenCalledWith(sent.id);
+    expect(screen.getByTestId('dm-composer')).toHaveDisplayValue('');
+  });
+
   it('shows the empty conversation copy', async () => {
     await openConversation([]);
     expect(screen.getByText('No messages yet. Start the conversation!')).toBeTruthy();
@@ -1482,6 +1523,8 @@ describe('mergeOutbox', () => {
       ['p1', undefined],
       ['local:1', 'failed-edit'],
     ]);
+    // Its bubble holds only what did not go out.
+    expect(partial.messages.at(-1)?.text).toBe(rest);
 
     // Both parts there (in any order): the send went out after all.
     const whole = mergeOutbox([own('p2', rest, 2001), own('p1', first, 2001)], [long]);

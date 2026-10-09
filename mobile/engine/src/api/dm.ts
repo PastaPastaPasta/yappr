@@ -17,7 +17,7 @@ import { badCursor, cursorInt, cursorString, decodeCursor } from '../dto/cursor'
 import { loadUserSummaries, notSupported } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
 import { createLegacyBackend, type LegacyDmService, type LegacyReads } from '../dm/legacy'
-import { BLOCK_SETTLING_MS, createV5Backend, SEND_GAVE_UP, type DmEngineSource } from '../dm/v5'
+import { BLOCK_SETTLING_MS, createV5Backend, RestNotSentError, SEND_GAVE_UP, type DmEngineSource } from '../dm/v5'
 import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
@@ -347,6 +347,21 @@ export function createDmModule(options: DmModuleOptions) {
   const stillSending = (kit: ProbeKit) => backend.kind === 'v5' && kit.sinceSettled() === null
   const STILL_SENDING_PROBE: ProbeResult = { state: 'unknown', error: new Error('Still sending. Check again in a moment.') }
 
+  /**
+   * A v5 send's failure once the parts it sent are recorded. One whose rest
+   * never left (`RestNotSentError`) stays not sent, so it may be retried,
+   * only while `partial` accounts for exactly the parts lib held: a retry
+   * sends the parts past those, so a miscount would send one twice (or skip
+   * one). Otherwise it reads as any failure after a broadcast.
+   */
+  function failureAfter(error: unknown, ticketId: string, sentBefore: number): unknown {
+    if (!(error instanceof RestNotSentError) || error.held === 0) return error
+    const sent = partial.get(ticketId)?.sent ?? 0
+    if (sent === sentBefore + error.held) return error
+    logger.debug(`DM send: ${error.held} part(s) held, but ${sent - sentBefore} found, so the rest is not retried:`, error)
+    return error.cause
+  }
+
   options.tickets.register<SendArgs>('dm.send', {
     run: async (args, ctx) => {
       const id = ctx.ticket.id
@@ -361,7 +376,12 @@ export function createDmModule(options: DmModuleOptions) {
           logger.debug('DM send: could not record the parts sent:', cause)
           return false
         })
-        if (!delivered) throw error
+        if (!delivered) {
+          // How much of it is out: the parts in the conversation, of all it makes.
+          const part = partial.get(id)
+          if (part) ctx.progress(part.sent, part.parts.length)
+          throw failureAfter(error, id, earlier?.sent ?? 0)
+        }
         logger.debug('DM send: failed after every part was out, so it is sent:', error)
         result = { state: 'confirmed' }
       }

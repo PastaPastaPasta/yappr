@@ -193,14 +193,31 @@ export const SEND_GAVE_UP = "Sending took too long, so it wasn't sent. Try again
  * A send in progress: how many broadcasts it made (its conversation's
  * invite, each message), counted just before each goes out, past every read
  * and build before it (lib's `beforeBroadcast`, called by `createDocument`
- * at its broadcast), and whether it was given up as not sent (it may
- * broadcast nothing from then on). Only this send's own broadcasts count:
- * lib runs group grants, leaves and re-keys through the same chain, and none
- * of them is this send's.
+ * at its broadcast); whether the latest may still land (`inFlight`: lib has
+ * not settled it yet, by starting the conversation or holding the message);
+ * how many of its messages lib holds (`held`, each out); and whether it was
+ * given up as not sent (it may broadcast nothing from then on). Only this
+ * send's own broadcasts count: lib runs group grants, leaves and re-keys
+ * through the same chain, and none of them is this send's.
  */
 interface SendAttempt {
   broadcasts: number
+  inFlight: boolean
+  held: number
   abandoned: boolean
+}
+
+/**
+ * A send that failed with none of its broadcasts in flight: its first
+ * `held` messages are out (none: nothing of the text is), and the rest never
+ * left the device, so a retry of just the rest cannot send anything twice
+ * (SR-18). Thrown only by the v5 backend's `send`.
+ */
+export class RestNotSentError extends NotSentError {
+  constructor(cause: unknown, readonly held: number) {
+    super(cause)
+    this.name = 'RestNotSentError'
+  }
 }
 
 /**
@@ -721,22 +738,29 @@ export function createV5Backend(options: V5BackendOptions) {
      * `DmEngine.send` settles uncertain broadcasts itself (it reads the slot
      * back), so a resolve is `confirmed` and a reject is classified
      * (ENGINE.md §7.1). Long text goes out as several messages (§5.7). A
-     * failure before the send broadcast anything (a read, the group's state,
-     * a read inside `createDocument` before its broadcast) is a
-     * `NotSentError`: nothing of it can land, so it is failed, not "maybe
-     * sent". After any broadcast (the invite, an earlier part), it never is.
+     * failure with none of its broadcasts in flight (before the first, or
+     * after lib settled each: a read, the group's state, a read inside
+     * `createDocument` before the next part's broadcast) is a
+     * `RestNotSentError`: the parts lib held are out and the rest can never
+     * land, so it is failed, not "maybe sent". A failure while a broadcast
+     * may still land (lib has not held that part) never is.
      * Its whole run, from the ticket's start, counts against
      * `SEND_BUDGET_MS`, including the settle of lib's pending replaces
      * before it (the host runs no other step before a send).
      */
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const running = engine(identityId)
-      const current: SendAttempt = { broadcasts: 0, abandoned: false }
+      const current: SendAttempt = { broadcasts: 0, inFlight: false, held: 0, abandoned: false }
       const gaveUp = () => new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK'))
       // Counts this send's own broadcasts, and refuses them once it was given up.
       const beforeBroadcast = () => {
         if (current.abandoned) throw new RpcError(SEND_GAVE_UP, 'NETWORK')
         current.broadcasts += 1
+        current.inFlight = true
+      }
+      const afterSettled = (held: number) => {
+        current.inFlight = false
+        current.held = held
       }
       const turn = (lanes.get(running) ?? Promise.resolve()).then(async () => {
         // Given up while it waited behind an earlier send: never started.
@@ -751,18 +775,19 @@ export function createV5Backend(options: V5BackendOptions) {
         if (current.abandoned) throw gaveUp()
         try {
           try {
-            await running.send(key, text, { beforeBroadcast })
+            await running.send(key, text, { beforeBroadcast, afterSettled })
           } catch (error) {
             if (!reattempts(error, current)) throw error
             logger.debug('DM send: the connection failed before anything went out; trying once more:', error)
             await pause(SEND_REATTEMPT_PAUSE_MS)
             if (current.abandoned) throw error
-            await running.send(key, text, { beforeBroadcast })
+            await running.send(key, text, { beforeBroadcast, afterSettled })
           }
         } catch (error) {
-          // Nothing broadcast (no invite, no message): nothing of it can land. After any broadcast,
-          // a part may have gone out, so the failure is "may have been sent" and is checked.
-          if (current.broadcasts === 0) throw new NotSentError(error)
+          // Nothing in flight: the parts lib held are out, and nothing of the rest can land. While a
+          // broadcast is (lib never held its part), that part may have gone out, so the failure is
+          // "may have been sent" and is checked, never sent again.
+          if (!current.inFlight) throw new RestNotSentError(error, current.held)
           throw error
         }
       })

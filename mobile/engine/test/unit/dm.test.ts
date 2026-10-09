@@ -873,7 +873,7 @@ describe('dm on DM v5: 1:1', () => {
     expect((await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()).toEqual(['h', 'a', 'b'])
   })
 
-  it('never tries a send once more after its invite was written, and never reads it as not sent (RC16-A-05)', async () => {
+  it('never tries a send once more after its invite was written, and reads it as not sent only once the invite settled with no message out (RC16-A-05, SR-18)', async () => {
     const ledger = ledgerNow()
     const a = await ready(userOn(ledger, alice))
     await ready(userOn(ledger, bob))
@@ -906,7 +906,8 @@ describe('dm on DM v5: 1:1', () => {
     expect(ledger.invites).toHaveLength(1)
     expect(sends).toHaveBeenCalledTimes(1)
     expect(broadcasts).not.toHaveBeenCalled()
-    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ outcome: 'unknown' }) })
+    // The conversation is started and no message went out: the text is not sent, and a retry sends no second invite.
+    expect(a.tickets.get(ticket.id)).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
   })
 
   it('sends a send given up on a stall exactly once on retry, even while the call given up still runs (RC16-A-03)', async () => {
@@ -1012,27 +1013,128 @@ describe('dm on DM v5: 1:1', () => {
       expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
     })
 
-    it('never reads a long send as not sent once a part is out, even when the next failed before its broadcast', async () => {
-      const { a, b, key, chain } = await sending()
-      let broadcasts = 0
+    /** Fails the first message-slot read once `when()` holds: the read before a part's broadcast. */
+    function failReadOnce(chain: MemoryChain, when: () => boolean) {
       let failed = false
-      chain.hook = method => {
-        if (method === 'createMessage') broadcasts += 1
-        return null
-      }
       const read = chain.messagesByTags.bind(chain)
-      vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
-        if (broadcasts === 1 && !failed) {
+      return vi.spyOn(chain, 'messagesByTags').mockImplementation(async tags => {
+        if (when() && !failed) {
           failed = true
           throw new Error('transport error: grpc error: Failed to fetch')
         }
         return read(tags)
       })
-      // Part 1 is out: the send may have been sent, so it is checked, never failed with a Retry beside it.
+    }
+
+    it('retries only the rest of a long send whose next part failed before its broadcast, once the first was held', async () => {
+      const { ledger, a, b, key, chain } = await sending()
+      let broadcasts = 0
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      failReadOnce(chain, () => broadcasts === 1)
+      const written = ledger.messages.length
+      // Part 1 is out and part 2 never left: the rest is not sent, and may be sent again.
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, progress: { done: 1, total: 3 }, error: expect.objectContaining({ code: 'NETWORK' }) })
+      expect(ledger.messages).toHaveLength(written + 1)
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed', error: null })
+      // Only the rest went out: three messages in all, each once.
+      expect(broadcasts).toBe(3)
+      expect(ledger.messages).toHaveLength(written + 3)
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('retries only the last part when the read before it failed', async () => {
+      const { ledger, a, b, key, chain } = await sending()
+      let broadcasts = 0
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      failReadOnce(chain, () => broadcasts === 2)
+      const written = ledger.messages.length
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, progress: { done: 2, total: 3 } })
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(ledger.messages).toHaveLength(written + 3)
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b', 'c'])
+    })
+
+    it('never sends again a part whose broadcast may have landed: it stays unknown', async () => {
+      const { ledger, a, b, key, chain } = await sending()
+      let writes = 0
+      const create = chain.createMessage.bind(chain)
+      // Part 2 lands, and its answer is lost.
+      vi.spyOn(chain, 'createMessage').mockImplementation(async (tag, body, options) => {
+        const outcome = await create(tag, body, options)
+        return ++writes === 2 ? { ok: false, failure: 'transport', error: 'Request timeout after 8000ms' } : outcome
+      })
+      const written = ledger.messages.length
       const ticket = await a.settled(await a.dm.send(key, text))
       expect(ticket).toMatchObject({ state: 'unconfirmed', retryable: false, error: expect.objectContaining({ outcome: 'unknown' }) })
+      // A check finds part 3 missing: still unknown, and never offered as a retry.
       expect(await a.tickets.check(ticket.id)).toMatchObject({ state: 'unconfirmed', retryable: false })
-      expect(await bobReads(b)).toEqual(['h', 'a'])
+      await expect(a.tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+      expect(writes).toBe(2)
+      expect(ledger.messages).toHaveLength(written + 2)
+      expect(await bobReads(b)).toEqual(['h', 'a', 'b'])
+    })
+
+    it('sends the whole text again when the read before its first part failed, after the conversation started', async () => {
+      const ledger = ledgerNow()
+      const a = await ready(userOn(ledger, alice))
+      const b = await ready(userOn(ledger, bob))
+      const key = await a.dm.startDirect(bob)
+      const chain = a.engine().ctx.chain as MemoryChain
+      let invites = 0
+      chain.hook = method => {
+        if (method === 'createInvite') invites += 1
+        return null
+      }
+      failReadOnce(chain, () => invites === 1)
+      // The invite is out, no part is: nothing of the text went, so it is not sent.
+      const ticket = await a.settled(await a.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+      expect(ledger.messages).toHaveLength(0)
+      await a.tickets.retry(ticket.id)
+      expect(await a.settled(ticket)).toMatchObject({ state: 'confirmed' })
+      expect(invites).toBe(1)
+      expect(ledger.invites).toHaveLength(1)
+      await b.engine().tick()
+      const [conversation] = await b.dm.conversations()
+      await b.engine().pollOwn(conversation.key)
+      await b.dm.open(conversation.key)
+      expect((await b.dm.messages(conversation.key)).items.map(m => m.text[0]).reverse()).toEqual(['a', 'b', 'c'])
+    })
+
+    it('sends nothing again after a restart: the rest of a long send is left to the user', async () => {
+      const ledger = ledgerNow()
+      const kv = new MapKv()
+      const first = await ready(userOn(ledger, alice, {}, kv))
+      await ready(userOn(ledger, bob))
+      const key = await first.dm.startDirect(bob)
+      await first.settled(await first.dm.send(key, 'hi'))
+      const chain = first.engine().ctx.chain as MemoryChain
+      let broadcasts = 0
+      chain.hook = method => {
+        if (method === 'createMessage') broadcasts += 1
+        return null
+      }
+      failReadOnce(chain, () => broadcasts === 1)
+      const ticket = await first.settled(await first.dm.send(key, text))
+      expect(ticket).toMatchObject({ state: 'failed', retryable: true })
+      const written = ledger.messages.length
+      await first.hooks.stop()
+
+      // The text was never stored: the restored ticket cannot send it, so nothing goes out twice.
+      const relaunched = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local }))
+      expect(relaunched.tickets.list().find(t => t.id === ticket.id)).toMatchObject({ state: 'failed', retryable: false })
+      await expect(relaunched.tickets.retry(ticket.id)).rejects.toMatchObject({ code: 'NOT_RETRYABLE' })
+      expect(ledger.messages).toHaveLength(written)
     })
   })
 

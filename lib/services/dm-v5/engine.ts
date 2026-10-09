@@ -462,18 +462,31 @@ export class DmEngine {
    * `beforeBroadcast` runs just before each of this send's broadcasts (a new
    * conversation's invite, each message broadcast), never before another
    * operation's; throwing refuses that broadcast and fails the send.
+   * `afterSettled` runs once each of them is settled (the conversation
+   * started, a message held), with how many of this send's messages are held
+   * so far: until it does, the latest broadcast may still land. A send that
+   * fails with every broadcast settled sent its first `held` messages, and
+   * none of the rest.
    */
-  async send(key: string, text: string, options: { beforeBroadcast?: BeforeBroadcast } = {}): Promise<void> {
+  async send(
+    key: string,
+    text: string,
+    options: { beforeBroadcast?: BeforeBroadcast; afterSettled?: (held: number) => void } = {}
+  ): Promise<void> {
     const conv = this.convByKey(key)
     const pieces = splitText(text.trim())
     if (pieces.length === 0) return
-    const { beforeBroadcast } = options
+    const { beforeBroadcast, afterSettled } = options
     await this.run(async () => {
       if (conv.kind === 'direct') {
         if (this.ctx.store.isBlocked(conv.peer)) throw new Error('Unblock this person to message them.')
         await ensureStarted(this.ctx, conv, { beforeBroadcast })
+        afterSettled?.(0)
       }
-      for (const text of pieces) await sendContent(this.ctx, conv, { type: 'text', text }, beforeBroadcast)
+      for (const [index, text] of pieces.entries()) {
+        await sendContent(this.ctx, conv, { type: 'text', text }, beforeBroadcast)
+        afterSettled?.(index + 1)
+      }
     })
   }
 
