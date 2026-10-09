@@ -421,7 +421,7 @@ export function kitsAfterDelivery(
 }
 
 /** The seller's own listing of an item, read from the chain. */
-export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status'>> & {
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants' | 'unreadableVariants'> & Partial<Pick<StoreItem, 'status'>> & {
   /** Required (undefined when untracked), so no listing passes the stock check by leaving it out. */
   stockQuantity: number | undefined
 }
@@ -496,6 +496,8 @@ export function lineProblems(
     if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
     if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }
     if (listing.fulfillment !== 'digital') { problem(`"${line.itemTitle}" is not listed as a digital product.`, true); continue }
+    // Its options could not be read, so nothing about the line can be checked.
+    if (listing.unreadableVariants !== undefined) { problem(`The options of "${listing.title}" could not be read, so this order can't be checked against the listing. Review it with the buyer.`, true); continue }
     // Paused, sold out or deleted since: perhaps a legitimate earlier purchase,
     // but never released without the seller looking (bulk holds any problem).
     if (listing.status !== undefined && listing.status !== 'active') problem(`"${listing.title}" is not on sale right now (${listing.status}).`)

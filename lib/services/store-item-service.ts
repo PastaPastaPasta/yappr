@@ -292,7 +292,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       throw new Error('Item not found');
     }
     if (baseRevision !== undefined && existing.$revision !== undefined && existing.$revision !== baseRevision) throw new StaleRevisionError();
-    if (existing.unreadableVariants !== undefined && 'variants' in data) throw new ListLimitError("This product's options could not be read, so they can't be changed here. List it again as a new product.");
+    // Its options cannot be read, so nothing that touches them (or the images they may name) is written.
+    if (existing.unreadableVariants !== undefined && ('variants' in data || 'imageUrls' in data)) throw new ListLimitError("This product's options could not be read, so they can't be changed here. List it again as a new product.");
 
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(storeId),

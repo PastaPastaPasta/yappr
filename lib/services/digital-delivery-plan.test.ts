@@ -440,6 +440,13 @@ describe('isReadyForBulkDelivery', () => {
     expect(ready([line(NOW_ID), line(SONG_ID)], 'pending')).toBe(false)
   })
 
+  it('holds a line whose listing stores a table that cannot be read', () => {
+    // Contract-valid, but the only selector names an option the table does not have.
+    const unreadableVariants = { axes: ['Color'], options: ['Red'], optionIds: [1], optionAxes: [0], nextOptionId: 2, selectors: [Uint8Array.of(2)], prices: [100] }
+    const listings = new Map([[NOW_ID, listing(NOW_ID, { basePrice: undefined, unreadableVariants })]])
+    expect(ready([line(NOW_ID, 1, { unitPrice: 0 })], undefined, { listings })).toBe(false)
+  })
+
   it('never re-delivers, delivers a closed order, or delivers without a kit', () => {
     expect(ready([line(NOW_ID)], undefined, { alreadyDelivered: true })).toBe(false)
     expect(ready([line(NOW_ID)], 'refunded')).toBe(false)

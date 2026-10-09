@@ -184,6 +184,9 @@ describe('storefront v7 typed variants', () => {
       await service.updateItem('item', 'owner', storeId, { status: 'paused' });
       expect(updateDocument.mock.calls[0][4].variants).toEqual(unreadable);
       await expect(service.updateItem('item', 'owner', storeId, { variants: undefined, basePrice: 5 }, 4)).rejects.toThrow(/could not be read/);
+      // The images it may name by position are left alone too.
+      await expect(service.updateItem('item', 'owner', storeId, { imageUrls: ['https://a/9.png'] })).rejects.toThrow(/could not be read/);
+      expect(updateDocument).toHaveBeenCalledTimes(1);
     } finally { restore(); }
   });
 
