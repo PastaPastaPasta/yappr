@@ -160,7 +160,7 @@ Each method re-expresses a web hook or page flow as a plain function over the sa
 | `graph.followers(id, cursor?)` / `following` | `connection-list-page.tsx`: whole list once, 30 a page with names, profiles, counts, viewer follow | `Page<UserSummaryDTO>` |
 | `graph.status(ids)` | `getFollowStatusBatch` (signed in), ≤100 | `Record<id, boolean>` |
 | `explore.trending({window?})` | `getTrendingHashtags({168 h, 12})`; cashtags flagged; `countKind` likes on v9/v10 | `TagDTO[]` |
-| `explore.topPosts({window?})` / `topCreators({window?})` | `app/explore/page.tsx`, `top-creators.tsx` | `PostDTO[]` / `RankedUserDTO[]` |
+| `explore.topPosts({window?, refresh?})` / `topCreators({window?})` | `app/explore/page.tsx`, `top-creators.tsx` | `PostDTO[]` / `RankedUserDTO[]` |
 | `explore.searchUsers(q)` / `searchHashtags(q)` / `searchPosts(q)` | `app/search/page.tsx` (≥3 chars; exact-name fallback; trending + exact tag count); `app/explore/page.tsx` (substring over the newest 100 posts) | `UserSummaryDTO[]` / `TagDTO[]` / `PostDTO[]` |
 
 DTO types and mappers live in `src/api/dto.ts`; `src/dto/` holds the cursor codec, paging, the enrichment-and-filter pipeline (`hydrate.ts`), the thread port, capabilities and the runtime validators (`validate.ts`, used by every contract test). `boot()` fails with code `NO_WEBASSEMBLY` when WebAssembly is missing (iOS Lockdown Mode).

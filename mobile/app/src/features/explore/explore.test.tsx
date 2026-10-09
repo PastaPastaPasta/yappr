@@ -266,6 +266,27 @@ describe('Explore', () => {
     expect(screen.getByText('most liked post')).toBeTruthy();
   });
 
+  // A post deleted on another device must show as deleted after a pull to refresh,
+  // not wait out the engine's minute-long Top posts page (RC16-I-04).
+  it('reads Top posts afresh on a pull to refresh, and only then', async () => {
+    useExplorePrefs.setState({ segment: 'top' });
+    fakeEngine.method('explore.topPosts').mockResolvedValue([post('t1', 'most liked post')]);
+    await renderAt('/explore');
+    expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all' });
+
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all', refresh: true });
+
+    // Any other read after it (here a plain refetch) keeps the engine's page.
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.explore.topPosts('all') });
+    });
+    expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all' });
+  });
+
   it('ranks creators with follow buttons; signed out, Follow asks to sign in (EXPL-04, G-8)', async () => {
     useExplorePrefs.setState({ segment: 'creators' });
     const ranked: RankedUserDTO[] = [

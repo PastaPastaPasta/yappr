@@ -65,6 +65,7 @@ const { feed } = await import('../../src/api/feed')
 const { posts } = await import('../../src/api/posts')
 const { profiles } = await import('../../src/api/profiles')
 const { graph } = await import('../../src/api/graph')
+const { explore } = await import('../../src/api/explore')
 const { attachQuotedPosts, getCachedQuotedPost } = await import('@/lib/feed/resolve-quoted-posts')
 const { validate, engagementPage, page, postDTO, threadDTO, pollDTO } = await import('../../src/dto/validate')
 
@@ -279,6 +280,15 @@ describe('Top sorts', () => {
     expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 40, window: 'all', force: true, throwOnError: true })
     expect(second.hasMore).toBe(false)
     await expect(feed.home({ tab: 'forYou', sort: 'top', window: 'today', cursor: first.cursor })).rejects.toMatchObject({ code: 'BAD_CURSOR' })
+  })
+
+  it('reads Explore\'s Top posts afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValue([post('Top1', 1)])
+    await explore.topPosts({ window: 'today' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: false })
+    await explore.topPosts({ window: 'today', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: true })
   })
 })
 
