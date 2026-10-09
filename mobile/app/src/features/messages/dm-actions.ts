@@ -173,19 +173,3 @@ export async function setBlockedInMessages(peerId: string, blocked: boolean, don
     failed(blocked ? 'Blocking' : 'Unblocking', error);
   }
 }
-
-/**
- * The Messages half of a profile Block or Unblock on DM v5 (PRD SAFE-01,
- * SAFE-02), silent: the block's own toast speaks for both. The engine writes
- * nothing when it already stands, and keeps it until Messages unlock on a
- * device without the encryption key. Called once the account's block is
- * confirmed; a failure is only logged.
- */
-export async function syncMessagesBlock(peerId: string, blocked: boolean): Promise<void> {
-  try {
-    await engine.api.dm.setBlocked(peerId, blocked);
-    refreshDm();
-  } catch (error) {
-    appendLog('warn', 'host', `${blocked ? 'Blocking' : 'Unblocking'} in Messages failed: ${errorMessage(error)}`);
-  }
-}

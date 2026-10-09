@@ -14,10 +14,12 @@ import type { AuthorDTO } from '../../src/api/dto'
 import type { LegacyDmService, LegacyReads } from '../../src/dm/legacy'
 import type { DmEvents, MessageDTO } from '../../src/dm/types'
 import type { WriteTicket } from '../../src/writes/types'
+import type { WriteResult } from '../../src/writes/tickets'
 import type { SessionEvents } from '../../src/api/session'
+import type { OwnBlocksListener } from '../../src/api/own-blocks'
 
 // The settle before each v5 write reads lib's nonce reservations; here it only records its calls.
-const settleSupersededReplaces = vi.hoisted(() => vi.fn(async () => 0))
+const settleSupersededReplaces = vi.hoisted(() => vi.fn<(ownerId: string, contractId: string) => Promise<number>>(async () => 0))
 vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object>(), settleSupersededReplaces }))
 
 // lib/store's persisted settings (read receipts) need the engine's storage before lib loads.
@@ -31,7 +33,7 @@ const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
 const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { RpcError } = await import('../../src/protocol/envelope')
-const { SEND_BUDGET_MS, SEND_REATTEMPT_PAUSE_MS } = await import('../../src/dm/v5')
+const { BLOCK_SETTLING_MS, SEND_BUDGET_MS, SEND_REATTEMPT_PAUSE_MS } = await import('../../src/dm/v5')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
 type MemoryLedger = InstanceType<typeof MemoryLedger>
 
@@ -61,6 +63,30 @@ function ledgerNow(): MemoryLedger {
   return ledger
 }
 
+/**
+ * The account's own block list on the chain, as `dm` reads it (`refresh`):
+ * `blocked` is what a read returns, `madeAt` when each block was made
+ * (unknown when unset), and `failing` makes every read reject.
+ */
+function accountOn(blocked: string[] = []) {
+  const listeners = new Set<OwnBlocksListener>()
+  const account = {
+    blocked,
+    madeAt: new Map<string, number>(),
+    failing: false,
+    refresh: vi.fn(async (identityId: string) => {
+      if (account.failing) throw new RpcError('The block list could not be read', 'NETWORK')
+      const blocks = account.blocked.map(blockedId => ({ blockedId, createdAt: account.madeAt.get(blockedId) ?? Number.NaN }))
+      for (const listener of listeners) listener(identityId, blocks)
+    }),
+    subscribe: (listener: OwnBlocksListener) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+  }
+  return account
+}
+
 type Event = { event: string; payload: unknown }
 const settle = () => new Promise(resolve => setTimeout(resolve, 0))
 const cleanups: (() => Promise<void>)[] = []
@@ -74,12 +100,23 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
   ({ session: { identityId, network: 'testnet', username: null, credits: 0n, hasEncryptionKey: true, method: 'key' }, reason: 'signed-in' })
 
 /** One user's engine: a dm module over a ticket store, signed in as `me`. */
-/** `kv`: the device's DM v5 store, kept across a relaunch (else a fresh device). */
-function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<typeof createDmModule>[0]> = {}, kv?: InstanceType<typeof MapKv>) {
+/**
+ * `kv`: the device's DM v5 store, kept across a relaunch (else a fresh
+ * device); `device`, its ticket and plain storage, kept the same way, and
+ * the account's block list on the chain (else an empty one).
+ */
+function userOn(
+  ledger: MemoryLedger,
+  me: string,
+  extra: Partial<Parameters<typeof createDmModule>[0]> = {},
+  kv?: InstanceType<typeof MapKv>,
+  device: { storage?: ReturnType<typeof memoryStorage>; local?: ReturnType<typeof memoryStorage>; account?: ReturnType<typeof accountOn> } = {},
+) {
   const events: Event[] = []
-  const storage = memoryStorage()
+  const storage = device.storage ?? memoryStorage()
   /** The engine's plain storage, where DM v5 keeps its per-device state. */
-  const local = memoryStorage()
+  const local = device.local ?? memoryStorage()
+  const account = device.account ?? accountOn()
   const emit = (event: string, payload: unknown) => { events.push({ event, payload }) }
   let signedIn: string | null = me
   const keyRequired = vi.fn()
@@ -101,11 +138,11 @@ function userOn(ledger: MemoryLedger, me: string, extra: Partial<Parameters<type
     release: vi.fn(),
   }
   const authors = vi.fn(async (ids: string[]) => new Map(ids.map(id => [id, authorOf(id)])))
-  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, storage: local, ...extra })
+  const dm = createDmModule({ emit, tickets, backend: 'v5', v5Source: source, viewer: () => signedIn, authors, coalesceMs: 0, storage: local, accountBlocks: account, ...extra })
   dm.hooks.sessionChanged(started(me))
   cleanups.push(() => dm.hooks.stop())
   return {
-    dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired,
+    dm: dm.api, hooks: dm.hooks, events, storage, local, source, authors, tickets, keyRequired, account,
     engine: () => engines.get(me) as DmEngine,
     signOut: () => { signedIn = null },
     /** Signs in as `id` without a sign-out (`hooks.sessionChanged` starts its messages). */
@@ -534,9 +571,10 @@ describe('dm on DM v5: 1:1', () => {
     const createMessage = chain.createMessage.bind(chain)
     let clear: () => void = () => undefined
     const stalled = new Promise<void>(resolve => { clear = resolve })
-    const broadcast = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+    const broadcast = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (tag, body, options) => {
+      options?.beforeBroadcast?.()
       await stalled
-      return createMessage(...args)
+      return createMessage(tag, body)
     })
     const pollOwn = vi.spyOn(engine, 'pollOwn')
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
@@ -559,6 +597,19 @@ describe('dm on DM v5: 1:1', () => {
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['through a stall'])
   })
 
+  /**
+   * Counts the messages `chain` broadcasts: its `hook` runs past `beforeBroadcast`, so a broadcast
+   * refused there is not counted (a `createMessage` spy would count the call).
+   */
+  function broadcastsOf(chain: MemoryChain) {
+    const count = { messages: 0 }
+    chain.hook = method => {
+      if (method === 'createMessage') count.messages += 1
+      return null
+    }
+    return count
+  }
+
   /** A DM v5 pair where every read of Alice's chain hangs until `clear` (a DAPI stall, as an iptables DROP makes). */
   async function stalledReads() {
     const ledger = ledgerNow()
@@ -574,8 +625,7 @@ describe('dm on DM v5: 1:1', () => {
       await stalled
       return read(tags)
     })
-    const broadcasts = vi.spyOn(chain, 'createMessage')
-    return { ledger, a, key, reads, broadcasts, written: ledger.messages.length, clear }
+    return { ledger, a, chain, key, reads, broadcasts: broadcastsOf(chain), written: ledger.messages.length, clear }
   }
 
   it('gives up a send stalled before its broadcast within 30 s as not delivered, retryably, and never sends it later (RC16-A-03)', async () => {
@@ -598,10 +648,141 @@ describe('dm on DM v5: 1:1', () => {
     // out. A send after it, queued behind it, goes out alone.
     clear()
     expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
-    expect(broadcasts).toHaveBeenCalledTimes(1)
+    expect(broadcasts.messages).toBe(1)
     expect(ledger.messages).toHaveLength(written + 1)
     expect(await a.settled(stuck)).toMatchObject(notSent)
     expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['after', 'first'])
+  })
+
+  /** A DM v5 pair with a conversation already started (no invite to write), and its message broadcasts counted. */
+  async function talking() {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    const chain = a.engine().ctx.chain as MemoryChain
+    return { ledger, a, key, chain, broadcasts: broadcastsOf(chain), written: ledger.messages.length }
+  }
+
+  it("gives up a send whose write stalls inside lib's createDocument before its broadcast, and never broadcasts it later (RC16-A-03)", async () => {
+    const { ledger, a, key, chain, broadcasts, written } = await talking()
+    // createDocument's reads (identity, nonce) hang before it broadcasts: the chain's write was
+    // called, but nothing went out. Counting the call as a broadcast would never give it up.
+    const createMessage = chain.createMessage.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const writes = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+      await stalled
+      return createMessage(...args)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'stuck')
+    await vi.waitFor(() => expect(writes).toHaveBeenCalledTimes(1))
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
+    expect(await a.settled(ticket)).toMatchObject(notSent)
+    vi.useRealTimers()
+
+    // The reads answer: its broadcast is refused at the boundary, and the next send goes out alone.
+    clear()
+    expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
+    expect(broadcasts.messages).toBe(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+    expect(await a.settled(ticket)).toMatchObject(notSent)
+  })
+
+  it("tries once more after a connection failure inside lib's createDocument before its broadcast, and sends it once (RC16-A-05)", async () => {
+    const { ledger, a, key, chain, broadcasts, written } = await talking()
+    // createDocument's identity read fails on a dead connection, before any broadcast: lib turns it
+    // into a refused outcome (as SdkDmChain does), and nothing went out.
+    const writes = vi.spyOn(chain, 'createMessage').mockResolvedValueOnce({ ok: false, failure: 'transport', error: 'transport error: Failed to fetch' })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const ticket = await a.dm.send(key, 'back online')
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(500)
+      expect(a.tickets.get(ticket.id)?.state).toBe('confirmed')
+    })
+    vi.useRealTimers()
+    expect(writes).toHaveBeenCalledTimes(2)
+    expect(broadcasts.messages).toBe(1)
+    expect(ledger.messages).toHaveLength(written + 1)
+  })
+
+  it("counts the settle of pending replaces in the send's budget: a send held by the write lock is given up at 30 s and never broadcast", async () => {
+    const { withIdentityWriteLock } = await import('@/lib/identity-write-lock')
+    const { YAPPR_DM_V5_CONTRACT_ID } = await import('@/lib/constants')
+    const actual = await vi.importActual<typeof import('@/lib/services/identity-nonce')>('@/lib/services/identity-nonce')
+    const { ledger, a, key, broadcasts, written } = await talking()
+    // A write in progress (a stalled roster save) holds the account's write lock; the settle before
+    // the send waits for it.
+    settleSupersededReplaces.mockImplementation(actual.settleSupersededReplaces)
+    let release: () => void = () => undefined
+    const held = new Promise<void>(resolve => { release = resolve })
+    let holding = false
+    const lock = withIdentityWriteLock(alice, YAPPR_DM_V5_CONTRACT_ID, async () => {
+      holding = true
+      await held
+    })
+    await vi.waitFor(() => expect(holding).toBe(true))
+    try {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const ticket = await a.dm.send(key, 'held')
+      await vi.waitFor(() => expect(settleSupersededReplaces).toHaveBeenCalledWith(alice, YAPPR_DM_V5_CONTRACT_ID))
+      await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+      const notSent = { state: 'failed', retryable: true, error: expect.objectContaining({ code: 'NETWORK', outcome: 'not-sent' }) }
+      expect(await a.settled(ticket)).toMatchObject(notSent)
+      vi.useRealTimers()
+
+      // The lock is released: the send given up never goes on to lib's send.
+      const sends = vi.spyOn(a.engine(), 'send')
+      release()
+      await lock
+      expect(await a.settled(await a.dm.send(key, 'after'))).toMatchObject({ state: 'confirmed' })
+      expect(sends).toHaveBeenCalledTimes(1)
+      expect(broadcasts.messages).toBe(1)
+      expect(ledger.messages).toHaveLength(written + 1)
+      expect(await a.settled(ticket)).toMatchObject(notSent)
+    } finally {
+      release()
+      settleSupersededReplaces.mockImplementation(async () => 0)
+    }
+  })
+
+  it('never refuses a group grant stalled before its broadcast when a send behind it is given up (RC16-A-03)', async () => {
+    const ledger = ledgerNow()
+    const a = await ready(userOn(ledger, alice))
+    await ready(userOn(ledger, bob))
+    const c = await ready(userOn(ledger, carol))
+    const { key: team } = await a.engine().createGroup('Team', [bob])
+    await a.engine().tick()
+    const key = await a.dm.startDirect(bob)
+    await a.settled(await a.dm.send(key, 'first'))
+    // Carol's grant stalls inside createDocument, before its broadcast (a DAPI stall), holding lib's
+    // queue; the send behind it times out and is given up.
+    const chain = a.engine().ctx.chain as MemoryChain
+    const createMessage = chain.createMessage.bind(chain)
+    let clear: () => void = () => undefined
+    const stalled = new Promise<void>(resolve => { clear = resolve })
+    const grant = vi.spyOn(chain, 'createMessage').mockImplementationOnce(async (...args) => {
+      await stalled
+      return createMessage(...args)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const add = await a.dm.addMember(team, carol)
+    await vi.waitFor(() => expect(grant).toHaveBeenCalledTimes(1))
+    const send = await a.dm.send(key, 'stuck')
+    await vi.advanceTimersByTimeAsync(SEND_BUDGET_MS)
+    expect(await a.settled(send)).toMatchObject({ state: 'failed', retryable: true, error: expect.objectContaining({ outcome: 'not-sent' }) })
+    vi.useRealTimers()
+
+    // The stall clears: the grant broadcasts (the send's refusal was never its), and the send never does.
+    clear()
+    expect(await a.settled(add)).toMatchObject({ state: 'confirmed' })
+    expect(await a.settled(send)).toMatchObject({ state: 'failed' })
+    expect((await a.dm.messages(key)).items.map(m => m.text)).toEqual(['first'])
+    await c.engine().tick()
+    expect((await c.dm.conversations()).find(conv => conv.key === team)?.flags.unreadable).toBe(false)
   })
 
   it("refuses only the given-up send's own writes: group writes queued beside it still go out (RC16-A-03)", async () => {
@@ -956,6 +1137,142 @@ describe('dm on DM v5: blocks asked for before they can apply (PRD SAFE-01)', ()
     await user.hooks.stop()
     user.hooks.forget(alice)
     expect(user.local.getItem(pendingKey)).toBeNull()
+  })
+})
+
+describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-02)', () => {
+  const followedKey = `yappr_engine_dm_account_blocks:${alice}`
+  const blockedNow = async (user: ReturnType<typeof userOn>) => [...(await user.dm.status()).blocked].sort()
+
+  it('blocks in Messages, at the next start, someone the account blocked while the app was closed', async () => {
+    const user = userOn(ledgerNow(), alice, {}, undefined, { account: accountOn([bob]) })
+    await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ ready: true, blocked: [bob] }))
+    expect(user.account.refresh).toHaveBeenCalledWith(alice)
+    expect(user.account.refresh).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+  })
+
+  it('blocks in Messages once a block the app was killed during is confirmed after the relaunch', async () => {
+    const ledger = ledgerNow()
+    const kv = new MapKv()
+    const first = await ready(userOn(ledger, alice, {}, kv))
+    // The block is sent, and the app is killed before its answer.
+    first.tickets.register<{ targetId: string }>('block', { persistArgs: true, deadlineMs: null, run: () => new Promise(() => {}) })
+    first.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } })
+    await first.hooks.stop()
+
+    // Relaunched: the list read at the start does not show the block yet (a lagging node).
+    const account = accountOn([])
+    const user = userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account })
+    user.tickets.register<{ targetId: string }>('block', { persistArgs: true, run: async () => ({ state: 'confirmed' }), probe: async () => ({ state: 'applied' }) })
+    await ready(user)
+    await vi.waitFor(() => expect(account.refresh).toHaveBeenCalledWith(alice))
+    const [interrupted] = user.tickets.list()
+    expect(interrupted).toMatchObject({ op: 'block', state: 'unconfirmed', target: { identityId: bob } })
+    expect(await blockedNow(user)).toEqual([])
+
+    expect(await user.tickets.check(interrupted.id)).toMatchObject({ state: 'confirmed' })
+    expect(await blockedNow(user)).toEqual([bob])
+    // A stale read still missing it, this soon after it landed, does not lift it.
+    await account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+  })
+
+  it('lifts only the blocks it made for the account, and never on a failed read', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    // Blocked in Messages alone (web's conversation menu): the account's list never lifts it.
+    expect(await user.dm.setBlocked(carol, true)).toBe(true)
+    user.account.blocked = [bob]
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob, carol].sort())
+
+    user.account.blocked = []
+    user.account.failing = true
+    await expect(user.account.refresh(alice)).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(await blockedNow(user)).toEqual([bob, carol].sort())
+
+    // A read missing bob this soon after Messages blocked him may come from a node behind: it lifts nothing.
+    user.account.failing = false
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob, carol].sort())
+
+    ledger.time += BLOCK_SETTLING_MS + 1000
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([carol])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([])
+  })
+
+  it('leaves unblocked someone Messages unblocked after the account blocked them, on a device that never followed it', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    // Blocked and unblocked in Messages (here, or on another device whose saved state this one loaded).
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    const unblockedAt = ledger.time
+
+    // The account's block is older than that unblock: the unblock stands.
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, unblockedAt - 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+    expect(user.local.getItem(followedKey)).toBeNull()
+
+    // Blocked again since: Messages follow the newer block.
+    user.account.madeAt.set(bob, unblockedAt + 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+  })
+
+  it('leaves unblocked in Messages someone unblocked there whom the account still blocks', async () => {
+    const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { account: accountOn([bob]) }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    // Message settings' Unblock: Messages only.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('follows a block and unblock confirmed here, and an unblock a followed list overrides, over stale reads', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    let unblocked: WriteResult = { state: 'confirmed' }
+    user.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed' }) })
+    user.tickets.register<{ targetId: string }>('unblock', { run: async () => unblocked })
+
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([bob])
+    // A read from before the block landed does not lift it.
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+
+    await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([])
+    // Nor does one from before the unblock landed block them again.
+    user.account.blocked = [bob]
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+
+    // The own block on carol deleted, but a block list alice follows still blocks carol: Messages let her write.
+    user.account.blocked = []
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: carol }, target: { identityId: carol } }))
+    unblocked = { state: 'failed', error: new RpcError('A block list you follow still blocks them', 'STILL_BLOCKED') }
+    expect(await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: carol }, target: { identityId: carol } })))
+      .toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
+    expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('ignores a read of another account\'s list, and forgets what it followed at sign-out', async () => {
+    const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { account: accountOn([bob]) }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    user.account.blocked = [carol]
+    await user.account.refresh(bob)
+    expect(await blockedNow(user)).toEqual([bob])
+
+    await user.hooks.stop()
+    user.hooks.forget(alice)
+    expect(user.local.getItem(followedKey)).toBeNull()
   })
 })
 

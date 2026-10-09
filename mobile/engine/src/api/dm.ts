@@ -17,7 +17,7 @@ import { badCursor, cursorInt, cursorString, decodeCursor } from '../dto/cursor'
 import { loadUserSummaries, notSupported } from '../dto/hydrate'
 import { nextPage } from '../dto/paging'
 import { createLegacyBackend, type LegacyDmService, type LegacyReads } from '../dm/legacy'
-import { createV5Backend, SEND_GAVE_UP, type DmEngineSource } from '../dm/v5'
+import { BLOCK_SETTLING_MS, createV5Backend, SEND_GAVE_UP, type DmEngineSource } from '../dm/v5'
 import type { ConversationRow } from '../dm/changes'
 import type { ConversationDTO, DmBackendKind, DmGroupAction, DmRetention, DmStatusDTO, MessageDTO } from '../dm/types'
 import type { AppLifecycleState } from '../shims/lifecycle'
@@ -25,6 +25,7 @@ import type { SessionEvents } from './session'
 import { NotSentError, type ProbeKit, type ProbeResult, type TicketStore, type WriteResult } from '../writes/tickets'
 import type { WriteTicket } from '../writes/types'
 import { avatarFromField, type AuthorDTO, type Page } from './dto'
+import { onOwnBlocks, ownBlocks, type OwnBlocksListener } from './own-blocks'
 
 export type * from '../dm/types'
 
@@ -50,7 +51,6 @@ const SENT_MATCH_SLACK_MS = 60_000
  * shows 60 s after it (`UNTICKETED_WAIT_MS`), so none may appear later.
  */
 const SEND_SUBMIT_DEADLINE_MS = 45_000
-
 export interface DmModuleOptions {
   emit(event: string, payload: unknown): void
   tickets: TicketStore
@@ -77,7 +77,18 @@ export interface DmModuleOptions {
    */
   unhydrated?: ReadonlySet<string>
   coalesceMs?: number
+  /** The account's own block list, which DM v5 Messages follow. Default: `own-blocks.ts`. */
+  accountBlocks?: AccountBlocks
 }
+
+/** Reads of the account's own block list (`own-blocks.ts`). */
+export interface AccountBlocks {
+  /** Read the list whole now; a read that succeeds reaches every `subscribe` listener. Rejects when it fails. */
+  refresh(identityId: string): Promise<unknown>
+  subscribe(listener: OwnBlocksListener): () => void
+}
+
+const libBlocks: AccountBlocks = { refresh: ownBlocks, subscribe: onOwnBlocks }
 
 /** The result of `dm.unlock` (PRD DM-02). */
 export type DmUnlockResult =
@@ -125,6 +136,12 @@ async function loadAuthors(ids: string[]): Promise<Map<string, AuthorDTO>> {
   return new Map([...users].map(([id, { username, displayName, avatar, resolved }]) => [id, { id, username, displayName, avatar, resolved }]))
 }
 
+/** The account a block or unblock ticket names. */
+function blockTarget(ticket: WriteTicket): string | null {
+  const id = (ticket.target as { identityId?: unknown } | null)?.identityId
+  return typeof id === 'string' ? id : null
+}
+
 function identityIdOf(value: unknown, what: string): string {
   const bytes = typeof value === 'string' ? base58ToBytes(value) : null
   if (!bytes || bytes.length !== 32) throw new RpcError(`Invalid ${what}`, 'BAD_REQUEST')
@@ -149,23 +166,70 @@ function keyOf(value: unknown): string {
  */
 export function createDmModule(options: DmModuleOptions) {
   const viewer = options.viewer ?? getCurrentUserId
-  const { emit } = options
-  const backend = (options.backend ?? (dmIsV5() ? 'v5' : 'legacy')) === 'v5'
-    ? createV5Backend({ source: options.v5Source ?? libEngines, emit, coalesceMs: options.coalesceMs, storage: options.storage })
-    : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs, reads: options.legacyReads })
-  // Legacy messages follow the account's blocks (DM-10): a settled block or unblock re-reads them.
-  options.tickets.observe(ticket => {
-    if (backend.kind === 'legacy' && (ticket.op === 'block' || ticket.op === 'unblock') && ticket.state !== 'pending') backend.blocksChanged()
-  })
-  const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
-  const fetchAuthors = options.authors ?? loadAuthors
-
+  const { emit, tickets } = options
+  const accountBlocks = options.accountBlocks ?? libBlocks
   /**
    * Set by `hooks.stop` (sign-out, account switch) until a session starts
    * again: the outgoing account's keys may still be readable for a moment,
    * and nothing may restart its messages.
    */
   let halted = false
+  const backend = (options.backend ?? (dmIsV5() ? 'v5' : 'legacy')) === 'v5'
+    ? createV5Backend({
+      source: options.v5Source ?? libEngines,
+      emit,
+      coalesceMs: options.coalesceMs,
+      storage: options.storage,
+      // Once per engine start (sign-in, restore, unlock): Messages catch up with blocks confirmed while the app was closed.
+      onStarted: identityId => {
+        accountBlocks.refresh(identityId)
+          .catch(error => logger.warn('DM v5: reading the account\'s blocks failed; Messages keep theirs for now:', error))
+      },
+      settling: blocksSettling,
+    })
+    : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs, reads: options.legacyReads })
+
+  /** People with a block or unblock from this device that may still land, or settled lately; null when unreadable. */
+  function blocksSettling(): Set<string> | null {
+    const lately = Date.now() - BLOCK_SETTLING_MS
+    try {
+      return new Set(tickets.list().flatMap(ticket => {
+        if (ticket.op !== 'block' && ticket.op !== 'unblock') return []
+        if (ticket.state !== 'pending' && ticket.state !== 'unconfirmed' && ticket.updatedAt.getTime() < lately) return []
+        const target = blockTarget(ticket)
+        return target ? [target] : []
+      }))
+    } catch (error) {
+      logger.warn('DM v5: reading block writes failed:', error)
+      return null
+    }
+  }
+
+  // Messages follow the account's blocks (DM-10). Legacy: a settled block or unblock re-reads them.
+  // DM v5: a confirmed block or unblock (or an unblock that deleted the own block but leaves a followed
+  // list blocking, STILL_BLOCKED) reaches Messages, also when a check confirms it after a relaunch.
+  tickets.observe(ticket => {
+    if ((ticket.op !== 'block' && ticket.op !== 'unblock') || ticket.state === 'pending') return
+    if (backend.kind === 'legacy') {
+      backend.blocksChanged()
+      return
+    }
+    const peerId = blockTarget(ticket)
+    const identityId = viewer()
+    if (!peerId || halted || !identityId || ticket.identityId !== identityId) return
+    if (ticket.state === 'confirmed') backend.followAccountBlock(identityId, peerId, ticket.op === 'block')
+    else if (ticket.op === 'unblock' && ticket.state === 'failed' && ticket.error?.code === 'STILL_BLOCKED') {
+      backend.followAccountBlock(identityId, peerId, false)
+    }
+  })
+  // Every whole read of the account's block list (this start's, the Blocked screen's) keeps Messages in step.
+  // Never unsubscribed: the dm module lives as long as the engine, and checks the backend and viewer on each read.
+  accountBlocks.subscribe((identityId, blocks) => {
+    if (backend.kind !== 'v5' || halted || identityId !== viewer()) return
+    backend.followAccountBlocks(identityId, new Map(blocks.map(block => [block.blockedId, block.createdAt])))
+  })
+  const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
+  const fetchAuthors = options.authors ?? loadAuthors
 
   /** The signed-in identity, with its backend started (a no-op once it runs; retried while locked). */
   function session(): string {
@@ -246,11 +310,13 @@ export function createDmModule(options: DmModuleOptions) {
    * replace (a roster or self-state save) whose answer was lost but which the
    * DM engine has since seen land stops holding writes back: lib keeps it
    * pending for 15 minutes otherwise, and every DM write in between fails
-   * PENDING_WRITE (`settleSupersededReplaces`).
+   * PENDING_WRITE (`settleSupersededReplaces`). A send settles them itself
+   * (`settle: false`), inside its own time budget: the settle waits for the
+   * account's write lock, which a stalled write holds.
    */
-  async function running<T>(identityId: string, work: () => Promise<T>): Promise<T> {
+  async function running<T>(identityId: string, work: () => Promise<T>, { settle = true }: { settle?: boolean } = {}): Promise<T> {
     if (halted) throw new NotSentError(new RpcError('Messages are stopped while the account changes', 'RESTART_REQUIRED'))
-    if (backend.kind === 'v5') {
+    if (settle && backend.kind === 'v5') {
       await settleSupersededReplaces(identityId, YAPPR_DM_V5_CONTRACT_ID)
         .catch(error => logger.debug('DM: could not settle pending replaces:', error))
     }
@@ -282,7 +348,7 @@ export function createDmModule(options: DmModuleOptions) {
       const text = earlier ? earlier.parts.slice(earlier.sent).join('') : args.text
       let result: WriteResult
       try {
-        result = await running(args.identityId, () => backend.send(args.identityId, args.key, text))
+        result = await running(args.identityId, () => backend.send(args.identityId, args.key, text), { settle: false })
       } catch (error) {
         const delivered = await notePartlySent(args, id).catch(cause => {
           logger.debug('DM send: could not record the parts sent:', cause)

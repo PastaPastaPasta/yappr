@@ -121,6 +121,7 @@ const { createGraphWrites } = await import('../../src/api/graph')
 const { createPostWrites } = await import('../../src/api/posts')
 const { createProfileWrites } = await import('../../src/api/profiles')
 const { createSafetyModule } = await import('../../src/api/safety')
+const { onOwnBlocks } = await import('../../src/api/own-blocks')
 const { createNotificationsModule } = await import('../../src/api/notifications')
 const { useSettingsStore } = await import('@/lib/store')
 const { useNotificationStore } = await import('@/lib/stores/notification-store')
@@ -412,6 +413,20 @@ describe('graph and safety writes', () => {
 
     m.blockService.getUserBlocks.mockRejectedValue(new Error('no available addresses to retry'))
     await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
+  })
+
+  it('tells every whole read of the blocked list to its listeners (DM v5 Messages), and never a failed one', async () => {
+    const { safety } = engine()
+    const heard = vi.fn()
+    const stop = onOwnBlocks(heard)
+    m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, $createdAt: 1000 }, { blockedId: '', $createdAt: 2000 }, { blockedId: id('Other'), $createdAt: 3000 }])
+    await safety.blocked()
+    expect(heard).toHaveBeenCalledExactlyOnceWith(VIEWER, [{ blockedId: AUTHOR, createdAt: 1000 }, { blockedId: id('Other'), createdAt: 3000 }])
+
+    m.blockService.getUserBlocks.mockRejectedValue(new Error('no available addresses to retry'))
+    await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
+    expect(heard).toHaveBeenCalledTimes(1)
+    stop()
   })
 
   it('tells an own block from one only a followed block list makes', async () => {

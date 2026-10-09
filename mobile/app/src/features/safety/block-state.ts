@@ -6,11 +6,12 @@ import { create } from 'zustand';
 import { queryKeys } from '~/data/keys';
 import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
-import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
+import { useSessionStore, useViewerId } from '~/data/session';
 import { sendWrite, useLandingIntent, useLandingTicket, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { setBlockedInMessages, syncMessagesBlock } from '~/features/messages/dm-actions';
+import { setBlockedInMessages } from '~/features/messages/dm-actions';
+import { refreshDm } from '~/features/messages/dm-data';
 import { queryClient } from '~/state/query-client';
 import { errorFeedback } from '~/ui/haptics';
 import { toast } from '~/ui/toast';
@@ -220,16 +221,17 @@ export interface BlockVars {
 
 
 /**
- * DM v5 keeps its own block list (DM-10): a confirmed Block also blocks them
- * there, and a confirmed Unblock lifts it (PRD SAFE-01, SAFE-02), so one
- * Block covers Messages too. Only once confirmed: Messages save their block
- * at once and keep it across a relaunch, so one saved for a block that
- * never landed would outlive it (RC16-A-02). Until then the conversation
- * shows this device's decision (`useConversationBlocked`). Legacy DMs
- * follow the account's blocks by themselves.
+ * Messages follow the account's blocks by themselves (PRD SAFE-01, SAFE-02):
+ * on DM v5 the engine blocks or unblocks them there once the block or
+ * unblock is confirmed (also when a check confirms it after a relaunch),
+ * and catches up with the account's block list at every start, so one Block
+ * covers Messages too and none outlives a block that never landed
+ * (RC16-A-02). Until then the conversation shows this device's decision
+ * (`useConversationBlocked`). This re-reads Messages' status for Message
+ * settings' Blocked list.
  */
-function blockInMessages(userId: string, block: boolean): void {
-  if (getCapabilities()?.dm === 'v5') syncMessagesBlock(userId, block).catch(() => undefined);
+function refreshMessages(): void {
+  refreshDm();
 }
 
 function applyBlock(vars: BlockVars): () => void {
@@ -261,8 +263,8 @@ function handleOf({ userId, user }: BlockVars): string | null {
  * Block or unblock (`safety.block` / `safety.unblock`), one at a time per
  * user. Optimistic: the author's content goes (or comes back) at once, and
  * a failure (or a check proving it never landed) brings everything back.
- * Only a confirmed write says "Blocked @x", reaches Messages on DM v5
- * (`blockInMessages`), and reads the lists the engine filters by block
+ * Only a confirmed write says "Blocked @x", reaches Messages (the engine
+ * follows it there, `refreshMessages`), and reads the lists the engine filters by block
  * status again; one not confirmed yet stays busy ("Blocking…") while the
  * app checks it. An unblock that leaves a followed block list blocking the
  * user fails with `STILL_BLOCKED`: the posts stay hidden, the Blocked list
@@ -296,7 +298,7 @@ export function useBlockTicket(userId: string | undefined): WriteTicket | null {
  * it made one, as the profile and the Blocked list show it, else what
  * Messages say (`flagged`, which on DM v5 also counts a block made only in
  * Messages). A block that fails or never lands takes the banner with it,
- * and Messages only save a block once it is confirmed (`blockInMessages`),
+ * and Messages only follow a block once it is confirmed (`refreshMessages`),
  * so none outlives it (RC16-A-02). An unblock still on its way keeps it:
  * Messages block them until it is confirmed.
  */
@@ -323,8 +325,8 @@ export const blockWrite: WriteSpec<BlockVars> = {
   intent: ({ block }) => block,
   matches: (ticket, { userId, block }) => ticket.op === (block ? 'block' : 'unblock') && targetIdentity(ticket) === userId,
   onConfirmed: (_ticket, vars) => {
-    const { userId, block } = vars;
-    blockInMessages(userId, block);
+    const { block } = vars;
+    refreshMessages();
     refetchFiltered(block);
     const handle = vars.handle ?? handleOf(vars) ?? 'this account';
     toast.success(block ? copy.toast.blocked(handle) : copy.toast.unblocked(handle));
@@ -333,7 +335,7 @@ export const blockWrite: WriteSpec<BlockVars> = {
   onFailed: (ticket, { viewerId, userId, block }) => {
     if (block || ticket.error?.code !== 'STILL_BLOCKED') return;
     decide(viewerId, userId, { blocked: true, listOnly: true });
-    blockInMessages(userId, false);
+    refreshMessages();
     refetch(queryKeys.blocked);
   },
   failureText: (ticket) => (ticket.error?.code === 'STILL_BLOCKED' ? copy.toast.stillBlocked : null),

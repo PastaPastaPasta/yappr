@@ -981,7 +981,7 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(useToastStore.getState().current?.message).toBe('Blocked @bob');
     });
 
-    it("lifts the account's own block, and the one in Messages once that is confirmed", async () => {
+    it("lifts the account's own block, and Messages follow it once that is confirmed", async () => {
       await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
       fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: 'self' });
       const pending = ticket({ op: 'unblock', target: { identityId: BOB_ID } });
@@ -997,9 +997,13 @@ describe('Conversation (DM-03, DM-04)', () => {
       const actions = () => screen.getByTestId('dm-conversation-menu').props.actions as { title: string }[];
       expect(actions().map((a) => a.title)).toContain('Unblocking…');
 
+      const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
       await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
-      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
+      // The engine lifts the block in Messages itself; the app only reads them again.
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
       expect(useToastStore.getState().current?.message).toBe('Unblocked @bob');
+      invalidate.mockRestore();
     });
 
     it('shows the banner from the same block as the profile, and takes it away when the block fails (RC16-A-02)', async () => {
@@ -1038,8 +1042,8 @@ describe('Conversation (DM-03, DM-04)', () => {
         await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: false, handle: '@bob' });
       });
       await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
-      // Messages are told, and until they are read again the conversation follows the confirmed unblock.
-      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
+      // The engine lifts it in Messages, and until they are read again the conversation follows the confirmed unblock.
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
       expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
     });
 

@@ -11,6 +11,7 @@ import { pageOfList } from '../dto/paging'
 import { assertId, assertTarget, characters, relationProbe, signer, socialDoc, ticketIdentity, ticketTarget } from '../writes/handler-kit'
 import { createdDocument, fromTransitionResult } from '../writes/lib-results'
 import { ownBlockExists } from '../writes/strict-reads'
+import { ownBlocks, type OwnBlock } from './own-blocks'
 import type { TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import type { BlockSourceDTO, Page, UserSummaryDTO } from './dto'
@@ -61,16 +62,7 @@ interface WithdrawReportArgs {
   reportId: string
 }
 
-const blockLists = new TtlMap<string, { blockedId: string; message?: string }[]>(60_000)
-
-/** Every one of the viewer's own blocks (`getUserBlocks`), rejecting when the read fails. */
-async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?: string }[]> {
-  try {
-    return (await blockService.getUserBlocks(viewer)).filter(block => block.blockedId)
-  } catch (error) {
-    throw readFailure(error)
-  }
-}
+const blockLists = new TtlMap<string, OwnBlock[]>(60_000)
 
 /**
  * Whether `docType` can be written now: false while the registered contract's
