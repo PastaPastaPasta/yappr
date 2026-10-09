@@ -189,13 +189,17 @@ export function createDmModule(options: DmModuleOptions) {
     })
     : createLegacyBackend({ service: options.legacyService ?? directMessageService, emit, coalesceMs: options.coalesceMs, reads: options.legacyReads })
 
-  /** People with a block or unblock from this device that may still land, or settled lately; null when unreadable. */
+  /**
+   * People with a block or unblock from this device that may still land, or settled lately (one a check proved
+   * never landed counts as settled when proved); null when unreadable.
+   */
   function blocksSettling(): Set<string> | null {
     const lately = Date.now() - BLOCK_SETTLING_MS
     try {
       return new Set(tickets.list().flatMap(ticket => {
         if (ticket.op !== 'block' && ticket.op !== 'unblock') return []
-        if (ticket.state !== 'pending' && ticket.state !== 'unconfirmed' && ticket.updatedAt.getTime() < lately) return []
+        const open = ticket.state === 'pending' || (ticket.state === 'unconfirmed' && !ticket.retryable)
+        if (!open && ticket.updatedAt.getTime() < lately) return []
         const target = blockTarget(ticket)
         return target ? [target] : []
       }))

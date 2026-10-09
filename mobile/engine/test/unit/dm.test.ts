@@ -31,7 +31,7 @@ const { useSettingsStore } = await import('@/lib/store')
 const { createDmModule } = await import('../../src/api/dm')
 const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
-const { WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
+const { ABSENCE_AFTER_MS, WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { RpcError } = await import('../../src/protocol/envelope')
 const { BLOCK_SETTLING_MS, SEND_BUDGET_MS, SEND_REATTEMPT_PAUSE_MS } = await import('../../src/dm/v5')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
@@ -102,15 +102,16 @@ const started = (identityId: string): SessionEvents['session.changed'] =>
 /** One user's engine: a dm module over a ticket store, signed in as `me`. */
 /**
  * `kv`: the device's DM v5 store, kept across a relaunch (else a fresh
- * device); `device`, its ticket and plain storage, kept the same way, and
- * the account's block list on the chain (else an empty one).
+ * device); `device`, its ticket and plain storage, kept the same way, the
+ * account's block list on the chain (else an empty one), and the ticket
+ * store's clock (else the one `Date.now` held when it was made).
  */
 function userOn(
   ledger: MemoryLedger,
   me: string,
   extra: Partial<Parameters<typeof createDmModule>[0]> = {},
   kv?: InstanceType<typeof MapKv>,
-  device: { storage?: ReturnType<typeof memoryStorage>; local?: ReturnType<typeof memoryStorage>; account?: ReturnType<typeof accountOn> } = {},
+  device: { storage?: ReturnType<typeof memoryStorage>; local?: ReturnType<typeof memoryStorage>; account?: ReturnType<typeof accountOn>; now?: () => number } = {},
 ) {
   const events: Event[] = []
   const storage = device.storage ?? memoryStorage()
@@ -120,7 +121,7 @@ function userOn(
   const emit = (event: string, payload: unknown) => { events.push({ event, payload }) }
   let signedIn: string | null = me
   const keyRequired = vi.fn()
-  const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true, onKeyRequired: keyRequired })
+  const tickets = createTicketStore({ storage, emit, currentIdentity: () => signedIn, documentExists: async () => true, onKeyRequired: keyRequired, now: device.now })
   const engines = new Map<string, DmEngine>()
   let locked = false
   const source = {
@@ -1149,7 +1150,7 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ ready: true, blocked: [bob] }))
     expect(user.account.refresh).toHaveBeenCalledWith(alice)
     expect(user.account.refresh).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: 'local' })
   })
 
   it('blocks in Messages once a block the app was killed during is confirmed after the relaunch', async () => {
@@ -1176,7 +1177,7 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     // A stale read still missing it, this soon after it landed, does not lift it.
     await account.refresh(alice)
     expect(await blockedNow(user)).toEqual([bob])
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: 'local' })
   })
 
   it('lifts only the blocks it made for the account, and never on a failed read', async () => {
@@ -1201,7 +1202,7 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     ledger.time += BLOCK_SETTLING_MS + 1000
     await user.account.refresh(alice)
     expect(await blockedNow(user)).toEqual([carol])
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({})
   })
 
   it('leaves unblocked someone Messages unblocked after the account blocked them, on a device that never followed it', async () => {
@@ -1217,13 +1218,13 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     user.account.madeAt.set(bob, unblockedAt - 60_000)
     await user.account.refresh(alice)
     expect(await blockedNow(user)).toEqual([])
-    expect(user.local.getItem(followedKey)).toBeNull()
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt - 60_000 })
 
     // Blocked again since: Messages follow the newer block.
     user.account.madeAt.set(bob, unblockedAt + 60_000)
     await user.account.refresh(alice)
     expect(await blockedNow(user)).toEqual([bob])
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt + 60_000 })
   })
 
   it('leaves unblocked in Messages someone unblocked there whom the account still blocks', async () => {
@@ -1239,10 +1240,11 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     const ledger = ledgerNow()
     const kv = new MapKv()
     const account = accountOn([bob])
-    account.madeAt.set(bob, ledger.time - 60_000)
+    const madeAt = ledger.time - 60_000
+    account.madeAt.set(bob, madeAt)
     const first = await ready(userOn(ledger, alice, {}, kv, { account }))
     await vi.waitFor(async () => expect(await blockedNow(first)).toEqual([bob]))
-    expect(JSON.parse(first.local.getItem(followedKey) as string)).toEqual([bob])
+    expect(JSON.parse(first.local.getItem(followedKey) as string)).toEqual({ [bob]: madeAt })
     // Message settings' Unblock: Messages only. The account's (older) block leaves it standing.
     expect(await first.dm.setBlocked(bob, false)).toBe(true)
     const unblockedAt = ledger.time
@@ -1255,7 +1257,7 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     ledger.time = unblockedAt + BLOCK_SETTLING_MS + 60_000
     const user = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account }))
     await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt + 60_000 })
   })
 
   it('keeps a Messages unblock made while the DM clock is behind the account block it followed', async () => {
@@ -1292,6 +1294,52 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     user.account.madeAt.set(bob, confirmedAt)
     await user.account.refresh(alice)
     expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('keeps a Messages unblock, made while the DM clock is behind, of a Messages block an account block adopted', async () => {
+    const ledger = ledgerNow()
+    const user = await ready(userOn(ledger, alice))
+    // Blocked in Messages alone first (web's conversation menu).
+    expect(await user.dm.setBlocked(bob, true)).toBe(true)
+    // The account's block, read from a node ahead of the latest DM read: Messages adopt the standing block.
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, ledger.time + 60_000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
+    // Message settings' Unblock, before the DM clock catches up with that block.
+    expect(await user.dm.setBlocked(bob, false)).toBe(true)
+    expect(ledger.time).toBeLessThan(user.account.madeAt.get(bob) as number)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([])
+    await user.hooks.stop()
+
+    // Nor does a device that never followed that block, once it has loaded the saved Messages state.
+    const reads = user.account.refresh.mock.calls.length
+    const other = await ready(userOn(ledger, alice, {}, undefined, { account: user.account }))
+    await vi.waitFor(() => expect(user.account.refresh).toHaveBeenCalledTimes(reads + 1))
+    expect(await blockedNow(other)).toEqual([])
+  })
+
+  it('follows a later block from another device once a block here was proved never to land', async () => {
+    // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
+    const user = await ready(userOn(ledgerNow(), alice, {}, undefined, { now: () => Date.now() }))
+    user.tickets.register<{ targetId: string }>('block', {
+      run: async () => ({ state: 'unconfirmed' }),
+      probe: async () => ({ state: 'not-applied' }),
+    })
+    const sent = await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(sent).toMatchObject({ state: 'unconfirmed' })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + ABSENCE_AFTER_MS + 1000)
+    expect(await user.tickets.check(sent.id)).toMatchObject({ state: 'unconfirmed', retryable: true, error: { code: 'NOT_RECORDED' } })
+    expect(await blockedNow(user)).toEqual([])
+
+    // Well after, the account blocks bob from another device.
+    vi.setSystemTime(Date.now() + BLOCK_SETTLING_MS + 60_000)
+    user.account.blocked = [bob]
+    user.account.madeAt.set(bob, Date.now() - 1000)
+    await user.account.refresh(alice)
+    expect(await blockedNow(user)).toEqual([bob])
   })
 
   it('follows a block and unblock confirmed here, and an unblock a followed list overrides, over stale reads', async () => {

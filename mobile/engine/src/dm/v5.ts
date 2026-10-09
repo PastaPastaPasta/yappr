@@ -55,20 +55,34 @@ const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${id
 
 /**
  * The people this device blocked in Messages because the account blocks
- * them (PRD SAFE-01): only these are lifted when the account's block goes.
- * A block made in Messages alone (web's conversation menu) is never in it,
- * so following the account's blocks never lifts one.
+ * them (PRD SAFE-01), each with the account block it followed: its
+ * `$createdAt`, or `LOCAL` for one confirmed here (or read without one)
+ * whose `$createdAt` it has not read yet. Only these are lifted when the
+ * account's block goes. A block made in Messages alone (web's conversation
+ * menu) is never in it, so following the account's blocks never lifts one.
  */
 const followedKey = (identityId: string) => scopedKey(`yappr_engine_dm_account_blocks:${identityId}`)
 
-function readFollowed(storage: KeyValueArea, identityId: string): Set<string> {
+const LOCAL = 'local'
+type Followed = Map<string, number | typeof LOCAL>
+
+function readFollowed(storage: KeyValueArea, identityId: string): Followed {
   try {
-    const value = JSON.parse(storage.getItem(followedKey(identityId)) ?? '[]') as unknown
-    if (Array.isArray(value)) return new Set(value.filter((id): id is string => typeof id === 'string'))
+    const value = JSON.parse(storage.getItem(followedKey(identityId)) ?? '{}') as unknown
+    // Earlier builds kept only the ids.
+    if (Array.isArray(value)) return new Map(value.filter((id): id is string => typeof id === 'string').map(id => [id, LOCAL]))
+    if (value && typeof value === 'object') {
+      return new Map(Object.entries(value).filter((entry): entry is [string, number | typeof LOCAL] =>
+        entry[1] === LOCAL || Number.isFinite(entry[1])))
+    }
   } catch {
     // Unreadable: nothing followed yet.
   }
-  return new Set()
+  return new Map()
+}
+
+function writeFollowed(storage: KeyValueArea, identityId: string, followed: Followed): void {
+  storage.setItem(followedKey(identityId), JSON.stringify(Object.fromEntries(followed)))
 }
 
 /** A choice kept for later: block or unblock, and when it was made (a newer one from another device wins). */
@@ -421,14 +435,15 @@ export function createV5Backend(options: V5BackendOptions) {
 
   /**
    * Messages follow the account's own blocks (PRD SAFE-01, SAFE-02): block
-   * everyone on `blocked` (the whole list, as read) whom this device never
-   * blocked in Messages for it, and lift the blocks it made for people no
-   * longer on it. A block already standing in Messages is adopted, so the
-   * account's unblock lifts it too. Anyone whose Messages block was lifted,
-   * on any device (Message settings' Unblock), after the account blocked
-   * them stays unblocked there, and a block the account made later (one
-   * removed and made again) blocks them again: the newer change wins, as in
-   * a merge. A block changed in Messages lately is never lifted by a read
+   * everyone on `blocked` (the whole list, as read) for each account block
+   * this device has not followed yet, and lift the blocks it made for people
+   * no longer on it. A block already standing in Messages is adopted, so the
+   * account's unblock lifts it too. An account block already followed here
+   * changes nothing, so a choice made in Messages since (Message settings'
+   * Unblock) stands; a newer one (removed and made again) blocks them again.
+   * One not followed here yet leaves unblocked someone Messages unblocked
+   * after it was made, on another device (the newer change wins, as in a
+   * merge). A block changed in Messages lately is never lifted by a read
    * (one from a node that has not caught up yet must not undo it). People
    * with a block or unblock of their own settling are left to it
    * (`followAccountBlock`).
@@ -440,26 +455,35 @@ export function createV5Backend(options: V5BackendOptions) {
     const standing = new Set(running.getSnapshot().blocked)
     let changed = false
     for (const [peerId, createdAt] of blocked) {
-      if (settling.has(peerId) || (followed.has(peerId) && standing.has(peerId))) continue
-      // An unknown age: the newest for a block not yet followed (the account's
-      // block wins), else the one already followed (a Messages unblock stands).
-      const unknown = followed.has(peerId) ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY
-      const madeAt = Number.isFinite(createdAt) ? createdAt : unknown
-      if (!standing.has(peerId) && savedBlockChange(running, peerId) > madeAt) continue
-      // Stamped no earlier than the account's block, even with the DM clock behind the
-      // account read: a Messages unblock after this is then always the newer change.
-      applyBlock(running, peerId, true, Number.isFinite(createdAt) ? createdAt : 0)
-      followed.add(peerId)
+      if (settling.has(peerId)) continue
+      const madeAt = Number.isFinite(createdAt) ? createdAt : LOCAL
+      const seen = followed.get(peerId)
+      if (seen === LOCAL) {
+        // Followed when it was confirmed here: only its age is new.
+        if (madeAt !== LOCAL) {
+          followed.set(peerId, madeAt)
+          changed = true
+        }
+        continue
+      }
+      // The account block already followed: a choice made in Messages since stands.
+      if (seen !== undefined && (madeAt === LOCAL || madeAt <= seen)) continue
+      // Not followed here yet (an unknown age counts as the newest): Messages block them,
+      // unless Messages lifted their block after it was made, on another device.
+      if (madeAt === LOCAL || standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) {
+        applyBlock(running, peerId, true)
+      }
+      followed.set(peerId, madeAt)
       changed = true
     }
     const lately = running.ctx.chain.now() - BLOCK_SETTLING_MS
-    for (const peerId of [...followed]) {
+    for (const peerId of [...followed.keys()]) {
       if (blocked.has(peerId) || settling.has(peerId) || savedBlockChange(running, peerId) > lately) continue
       applyBlock(running, peerId, false)
       followed.delete(peerId)
       changed = true
     }
-    if (changed) storage().setItem(followedKey(identityId), JSON.stringify([...followed]))
+    if (changed) writeFollowed(storage(), identityId, followed)
   }
 
   /** `setBlocked`: now when the saved state has loaded, else kept for when it has; stamped no earlier than `notBefore`. */
@@ -605,7 +629,12 @@ export function createV5Backend(options: V5BackendOptions) {
      * Messages while they are locked here. Returns whether it changed
      * anything (kept for later counts as a change).
      */
-    setBlocked: (identityId: string, peerId: string, blocked: boolean): boolean => blockInMessages(identityId, peerId, blocked),
+    setBlocked(identityId: string, peerId: string, blocked: boolean): boolean {
+      // Stamped after the account block followed here, whatever the DM clock says, so
+      // another device that has not followed it yet reads this choice as the newer one.
+      const seen = readFollowed(storage(), identityId).get(peerId)
+      return blockInMessages(identityId, peerId, blocked, seen === undefined ? 0 : seen === LOCAL ? Date.now() : seen + 1)
+    },
 
     /**
      * The account's own block list as just read, whole (never a failed or
@@ -627,13 +656,11 @@ export function createV5Backend(options: V5BackendOptions) {
      * there for the account.
      */
     followAccountBlock(identityId: string, peerId: string, blocked: boolean): void {
-      // The block was made no later than now (its `$createdAt` is not known here): stamped
-      // no earlier, even with the DM clock behind, so a later Messages unblock is the newer change.
-      blockInMessages(identityId, peerId, blocked, blocked ? Date.now() : 0)
+      blockInMessages(identityId, peerId, blocked)
       const followed = readFollowed(storage(), identityId)
-      if (blocked) followed.add(peerId)
+      if (blocked) followed.set(peerId, LOCAL)
       else followed.delete(peerId)
-      storage().setItem(followedKey(identityId), JSON.stringify([...followed]))
+      writeFollowed(storage(), identityId, followed)
     },
 
     /** "Reclaim message fees": applied at once and saved now, kept on the device until the save lands. */
