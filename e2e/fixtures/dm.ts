@@ -527,7 +527,31 @@ export async function selfStateOf(bot: DmBot): Promise<{ id: string; revision: n
   return { id: b58(doc.$id), revision: Number(doc.$revision ?? 1), state }
 }
 
-export const hasDirect = (state: SelfState, peer: DmBot): boolean => state.directs.some((d) => bytesEqual(d.peer, peer.id))
+/**
+ * Clear a block that `device`'s bot holds on `peer`. The direct file's block test blocks A from B
+ * and unblocks at its end, so a run interrupted in between leaves the block in B's self-state, and
+ * a held block drops everything from the peer: messages, invites and group grants. Every later
+ * run of both DM files then waits out its first delivery from A. Each file calls this before its
+ * first delivery, through the settings dialog's blocked list (a fresh device does not list a
+ * blocked person's conversation until its first poll ends).
+ */
+export async function ensureNotBlocked(device: Device, peer: DmBot): Promise<void> {
+  const blocked = async () =>
+    (await selfStateOf(device.bot))?.state.blocks.some((b) => b.blocked && bytesEqual(b.id, peer.id)) ?? false
+  if (!(await blocked())) return
+  const { page } = device
+  await gotoMessages(page)
+  await page.getByRole('button', { name: 'Message settings' }).click()
+  const name = (await profileDisplayName(peer)) ?? `yappr-dm-e2e-${peer.index}`
+  const entry = page.getByRole('dialog').getByRole('listitem').filter({ has: page.getByText(name, { exact: true }) })
+  await entry.getByRole('button', { name: 'Unblock' }).click({ timeout: 60_000 })
+  await expect(entry).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await flushSelfState(device)
+  await expect.poll(blocked, { timeout: 120_000, intervals: [3_000, 5_000] }).toBe(false)
+}
+
+export const hasDirect = (state: SelfState, peer: DmBot): boolean =>state.directs.some((d) => bytesEqual(d.peer, peer.id))
 
 // ---------------------------------------------------------------------------
 // Writing DM v5 documents from Node with the app's own encodings
