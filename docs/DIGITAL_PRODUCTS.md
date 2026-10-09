@@ -189,8 +189,11 @@ deliver a `javascript:` link.
   delivery, so every kit it saves is deliverable, one code per receipt if need
   be. A receipt's size depends on the kit alone: the title is budgeted at its
   largest (200 characters at their largest once serialized), and a receipt
-  names the variant by a fixed-size reference (16 hex characters of SHA-256)
-  plus a label cut to 60 characters, never by the listing's variant key. So
+  names the variant by its canonical id (storefront v7: the sorted option ids,
+  "3.9", at most 19 characters) plus a label cut to 60 characters, never by
+  the listing's option names. A kit asset can be limited to the variants
+  carrying some options (one option, e.g. every "Red", or one per option type
+  for exactly one variant). So
   no listing edit (from this device or another, at any time) can make a saved
   kit undeliverable, and the fit needs no coordination between the listing
   and the kit. Files have no such cap: they live on IPFS, up to 100 MB each,
