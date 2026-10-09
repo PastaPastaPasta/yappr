@@ -170,6 +170,8 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   const bulkPriceValue = parsePriceInput(bulkPrice, currency)
   const bulkStockValue = parseCountInput(bulkStock, VARIANT_LIMITS.maxStock)
   const missing = missingCombinationCount(variants)
+  // A v1–v6 combination can keep its own photo outside the listing's images.
+  const showImages = imageUrls.length > 0 || variants.combinations.some((combination) => combination.imageUrl)
   const handleRestore = () => {
     grow(() => restoreCombinations(variants, defaults))
   }
@@ -373,7 +375,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
                     {trackStock && <th className="px-3 py-2 text-left font-medium">Stock</th>}
                     <th className="px-3 py-2 text-left font-medium">SKU</th>
                     {showWeight && <th className="px-3 py-2 text-left font-medium whitespace-nowrap">Weight (g)</th>}
-                    {imageUrls.length > 0 && <th className="px-3 py-2 text-left font-medium">Image</th>}
+                    {showImages && <th className="px-3 py-2 text-left font-medium">Image</th>}
                     <th className="px-3 py-2"><span className="sr-only">Remove</span></th>
                   </tr>
                 </thead>
@@ -388,6 +390,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
                       showWeight={showWeight}
                       legacy={legacy}
                       imageUrls={imageUrls}
+                      showImage={showImages}
                       disabled={disabled}
                       onUpdate={(patch) => onChange(updateCombination(variants, combination.id, patch))}
                       onRemove={() => {
@@ -523,13 +526,19 @@ interface CombinationRowProps {
   showWeight: boolean
   legacy?: boolean
   imageUrls: string[]
+  /** Whether the table has an Image column (the listing has images, or a combination its own photo). */
+  showImage: boolean
   disabled: boolean
   onUpdate: (patch: Partial<CombinationData>) => void
   onRemove: () => void
 }
 
-function CombinationRow({ combination, label, currency, trackStock, showWeight, legacy = false, imageUrls, disabled, onUpdate, onRemove }: CombinationRowProps) {
-  const imageUrl = combination.image ? imageUrls[combination.image - 1] : undefined
+/** The image select's value for a v1–v6 combination photo that is not in the listing's images. */
+const OWN_PHOTO = 'own'
+
+function CombinationRow({ combination, label, currency, trackStock, showWeight, legacy = false, imageUrls, showImage, disabled, onUpdate, onRemove }: CombinationRowProps) {
+  const imageUrl = combination.image ? imageUrls[combination.image - 1] : combination.imageUrl
+  const imageChoice = combination.image ? String(combination.image) : combination.imageUrl ? OWN_PHOTO : ''
   return (
     <tr>
       <td className="px-3 py-2 font-medium min-w-[8rem]">{label}</td>
@@ -608,17 +617,22 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
           />
         </td>
       )}
-      {imageUrls.length > 0 && (
+      {showImage && (
         <td className="px-3 py-2">
           <div className="flex items-center gap-2">
             <select
               aria-label={`Image for ${label}`}
-              value={combination.image ?? ''}
-              onChange={(event) => onUpdate({ image: event.target.value ? Number(event.target.value) : undefined, imageUrl: undefined })}
+              value={imageChoice}
+              onChange={(event) => {
+                const choice = event.target.value
+                if (choice === OWN_PHOTO) return
+                onUpdate({ image: choice ? Number(choice) : undefined, imageUrl: undefined })
+              }}
               disabled={disabled}
               className={`${cellClass} py-1`}
             >
               <option value="">Default image</option>
+              {combination.imageUrl && <option value={OWN_PHOTO}>Its own photo</option>}
               {imageUrls.map((url, index) => (
                 <option key={`${index}-${url}`} value={index + 1}>Image {index + 1}</option>
               ))}

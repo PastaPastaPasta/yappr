@@ -21,3 +21,14 @@ test('variant-editor-legacy: an empty stock entry stops tracking only that combi
   await page.getByLabel('Stock for M').blur()
   await expect.poll(() => page.evaluate(() => window.variantEditorValue().combinations.map((combination) => combination.stock))).toEqual([4, undefined])
 })
+
+test('variant-editor-legacy: a combination\'s own photo shows as such and can be reset to the default directly', async ({ page }) => {
+  await page.goto('/?fixture=variant-editor-legacy')
+  const image = page.getByLabel('Image for M')
+  await expect(image).toHaveValue('own')
+  await expect(page.getByLabel('Image for S')).toHaveValue('')
+  await image.selectOption('')
+  await expect.poll(() => page.evaluate(() => window.variantEditorValue().combinations.map((combination) => combination.imageUrl ?? null))).toEqual([null, null])
+  // With no listing images and no own photo left, there is nothing to choose: the column goes.
+  await expect(image).toHaveCount(0)
+})
