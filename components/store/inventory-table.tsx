@@ -16,7 +16,8 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils/format'
 import { storeItemService } from '@/lib/services/store-item-service'
-import { combinationImageUrl, tracksStock, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
+import { combinationImageUrl, findCombination, tracksStock, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
+import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
@@ -49,9 +50,7 @@ function totalStock(item: StoreItem, drafts: StockDrafts = {}): number {
 
 /** A typed stock count, or null when it is not a whole number the contract stores (0 to 4,294,967,295). */
 function parseStock(value: string): number | null {
-  if (!/^\d+$/.test(value.trim())) return null
-  const stock = Number(value.trim())
-  return Number.isSafeInteger(stock) && stock <= VARIANT_LIMITS.maxStock ? stock : null
+  return parseCountInput(value, VARIANT_LIMITS.maxStock) ?? null
 }
 
 export function InventoryTable({
@@ -252,7 +251,7 @@ export function InventoryTable({
 
   /** Keep a combination's typed stock as an unsaved edit (dropped when it matches what is saved). */
   const setStockDraft = useCallback((item: StoreItem, variantId: string, stock: number) => {
-    const saved = item.variants?.combinations.find((combination) => combination.id === variantId)?.stock
+    const saved = findCombination(item.variants, variantId)?.stock
     setStockDrafts((prev) => {
       const drafts = { ...prev[item.id] }
       if (stock === saved) delete drafts[variantId]

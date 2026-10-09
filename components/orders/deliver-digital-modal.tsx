@@ -247,6 +247,7 @@ export function DeliverDigitalModal({
 
         {lines.map((line, index) => {
           const planned = plan.delivery.items.find((item) => deliveredFor(item, line))
+          const variantLabel = orderLineVariantLabel(line)
           return (
             <div key={`${line.itemId}-${line.variantId ?? ''}-${index}`} className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg space-y-2 ${selected.has(index) ? '' : 'opacity-60'}`}>
               <label className="flex items-start gap-2 text-sm font-medium">
@@ -262,7 +263,7 @@ export function DeliverDigitalModal({
                 )}
                 <span>
                   {line.itemTitle}
-                  {orderLineVariantLabel(line) && <span className="text-gray-500 font-normal"> ({orderLineVariantLabel(line)})</span>}
+                  {variantLabel && <span className="text-gray-500 font-normal"> ({variantLabel})</span>}
                   <span className="text-gray-500 font-normal"> ×{line.quantity}</span>
                   {coverage[index].confirmed
                     ? <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-300">Sent before</span>

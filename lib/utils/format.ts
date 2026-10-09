@@ -59,6 +59,11 @@ export function formatPrice(price: number, currency: string = 'USD'): string {
   }).format(price / 100)
 }
 
+/** One price, or the lowest to the highest when they differ. */
+export function formatPriceRange({ min, max }: { min: number; max: number }, currency?: string): string {
+  return min === max ? formatPrice(min, currency) : `${formatPrice(min, currency)} – ${formatPrice(max, currency)}`
+}
+
 /**
  * Format a date for display
  */

@@ -15,7 +15,7 @@ import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ImageGallery, QuantityControl, MobileCartFab, RatingStars, ItemReviewList, BlockedOwnerBanner } from '@/components/store'
-import { formatPrice } from '@/lib/utils/format'
+import { formatPrice, formatPriceRange } from '@/lib/utils/format'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
@@ -42,11 +42,6 @@ function unavailableReasonFor(item: StoreItem, store: Store | null, viewerId: st
 /** The picker's starting choice, one entry per axis: an axis with a single option starts on it. */
 function initialSelection(variants: ItemVariants | undefined): Array<number | undefined> {
   return variants?.axes.map((axis) => (axis.options.length === 1 ? axis.options[0].id : undefined)) ?? []
-}
-
-/** One price, or the lowest and highest when they differ. */
-function formatPriceRange({ min, max }: { min: number; max: number }, currency: string | undefined): string {
-  return min === max ? formatPrice(min, currency) : `${formatPrice(min, currency)} – ${formatPrice(max, currency)}`
 }
 
 function LoadingFallback() {
@@ -300,11 +295,10 @@ function ItemDetailContent() {
 
             <div>
               <p className="text-2xl font-bold text-yappr-600">
+                {/* The chosen combination's price; until then the item's range (its one price without variants). */}
                 {combination
                   ? formatPrice(combination.price, item.currency)
-                  : variants
-                    ? formatPriceRange(storeItemService.getPriceRange(item), item.currency)
-                    : formatPrice(storeItemService.getPrice(item), item.currency)}
+                  : formatPriceRange(storeItemService.getPriceRange(item), item.currency)}
               </p>
               {combination?.sku && <p className="text-xs text-gray-400 mt-1">SKU {combination.sku}</p>}
             </div>

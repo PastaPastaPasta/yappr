@@ -14,7 +14,7 @@ import {
   ArrowDownTrayIcon
 } from '@heroicons/react/24/outline'
 import { Button } from '@/components/ui/button'
-import { formatPrice } from '@/lib/utils/format'
+import { formatPrice, formatPriceRange } from '@/lib/utils/format'
 import {
   parseInventoryCSV,
   toStoreItemData,
@@ -55,8 +55,7 @@ function messageFor(item: GroupedInventoryItem, message: string): string {
 /** The price a product preview shows: one price, or the lowest to the highest. */
 function previewPrice(item: GroupedInventoryItem, currency: string): string {
   if (!item.variants) return formatPrice(item.basePrice, currency)
-  const { min, max } = priceRange(item.variants)
-  return min === max ? formatPrice(min, currency) : `${formatPrice(min, currency)} – ${formatPrice(max, currency)}`
+  return formatPriceRange(priceRange(item.variants), currency)
 }
 
 /** The stock a product preview shows: the units in all, or "Not tracked". */

@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { getUploadErrorMessage, isUploadException, UploadErrorCode } from '@/lib/upload'
 import { formatFileSize, uploadEncryptedFile } from '@/lib/services/digital-file-service'
 import { describeAssetTarget, isSafeDeliveryUrl, MAX_CODE_LENGTH, MAX_DIGITAL_FILE_BYTES, normalizeLinkInput, retargetAxis, withAssetTarget } from '@/lib/services/digital-delivery-plan'
-import { findOption } from '@/lib/storefront/variant-codec'
+import { emptyVariants, findOption } from '@/lib/storefront/variant-codec'
 import type { DigitalAsset, ItemVariants } from '@/lib/types'
 
 interface DigitalAssetListEditorProps {
@@ -65,7 +65,7 @@ interface AssetTargetProps {
 }
 
 /** No option types: a product without variants still shows (and clears) an asset's old target. */
-const NO_VARIANTS: ItemVariants = { axes: [], combinations: [], nextOptionId: 1 }
+const NO_VARIANTS = emptyVariants()
 
 /**
  * Which variants get one asset: all of them, or those with the options

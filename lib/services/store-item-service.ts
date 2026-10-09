@@ -294,9 +294,10 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('sku' in data) documentData.sku = data.sku;
     // The table is re-encoded whenever the images change too: on v1–v6 a
     // combination's image is stored as its URL, not an index.
+    const writesTable = 'variants' in data || 'imageUrls' in data;
     const imageUrls = 'imageUrls' in data ? data.imageUrls : existing.imageUrls;
     const variants = 'variants' in data ? data.variants : existing.variants;
-    if ('variants' in data || 'imageUrls' in data) documentData.variants = variants && storedVariants(variants, imageUrls);
+    if (writesTable) documentData.variants = variants && storedVariants(variants, imageUrls);
     if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
 
     // What update() will send: the stored fields, with these changes over them.
@@ -304,7 +305,6 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     // a status or stock edit must never be blocked by a stored v1-v6 table.
     const merged: Record<string, unknown> = { ...this.extractContentFields(existing), ...documentData };
     for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
-    const writesTable = 'variants' in data || 'imageUrls' in data;
     assertStorable(merged, writesTable ? variants : undefined, imageUrls?.length ?? 0);
     return this.update(itemId, ownerId, documentData);
   }

@@ -7,9 +7,9 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import type { ItemVariants, VariantAxis, VariantCombination } from '@/lib/types'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import {
-  addAxis, addOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
-  renumberOptions, restoreCombinations, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
-  type CombinationDefaults,
+  addAxis, addOption, findOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
+  renumberOptions, restoreCombinations, sameName, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
+  type CombinationData, type CombinationDefaults,
 } from '@/lib/storefront/variant-codec'
 import {
   formatPriceInput, fullGridSize, missingCombinationCount, parseCountInput, parsePriceInput, splitOptionNames, variantGrowthProblem,
@@ -131,7 +131,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
     const name = newAxisName.trim()
     const names = splitOptionNames(newAxisOptions)
     if (!name || names.length === 0 || !canAddAxis) return
-    if (variants.axes.some((axis) => axis.name.trim().toLowerCase() === name.toLowerCase())) {
+    if (variants.axes.some((axis) => sameName(axis.name, name))) {
       setNotice(`There is already an option type called "${name}".`)
       return
     }
@@ -149,7 +149,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   }
 
   const bulkOptionId = bulkTarget === 'all' ? undefined : Number(bulkTarget)
-  const bulkOptionName = bulkOptionId === undefined ? undefined : variants.axes.flatMap((axis) => axis.options).find((option) => option.id === bulkOptionId)?.name
+  const bulkOptionName = bulkOptionId === undefined ? undefined : findOption(variants, bulkOptionId)?.option.name
   // A target removed since it was chosen falls back to every combination.
   const bulkScope = bulkOptionName === undefined ? undefined : bulkOptionId
   const bulkPriceValue = parsePriceInput(bulkPrice, currency)
@@ -509,7 +509,7 @@ interface CombinationRowProps {
   showWeight: boolean
   imageUrls: string[]
   disabled: boolean
-  onUpdate: (patch: Partial<Omit<VariantCombination, 'id' | 'optionIds'>>) => void
+  onUpdate: (patch: Partial<CombinationData>) => void
   onRemove: () => void
 }
 

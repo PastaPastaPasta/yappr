@@ -7,8 +7,8 @@
  * summary of a product's option types. Pure.
  */
 import type { ItemVariants, StoreItem } from '@/lib/types'
-import { fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import { findOption } from './variant-codec'
+import { formatPriceInput } from './variant-editor-model'
 
 const ITEM_COLUMNS = ['Group', 'Title', 'Description', 'Section', 'Category', 'Subcategory', 'Tags', 'SKU', 'Price', 'Quantity', 'Weight']
 
@@ -45,7 +45,7 @@ export function inventoryToCsv(items: readonly StoreItem[], defaultCurrency: str
 
   for (const item of items) {
     const currency = item.currency || defaultCurrency
-    const price = (amount: number) => fromSmallestUnit(amount, currency).toFixed(getCurrencyDecimals(currency))
+    const price = (amount: number) => formatPriceInput(amount, currency)
     const images = item.imageUrls ?? []
     const itemCells = (group: string) => [group, item.title, item.description ?? '', item.section ?? '', item.category ?? '', item.subcategory ?? '', item.tags?.join(', ') ?? '']
     const imageCells = (first: boolean) => Array.from({ length: imageCount }, (_, index) => (first ? images[index] ?? '' : ''))

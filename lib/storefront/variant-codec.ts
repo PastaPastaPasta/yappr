@@ -83,8 +83,9 @@ export function variantLabelSnapshot(variants: ItemVariants, combination: Pick<V
  * "Blue|Large".
  */
 export function orderLineVariantLabel(line: { variantLabel?: unknown; variantKey?: unknown }): string | undefined {
-  const label = typeof line.variantLabel === 'string' ? line.variantLabel
-    : typeof line.variantKey === 'string' ? line.variantKey.split('|').join(' / ') : undefined
+  let label: string | undefined
+  if (typeof line.variantLabel === 'string') label = line.variantLabel
+  else if (typeof line.variantKey === 'string') label = line.variantKey.split('|').join(' / ')
   return label ? label.slice(0, VARIANT_LABEL_MAX_LENGTH) : undefined
 }
 
@@ -178,7 +179,9 @@ export function encodeVariants(variants: ItemVariants): StoredVariants {
 
 /** A non-negative safe integer however a read hands it back (number, bigint or decimal string), else undefined. */
 function toCount(value: unknown): number | undefined {
-  const number = typeof value === 'bigint' ? Number(value) : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value
+  let number = value
+  if (typeof value === 'bigint') number = Number(value)
+  else if (typeof value === 'string' && /^\d+$/.test(value)) number = Number(value)
   return typeof number === 'number' && Number.isSafeInteger(number) && number >= 0 ? number : undefined
 }
 
@@ -255,7 +258,8 @@ export function decodeVariants(raw: unknown): ItemVariants | undefined {
 // ---- validation --------------------------------------------------------------
 
 const utf8Length = (text: string) => new TextEncoder().encode(text).length
-const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+/** Whether two option type or option names are the same to a shopper (spaces and case aside). */
+export const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
 
 export interface VariantCheckOptions {
   /** How many images the listing has (a combination names one by 1-based index). */
@@ -345,10 +349,11 @@ export function emptyVariants(): ItemVariants {
   return { axes: [], combinations: [], nextOptionId: 1 }
 }
 
-type CombinationData = Omit<VariantCombination, 'id' | 'optionIds'>
+/** A combination's own data (price, stock, SKU, weight, image), without its identity. */
+export type CombinationData = Omit<VariantCombination, 'id' | 'optionIds'>
 const combinationOf = (optionIds: number[], data: CombinationData): VariantCombination =>
   ({ ...data, id: variantIdOf(optionIds), optionIds })
-/** A combination's own data (price, stock, SKU, weight, image), without its identity. */
+/** `combination` without its identity. */
 function dataOf(combination: VariantCombination): CombinationData {
   const data: Partial<VariantCombination> = { ...combination }
   delete data.id

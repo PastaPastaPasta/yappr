@@ -51,7 +51,8 @@ export const MAX_VARIANT_LABEL_LENGTH = 60
  * id, never the listing's variant names, so a receipt's size stays bounded
  * however the listing is edited later.
  */
-export const MAX_VARIANT_ID_LENGTH = 19
+const WORST_VARIANT_ID = '254.254.254.254.254'
+export const MAX_VARIANT_ID_LENGTH = WORST_VARIANT_ID.length
 const VARIANT_ID = /^\d+(\.\d+)*$/
 /** A canonical variant id ("3.9") of bounded length. */
 export const isVariantId = (value: unknown): value is string =>
@@ -355,8 +356,6 @@ export function deliveryCompletesOrder(
 const MAX_ITEM_TITLE_LENGTH = 200
 /** Longest base58 encoding of a 32-byte id. */
 const MAX_ID_LENGTH = 44
-/** A variant id of the longest length a receipt can carry (MAX_VARIANT_ID_LENGTH). */
-const WORST_VARIANT_ID = '254.254.254.254.254'
 
 /**
  * Why this kit could not go out for one unit in one delivery, or null when it
@@ -620,7 +619,6 @@ export function splitPoolEntry(entry: string): { url?: string; code?: string } {
 const safeUrl = (value: unknown): string | undefined =>
   typeof value === 'string' && isSafeDeliveryUrl(value) ? value : undefined
 
-/** An asset's target: whole option ids from 1 to 254, each once; absent when none is valid. */
 /**
  * An asset limited to variants this client cannot read (a target written by an
  * older client, or ids that are not option ids) matches NO variant rather than
@@ -630,6 +628,7 @@ const safeUrl = (value: unknown): string | undefined =>
  */
 const UNREADABLE_TARGET = { optionIds: [0] }
 
+/** An asset's target: whole option ids from 1 to 254, each once; absent when it has none. */
 function parseOptionIds(asset: Record<string, unknown>): { optionIds?: number[] } {
   if (asset.optionIds === undefined) return asset.variantKey === undefined ? {} : UNREADABLE_TARGET
   if (!Array.isArray(asset.optionIds)) return UNREADABLE_TARGET

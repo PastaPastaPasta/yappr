@@ -575,16 +575,10 @@ function collectImages(rows: ParsedInventoryRow[]): string[] {
   return images
 }
 
-/** The quantity the import gives a variant row: tracked rows without one start at 0. */
-function rowStock(row: ParsedInventoryRow, tracked: boolean): number | undefined {
-  if (!tracked) return undefined
-  return row.quantity ?? 0
-}
-
 /** A SKU cut to what a combination can store. */
 function fitSku(sku: string): string {
   let fitted = [...sku].slice(0, VARIANT_LIMITS.skuLength).join('')
-  while (new TextEncoder().encode(fitted).length > VARIANT_LIMITS.skuLength * 2) fitted = [...fitted].slice(0, -1).join('')
+  while (new TextEncoder().encode(fitted).length > VARIANT_LIMITS.skuBytes) fitted = [...fitted].slice(0, -1).join('')
   return fitted
 }
 
@@ -671,7 +665,8 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
       // The v1–v6 JSON keys a combination by its option names joined with "|".
       optionNames: storefrontVariantsAreTyped() ? plan.rowOptions[index] : plan.rowOptions[index].map((name) => name.replace(/\|/g, '/')),
       price: row.price,
-      stock: rowStock(row, tracked),
+      // Tracked rows without a quantity start at 0.
+      stock: tracked ? row.quantity ?? 0 : undefined,
       sku: row.sku ? fitSku(row.sku) : undefined,
       weight: perCombinationWeight && row.weight !== undefined ? Math.round(row.weight) : undefined,
       image: imageIndex > 0 ? imageIndex : undefined,
@@ -802,7 +797,7 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
       shippingCost: shippingCost ?? undefined,
       combineShipping: combineResult.type,
       combineShippingExtra: combineResult.extra,
-      weight: weight !== undefined && !isNaN(weight) ? weight : undefined,
+      weight,
       imageUrls,
       image: imageUrlOf(getValue('image')),
       rowNumber
