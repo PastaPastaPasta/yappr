@@ -1150,7 +1150,7 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     await vi.waitFor(async () => expect(await user.dm.status()).toMatchObject({ ready: true, blocked: [bob] }))
     expect(user.account.refresh).toHaveBeenCalledWith(alice)
     expect(user.account.refresh).toHaveBeenCalledTimes(1)
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: 'local' })
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: expect.stringMatching(/^local:\d+$/) })
   })
 
   it('blocks in Messages once a block the app was killed during is confirmed after the relaunch', async () => {
@@ -1177,7 +1177,7 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     // A stale read still missing it, this soon after it landed, does not lift it.
     await account.refresh(alice)
     expect(await blockedNow(user)).toEqual([bob])
-    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: 'local' })
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: expect.stringMatching(/^local:\d+$/) })
   })
 
   it('lifts only the blocks it made for the account, and never on a failed read', async () => {
@@ -1258,6 +1258,48 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     const user = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account }))
     await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
     expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: unblockedAt + 60_000 })
+  })
+
+  it('blocks again, after a restart, someone unblocked in Messages whose block confirmed here was made again since, unread', async () => {
+    const ledger = ledgerNow()
+    const kv = new MapKv()
+    const account = accountOn()
+    // Every clock read at the time it is asked, so the faked one moves the ticket store's too.
+    const now = () => Date.now()
+    const first = await ready(userOn(ledger, alice, {}, kv, { account, now }))
+    first.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed' }) })
+    const confirmedAt = Date.now()
+    await first.settled(first.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(first)).toEqual([bob])
+    expect(JSON.parse(first.local.getItem(followedKey) as string)).toEqual({ [bob]: expect.stringMatching(/^local:\d+$/) })
+    // Message settings' Unblock, before this device has read when that block was made.
+    expect(await first.dm.setBlocked(bob, false)).toBe(true)
+    expect(await blockedNow(first)).toEqual([])
+    await first.hooks.stop()
+
+    // While the app is closed, another device removes the account's block and makes it again.
+    const remadeAt = confirmedAt + 15 * 60_000
+    account.blocked = [bob]
+    account.madeAt.set(bob, remadeAt)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(confirmedAt + BLOCK_SETTLING_MS + 20 * 60_000)
+    ledger.time = Date.now()
+    const user = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account, now }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: remadeAt })
+  })
+
+  it('reads the followed people an earlier build kept, as blocks followed here at an unknown time', async () => {
+    const ledger = ledgerNow()
+    const local = memoryStorage()
+    local.setItem(followedKey, JSON.stringify([bob]))
+    const account = accountOn([bob])
+    const madeAt = ledger.time + 60 * 60_000
+    account.madeAt.set(bob, madeAt)
+    // Their Messages unblock (made then) stands: the block read is the one followed, now with its age.
+    const user = await ready(userOn(ledger, alice, {}, undefined, { local, account }))
+    await vi.waitFor(() => expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual({ [bob]: madeAt }))
+    expect(await blockedNow(user)).toEqual([])
   })
 
   it('keeps a Messages unblock made while the DM clock is behind the account block it followed', async () => {

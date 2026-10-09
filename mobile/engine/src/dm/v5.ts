@@ -56,24 +56,41 @@ const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${id
 /**
  * The people this device blocked in Messages because the account blocks
  * them (PRD SAFE-01), each with the account block it followed: its
- * `$createdAt`, or `LOCAL` for one confirmed here (or read without one)
- * whose `$createdAt` it has not read yet. Only these are lifted when the
- * account's block goes. A block made in Messages alone (web's conversation
- * menu) is never in it, so following the account's blocks never lifts one.
+ * `$createdAt`, or a `Local` mark for one confirmed here (or read without
+ * one) whose `$createdAt` it has not read yet. Only these are lifted when
+ * the account's block goes. A block made in Messages alone (web's
+ * conversation menu) is never in it, so following the account's blocks
+ * never lifts one.
  */
 const followedKey = (identityId: string) => scopedKey(`yappr_engine_dm_account_blocks:${identityId}`)
 
-const LOCAL = 'local'
-type Followed = Map<string, number | typeof LOCAL>
+/** `local:<when this device followed it, ms>`; `local` alone (earlier builds) when that is not known. */
+type Local = `local${string}`
+type Followed = Map<string, number | Local>
+
+const localNow = (): Local => `local:${Date.now()}`
+
+/** When a `Local` block was followed here, or null when not known. */
+function followedAt(seen: Local): number | null {
+  const at = seen.startsWith('local:') ? Number(seen.slice('local:'.length)) : Number.NaN
+  return Number.isFinite(at) ? at : null
+}
+
+/**
+ * How much later than this device's clock when it followed a block confirmed
+ * here that block's `$createdAt` (the chain's time) may read and still be
+ * that block, not one removed and made again since.
+ */
+const LOCAL_CLOCK_SKEW_MS = 5 * 60_000
 
 function readFollowed(storage: KeyValueArea, identityId: string): Followed {
   try {
     const value = JSON.parse(storage.getItem(followedKey(identityId)) ?? '{}') as unknown
     // Earlier builds kept only the ids.
-    if (Array.isArray(value)) return new Map(value.filter((id): id is string => typeof id === 'string').map(id => [id, LOCAL]))
+    if (Array.isArray(value)) return new Map(value.filter((id): id is string => typeof id === 'string').map(id => [id, 'local']))
     if (value && typeof value === 'object') {
-      return new Map(Object.entries(value).filter((entry): entry is [string, number | typeof LOCAL] =>
-        entry[1] === LOCAL || Number.isFinite(entry[1])))
+      return new Map(Object.entries(value).filter((entry): entry is [string, number | Local] =>
+        (typeof entry[1] === 'string' && entry[1].startsWith('local')) || Number.isFinite(entry[1])))
     }
   } catch {
     // Unreadable: nothing followed yet.
@@ -456,24 +473,28 @@ export function createV5Backend(options: V5BackendOptions) {
     let changed = false
     for (const [peerId, createdAt] of blocked) {
       if (settling.has(peerId)) continue
-      const madeAt = Number.isFinite(createdAt) ? createdAt : LOCAL
+      const madeAt = Number.isFinite(createdAt) ? createdAt : null
       const seen = followed.get(peerId)
-      if (seen === LOCAL) {
-        // Followed when it was confirmed here: only its age is new.
-        if (madeAt !== LOCAL) {
+      if (typeof seen === 'string') {
+        if (madeAt === null) continue
+        // Followed when it was confirmed here: the block read is that one, its age new, unless it
+        // was made after this device followed it (removed and made again since, on another device).
+        const at = followedAt(seen)
+        if (at === null || madeAt <= at + LOCAL_CLOCK_SKEW_MS) {
           followed.set(peerId, madeAt)
           changed = true
+          continue
         }
+      } else if (seen !== undefined && (madeAt === null || madeAt <= seen)) {
+        // The account block already followed: a choice made in Messages since stands.
         continue
       }
-      // The account block already followed: a choice made in Messages since stands.
-      if (seen !== undefined && (madeAt === LOCAL || madeAt <= seen)) continue
       // Not followed here yet (an unknown age counts as the newest): Messages block them,
-      // unless Messages lifted their block after it was made, on another device.
-      if (madeAt === LOCAL || standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) {
+      // unless Messages lifted their block after it was made (on another device, or here since).
+      if (madeAt === null || standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) {
         applyBlock(running, peerId, true)
       }
-      followed.set(peerId, madeAt)
+      followed.set(peerId, madeAt ?? localNow())
       changed = true
     }
     const lately = running.ctx.chain.now() - BLOCK_SETTLING_MS
@@ -633,7 +654,7 @@ export function createV5Backend(options: V5BackendOptions) {
       // Stamped after the account block followed here, whatever the DM clock says, so
       // another device that has not followed it yet reads this choice as the newer one.
       const seen = readFollowed(storage(), identityId).get(peerId)
-      return blockInMessages(identityId, peerId, blocked, seen === undefined ? 0 : seen === LOCAL ? Date.now() : seen + 1)
+      return blockInMessages(identityId, peerId, blocked, seen === undefined ? 0 : typeof seen === 'string' ? Date.now() : seen + 1)
     },
 
     /**
@@ -658,7 +679,7 @@ export function createV5Backend(options: V5BackendOptions) {
     followAccountBlock(identityId: string, peerId: string, blocked: boolean): void {
       blockInMessages(identityId, peerId, blocked)
       const followed = readFollowed(storage(), identityId)
-      if (blocked) followed.set(peerId, LOCAL)
+      if (blocked) followed.set(peerId, localNow())
       else followed.delete(peerId)
       writeFollowed(storage(), identityId, followed)
     },
