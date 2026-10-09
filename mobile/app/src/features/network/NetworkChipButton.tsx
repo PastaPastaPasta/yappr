@@ -1,3 +1,4 @@
+import { useNetInfo } from '@react-native-community/netinfo';
 import { useState } from 'react';
 import { View } from 'react-native';
 
@@ -18,8 +19,19 @@ export const networkCopy = {
     ready: 'Connected',
     booting: 'Connecting…',
     unavailable: "Can't connect right now",
+    offline: "You're offline",
   } satisfies Record<ChipState, string>,
 };
+
+/**
+ * What every chip shows: the engine's state, unless the device itself is
+ * offline (PRD G-1), which no engine state can hide (D-014). Unknown
+ * connectivity, before NetInfo's first answer, counts as online.
+ */
+export function useChipState(): ChipState {
+  const engine = chipStateOf(useEngineStatus().state);
+  return useNetInfo().isConnected === false ? 'offline' : engine;
+}
 
 /**
  * The network sheet (UX_SPEC §4.34, PRD NET-07): the chip, what the network
@@ -27,7 +39,7 @@ export const networkCopy = {
  * scrim and Android Back close it. Troubleshooting lives in About, not here.
  */
 export function NetworkSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const chipState = chipStateOf(useEngineStatus().state);
+  const chipState = useChipState();
   const body = networkCopy.body[config.network];
   return (
     <Sheet open={open} onClose={onClose} testID="network-sheet">
@@ -42,12 +54,12 @@ export function NetworkSheet({ open, onClose }: { open: boolean; onClose: () => 
 
 /** The network chip that opens the network sheet: Home's header and the Settings footer (UX_SPEC §2.17). */
 export function NetworkChipButton() {
-  const { state } = useEngineStatus();
+  const chipState = useChipState();
   const [open, setOpen] = useState(false);
   if (config.network === 'mainnet') return null;
   return (
     <View>
-      <NetworkChip network={config.network} state={chipStateOf(state)} onPress={() => setOpen(true)} />
+      <NetworkChip network={config.network} state={chipState} onPress={() => setOpen(true)} />
       <NetworkSheet open={open} onClose={() => setOpen(false)} />
     </View>
   );
