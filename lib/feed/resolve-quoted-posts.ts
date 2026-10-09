@@ -111,6 +111,8 @@ function fetchQuoteTargets(pending: Post[]): Promise<Post[]> {
  * every one when omitted. Returns the ids it dropped. Web keeps them for the
  * session; the mobile engine forgets them on a delete and on a refresh, so a
  * quote of a deleted post stops showing the text it had.
+ *
+ * @public Used only by the mobile engine, which root knip doesn't scan.
  */
 export function forgetQuotedPosts(ids?: Iterable<string>): string[] {
   const dropped = ids ? Array.from(ids).filter((id) => resolvedQuoteCache.has(id)) : Array.from(resolvedQuoteCache.keys());
