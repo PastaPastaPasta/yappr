@@ -36,6 +36,7 @@ import {
   directKey,
   directStream,
   dmBot,
+  ensureNotBlocked,
   expectAbsentFor,
   gotoMessages,
   groupDocsOf,
@@ -161,6 +162,9 @@ test.describe('DM v5: groups', () => {
     n = await nextGroupNumber(A)
     gid = ownedGroup(A, n).gid
     key = groupKeyOf(A, gid)
+
+    // B blocking A (an interrupted block test in the direct file) would drop A's grant to B.
+    await ensureNotBlocked(await dev(browser, B, 'B'), A)
 
     const a = await dev(browser, A, 'A')
     await gotoMessages(a.page)

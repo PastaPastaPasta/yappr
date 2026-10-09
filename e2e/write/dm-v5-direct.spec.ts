@@ -42,6 +42,7 @@ import {
   directKey,
   directStream,
   dmBot,
+  ensureNotBlocked,
   expectAbsentFor,
   flushSelfState,
   gotoMessages,
@@ -101,10 +102,13 @@ test.describe('DM v5: 1:1 conversations', () => {
   })
 
   test('both users open the v5 inbox', async () => {
+    test.setTimeout(300_000)
     // Earlier runs left invites between these two bots; the rule is "no NEW invite".
     invitesAtStart = (await invitesBetween(A, B)) + (await invitesBetween(B, A))
     await gotoMessages(a1!.page)
     await gotoMessages(b1!.page)
+    // A run interrupted inside the block test leaves B blocking A, which would hide every delivery below.
+    await ensureNotBlocked(b1!, A)
   })
 
   test('A starts a 1:1 with B: one invite, then a normal first message B finds unread', async () => {
@@ -245,14 +249,10 @@ test.describe('DM v5: 1:1 conversations', () => {
   test('block: B blocks A, A\'s next message stays hidden; B\'s other device agrees; unblock shows it', async ({ browser }) => {
     test.setTimeout(900_000)
     const pb = b1!.page
+    // Start unblocked even when this test runs alone (--grep).
+    await ensureNotBlocked(b1!, A)
     await gotoMessages(pb)
     await openRow(pb, row(pb, directKey(A)))
-    // Start unblocked (an interrupted earlier run can leave the block in B's self-state).
-    const blockedNotice = thread(pb).getByText('You blocked this person. Unblock them to send messages.')
-    if (await blockedNotice.isVisible()) {
-      await threadMenu(pb, /^Unblock /)
-      await expect(blockedNotice).toHaveCount(0)
-    }
     await threadMenu(pb, /^Block /)
     await expect(thread(pb).getByText('You blocked this person. Unblock them to send messages.')).toBeVisible()
     await flushSelfState(b1!)
@@ -309,9 +309,13 @@ test.describe('DM v5: 1:1 conversations', () => {
     const pb = b1!.page
     await gotoMessages(pb)
     await openRow(pb, row(pb, directKey(A)))
+    // B's other conversations can already be deleted (other DM files, interrupted runs): count from there.
+    const showDeleted = pb.getByRole('button', { name: /^Show \d+ deleted conversations?$/ })
+    const deletedBefore = (await showDeleted.count()) === 0 ? 0 : Number((await showDeleted.innerText()).match(/\d+/)?.[0] ?? 0)
     await threadMenu(pb, 'Delete conversation')
     await expect(row(pb, directKey(A))).toHaveCount(0)
-    await expect(pb.getByRole('button', { name: /Show 1 deleted conversation/ })).toBeVisible()
+    const deletedAfter = deletedBefore + 1
+    await expect(showDeleted).toHaveText(`Show ${deletedAfter} deleted conversation${deletedAfter === 1 ? '' : 's'}`)
     await flushSelfState(b1!)
     // Hidden survives a reload (hiddenAt is in the self-state).
     await expect
