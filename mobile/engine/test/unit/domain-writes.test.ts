@@ -381,6 +381,19 @@ describe('graph and safety writes', () => {
     expect(await outcome(safety.unblock(AUTHOR))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED', outcome: 'local' } })
   })
 
+  it('fails a block or unblock whose lookup of the block failed as not sent and retryable, never confirmed', async () => {
+    const { tickets, outcome, safety } = engine()
+    m.blockService.unblockUser.mockResolvedValue({ success: false, error: 'no available addresses to retry', lookupFailed: true })
+    const unblock = await outcome(safety.unblock(AUTHOR))
+    expect(unblock).toMatchObject({ state: 'failed', retryable: true, error: { code: 'NETWORK', outcome: 'not-sent', retryable: true } })
+    // Nothing was deleted: no provenance read, no STILL_BLOCKED, and checking never confirms it.
+    expect(m.blockService.getBlockProvenance).not.toHaveBeenCalled()
+    expect(await tickets.check(unblock.id)).toMatchObject({ state: 'failed' })
+
+    m.blockService.blockUser.mockResolvedValue({ success: false, error: 'Request timeout', lookupFailed: true })
+    expect(await outcome(safety.block(AUTHOR))).toMatchObject({ state: 'failed', retryable: true, error: { code: 'TIMEOUT', outcome: 'not-sent' } })
+  })
+
   it('re-reads the blocked list after a block or unblock lands, on every page, and rejects an unreadable list', async () => {
     const { outcome, safety } = engine()
     const many = (count: number) => Array.from({ length: count }, (_, n) => ({ blockedId: id(`B${n + 1}`) }))

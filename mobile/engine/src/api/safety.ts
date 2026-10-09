@@ -2,7 +2,7 @@ import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
 import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
 import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
-import { blockService } from '@/lib/services/block-service'
+import { blockService, type BlockWriteResult } from '@/lib/services/block-service'
 import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
@@ -12,7 +12,7 @@ import { assertId, assertTarget, characters, relationProbe, signer, socialDoc, t
 import { createdDocument, fromTransitionResult } from '../writes/lib-results'
 import { ownBlockExists } from '../writes/strict-reads'
 import { ownBlocks, type OwnBlock } from './own-blocks'
-import type { TicketStore } from '../writes/tickets'
+import { NotSentError, type TicketStore } from '../writes/tickets'
 import type { TargetRef, WriteTicket } from '../writes/types'
 import type { BlockSourceDTO, Page, UserSummaryDTO } from './dto'
 
@@ -65,6 +65,15 @@ interface WithdrawReportArgs {
 const blockLists = new TtlMap<string, OwnBlock[]>(60_000)
 
 /**
+ * A block or unblock lib stopped before sending anything, because reading
+ * the viewer's block on the account failed: a read failure, so the write is
+ * failed and may be tried again, never confirmed or "may have landed".
+ */
+function throwIfSentNothing(result: BlockWriteResult): void {
+  if (!result.success && result.lookupFailed) throw new NotSentError(readFailure(new Error(result.error)))
+}
+
+/**
  * Whether `docType` can be written now: false while the registered contract's
  * interim is `notYetUsable` (mainnet v13) and no team is seated, as web's
  * `useModeratedTypeOpen` reads it. A failed read rejects.
@@ -99,6 +108,7 @@ export function createSafetyModule(tickets: TicketStore) {
     persistArgs: true,
     async run({ targetId, message }, ctx) {
       const result = await blockService.blockUser(signer(ctx), targetId, message)
+      throwIfSentNothing(result)
       // v13: the block lands in the blocks contract (blockUser refuses when there is none).
       return fromTransitionResult(result, createdDocument(result, blocksContractId() ?? YAPPR_CONTRACT_ID, 'block'))
     },
@@ -109,6 +119,7 @@ export function createSafetyModule(tickets: TicketStore) {
     async run({ targetId }, ctx) {
       const viewer = signer(ctx)
       const result = await blockService.unblockUser(viewer, targetId)
+      throwIfSentNothing(result)
       if (!result.success) return fromTransitionResult(result)
       // Only the viewer's own block can be deleted: a followed block list keeps blocking (use-block.ts).
       const after = await blockService.getBlockProvenance(targetId, viewer).catch(() => null)

@@ -585,6 +585,36 @@ describe('blocking', () => {
       expect(toastMessage()).toBe('Unblocked @bob');
     });
 
+    it('keeps them blocked, everywhere, when the unblock could not read the block and sent nothing', async () => {
+      const blocking = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(blocking);
+      renderPosts(bobPosts());
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, handle: '@bob' }));
+      await act(async () => fakeEngine.emit('write.status', advance(blocking, { state: 'confirmed' })));
+      expect(screen.queryByTestId('post-card-b1')).toBeNull();
+
+      const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false, handle: '@bob' }));
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            retryable: true,
+            error: { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: '' },
+          }),
+        ),
+      );
+      // Never "Unblocked", the posts stay hidden, and Messages are neither touched nor re-read.
+      expect(toastMessage()).toBe("Couldn't unblock @bob. Try again.");
+      expect(screen.queryByTestId('post-card-b1')).toBeNull();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
+      invalidate.mockRestore();
+    });
+
     it('re-reads Messages when a followed block list keeps the posts hidden after an unblock', async () => {
       const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
       const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });

@@ -31,7 +31,7 @@ const { useSettingsStore } = await import('@/lib/store')
 const { createDmModule } = await import('../../src/api/dm')
 const { avatarFromField } = await import('../../src/api/dto')
 const { LEGACY_LIST_TTL_MS, LEGACY_OPEN_POLL_MS } = await import('../../src/dm/legacy')
-const { ABSENCE_AFTER_MS, WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
+const { ABSENCE_AFTER_MS, NotSentError, WRITES_STORAGE_KEY, createTicketStore } = await import('../../src/writes/tickets')
 const { RpcError } = await import('../../src/protocol/envelope')
 const { BLOCK_SETTLING_MS, SEND_BUDGET_MS, SEND_REATTEMPT_PAUSE_MS } = await import('../../src/dm/v5')
 const { conversationDTO, dmStatusDTO, messageDTO, page, validate } = await import('../../src/dto/validate')
@@ -1640,6 +1640,20 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     expect(await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: carol }, target: { identityId: carol } })))
       .toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
     expect(await blockedNow(user)).toEqual([])
+  })
+
+  it('keeps Messages blocked when an unblock sent nothing because its read of the block failed', async () => {
+    const user = await ready(userOn(ledgerNow(), alice))
+    user.tickets.register<{ targetId: string }>('block', { run: async () => ({ state: 'confirmed' }) })
+    user.tickets.register<{ targetId: string }>('unblock', {
+      run: async () => { throw new NotSentError(new RpcError('no available addresses to retry', 'NETWORK')) },
+    })
+    await user.settled(user.tickets.submit({ op: 'block', args: { targetId: bob }, target: { identityId: bob } }))
+    expect(await blockedNow(user)).toEqual([bob])
+
+    expect(await user.settled(user.tickets.submit({ op: 'unblock', args: { targetId: bob }, target: { identityId: bob } })))
+      .toMatchObject({ state: 'failed', retryable: true, error: { outcome: 'not-sent' } })
+    expect(await blockedNow(user)).toEqual([bob])
   })
 
   it('ignores a read of another account\'s list, and forgets what it followed at sign-out', async () => {

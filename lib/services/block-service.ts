@@ -1,6 +1,6 @@
 import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service'
-import { stateTransitionService } from './state-transition-service'
+import { stateTransitionService, type StateTransitionResult } from './state-transition-service'
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
@@ -55,6 +55,22 @@ export interface BlockProvenance {
 
 /** What a block write answers on a deployment without its blocks contract. */
 const BLOCKS_UNAVAILABLE = 'Blocking is not available on this network yet.'
+
+/** What `blockUser` and `unblockUser` answer. */
+export interface BlockWriteResult extends StateTransitionResult {
+  /** `blockUser`: the target's private feed access was revoked too. */
+  autoRevoked?: boolean
+  /**
+   * The write stopped before sending anything because reading the viewer's
+   * block on the target failed: nothing changed, and it may be tried again.
+   */
+  lookupFailed?: true
+}
+
+/** A block write that sent nothing: its lookup of the block failed, which proves neither "blocked" nor "not blocked". */
+function lookupFailure(error: unknown): BlockWriteResult {
+  return { success: false, error: error instanceof Error ? error.message : 'Failed to read the block', lookupFailed: true }
+}
 
 /**
  * Block Service - Manages enhanced blocking with bloom filters and block following.
@@ -146,14 +162,19 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     blockerId: string,
     targetUserId: string,
     message?: string
-  ): Promise<{ success: boolean; error?: string; autoRevoked?: boolean }> {
+  ): Promise<BlockWriteResult> {
     if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       if (blockerId === targetUserId) {
         return { success: false, error: 'Cannot block yourself' }
       }
 
-      const existing = await this.getBlock(targetUserId, blockerId)
+      let existing: BlockDocument | null
+      try {
+        existing = await this.getBlock(targetUserId, blockerId, { throwOnError: true })
+      } catch (error) {
+        return lookupFailure(error)
+      }
       if (existing) {
         return { success: true }
       }
@@ -245,10 +266,17 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   async unblockUser(
     blockerId: string,
     targetUserId: string
-  ): Promise<{ success: boolean; error?: string }> {
+  ): Promise<BlockWriteResult> {
     if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
-      const block = await this.getBlock(targetUserId, blockerId)
+      let block: BlockDocument | null
+      try {
+        block = await this.getBlock(targetUserId, blockerId, { throwOnError: true })
+      } catch (error) {
+        // Never "no block": that would report an unblock and drop the block from the cache while it stands.
+        return lookupFailure(error)
+      }
+      // Proved absent by a read that succeeded: nothing to delete.
       if (!block) {
         this.updateOwnBlock(blockerId, targetUserId, false)
         return { success: true }
@@ -278,9 +306,11 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
-   * Get a specific block document.
+   * Get a specific block document. A failed read answers null (no block)
+   * unless `throwOnError` is set: block and unblock set it, so a failure is
+   * never taken for "no block".
    */
-  async getBlock(targetUserId: string, blockerId: string): Promise<BlockDocument | null> {
+  async getBlock(targetUserId: string, blockerId: string, options: { throwOnError?: boolean } = {}): Promise<BlockDocument | null> {
     if (!this.available) return null
     try {
       const result = await this.query({
@@ -293,6 +323,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
       return result.documents[0] || null
     } catch (error) {
       logger.error('Error getting block:', error)
+      if (options.throwOnError) throw error
       return null
     }
   }

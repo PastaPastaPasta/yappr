@@ -281,7 +281,7 @@ export interface BlockVars {
   message?: string;
   /** Block only: who it is, for the Blocked list's row until the engine lists them. */
   user?: Pick<BlockedUserDTO, 'username' | 'displayName' | 'avatar'>;
-  /** Who, as the screen shows them ("@bob"), for the toast once it lands. */
+  /** Who, as the screen shows them ("@bob"), for its toasts. */
   handle?: string;
 }
 
@@ -320,8 +320,9 @@ function applyBlock(vars: BlockVars): () => void {
 
 const targetIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?: string } | null)?.identityId;
 
-/** "@alice" for the failure toast: the row being blocked, else the cached profile; null when unknown. */
-function handleOf({ userId, user }: BlockVars): string | null {
+/** "@alice" for the toasts: the handle given, else the row being blocked, else the cached profile; null when unknown. */
+function handleOf({ userId, user, handle }: BlockVars): string | null {
+  if (handle) return handle;
   const username = user?.username ?? queryClient.getQueryData<ProfileDTO | null>(queryKeys.profile.detail(userId))?.username;
   return username ? `@${username}` : null;
 }
@@ -401,7 +402,7 @@ export const blockWrite: WriteSpec<BlockVars> = {
     if (decided?.blocked === block && !decided.listOnly) decide(viewerId, userId, settledNow(decided));
     refreshMessages();
     refetchFiltered(block);
-    const handle = vars.handle ?? handleOf(vars) ?? 'this account';
+    const handle = handleOf(vars) ?? 'this account';
     toast.success(block ? copy.toast.blocked(handle) : copy.toast.unblocked(handle));
   },
   // The own block is gone, but the user stays blocked: their posts stay hidden, their Blocked row goes.
