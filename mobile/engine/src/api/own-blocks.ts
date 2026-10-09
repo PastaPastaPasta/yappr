@@ -8,9 +8,10 @@ export interface OwnBlock {
   message?: string
 }
 
-/** One of a viewer's own blocks as a list read tells it: who, and when it was made (block time, ms). */
+/** One of a viewer's own blocks as a list read tells it: who, the block document's `$id`, and when it was made (block time, ms). */
 export interface AccountBlock {
   blockedId: string
+  id: string
   createdAt: number
 }
 
@@ -32,7 +33,7 @@ export async function ownBlocks(viewer: string): Promise<OwnBlock[]> {
   } catch (error) {
     throw readFailure(error)
   }
-  const told = blocks.map(block => ({ blockedId: block.blockedId, createdAt: block.$createdAt }))
+  const told = blocks.map(block => ({ blockedId: block.blockedId, id: block.$id, createdAt: block.$createdAt }))
   for (const listener of listeners) {
     try {
       listener(viewer, told)

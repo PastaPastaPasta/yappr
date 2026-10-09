@@ -64,24 +64,23 @@ const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${id
  */
 const followedKey = (identityId: string) => scopedKey(`yappr_engine_dm_account_blocks:${identityId}`)
 
-/** `local:<when this device followed it, ms>`; `local` alone (earlier builds) when that is not known. */
+/**
+ * `local:<the block document's $id>` (empty when not known). Document ids
+ * are nonce-committed, so a block removed and made again has a new one.
+ * Earlier builds kept `local` alone: whatever block is read is that one.
+ */
 type Local = `local${string}`
 type Followed = Map<string, number | Local>
 
-const localNow = (): Local => `local:${Date.now()}`
-
-/** When a `Local` block was followed here, or null when not known. */
-function followedAt(seen: Local): number | null {
-  const at = seen.startsWith('local:') ? Number(seen.slice('local:'.length)) : Number.NaN
-  return Number.isFinite(at) ? at : null
-}
+const localMark = (documentId: string | undefined): Local => `local:${documentId ?? ''}`
 
 /**
- * How much later than this device's clock when it followed a block confirmed
- * here that block's `$createdAt` (the chain's time) may read and still be
- * that block, not one removed and made again since.
+ * Whether the block read (`$id`) is the one a `Local` mark followed: always
+ * for an earlier build's mark, never when its id was not known.
  */
-const LOCAL_CLOCK_SKEW_MS = 5 * 60_000
+function isFollowedBlock(seen: Local, documentId: string): boolean {
+  return seen === 'local' || (seen.length > 'local:'.length && seen === localMark(documentId))
+}
 
 function readFollowed(storage: KeyValueArea, identityId: string): Followed {
   try {
@@ -326,8 +325,8 @@ function view(engine: DmEngine): DmView {
  */
 export const BLOCK_SETTLING_MS = 10 * 60_000
 
-/** The account's own block list, read whole: each blocked person, and when the block was made (block time, ms). */
-export type AccountBlockList = ReadonlyMap<string, number>
+/** The account's own block list, read whole: each blocked person, the block's `$id`, and when it was made (block time, ms). */
+export type AccountBlockList = ReadonlyMap<string, { id: string; createdAt: number }>
 
 export interface V5BackendOptions {
   source: DmEngineSource
@@ -471,18 +470,18 @@ export function createV5Backend(options: V5BackendOptions) {
     const followed = readFollowed(storage(), identityId)
     const standing = new Set(running.getSnapshot().blocked)
     let changed = false
-    for (const [peerId, createdAt] of blocked) {
+    for (const [peerId, { id, createdAt }] of blocked) {
       if (settling.has(peerId)) continue
       const madeAt = Number.isFinite(createdAt) ? createdAt : null
       const seen = followed.get(peerId)
       if (typeof seen === 'string') {
-        if (madeAt === null) continue
-        // Followed when it was confirmed here: the block read is that one, its age new, unless it
-        // was made after this device followed it (removed and made again since, on another device).
-        const at = followedAt(seen)
-        if (at === null || madeAt <= at + LOCAL_CLOCK_SKEW_MS) {
-          followed.set(peerId, madeAt)
-          changed = true
+        // Followed when it was confirmed (or read) here: only its age is new. Another block (removed
+        // and made again since, on another device), or one whose id this device never learnt, is new.
+        if (isFollowedBlock(seen, id)) {
+          if (madeAt !== null) {
+            followed.set(peerId, madeAt)
+            changed = true
+          }
           continue
         }
       } else if (seen !== undefined && (madeAt === null || madeAt <= seen)) {
@@ -494,7 +493,7 @@ export function createV5Backend(options: V5BackendOptions) {
       if (madeAt === null || standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) {
         applyBlock(running, peerId, true)
       }
-      followed.set(peerId, madeAt ?? localNow())
+      followed.set(peerId, madeAt ?? localMark(id))
       changed = true
     }
     const lately = running.ctx.chain.now() - BLOCK_SETTLING_MS
@@ -674,12 +673,12 @@ export function createV5Backend(options: V5BackendOptions) {
      * The account's own block on `peerId` was confirmed (`blocked`), or
      * confirmed gone: Messages block or unblock them too, now or once they
      * can (`setBlocked`), and this device remembers whether it blocked them
-     * there for the account.
+     * there for the account, and which block (`documentId`, when known).
      */
-    followAccountBlock(identityId: string, peerId: string, blocked: boolean): void {
+    followAccountBlock(identityId: string, peerId: string, blocked: boolean, documentId?: string): void {
       blockInMessages(identityId, peerId, blocked)
       const followed = readFollowed(storage(), identityId)
-      if (blocked) followed.set(peerId, localNow())
+      if (blocked) followed.set(peerId, localMark(documentId))
       else followed.delete(peerId)
       writeFollowed(storage(), identityId, followed)
     },

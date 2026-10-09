@@ -221,7 +221,10 @@ export function createDmModule(options: DmModuleOptions) {
     const peerId = blockTarget(ticket)
     const identityId = viewer()
     if (!peerId || halted || !identityId || ticket.identityId !== identityId) return
-    if (ticket.state === 'confirmed') backend.followAccountBlock(identityId, peerId, ticket.op === 'block')
+    if (ticket.state === 'confirmed') {
+      const made = ticket.documents.find(document => document.type === 'block' && document.action === 'create')
+      backend.followAccountBlock(identityId, peerId, ticket.op === 'block', made?.id)
+    }
     else if (ticket.op === 'unblock' && ticket.state === 'failed' && ticket.error?.code === 'STILL_BLOCKED') {
       backend.followAccountBlock(identityId, peerId, false)
     }
@@ -230,7 +233,7 @@ export function createDmModule(options: DmModuleOptions) {
   // Never unsubscribed: the dm module lives as long as the engine, and checks the backend and viewer on each read.
   accountBlocks.subscribe((identityId, blocks) => {
     if (backend.kind !== 'v5' || halted || identityId !== viewer()) return
-    backend.followAccountBlocks(identityId, new Map(blocks.map(block => [block.blockedId, block.createdAt])))
+    backend.followAccountBlocks(identityId, new Map(blocks.map(({ blockedId, id, createdAt }) => [blockedId, { id, createdAt }])))
   })
   const authors = new TtlMap<string, AuthorDTO>(AUTHOR_TTL_MS)
   const fetchAuthors = options.authors ?? loadAuthors
