@@ -19,6 +19,7 @@ import { storeItemService } from '@/lib/services/store-item-service'
 import { combinationImageUrl, findCombination, tracksStock, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
 import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
+import { StaleRevisionError } from '@/lib/services/document-service'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
@@ -295,7 +296,7 @@ export function InventoryTable({
       toast.success('Stock saved')
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error(err instanceof ListLimitError ? err.message : 'Stock could not be saved. Please try again.')
+      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     } finally {
       setSavingItemId(null)
     }
@@ -323,7 +324,7 @@ export function InventoryTable({
       onItemUpdated?.(item.id, { stockQuantity, $revision: updated.$revision })
     } catch (err) {
       logger.error('Failed to update stock:', err)
-      toast.error(err instanceof ListLimitError ? err.message : 'Stock could not be saved. Please try again.')
+      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     }
   }, [editingStock, items, ownerId, storeId, onItemUpdated, setStockDraft])
 

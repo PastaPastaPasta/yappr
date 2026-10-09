@@ -155,6 +155,19 @@ describe('storefront v7 typed variants', () => {
       expect(updateDocument).not.toHaveBeenCalled();
       await service.updateItem('item', 'owner', storeId, { variants: item.variants }, 5);
       expect(updateDocument).toHaveBeenCalledTimes(1);
+      expect(updateDocument.mock.calls[0][5]).toBe(5);
+    } finally { restore(); }
+  });
+
+  it('refuses a table when another editor saves between the check and the replace', async () => {
+    try {
+      const service = await v7();
+      get.mockResolvedValue(variantItem);
+      const item = defined(await service.getById('item'));
+      // updateItem's read sees 4; the replace's own read, a moment later, sees 5.
+      get.mockResolvedValueOnce(variantItem).mockResolvedValueOnce({ ...variantItem, $revision: 5 });
+      await expect(service.updateItem('item', 'owner', storeId, { variants: item.variants }, 4)).rejects.toThrow(/changed somewhere else/);
+      expect(updateDocument).not.toHaveBeenCalled();
     } finally { restore(); }
   });
 

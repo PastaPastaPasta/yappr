@@ -42,11 +42,11 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
     const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
-      cartService.updateQuantity(item.itemId, item.variantId, newQuantity)
+      cartService.updateQuantity(item, newQuantity)
     }
 
     const handleRemoveItem = (item: CartItem) => {
-      cartService.removeItem(item.itemId, item.variantId)
+      cartService.removeItem(item)
     }
 
     const handleCheckout = () => {

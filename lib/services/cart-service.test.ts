@@ -64,9 +64,21 @@ describe('cart inventory', () => {
     cartService.addStoreItem(item, '1')
     cartService.addStoreItem(item, '2')
     expect(cartService.getItems().map(line => line.imageUrl)).toEqual(['https://a/small.png', 'https://a/hero.png'])
-    cartService.updateQuantity('item', '1', 4)
-    cartService.removeItem('item', '2')
+    const [small, medium] = cartService.getItems()
+    cartService.updateQuantity(small, 4)
+    cartService.removeItem(medium)
     expect(cartService.getItems()).toMatchObject([{ variantId: '1', quantity: 4 }])
+  })
+
+  it('on v1–v6 never merges a new choice into an old line that shares its positional id', () => {
+    const red = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Red', price: 100, stock: 1 }, { name: 'Blue', price: 200, stock: 1 }]) })
+    cartService.addStoreItem(red, '1')
+    // The seller moved Blue first: id '1' is now Blue.
+    const moved = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Blue', price: 200, stock: 1 }, { name: 'Red', price: 100, stock: 1 }]) })
+    cartService.addStoreItem(moved, '1')
+    expect(cartService.getItems().map(line => [line.variantId, line.variantOptions, line.quantity])).toEqual([['1', ['Red'], 1], ['1', ['Blue'], 1]])
+    cartService.removeItem(cartService.getItems()[0])
+    expect(cartService.getItems().map(line => line.variantOptions)).toEqual([['Blue']])
   })
 
   it('rejects removed variants, and a variant item named without one, before adding them', () => {

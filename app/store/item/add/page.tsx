@@ -32,6 +32,7 @@ import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
+import { StaleRevisionError } from '@/lib/services/document-service'
 import { itemImageLimit, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
 import { clampImages, emptyVariants, variantProblems } from '@/lib/storefront/variant-codec'
 import { convertPrices, defaultCombinationPrice, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
@@ -470,8 +471,10 @@ function AddItemPage() {
     } catch (err) {
       logger.error(`Failed to ${editingItemId ? 'update' : 'create'} item:`, err)
       // A write that failed after it was sent may still land with its table.
-      if (!(err instanceof ListLimitError) && hasVariants && variantsAreTyped) keepSentVariants()
-      setError(err instanceof ListLimitError ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
+      // Refused before signing (a limit, or a listing changed elsewhere): nothing was sent.
+      const refusedBeforeSending = err instanceof ListLimitError || err instanceof StaleRevisionError
+      if (!refusedBeforeSending && hasVariants && variantsAreTyped) keepSentVariants()
+      setError(refusedBeforeSending ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
     }

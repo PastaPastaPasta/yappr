@@ -7,7 +7,7 @@
  * a JSON string (lib/storefront/legacy-variants.ts). Callers see one model.
  */
 
-import { BaseDocumentService } from './document-service';
+import { BaseDocumentService, StaleRevisionError } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants';
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
@@ -286,9 +286,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (!existing) {
       throw new Error('Item not found');
     }
-    if (baseRevision !== undefined && existing.$revision !== undefined && existing.$revision !== baseRevision) {
-      throw new ListLimitError('This product was changed somewhere else since you opened it. Reload it and make your changes again.');
-    }
+    if (baseRevision !== undefined && existing.$revision !== undefined && existing.$revision !== baseRevision) throw new StaleRevisionError();
 
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(storeId),
@@ -324,7 +322,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     const merged: Record<string, unknown> = { ...this.extractContentFields(existing), ...documentData };
     for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
     assertStorable(merged, writesTable ? variants : undefined, imageUrls);
-    return this.update(itemId, ownerId, documentData);
+    return this.update(itemId, ownerId, documentData, baseRevision);
   }
 
   /**

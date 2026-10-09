@@ -44,9 +44,11 @@ function withFulfillment(line: CartItem, fulfillment: CartItem['fulfillment']): 
 /** Lines that must be shipped: everything not explicitly digital. */
 export const shippableItems = (items: readonly CartItem[]) => items.filter(item => item.fulfillment !== 'digital');
 
-/** Whether a stored line is this item and variant (one line per item and variant). */
-const isLine = (line: CartItem, itemId: string, variantId: string | undefined) =>
-  line.itemId === itemId && line.variantId === variantId;
+/** What makes a cart line one line: item, variant id and (v1–v6 ids follow option order) its option names. */
+type LineIdentity = Pick<CartItem, 'itemId' | 'variantId' | 'variantOptions'>;
+const lineKey = (line: LineIdentity) => JSON.stringify([line.itemId, line.variantId ?? null, line.variantOptions ?? null]);
+/** Whether a stored line is the line `other` names. */
+const isLine = (line: LineIdentity, other: LineIdentity) => lineKey(line) === lineKey(other);
 
 class CartService {
   private cart: Cart | null = null;
@@ -176,7 +178,7 @@ class CartService {
     const cart = this.getCart();
 
     // One line per item and variant: adding the same again raises its quantity.
-    const existingIndex = cart.items.findIndex(i => isLine(i, item.itemId, item.variantId));
+    const existingIndex = cart.items.findIndex(i => isLine(i, item));
 
     if (existingIndex >= 0) {
       // Update quantity
@@ -195,8 +197,9 @@ class CartService {
    */
   addStoreItem(storeItem: StoreItem, variantId?: string, quantity: number = 1): void {
     const stock = storeItemService.getStock(storeItem, variantId);
-    const existingQuantity = this.getItems().find(item => isLine(item, storeItem.id, variantId))?.quantity ?? 0;
     const combination = storeItemService.getCombination(storeItem, variantId);
+    const variantOptions = combination && storeItem.variants ? variantOptionNames(storeItem.variants, combination) : undefined;
+    const existingQuantity = this.getItems().find(item => isLine(item, { itemId: storeItem.id, variantId: combination?.id, variantOptions }))?.quantity ?? 0;
     if (storeItem.status !== 'active' || (storeItem.variants && !combination)) {
       throw new Error('This item is no longer available');
     }
@@ -213,7 +216,6 @@ class CartService {
     }
 
     const variantLabel = storeItemService.getVariantLabel(storeItem, variantId);
-    const variantOptions = combination && storeItem.variants ? variantOptionNames(storeItem.variants, combination) : undefined;
     const sku = storeItemService.getSku(storeItem, { variantId: combination?.id, variantOptions });
     this.addItem({
       itemId: storeItem.id,
@@ -234,9 +236,9 @@ class CartService {
   /**
    * Update item quantity
    */
-  updateQuantity(itemId: string, variantId: string | undefined, quantity: number): void {
+  updateQuantity(line: LineIdentity, quantity: number): void {
     const cart = this.getCart();
-    const index = cart.items.findIndex(i => isLine(i, itemId, variantId));
+    const index = cart.items.findIndex(i => isLine(i, line));
 
     if (index >= 0) {
       if (quantity <= 0) {
@@ -252,9 +254,9 @@ class CartService {
   /**
    * Remove item from cart
    */
-  removeItem(itemId: string, variantId?: string): void {
+  removeItem(line: LineIdentity): void {
     const cart = this.getCart();
-    cart.items = cart.items.filter(i => !isLine(i, itemId, variantId));
+    cart.items = cart.items.filter(i => !isLine(i, line));
     this.saveCart();
   }
 
