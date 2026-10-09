@@ -5,6 +5,7 @@ import { AtSymbolIcon } from '@heroicons/react/24/outline'
 import type { Post } from '@/lib/types'
 import type { MissingReplyParent } from '@/lib/feed/resolve-reply-parents'
 import { cn } from '@/lib/utils'
+import { getBlogUrl } from '@/lib/blog/content-utils'
 import { likesAreIndexOnly } from '@/lib/contract-topology'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
 import { useSettingsStore } from '@/lib/store'
@@ -49,7 +50,13 @@ interface ProfileTabsProps {
     onRetry: () => void
   }
   top: PostListState & { window: RankingWindow; onWindowChange: (w: RankingWindow) => void }
-  mentions: PostListState
+  mentions: PostListState & {
+    hasMore: boolean
+    loadingMore: boolean
+    isSuspended: boolean
+    sentinelRef: React.ComponentProps<typeof InfiniteScrollSentinel>['sentinelRef']
+    onLoadMore: () => void
+  }
   blogs: { blogs: ProfileBlog[]; loading: boolean }
   pagination: {
     hasMore: boolean
@@ -143,7 +150,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
 
   const renderMentions = () => {
     if (mentions.loading) return <Loading text="Loading mentions..." />
-    if (mentions.posts.length === 0) {
+    if (mentions.posts.length === 0 && !mentions.hasMore) {
       return (
         <div className="p-8 text-center text-gray-500">
           <AtSymbolIcon className="h-12 w-12 mx-auto mb-4 text-gray-300" />
@@ -157,6 +164,16 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
         {filterHiddenSensitive(mentions.posts, sensitiveContentMode, viewerId).map((post) => (
           <PostCard key={post.id} post={post} />
         ))}
+        {mentions.hasMore && (
+          <InfiniteScrollSentinel
+            sentinelRef={mentions.sentinelRef}
+            isLoading={mentions.loadingMore}
+            isSuspended={mentions.isSuspended}
+            onLoadMore={mentions.onLoadMore}
+            label="Load more mentions"
+            className="border-t border-gray-200 dark:border-gray-800"
+          />
+        )}
       </div>
     )
   }
@@ -175,7 +192,7 @@ export function ProfileTabs({ activeTab, onTabChange, viewerId, getPostEnrichmen
         {blogs.blogs.map((blog) => (
           <button
             key={blog.id}
-            onClick={() => router.push(`/blog?blog=${encodeURIComponent(blog.id)}`)}
+            onClick={() => router.push(getBlogUrl(blog.id))}
             className="w-full rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-neutral-950 p-4 text-left hover:border-gray-300 dark:hover:border-gray-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             <p className="text-lg font-semibold">{blog.name}</p>

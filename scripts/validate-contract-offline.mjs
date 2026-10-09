@@ -43,14 +43,16 @@
  *   node scripts/validate-contract-offline.mjs contracts/yappr-social-contract-v10.json --strict-size
  *   node scripts/validate-contract-offline.mjs <file> --immutable post,reply
  *   node scripts/validate-contract-offline.mjs <file> --network mainnet   # mainnet's one-day election-window floor (default devnet: 0)
- *   node scripts/validate-contract-offline.mjs <file> --cost              # documentCreateCost per type (new / known index values)
- *   node scripts/validate-contract-offline.mjs --probes
+ *                                                                         # and its registration: an elected interim becomes notYetUsable
+ *   node scripts/validate-contract-offline.mjs <file> --interim noModeration   # validate another interim than the network's
+ *   node scripts/validate-contract-offline.mjs <file> --cost              # documentCreateCost per type and per social write (credits and ¢)
+ *   node scripts/validate-contract-offline.mjs --probes        # negative probes, update probes through wasm-dpp2 validateUpdate
  *   node scripts/validate-contract-offline.mjs --constraints   # propertyConstraints accept/refuse cases (wasm-sdk checkDocumentPropertyConstraints)
  */
 import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, Document, PlatformVersion, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
-import { renderModeration } from './register-lib.mjs';
+import { renderModeration, withInterim } from './register-lib.mjs';
 import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
 
@@ -85,20 +87,29 @@ function parseArgs(argv) {
   const networkEquals = argv.find((arg) => arg.startsWith('--network='));
   const network = networkEquals ? networkEquals.slice('--network='.length) : networkIndex === -1 ? 'devnet' : argv[networkIndex + 1];
   if (!['devnet', 'testnet', 'mainnet'].includes(network)) throw new Error(`--network must be devnet, testnet or mainnet (got "${network}")`);
+  const interimIndex = argv.indexOf('--interim');
+  const interimEquals = argv.find((arg) => arg.startsWith('--interim='));
+  const interim = interimEquals ? interimEquals.slice('--interim='.length) : interimIndex === -1 ? undefined : argv[interimIndex + 1];
+  if ((interimEquals || interimIndex !== -1) && !interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)');
   // Skip each flag's value, so `--immutable post,reply <file>` does not
   // resolve the positional to "post,reply".
-  const valueIndexes = new Set([flagIndex, networkIndex].filter((index) => index !== -1).map((index) => index + 1));
+  const valueIndexes = new Set([flagIndex, networkIndex, interimIndex].filter((index) => index !== -1).map((index) => index + 1));
   const file = argv.find((arg, index) => !arg.startsWith('--') && !valueIndexes.has(index));
-  if (!file && !probes && !constraints) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--immutable a,b] [--cost] | --probes | --constraints');
-  return { file, immutable, probes, constraints, cost, strictSize, network };
+  if (!file && !probes && !constraints) throw new Error('usage: node scripts/validate-contract-offline.mjs <contract.json> [--network n] [--interim kind] [--immutable a,b] [--cost] | --probes | --constraints');
+  return { file, immutable, probes, constraints, cost, strictSize, network, interim };
 }
 
-/** A contract file in the shape registration assembles it: schemas, config (file or default), tokens. */
-function loadContractSource(file) {
+/**
+ * A contract file in the shape registration assembles it on `network`:
+ * schemas, config (file or default, with the network's elected interim, see
+ * `withInterim`), tokens.
+ */
+function loadContractSource(file, { network, interim } = {}) {
   const raw = JSON.parse(readFileSync(file, 'utf8').replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(SOCIAL_STAND_IN)));
-  return raw.documentSchemas
+  const source = raw.documentSchemas
     ? { ...raw, config: raw.config ?? DEFAULT_CONFIG }
     : { documentSchemas: raw, config: DEFAULT_CONFIG };
+  return { ...source, config: withInterim(source.config, { network, interim }) };
 }
 
 /** The JSON `scripts/register-social-v3-draft.mjs` publishes. */
@@ -124,6 +135,18 @@ function parseWithNodeRules(source) {
   return NodeRulesDataContract.fromJSON(contractJson(source), true, NodeRulesPlatformVersion.latest());
 }
 
+/**
+ * Why a data contract update from `stored` to `updated` would be refused, as
+ * `<code> <message>` lines ([] = accepted): wasm-dpp2's `validateUpdate`, the
+ * code consensus runs on an update transition. No state is read.
+ */
+function updateRefusals(stored, updated) {
+  const platformVersion = NodeRulesPlatformVersion.latest();
+  const before = NodeRulesDataContract.fromJSON(contractJson(stored), true, platformVersion);
+  const after = NodeRulesDataContract.fromJSON(contractJson(updated), true, platformVersion);
+  return before.validateUpdate(after, undefined, platformVersion).map((error) => `${error.code} ${error.message}`);
+}
+
 const describeReference = (reference) => {
   const findBy = reference.findBy ? ` findBy ${JSON.stringify(reference.findBy)}` : '';
   const where = reference.where ? ` where ${JSON.stringify(reference.where)}` : '';
@@ -131,14 +154,18 @@ const describeReference = (reference) => {
   return `${reference.type} ${reference.documentType}${foreign}${findBy}${where}`;
 };
 
-function validateFile(file, immutable, strictSize, network) {
-  const source = loadContractSource(file);
+function validateFile(file, { immutable, strictSize, network, interim }) {
+  const declared = loadContractSource(file);
+  const source = { ...declared, config: withInterim(declared.config, { network, interim }) };
   const platformVersion = PlatformVersion.latest();
   const contract = parseContract(source, platformVersion);
   console.log(`OK  ${file} parses under FULL validation (wasm-sdk)`);
   parseWithNodeRules(source);
   console.log(`OK  ${file} parses under the node rules (wasm-dpp2: meta-schema + index shapes)`);
   console.log(`    platform version: ${platformVersion.version} (${platformVersion.__type})`);
+  const declaredInterim = declared.config.moderation?.moderators?.interim?.$type;
+  const renderedInterim = source.config.moderation?.moderators?.interim?.$type;
+  if (declaredInterim !== renderedInterim) console.log(`    interim:          ${renderedInterim} as registered on ${network} (the file declares ${declaredInterim})`);
   console.log(`    document types:   ${Object.keys(source.documentSchemas).length}`);
 
   // `documentImmutableProperties` is a Map of every type that freezes
@@ -188,7 +215,7 @@ function validateFile(file, immutable, strictSize, network) {
     // 5.0: `immutableWhen` conditions carry numeric literals as BigInt.
     console.log(`    ${documentType}: ${JSON.stringify(contract.documentTypeImmutableProperties(documentType), (_key, value) => (typeof value === 'bigint' ? value.toString() : value))}`);
   }
-  return contract;
+  return { contract, source };
 }
 
 /**
@@ -209,20 +236,88 @@ function printCosts(contract, source) {
       console.log(`    ${name.padEnd(20)} (not priced: ${String(e?.message ?? e).slice(0, 100)})`);
     }
   }
+  printWriteCosts(contract, source, platformVersion);
+}
+
+/** USD cents at $60/DASH: 10^11 credits are one DASH, so 1M credits = 0.06¢. */
+const CENTS_PER_CREDIT = 60 * 100 / 1e11;
+
+/**
+ * The writes Yappr makes, one document shape each: [label, type, the optional
+ * fields present, with a length for a variable-size one]. A field ending in
+ * `?` is priced only where the cut declares it (v13's `live`); a write
+ * naming any other field the cut lacks is skipped. Required fields (v13's
+ * `rootOwnerId` among them) are always priced. Every other
+ * optional field is absent. A typed array's length is its element count; the
+ * estimator prices each element at the middle of its bound (256 characters
+ * for a media URL), so the media rows overstate an ipfs:// link.
+ */
+const SOCIAL_WRITES = [
+  ['post, 140 characters', 'post', { content: 140, 'live?': 0 }],
+  ['post, 140 characters, tagged', 'post', { content: 140, hashtag: 8, 'live?': 0 }],
+  ['post, one image', 'post', { content: 140, 'live?': 0, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1 }],
+  ['post, four images', 'post', { content: 140, 'live?': 0, mediaUrls: 4, mediaDigests: 160, mediaKinds: 4 }],
+  ['private post (300 B ciphertext)', 'post', { encryptedContent: 300, keyGeneration: 0, nonce: 0, 'live?': 0 }],
+  ['quote', 'post', { content: 140, quotedPostId: 0, quotedPostOwnerId: 0, 'live?': 0 }],
+  ['repost (a bare quote)', 'post', { quotedPostId: 0, quotedPostOwnerId: 0, 'live?': 0 }],
+  ['reply, 140 characters', 'reply', { content: 140 }],
+  ['reply to a reply', 'reply', { content: 140, replyToReplyId: 0 }],
+  ['reply, one image', 'reply', { content: 140, mediaUrls: 1, mediaDigests: 40, mediaKinds: 1 }],
+  ['like', 'like', {}],
+  ['like, tagged post', 'like', { hashtag: 8 }],
+  ['reply like', 'likeReply', {}],
+  ['report a post', 'report', { postId: 0 }],
+  ['report a reply', 'report', { replyId: 0 }],
+  ['report a profile', 'report', { about: 0 }],
+  ['report a private post, box for 3 moderators (400 B)', 'report', { postId: 0, box: 400 }],
+  ['report a private post, a full box (5,120 B)', 'report', { postId: 0, box: 5120 }],
+  ['bookmark', 'bookmark', {}],
+  ['follow', 'follow', {}],
+  ['block', 'block', {}],
+  ['block filter (one 1 KB bloom filter)', 'blockFilter', { filterData: 1024, itemCount: 0, version: 0 }],
+];
+
+/**
+ * `documentCreateCost` for each write in SOCIAL_WRITES whose type the cut has:
+ * the network fee (storage plus estimated processing) for the first document
+ * with its index values and for a later one, and the action fee the contract
+ * adds on top. Token costs (YAPP) are not credits and are not included.
+ */
+function printWriteCosts(contract, source, platformVersion) {
+  const rows = [];
+  for (const [label, type, wanted] of SOCIAL_WRITES) {
+    const schema = source.documentSchemas[type];
+    if (!schema) continue;
+    const declared = Object.keys(schema.properties);
+    const present = Object.entries(wanted).map(([name, length]) => [name.replace(/\?$/, ''), length, name.endsWith('?')]);
+    if (present.some(([name, , optional]) => !optional && !declared.includes(name))) continue;
+    const fields = Object.fromEntries(declared.filter((p) => !schema.required?.includes(p)).map((p) => [p, { present: false }]));
+    for (const [name, length] of present) if (declared.includes(name)) fields[name] = length > 0 ? { present: true, length } : { present: true };
+    const cost = documentCreateCost(contract, type, { fields }, platformVersion);
+    const actionFee = cost.contractCharges.filter((c) => c.kind === 'actionFee').reduce((n, c) => n + c.charged.owner + c.charged.moderators, 0);
+    const networkFee = (scenario) => Number(cost.totalCredits[scenario]) - actionFee;
+    rows.push([label, networkFee('newValues'), networkFee('knownValues'), actionFee]);
+  }
+  if (rows.length === 0) return;
+  const credits = (n) => `${(n / 1e6).toFixed(1)}M (${(n * CENTS_PER_CREDIT).toFixed(2)}¢)`;
+  console.log('\nnetwork fee per write (documentCreateCost: storage + estimated processing; first with its index values / later; ¢ at $60/DASH) + the action fee:');
+  for (const [label, first, later, actionFee] of rows) {
+    console.log(`    ${label.padEnd(52)} ${credits(first).padStart(17)} / ${credits(later).padStart(17)}${actionFee ? `   + ${credits(actionFee)} action fee` : ''}`);
+  }
 }
 
 async function main() {
   // The wasm modules back every class below; nothing works before they load.
   await Promise.all([ensureInitialized(), initWasmDpp2()]);
-  const { file, immutable, probes, constraints, cost, strictSize, network } = parseArgs(process.argv.slice(2));
+  const { file, immutable, probes, constraints, cost, strictSize, network, interim } = parseArgs(process.argv.slice(2));
   if (file) {
-    const contract = validateFile(file, immutable, strictSize, network);
-    if (cost) printCosts(contract, loadContractSource(file));
+    const { contract, source } = validateFile(file, { immutable, strictSize, network, interim });
+    if (cost) printCosts(contract, source);
   }
   if (probes) {
     const platformVersion = PlatformVersion.latest();
     const sizeOf = (contract) => createTransitionSize(contract, { DataContractCreateTransition, platformVersion });
-    const failed = runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf });
+    const failed = runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf, updateRefusals });
     if (failed > 0) throw new Error(`${failed} probe(s) did not behave as recorded`);
   }
   if (constraints) {

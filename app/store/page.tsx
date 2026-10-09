@@ -18,10 +18,13 @@ import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import { useSdk } from '@/contexts/sdk-context'
 import { storeService } from '@/lib/services/store-service'
-import { storeStatsService } from '@/lib/services/store-stats-service'
-import { storefrontIsV2 } from '@/lib/constants'
+import { storeStatsService, type RankedEntry } from '@/lib/services/store-stats-service'
+import { DISCOVERY_SCAN_LIMIT } from '@/lib/services/pagination-utils'
+import { storefrontIsV2, storefrontIsV6 } from '@/lib/constants'
+import { storeCategoryLabel } from '@/lib/storefront/storefront-contract'
 import { checkBlockedForAuthors } from '@/hooks/use-block'
 import type { Store, StoreRatingSummary } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 type StoreSort = 'newest' | 'topRated' | 'mostOrdered'
 const SORT_OPTIONS: ReadonlyArray<[StoreSort, string]> = [['newest', 'Newest'], ['topRated', 'Top rated'], ['mostOrdered', 'Most ordered']]
@@ -38,6 +41,12 @@ export default function StoreBrowsePage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [hasStore, setHasStore] = useState(false)
   const [sort, setSort] = useState<StoreSort>('newest')
+  // v6: the newest active stores in one category ('' = every category), and
+  // the categories with the most active stores, for the picker.
+  const [category, setCategory] = useState('')
+  const [categories, setCategories] = useState<RankedEntry[]>([])
+  // `newest` sorted only the first DISCOVERY_SCAN_LIMIT stores read.
+  const [scanIncomplete, setScanIncomplete] = useState(false)
 
   // Check if user has a store
   useEffect(() => {
@@ -53,6 +62,16 @@ export default function StoreBrowsePage() {
     checkUserStore().catch((error) => logger.error(error))
   }, [sdkReady, user?.identityId])
 
+  // v6: one proved ranked count of active stores per category.
+  useEffect(() => {
+    if (!sdkReady || !storefrontIsV6()) return
+    let active = true
+    storeStatsService.topStoreCategories(20)
+      .then((ranked) => { if (active) setCategories(ranked) })
+      .catch((error) => logger.error('Failed to load store categories:', error))
+    return () => { active = false }
+  }, [sdkReady])
+
   // Load active stores
   useEffect(() => {
     if (!sdkReady) return
@@ -61,8 +80,13 @@ export default function StoreBrowsePage() {
       try {
         setIsLoading(true)
         let activeStores: Store[]
-        if (sort === 'newest') {
-          activeStores = (await storeService.getActiveStores({ limit: 50 })).stores
+        let complete = true
+        if (category) {
+          // v6 `byCategory`: only active stores in the category, newest first.
+          activeStores = await storeService.getNewestActiveStoresInCategory(category, 50)
+        } else if (sort === 'newest') {
+          // v6 reads `byStatus` (active only, complete); earlier cuts scan and filter.
+          ({ stores: activeStores, complete } = await storeService.getNewestActiveStores(50))
         } else {
           // One proved ranked page (top rated by average, or most ordered),
           // then the stores by id.
@@ -81,6 +105,7 @@ export default function StoreBrowsePage() {
         if (!active) return
         setStores(activeStores)
         setStoreRatings(ratings)
+        setScanIncomplete(!complete)
       } catch (error) {
         logger.error('Failed to load stores:', error)
       } finally {
@@ -89,7 +114,7 @@ export default function StoreBrowsePage() {
     }
     loadStores().catch((error) => logger.error(error))
     return () => { active = false }
-  }, [sdkReady, sort])
+  }, [sdkReady, sort, category])
 
   const viewerId = user?.identityId
   const blockCheckKey = viewerId && stores.length > 0
@@ -182,13 +207,18 @@ export default function StoreBrowsePage() {
 
             {/* Sort (ranked tabs need the v2 contract's ranking trees) */}
             {storefrontIsV2() && (
-            <div className="flex gap-2 px-4 pb-3" role="tablist" aria-label="Sort stores">
+            <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+            <div className="flex gap-2" role="tablist" aria-label="Sort stores">
               {SORT_OPTIONS.map(([key, label]) => (
                 <button
                   key={key}
                   role="tab"
                   aria-selected={sort === key}
-                  onClick={() => setSort(key)}
+                  onClick={() => {
+                    setSort(key)
+                    // A category lists its newest stores; the rankings span every category.
+                    if (key !== 'newest') setCategory('')
+                  }}
                   className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
                     sort === key
                       ? 'bg-yappr-500 text-white'
@@ -198,6 +228,25 @@ export default function StoreBrowsePage() {
                   {label}
                 </button>
               ))}
+            </div>
+            {categories.length > 0 && (
+              <select
+                aria-label="Category"
+                value={category}
+                onChange={(e) => {
+                  setCategory(e.target.value)
+                  if (e.target.value) setSort('newest')
+                }}
+                className="ml-auto h-8 rounded-full border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
+              >
+                <option value="">All categories</option>
+                {categories.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {storeCategoryLabel(entry.id)} ({entry.value})
+                  </option>
+                ))}
+              </select>
+            )}
             </div>
             )}
 
@@ -227,7 +276,7 @@ export default function StoreBrowsePage() {
               <div className="p-8 text-center">
                 <BuildingStorefrontIcon className="h-16 w-16 text-gray-300 mx-auto mb-4" />
                 <p className="text-gray-500 font-medium">
-                  {searchQuery ? 'No stores match your search' : allStoresHidden ? 'No stores to show' : 'No stores yet'}
+                  {searchQuery ? 'No stores match your search' : allStoresHidden ? 'No stores to show' : category ? 'No open stores in this category' : 'No stores yet'}
                 </p>
                 <p className="text-sm text-gray-400 mt-1">
                   {searchQuery
@@ -247,7 +296,13 @@ export default function StoreBrowsePage() {
                 )}
               </div>
             ) : (
-              filteredStores.map((store, index) => {
+              <>
+              {scanIncomplete && sort === 'newest' && (
+                <p className="px-4 py-2 text-center text-xs text-gray-500">
+                  Newest among the first {DISCOVERY_SCAN_LIMIT.toLocaleString()} stores found; there are more.
+                </p>
+              )}
+              {filteredStores.map((store, index) => {
                 const rating = storeRatings.get(store.id)
                 return (
                   <motion.div
@@ -270,7 +325,7 @@ export default function StoreBrowsePage() {
                       {/* Store Logo */}
                       <div className="flex-shrink-0 w-16 h-16 rounded-lg bg-gray-200 dark:bg-gray-800 overflow-hidden">
                         {store.logoUrl ? (
-                          <img
+                          <IpfsImage
                             src={store.logoUrl}
                             alt={store.name}
                             className="w-full h-full object-cover"
@@ -312,7 +367,8 @@ export default function StoreBrowsePage() {
                     </div>
                   </motion.div>
                 )
-              })
+              })}
+              </>
             )}
           </div>
     </PageShell>

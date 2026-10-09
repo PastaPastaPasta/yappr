@@ -15,6 +15,9 @@ export type StoreItemStatus = 'active' | 'paused' | 'sold_out' | 'deleted'
 // Order status values
 export type OrderStatus = 'pending' | 'payment_received' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'disputed'
 
+// How an item reaches the buyer. Absent on chain means `shipped`.
+export type ItemFulfillment = 'shipped' | 'digital'
+
 // Shipping rate type values
 export type ShippingRateType = 'flat' | 'weight_tiered' | 'price_tiered'
 
@@ -44,6 +47,7 @@ export interface StoreDocument {
   policies?: string
   location?: string
   contactMethods?: string // JSON string of SocialLink[] (or legacy StoreContactMethods object)
+  category?: string // v6: required lowercase slug (e.g. vintage-clothing)
 }
 
 // Parsed store for UI display
@@ -62,6 +66,8 @@ export interface Store {
   policies?: string
   location?: string
   contactMethods?: SocialLink[]
+  /** v6: the seller's category slug (every v6 store has one; no earlier cut does). */
+  category?: string
   // Enriched fields
   ownerUsername?: string
   ownerDisplayName?: string
@@ -112,6 +118,7 @@ export interface StoreItemDocument {
   stockQuantity?: number
   sku?: string
   variants?: string // JSON string of ItemVariants
+  fulfillment?: ItemFulfillment // storefront v6
 }
 
 // Parsed store item for UI display
@@ -135,6 +142,7 @@ export interface StoreItem {
   stockQuantity?: number
   sku?: string
   variants?: ItemVariants
+  fulfillment?: ItemFulfillment
   // Enriched fields
   storeName?: string
   storeLogoUrl?: string
@@ -213,6 +221,8 @@ export interface CartItem {
   unitPrice: number
   imageUrl?: string
   currency: string
+  /** Copied from the item when added; absent (older carts) means shipped. */
+  fulfillment?: ItemFulfillment
 }
 
 // Cart (localStorage)
@@ -245,6 +255,8 @@ export interface OrderItem {
   quantity: number
   unitPrice: number
   imageUrl?: string
+  /** Absent means shipped (orders placed before digital products existed). */
+  fulfillment?: ItemFulfillment
 }
 
 // Encrypted order payload structure
@@ -339,8 +351,8 @@ export interface StoreReview {
   storeId: string
   orderId: string
   sellerId: string
-  /** v2: always true — only the order's owner can write a review of it. */
-  verifiedPurchase: boolean
+  /** v2+: always true. Only the order's owner can review it, which proves an order was placed (not paid or delivered). */
+  ordered: boolean
   createdAt: Date
   rating: number
   title?: string
@@ -370,8 +382,8 @@ export interface ItemReview {
   storeId: string
   itemId: string
   orderId: string
-  /** v2-only doctype, and the writer gate makes every review a real purchase. */
-  verifiedPurchase: boolean
+  /** v2-only doctype, and the writer gate admits only the order's owner: an order was placed. */
+  ordered: boolean
   createdAt: Date
   rating: number
   content?: string
@@ -423,4 +435,133 @@ export interface SavedAddressDocument {
   $updatedAt?: number
   $revision?: number
   encryptedPayload: Uint8Array
+}
+
+// ---------------------------------------------------------------------------
+// Digital products (storefront v6, docs/DIGITAL_PRODUCTS.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * One deliverable piece of a digital product. A `link` is any URL the seller
+ * hosts elsewhere (their own site, a cloud drive, a course portal, a magnet
+ * link), with the access code or password it asks for, if any. A `code` is a
+ * piece of text to copy: a voucher, a gift card, a login, an invite. A `file`
+ * is encrypted in the browser with its own random key and the ciphertext
+ * pinned to IPFS, so the public CID reveals nothing; whoever holds `key` (the
+ * seller, then each buyer it is delivered to) can fetch and decrypt it.
+ * `variantKey` limits an asset to one variant of the item; absent means every
+ * variant.
+ */
+export type DigitalAsset =
+  | {
+      kind: 'file'
+      name: string
+      mime?: string
+      /** Plaintext size in bytes. */
+      size: number
+      /** ipfs:// URL of the ciphertext (24-byte nonce || XChaCha20-Poly1305 output). */
+      url: string
+      /** Base64 of the 32-byte file key. */
+      key: string
+      variantKey?: string
+    }
+  | {
+      kind: 'link'
+      label: string
+      url: string
+      /** Access code or password the link asks for. */
+      code?: string
+      variantKey?: string
+    }
+  | {
+      kind: 'code'
+      label: string
+      code: string
+      variantKey?: string
+    }
+
+/** When the seller's "deliver ready orders" action may fulfil an order. */
+export type DeliverWhen = 'payment_confirmed' | 'on_order'
+
+/** The seller's private delivery kit for one digital item (encrypted to themselves). */
+export interface ItemDeliverablePayload {
+  v: 1
+  assets: DigitalAsset[]
+  instructions?: string
+  /**
+   * Pool of unique codes, one consumed per unit sold: license keys, voucher
+   * codes, or single-use links (an entry that is a URL is shown as a link).
+   * Present (even empty) when the item sells them, so an exhausted pool
+   * blocks delivery instead of silently sending none.
+   */
+  licenseKeys?: string[]
+  deliverWhen: DeliverWhen
+}
+
+/** itemDeliverable document (from platform) */
+export interface ItemDeliverableDocument {
+  $id: string
+  $ownerId: string
+  $createdAt: number
+  $revision?: number
+  itemId: Uint8Array | string
+  encryptedPayload: Uint8Array
+}
+
+/** Parsed itemDeliverable (payload decrypted on demand by the seller). */
+export interface ItemDeliverable {
+  id: string
+  ownerId: string
+  itemId: string
+  createdAt: Date
+  $revision?: number
+  encryptedPayload: Uint8Array
+}
+
+/** One order line as delivered to the buyer. */
+export interface DeliveredItem {
+  itemId: string
+  itemTitle: string
+  /**
+   * Which variant this fulfils, as a fixed-size reference (`variantRef()`),
+   * not the variant key itself: a receipt's size must not depend on the
+   * listing's variant names, which can change after the kit was checked.
+   */
+  variantRef?: string
+  /** The variant's name for display, cut to a fixed length. */
+  variantLabel?: string
+  assets: DigitalAsset[]
+  licenseKeys?: string[]
+  instructions?: string
+}
+
+/** Decrypted orderDelivery content. */
+export interface OrderDeliveryPayload {
+  v: 1
+  items: DeliveredItem[]
+  message?: string
+}
+
+/** orderDelivery document (from platform) */
+export interface OrderDeliveryDocument {
+  $id: string
+  $ownerId: string // seller — the writer gate makes it the order's seller
+  $createdAt: number
+  orderId: Uint8Array | string
+  encryptedPayload: Uint8Array
+  nonce: Uint8Array
+}
+
+/** Parsed orderDelivery */
+export interface OrderDelivery {
+  id: string
+  sellerId: string
+  orderId: string
+  createdAt: Date
+  encryptedPayload: Uint8Array
+  nonce: Uint8Array
+  /** Decrypted content, when the reader is the buyer or the seller. */
+  payload?: OrderDeliveryPayload
+  /** Seller side only: broadcast this session but not yet seen on chain. */
+  unconfirmed?: boolean
 }

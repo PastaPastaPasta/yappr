@@ -6,14 +6,16 @@
  */
 
 import { BaseDocumentService } from './document-service';
+import { stateTransitionService } from './state-transition-service';
 import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped } from '../constants';
 import { LIST_LIMITS, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
-import { identifierToBase58, identifierStringToDocumentBytes, type DocumentWhereClause } from './sdk-helpers';
+import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { parseJsonObject } from '../utils/json-parsing';
 import type {
   StoreItem,
   StoreItemDocument,
   StoreItemStatus,
+  ItemFulfillment,
   ItemVariants,
   VariantAxis,
   VariantCombination
@@ -82,7 +84,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       weight: data.weight,
       stockQuantity: data.stockQuantity,
       sku: data.sku,
-      variants: parseJsonObject<ItemVariants>(data.variants, 'variants')
+      variants: parseJsonObject<ItemVariants>(data.variants, 'variants'),
+      fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined
     };
   }
 
@@ -91,6 +94,25 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
    */
   async getById(itemId: string): Promise<StoreItem | null> {
     return this.get(itemId);
+  }
+
+  /**
+   * These items read from Platform, never from the cache: for a check that
+   * authorizes a delivery, where a listing switched to shipped elsewhere a
+   * minute ago must not still pass as digital.
+   */
+  async getManyFresh(itemIds: string[]): Promise<StoreItem[]> {
+    for (const id of itemIds) this.cache.delete(id);
+    return this.getMany(itemIds);
+  }
+
+  /**
+   * Whether a listing created without confirmation (`__createConfirmed ===
+   * false`) is on chain yet, polled a few times. False is not proof it never
+   * will be: the broadcast may still execute.
+   */
+  async isOnChain(itemId: string, attempts = 3): Promise<boolean> {
+    return stateTransitionService.waitForDocument(this.contractId, this.documentType, itemId, { attempts });
   }
 
   /**
@@ -133,65 +155,6 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   /**
-   * Get items by category
-   */
-  async getByCategory(section: string, category?: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
-    const where: DocumentWhereClause[] = [['section', '==', section]];
-    if (category) {
-      where.push(['category', '==', category]);
-    }
-
-    const { documents } = await this.query({
-      where,
-      orderBy: [['section', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
-    });
-
-    // Filter to active items
-    const activeItems = documents.filter(item => item.status === 'active');
-
-    return {
-      items: activeItems,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
-   * Get items by owner
-   */
-  async getByOwner(ownerId: string, options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['$ownerId', '==', ownerId]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
-    });
-
-    return {
-      items: documents,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
-   * Get active items for browsing
-   */
-  async getActiveItems(options: { limit?: number; startAfter?: string } = {}): Promise<{ items: StoreItem[]; nextCursor?: string }> {
-    const { documents } = await this.query({
-      where: [['status', '==', 'active']],
-      orderBy: [['status', 'asc'], ['$createdAt', 'desc']],
-      limit: options.limit || 20,
-      startAfter: options.startAfter
-    });
-
-    return {
-      items: documents,
-      nextCursor: documents.length > 0 ? documents[documents.length - 1].id : undefined
-    };
-  }
-
-  /**
    * Create a new item
    */
   async createItem(
@@ -212,6 +175,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity?: number;
       sku?: string;
       variants?: ItemVariants;
+      fulfillment?: ItemFulfillment;
     }
   ): Promise<StoreItem> {
     const documentData: Record<string, unknown> = {
@@ -232,6 +196,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.stockQuantity !== undefined) documentData.stockQuantity = data.stockQuantity;
     if (data.sku) documentData.sku = data.sku;
     if (data.variants) documentData.variants = JSON.stringify(data.variants);
+    // Absent means shipped, so a physical product writes exactly what v5 accepts.
+    if (data.fulfillment === 'digital') documentData.fulfillment = 'digital';
 
     return this.create(ownerId, documentData);
   }
@@ -258,6 +224,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       stockQuantity: number;
       sku: string;
       variants: ItemVariants;
+      fulfillment: ItemFulfillment;
     }>
   ): Promise<StoreItem> {
     // Fetch existing item to preserve required fields
@@ -287,6 +254,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('stockQuantity' in data) documentData.stockQuantity = data.stockQuantity;
     if ('sku' in data) documentData.sku = data.sku;
     if ('variants' in data) documentData.variants = data.variants && JSON.stringify(data.variants);
+    if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
 
     return this.update(itemId, ownerId, documentData);
   }

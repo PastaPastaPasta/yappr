@@ -7,10 +7,10 @@ import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel, getPurposeName, getSecurityLevelName } from '@/lib/crypto/identity-keys';
 import type { IdentityPublicKey as WasmIdentityPublicKey } from '@dashevo/wasm-sdk/compressed';
 import { promptForAuthKey } from '../auth-utils';
-import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogIsV2, keyNetwork, storefrontIsV2 } from '../constants';
-import { declaredActionFee, tokenCostFor, type DocumentAction } from '../contract-topology';
+import { BLOG_YAPP_TOKEN_COSTS, STOREFRONT_YAPP_TOKEN_COSTS, YAPPR_BLOG_CONTRACT_ID, YAPPR_CONTRACT_ID, YAPPR_STOREFRONT_CONTRACT_ID, YAPP_TOKEN_POSITION, blogCommentsCostYapp, keyNetwork, storefrontReviewsCostYapp } from '../constants';
+import { tokenCostFor, yappIsPausedForGood, type DocumentAction } from '../contract-topology';
 import { planPayment } from '../payment-preference';
-import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, tokenPaymentOptions } from '../transition-agreements';
+import { DEFAULT_FEE_MULTIPLIER_PERMILLE, actionFeeAgreementOptions, declaredActionFeeFor, tokenPaymentOptions } from '../transition-agreements';
 import { CREATE_NOT_RECORDED_ERROR, PENDING_WRITE_ERROR, extractErrorMessage, messageWithConsensusCode, isConsensusRefusal, isTimeoutError, isAlreadyExistsError, isNonFatalWaitError, isFeeMultiplierNotToleratedError, isIdentityNonceConflictError, isNonceSpentRefusal } from '../error-utils';
 import { useSettingsStore } from '../store';
 import { tokenService } from './token-service';
@@ -323,8 +323,9 @@ class StateTransitionService {
    * The `$tokenPaymentInfo` a create of `documentType` should carry, or
    * undefined when it pays credits (an unpriced type, or an `optional` cost the
    * viewer chose not to pay in YAPP). Three contracts declare a `tokenCost`:
-   * the social contract charges its own YAPP, while storefront v2+ and blog
-   * v2+ charge the SOCIAL contract's YAPP — a cross-contract cost, so those
+   * the social contract charges its own YAPP, while storefront v2–v5 and blog
+   * v2–v6 charge the SOCIAL contract's YAPP (storefront v6 and blog v7 charge
+   * an action fee instead) — a cross-contract cost, so those
    * agreements name that contract explicitly and stay required (neither
    * contract declares `optional`).
    *
@@ -353,18 +354,19 @@ class StateTransitionService {
       // on an optional cost, where too little means planning credits instead. A
       // user who chose credits, or a required cost consensus gives no choice
       // about, must not pay a balance round-trip on every like.
+      // YAPP paused for good is never spent, so its balance never matters.
       const payWith = useSettingsStore.getState().payWith;
-      const balance = cost.optional && payWith === 'yapp' ? await this.yappBalanceOrNull(ownerId) : null;
+      const balance = cost.optional && payWith === 'yapp' && !yappIsPausedForGood() ? await this.yappBalanceOrNull(ownerId) : null;
       const plan = planPayment(documentType, 'create', balance, payWith);
       if (plan.fallbackReason) logger.debug(`Paying ${documentType} in ${plan.payWith} (${plan.fallbackReason})`);
       return tokenPaymentOptions(plan, YAPP_TOKEN_POSITION);
     }
     const crossContract = (amount: number | undefined): TokenPaymentInfoOptions | undefined =>
       amount ? { paymentTokenContractId: YAPPR_CONTRACT_ID, tokenContractPosition: YAPP_TOKEN_POSITION, maximumTokenCost: BigInt(amount) } : undefined;
-    if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontIsV2()) {
+    if (contractId === YAPPR_STOREFRONT_CONTRACT_ID && storefrontReviewsCostYapp()) {
       return crossContract((STOREFRONT_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
-    if (contractId === YAPPR_BLOG_CONTRACT_ID && blogIsV2()) {
+    if (contractId === YAPPR_BLOG_CONTRACT_ID && blogCommentsCostYapp()) {
       return crossContract((BLOG_YAPP_TOKEN_COSTS as Record<string, number>)[documentType]);
     }
     return undefined;
@@ -382,7 +384,9 @@ class StateTransitionService {
   /**
    * The `$actionFeeAgreement` a transition on `documentType`/`action` must
    * carry, or undefined when the contract charges nothing for it (every action
-   * on v2; every action but `post`/`reply` create on v9). Built from the
+   * on social v2; every action but `post`/`reply` create on v9; every blog
+   * action but a `blog`/`blogPost`/`blogComment` create on blog v7; every
+   * storefront action but a store, item or review create on storefront v6). Built from the
    * contract's declared amounts and the multiplier this session knows: a
    * different amount is 40133, no agreement is 40132.
    */
@@ -392,8 +396,7 @@ class StateTransitionService {
     documentType: string,
     action: DocumentAction
   ): Promise<DocumentActionFeeAgreement | undefined> {
-    if (contractId !== YAPPR_CONTRACT_ID) return undefined;
-    const fee = declaredActionFee(documentType, action);
+    const fee = declaredActionFeeFor(contractId, documentType, action);
     if (!fee) return undefined;
     const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await currentFeeMultiplierPermille(sdk)));
     logger.debug(`Agreeing to the ${documentType} ${action} fee: moderators=${fee.moderators} owner=${fee.owner} at ${agreement.knownFeeMultiplierPermille ?? 'fixed'} permille`);
@@ -407,7 +410,7 @@ class StateTransitionService {
    * this fails BEFORE signing rather than after paying.
    */
   private assertUnpricedAction(contractId: string, documentType: string, action: DocumentAction): void {
-    if (contractId === YAPPR_CONTRACT_ID && declaredActionFee(documentType, action)) {
+    if (declaredActionFeeFor(contractId, documentType, action)) {
       throw new Error(`${documentType} ${action} charges an action fee, which this write path cannot agree to yet`);
     }
   }
@@ -539,6 +542,8 @@ class StateTransitionService {
        * confirmation must read the write back through a value query.
        */
       confirmation?: 'strict' | 'affectedState';
+      /** Stored with the nonce reservation: what this create writes (see `PendingTransition.scope`). */
+      reservationScope?: string;
     }
   ): Promise<StateTransitionResult> {
     return withIdentityWriteLock(ownerId, contractId, () => this.createDocumentLocked(contractId, documentType, ownerId, documentData, options));
@@ -721,7 +726,7 @@ class StateTransitionService {
 
       // Reserved before the broadcast: a broadcast that errors may still have
       // gone out, and skipping a nonce that did not only leaves a gap Drive fills.
-      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce);
+      pendingEntry = reserveNonce(ownerId, contractId, newNonce, currentNonce, undefined, options?.reservationScope);
       try {
         await sdk.stateTransitions.broadcastStateTransition(stateTransition);
         logger.debug('Broadcast succeeded, waiting for confirmation...');
@@ -867,7 +872,9 @@ class StateTransitionService {
     documentId: string,
     ownerId: string,
     documentData: Record<string, unknown>,
-    revision: number
+    revision: number,
+    /** Stored with the nonce reservation: what this replace writes (see `PendingTransition.scope`). */
+    reservationScope?: string
   ): Promise<StateTransitionResult> {
     try {
       this.assertUnpricedAction(contractId, documentType, 'replace');
@@ -909,7 +916,7 @@ class StateTransitionService {
         documentType,
         documentId,
         revision: newRevision,
-      });
+      }, reservationScope);
       logger.debug('Document update submitted successfully');
 
       return {
@@ -939,7 +946,9 @@ class StateTransitionService {
     contractId: string,
     documentType: string,
     documentId: string,
-    ownerId: string
+    ownerId: string,
+    /** Re-checked under the write lock right before sending (see withSdkSignedWrite). */
+    precondition?: () => Promise<boolean>
   ): Promise<StateTransitionResult> {
     try {
       this.assertUnpricedAction(contractId, documentType, 'delete');
@@ -974,7 +983,7 @@ class StateTransitionService {
         identityKey
       );
 
-      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }));
+      await withSdkSignedWrite(ownerId, contractId, () => sdk.documents.delete({ document: documentForDelete, identityKey: signingKey, signer }), undefined, undefined, precondition);
       logger.debug('Document deletion submitted successfully');
 
       return {

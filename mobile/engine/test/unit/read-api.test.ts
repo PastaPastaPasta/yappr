@@ -19,7 +19,7 @@ const m = vi.hoisted(() => ({
   replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn() },
   followService: {
     getFollowers: vi.fn(), getFollowing: vi.fn(), countFollowersBatch: vi.fn(), countFollowingBatch: vi.fn(),
-    getFollowStatusBatch: vi.fn(), getFollowingIds: vi.fn(),
+    getFollowStatusBatch: vi.fn(), getFollowingIds: vi.fn(), getFollowingIdsCached: vi.fn(),
   },
   getPostIdsByHashtag: vi.fn(),
   topLikedPostsHydrated: vi.fn(),

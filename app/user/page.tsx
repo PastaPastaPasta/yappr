@@ -19,6 +19,8 @@ import { useAuth } from '@/contexts/auth-context'
 import { useRequireAuth } from '@/hooks/use-require-auth'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useBlockProvenance } from '@/hooks/use-block'
+import { useModeratedTypeOpen } from '@/hooks/use-moderated-type-open'
+import { POSTING_CLOSED_COPY } from '@/lib/error-utils'
 import { useProgressiveEnrichment } from '@/hooks/use-progressive-enrichment'
 import { useTipModal } from '@/hooks/use-tip-modal'
 import { YappFlow } from '@/components/profile/yapp-flow'
@@ -117,6 +119,7 @@ function UserProfileContent() {
   const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false)
 
   const { isBlocked: isBlockedByMe, isOwnBlock, isLoading: blockLoading, unblock } = useBlockProvenance(userId ?? undefined)
+  const profileWritable = useModeratedTypeOpen('yapprProfile')
   const { openForUser: openTipModal } = useTipModal()
   const { enrichProgressively, getPostEnrichment } = useProgressiveEnrichment({ currentUserId: viewerId })
   const tabs = useProfileTabs(userId, enrichProgressively)
@@ -424,6 +427,11 @@ function UserProfileContent() {
 
   const handleSaveProfile = async () => {
     if (!viewerId) return
+    // Mainnet v13 (`notYetUsable`): the profile extension waits for the first seated team.
+    if (!profileWritable) {
+      toast.error(POSTING_CLOSED_COPY)
+      return
+    }
     setIsSaving(true)
     try {
       const { unifiedProfileService } = await import('@/lib/services')

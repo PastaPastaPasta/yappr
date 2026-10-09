@@ -6,7 +6,7 @@ import { reportBarredWrite } from '@/components/moderation/barred-writer-notice'
 import { logger } from '@/lib/logger'
 import type { Post } from '@/lib/types'
 import { canBookmark, canRepost, repostsAreQuotes, type TargetKind } from '@/lib/contract-topology'
-import { categorizeError, isDuplicateUniqueIndexError, isFrozenBalanceError } from '@/lib/error-utils'
+import { categorizeError, isDuplicateUniqueIndexError, isFrozenBalanceError, isTokenPausedError } from '@/lib/error-utils'
 import type { OwnQuote } from '@/lib/feed/quote-reposts'
 import { handleInsufficientYapp } from '@/hooks/use-buy-yapp-modal'
 import { isUnconfirmed, settleUnconfirmed } from '@/lib/unconfirmed-writes'
@@ -21,10 +21,10 @@ export interface EngagementSnapshot {
   ownQuote?: OwnQuote
 }
 
-/** Frozen accounts cannot spend at all, so say that instead of offering YAPP. */
+/** Frozen accounts and a paused token cannot spend at all, so say that instead of offering YAPP. */
 function reportSpendError(error: unknown, viewerId: string | undefined, buyReason: string, fallback: string) {
   if (reportBarredWrite(error, viewerId)) return
-  if (isFrozenBalanceError(error)) toast.error(categorizeError(error))
+  if (isFrozenBalanceError(error) || isTokenPausedError(error)) toast.error(categorizeError(error))
   else if (!handleInsufficientYapp(error, buyReason)) toast.error(fallback)
 }
 
@@ -141,7 +141,8 @@ export function usePostEngagement(post: Post, viewerId: string | undefined, init
       setReposted(true)
       setReposts(prevReposts)
       logger.error('Repost error:', error)
-      // Undo is a tombstone (a replace), refused to a banned or suspended author.
+      // Undo is a tombstone (a replace), refused to a banned or suspended
+      // author on v11; v12 accepts it (retractedWhen).
       if (!reportBarredWrite(error, viewerId)) toast.error('Failed to update repost. Please try again.')
     } finally {
       setRepostLoading(false)

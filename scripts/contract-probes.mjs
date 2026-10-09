@@ -3,8 +3,9 @@
  * and the negative probes that record which refusals are local and which only
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
- * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1 with
- * `DataContract.fromJSON(json, true, latest)`:
+ * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1,
+ * 5.0.0-beta.2 and 5.0.0-beta.3 with `DataContract.fromJSON(json, true, latest)`
+ * (and a fourth for contract updates, below):
  *
  *   - **wasm-sdk** (`@dashevo/evo-sdk`): the structural parser (findBy/where,
  *     distinctFrom targets, moderatorAbilities, skipIfAbsent, ttl, …). It is
@@ -29,6 +30,21 @@
  *     (40126). It also re-checks the index shapes wasm-dpp2 checks
  *     (`auditIndexShapes`, ported from the v10 study's index-audit.py), so the
  *     rules Yappr relies on do not depend on one package alone.
+ *   - **update** (an `update` probe): version 2 of a committed cut parses
+ *     under both, and wasm-dpp2's `DataContract.validateUpdate` (the code a
+ *     data contract update transition runs, no state read) refuses it.
+ *
+ * The 5.0.0-beta.2 keywords (`summableOffCountIndex`, `retractedWhen`,
+ * `deleteSettled.approversPredateDocument`) are all refused by the wasm-sdk
+ * parse itself (10231): the structural rules run with full validation there.
+ *
+ * Rule budgets are not re-counted here: both parses refuse a type with more
+ * than 16 propertyConstraints rules or a rule above 32 nodes (the probes
+ * below record it at the `wasm` layer). 5.0.0-beta.3 adds two things to that
+ * budget: a `countPresent` operand costs 1 node plus 1 per path it tests, and
+ * a type's `deleteConstraints` (rules its owner's delete must meet, refused
+ * with 40147) have their own 16 × 32 budget and 4 distinct totals, counted
+ * apart from `propertyConstraints`.
  *
  * The rs-dpp sources are at v4.2.0-beta.7: config/moderation/{mod,elected}.rs,
  * try_from_schema/common/mod.rs (validate_index_properties,
@@ -71,7 +87,12 @@ const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v5.0.0-beta.1 (5.0 added conditional
+ * rs-dpp's document meta-schema v3 at v5.0.0-beta.3 (beta.3 added the
+ * `countPresent` operand, `deleteConstraints` and `$id` as a countOf/sumOf
+ * filter value; beta.2 added
+ * `summableOffCountIndex` with the `{ "at": ... }` form of `rankedSummable` /
+ * `rankedAverageable`, `retractedWhen` and `deleteSettled.approversPredateDocument`;
+ * 5.0.0-beta.1 added conditional
  * `immutable` entries in place of the refused `immutableAllowSetting`, the
  * `moderatedDocument` reference kind, derived index properties,
  * `outlivesDelete`, `deleteKeepsFields` and `deleteSettled`; beta.7 replaced
@@ -84,7 +105,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * ajv pass names the failing path more precisely.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = 'eb8d94b78752998dbe76f7fd32c551e170e23fc560b6ece70f302f4ac62b8b52';
+const META_SCHEMA_SHA256 = '7d4ddb30d2370a7df1bbff5905e93b153d1f50f757904526c113f18104f2db28';
 
 let metaValidator;
 /**
@@ -97,7 +118,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.1 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.3 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;
@@ -133,7 +154,7 @@ export function createTransitionSize(contract, { DataContractCreateTransition, p
   return { bytes, fits: bytes <= CREATE_TRANSITION_BUDGET, overCap: bytes > STATE_TRANSITION_CAP };
 }
 const ABILITY_LIST = { ban: 'banlist', suspend: 'suspensions', warn: 'warnings' };
-const INTERIM_KINDS = ['contractOwner', 'appointedModerators', 'notYetUsable', 'noModeration'];
+export const INTERIM_KINDS = ['contractOwner', 'appointedModerators', 'notYetUsable', 'noModeration'];
 
 const within = (value, [min, max]) => Number.isInteger(value) && value >= min && value <= max;
 
@@ -433,6 +454,10 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
 
 const SOCIAL_V10 = 'contracts/yappr-social-contract-v10.json';
 const SOCIAL_V11 = 'contracts/yappr-social-contract-v11.json';
+const SOCIAL_V12 = 'contracts/yappr-social-contract-v12.json';
+const SOCIAL_V13 = 'contracts/yappr-social-contract-v13.json';
+const SOCIAL_V14 = 'contracts/yappr-social-contract-v14.json';
+const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
@@ -440,7 +465,26 @@ const BLOG = 'contracts/yappr-blog-contract.json';
 
 const elected = (source) => source.config.moderation.moderators;
 const types = (source) => source.documentSchemas;
+let v12Json;
+/** The committed v12 file, read once (the v11 → v12 update probe copies its types). */
+const v12Source = () => (v12Json ??= JSON.parse(readFileSync(SOCIAL_V12, 'utf8')));
+const namedIndex = (source, type, name) => types(source)[type].indices.find((i) => i.name === name);
+/** v12 keeping warnings only: no banlist, no suspensions, and no ban/suspend ability they back. */
+function withoutBars(source) {
+  Object.assign(source.config.moderation, { banlist: false, suspensions: false });
+  const moderated = elected(source).moderatedDocumentTypes;
+  for (const [type, abilities] of Object.entries(moderated)) moderated[type] = abilities.filter((a) => a !== 'ban' && a !== 'suspend');
+}
+/** yapprProfile with a week's delete window and post's settled rule, $createdAt no longer required; answers the rule. */
+function settledWithoutCreatedAt(source) {
+  const profile = types(source).yapprProfile;
+  profile.required = profile.required.filter((p) => p !== '$createdAt');
+  profile.moderatorAbilities = { delete: true, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } };
+  return profile.moderatorAbilities.deleteSettled;
+}
 const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position, ...(refersTo ? { refersTo } : {}) });
+/** Every same-contract document type a source's references name. */
+const referencedTypes = (source) => Object.values(types(source)).flatMap((schema) => referenceDeclarations(schema).map(([, ref]) => ref.documentType)).filter(Boolean);
 
 /**
  * Each probe mutates a committed cut and records the first layer that refuses
@@ -449,6 +493,10 @@ const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, mi
  * parse and only `auditNodeRules` (or the size cap) refuses it — the node
  * does, and the SDK signs it — or `accepted` for a control. `auditToo` also
  * requires the audit to flag a `dpp2` probe, pinning the ported index checks.
+ * An `update` probe (in place of `mutate`) edits version 2 of the cut, and
+ * `update` is its refusal by the update rules; its first refusal must carry the
+ * probe's `node` code. `why` must match the refusal's text: a probe refused by
+ * some other rule first proves nothing about its own.
  */
 const PROBES = [
   { label: 'control: social v10 as committed', file: SOCIAL_V10, mutate: () => {}, expect: 'accepted' },
@@ -516,6 +564,175 @@ const PROBES = [
   { label: 'v11 M: a derived root-owner index on a reply (rootPostId frozen): legal, not adopted (SOCIAL_V11.md)', file: SOCIAL_V11, expect: 'accepted', mutate: (s) => { types(s).reply.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { 'rootPostId.$ownerId': 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } }); } },
   { label: 'v11 M: a derived post-owner index on the indexOnly like', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).like.indices.push({ name: 'probe', properties: [{ 'postId.$ownerId': 'asc' }, { postId: 'asc' }], terminal: '$ownerId' }); } },
   { label: 'v11: deleteKeepsFields beside deleteKeepsRecord false', file: SOCIAL_V11, expect: 'wasm', mutate: (s) => { types(s).post.moderatorAbilities.deleteKeepsRecord = false; } },
+
+  // Social v12 (5.0.0-beta.2): counter indexes (`summableOffCountIndex`, #5250; index-only.md
+  // "summableOffCountIndex"), `retractedWhen` (#5253; deletion.md) and the dated settled
+  // deletion (`approversPredateDocument`, #5260). `why` pins the rule a refusal names, so a
+  // probe refused for some other reason first does not pass as this one.
+  { label: 'control: social v12 as committed', file: SOCIAL_V12, mutate: () => {}, expect: 'accepted' },
+  { label: 'v12 counter: byAuthorPost without rangeSummable (the counters sit in the last property\'s sum tree)', file: SOCIAL_V12, expect: 'wasm', why: /needs rangeSummable/i, mutate: (s) => { delete namedIndex(s, 'like', 'byAuthorPost').rangeSummable; } },
+  { label: 'v12 counter: byAuthorPost with a terminal', file: SOCIAL_V12, expect: 'wasm', why: /takes no terminal/i, mutate: (s) => { namedIndex(s, 'like', 'byAuthorPost').terminal = '$ownerId'; } },
+  { label: 'v12 counter: byAuthorPost also `summable` (one summed value per type)', file: SOCIAL_V12, expect: 'wasm', why: /no summable or averageable/i, mutate: (s) => { namedIndex(s, 'like', 'byAuthorPost').summable = 'postId'; } },
+  // A source that skips: byPost holds only the required postId, so `skipIfAbsent` there is refused
+  // by the skip rules too; `why` reports which rule spoke first.
+  { label: 'v12 counter: its source byPost skips (skipIfAbsent)', file: SOCIAL_V12, expect: 'wasm', why: /sums the count of "byPost", which must/i, mutate: (s) => { namedIndex(s, 'like', 'byPost').skipIfAbsent = true; } },
+  // A source that outlives deletes is a window (outlivesDelete needs a timeRange, which needs
+  // $createdAt): every counter names byTrendPost, which breaks both source rules.
+  { label: 'v12 counter: both like counters count off byTrendPost (a window that outlives deletes and involves $createdAt)', file: SOCIAL_V12, expect: 'wasm', why: /sums the count of "byTrendPost", which must/i, mutate: (s) => {
+    for (const name of ['byAuthorPost', 'byHashtagPost']) namedIndex(s, 'like', name).summableOffCountIndex = 'byTrendPost';
+  } },
+  // Lossless: postAuthor is fixed only by the postId reference's `"$ownerId": "postAuthor"`.
+  // Without it the preallocation rule speaks first (the counter's path is no longer named by
+  // the post); without preallocation too, the counter's own rule does.
+  { label: 'v12 counter: the like.postId where loses "$ownerId": "postAuthor" (preallocated byAuthorPost loses its path first)', file: SOCIAL_V12, expect: 'wasm', why: /preallocated/i, mutate: (s) => { delete types(s).like.properties.postId.refersTo.where.$ownerId; } },
+  { label: 'v12 counter: the same on an unpreallocated byAuthorPost (postAuthor is neither in the source nor fixed by it)', file: SOCIAL_V12, expect: 'wasm', why: /postAuthor.{0,40}neither a property of its source/i, mutate: (s) => {
+    delete types(s).like.properties.postId.refersTo.where.$ownerId;
+    delete namedIndex(s, 'like', 'byAuthorPost').preallocated;
+  } },
+  { label: 'v12 counter: byAuthorPost with a timeRange', file: SOCIAL_V12, expect: 'wasm', why: /cannot declare timeRange/i, mutate: (s) => {
+    const counter = namedIndex(s, 'like', 'byAuthorPost');
+    counter.properties = [{ $createdAt: 'asc' }, ...counter.properties];
+    counter.timeRange = { on: '$createdAt', range: 86_400, step: 86_400, ttl: 172_800 };
+    delete counter.preallocated;
+    delete counter.rankedCountable;
+  } },
+  { label: 'v12 counter: another index continues below byAuthorPost\'s last property ([postAuthor, postId, hashtag] → $ownerId)', file: SOCIAL_V12, expect: 'wasm', why: /is continued by index "probe"/i, mutate: (s) => {
+    types(s).like.indices.push({ name: 'probe', properties: [{ postAuthor: 'asc' }, { postId: 'asc' }, { hashtag: 'asc' }], terminal: '$ownerId', skipIfAbsent: true });
+  } },
+  // A second entries index over the post, [postId, $ownerId], is a legal source on its own;
+  // byHashtagPost naming it while byAuthorPost names byPost is two summed values.
+  { label: 'v12 counter: two like counters naming different sources (byPost, and a second [postId, $ownerId] index)', file: SOCIAL_V12, expect: 'wasm', why: /sums the count of "byPost", but index "byHashtagPost"/i, mutate: (s) => {
+    types(s).like.indices.push({ name: 'byPostOwner', properties: [{ postId: 'asc' }, { $ownerId: 'asc' }] });
+    namedIndex(s, 'like', 'byHashtagPost').summableOffCountIndex = 'byPostOwner';
+  } },
+  { label: 'v12 counter: likeReply byAuthorReply counting off itself', file: SOCIAL_V12, expect: 'wasm', mutate: (s) => { namedIndex(s, 'likeReply', 'byAuthorReply').summableOffCountIndex = 'byAuthorReply'; } },
+  { label: 'v12: rankedSummable { at } on a stored type\'s index (post.ownerAndTime), which is no counter', file: SOCIAL_V12, expect: 'wasm', why: /`at` form is only allowed on a summableOffCountIndex index/i, mutate: (s) => { namedIndex(s, 'post', 'ownerAndTime').rankedSummable = { at: ['$ownerId'] }; } },
+  { label: 'v12: rankedSummable { at } on like.byTrendPost (keeps entries, no counter)', file: SOCIAL_V12, expect: 'wasm', why: /`at` form is only allowed on a summableOffCountIndex index/i, mutate: (s) => { namedIndex(s, 'like', 'byTrendPost').rankedSummable = { at: ['postId'] }; } },
+  { label: 'v12 counter: byAuthorReply ranked at [replyAuthor] (rankedCountable merges into the sum ranking; legal, not adopted)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { namedIndex(s, 'likeReply', 'byAuthorReply').rankedCountable = { at: ['replyAuthor'] }; } },
+  { label: 'v12: retractedWhen on like, whose documents are not mutable', file: SOCIAL_V12, expect: 'wasm', why: /retractedWhen.{0,40}not mutable/i, mutate: (s) => { types(s).like.retractedWhen = { present: 'hashtag' }; } },
+  { label: 'v12: retractedWhen on follow, whose documents are not mutable', file: SOCIAL_V12, expect: 'wasm', why: /retractedWhen.{0,40}not mutable/i, mutate: (s) => { types(s).follow.retractedWhen = { present: 'followingId' }; } },
+  // Only a banlist or a suspension list bars anyone: the control drops both lists (and the
+  // abilities they back) and keeps the warnings, so the probe differs by retractedWhen alone.
+  { label: 'v12: a warnings-only contract without retractedWhen (control for the next probe)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { withoutBars(s); for (const type of ['post', 'reply']) delete types(s)[type].retractedWhen; } },
+  { label: 'v12: retractedWhen on a contract that keeps neither a banlist nor a suspension list', file: SOCIAL_V12, expect: 'wasm', why: /retractedWhen.{0,200}(banlist|suspension)/i, mutate: (s) => { withoutBars(s); } },
+  { label: 'v12: retractedWhen reading a property post does not have', file: SOCIAL_V12, expect: 'wasm', mutate: (s) => { types(s).post.retractedWhen = { present: 'nope' }; } },
+  // #5260: a settled deletion needing several approvals dates the leader's added members by
+  // $createdAt. yapprProfile (mutable, moderator-deletable, deleteDocuments in the elected set)
+  // takes a deleteSettled here; `$updatedAt` stays required as deleteWithin's clock.
+  { label: 'v12: deleteSettled approvals 3 on a type that does not require $createdAt (#5260)', file: SOCIAL_V12, expect: 'wasm', why: /createdAt|approversPredateDocument/i, mutate: (s) => { settledWithoutCreatedAt(s); } },
+  { label: 'v12: the same with approversPredateDocument false (members count whenever added)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { settledWithoutCreatedAt(s).approversPredateDocument = false; } },
+  { label: 'v12: the same with one approval (the leader alone; nobody is dated by default)', file: SOCIAL_V12, expect: 'accepted', mutate: (s) => { const rule = settledWithoutCreatedAt(s); rule.approvals = 1; } },
+
+  // Contract updates (wasm-dpp2 `validateUpdate`, the code a data contract update runs): the
+  // committed file is version 1, `update` builds version 2. `retractedWhen`, the counter and
+  // `deleteSettled` are fixed once a type exists (40212 / 10217).
+  { label: 'v12 update: version 2 changing nothing (control)', file: SOCIAL_V12, expect: 'accepted', update: () => {} },
+  { label: 'v12 update: retractedWhen changed on post', file: SOCIAL_V12, expect: 'update', node: '40212', why: /retractedWhen/i, update: (s) => { types(s).post.retractedWhen = { anyOf: [{ present: 'deleted' }, { absent: 'content' }] }; } },
+  { label: 'v12 update: retractedWhen removed from reply', file: SOCIAL_V12, expect: 'update', node: '40212', why: /retractedWhen/i, update: (s) => { delete types(s).reply.retractedWhen; } },
+  { label: 'v11 update: retractedWhen added to a stored post', file: SOCIAL_V11, expect: 'update', node: '40212', why: /retractedWhen/i, update: (s) => { types(s).post.retractedWhen = { present: 'deleted' }; } },
+  { label: 'v12 update: approversPredateDocument turned off on post', file: SOCIAL_V12, expect: 'update', node: '40212', why: /who must approve/i, update: (s) => { types(s).post.moderatorAbilities.deleteSettled.approversPredateDocument = false; } },
+  // A counter's source can only be byPost (every source property must be the counter's, and a
+  // second [postId] index is a duplicate), so the update probes turn entries into counters and
+  // back: the index is frozen whole.
+  { label: 'v12 update: byHashtagPost back to v11\'s entries index (terminal $ownerId, no counter)', file: SOCIAL_V12, expect: 'update', node: '10217', why: /changed index 'byHashtagPost'/i, update: (s) => {
+    const tags = namedIndex(s, 'like', 'byHashtagPost');
+    delete tags.summableOffCountIndex; delete tags.rangeSummable; tags.terminal = '$ownerId';
+  } },
+  { label: 'v11 update: v11 updated in place to v12\'s like, likeReply, post and reply (counters and retractedWhen)', file: SOCIAL_V11, expect: 'update', node: '10217', why: /changed index 'byAuthor(Post|Reply)'|changed index 'byHashtagPost'/i, update: (s) => {
+    for (const type of ['like', 'likeReply', 'post', 'reply']) types(s)[type] = structuredClone(types(v12Source())[type]);
+  } },
+
+  // Social v13 (the mainnet candidate) and the blocks contract split out of it. `network`
+  // renders the file as that network registers it (`withInterim`): mainnet's interim is
+  // notYetUsable. `holds` is a statement about the loaded source that must be true.
+  { label: 'control: social v13 as committed (devnet: interim contractOwner)', file: SOCIAL_V13, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v13 as mainnet registers it (interim notYetUsable, one-day window floor)', file: SOCIAL_V13, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'control: the blocks contract as committed (bare schemas, unmoderated)', file: BLOCKS, mutate: () => {}, expect: 'accepted', holds: (s) => !s.config.moderation && types(s).block.indices.every((i) => i.name !== 'ownerBlocks') },
+  { label: 'v13: no block type is left in social, and nothing in it refers to one', file: SOCIAL_V13, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const blockTypes = ['block', 'blockFilter', 'blockFollow'];
+    return blockTypes.every((t) => !types(s)[t]) && !referencedTypes(s).some((t) => blockTypes.includes(t)) && !JSON.stringify(s.config).includes('block');
+  } },
+  // `live` is const true, optional, and frozen while the post is not a tombstone: read back off
+  // the PARSED contract, so a keyword the parser dropped would fail here.
+  { label: 'v13: the parsed post keeps `live` const true and frozen unless tombstoned (immutableWhen)', file: SOCIAL_V13, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => {
+    const live = parsed.schemas.post?.properties?.live;
+    const frozen = parsed.documentTypeImmutableProperties('post').immutableWhen ?? {};
+    return live?.const === true && JSON.stringify(frozen.live) === JSON.stringify({ absent: 'deleted' });
+  } },
+  { label: 'v13 on mainnet with v12\'s 3600 s election windows', file: SOCIAL_V13, network: 'mainnet', expect: 'audit', node: '10900', mutate: (s) => { elected(s).joinWindow = 3600; elected(s).voteWindow = 3600; } },
+  { label: 'v13: a contestable seat with a 13-day challenge cool-down (two weeks minimum)', file: SOCIAL_V13, expect: 'audit', node: '10900', mutate: (s) => { elected(s).challengeCoolDown = 1_123_200; } },
+  // The report target rule cannot be arithmetic: `count` reads arrays and byte arrays, not identifiers.
+  { label: 'v13: report oneTarget as arithmetic over the identifiers (count of postId)', file: SOCIAL_V13, expect: 'wasm', why: /counts the items of "postId"/i, mutate: (s) => {
+    types(s).report.propertyConstraints.oneTarget = { in: [{ add: [{ count: 'postId' }, { count: 'replyId' }, 'about'] }, [1, 32]] };
+  } },
+  { label: 'v13: the media rule measuring mediaUrls with `length` (a typed array is counted, not measured)', file: SOCIAL_V13, expect: 'wasm', why: /measures the length of "mediaUrls"/i, mutate: (s) => {
+    types(s).post.propertyConstraints.media.allOf[1] = { equal: [{ length: 'mediaUrls' }, { count: 'mediaKinds' }] };
+  } },
+  { label: 'v13: parentIsRoot comparing parentOwnerId with itself', file: SOCIAL_V13, expect: 'wasm', why: /compares "parentOwnerId" with itself/i, mutate: (s) => {
+    types(s).reply.propertyConstraints.parentIsRoot = { ifThen: [{ absent: 'replyToReplyId' }, { equal: ['parentOwnerId', 'parentOwnerId'] }] };
+  } },
+  // `live` is optional so that ownerAndTime can skip a tombstone; required, the index could never skip.
+  { label: 'v13: live required (ownerAndTime\'s skipIfAbsent could never skip a tombstone)', file: SOCIAL_V13, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { types(s).post.required.push('live'); } },
+  { label: 'v13: the reply\'s rootPostId where naming a rootOwnerId the post does not have', file: SOCIAL_V13, expect: 'audit', node: '40126', mutate: (s) => { types(s).reply.properties.rootPostId.refersTo.where = { rootOwnerId: 'rootOwnerId' }; } },
+  { label: 'v13: the nested reply\'s where comparing the parent\'s rootPostId with a string', file: SOCIAL_V13, expect: 'audit', node: '40126', mutate: (s) => { types(s).reply.properties.replyToReplyId.refersTo.where.rootPostId = 'content'; } },
+  // Updates: what can follow v13 without a new contract. An elected declaration, its interim
+  // included, is frozen (40002), so mainnet must register notYetUsable from the start.
+  { label: 'v13 update: the interim swapped to notYetUsable after registration', file: SOCIAL_V13, expect: 'update', node: '40002', why: /elected moderation declaration/i, update: (s) => { elected(s).interim = { $type: 'notYetUsable' }; } },
+  { label: 'v13 update: a second report kind (report.about maximum 2): accepted, so profile is not the last identity target', file: SOCIAL_V13, expect: 'accepted', update: (s) => { types(s).report.properties.about.maximum = 2; } },
+  { label: 'v13 update: a new optional report property: accepted', file: SOCIAL_V13, expect: 'accepted', update: (s) => { types(s).report.properties.probe = { type: 'integer', minimum: 1, maximum: 3, position: 9 }; } },
+  { label: 'v13 update: post.ownerAndTime back to v12\'s [$ownerId, $createdAt]', file: SOCIAL_V13, expect: 'update', node: '10217', why: /changed index 'ownerAndTime'/i, update: (s) => {
+    const index = namedIndex(s, 'post', 'ownerAndTime');
+    index.properties = index.properties.slice(1); delete index.skipIfAbsent;
+  } },
+  { label: 'v13 update: the media rule relaxed (rules are fixed)', file: SOCIAL_V13, expect: 'update', node: '10246', why: /propertyConstraints/i, update: (s) => { types(s).post.propertyConstraints.media = { equal: [{ count: 'mediaUrls' }, { count: 'mediaKinds' }] }; } },
+
+  // Social v14 (5.0.0-beta.3, docs/SOCIAL_V14.md): countPresent rules, the report deleteConstraints,
+  // the derived reply-owner windows and an unpaused YAPP. Every refusal below was first measured
+  // with rs-dpp at the v5.0.0-beta.3 tag; `why` pins the rule that speaks.
+  { label: 'control: social v14 as committed (devnet: interim contractOwner)', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v14 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V14, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  // beta.3 refuses a tokenCost paid in a paused token (40711), so v14's YAPP starts unpaused, and
+  // with `emergencyActionRules: noOne` nobody can ever pause it. Everything else is v13's.
+  { label: 'v14: YAPP starts unpaused, can never be paused, and still has no price', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const yapp = s.tokens['0'];
+    return yapp.startAsPaused === false && yapp.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+      && yapp.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne';
+  } },
+  // Read back off the PARSED contract, so a keyword the parser dropped fails here.
+  { label: 'v14: the parsed reply files its windows under the derived owners, and stores no owner', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => {
+    const reply = parsed.schemas.reply;
+    const window = (name) => reply?.indices?.find((i) => i.name === name);
+    const keys = (index) => index?.properties?.map((p) => Object.keys(p)[0]);
+    return JSON.stringify(keys(window('rootOwnerRecent'))) === '["$createdAt","rootPostId.$ownerId"]'
+      && JSON.stringify(keys(window('parentOwnerRecent'))) === '["$createdAt","replyToReplyId.$ownerId"]'
+      && JSON.stringify(window('parentOwnerRecent')?.skipIfAbsent) === '["replyToReplyId.$ownerId"]'
+      && window('rootOwnerRecent')?.skipIfAbsent === undefined
+      && !reply.properties.parentOwnerId && !reply.properties.rootOwnerId;
+  } },
+  { label: 'v14: the parsed report keeps its deleteConstraints (withdrawal only while pending)', file: SOCIAL_V14, mutate: () => {}, expect: 'accepted', holds: (_s, parsed) => JSON.stringify(parsed.schemas.report?.deleteConstraints) === '{"pending":{"absent":"status"}}' },
+  // A derived property reads through a reference the type fixes for good: frozen with a condition
+  // (a tombstone could re-point it) is refused, which is why no quote-owner window exists.
+  { label: 'v14: replyToReplyId frozen only while not tombstoned (parentOwnerRecent derives through it)', file: SOCIAL_V14, expect: 'wasm', why: /list "replyToReplyId" under `immutable` without a condition/i, mutate: (s) => {
+    const reply = types(s).reply;
+    reply.immutable = reply.immutable.map((e) => (e === 'replyToReplyId' ? { property: 'replyToReplyId', when: { absent: 'deleted' } } : e));
+  } },
+  { label: 'v14: rootPostId not frozen (rootOwnerRecent derives through it)', file: SOCIAL_V14, expect: 'wasm', why: /list "rootPostId" under `immutable` without a condition/i, mutate: (s) => { types(s).reply.immutable = types(s).reply.immutable.filter((e) => e !== 'rootPostId'); } },
+  { label: 'v14: a quote-owner window on post (quotedPostId is frozen only until a tombstone)', file: SOCIAL_V14, expect: 'wasm', why: /list "quotedPostId" under `immutable` without a condition/i, mutate: (s) => {
+    types(s).post.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { 'quotedPostId.$ownerId': 'asc' }], skipIfAbsent: ['quotedPostId.$ownerId'], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } });
+  } },
+  // A derived skip property must be able to be absent: rootPostId is required and every post has an owner.
+  { label: 'v14: rootOwnerRecent skipping on rootPostId.$ownerId (never absent)', file: SOCIAL_V14, expect: 'wasm', why: /never absent/i, mutate: (s) => { namedIndex(s, 'reply', 'rootOwnerRecent').skipIfAbsent = ['rootPostId.$ownerId']; } },
+  // Only the array form names a derived property: `true` skips on stored properties alone, and both are required or system.
+  { label: 'v14: parentOwnerRecent with skipIfAbsent: true (the boolean form skips on no derived property)', file: SOCIAL_V14, expect: 'wasm', why: /none of its properties is optional/i, mutate: (s) => { namedIndex(s, 'reply', 'parentOwnerRecent').skipIfAbsent = true; } },
+  { label: 'v14: deleteConstraints on the indexOnly like', file: SOCIAL_V14, expect: 'wasm', why: /deleteConstraints.{0,80}indexOnly/i, mutate: (s) => { types(s).like.deleteConstraints = { r: { absent: 'hashtag' } }; } },
+  { label: 'v14: deleteConstraints on post (canBeDeleted false: authors tombstone)', file: SOCIAL_V14, expect: 'wasm', why: /canBeDeleted: false/i, mutate: (s) => { types(s).post.deleteConstraints = { r: { present: 'deleted' } }; } },
+  { label: 'v14: a deleteConstraints rule reading a property report does not have', file: SOCIAL_V14, expect: 'wasm', why: /presence of "state"/i, mutate: (s) => { types(s).report.deleteConstraints.pending = { absent: 'state' }; } },
+  { label: 'v14: countPresent over a single path', file: SOCIAL_V14, expect: 'wasm', why: /two or more property paths/i, mutate: (s) => { types(s).report.propertyConstraints.oneTarget = { equal: [{ countPresent: ['postId'] }, 1] }; } },
+  { label: 'v14: countPresent naming $ownerId', file: SOCIAL_V14, expect: 'wasm', why: /presence of "\$ownerId"/i, mutate: (s) => { types(s).report.propertyConstraints.oneTarget = { equal: [{ countPresent: ['postId', '$ownerId'] }, 1] }; } },
+  { label: 'v14: countPresent repeating a path', file: SOCIAL_V14, expect: 'wasm', why: /repeats the path/i, mutate: (s) => { types(s).report.propertyConstraints.oneTarget = { equal: [{ countPresent: ['postId', 'postId'] }, 1] }; } },
+  // deleteConstraints are frozen like propertyConstraints (validate_schema_compatibility v1).
+  { label: 'v14 update: the report delete rule relaxed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { types(s).report.deleteConstraints.pending = { notEqual: ['status', 2] }; } },
+  { label: 'v14 update: the report delete rule removed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { delete types(s).report.deleteConstraints; } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only
@@ -636,24 +853,89 @@ const PROBES = [
     const rules = types(s).post.propertyConstraints;
     for (let n = 0; Object.keys(rules).length < 17; n++) rules[`extra${n}`] = { absent: 'content' };
   } },
-  // rs-dpp node_count: allOf 1 + each `anyOf [absent, present]` 3; 22 as cut, so 4 more make 34.
-  { label: 'a 34-node optionsContiguous rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
-    const rule = types(s).poll.propertyConstraints.optionsContiguous.allOf;
-    for (const property of ['question', 'option0', 'option1', 'multiChoice']) rule.push({ anyOf: [{ absent: 'endsAt' }, { present: property }] });
+  // rs-dpp node_count counts operands too: pollr v5's multiChoiceIsSlot is 8 as cut, and each
+  // `lessThan [slot, n]` adds 3, so nine more make 35.
+  { label: 'a 35-node multiChoiceIsSlot rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
+    const rule = types(s).vote.propertyConstraints.multiChoiceIsSlot.anyOf;
+    for (let n = 1; n <= 9; n++) rule.push({ lessThan: ['slot', n] });
+  } },
+  // Pollr v6 (5.0.0-beta.3): a deleteConstraints countOf total needs a plain countable index
+  // whose properties are exactly the filter's keys. byPollChoice [pollId, choice] is not one.
+  { label: 'pollr v6: noBallots counting vote by pollId without byPoll', file: 'contracts/pollr-contract.json', expect: 'wasm', why: /no countable index/i, mutate: (s) => {
+    const vote = types(s).vote;
+    vote.indices = vote.indices.filter((index) => index.name !== 'byPoll');
   } },
 ];
 
 /**
- * Runs every probe; returns the number whose outcome differs from the recorded
- * one. `parseContract` is the wasm-sdk parse, `parseWithNodeRules` the
- * wasm-dpp2 one.
+ * The `where` agreements of the reply and report references, judged off the
+ * PARSED contract (`documentTypeReferences`), so a declaration the parser
+ * dropped fails here. No package checks a `where` offline: consensus fetches
+ * the referenced document and refuses a disagreement with 40127. This models
+ * that equality on hand-written documents (owners as names), so each case pins
+ * what the cut binds; `verify-v10.mjs` broadcasts the refused ones.
+ * [label, file, referring type, reference path, the referring document's
+ * values, the referenced document's values, '40127' or null for agreement]
  */
-export function runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf }) {
+const WHERE_CASES = [
+  ['v13: a top-level reply naming its root post\'s owner', SOCIAL_V13, 'reply', 'rootPostId', { rootOwnerId: 'alice' }, { $ownerId: 'alice' }, null],
+  // With parentIsRoot (parentOwnerId = rootOwnerId on a top-level reply), this closes the
+  // forged "replied to you": the notification index keys on parentOwnerId.
+  ['v13: reply forgery, a rootOwnerId that does not own the root post', SOCIAL_V13, 'reply', 'rootPostId', { rootOwnerId: 'mallory' }, { $ownerId: 'alice' }, '40127'],
+  ['v13: a nested reply in its parent\'s thread', SOCIAL_V13, 'reply', 'replyToReplyId', { parentOwnerId: 'bob', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, null],
+  ['v13: a nested reply crossing threads (its parent is in another thread)', SOCIAL_V13, 'reply', 'replyToReplyId', { parentOwnerId: 'bob', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, '40127'],
+  ['v13: a nested reply naming someone else as its parent\'s owner', SOCIAL_V13, 'reply', 'replyToReplyId', { parentOwnerId: 'carol', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, '40127'],
+  // The holes v13 closes, still open on v12.
+  ['v12 (the hole): a top-level reply binds no owner to its root post', SOCIAL_V12, 'reply', 'rootPostId', { parentOwnerId: 'mallory' }, { $ownerId: 'alice' }, null],
+  ['v12 (the hole): a nested reply crossing threads agrees', SOCIAL_V12, 'reply', 'replyToReplyId', { parentOwnerId: 'bob', rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, null],
+  ['v13: a post report naming the post\'s author', SOCIAL_V13, 'report', 'postId', { targetOwnerId: 'alice' }, { $ownerId: 'alice' }, null],
+  ['v13: a post report naming someone else as the author', SOCIAL_V13, 'report', 'postId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+  ['v13: a reply report naming someone else as the author', SOCIAL_V13, 'report', 'replyId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+  // v14 stores no owner on a reply: there is nothing left to forge, so the root reference binds
+  // nothing, and the windows read the owners off the referenced documents. A nested reply still
+  // stays in its parent's thread.
+  ['v14: a top-level reply names no owner (rootPostId binds nothing)', SOCIAL_V14, 'reply', 'rootPostId', {}, { $ownerId: 'alice' }, null],
+  ['v14: a nested reply in its parent\'s thread', SOCIAL_V14, 'reply', 'replyToReplyId', { rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, null],
+  ['v14: a nested reply crossing threads (its parent is in another thread)', SOCIAL_V14, 'reply', 'replyToReplyId', { rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, '40127'],
+  ['v14: a post report naming someone else as the author', SOCIAL_V14, 'report', 'postId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+];
+
+function runWhereCases({ loadContractSource, parseContract }) {
   let failures = 0;
-  console.log('\nnegative probes (wasm = refused by the wasm-sdk parse; dpp2 = only by the wasm-dpp2 parse; audit = both parse, the node refuses):');
+  const parsed = new Map();
+  console.log('\nreference `where` agreements (read off the parsed contract; the node refuses a disagreement with 40127):');
+  for (const [label, file, type, path, referring, referenced, expected] of WHERE_CASES) {
+    if (!parsed.has(file)) parsed.set(file, parseContract(loadContractSource(file)));
+    const reference = parsed.get(file).documentTypeReferences(type).find((r) => r.path === path);
+    // A value left out on both sides agrees, as consensus judges it.
+    const disagreement = Object.entries(reference?.where ?? {}).find(([theirs, mine]) => referring[mine] !== referenced[theirs]);
+    const outcome = reference && disagreement ? '40127' : null;
+    const ok = reference !== undefined && outcome === expected;
+    if (!ok) failures += 1;
+    const detail = disagreement ? `${type}.${path} where ${disagreement[0]} = ${disagreement[1]}: ${referenced[disagreement[0]]} ≠ ${referring[disagreement[1]]}` : `where ${JSON.stringify(reference?.where ?? null)} agrees`;
+    console.log(`${ok ? 'PASS' : 'FAIL'}  [${(outcome ?? 'agrees').padEnd(8)}] ${label} — ${detail}${ok ? '' : ` (expected ${expected ?? 'agreement'})`}`);
+  }
+  return failures;
+}
+
+/**
+ * Runs every probe and `where` case; returns the number whose outcome differs
+ * from the recorded one. `parseContract` is the wasm-sdk parse,
+ * `parseWithNodeRules` the wasm-dpp2 one.
+ */
+export function runContractProbes({ loadContractSource, parseContract, parseWithNodeRules, sizeOf, updateRefusals }) {
+  let failures = 0;
+  console.log('\nnegative probes (wasm = refused by the wasm-sdk parse; dpp2 = only by the wasm-dpp2 parse; audit = both parse, the node refuses; update = version 2 parses, the update rules refuse it):');
   for (const probe of PROBES) {
-    const source = structuredClone(loadContractSource(probe.file));
-    probe.mutate(source);
+    // As the probe's network registers the file (mainnet: an elected interim becomes notYetUsable).
+    const stored = loadContractSource(probe.file, { network: probe.network });
+    const source = structuredClone(stored);
+    if (probe.update) {
+      source.version = (stored.version ?? 1) + 1;
+      probe.update(source);
+    } else {
+      probe.mutate(source);
+    }
     const refusal = (parse) => { try { parse(source); return null; } catch (e) { return String(e?.message ?? e); } };
     const wasmError = refusal(parseContract);
     const dpp2Error = wasmError ? null : refusal(parseWithNodeRules);
@@ -663,14 +945,20 @@ export function runContractProbes({ loadContractSource, parseContract, parseWith
       const size = sizeOf(parseContract(source));
       if (size.overCap) audit.push(`create transition ~${size.bytes} B, over the ${STATE_TRANSITION_CAP} B cap`);
     }
-    const outcome = wasmError ? 'wasm' : dpp2Error ? 'dpp2' : audit.length > 0 ? 'audit' : 'accepted';
+    const updateErrors = probe.update && !wasmError && !dpp2Error ? updateRefusals(stored, source) : [];
+    const outcome = wasmError ? 'wasm' : dpp2Error ? 'dpp2' : audit.length > 0 ? 'audit' : updateErrors.length > 0 ? 'update' : 'accepted';
     const auditMissed = probe.auditToo && audit.length === 0;
-    const ok = outcome === probe.expect && !auditMissed;
+    const detail = wasmError ?? dpp2Error ?? audit[0] ?? updateErrors[0] ?? '';
+    // A refusal for some other reason than the probed rule is no proof of that rule.
+    const wrongReason = probe.why !== undefined && outcome !== 'accepted' && !probe.why.test(detail);
+    // An update refusal reads "<code> <message>": it must be the code the node refuses with.
+    const wrongCode = outcome === 'update' && probe.node !== undefined && !detail.startsWith(`${probe.node} `);
+    const statementFails = probe.holds !== undefined && !probe.holds(source, wasmError ? null : parseContract(source));
+    const ok = outcome === probe.expect && !auditMissed && !wrongReason && !wrongCode && !statementFails;
     if (!ok) failures += 1;
-    const detail = wasmError ?? dpp2Error ?? audit[0] ?? '';
-    const where = outcome === 'audit' || outcome === 'dpp2' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
-    const note = auditMissed ? ' (auditNodeRules did not flag it)' : '';
+    const where = outcome === 'audit' || outcome === 'dpp2' || outcome === 'update' ? ` (node: ${probe.node ?? '?'}; the SDK signs it)` : '';
+    const note = `${auditMissed ? ' (auditNodeRules did not flag it)' : ''}${wrongReason ? ` (refused, but not for ${probe.why})` : ''}${wrongCode ? ` (refused, but not with ${probe.node})` : ''}${statementFails ? ' (its `holds` statement is false)' : ''}`;
     console.log(`${ok ? 'PASS' : 'FAIL'}  [${outcome.padEnd(8)}] ${probe.label}${where}${detail ? ` — ${detail.replace(/\s+/g, ' ').slice(0, 150)}` : ''}${note}${outcome === probe.expect ? '' : ` (expected ${probe.expect})`}`);
   }
-  return failures;
+  return failures + runWhereCases({ loadContractSource, parseContract });
 }

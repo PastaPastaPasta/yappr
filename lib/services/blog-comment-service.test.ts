@@ -193,3 +193,27 @@ describe('creating a comment', () => {
     expect(create.mock.calls[0][1]).not.toHaveProperty('postCommentsEnabled');
   });
 });
+
+describe('commenting on blog v7', () => {
+  const author = bs58.encode(new Uint8Array(32).fill(7));
+  const reader = bs58.encode(new Uint8Array(32).fill(8));
+
+  it('refuses a deleted post before signing, naming why', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7');
+    const { blogPostService } = await import('./blog-post-service');
+    vi.spyOn(blogPostService, 'getPost').mockResolvedValue({ ownerId: author, deleted: true, commentsEnabled: false } as never);
+    const create = vi.spyOn(blogCommentService, 'create').mockResolvedValue({ id: 'c' } as never);
+    await expect(blogCommentService.createComment(reader, postA, author, 'hi')).rejects.toThrow(/deleted/);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('writes a v7 comment exactly as v6 does: the copied flag, no post owner', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7');
+    const { blogPostService } = await import('./blog-post-service');
+    vi.spyOn(blogPostService, 'getPost').mockResolvedValue({ ownerId: author, commentsEnabled: true } as never);
+    const create = vi.spyOn(blogCommentService, 'create').mockResolvedValue({ id: 'c' } as never);
+    await blogCommentService.createComment(reader, postA, author, 'hi');
+    expect(create.mock.calls[0][1]).toMatchObject({ content: 'hi', postCommentsEnabled: true });
+    expect(create.mock.calls[0][1]).not.toHaveProperty('blogPostOwnerId');
+  });
+});

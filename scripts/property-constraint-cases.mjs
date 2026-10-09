@@ -4,7 +4,8 @@
  * docs/CONTRACTS_BETA5.md explains the beta.5 rules, docs/CONTRACTS_BETA6.md
  * the beta.6 ones (blog `commentsOpen`) and docs/SOCIAL_V10.md the beta.7 ones
  * (social v10 drops the tombstone rule and adds report `resolvedHasStatus`;
- * storefront `storeIsOpen`, QA D-25).
+ * storefront `storeIsOpen`, QA D-25). Blog v7 (5.0.0-beta.2) adds the post
+ * tombstone (`hasBody`, `tombstoneIsBlank`) and `publishedNotAhead`.
  *
  * One table, two consumers:
  *   - `validate-contract-offline.mjs --constraints` runs every case through
@@ -13,7 +14,7 @@
  *     on a create or replace), so a rule that drifts from its cases fails
  *     before anything is registered;
  *   - the live batteries (verify-v10 c1 and r1, verify-storefront s20,
- *     verify-pollr p12, verify-blog b19) broadcast the refused create cases against the
+ *     verify-pollr p10, verify-blog b19) broadcast the refused create cases against the
  *     registered contract; their existing fixtures are the accepted side.
  *
  * `data` holds only the properties a rule reads plus what the schema requires;
@@ -36,8 +37,11 @@ export const DECLARED_RULES = {
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
     storeOrder: ['storeIsOpen'],
   },
-  'pollr-contract.json': { poll: ['optionsContiguous'] },
-  'yappr-blog-contract.json': { blogPost: ['chunksContiguous'], blogComment: ['commentsOpen'] },
+  'pollr-contract.json': {
+    poll: ['endsAfterCreation', 'endsWithin31Days', 'optionCountMatches'],
+    vote: ['choiceIsAnOption', 'multiChoiceIsSlot', 'singleUsesSlotZero', 'slotIsAnOption', 'writtenBeforeClose'],
+  },
+  'yappr-blog-contract.json': { blogPost: ['chunksContiguous', 'hasBody', 'tombstoneIsBlank', 'publishedNotAhead'], blogComment: ['commentsOpen'] },
 };
 
 // ---- Base documents (valid under every rule) --------------------------------
@@ -53,19 +57,44 @@ const media = (mediaUrl) => ({ mediaUrl, mediaHash: bytes(32), mediaFingerprint:
 export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayload: bytes(64), nonce: bytes(24), storeStatus: 'active' });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
-export const basePoll = () => ({ question: 'constraint probe?', option0: 'a', option1: 'b' });
+/**
+ * The instant every case is judged at. The pollr rules read `$createdAt` and
+ * `$updatedAt`, so a case fixes both (through its `at` option) relative to
+ * this one clock reading; cases that set no `at` are judged at it too.
+ */
+export const CASE_NOW = Date.now();
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+/** Pollr v5: a three-option single-choice poll closing in a day. */
+export const basePoll = () => ({ question: 'constraint probe?', options: ['a', 'b', 'c'], optionCount: 3, multiChoice: false, endsAt: CASE_NOW + DAY });
+/** A single-choice ballot (slot 0) for option 1, on a poll closing in an hour. */
+const singleBallot = (fields = {}) => ({ pollId: id(), slot: 0, choice: 1, pollOptionCount: 3, pollMultiChoice: false, pollEndsAt: CASE_NOW + HOUR, ...fields });
+/** A multi-choice ballot ticking option 2 (slot 2), on a poll closing in an hour. */
+const multiBallot = (fields = {}) => ({ pollId: id(), slot: 2, choice: 2, pollOptionCount: 3, pollMultiChoice: true, pollEndsAt: CASE_NOW + HOUR, ...fields });
+/** A later write of a ballot: `$revision` 2+ and its own block time. */
+const replaced = (revision = 2n, created = CASE_NOW - HOUR) => ({ replace: true, at: { createdAt: created, updatedAt: CASE_NOW, revision } });
 /** Blog v6 derives the post owner through blogPostId; there is no blogPostOwnerId to send. */
 export const baseComment = () => ({ blogPostId: id(), content: 'constraint probe' });
 export const baseBlogPost = () => ({ blogId: id(), title: 'constraint probe', slug: 'constraint-probe', data0: bytes(16) });
+/**
+ * Blog v7: an author's delete. `deleted` and comments off, every content field
+ * absent; `blogId` and `slug` (and `publishedAt`, when the post had one) stay.
+ * Written by a replace, so its cases are marked `replace: true`.
+ */
+export const blogTombstone = (extra = {}) => ({ blogId: id(), slug: 'constraint-probe', deleted: true, commentsEnabled: false, ...extra });
+/** `publishedNotAhead` judges `publishedAt` against `$updatedAt`, which the oracle sets to the clock. */
+const BLOG_NOW = Date.now();
 
-const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
+export const drop = (fields, ...names) => Object.fromEntries(Object.entries(fields).filter(([key]) => !names.includes(key)));
 
 /**
- * [label, docType, data, refusedBy] — `refusedBy` is the rule the document
- * breaks, or null when it must be accepted. `replace: true` marks a shape only
- * a later write produces (a moderator's field change); the offline oracle
- * validates it the same way, because the node runs the rules against the
- * whole changed document.
+ * [label, docType, data, refusedBy, options] — `refusedBy` is the rule the
+ * document breaks, or null when it must be accepted. `options.replace` marks a
+ * shape only a later write produces (a moderator's field change, a changed
+ * ballot); the offline oracle validates it the same way, because the node runs
+ * the rules against the whole changed document. `options.at` fixes the
+ * document's `$createdAt`, `$updatedAt` and `$revision` (default: CASE_NOW,
+ * CASE_NOW, 1). `options.offlineOnly` keeps a case out of the live batteries.
  */
 export const CONSTRAINT_CASES = {
   'yappr-social-contract-v10.json': [
@@ -125,12 +154,41 @@ export const CONSTRAINT_CASES = {
     ['storeOrder: at an active store', 'storeOrder', baseOrder(), null],
     ['storeOrder: at a paused store', 'storeOrder', { ...baseOrder(), storeStatus: 'paused' }, 'storeIsOpen'],
     ['storeOrder: at a closed store', 'storeOrder', { ...baseOrder(), storeStatus: 'closed' }, 'storeIsOpen'],
+    // Storefront v6 (the mainnet re-cut) keeps these three rules as they were; its new shapes
+    // must still pass them: a digital product, variants and an order payload at the 5,120 B caps.
+    ['storeItem: a digital product priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD', fulfillment: 'digital' }, null],
+    ['storeItem: a digital product priced with no currency', 'storeItem', { ...baseItem(), basePrice: 1000, fulfillment: 'digital' }, 'pricedHasCurrency'],
+    ['storeItem: variants at the 5,120 B cap with a currency', 'storeItem', { ...baseItem(), variants: '{"axes":[]}'.padEnd(5120, ' '), currency: 'DASH' }, null],
+    ['storeItem: a price at 2^53-1 with a currency', 'storeItem', { ...baseItem(), basePrice: Number.MAX_SAFE_INTEGER, currency: 'DASH' }, null],
+    ['storeOrder: a 5,120 B payload at an active store', 'storeOrder', { ...baseOrder(), encryptedPayload: bytes(5120) }, null],
   ],
+  // Pollr v5 (docs/NON_SOCIAL_CONTRACTS.md). The offline check judges system
+  // times by what the case says, so "after close" is a pollEndsAt in the past.
+  // `offlineOnly` marks a case a live create cannot reproduce: one the JSON
+  // schema refuses before any rule runs, or one whose margin is a single
+  // millisecond of block time.
   'pollr-contract.json': [
-    ['poll: two options', 'poll', basePoll(), null],
-    ['poll: ten options', 'poll', { ...basePoll(), ...Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`option${i + 2}`, `o${i + 2}`])) }, null],
-    ['poll: option3 with no option2', 'poll', { ...basePoll(), option3: 'gap' }, 'optionsContiguous'],
-    ['poll: option9 alone after option1', 'poll', { ...basePoll(), option9: 'gap' }, 'optionsContiguous'],
+    ['poll: closes in 1 day', 'poll', basePoll(), null],
+    ['poll: closes in exactly 31 days', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY }, null],
+    ['poll: ten options', 'poll', { ...basePoll(), options: Array.from({ length: 10 }, (_, i) => `o${i}`), optionCount: 10 }, null],
+    ['poll: closes in 31 days + 1 ms', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY + 1 }, 'endsWithin31Days', { offlineOnly: true }],
+    ['poll: no endsAt (the schema requires it; the rules alone refuse it too)', 'poll', drop(basePoll(), 'endsAt'), 'endsAfterCreation', { offlineOnly: true }],
+    ['poll: optionCount disagrees with options', 'poll', { ...basePoll(), optionCount: 2 }, 'optionCountMatches'],
+    ['poll: born closed', 'poll', { ...basePoll(), endsAt: CASE_NOW - 1000 }, 'endsAfterCreation'],
+    ['vote: single, created before close', 'vote', singleBallot(), null],
+    ['vote: single, created after close', 'vote', singleBallot({ pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose'],
+    ['vote: single, choice changed before close', 'vote', singleBallot({ choice: 2 }), null, replaced()],
+    ['vote: single, choice changed after close', 'vote', singleBallot({ choice: 2, pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose', replaced(2n, CASE_NOW - 2 * HOUR)],
+    ['vote: single, withdrawn (choice dropped) before close', 'vote', drop(singleBallot(), 'choice'), null, replaced()],
+    ['vote: single, withdrawn after close', 'vote', drop(singleBallot({ pollEndsAt: CASE_NOW - HOUR }), 'choice'), 'writtenBeforeClose', replaced()],
+    ['vote: no pollEndsAt', 'vote', drop(singleBallot(), 'pollEndsAt'), 'writtenBeforeClose', { offlineOnly: true }],
+    ['vote: single, choice past the options', 'vote', singleBallot({ choice: 3 }), 'choiceIsAnOption'],
+    ['vote: single, a second ballot (slot 2)', 'vote', singleBallot({ slot: 2, choice: 2 }), 'singleUsesSlotZero'],
+    ['vote: multi, option 2 ticked (slot 2)', 'vote', multiBallot(), null],
+    ['vote: multi, unticked (choice dropped) before close', 'vote', drop(multiBallot(), 'choice'), null, replaced()],
+    ['vote: multi, re-ticked after close', 'vote', multiBallot({ pollEndsAt: CASE_NOW - HOUR }), 'writtenBeforeClose', replaced(3n)],
+    ['vote: multi, slot 2 holding choice 1', 'vote', multiBallot({ choice: 1 }), 'multiChoiceIsSlot'],
+    ['vote: multi, slot past the options', 'vote', drop(multiBallot({ slot: 5 }), 'choice'), 'slotIsAnOption'],
   ],
   'yappr-blog-contract.json': [
     ['blogPost: one chunk', 'blogPost', baseBlogPost(), null],
@@ -142,6 +200,20 @@ export const CONSTRAINT_CASES = {
     ['blogComment: on a post that leaves commentsEnabled out (on by default)', 'blogComment', baseComment(), null],
     ['blogComment: on a post with commentsEnabled true', 'blogComment', { ...baseComment(), postCommentsEnabled: true }, null],
     ['blogComment: on a post with commentsEnabled false', 'blogComment', { ...baseComment(), postCommentsEnabled: false }, 'commentsOpen'],
+    // Blog v7 (5.0.0-beta.2): a live post carries a title and a body (`hasBody`); an author's
+    // delete is a tombstone (`tombstoneIsBlank`), which `hasBody` admits; `publishedAt` may run
+    // at most 10 minutes past `$updatedAt` (`publishedNotAhead`), so a backdated import is fine.
+    ['blogPost: a live post with comments on', 'blogPost', { ...baseBlogPost(), commentsEnabled: true }, null],
+    ['blogPost: a live post with no title', 'blogPost', drop(baseBlogPost(), 'title'), 'hasBody'],
+    ['blogPost: a tombstone (deleted, comments off, nothing else)', 'blogPost', blogTombstone({ publishedAt: BLOG_NOW }), null, { replace: true }],
+    ['blogPost: a tombstone keeping its title', 'blogPost', blogTombstone({ title: 'still here' }), 'tombstoneIsBlank', { replace: true }],
+    ['blogPost: a tombstone leaving comments on', 'blogPost', blogTombstone({ commentsEnabled: true }), 'tombstoneIsBlank', { replace: true }],
+    ['blogPost: a tombstone with commentsEnabled left out', 'blogPost', drop(blogTombstone(), 'commentsEnabled'), 'tombstoneIsBlank', { replace: true }],
+    ['blogPost: `deleted: false` on a live post', 'blogPost', { ...baseBlogPost(), commentsEnabled: true, deleted: false }, 'tombstoneIsBlank'],
+    ['blogPost: publishedAt now', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW }, null],
+    ['blogPost: publishedAt backdated (an import)', 'blogPost', { ...baseBlogPost(), publishedAt: 1e12 }, null],
+    // A day ahead, so a long live run reaching b19 late still finds it ahead.
+    ['blogPost: publishedAt a day ahead', 'blogPost', { ...baseBlogPost(), publishedAt: BLOG_NOW + 86_400_000 }, 'publishedNotAhead'],
   ],
 };
 
@@ -166,6 +238,195 @@ CONSTRAINT_CASES['yappr-social-contract-v11.json'] = [
   ['reply: a tombstone keeping its text', 'reply', { ...baseReply(), deleted: true }, 'tombstoneIsBlank'],
 ];
 
+// Social v12 (5.0.0-beta.2) declares exactly v11's rules: its changes are the like counter indexes
+// and `retractedWhen` on post and reply, neither of which is a propertyConstraints rule. A barred
+// author's tombstone is still judged by `tombstoneIsBlank` (retractedWhen only lets it past the
+// bar), so v11's cases are v12's, run against v12's own file.
+DECLARED_RULES['yappr-social-contract-v12.json'] = DECLARED_RULES['yappr-social-contract-v11.json'];
+CONSTRAINT_CASES['yappr-social-contract-v12.json'] = CONSTRAINT_CASES['yappr-social-contract-v11.json'];
+
+// Social v13 (the mainnet candidate) renames every rule (names appear only in errors), and adds:
+// `media` (mediaUrls, mediaDigests at 40 B per item and mediaKinds at 1 B per item agree in
+// length), `live` (a post carries `live: true` unless it is a tombstone, and a tombstone does not),
+// `parentIsRoot` (a top-level reply's parentOwnerId is its rootOwnerId, which the rootPostId
+// reference binds to the post's owner: no forged "replied to you"), and on report `oneTarget`
+// over three targets (post, reply, or a profile: `about`) and `boxOnContent` (the moderators' key
+// box only on a post or reply report). The `where` bindings are judged by `--probes`.
+DECLARED_RULES['yappr-social-contract-v13.json'] = {
+  post: ['blankTombstone', 'embed', 'live', 'media', 'notEmpty', 'oneQuote', 'private', 'privateNoMedia', 'quoteOwner'],
+  reply: ['blankTombstone', 'media', 'parentIsRoot', 'private', 'privateNoMedia'],
+  report: ['boxOnContent', 'oneTarget', 'otherNote', 'resolvedStatus'],
+};
+/** A v13 post is `live` unless tombstoned. */
+const v13Post = () => ({ content: 'constraint probe', live: true });
+/** A v13 top-level reply: its parent is the root post, so its parentOwnerId is the root's owner. */
+const v13Reply = () => {
+  const rootOwner = id();
+  return { content: 'constraint probe', rootPostId: id(), rootOwnerId: rootOwner, parentOwnerId: Uint8Array.from(rootOwner) };
+};
+/** `n` media items: a URL, a 40-byte digest (sha256 + fingerprint) and a kind byte each. */
+const v13Media = (n, { urls = n, digests = n, kinds = n } = {}) => ({
+  mediaUrls: Array.from({ length: urls }, (_, i) => `ipfs://bafyprobe${i}`),
+  mediaDigests: bytes(40 * digests),
+  mediaKinds: new Uint8Array(kinds),
+});
+const withoutEmpty = (fields) => Object.fromEntries(Object.entries(fields).filter(([, value]) => value.length !== 0));
+CONSTRAINT_CASES['yappr-social-contract-v13.json'] = [
+  ['post: a public post', 'post', v13Post(), null],
+  ['post: no live marker on a post that is not a tombstone', 'post', drop(v13Post(), 'live'), 'live'],
+  ['post: a private post', 'post', { ...v13Post(), content: '🔒', ...privateFields() }, null],
+  ['post: ciphertext without its nonce', 'post', { ...v13Post(), ...drop(privateFields(), 'nonce') }, 'private'],
+  ['post: a private post carrying media', 'post', { ...v13Post(), ...privateFields(), ...v13Media(1) }, 'privateNoMedia'],
+  ['post: an embed missing its doc type', 'post', { ...v13Post(), ...drop(embed(), 'embedDocType') }, 'embed'],
+  ['post: a quote naming no owner', 'post', { ...v13Post(), quotedPostId: id() }, 'quoteOwner'],
+  ['post: quoting a post AND a reply', 'post', { ...v13Post(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id() }, 'oneQuote'],
+  ['post: a bare repost', 'post', { live: true, quotedPostId: id(), quotedPostOwnerId: id() }, null],
+  ['post: nothing but the live marker', 'post', { live: true }, 'notEmpty'],
+  ['post: one image, no text', 'post', { live: true, ...v13Media(1) }, null],
+  ['post: four images with text', 'post', { ...v13Post(), ...v13Media(4) }, null],
+  ['post: two URLs, one digest', 'post', { ...v13Post(), ...v13Media(2, { digests: 1 }) }, 'media'],
+  ['post: two URLs and digests, one kind', 'post', { ...v13Post(), ...v13Media(2, { kinds: 1 }) }, 'media'],
+  ['post: URLs with no digests or kinds', 'post', { ...v13Post(), ...withoutEmpty(v13Media(1, { digests: 0, kinds: 0 })) }, 'media'],
+  ['post: digests and kinds with no URL', 'post', { ...v13Post(), ...withoutEmpty(v13Media(1, { urls: 0 })) }, 'media'],
+  ['post: a tombstone (deleted, live gone)', 'post', { deleted: true }, null],
+  ['post: a tombstone keeping its hashtag', 'post', { deleted: true, hashtag: 'kept' }, null],
+  ['post: a tombstone still live', 'post', { deleted: true, live: true }, 'live'],
+  ['post: a tombstone keeping its media', 'post', { deleted: true, ...v13Media(1) }, 'blankTombstone'],
+  ['post: a tombstone keeping only its media digests', 'post', { deleted: true, mediaDigests: bytes(40) }, 'blankTombstone'],
+  ['post: a tombstone keeping its text', 'post', { deleted: true, content: 'still here' }, 'blankTombstone'],
+  ['post: a tombstone keeping its quote', 'post', { deleted: true, quotedPostId: id(), quotedPostOwnerId: id() }, 'blankTombstone'],
+  ['post: `deleted: false` on a live post', 'post', { ...v13Post(), deleted: false }, 'blankTombstone'],
+  ['reply: a top-level reply to the root post\'s owner', 'reply', v13Reply(), null],
+  ['reply: forged, a top-level reply naming a parentOwnerId other than the root\'s owner', 'reply', { ...v13Reply(), parentOwnerId: id() }, 'parentIsRoot'],
+  ['reply: a nested reply to another author in the thread', 'reply', { ...v13Reply(), replyToReplyId: id(), parentOwnerId: id() }, null],
+  ['reply: a private reply', 'reply', { ...v13Reply(), content: '🔒', ...privateFields() }, null],
+  ['reply: a nonce alone', 'reply', { ...v13Reply(), nonce: bytes(24) }, 'private'],
+  ['reply: a private reply carrying media', 'reply', { ...v13Reply(), ...privateFields(), ...v13Media(1) }, 'privateNoMedia'],
+  ['reply: two images', 'reply', { ...v13Reply(), ...v13Media(2) }, null],
+  ['reply: three URLs, two digests', 'reply', { ...v13Reply(), ...v13Media(3, { digests: 2 }) }, 'media'],
+  ['reply: a tombstone (deleted, the linkage kept)', 'reply', { ...drop(v13Reply(), 'content'), deleted: true }, null],
+  ['reply: a tombstone keeping its media', 'reply', { ...drop(v13Reply(), 'content'), deleted: true, ...v13Media(1) }, 'blankTombstone'],
+  ['reply: a tombstone keeping its text', 'reply', { ...v13Reply(), deleted: true }, 'blankTombstone'],
+  ['report: a post report', 'report', baseReport(), null],
+  ['report: a reply report', 'report', { ...drop(baseReport(), 'postId'), replyId: id() }, null],
+  ['report: a profile report (about 1)', 'report', { ...drop(baseReport(), 'postId'), about: 1 }, null],
+  ['report: naming a post AND a reply', 'report', { ...baseReport(), replyId: id() }, 'oneTarget'],
+  ['report: naming a post AND the profile', 'report', { ...baseReport(), about: 1 }, 'oneTarget'],
+  ['report: naming a reply AND the profile', 'report', { ...drop(baseReport(), 'postId'), replyId: id(), about: 1 }, 'oneTarget'],
+  ['report: naming no target', 'report', drop(baseReport(), 'postId'), 'oneTarget'],
+  ['report: a private post report carrying the moderators\' key box', 'report', { ...baseReport(), box: bytes(400) }, null],
+  ['report: a private reply report carrying the box', 'report', { ...drop(baseReport(), 'postId'), replyId: id(), box: bytes(400) }, null],
+  ['report: a profile report carrying a box', 'report', { ...drop(baseReport(), 'postId'), about: 1, box: bytes(400) }, 'boxOnContent'],
+  ['report: "something else" saying what', 'report', { ...baseReport(), reason: 8, note: 'constraint probe' }, null],
+  ['report: "something else" with no note', 'report', { ...baseReport(), reason: 8 }, 'otherNote'],
+  ['report: sexual content involving minors (reason 9), no note needed', 'report', { ...baseReport(), reason: 9 }, null],
+  ['report: handled with a status and a resolution', 'report', { ...baseReport(), status: 2, resolution: 'post removed' }, null, { replace: true }],
+  ['report: a resolution with no status', 'report', { ...baseReport(), resolution: 'looked at it' }, 'resolvedStatus', { replace: true }],
+];
+
+// Social v14 (5.0.0-beta.3) keeps v13's rule names and behaviour, rewritten with `countPresent`
+// (S2-S5 in docs/SOCIAL_V14.md): `private` and `embed` are "0 or all 3 present", `blankTombstone`
+// is "none of the content paths present", `live` is "exactly one of deleted and live", `notEmpty`
+// is "text, or at least one of six paths", and report `oneTarget` is "exactly one of postId,
+// replyId and about". A reply no longer stores `parentOwnerId`/`rootOwnerId` (S7: its
+// notification windows derive the owners), so `parentIsRoot` is gone. The cases below walk every
+// countPresent boundary: each count a rule accepts, and the counts on either side of it.
+DECLARED_RULES['yappr-social-contract-v14.json'] = {
+  ...DECLARED_RULES['yappr-social-contract-v13.json'],
+  reply: DECLARED_RULES['yappr-social-contract-v13.json'].reply.filter((rule) => rule !== 'parentIsRoot'),
+};
+/** A v14 reply: its thread root alone; the owners are read off the referenced documents. */
+const v14Reply = () => ({ content: 'constraint probe', rootPostId: id() });
+/** Every subset of `fields` of exactly `n` entries. */
+const subsetsOf = (fields, n) => (n === 0 ? [{}] : Object.keys(fields).flatMap((key, i) =>
+  subsetsOf(Object.fromEntries(Object.entries(fields).slice(i + 1)), n - 1).map((rest) => ({ [key]: fields[key], ...rest }))));
+/** Cases for an all-or-none rule: 0 and all present are accepted, every partial subset breaks `rule`. */
+const allOrNoneCases = (docType, base, rule, fields) => Object.keys(fields).flatMap((_, k, keys) => {
+  const n = keys.length - k; // n = all, all - 1, … 1
+  return subsetsOf(fields, n).map((subset) => [
+    `${docType}: ${rule} with ${n} of ${keys.length} (${Object.keys(subset).join(', ')})`, docType, { ...base, ...subset }, n === keys.length ? null : rule,
+  ]);
+});
+/** Post content paths a tombstone must leave out, one value each. */
+const v14PostTombstoneFields = () => ({
+  content: 'still here', ...v13Media(1), sensitive: true, ...privateFields(), ...embed(),
+  mentionedUserId: id(), quotedPostId: id(), quotedReplyId: id(), quotedPostOwnerId: id(),
+});
+const v14ReplyTombstoneFields = () => ({ content: 'still here', ...v13Media(1), sensitive: true, ...privateFields(), mentionedUserId: id() });
+CONSTRAINT_CASES['yappr-social-contract-v14.json'] = [
+  // Every v13 post and report case still holds (same names, same behaviour).
+  ...CONSTRAINT_CASES['yappr-social-contract-v13.json'].filter(([, docType]) => docType !== 'reply'),
+  // private / embed: countPresent in [0, 3].
+  ...allOrNoneCases('post', v13Post(), 'private', privateFields()),
+  ...allOrNoneCases('post', v13Post(), 'embed', embed()),
+  ...allOrNoneCases('reply', v14Reply(), 'private', privateFields()),
+  ['post: no encryption field at all (countPresent 0)', 'post', v13Post(), null],
+  // live: exactly one of deleted and live.
+  ['post: live and not deleted (1 of 2)', 'post', v13Post(), null],
+  ['post: a tombstone without live (1 of 2)', 'post', { deleted: true }, null],
+  ['post: neither deleted nor live (0 of 2)', 'post', { content: 'constraint probe' }, 'live'],
+  ['post: deleted and live (2 of 2)', 'post', { deleted: true, live: true }, 'live'],
+  // notEmpty: text, or at least one of encryptedContent, mediaUrls, embedId, quotedPostId,
+  // quotedReplyId, deleted (each alone is enough; a quote needs its owner for quoteOwner).
+  ['post: notEmpty met by text alone', 'post', v13Post(), null],
+  ['post: notEmpty met by ciphertext alone (no teaser)', 'post', { live: true, ...privateFields() }, null],
+  ['post: notEmpty met by media alone', 'post', { live: true, ...v13Media(1) }, null],
+  ['post: notEmpty met by an embed alone', 'post', { live: true, ...embed() }, null],
+  ['post: notEmpty met by a quoted post alone', 'post', { live: true, quotedPostId: id(), quotedPostOwnerId: id() }, null],
+  ['post: notEmpty met by a quoted reply alone', 'post', { live: true, quotedReplyId: id(), quotedPostOwnerId: id() }, null],
+  ['post: notEmpty met by deleted alone (a tombstone)', 'post', { deleted: true }, null],
+  ['post: notEmpty with an empty text and none of the six (countPresent 0)', 'post', { live: true, content: '' }, 'notEmpty'],
+  ['post: notEmpty with only a hashtag, the sensitive flag and a mention', 'post', { live: true, hashtag: 'dash', sensitive: true, mentionedUserId: id() }, 'notEmpty'],
+  // blankTombstone: a tombstone holds none of its content paths (countPresent = 0); each one alone breaks it.
+  ['post: a blank tombstone keeping only its hashtag', 'post', { deleted: true, hashtag: 'kept' }, null],
+  ...Object.entries(v14PostTombstoneFields()).map(([path, value]) => [`post: a tombstone keeping ${path} (countPresent 1)`, 'post', { deleted: true, [path]: value }, 'blankTombstone']),
+  ['post: a tombstone keeping every content path (countPresent 15)', 'post', { deleted: true, ...v14PostTombstoneFields() }, 'blankTombstone'],
+  // Replies: no stored owners.
+  ['reply: a top-level reply (its root alone)', 'reply', v14Reply(), null],
+  ['reply: a nested reply', 'reply', { ...v14Reply(), replyToReplyId: id() }, null],
+  ['reply: a private reply carrying media', 'reply', { ...v14Reply(), ...privateFields(), ...v13Media(1) }, 'privateNoMedia'],
+  ['reply: two images', 'reply', { ...v14Reply(), ...v13Media(2) }, null],
+  ['reply: three URLs, two digests', 'reply', { ...v14Reply(), ...v13Media(3, { digests: 2 }) }, 'media'],
+  ['reply: a blank tombstone (the linkage kept)', 'reply', { ...drop(v14Reply(), 'content'), deleted: true }, null],
+  ['reply: a nested blank tombstone', 'reply', { ...drop(v14Reply(), 'content'), replyToReplyId: id(), deleted: true }, null],
+  ...Object.entries(v14ReplyTombstoneFields()).map(([path, value]) => [`reply: a tombstone keeping ${path} (countPresent 1)`, 'reply', { ...drop(v14Reply(), 'content'), deleted: true, [path]: value }, 'blankTombstone']),
+  // report oneTarget: exactly one of postId, replyId, about.
+  ['report: oneTarget with all three targets (countPresent 3)', 'report', { ...baseReport(), replyId: id(), about: 1 }, 'oneTarget'],
+];
+
+/**
+ * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
+ * {@link DECLARED_RULES}: rules the STORED document must meet for its owner to
+ * delete it, refused with 40147 `DocumentDeleteConstraintViolatedError` (paid).
+ * Moderator deletes and ttl expiry are not judged.
+ */
+export const DECLARED_DELETE_RULES = {
+  // S6: a report can be withdrawn only while no moderator has resolved it (`status` absent).
+  'yappr-social-contract-v14.json': { report: ['pending'] },
+};
+
+/**
+ * [label, docType, the stored document's data, the delete rule its owner's
+ * delete breaks or null] — judged offline by `runConstraintCases` and
+ * broadcast by verify-v10 r1wa (a resolved report's withdrawal is 40147).
+ */
+export const DELETE_CASES = {
+  'yappr-social-contract-v14.json': [
+    ['report: withdrawing an open report (no status)', 'report', baseReport(), null],
+    ['report: withdrawing an open profile report', 'report', { ...drop(baseReport(), 'postId'), about: 1 }, null],
+    ...[1, 2, 3].map((status) => [`report: withdrawing a report resolved with status ${status}`, 'report', { ...baseReport(), status }, 'pending']),
+    ['report: withdrawing a resolved report that carries a resolution', 'report', { ...baseReport(), status: 2, resolution: 'post removed' }, 'pending'],
+  ],
+};
+
+/**
+ * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule
+ * `rule`: Drive's DocumentDeleteConstraintViolatedError Display, naming the
+ * rule ('… can not be deleted: it breaks its deleteConstraints rule "<rule>": …').
+ */
+export const deleteConstraintViolation = (rule) =>
+  new RegExp(`breaks its deleteConstraints rule \\\\?"${rule}\\\\?":`, 'i');
+
 /**
  * The rejection a live write breaking `rule` must produce: the node's 10422
  * `DocumentPropertyConstraintViolatedError` message naming exactly this rule
@@ -179,10 +440,17 @@ CONSTRAINT_CASES['yappr-social-contract-v11.json'] = [
 export const constraintViolation = (rule) =>
   new RegExp(`breaks its propertyConstraints rule \\\\?"${rule}\\\\?":`, 'i');
 
+/** The refused REPLACE-only cases of one contract and doctype (a tombstone, a moderator's edit), as [label, data, rule]. */
+export function refusedReplaces(file, docType) {
+  return CONSTRAINT_CASES[file]
+    .filter(([, type, , rule, options]) => type === docType && rule !== null && options?.replace)
+    .map(([label, , data, rule]) => [label, data, rule]);
+}
+
 /** The refused CREATE cases of one contract and doctype, as [label, data, rule]. */
 export function refusedCreates(file, docType) {
   return CONSTRAINT_CASES[file]
-    .filter(([, type, , rule, options]) => type === docType && rule !== null && !options?.replace)
+    .filter(([, type, , rule, options]) => type === docType && rule !== null && !options?.replace && !options?.offlineOnly)
     .map(([label, , data, rule]) => [label, data, rule]);
 }
 
@@ -193,8 +461,9 @@ export function refusedCreates(file, docType) {
  * create or replace, offline: from 4.2.0-beta.6 (platform#5051) the wasm-sdk's
  * `DataContract.checkDocumentPropertyConstraints` evaluates a document's rules
  * with rs-dpp's own code, so no extra package is needed. It judges the rules
- * alone (not the JSON schema), and uses the device clock for system times;
- * none of Yappr's rules reads a time, a height or a total.
+ * alone (not the JSON schema). System times are the case's own (`options.at`,
+ * default CASE_NOW): the pollr rules read `$createdAt` and `$updatedAt`; no
+ * rule reads a height or a total.
  *
  * Returns the number of cases whose outcome is not the recorded one.
  */
@@ -203,13 +472,23 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
   let failures = 0;
   console.log('\npropertyConstraints cases (DataContract.checkDocumentPropertyConstraints, the rules a create or replace runs):');
   for (const [file, cases] of Object.entries(CONSTRAINT_CASES)) {
-    const contract = parseContract(loadContractSource(`contracts/${file}`), platformVersion);
-    for (const [label, docType, data, rule] of cases) {
+    const source = loadContractSource(`contracts/${file}`);
+    // The rule names the live batteries pin must be exactly the ones the file declares.
+    for (const [docType, rules] of Object.entries(DECLARED_RULES[file] ?? {})) {
+      const declared = Object.keys(source.documentSchemas[docType]?.propertyConstraints ?? {}).sort();
+      if (JSON.stringify(declared) !== JSON.stringify([...rules].sort())) {
+        failures += 1;
+        console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares rules ${declared.join(', ')}, DECLARED_RULES says ${rules.join(', ')}`);
+      }
+    }
+    const contract = parseContract(source, platformVersion);
+    for (const [label, docType, data, rule, options] of cases) {
+      const at = options?.at ?? {};
       let violation = null;
       try {
         const document = Document.fromObject({
           $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
-          $revision: 1n, $createdAt: Date.now(), $updatedAt: Date.now(), ...data,
+          $revision: at.revision ?? 1n, $createdAt: at.createdAt ?? CASE_NOW, $updatedAt: at.updatedAt ?? CASE_NOW, ...data,
         }, platformVersion);
         violation = contract.checkDocumentPropertyConstraints(document) ?? null;
       } catch (e) {
@@ -219,6 +498,52 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
       if (!ok) failures += 1;
       const outcome = violation === null ? 'accepted' : `10422 "${violation.rule}": ${String(violation.message).slice(0, 100)}`;
       console.log(`${ok ? 'PASS' : 'FAIL'}  ${file.replace(/\.json$/, '')}: ${label} — ${outcome}${ok ? '' : ` (expected ${rule === null ? 'accepted' : `10422 on "${rule}"`})`}`);
+    }
+  }
+  return failures + await runDeleteCases({ loadContractSource, parseContract, platformVersion, Document, owner });
+}
+
+/**
+ * The `deleteConstraints` cases, offline. No package exposes a delete check,
+ * but the rules are written in the `propertyConstraints` grammar and judged by
+ * the same evaluator, so each file is parsed once more with every type's
+ * `propertyConstraints` replaced by its `deleteConstraints`, and the STORED
+ * document is judged with `checkDocumentPropertyConstraints`.
+ */
+async function runDeleteCases({ loadContractSource, parseContract, platformVersion, Document, owner }) {
+  let failures = 0;
+  console.log('\ndeleteConstraints cases (the stored document an owner\'s delete is judged on; 40147 when a rule breaks):');
+  for (const [file, cases] of Object.entries(DELETE_CASES)) {
+    const source = loadContractSource(`contracts/${file}`);
+    for (const [docType, rules] of Object.entries(DECLARED_DELETE_RULES[file] ?? {})) {
+      const declared = Object.keys(source.documentSchemas[docType]?.deleteConstraints ?? {}).sort();
+      if (JSON.stringify(declared) !== JSON.stringify([...rules].sort())) {
+        failures += 1;
+        console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares delete rules ${declared.join(', ')}, DECLARED_DELETE_RULES says ${rules.join(', ')}`);
+      }
+    }
+    const asWriteRules = structuredClone(source);
+    for (const schema of Object.values(asWriteRules.documentSchemas)) {
+      if (!schema.deleteConstraints) continue;
+      schema.propertyConstraints = schema.deleteConstraints;
+      delete schema.deleteConstraints;
+    }
+    const contract = parseContract(asWriteRules, platformVersion);
+    for (const [label, docType, data, rule] of cases) {
+      let violation = null;
+      try {
+        const document = Document.fromObject({
+          $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
+          $revision: 1n, $createdAt: CASE_NOW, $updatedAt: CASE_NOW, ...data,
+        }, platformVersion);
+        violation = contract.checkDocumentPropertyConstraints(document) ?? null;
+      } catch (e) {
+        violation = { rule: null, message: String(e?.message ?? e) };
+      }
+      const ok = rule === null ? violation === null : violation?.rule === rule;
+      if (!ok) failures += 1;
+      const outcome = violation === null ? 'deletable' : `40147 "${violation.rule}": ${String(violation.message).slice(0, 100)}`;
+      console.log(`${ok ? 'PASS' : 'FAIL'}  ${file.replace(/\.json$/, '')}: ${label} — ${outcome}${ok ? '' : ` (expected ${rule === null ? 'deletable' : `40147 on "${rule}"`})`}`);
     }
   }
   return failures;

@@ -520,12 +520,9 @@ export function LegacyMessages() {
 
     const loadFollowerSuggestions = async () => {
       try {
-        const follows = await followService.getFollowers(user.identityId)
-        // getFollowers returns oldest first; suggest the most recent followers
-        // and cap the list so the DPNS/profile lookups stay a single batch.
-        const followerIds = Array.from(
-          new Set(follows.map(f => f.$ownerId).filter(id => id && id !== user.identityId))
-        ).reverse().slice(0, MAX_FOLLOWER_SUGGESTIONS)
+        // The most recent followers, capped so the DPNS/profile lookups stay a single batch.
+        const follows = await followService.getRecentFollowers(user.identityId, MAX_FOLLOWER_SUGGESTIONS)
+        const followerIds = follows.map(f => f.$ownerId).filter(id => id && id !== user.identityId)
 
         if (cancelled) return
 

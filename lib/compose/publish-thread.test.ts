@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Post } from '@/lib/types'
 import { planPosts, publishThread, type PublishInput } from './publish-thread'
 
-const services = vi.hoisted(() => ({ createPost: vi.fn(), createReply: vi.fn(), isUnconfirmed: vi.fn(), settleUnconfirmed: vi.fn() }))
+const services = vi.hoisted(() => ({ createPost: vi.fn(), createReply: vi.fn(), getPostById: vi.fn(), isUnconfirmed: vi.fn(), settleUnconfirmed: vi.fn() }))
 vi.mock('@/lib/services', () => ({ postService: { createPost: services.createPost } }))
+vi.mock('@/lib/services/post-service', () => ({ postService: { getPostById: services.getPostById } }))
 vi.mock('@/lib/services/reply-service', () => ({ replyService: { createReply: services.createReply } }))
 vi.mock('@/lib/unconfirmed-writes', () => ({ isUnconfirmed: services.isUnconfirmed, settleUnconfirmed: services.settleUnconfirmed, markUnconfirmed: vi.fn() }))
 
@@ -66,7 +67,7 @@ describe('publishThread retry linkage', () => {
     isPrivate: false,
     inheritedEncryption: null,
     pollEmbed: undefined,
-    mediaUrlField: undefined,
+    media: [],
     markSensitive: false,
     onProgress: vi.fn(),
   })
@@ -89,7 +90,7 @@ describe('publishThread retry linkage', () => {
       rootPostId: 'original-root',
       replyToReplyId: lastPostedId === 'original-root' ? undefined : lastPostedId,
       parentOwnerId: 'author',
-    }, { encryption: undefined, sensitive: undefined, mediaUrl: undefined })
+    }, { encryption: undefined, sensitive: undefined })
     expect(result.successful).toEqual([{ index: 0, postId: 'new-reply', content: 'remaining part', threadPostId: 'draft-remaining' }])
   })
 
@@ -178,7 +179,7 @@ describe('publishThread sensitive flag', () => {
     isPrivate: false,
     inheritedEncryption: null,
     pollEmbed: undefined,
-    mediaUrlField: undefined,
+    media: [],
     markSensitive: true,
     onProgress: vi.fn(),
   }
@@ -202,11 +203,96 @@ describe('publishThread sensitive flag', () => {
     expect(services.createReply.mock.calls[0][3]).toMatchObject({ sensitive: true })
   })
 
+  it('names no root owner off v13', async () => {
+    await publishThread({ ...base, posts: [{ threadPostId: 'draft-1', content: 'my reply' }], replyingTo: otherUsersPost })
+    expect(services.createReply.mock.calls[0][2].rootOwnerId).toBeUndefined()
+  })
+
   it('does not mark a reply to someone else even when the profile seeded the flag on', async () => {
     await publishThread({ ...base, posts: [{ threadPostId: 'draft-1', content: 'my reply' }], replyingTo: otherUsersPost })
     expect(services.createPost).not.toHaveBeenCalled()
     expect(services.createReply).toHaveBeenCalledOnce()
     expect(services.createReply.mock.calls[0][2]).toMatchObject({ rootPostId: 'their-post', parentOwnerId: 'someone-else' })
     expect(services.createReply.mock.calls[0][3].sensitive).toBeUndefined()
+  })
+})
+
+describe('publishThread on v13: every reply names its thread root\'s owner', () => {
+  const user = (id: string) => ({ id, username: '', displayName: '', avatar: '', followers: 0, following: 0, verified: false, joinedAt: new Date(1000) })
+  const theirPost: Post = {
+    id: 'their-post', targetKind: 'post', content: 'theirs', createdAt: new Date(1000), author: user('root-owner'),
+    likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0,
+  }
+  const replyInTheirThread = (rootOwnerId?: string): Post => ({
+    ...theirPost, id: 'a-reply', targetKind: 'reply', author: user('replier'), parentId: 'their-post', rootPostId: 'their-post', ...(rootOwnerId ? { rootOwnerId } : {}),
+  })
+  const base: PublishInput = {
+    authorId: 'author',
+    posts: [{ threadPostId: 'draft-1', content: 'part' }],
+    replyingTo: null,
+    quotingPost: null,
+    knownThreadRootId: null,
+    isPrivate: false,
+    inheritedEncryption: null,
+    pollEmbed: undefined,
+    media: [],
+    markSensitive: false,
+    onProgress: vi.fn(),
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v13')
+    vi.resetModules()
+    services.createPost.mockResolvedValue({ id: 'new-root' })
+    services.createReply.mockResolvedValue({ id: 'new-reply' })
+    services.isUnconfirmed.mockReturnValue(false)
+    vi.stubGlobal('window', { dispatchEvent: vi.fn() })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.unstubAllEnvs()
+  })
+
+  const publish = async (input: PublishInput) => (await import('./publish-thread')).publishThread(input)
+
+  it('names the post\'s author as both owners of a reply to a post', async () => {
+    await publish({ ...base, replyingTo: theirPost })
+    expect(services.createReply.mock.calls[0][2]).toEqual({ rootPostId: 'their-post', replyToReplyId: undefined, parentOwnerId: 'root-owner', rootOwnerId: 'root-owner' })
+  })
+
+  it('takes a reply\'s own rootOwnerId when replying to it, and its author as the parent owner', async () => {
+    await publish({ ...base, replyingTo: replyInTheirThread('root-owner') })
+    expect(services.getPostById).not.toHaveBeenCalled()
+    expect(services.createReply.mock.calls[0][2]).toEqual({ rootPostId: 'their-post', replyToReplyId: 'a-reply', parentOwnerId: 'replier', rootOwnerId: 'root-owner' })
+  })
+
+  it('reads the root post when the reply does not carry its root owner', async () => {
+    services.getPostById.mockResolvedValue(theirPost)
+    await publish({ ...base, replyingTo: replyInTheirThread() })
+    expect(services.getPostById).toHaveBeenCalledWith('their-post', { skipEnrichment: true })
+    expect(services.createReply.mock.calls[0][2]).toMatchObject({ parentOwnerId: 'replier', rootOwnerId: 'root-owner' })
+  })
+
+  it('posts nothing when the root cannot be read', async () => {
+    services.getPostById.mockResolvedValue(null)
+    const result = await publish({ ...base, replyingTo: replyInTheirThread() })
+    expect(services.createReply).not.toHaveBeenCalled()
+    expect(result.failedAtIndex).toBe(0)
+    expect(result.failureError?.message).toMatch(/nothing was posted/)
+  })
+
+  it('names the author as the root owner of their own thread\'s continuation parts', async () => {
+    await publish({ ...base, posts: [{ threadPostId: 'draft-1', content: 'root' }, { threadPostId: 'draft-2', content: 'second' }] })
+    expect(services.createReply.mock.calls[0][2]).toEqual({ rootPostId: 'new-root', replyToReplyId: undefined, parentOwnerId: 'author', rootOwnerId: 'author' })
+  })
+
+  it('reads no root on v14, where a reply stores no owner (createReply writes neither)', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v14')
+    vi.resetModules()
+    await publish({ ...base, replyingTo: replyInTheirThread() })
+    expect(services.getPostById).not.toHaveBeenCalled()
+    expect(services.createReply.mock.calls[0][2]).toEqual({ rootPostId: 'their-post', replyToReplyId: 'a-reply', parentOwnerId: 'replier', rootOwnerId: undefined })
   })
 })

@@ -2,10 +2,11 @@ import { BaseDocumentService, type QueryOptions } from './document-service'
 import type { Blog } from '@/lib/types'
 import type { BlogThemeConfig } from '@/lib/blog/theme-types'
 import { normalizeBlogThemeConfig } from '@/lib/blog/theme-types'
-import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants'
-import { labelsFromStored, storedLabels } from '@/lib/blog/content-utils'
+import { YAPPR_BLOG_CONTRACT_ID, blogIsV7 } from '@/lib/constants'
+import { labelsFromStored, storedImageUrl, storedLabels } from '@/lib/blog/content-utils'
 import { normalizeBytes } from './sdk-helpers'
 import { compressContent, decompressContent } from '@/lib/utils/compression'
+import { DISCOVERY_SCAN_LIMIT, DISCOVERY_SCAN_TTL_MS, newestFirst } from './pagination-utils'
 
 export interface CreateBlogData {
   name: string
@@ -18,6 +19,16 @@ export interface CreateBlogData {
 }
 
 export interface UpdateBlogData extends Partial<CreateBlogData> {}
+
+/** One page of blogs, newest first (blog v7 `blog.timeline`). */
+export interface BlogTimelinePage {
+  blogs: Blog[]
+  /** Where the next page starts, or undefined at the end. */
+  nextCursor?: string
+}
+
+/** The most blogs one timeline query returns. */
+const BLOG_PAGE_SIZE = 100
 
 function deserializeThemeConfig(raw: unknown): BlogThemeConfig | undefined {
   if (!raw) return undefined
@@ -96,6 +107,9 @@ class BlogService extends BaseDocumentService<Blog> {
     }
     // An explicit `undefined` clears labels during the replace merge; keep it.
     if (data.labels !== undefined) result.labels = storedLabels(data.labels, 'blog')
+    // Likewise for the images; an empty URL clears one (v7 refuses '' outright).
+    if ('avatar' in data) result.avatar = storedImageUrl(data.avatar, 'avatar')
+    if ('headerImage' in data) result.headerImage = storedImageUrl(data.headerImage, 'header image')
     return result
   }
 
@@ -128,39 +142,66 @@ class BlogService extends BaseDocumentService<Blog> {
   }
 
   /**
-   * Get all blogs on the platform (for discovery).
-   * Uses the ownerAndTime index [$ownerId, $createdAt] with cursor-based pagination,
-   * then sorts client-side by createdAt desc for display.
+   * One page of every blog, newest first, on blog v7's `timeline
+   * [$createdAt]`: a single query per page, paged with `nextCursor`.
    */
-  async getAllBlogs(limit = 100): Promise<Blog[]> {
-    if (!this.isConfigured()) return []
+  async getBlogTimelinePage(options: { limit?: number; startAfter?: string } = {}): Promise<BlogTimelinePage> {
+    if (!this.isConfigured()) return { blogs: [] }
+    const { documents, nextCursor } = await this.newestFirstPage(Math.min(options.limit ?? BLOG_PAGE_SIZE, BLOG_PAGE_SIZE), options.startAfter)
+    return { blogs: documents, nextCursor }
+  }
+
+  /** The newest `limit` blogs on v7's `blog.timeline`, page by page. */
+  private async timelineHead(limit: number): Promise<Blog[]> {
     const blogs: Blog[] = []
-    const pageSize = Math.min(100, limit)
     let startAfter: string | undefined
-
     while (blogs.length < limit) {
-      const remaining = limit - blogs.length
-      const batchLimit = Math.min(pageSize, remaining)
-
-      const queryOptions: QueryOptions = {
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-        limit: batchLimit,
-        startAfter,
-      }
-
-      const result = await this.query(queryOptions)
-      if (result.documents.length === 0) break
-
-      blogs.push(...result.documents)
-      startAfter = result.documents[result.documents.length - 1].id
-
-      if (result.documents.length < batchLimit) break
+      const page = await this.newestFirstPage(Math.min(BLOG_PAGE_SIZE, limit - blogs.length), startAfter)
+      blogs.push(...page.documents)
+      startAfter = page.nextCursor
+      if (!startAfter) break
     }
+    return blogs
+  }
 
-    // Sort client-side by newest first
-    blogs.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+  /**
+   * The newest blogs for discovery, `limit` at most. On v7 that is the head
+   * of `blog.timeline`, read newest first, so it is always `complete`. Earlier
+   * cuts only index `[$ownerId, $createdAt]`, so there is no newest-first
+   * query: this reads every blog in owner order (up to
+   * {@link DISCOVERY_SCAN_LIMIT}) and sorts by creation time. `complete` is
+   * false when that cap cut the read short, so the newest order only covers
+   * the blogs read; callers say so.
+   */
+  async getNewestBlogs(limit = 100): Promise<{ blogs: Blog[]; complete: boolean }> {
+    if (!this.isConfigured()) return { blogs: [], complete: true }
+    if (blogIsV7()) return { blogs: await this.timelineHead(limit), complete: true }
+    const { blogs, complete } = await this.scanNewestBlogs()
+    return { blogs: blogs.slice(0, limit), complete }
+  }
 
-    return blogs.slice(0, limit)
+  /** A full clear (a create runs one) drops the discovery scan too, so a new one is listed. */
+  clearCache(documentId?: string): void {
+    super.clearCache(documentId)
+    if (!documentId) this.newestScan = null
+  }
+
+  /** The full discovery scan, newest first, held for two minutes (it is up to 10 queries). */
+  private newestScan: { at: number; result: Promise<{ blogs: Blog[]; complete: boolean }> } | null = null
+
+  private scanNewestBlogs(): Promise<{ blogs: Blog[]; complete: boolean }> {
+    if (this.newestScan && Date.now() - this.newestScan.at < DISCOVERY_SCAN_TTL_MS) return this.newestScan.result
+    const result = this.queryAll(
+      { orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']] },
+      DISCOVERY_SCAN_LIMIT
+    ).then(({ documents, reachedLimit }) => ({ blogs: newestFirst(documents), complete: !reachedLimit }))
+    const scan = { at: Date.now(), result }
+    this.newestScan = scan
+    // A failed scan is not held.
+    result.catch(() => {
+      if (this.newestScan === scan) this.newestScan = null
+    })
+    return result
   }
 }
 

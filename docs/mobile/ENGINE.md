@@ -589,7 +589,7 @@ App Connect (`FEATURE_APP_CONNECT`, ADR E5) adds `session.startAppConnect` and `
 | `thread` | `(id: Id, cursor?: Cursor) => Promise<ThreadDTO>` | Ports `usePostDetail` (`hooks/use-post-detail.ts:277-607`):<br>• A v10 bare repost redirects to its target.<br>• Ancestors: one `getPostById(rootId)` on flat threads; on v2, walk up the parents (max 50).<br>• Replies: `replyService.getReplies` (`reply-service.ts:299`; 50 per page flat, 20 on v2; cursor = `nextCursor`), plus `getNestedReplies` (:443) frontier expansion when the focus is a reply.<br>• v10 deleted parents: `provenAbsent` (`lib/feed/prove-absent.ts:13`) → `deletedReplyStubs` (`lib/feed/deleted-reply-stubs.ts:27`).<br>• v2: the v2 thread loader (`use-post-detail.ts:782+`). |
 | `engagements` | `(target: TargetRef, tab: 'likes' \| 'reposts' \| 'quotes', cursor?: Cursor) => Promise<Page<EngagementDTO>>` | **Likes:** `likeService.getPostLikes` (`like-service.ts:726`).<br>**Reposts:** `repostService.getPostReposts` (`repost-service.ts:133`), off v10.<br>**Quotes:** `postService.getQuotePosts` (`post-service.ts:750`); on v10 one call with `limit:100`, split by `splitRepostsAndQuotes` (`lib/feed/quote-reposts.ts:97`).<br>Users come from `loadIdentityBatch` (`identity-batch.ts:14`) + `getFollowStatusBatch`. The fetch-all results are paged in memory, 30 per page. Mirrors `app/post/engagements/page.tsx:45-239`. |
 | `engagementCounts` | `(target: TargetRef) => Promise<{ likes: number; reposts: number; quotes: number }>` | `loadEngagementCounts` (`lib/services/social-stats-service.ts:61`) |
-| `poll` | `(embed: { contractId: Id; id: Id }) => Promise<PollDTO \| null>` | `pollrPollService.getPoll` (`lib/services/pollr-poll-service.ts:129`) plus the tallies from `pollr-vote-service.ts`. Read-only in 1.0. |
+| `poll` | `(embed: { contractId: Id; id: Id }) => Promise<PollDTO \| null>` | `pollrPollService.getPoll` (`lib/services/pollr-poll-service.ts:153`) plus the tallies from `pollr-vote-service.ts`. Read-only in 1.0. |
 | `publish` | `(draft: DraftDTO) => Promise<WriteTicket>` | `planPosts` (`lib/compose/publish-thread.ts:33`) → `publishThread` (:109). `replyingTo` and `quotingPost` are resolved by id with `posts.get` internals. `onProgress` feeds the ticket's `progress`. `settleUnconfirmed` (`lib/unconfirmed-writes.ts:52`) runs inside `publishThread` (:162). On v2, `publishThread` also writes hashtag and mention indexes (:263-286). |
 | `delete` | `(target: TargetRef) => Promise<WriteTicket>` | If `deletesAreTombstones()` (v9): `postService.tombstonePost` (:362) / `replyService.tombstoneReply` (:170). Otherwise `postService.deletePost` (:322) / `replyService.deleteReply` (:143). Mirrors `components/post/post-card.tsx:434-446`. |
 | `mentionCandidates` | `(prefix: string) => Promise<AuthorDTO[]>` | `dpnsService.searchUsernamesWithDetails(prefix, 5)` (`dpns-service.ts:372`), enforcing the web's 3-character minimum (`MIN_SEARCH_LENGTH`, `components/compose/mention-autocomplete.tsx:13`); RN detects the active mention with the allow-listed `detectActiveMention` (`lib/compose/mention-query.ts:2`). Then `loadIdentityBatch`. |
@@ -737,8 +737,8 @@ interface MessageDTO { id: string; sender: Id; text: string; at: Date; own: bool
 | `isBlocked` | `(ids: Id[]) => Promise<Record<Id, boolean>>` | `checkBlockedBatch(viewer, ids)` (:735) |
 | `blockedBy` | `(ids: Id[]) => Promise<Record<Id, 'self' \| 'list' \| null>>` | `getBlockSourcesBatch(viewer, ids)` (:716): the viewer's own block (`'self'`, which `unblock` deletes) vs. only a followed block list (`'list'`) |
 | `report` | `(target: TargetRef, reason: number, note?: string) => Promise<WriteTicket>` | `reportService.fileReport(viewer, {kind, targetId, targetOwnerId, reason, note})` (`lib/services/report-service.ts:89`). `REPORT_REASONS` and codes 0–8 come from `lib/reports.ts:37`, which RN imports directly (allow-listed). Code 8 needs a note of up to 500 characters. Gated by `capabilities.reports`. |
-| `ownReport` | `(target: TargetRef) => Promise<{ reason: number; status: 1 \| 2 \| 3 \| null; resolution: string \| null } \| null>` | `reportService.getOwnReport` (:78) |
-| `withdrawReport` | `(target: TargetRef, reportId: Id) => Promise<WriteTicket>` | `reportService.withdrawReport(viewer, reportId)` (`report-service.ts:106`): the reporter deletes its own report (op `report.withdraw`; the ticket names the `delete`, which Check again proves absent). A report already gone (40101: dismissed on v9, or withdrawn elsewhere) fails `REPORT_GONE` with `withdrawFailureMessage`'s text. Gated by `capabilities.reports`. |
+| `ownReport` | `(target: TargetRef) => Promise<{ reason: number; status: 1 \| 2 \| 3 \| null; resolution: string \| null; withdrawable: boolean } \| null>` (`withdrawable` false on v14 once resolved) | `reportService.getOwnReport` (:78) |
+| `withdrawReport` | `(target: TargetRef, reportId: Id) => Promise<WriteTicket>` | `reportService.withdrawReport(viewer, reportId)` (`report-service.ts:106`): the reporter deletes its own report (op `report.withdraw`; the ticket names the `delete`, which Check again proves absent). A report already gone (40101: dismissed on v9, or withdrawn elsewhere) fails `REPORT_GONE` with `withdrawFailureMessage`'s text; on v14 a report the moderators resolved meanwhile fails `REPORT_RESOLVED` (refused before signing, or a paid 40147), with the same function's text. Gated by `capabilities.reports`. |
 
 The NSFW gate and the media gate run in RN:
 - **NSFW:** `shouldGateSensitive` (`lib/sensitive-content.ts:15`), with the `sensitiveContentMode` setting.
@@ -888,6 +888,7 @@ type EngineErrorCode =
   // domain writes, raised by the engine itself (outcome `local`, never retryable)
   | 'STILL_BLOCKED'      // an unblock a followed block list overrides
   | 'REPORT_GONE'        // safety.withdrawReport: the report is already gone
+  | 'REPORT_RESOLVED'    // safety.withdrawReport (v14): the moderators resolved it, so the network keeps it
   | 'MEDIA_UNREADABLE'   // posts.publish: the image link's host refuses it (HTTP 4xx) or it is no decodable image (v10), nothing sent
 interface EngineErrorData {
   code: EngineErrorCode
@@ -914,7 +915,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 | 1 | `isModerationBarredError` :457 | `MODERATION_BARRED` | no |
 | 2 | `isModerationNotYetSeatedError` :745 | `MODERATION_NOT_SEATED` | no |
 | 3 | `isPropertyMaxBytesError` :630 | `TOO_LONG` | no |
-| 4 | `isPropertyNotDistinctError` :664, then `isDocumentPropertyRuleError` :653 | `RULE_VIOLATION` | no |
+| 4 | `isPropertyNotDistinctError` :752, then `isDocumentPropertyRuleError` :674, then `isDeleteConstraintError` :693 (40147, 5.0.0-beta.3 `deleteConstraints`) | `RULE_VIOLATION` | no |
 | 5 | `isOncePerIdentityAlreadyClaimedError` :614 | `ALREADY_CLAIMED` | no |
 | 6 | `isReferencedDocumentTooYoungError` :712 | `PARENT_TOO_YOUNG` | yes |
 | 7 | `isGasSponsorShortError` :580, then `isGasPayerError` :497 | `FEE_UNPAYABLE` | no |
@@ -930,7 +931,7 @@ Three predicates that `categorizeError` uses are module-private: `isPropertyNotD
 | 17 | `isReferenceNotFoundError` :276 | `TARGET_GONE` | no |
 | 18 | `isWriteGateError` :365 | `NOT_OWNER` | no |
 | 19 | `isPropertyAgreementError` :345 | `STALE` | no |
-| 20 | `isFrozenBalanceError` :239 | `FROZEN` | no |
+| 20 | `isTokenPausedError` (40711), then `isFrozenBalanceError` :239 | `FROZEN` | no |
 | 21 | `isInsufficientTokenError` :217 | `INSUFFICIENT_YAPP` | no |
 
 **Stage 2**, after the chain:

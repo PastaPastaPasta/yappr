@@ -64,18 +64,94 @@ contract id is an input to every registration.
 ## Storefront
 
 `contracts/yappr-storefront-contract.json` — `store`, `storeItem`,
-`shippingZone`, `storeOrder`, `orderStatusUpdate`, `storeReview`, `itemReview`,
-`savedAddress`. Client gate: `NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v2`.
+`shippingZone`, `itemDeliverable`, `storeOrder`, `orderStatusUpdate`,
+`orderDelivery`, `storeReview`, `itemReview`, `savedAddress`. Client gate:
+`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v6`, resolved in `lib/constants.ts`).
+**The file is storefront v6**, the 5.0.0-beta.2 mainnet-ready cut that also
+carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638). It is
+registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk`
+(re-registered after the 2026-10-08 beta.3 wipe) and `/devnet` runs it
+([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `store` | `canBeDeleted: false` (`closed` is the tombstone) | permanentDocument target |
-| `storeItem` | `canBeDeleted: false`; `storeId`→store **writer-gated**; `immutable [storeId]` | item reviews, ghost-store rejection, seller-only listings |
-| `shippingZone` | `storeId`→store **writer-gated**; `immutable [storeId]` | seller-only zones |
-| `storeOrder` | permanent; `storeId`→store `{sellerId: $ownerId}`; countable buyer/seller indexes; ranked `storeOrderCount` | order badges, "most ordered stores", consensus-true seller |
-| `orderStatusUpdate` | `orderId`→storeOrder **writer-gated to the seller**; `buyerId` bound to the order's `$ownerId` | buyer status feed carrying only the seller's updates |
-| `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg+count ranked; `sellerRating` avg ranked; `storeRatingDistribution` grouped count; 3 YAPP | averages, distribution, top rated |
-| `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `itemRating`, `storeItemRating` avg ranked; 1 YAPP | item averages, top items |
+| `store` | `canBeDeleted: false` (`closed` is the tombstone), `moderatorAbilities.delete`; required `category` slug; `byStatus [status, $createdAt]`; `byCategory [status, category, $createdAt]` rangeCountable, ranked at `category`; 1000M action fee | "newest stores", per-category newest, "top categories"; moderatedDocument target |
+| `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); 50M action fee | item reviews, ghost-store rejection, seller-only listings |
+| `shippingZone` | `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]` | seller-only zones |
+| `itemDeliverable` | one per item; `itemId`→storeItem (moderatedDocument) **writer-gated**; `immutable [itemId]`; seller-encrypted kit (≤ 5,120 B) | digital products |
+| `storeOrder` | permanent; `storeId`→store `{$ownerId: sellerId, status: storeStatus}`; `sellerId` distinctFrom `$ownerId`; `buyerOrders [$ownerId, $createdAt]` rangeCountable; `storeOrders [storeId, $createdAt]` rangeCountable, ranked at `storeId`; payload ≤ 5,120 B | buyer and seller order lists and counts, "most ordered stores" |
+| `orderStatusUpdate` | `orderId`→storeOrder **writer-gated to the seller**; neither deletable nor mutable; `buyerFeed [orderId.$ownerId, $createdAt]` (derived) | the order's history; buyer notifications carrying only the seller's updates |
+| `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller**; permanent, append-only; `buyerDeliveries [orderId.$ownerId, $createdAt]` (derived); payload ≤ 5,120 B | encrypted digital delivery, buyer library |
+| `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg ranked; `storeRatingDistribution` grouped count; 16M action fee | averages, distribution, top rated |
+| `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `storeItemRating [storeId, itemId]` avg+count, avg ranked; 8M action fee | item averages and counts within a store, top items in a store |
+
+### What v6 changed (from v5)
+
+- **Moderation is elected** per contract, exactly as blog v7 and social v13:
+  `seatContestable`, a 30-day `challengeCoolDown`, a 7-day join window and a
+  3-day vote window, `maxAddedModerators: 10`, `ownerProtected`. The file's
+  interim team is the contract owner; registration picks the network's interim
+  (`withInterim` in `scripts/register-lib.mjs`): devnet keeps the owner,
+  mainnet registers `notYetUsable`, and `--interim <kind>` overrides it.
+- **Stores and items are moderator-deletable** (`moderatorAbilities.delete`;
+  their owners still cannot delete them), so every reference at them is a
+  `moderatedDocument` reference, #638's `itemDeliverable.itemId` included.
+  After a takedown the reference resolves to the removal record.
+- **No YAPP.** The review `tokenCost` is gone (so is the `SOCIAL_CONTRACT_ID`
+  placeholder). Creates of `store` (1000M credits, about 60¢ at $60/DASH),
+  `storeItem` (50M), `storeReview` (16M) and `itemReview` (8M) pay a
+  `feeMultiplier` moderators fee and must carry an `$actionFeeAgreement`
+  naming exactly that (40132 without one, 40133 for another amount). The
+  client reads the amounts off the committed JSON
+  (`lib/storefront/storefront-contract.ts`) and the write path attaches the
+  agreement (`declaredActionFeeFor` in `lib/transition-agreements.ts`). Orders,
+  status updates, deliveries, kits, shipping zones, saved addresses and every
+  edit are unpriced.
+- **No self-orders.** `storeOrder.sellerId` is distinctFrom `$ownerId`
+  (10419), so a seller cannot pad their order counts or reach the review step
+  on their own store. The client never offers it (cart, item page and
+  checkout say why).
+- **No stored buyer.** `orderStatusUpdate.buyerId` and `orderDelivery.buyerId`
+  are gone; `buyerFeed` and `buyerDeliveries` index `orderId.$ownerId`, read
+  through the order (a cursor walk must pin it with `==`). Status updates are
+  now undeletable as well as immutable: an order's updates ARE its history.
+- **Store categories.** `store.category` is required: a free-form lowercase
+  slug (`^[a-z0-9]+(-[a-z0-9]+)*$`, ≤ 20 characters; the form normalises
+  "Vintage Clothing" to `vintage-clothing`). `byStatus` lists the newest
+  active stores in one query (replacing the owner-order scan the app sorted
+  client-side), `byCategory` the newest in one category, and its ranked count
+  at `category` with `status` pinned is "top categories" in one proved query.
+- **Seller lists and counts ride `storeId`** (one store per owner):
+  `sellerOrders`, `sellerOrderCount` and `storeOrderCount` are gone, and
+  `storeOrders` is rangeCountable and ranked at `storeId`. `buyerOrderCount`
+  folds into `buyerOrders` (rangeCountable).
+- **Item ratings only per store.** `itemRating [itemId]` is gone; an item's
+  average and count read `storeItemRating` with its store pinned. There is no
+  global "top items" ranking any more.
+- **Dropped:** `storeItem.ownerAndTime`/`statusAndTime`/`categoryAndTime`,
+  `orderStatusUpdate.sellerStatusUpdates`, `storeReview.sellerReviews`/
+  `buyerReviews`/`sellerRating`, `itemReview.buyerItemReviews`, and the
+  ranked count on `storeRating` ("most reviewed stores").
+- **Bounds.** Encrypted payloads (order, kit, delivery) cap at 5,120 B, and
+  `variants` at 5,120 characters and bytes; the client refuses either before
+  signing (checkout, add-item, CSV import). Logo and banner URLs must be
+  https:// or ipfs://; currencies are free text of at most 10 characters;
+  prices may reach 2^53−1 and weight and stock are u32; `fulfillment` is at
+  most 7 characters.
+- **Label.** A review on chain proves its author placed the order, not that
+  it was paid or delivered, so the badge reads "Ordered", not "Verified
+  purchase".
+
+### Earlier cuts
+
+v5 (beta.7) added `storeOrder.storeStatus` (QA D-25: only an active store
+takes orders, `storeIsOpen`); v4 (beta.4) a warning list, typed
+`tags`/`imageUrls` arrays and `storeReview.sellerId` distinct from the
+reviewer; v3 (beta.3) moderator-deletable reviews; v2 (beta.2) the rating
+trees and writer gates below. v2–v5 priced reviews in YAPP from the social
+contract (3 for a store review, 1 for an item review), copied `buyerId` into
+status updates, kept per-seller indexes beside the store ones, and had no
+category: discovery scanned stores in owner order.
 
 **Writer gates.** beta.2 lets the *referring* side of a `propertyAgreement` be
 `$ownerId`, which turns a reference into a gate: only the identity the
@@ -89,8 +165,8 @@ sellerId}` (only the seller posts a status), `storeReview.orderId`/
 `storeOrder.storeId` → `{sellerId: $ownerId}` (`sellerId` is the store's real
 owner).
 
-Consequences the client no longer enforces: every review on chain is a verified
-purchase; a stranger cannot burn an order's single review slot; `getLatestStatus`
+Consequences the client no longer enforces: every review on chain comes from
+the order's buyer; a stranger cannot burn an order's single review slot; `getLatestStatus`
 is one row rather than a walk through pages of spoofable updates; and the
 attested copies `storeOrder.buyerId`, `orderStatusUpdate.sellerId` and
 `storeReview.buyerId`/`itemReview.buyerId` are gone.
@@ -107,6 +183,18 @@ sdk.documents.count({ dataContractId, documentTypeName: 'storeReview',
 // with groupBy 'itemId' + where storeId = top items in one store.
 sdk.documents.ranked({ dataContractId, documentTypeName: 'storeReview',
   groupBy: 'storeId', aggregate: { type: 'avg', property: 'rating' }, limit: 20 })
+// v6: top categories among active stores, and the newest in one category.
+sdk.documents.ranked({ dataContractId, documentTypeName: 'store',
+  where: [['status', '==', 'active']], groupBy: 'category', aggregate: { type: 'count' }, limit: 20 })
+sdk.documents.query({ dataContractId, documentTypeName: 'store',
+  where: [['status', '==', 'active'], ['category', '==', 'books']],
+  orderBy: [['status', 'asc'], ['category', 'asc'], ['$createdAt', 'desc']], limit: 50 })
+// v6: an item's average and the per-item counts pin the store (storeItemRating).
+sdk.documents.average({ dataContractId, documentTypeName: 'itemReview',
+  where: [['storeId', '==', S], ['itemId', '==', I]] }, 'rating')
+// v6: the buyer's library (and status feed) through the order's owner.
+sdk.documents.query({ dataContractId, documentTypeName: 'orderDelivery',
+  where: [['orderId.$ownerId', '==', me]], orderBy: [['orderId.$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 })
 // documents.having takes the same shape plus having:{operator:'>=',value:3}.
 // Buyer orders page in one proof: orders + store join + review-exists + status.
 sdk.documents.composite({ dataContractId, documentType: 'storeOrder',
@@ -119,8 +207,10 @@ sdk.documents.composite({ dataContractId, documentType: 'storeOrder',
 ```
 
 Cold-load DAPI budgets: `/store` directory 1 + 50 review scans → 1 + 50 averages
-(6 at a time); `/store/view` ≥ 7 + ⌈reviews/100⌉ → 7 fixed; `/orders` 1 + 4N →
-1 composite + N decrypts; `/orders/seller` 1 + 2N → 1 + ⌈N/100⌉ + 1 DPNS batch;
+(6 at a time; v6 replaces the up-to-10-query owner scan with one `byStatus`
+page, plus one ranked read for the category picker); `/store/view` ≥ 7 +
+⌈reviews/100⌉ → 7 fixed; `/orders` 1 + 4N → 1 composite + N decrypts;
+`/orders/seller` 1 + 2N → 1 + ⌈N/100⌉ + 1 DPNS batch (v6: + 1 store lookup);
 manage badge 1 capped (wrong) page → 1 count.
 
 Not adopted: sums of order amounts (orders are encrypted to the seller, so there
@@ -134,59 +224,109 @@ gated the other way rather than a loosened gate; `immutable` on
 ## Blog
 
 `contracts/yappr-blog-contract.json` — `blog`, `blogPost`, `blogComment`,
-`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY=v2` (`blogIsV2()` reads
-`process.env` at call time so unit tests can stub it).
+`blogFollow`. Client gate: `NEXT_PUBLIC_BLOG_TOPOLOGY` (`v1`–`v7`, resolved
+in `lib/constants.ts` at call time so unit tests can stub it). **The file is
+blog v7**, the 5.0.0-beta.2 mainnet-ready cut, registered on sakura as
+`4F1Wi4dim7j6eWrFQ3aHWEB9az5dHcJBmdvMvpx7sx1j` (re-registered after the
+2026-10-08 beta.3 wipe); `/devnet` runs it ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `blog` | `canBeDeleted: false`, `moderatorAbilities.delete` | moderatedDocument target (its owner can never delete it; a moderator can, keeping a removal record) |
-| `blogPost` | `blogId`→blog (moderatedDocument); `immutable [blogId, {publishedAt when present: $old.publishedAt}]`; `moderatorAbilities.delete` | ghost-blog rejection; a post cannot change blogs or be re-dated |
-| `blogComment` | `blogPostId`→blogPost (moderatedDocument); ranked `commentCount [blogPostId]`; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]` (derived through the reference); 1 YAPP; `moderatorAbilities.delete` | exact counts, "most discussed", unforgeable "comments on my posts" |
-| `blogFollow` | `blogId`→blog (moderatedDocument); ranked `followerCount [blogId]`; `followersByDay [$createdAt, blogId]` on the daily grid with a 7-day ttl | exact follower counts, "most followed", "trending today" |
+| `blog` | `canBeDeleted: false`, `moderatorAbilities.delete`; `timeline [$createdAt]`; 80M action fee | "new blogs" newest first; moderatedDocument target |
+| `blogPost` | `blogId`→blog (moderatedDocument, only the blog's owner posts); `timeline [$createdAt]`; `immutable [blogId, {publishedAt when present}, {deleted when present}]`; the tombstone rules; `retractedWhen {present: deleted}`; 80M action fee | "latest posts" across blogs; an author's delete (a tombstone) |
+| `blogComment` | `blogPostId`→blogPost (moderatedDocument, copies `commentsEnabled`); `postAndTime [blogPostId, $createdAt]` rangeCountable; `postOwnerAndTime [blogPostId.$ownerId, $createdAt]`; ranked `discussedRecent [$createdAt, blogPostId]` (72h window, a new one every 24h, 7-day ttl); 16M action fee | comment lists and exact counts, "most discussed (3 days)", unforgeable "comments on my posts" |
+| `blogFollow` | `blogId`→blog (moderatedDocument); unique `ownerAndBlog`; `followers [blogId, $createdAt]` rangeCountable, ranked at `blogId`; ranked `followersTrend [$createdAt, blogId]` (72h / 24h / 7-day ttl) | a reader's follows, exact follower counts, "most followed", "trending (3 days)" |
 
-The table is the 5.0.0-beta.1 re-cut (blog v6, topology v6): until beta.7 the
-references were `deletableDocument`, `publishedAt` sat under
-`immutableAllowSetting`, and a comment copied its post's owner into
-`blogPostOwnerId` (bound by `where {$ownerId: blogPostOwnerId}`);
-see [PLATFORM_V5_BETA1_UPGRADE.md](./PLATFORM_V5_BETA1_UPGRADE.md).
+### What v7 changed (from v6)
 
-**v3 (4.2.0-beta.3) is the moderated cut.** The contract config declares
-`moderation: { banlist, suspensions, moderators }` (see `docs/SOCIAL_V8.md`
-for the grammar), and `blog`, `blogPost` and `blogComment` carry
-`canBeDeletedByModerators`, so the moderation team can take an abusive blog,
-post or comment down. Two consequences: every reference at those types is a
-`deletableDocument` reference (a moderator-deletable type counts as deletable;
-`permanentDocument` at it is refused with 40122), so a reader must expect
-`blogPost.blogId`/`blogComment.blogPostId`/`blogFollow.blogId` to resolve to
-nothing after a takedown; and **the edit-history feature is gone** —
-`documentsKeepHistory` was dropped from `blog` and `blogPost`, because Drive
-refuses moderator deletes on a history-keeping type. `blogPost.$revision > 1`
-still marks an edited post, but the previous revisions are no longer stored
-and `documents.history` has nothing to return.
+- **Moderation is elected** per contract: `seatContestable`, a 30-day
+  `challengeCoolDown`, a 7-day join window and a 3-day vote window,
+  `maxAddedModerators: 10` and `ownerProtected`. The file declares the
+  contract owner as the interim team, and registration picks the network's
+  interim the way social v13 does (`withInterim` in `scripts/register-lib.mjs`):
+  devnet keeps the owner, mainnet registers `notYetUsable` (nobody moderates
+  and the moderated types stay closed until a team is seated), and
+  `--interim <kind>` overrides it.
+- **No YAPP.** The comment `tokenCost` is gone (so is the `SOCIAL_CONTRACT_ID`
+  placeholder). Creates of `blog` (80M), `blogPost` (80M) and `blogComment`
+  (16M) pay a `feeMultiplier` moderators fee and must carry an
+  `$actionFeeAgreement` naming exactly that (40132 without one, 40133 for
+  another amount). The client reads the amounts off the committed JSON
+  (`lib/blog/blog-contract.ts`) and the write path attaches the agreement
+  like it does for social posts (`declaredActionFeeFor` in
+  `lib/transition-agreements.ts`). Follows, edits and deletes are unpriced.
+- **Timelines.** `blog.timeline` and `blogPost.timeline [$createdAt]` list new
+  blogs and the latest posts everywhere in one query per page, replacing the
+  owner-order scan the app sorted client-side.
+- **Merged count twins.** `commentCount` folds into `postAndTime`
+  (rangeCountable) and `followerCount` into `followers` (rangeCountable,
+  ranked at `blogId`). The app's count queries do not change: a `blogPostId ==`
+  or `blogId ==` pin is the index's prefix total, and the grouped `in` count
+  serves a post list as before.
+- **Windows.** `followersByDay` (a daily grid) becomes `followersTrend`, and
+  `discussedRecent` ranks posts by comments, both on a 72h window stepping
+  every 24h, read with `selector: 'oldest'` so a page covers ~48–72h. There is
+  no all-time comment ranking any more.
+- **Dropped:** `blogPost.ownerAndTime`, `blogComment.ownerAndTime`,
+  `blogFollow.following` (a reader's follows ride `ownerAndBlog`).
+- **Post tombstone.** An author deletes a post by replacing it with
+  `{ deleted: true, commentsEnabled: false }` plus `blogId`, `slug` and
+  `publishedAt` (`tombstoneIsBlank` requires `commentsEnabled` present and
+  false and every content field absent; `hasBody` requires a live post to
+  carry a title and a body). `deleted` is frozen once set, so a tombstone
+  cannot be undone or refilled. `retractedWhen` lets a banned or suspended
+  author still write it, and nothing else. The slug stays taken and the link
+  resolves to "this post was deleted"; a comment on it is refused
+  (`commentsOpen`, or 40127 for a lying copy).
+- **Bounds.** `publishedAt` may run at most 10 minutes past `$updatedAt`
+  (`publishedNotAhead`; `$updatedAt` is required), so a backdated import is
+  fine and a post dated into the future is refused. The slug pattern is
+  `lib/utils/slug.ts`'s, and avatar, header and cover URLs must be https://
+  or ipfs://.
 
-`blogPost` carries no `author`: the author IS `$ownerId`, which `ownerAndTime`
-already indexes. Up to v5 a comment copied it into `blogPostOwnerId`, bound to
-the referenced post's `$ownerId` (40127); v6 indexes `blogPostId.$ownerId`, read
-from the post itself. Either way `postOwnerAndTime` is safe to read as a
-notification source — nobody can inject
-a row into someone else's feed — and a comment on a post that does not exist is
-impossible (40120). `blog-comment-service.ts` still fetches the post before
-commenting, not to decide whom to trust: up to v5 the write must carry the owner
-id verbatim and the caller's copy may be stale, and on every topology it copies
-the post's `commentsEnabled` into `postCommentsEnabled`. There is deliberately **no writer
-gate** here: anyone may comment on anyone's post — that is the feature.
+### Earlier cuts
+
+v6 (5.0.0-beta.1) was v5 in the 5.0 grammar: `moderatedDocument` references,
+a conditional `immutable` entry for `publishedAt`, and no copied
+`blogPostOwnerId` (`postOwnerAndTime` derives the post's owner through
+`blogPostId`); see [PLATFORM_V5_BETA1_UPGRADE.md](./PLATFORM_V5_BETA1_UPGRADE.md).
+v5 (beta.6) copied `commentsEnabled` into comments and gated posting to the
+blog's owner; v4 (beta.4) added a warning list and typed `labels` arrays; v3
+(beta.3) was the moderated cut, which dropped `documentsKeepHistory` (Drive
+refuses moderator deletes on a history-keeping type), so `$revision > 1`
+still marks an edited post but no earlier revision is stored. v2–v6 priced a
+comment at 1 YAPP from the social contract, kept count-only twins
+(`commentCount`, `followerCount`) and a daily `followersByDay`, and had no
+timeline: discovery paged blogs in owner order and sorted them client-side.
+
+`blogPost` carries no `author`: the author IS `$ownerId`. Up to v5 a comment
+copied it into `blogPostOwnerId`, bound to the referenced post's `$ownerId`
+(40127); from v6 `postOwnerAndTime` indexes `blogPostId.$ownerId`, read from
+the post itself. Either way that index is safe to read as a notification
+source, and a comment on a post that does not exist is impossible (40120).
+`blog-comment-service.ts` still reads the post before commenting, to copy its
+`commentsEnabled` and to refuse a closed or deleted post before signing. There
+is deliberately **no writer gate** on comments: anyone may comment on anyone's
+post.
 
 ```js
-// Comment count for one post, and for a whole post list in one request.
+// Comment count for one post, and for a whole post list in one request
+// (v7: the postAndTime prefix total; v2–v6: commentCount).
 sdk.documents.count({ dataContractId, documentTypeName: 'blogComment',
   where: [['blogPostId', '==', P]] })
 sdk.documents.count({ dataContractId, documentTypeName: 'blogComment',
   where: [['blogPostId', 'in', [P1, P2]]], groupBy: ['blogPostId'] })
-// Most followed blogs, and trending today (drop the timeRange for all-time;
-// the same shape on blogComment/blogPostId gives most discussed posts).
+// Most followed blogs (all time), and trending (3 days) on v7.
 sdk.documents.ranked({ dataContractId, documentTypeName: 'blogFollow',
   groupBy: 'blogId', aggregate: { type: 'count' }, direction: 'desc', limit: 20,
-  timeRange: [{ field: '$createdAt', selector: 'newest', grid: { range: 86400, step: 86400 } }] })
+  timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } }] })
+// Most discussed posts (3 days): the same shape on blogComment / blogPostId.
+// The latest posts everywhere, and the newest blogs (v7 timelines).
+sdk.documents.query({ dataContractId, documentTypeName: 'blogPost',
+  where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 20 })
+// The blogs a reader follows (v7: ownerAndBlog; v2–v6: following).
+sdk.documents.query({ dataContractId, documentTypeName: 'blogFollow',
+  where: [['$ownerId', '==', me]], orderBy: [['$ownerId', 'asc'], ['blogId', 'asc']] })
 // Comments on my posts since last seen (notification source; v2-v5 name the
 // copied 'blogPostOwnerId' instead of the derived 'blogPostId.$ownerId').
 sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
@@ -194,12 +334,24 @@ sdk.documents.query({ dataContractId, documentTypeName: 'blogComment',
   orderBy: [['blogPostId.$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100 })
 ```
 
-Cold-load budgets: blog home goes from 1 posts page + a full cursor scan per
-100+-comment post to 1 posts page + 1 grouped count per 100 posts; the follower
-badge from ⌈followers/100⌉ to 1 count; `/blog` discovery rankings were not
-affordable at all before. `blogStatsService.mostDiscussedPosts()` is proved and
-exposed but has no page — the ranked axis is global, so it cannot be pinned to
-one blog, and the app has no cross-blog post feed yet.
+Client surfaces on v7: `/blog` discovery gains a Blogs / Posts switch. Blogs
+lists Newest (paged on `blog.timeline`), Most followed and Trending (3 days);
+Posts lists Latest posts (paged on `blogPost.timeline`) and Most discussed
+(3 days). Explore's blog tab reads the post timeline directly. An author's
+dashboard has a Delete action on each post (the tombstone); readers see a
+deleted post's link as "this post was deleted", with no comments.
+
+Validation: `node scripts/validate-contract-offline.mjs
+contracts/yappr-blog-contract.json --network mainnet --cost` (create size
+~7,010 B signed; documentCreateCost blog 248.5M, blogPost 492.6M, blogComment
+90.6M, blogFollow 72.6M credits for new index values), `--constraints` for the
+tombstone and `publishedNotAhead` cases (`scripts/property-constraint-cases.mjs`),
+and `node scripts/verify-blog.mjs --self-test`. The live battery adds b9 (a
+wrong fee amount), b22 (the tombstone), b23 (a banned author's retraction) and
+b24 (a comment on a tombstone); it has not been run, since v7 is not
+registered. `scripts/seed/non-social/blog.mjs` still seeds the v6 shape (YAPP
+comments, `commentCount`), and needs the same agreement plumbing before it can
+seed a v7 contract.
 
 ---
 
@@ -276,69 +428,214 @@ battery probes this and never fails on it.
 
 ## Polls (Pollr)
 
-`contracts/pollr-contract.json` — `poll`, `vote`, `multiVote`. Client gate:
-`NEXT_PUBLIC_POLLR_TOPOLOGY=v4`.
+`contracts/pollr-contract.json` is **pollr v6**, the 5.0.0-beta.3 cut: `poll`
+and one `vote` doctype. Client gate: `NEXT_PUBLIC_POLLR_TOPOLOGY=v6`. v6 is v5
+plus the owner's delete before the first ballot (below). Sakura runs it as
+`Fq5yTk2YqJZ2wa7uESKB119nX3ea23QP2gUsLqGtEu8c` since the 2026-10-08 beta.3
+wipe (`/devnet`); `verify-pollr.mjs` passed 64/64 there, the `noBallots`
+delete refusals (40147) included ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
+v5 (`BX94nj87…` on the pre-wipe chain, [SAKURA_V13_DEPLOY.md](SAKURA_V13_DEPLOY.md))
+replaced the v4 cut (indexOnly `vote`/`multiVote`; recover both from git history). Testnet runs v3 (`GBCR8Jqt…`, externally owned).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
-| `poll` | `canBeDeleted: false`, no `author` | its `$ownerId` is the agreement source for `pollOwnerId` |
-| `vote` | indexOnly; `pollId`→poll `{pollOwnerId: '$ownerId'}`; `byPoll` (preallocated) structural single ballot; `byPollChoice` count + ranked; `byPollOwner` (preallocated); `byVoterChoice` | body-less flat-priced ballots, ghost-poll rejection, O(log n) winner |
-| `multiVote` | the same minus any `[pollId]`-terminating index | one entry per (poll, voter, choice) |
+| `poll` | immutable, `canBeDeleted: true` with `deleteConstraints.noBallots`, no moderation; `question` (1-280 chars, 560 B), `options[]` (2-10 unique, each 1-80 chars / 160 B), `optionCount`, `multiChoice`, `endsAt` (all required) | a fixed question, choices, mode and close time that every ballot copies; its owner may delete it until the first ballot |
+| `vote` | stored, mutable, `canBeDeleted: false`; `immutable: [pollId, slot]`; `pollId` → deletableDocument poll `where {optionCount: pollOptionCount, multiChoice: pollMultiChoice, endsAt: pollEndsAt}`; optional `choice`; unique `byPollVoter [pollId, $ownerId, slot]`; `byPollChoice [pollId, choice]` countable, `skipIfAbsent: [choice]`; `byPoll [pollId]` countable | one editable ballot per voter (single choice) or per voter and option (multi choice), tallied in O(1) per option, and counted in O(1) per poll for `noBallots` |
 
-Ballots are free — no `tokenCost`. Structural uniqueness already caps what one
-identity writes per poll, and pricing a vote would make polls useless.
+Ballots are free — no `tokenCost`.
 
-**Single-choice is structural.** indexOnly types cannot declare `unique`
-indexes — uniqueness is a property of the storage, one entry per value tuple and
-terminal — so `byPoll [pollId] terminal $ownerId` *is* "one ballot per voter per
-poll". A second ballot comes back as `duplicate unique properties ["pollId",
-"$ownerId"]`, which the client routes by text (`isDuplicateVoteError`); a lot
-hangs off that predicate, because a duplicate misread as an ordinary error would
-be handed to the landed-write probe, which finds the voter's *earlier* entry and
-reports the rejected write as cast. `multiVote` must NOT have that index — any
-index terminating at `[pollId]` would make a second selection a duplicate — so
-every `multiVote` index carries `choice`. The cost is that nothing counts
-*distinct voters* on a multi-choice poll.
+### What v6 changed (from v5)
 
-**No `$createdAt` anywhere.** Keeping no time index leaves `$createdAt` out of
-`required`, so a ballot's delete tuple is just `{pollId, choice, pollOwnerId}`
-and unvote is one hop (social-contract likes must first recover the consensus
-`$createdAt` from a time-carrying projection). The price is no vote history: no
-"recent votes", no "trending polls today".
+The product rule: a poll's owner may delete it only before the first vote, and
+after that it can never be deleted. Votes stay editable until the close and
+final after. There is no pollr moderation.
 
-```js
-// Per-option tally (keys are hex of 0x80 + choice) and winner in O(log n).
-// Ranked pages hand integer group values back DECODED.
-sdk.documents.count({ dataContractId, documentTypeName: 'vote',
-  where: [['pollId', '==', P], ['choice', 'in', [0, 1, 2]]], groupBy: ['choice'] })
-sdk.documents.ranked({ dataContractId, documentTypeName: 'vote',
-  groupBy: 'choice', aggregate: { type: 'count' }, where: [['pollId', '==', P]], limit: 1 })
-// My choices on one poll (also the write-confirmation probe for an indexOnly
-// ballot, with choice '==' and limit 1). An `in` on an indexOnly PREFIX
-// property REQUIRES the matching orderBy or the query is refused outright.
-sdk.documents.query({ dataContractId, documentTypeName: 'multiVote',
-  where: [['pollId', '==', P], ['choice', 'in', [0, 1, 2]], ['$ownerId', '==', me]],
-  orderBy: [['choice', 'asc']] })
+```json
+"poll": { "canBeDeleted": true,
+  "deleteConstraints": { "noBallots": { "equal": [{ "countOf": ["vote", { "pollId": "$id" }] }, 0] } } },
+"vote.pollId.refersTo.type": "deletableDocument",
+"vote.indices": [ …, { "name": "byPoll", "properties": [{ "pollId": "asc" }], "countable": "countable" } ]
 ```
 
-**Confirming an indexOnly write.** `documents.get` cannot confirm a ballot —
-there is no row under the id — so the landed-check always comes back empty and a
-DAPI 504 yields `{success: true, confirmed: false}` whether or not the
-transition was rejected. `castVote` therefore treats an unconfirmed success
-exactly like a reported failure: it polls the entry probe and classifies on what
-the chain shows, because a single-choice ballot is one-shot and reporting an
-unverified one as cast would close the ballot on a vote that never landed. The
-tally's last-resort path has the mirror-image constraint: `paginateFetchAll`
-cursors on `$id` and an indexOnly type's synthesized ids address nothing, so it
-keyset-walks the terminal (`countByChoiceKeyset`) and fails outright when no
-cursor can be recovered rather than returning a truncated tally.
+- **`noBallots`** is judged on the owner's delete only, against the stored
+  state. A broken rule is `DocumentDeleteConstraintViolatedError`, a paid
+  **40147**. Ballots are undeletable and a withdrawal is a replace that keeps
+  the document, so a withdrawn ballot still counts: once anyone votes, the poll
+  is permanent. A ballot earlier in the same block counts too.
+- **`byPoll`** is required: a `countOf` total needs a plain countable index
+  whose properties are exactly the filter's keys, and `byPollChoice`
+  (`[pollId, choice]`, skipping absent choices) is not one. Without it beta.3
+  refuses the contract ("no countable index … exactly those keys").
+- **`deletableDocument`**: a `permanentDocument` reference at a deletable type
+  parses in dpp but is refused at registration (40122). A ballot cast after the
+  delete is refused 40120 (the poll is not found); with `deletableDocument`
+  every ballot write re-reads the poll, a small processing cost.
+- **Size and fees.** 4,150 B serialized on the beta.3 validator (v5's schemas
+  are 3,897 B there; +146 B for the rules and index, the rest descriptions).
+  The extra index costs every ballot: the estimator says +13.9M credits on a
+  poll's first ballot and +8.8M on later ones, so about +6-10M live (≈0.4-0.6¢
+  at $60/DASH). Measure it on registration day.
+
+**Client (v6).** `pollrPollService.deletePoll(poll, me)` counts the ballots off
+`byPoll` first and refuses without a write (`voted`) if there are any, so a
+voted poll costs nothing to refuse; a ballot landing between the count and the
+delete comes back as 40147 and is reported the same way. `PollCard` offers
+"Delete poll" only to the signed-in owner, and only once the count reads 0 (a
+tally with any selection already proves a ballot; an unreadable count, or a
+ballot write of the owner's still pending, offers nothing), and stops offering
+it the moment the owner votes, even if a count read before the vote comes back
+later. A poll once known to have a ballot is never offered again
+(`lib/services/pollr-known-ballots.ts`, kept in localStorage, so no reload,
+card or tab resets it): the services record the
+evidence where they see it, as a positive count, a 40147, a tallied selection,
+any own ballot document read (a withdrawn one included), a stored ballot
+replace record (it targets a ballot read off the chain; recorded whenever the
+records are loaded, before any is pruned, and loaded by both delete paths, so a
+closed poll's records count too), or a confirmed ballot write,
+even when a later write of the same vote fails. `deletePoll` re-checks the set
+after its count, so evidence seen meanwhile still stops the write, and sends
+nothing (`pending`) while an own ballot write on the poll may still land. Its
+last check runs under the identity's write lock, once every earlier
+transition of the owner's has settled and before a nonce is reserved
+(`withSdkSignedWrite`'s `precondition`): no known ballot and a fresh count of
+0, with no own ballot write on the poll that may still land, so a vote queued
+ahead of the delete in another card or tab stops it. These guards spare the
+owner a paid refusal; consensus enforces `noBallots` whatever they say. The
+card asks `pollrVoteService.deleteEligible` afresh after every load and every
+submission, and only the latest answer applies, so a vote that was never sent
+gives the delete back. A vote refused before
+any write, or left unconfirmed, proves nothing, so the next load counts again;
+a write that is really out keeps its reservation, which reads as a pending
+(or, if the read fails, unreadable) ballot state and holds the delete back
+(`ownBallotMayBePending`). Ballots are permanent, and a lagging node can still
+count 0. Post embeds name the poll in their own fields, not through a reference,
+so a post outlives its poll: when `fetchPoll` proves a natively embedded poll
+absent on v6 twice, 2.5 s apart (a node a block behind proves a just-published
+poll absent too; `pollMissingMeansDeleted`), the card says "This poll was
+deleted." A failed read still says the poll could not be loaded. A ballot sent
+to a poll deleted after the card loaded (40120) re-reads it instead of keeping
+the ballot open. `categorizeError` words any other 40147 as "This can't be
+deleted anymore."
+
+**Battery (`verify-pollr.mjs` p8).** A ballot delete is refused
+(`canBeDeleted: false`); deleting a poll with ballots is 40147; a fresh poll
+with no ballots (byPoll count 0) is refused to a stranger (40102), deleted by
+its owner, and a ballot on it after is 40120; a fresh poll with one ballot is
+40147 and still reads back; a fresh poll whose only ballot was withdrawn leaves
+the tally empty, still counts 1 on byPoll, and is 40147. `--self-test` pins the
+`noBallots` rule body, `poll.canBeDeleted`, the `deletableDocument` reference
+and `byPoll`.
+
+**Rules (`propertyConstraints`, 10422).** On `poll`: `optionCountMatches`
+(`optionCount == count(options)`), `endsAfterCreation` (`endsAt > $createdAt`)
+and `endsWithin31Days` (`endsAt - $createdAt <= 31 days`), so every poll closes
+and none is born closed. On `vote`: `writtenBeforeClose`
+(`$updatedAt <= pollEndsAt`, judged on every create AND replace), `choiceIsAnOption`
+and `slotIsAnOption` (both `< pollOptionCount`), `singleUsesSlotZero` (a
+single-choice ballot is slot 0) and `multiChoiceIsSlot` (a multi-choice
+ballot's `choice` is absent or equals its slot). The copied poll fields are
+consensus-bound through the reference (40127 on a mismatch, 40120 for a ghost
+poll), and the poll is immutable, so they never move under a ballot.
+`scripts/property-constraint-cases.mjs` holds the accept/refuse cases;
+`node scripts/validate-contract-offline.mjs --constraints` runs them offline.
+
+**Ballots are editable until the close and final after.** `$updatedAt` is the
+write's block time, so `writtenBeforeClose` refuses any write that lands after
+`pollEndsAt`, and nothing deletes a ballot:
+
+- Single choice: one ballot, slot 0. The first vote creates it; changing the
+  vote replaces `choice`; withdrawing replaces it with `choice` left out.
+- Multi choice: one ballot per option, `slot` = the option. Ticking an option
+  creates its ballot (or replaces it with `choice = slot`); unticking replaces
+  it without `choice`.
+- `byPollChoice` skips ballots without a `choice`, so the tally counts current
+  selections: withdrawn and unticked ballots drop out. On a single-choice poll
+  the total is the number of voters; on a multi-choice poll it is selections.
+
+What the design could not do: a tally index can only be `preallocated` on an
+indexOnly type, and an indexOnly ballot has no stored row to replace, so the ballot trees are
+not preallocated (the first ballot on a poll pays for its branch). And before
+5.0.0-beta.3 a delete could not be gated by a rule, so ballots were made not
+deletable at all — a withdrawal is a replace. v6 keeps that: a ballot that
+could be deleted would let its voter free the poll for deletion again.
+
+```js
+// Per-option tally (keys are hex of 0x80 + choice).
+sdk.documents.count({ dataContractId, documentTypeName: 'vote',
+  where: [['pollId', '==', P], ['choice', 'in', [0, 1, 2]]], groupBy: ['choice'] })
+// The voter's ballots on one poll (withdrawn ones included, with their revisions).
+sdk.documents.query({ dataContractId, documentTypeName: 'vote',
+  where: [['pollId', '==', P], ['$ownerId', '==', me]],
+  orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']] })
+// v6: every ballot on a poll, withdrawn ones included (byPoll), as noBallots counts them.
+sdk.documents.count({ dataContractId, documentTypeName: 'vote', where: [['pollId', '==', P]] })
+```
+
+**Client (`lib/services/pollr-vote-service.ts`, `lib/pollr-rules.ts`).**
+The service is the one source of truth for a voter's ballots:
+`getBallotState(poll, me)` returns `{ choices, pending }`. `pending` is true
+while an earlier write to this voter's ballots on this poll could still execute
+(`pollrWriteMayStillExecute`): an unconfirmed create until Platform shows its
+nonce consumed (it landed, another transition took it, or it fell out of the
+window behind the tip; a signed transition has no deadline, so no clock ends
+it), a ballot replace until a verdict, the ballot reaching the revision it
+writes (it can never execute after that) or the poll's close — tracked in its
+own record (`recordBallotReplace`), because the nonce store forgets an
+SDK-signed replace once its 15-minute reservation lifetime passes, which is a
+write-availability policy and not a protocol deadline — and anything when the
+reservation store or the nonce cannot be read. The ballots
+are read only after that check, so a write landing during it is in the read. Ballot writes are reserved with their poll's
+scope (`pollr-vote:<pollId>`, an optional field on the nonce reservation), so a
+pending write on one poll does not hold back another; an entry with no scope (a
+poll create, or one stored before scopes) counts for every poll. Before
+anything, the replaces Platform shows landed are released
+(`settlePendingPollrReplaces`, over `settleSupersededReplaces`); `createPoll`
+runs that too.
+
+While `pending`, the card shows the results read-only with "Confirming your
+vote… Check again", which re-reads that state; editing comes back once nothing
+is pending. If a submission was interrupted, "Finish your vote" opens the
+editor on what the voter last asked for, with the options the chain does not
+show marked "not sent yet" (`editorStart`); nothing is resent until the voter
+submits.
+
+`setVote(poll, wanted, me)` refuses to plan while anything is pending
+(`heldBack`, nothing sent; an unreadable store refuses too). Otherwise it reads
+the ballots fresh, plans the writes that make them select exactly `wanted`
+(`planBallotWrites`), and runs them one at a time, each reserved with the
+poll's scope. A 10422 naming `writtenBeforeClose` is reported as "This poll has
+closed"; a stale revision (40106) or a ballot another tab created first (40105)
+as `stale`, and the card reloads. After a refused write it re-reads the
+ballots and reports what the chain shows. A write whose confirmation timed out
+stops the run and comes back `unconfirmed`, with no re-read (one this soon
+would likely predate the write), and the card shows the ballots as pending.
+Every submission is a fresh plan against the chain. The ballots copy the poll's
+stored `optionCount`. Optimistic tallies move down as well as up.
+`tallyIsFinal` is true only for a tally read off the chain after `endsAt`
+(plus a 30 s margin for the device clock against block time); the card says
+"Final results" only then. The poll editor offers 1, 3, 7, 14 and 30 days
+(default 1 day) — 30, not 31, because the close time comes from the device
+clock and the rule judges block time — and enforces the character and byte
+limits and distinct options.
+
+A submission cannot be one atomic batch: the batch cap is one document
+transition (see "Not possible at 4.2" below), so a multi-choice change is
+several transitions, and the pending state above is what keeps a partial one
+from being read as settled.
+
+**v3 and v4.** v3 (testnet) keeps its immutable, one-document-per-selection
+ballots and the time-bounded "final results" read. v4 is **read-only** in the
+client: its polls, tallies and the voter's own choices still load, but its
+indexOnly write path (affected-state confirmation, entry probes, the keyset
+tally fallback and the ranked winner) is gone. A deployment still on v4 shows
+results but takes no votes until it moves to v5.
 
 **The standalone Pollr app needs the same cut.** The testnet contract
 (`GBCR8Jqt…`) is externally owned and is what
 `https://pastapastapasta.github.io/pollr` reads; only the devnet clone is ours.
-A v4 poll is written exactly like a v3 one, so that app's poll-create path needs
-no change — only its ballot path does. `scripts/verify-poll-interop.mjs` works
-against a v4 contract for the same reason.
+A v5 poll stores `options[]` rather than `option0..9`, so that app needs both
+its poll and its ballot paths changed before it can read or write a v5
+contract.
 
 ---
 

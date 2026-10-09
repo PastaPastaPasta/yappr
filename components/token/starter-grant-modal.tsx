@@ -8,7 +8,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/contexts/auth-context'
 import { useStarterGrantModal } from '@/hooks/use-starter-grant-modal'
-import { starterGrantAmount, yappIsLocked } from '@/lib/contract-topology'
+import { starterGrantAmount, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
 import { logger } from '@/lib/logger'
 import { isStarterGrantSettled, markStarterGrantSettled } from '@/lib/starter-grant'
 import { tokenService } from '@/lib/services/token-service'
@@ -19,9 +19,12 @@ import { tokenService } from '@/lib/services/token-service'
  * successful claim, or a 40722 "already claimed", settles the identity so the
  * prompt never returns; declining only postpones it to the next session.
  *
- * Where YAPP is locked (v10) this modal also stands in for Buy YAPP: running
- * out of YAPP opens it, offering the grant while it is unclaimed and otherwise
- * explaining that YAPP cannot be topped up.
+ * Where YAPP is locked (v10 onwards) it can't be bought, so running out of
+ * YAPP opens this modal in place of Buy YAPP. Where it is also paused for
+ * good (v10–v13) it can't be spent either: posts, replies and likes always
+ * pay credits (lib/payment-preference.ts), so the grant is never pushed on
+ * anyone; it still opens from the account menu's Claim row. v14's YAPP pays
+ * token costs again, so the grant is offered as on v9, without "buy more".
  */
 export function StarterGrantModal() {
   const { user } = useAuth()
@@ -32,8 +35,11 @@ export function StarterGrantModal() {
   const identityId = user?.identityId
   const amount = starterGrantAmount()
 
+  const locked = yappIsLocked()
+  const paused = yappIsPausedForGood()
+
   useEffect(() => {
-    if (!identityId || amount === null || isStarterGrantSettled(identityId)) return
+    if (!identityId || amount === null || paused || isStarterGrantSettled(identityId)) return
     let cancelled = false
     tokenService.getBalance(identityId)
       .then((balance) => {
@@ -43,7 +49,7 @@ export function StarterGrantModal() {
     return () => {
       cancelled = true
     }
-  }, [identityId, amount, open])
+  }, [identityId, amount, paused, open])
 
   if (!identityId || amount === null) return null
 
@@ -72,8 +78,6 @@ export function StarterGrantModal() {
     toast.error(result.error ?? 'Claim failed')
   }
 
-  const locked = yappIsLocked()
-
   if (locked && isStarterGrantSettled(identityId)) {
     return (
       <Modal open={isOpen} onOpenChange={(next) => !next && close()} className="w-[420px] max-w-[90vw]">
@@ -82,9 +86,9 @@ export function StarterGrantModal() {
           Out of YAPP
         </ModalTitle>
         <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-          You don&apos;t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can&apos;t be bought
-          or transferred on this network. Posts, replies, likes and reposts can be paid in credits instead: switch in
-          Settings.
+          {paused
+            ? 'YAPP can\'t be spent, bought or transferred on this network. Posts, replies, likes and reposts are paid in credits instead.'
+            : 'You don\'t have enough YAPP for this, and your starter YAPP is already claimed. YAPP can\'t be bought on this network, so try again to pay with credits instead.'}
         </Dialog.Description>
         <Button data-testid="starter-grant-dismiss" onClick={close} className="w-full bg-yappr-500 hover:bg-yappr-600 text-white">
           OK
@@ -100,9 +104,9 @@ export function StarterGrantModal() {
         Claim your starter YAPP
       </ModalTitle>
       <Dialog.Description className="text-gray-600 dark:text-gray-400 mb-4">
-        Every identity may claim {amount.toString()} YAPP once. Posts, replies, likes and reposts paid in YAPP have their
-        network fee covered by Yappr while the grant lasts; after that you can keep posting on credits
-        {locked ? '. YAPP can\'t be bought or transferred on this network.' : ' or buy more YAPP.'}
+        {paused
+          ? `Every identity may claim ${amount.toString()} YAPP once. YAPP can't be spent, bought or transferred on this network, so posts, replies, likes and reposts are paid in credits.`
+          : `Every identity may claim ${amount.toString()} YAPP once. Posts, replies, likes and reposts paid in YAPP have their network fee covered by Yappr while the grant lasts; after that you can keep posting on credits${locked ? '.' : ' or buy more YAPP.'}`}
       </Dialog.Description>
       {needsCritical && (
         <div className="mb-4">

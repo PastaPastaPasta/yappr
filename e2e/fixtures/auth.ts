@@ -65,6 +65,24 @@ export async function resolveBotIdentity(): Promise<BotIdentity> {
   return cachedIdentity
 }
 
+/**
+ * Another identity of the same pool, `offset` slots after the run's bot (wrapped),
+ * for specs that need a second actor, such as a like from someone else. Null when
+ * the pool holds only the run's bot.
+ */
+export async function otherBotIdentity(offset = 1): Promise<BotIdentity | null> {
+  const bot = await resolveBotIdentity()
+  const { deriveIdentityKeys, loadIdentityIds } = (await import(
+    '../../scripts/derive-identities.mjs'
+  )) as DeriveModule
+  const pool = loadIdentityIds()
+  const index = (bot.index + offset) % pool.length
+  if (index === bot.index) return null
+  const key = deriveIdentityKeys(index).find((k) => k.keyIndex === AUTH_HIGH_KEY_INDEX)
+  if (!key) throw new Error(`Derivation produced no AUTHENTICATION/HIGH key for identity ${index}`)
+  return { index, identityId: pool[index], wif: key.wif }
+}
+
 /** Seed manually-created hook contexts with the same session as the page fixture. */
 export async function seedContext(context: BrowserContext, bot: BotIdentity): Promise<void> {
   // Runs before any page script on every navigation, so the private key stays

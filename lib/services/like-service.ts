@@ -3,11 +3,11 @@ import { logger } from '@/lib/logger';
 import { BaseDocumentService } from './document-service';
 import { stateTransitionService } from './state-transition-service';
 import { documentToPlainObject, identifierStringToDocumentBytes, normalizeSDKResponse, identifierToBase58, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
-import { paginateFetchAll, documentCount, groupedDocumentCount, queryOwnedPostIds } from './pagination-utils';
-import { isFrozenBalanceError, isInsufficientTokenError } from '../error-utils';
+import { paginateFetchAll, documentCount, groupedDocumentCount, mapLimit, queryOwnedPostIds } from './pagination-utils';
+import { isFrozenBalanceError, isInsufficientTokenError, isTokenPausedError } from '../error-utils';
 import type { getEvoSdk } from './evo-sdk-service';
 import type { RecentTarget } from '../like-notification-snapshot';
-import { indexOnlyLikeShapeFor, likeIndexFor, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
+import { indexOnlyLikeShapeFor, likeIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, type IndexOnlyLikeShape, type TargetKind, beatCompanionFor } from '../contract-topology';
 
 export interface LikeDocument {
   $id: string;
@@ -73,7 +73,7 @@ function compareBytes(a: Uint8Array, b: Uint8Array): number {
 function isRawBareRepost(doc: Record<string, unknown>): boolean {
   const quotes = Boolean(doc.quotedPostId || doc.quotedReplyId);
   const content = typeof doc.content === 'string' ? doc.content.trim() : '';
-  return quotes && !content && !doc.encryptedContent && !doc.mediaUrl && !doc.embedId;
+  return quotes && !content && !doc.encryptedContent && !doc.mediaUrl && !doc.mediaUrls && !doc.embedId;
 }
 const LIKE_NOTIFICATION_PAGE_SIZE = 100;
 /**
@@ -82,8 +82,21 @@ const LIKE_NOTIFICATION_PAGE_SIZE = 100;
  * snapshot tracks) still reads complete; past 200 it stops naming new likers.
  */
 const LIKER_READ_MAX_PAGES = 3;
+/** v12: per-target liker reads in flight at once (one request each, the targets whose count moved). */
+const LIKER_READ_CONCURRENCY = 4;
+/** One target's likers (identity ids), and whether the read reached the last of them. */
+type TargetLikers = { likers: string[]; complete: boolean };
 /** Keyset pages per target when the one `in` read comes back full (1,000 likes of one target since the last poll). */
 const LIKE_NOTIFICATION_MAX_PAGES = 10;
+
+/**
+ * The author property of an indexOnly like doctype, for the reads that pin it
+ * (the v9/v10 author-time index). Only reachable where the doctype carries one.
+ */
+function authorFieldOf(shape: IndexOnlyLikeShape): string {
+  if (shape.authorField === null) throw new Error('This like doctype names no author');
+  return shape.authorField;
+}
 
 /**
  * Likes of posts and likes of replies share this service, but not necessarily a
@@ -102,7 +115,10 @@ const LIKE_NOTIFICATION_MAX_PAGES = 10;
  * author-time reads (unlike tuple, notifications) pin the target too on v10
  * (`IndexOnlyLikeShape.authorTimeKeysTarget`). v11 has no author-time index:
  * an unlike names no `$createdAt` (`unlikeByContentValues`) and notifications
- * diff likers (`getRecentTargetLikeCounts`, `getLikersOf`).
+ * diff likers (`getRecentTargetLikeCounts`, `getLikersOf`). v12 keeps the
+ * author indexes as counters (`IndexOnlyLikeShape.authorIndexIsCounter`):
+ * they count and rank as before but hold no like documents, so every read of
+ * who liked something goes through `byPost`/`byReply`.
  */
 class LikeService extends BaseDocumentService<LikeDocument> {
   /**
@@ -215,8 +231,9 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     } catch (error) {
       logger.error('Error liking post:', error);
       // Let the UI prompt to buy YAPP on insufficient-token failures, and explain
-      // the suspension on frozen-account failures (buying YAPP would not help).
-      if (isInsufficientTokenError(error) || isFrozenBalanceError(error)) throw error;
+      // the suspension on frozen-account failures and the paused token (buying
+      // YAPP would not help either).
+      if (isInsufficientTokenError(error) || isFrozenBalanceError(error) || isTokenPausedError(error)) throw error;
       return false;
     }
   }
@@ -268,6 +285,8 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     shape: IndexOnlyLikeShape,
     target?: LikeTargetInfo
   ): Promise<{ author: string; hashtag: string | null }> {
+    // v13 `likeReply` names the reply alone: nothing to agree with.
+    if (shape.authorField === null && shape.hashtagField === null) return { author: target?.author ?? '', hashtag: null };
     let author = target?.author;
     let hashtag: string | undefined = shape.hashtagField ? target?.hashtag : undefined;
 
@@ -313,7 +332,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const tag = info.hashtag ?? '';
     return {
       [field]: identifierStringToDocumentBytes(targetId),
-      [shape.authorField]: identifierStringToDocumentBytes(info.author),
+      ...(shape.authorField !== null ? { [shape.authorField]: identifierStringToDocumentBytes(info.author) } : {}),
       ...(shape.hashtagField !== null && tag !== '' ? { [shape.hashtagField]: tag } : {}),
     };
   }
@@ -363,7 +382,7 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     if (!result.success) {
       // Definitive, user-actionable failures propagate to the UI untouched.
       const err = new Error(result.error || 'Like failed');
-      if (isInsufficientTokenError(err) || isFrozenBalanceError(err)) throw err;
+      if (isInsufficientTokenError(err) || isFrozenBalanceError(err) || isTokenPausedError(err)) throw err;
 
       // Anything else may be the post-broadcast throw: believe the chain.
       const landed = await this.waitForLikeVisible(targetId, ownerId, kind);
@@ -698,9 +717,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
       const { docType, field } = likeIndexFor(kind);
+      const authorField = authorFieldOf(shape);
       const prefix: DocumentWhereClause[] = shape.authorTimeKeysTarget
-        ? [[shape.authorField, '==', targetAuthor], [field, '==', targetId]]
-        : [[shape.authorField, '==', targetAuthor]];
+        ? [[authorField, '==', targetAuthor], [field, '==', targetId]]
+        : [[authorField, '==', targetAuthor]];
       const orderBy: DocumentOrderByClause[] = [...prefix.map(([property]) => [property, 'asc'] as DocumentOrderByClause), ['$createdAt', 'desc']];
 
       const seen = new Set<string>();
@@ -997,11 +1017,12 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const liked = [...recent].flatMap(([targetId, { count }]) => (count > 0 ? [targetId] : []));
     if (liked.length === 0) return [];
 
+    const authorField = authorFieldOf(shape);
     const read = (targets: string[], extra: DocumentWhereClause[] = []) => sdk.documents.query({
       dataContractId: this.contractId,
       documentTypeName: docType,
-      where: [[shape.authorField, '==', userId], [field, 'in', targets], ['$createdAt', '>', sinceTimestamp], ...extra],
-      orderBy: [[shape.authorField, 'asc'], [field, 'asc'], ['$createdAt', 'desc']],
+      where: [[authorField, '==', userId], [field, 'in', targets], ['$createdAt', '>', sinceTimestamp], ...extra],
+      orderBy: [[authorField, 'asc'], [field, 'asc'], ['$createdAt', 'desc']],
       limit: LIKE_NOTIFICATION_PAGE_SIZE,
     }).then((response) => normalizeSDKResponse(response)
       // Each row names its own target; one whose target did not come back cannot be linked.
@@ -1041,16 +1062,23 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * on `ownerAndTime [$ownerId, $createdAt]` (bare reposts never gain likes
    * and tombstones are deleted, so both are skipped) with a like-count slot bound page `$id` → target, grouped
    * on the countable `byPost`/`byReply`. Throws on a failed or incomplete read.
+   *
+   * The same read serves v12, where the author index is a counter that could
+   * answer the counts too (`postAuthor == me && postId in [...]` grouped by
+   * `postId` on `byAuthorPost`): the composite needs the recent page anyway,
+   * and the target index counts the same entries the counter sums.
    */
   async getRecentTargetLikeCounts(userId: string, kind: TargetKind): Promise<Map<string, RecentTarget>> {
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const { docType, field } = likeIndexFor(kind);
 
+    // A post's `ownerAndTime` starts at `live` on v13 (a reply's never does).
+    const live = kind === 'post' ? { where: postOwnerIndexPrefix(), orderBy: postOwnerIndexOrderPrefix() } : { where: [], orderBy: [] };
     const result = await sdk.documents.composite({
       dataContractId: this.contractId,
       documentType: kind,
-      where: [['$ownerId', '==', userId], ['$createdAt', '>', 0]],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      where: [...live.where, ['$ownerId', '==', userId], ['$createdAt', '>', 0]],
+      orderBy: [...live.orderBy, ['$ownerId', 'asc'], ['$createdAt', 'desc']],
       limit: LIKE_NOTIFICATION_RECENT_SCAN,
       subQueries: [{ documentType: docType, kind: 'counts', bind: { source: 'page', sourceProperty: '$id', field } }],
     });
@@ -1073,10 +1101,10 @@ class LikeService extends BaseDocumentService<LikeDocument> {
   }
 
   /**
-   * v11 timeless like notifications: who likes each of `targetIds`, the
-   * user's own posts or replies (identity ids, in `$ownerId` order).
+   * Timeless like notifications (v11, v12): who likes each of `targetIds`,
+   * the user's own posts or replies (identity ids, in `$ownerId` order).
    *
-   * ONE read over all of them on the author index (`byAuthorPost`/
+   * v11: ONE read over all of them on the author index (`byAuthorPost`/
    * `byAuthorReply`, which keep no time): `author == me && target in [...]`
    * ordered `[author asc, target asc]`; each row names its liker and target.
    * (`target in` on `byPost` alone is refused: an `in` on an indexOnly prefix
@@ -1084,22 +1112,51 @@ class LikeService extends BaseDocumentService<LikeDocument> {
    * page may have cut short the last row's target, and left out those that
    * sort after it (the `in` walks targets in key order, so the ones before it
    * are complete). An indexOnly type takes no id cursor, so each of those is
-   * then read on its own on `byPost`/`byReply`,
-   * `target == T` ordered `[target asc, $ownerId asc]` and paged on an
-   * `$ownerId > last` keyset, capped at {@link LIKER_READ_MAX_PAGES} pages
-   * (`complete: false` past it). Throws on a failed read.
+   * then read on its own ({@link readTargetLikers}).
+   *
+   * v12 ({@link IndexOnlyLikeShape.authorIndexIsCounter}): the author index
+   * keeps one counter per target and no like documents, so there is no
+   * author-pinned read of likers. Every target is read on its own on
+   * `byPost`/`byReply` instead: one request per target (the caller only asks
+   * for the targets whose count moved, at most 10 per kind per poll), plus a
+   * page per further 100 likers, {@link LIKER_READ_CONCURRENCY} at a time.
+   * A target whose read fails is left out of the answer, which the like
+   * snapshot takes as "not re-read": it keeps that target's known likers and
+   * count, so the next poll reads it again while the others proceed. (A
+   * `complete: false` entry would store the new count without likers, and
+   * that target's next likers would then be taken silently.) Throws when
+   * every read failed, and on v11 on a failed read.
    */
-  async getLikersOf(userId: string, targetIds: string[], kind: TargetKind): Promise<Map<string, { likers: string[]; complete: boolean }>> {
+  async getLikersOf(userId: string, targetIds: string[], kind: TargetKind): Promise<Map<string, TargetLikers>> {
     const shape = indexOnlyLikeShapeFor(kind);
     if (!shape) throw new Error('Liker reads need an indexOnly like doctype');
     const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
     const { docType, field } = likeIndexFor(kind);
 
+    const authorField = shape.authorField;
+    if (shape.authorIndexIsCounter || authorField === null) {
+      const reads = await mapLimit(targetIds, LIKER_READ_CONCURRENCY, (targetId) => this.readTargetLikers(sdk, targetId, kind).then(
+        (value): PromiseSettledResult<TargetLikers> => ({ status: 'fulfilled', value }),
+        (reason: unknown): PromiseSettledResult<TargetLikers> => ({ status: 'rejected', reason })
+      ));
+      const likers = new Map<string, TargetLikers>();
+      const failed: unknown[] = [];
+      reads.forEach((outcome, index) => {
+        if (outcome.status === 'fulfilled') likers.set(targetIds[index], outcome.value);
+        else failed.push(outcome.reason);
+      });
+      if (failed.length > 0 && failed.length === targetIds.length) {
+        throw failed[0] instanceof Error ? failed[0] : new Error(String(failed[0]));
+      }
+      if (failed.length > 0) logger.warn(`Like notifications: ${failed.length} of ${targetIds.length} ${kind} liker reads failed; they are re-read next poll:`, failed[0]);
+      return likers;
+    }
+
     const rows = normalizeSDKResponse(await sdk.documents.query({
       dataContractId: this.contractId,
       documentTypeName: docType,
-      where: [[shape.authorField, '==', userId], [field, 'in', targetIds]],
-      orderBy: [[shape.authorField, 'asc'], [field, 'asc']],
+      where: [[authorField, '==', userId], [field, 'in', targetIds]],
+      orderBy: [[authorField, 'asc'], [field, 'asc']],
       limit: TARGET_LIKES_PAGE_SIZE,
     })).map((doc) => this.transformDocumentFor(doc, kind));
     const fromRows = (targetId: string) => ({
@@ -1113,9 +1170,24 @@ class LikeService extends BaseDocumentService<LikeDocument> {
     const cutAt = bs58.decode(rows[rows.length - 1].postId);
     return new Map(await Promise.all(targetIds.map(async (targetId) => {
       if (compareBytes(bs58.decode(targetId), cutAt) < 0) return [targetId, fromRows(targetId)] as const;
-      const { likes, complete } = await this.pageTargetLikes(sdk, targetId, kind, LIKER_READ_MAX_PAGES, { targetThenOwner: true });
-      return [targetId, { likers: likes.map((like) => like.$ownerId), complete }] as const;
+      return [targetId, await this.readTargetLikers(sdk, targetId, kind)] as const;
     })));
+  }
+
+  /**
+   * One target's likers on `byPost`/`byReply`: `target == T` ordered
+   * `[target asc, $ownerId asc]` and paged on an `$ownerId > last` keyset (an
+   * indexOnly type takes no id cursor), capped at {@link LIKER_READ_MAX_PAGES}
+   * pages (`complete: false` past it). The read is proved, as every like
+   * documents read must be: no like index holds every like property.
+   */
+  private async readTargetLikers(
+    sdk: Awaited<ReturnType<typeof getEvoSdk>>,
+    targetId: string,
+    kind: TargetKind
+  ): Promise<TargetLikers> {
+    const { likes, complete } = await this.pageTargetLikes(sdk, targetId, kind, LIKER_READ_MAX_PAGES, { targetThenOwner: true });
+    return { likers: likes.map((like) => like.$ownerId), complete };
   }
 }
 

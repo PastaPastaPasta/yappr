@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { get, updateDocument, createDocument } = vi.hoisted(() => ({
-  get: vi.fn(), updateDocument: vi.fn(), createDocument: vi.fn(),
+const { get, query, updateDocument, createDocument } = vi.hoisted(() => ({
+  get: vi.fn(), query: vi.fn(), updateDocument: vi.fn(), createDocument: vi.fn(),
 }))
-vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get } }) }))
+vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { get, query } }) }))
 vi.mock('./state-transition-service', () => ({ stateTransitionService: { updateDocument, createDocument } }))
 
 import { blogService } from './blog-service'
@@ -136,5 +136,77 @@ describe('blog v4 label limits', () => {
     const labels = Array.from({ length: 65 }, (_, i) => `l${i}`)
     await blogService.updateBlog(blogId, ownerId, { labels })
     expect(updateDocument.mock.calls[0][4].labels).toBe(labels.join(','))
+  })
+})
+
+describe('blog v7 discovery on blog.timeline', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  const blog = (n: number) => ({ id: `b${n}`, ownerId: 'o', createdAt: new Date(n), name: `B${n}` })
+
+  it('reads one newest-first page per request, with a cursor while pages come back full', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    const read = vi.spyOn(blogService, 'query').mockResolvedValue({ documents: [blog(2), blog(1)] } as never)
+    const page = await blogService.getBlogTimelinePage({ limit: 2, startAfter: 'b3' })
+    expect(read).toHaveBeenCalledWith({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit: 2, startAfter: 'b3' })
+    expect(page).toEqual({ blogs: [blog(2), blog(1)], nextCursor: 'b1' })
+  })
+
+  it('serves getNewestBlogs from the timeline on v7, complete, not an owner-order scan', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    const read = vi.spyOn(blogService, 'query').mockResolvedValue({ documents: [blog(3)] } as never)
+    expect(await blogService.getNewestBlogs(100)).toEqual({ blogs: [blog(3)], complete: true })
+    expect(read).toHaveBeenCalledOnce()
+    expect(read.mock.calls[0][0]?.orderBy).toEqual([['$createdAt', 'desc']])
+  })
+
+  it('refuses an http avatar on v7 before signing', async () => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7')
+    createDocument.mockClear()
+    await expect(blogService.createBlog(ownerId, { name: 'B', avatar: 'http://example.com/a.png' })).rejects.toThrow(/https:\/\/ or ipfs:\/\//)
+    expect(createDocument).not.toHaveBeenCalled()
+  })
+})
+
+describe('newest blogs for discovery', () => {
+  /** `total` blogs in owner order, created in reverse of it, paged after `startAfter`. */
+  const blogs = (total: number) => async ({ limit, startAfter }: { limit: number; startAfter?: string }) => {
+    const first = startAfter ? Number(startAfter.slice(1)) + 1 : 0
+    return Array.from({ length: Math.max(0, Math.min(limit, total - first)) }, (_, i) => ({
+      $id: `b${first + i}`, $ownerId: `o${first + i}`, $createdAt: 1_000_000 - (first + i), name: `Blog ${first + i}`,
+    }))
+  }
+
+  it('sorts every blog by creation time, not just the first page in owner order', async () => {
+    query.mockReset().mockImplementation(blogs(250))
+    const { blogs: newest, complete } = await blogService.getNewestBlogs(100)
+    expect(complete).toBe(true)
+    expect(newest).toHaveLength(100)
+    // The newest blog is the lowest owner id here, the oldest of those kept is the 100th.
+    expect(newest[0].id).toBe('b0')
+    expect(newest.at(-1)?.id).toBe('b99')
+    expect(query).toHaveBeenCalledTimes(3)
+    expect(query.mock.calls[0][0]).toMatchObject({ orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100 })
+  })
+
+  it('reuses the scan for a while, and a created blog drops it', async () => {
+    query.mockReset().mockImplementation(blogs(150))
+    await blogService.getNewestBlogs(10)
+    await blogService.getNewestBlogs(100)
+    expect(query).toHaveBeenCalledTimes(2)
+    blogService.clearCache()
+    await blogService.getNewestBlogs(10)
+    expect(query).toHaveBeenCalledTimes(4)
+  })
+
+  it('says when the scan stopped at its cap', async () => {
+    query.mockReset().mockImplementation(blogs(5000))
+    const { complete } = await blogService.getNewestBlogs(100)
+    expect(complete).toBe(false)
+    // Ten full pages, then a one-row probe that proves there is more.
+    expect(query).toHaveBeenCalledTimes(11)
   })
 })

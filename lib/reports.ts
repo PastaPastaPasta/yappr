@@ -1,16 +1,18 @@
 /**
- * Reporting a post or reply to the social contract's moderators: the v9
- * `report` document type (docs/CONTRACTS_BETA6.md) and the queue the
- * moderators work from.
+ * Reporting a post, a reply or (v13) a profile to the social contract's
+ * moderators: the `report` document type (docs/CONTRACTS_BETA6.md,
+ * docs/SOCIAL_V13.md §4) and the queue the moderators work from.
  *
  * What consensus enforces on a report:
- * - it names exactly one target, `postId` or `replyId` (`oneTarget`, 10422);
+ * - it names exactly one target, `postId` or `replyId`, or on v13 the
+ *   identity itself (`about: 1`, a profile report) (`oneTarget`, 10422);
  * - `targetOwnerId` is the target's author (40127) and never the reporter
  *   (10419), so the queue can name the author even once the target is gone;
  * - one report per reporter and target (the `ownerAndPost` / `ownerAndReply`
  *   unique indexes, 40105);
  * - "something else" must say what (`otherHasNote`, 10422);
- * - reports are immutable: the reporter withdraws one by deleting it. On v9
+ * - reports are immutable: the reporter withdraws one by deleting it (on v14
+ *   only while no moderator resolved it: `deleteConstraints`, 40147). On v9
  *   the moderators dismiss one by deleting it as moderators (a removal
  *   record); on v10 they resolve it instead, writing `status` and
  *   `resolution` with `moderatorChangeDocumentFields`, which stamps
@@ -22,8 +24,9 @@
  * A report is public: anyone can read who reported what, and why, and how the
  * moderators resolved it.
  */
-import type { TargetKind } from './contract-topology'
-import { categorizeError, extractErrorMessage, hasConsensusCode, isReferenceNotFoundError } from './error-utils'
+import { declaredActionFee, reportShape, reportsWithdrawOnlyWhilePending, type TargetKind } from './contract-topology'
+import { categorizeError, extractErrorMessage, hasConsensusCode, isDeleteConstraintError, isReferenceNotFoundError } from './error-utils'
+import { normalizeBytes } from './bytes'
 import { identifierToBase58 } from './services/sdk-helpers'
 
 export interface ReportReason {
@@ -33,7 +36,10 @@ export interface ReportReason {
   hint: string
 }
 
-/** Stored as its code, so the order and codes are frozen with the contract (`reason` 0..8). */
+/**
+ * Stored as its code, so the order and codes are frozen with the contract
+ * (`reason` 0..8, and 9 from v13: see {@link reportReasonsOffered}).
+ */
 export const REPORT_REASONS: readonly ReportReason[] = Object.freeze([
   { code: 0, label: 'Spam or scam', hint: 'Repetitive, misleading or fraudulent content' },
   { code: 1, label: 'Harassment or bullying', hint: 'Targeting, insulting or intimidating someone' },
@@ -44,7 +50,51 @@ export const REPORT_REASONS: readonly ReportReason[] = Object.freeze([
   { code: 6, label: 'Illegal goods or activity', hint: 'Selling or promoting something illegal' },
   { code: 7, label: 'Impersonation', hint: 'Pretending to be someone else' },
   { code: 8, label: 'Something else', hint: 'Say what in the details' },
+  { code: 9, label: 'Child sexual abuse material', hint: 'Sexual content involving minors' },
 ].map((reason) => Object.freeze(reason)))
+
+/**
+ * Sexual content involving minors (v13): the moderators' queue puts it first
+ * and flags it urgent, and the reporter is pointed at the authorities and the
+ * team's email as well (a report is public, the material must not be repeated).
+ */
+export const URGENT_REASON_CODE = 9
+
+export function isUrgentReason(code: number): boolean {
+  return code === URGENT_REASON_CODE
+}
+
+/** The reasons the configured contract accepts (`reason.maximum`): 0..8, or 0..9 on v13. */
+export function reportReasonsOffered(): readonly ReportReason[] {
+  const { maxReason } = reportShape()
+  return REPORT_REASONS.filter((reason) => reason.code <= maxReason)
+}
+
+/** What a report names: a post, a reply, or (v13 `about: 1`) the identity's profile. */
+export type ReportTargetKind = TargetKind | 'profile'
+
+/** `report.about` for a profile report (v13). */
+export const ABOUT_PROFILE = 1
+
+/**
+ * Where reports go when the chain cannot carry them: the team's email
+ * (`support@yap.pr`, the address the mobile apps use), for a private post no
+ * moderator holds an encryption key to read, or anything urgent.
+ */
+export const MODERATION_EMAIL = 'support@yap.pr'
+
+/** A `mailto:` for reporting `target` by email, naming it and the reason (never the content). */
+export function reportEmailHref(target: { kind: ReportTargetKind; targetId: string }, reasonCode: number): string {
+  const subject = `Yappr report: ${reportReasonLabel(reasonCode)}`
+  const body = `Reported ${target.kind}: ${target.targetId}\n\nWhat is wrong with it:\n`
+  return `mailto:${MODERATION_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
+/** The moderators' action fee a report pays, in credits (v13: 50M), or null where reports are free. */
+export function reportFeeCredits(): bigint | null {
+  const fee = declaredActionFee('report', 'create')
+  return fee ? fee.owner + fee.moderators : null
+}
 
 /** "Something else": the contract refuses it without a note (`otherHasNote`). */
 export const OTHER_REASON_CODE = 8
@@ -61,7 +111,7 @@ export function reportReasonLabel(code: number): string {
  * contract would refuse it for, made before anything is signed.
  */
 export function reportInputProblem(reason: number | null, note: string): string | null {
-  if (reason === null || !REPORT_REASONS.some((known) => known.code === reason)) return 'Choose why you are reporting this'
+  if (reason === null || !reportReasonsOffered().some((known) => known.code === reason)) return 'Choose why you are reporting this'
   const trimmed = note.trim()
   if (reason === OTHER_REASON_CODE && trimmed.length === 0) return 'Say what is wrong with it'
   if (trimmed.length > REPORT_NOTE_MAX_LENGTH) return `Keep the details to ${REPORT_NOTE_MAX_LENGTH} characters`
@@ -70,17 +120,18 @@ export function reportInputProblem(reason: number | null, note: string): string 
 
 /**
  * A second report of the same target by the same reporter (the unique
- * `ownerAndPost` / `ownerAndReply` index, 40105): the first one stands.
+ * `ownerAndPost` / `ownerAndReply` index, v13 `byPost` / `byReply` /
+ * `byTarget`, 40105): the first one stands.
  */
 export function isAlreadyReportedError(error: unknown): boolean {
   return /duplicate unique properties|duplicateuniqueindex/i.test(extractErrorMessage(error)) || hasConsensusCode(error, [40105])
 }
 
 /** What to tell a reporter whose report was refused. */
-export function reportFailureMessage(error: unknown, noun: 'post' | 'reply'): string {
+export function reportFailureMessage(error: unknown, noun: ReportTargetKind): string {
   if (isAlreadyReportedError(error)) return `You have already reported this ${noun}.`
   // 40120 on postId/replyId: a moderator removed it (or it never existed).
-  if (isReferenceNotFoundError(error)) return `This ${noun} has been removed, so there is nothing to report.`
+  if (noun !== 'profile' && isReferenceNotFoundError(error)) return `This ${noun} has been removed, so there is nothing to report.`
   return categorizeError(error)
 }
 
@@ -93,9 +144,31 @@ export function isReportGoneError(error: unknown): boolean {
     hasConsensusCode(error, [40101])
 }
 
+/** Why a resolved report cannot be withdrawn (v14), said before or after a refused delete. */
+export const REPORT_RESOLVED_MESSAGE = 'The moderators have already resolved this report, so it can no longer be withdrawn. It expires 90 days after you filed it.'
+
+/**
+ * The withdrawal of a report a moderator already resolved (v14): refused by
+ * consensus with 40147 (the report type's `pending` delete rule, paid), or
+ * locally before anything was signed ({@link REPORT_RESOLVED_MESSAGE}).
+ */
+export function isReportResolvedError(error: unknown): boolean {
+  return isDeleteConstraintError(error) || extractErrorMessage(error) === REPORT_RESOLVED_MESSAGE
+}
+
+/**
+ * True when the reporter may still withdraw `report`: always, except on v14
+ * once a moderator resolved it (`status` set), when consensus refuses the
+ * delete with a paid 40147. A resolved report then stays until its ttl.
+ */
+export function reportCanBeWithdrawn(report: Pick<ReportRecord, 'status'>): boolean {
+  return report.status === null || !reportsWithdrawOnlyWhilePending()
+}
+
 /** What to tell a reporter whose withdrawal was refused. */
 export function withdrawFailureMessage(error: unknown): string {
   if (isReportGoneError(error)) return 'This report is already gone: the moderators dismissed it, or it was withdrawn elsewhere.'
+  if (isReportResolvedError(error)) return REPORT_RESOLVED_MESSAGE
   return categorizeError(error)
 }
 
@@ -137,7 +210,8 @@ export function resolutionInputProblem(status: number | null, resolution: string
 export interface ReportRecord {
   id: string
   reporterId: string
-  kind: TargetKind
+  kind: ReportTargetKind
+  /** The post or reply id, or for a profile report the reported identity. */
   targetId: string
   targetOwnerId: string
   reason: number
@@ -152,6 +226,8 @@ export interface ReportRecord {
   moderatedBy: string | null
   /** Block time (ms) of that write (`$moderatedAt`, v10), or null. */
   moderatedAt: number | null
+  /** v13: the moderators' key to a reported private post or reply (`lib/report-box.ts`), or null. */
+  box: Uint8Array | null
 }
 
 /**
@@ -226,10 +302,11 @@ export function toReportRecord(doc: Record<string, unknown>): ReportRecord | nul
   const data = (doc.data ?? doc) as Record<string, unknown>
   const postId = identifierToBase58(data.postId ?? doc.postId)
   const replyId = identifierToBase58(data.replyId ?? doc.replyId)
-  const targetId = postId ?? replyId
   const id = identifierToBase58(doc.$id ?? doc.id)
   const reporterId = identifierToBase58(doc.$ownerId ?? doc.ownerId)
   const targetOwnerId = identifierToBase58(data.targetOwnerId ?? doc.targetOwnerId)
+  const aboutProfile = Number(data.about ?? doc.about) === ABOUT_PROFILE
+  const targetId = postId ?? replyId ?? (aboutProfile ? targetOwnerId : null)
   const reason = Number(data.reason ?? doc.reason)
   // Consensus requires both; a read missing either is malformed, not a report.
   if (!targetId || !id || !reporterId || !targetOwnerId || !Number.isInteger(reason)) return null
@@ -237,10 +314,11 @@ export function toReportRecord(doc: Record<string, unknown>): ReportRecord | nul
   const status = Number(data.status ?? doc.status)
   const resolution = data.resolution ?? doc.resolution
   const moderatedAt = Number(doc.$moderatedAt ?? 0)
+  const box = normalizeBytes(data.box ?? doc.box)
   return {
     id,
     reporterId,
-    kind: postId ? 'post' : 'reply',
+    kind: postId ? 'post' : replyId ? 'reply' : 'profile',
     targetId,
     targetOwnerId,
     reason,
@@ -250,12 +328,13 @@ export function toReportRecord(doc: Record<string, unknown>): ReportRecord | nul
     resolution: typeof resolution === 'string' && resolution.length > 0 ? resolution : null,
     moderatedBy: identifierToBase58(doc.$moderatedBy),
     moderatedAt: Number.isFinite(moderatedAt) && moderatedAt > 0 ? moderatedAt : null,
+    box: box && box.length > 0 ? box : null,
   }
 }
 
-/** Every report on one post or reply: one row of the moderators' queue. */
+/** Every report on one post, reply or profile: one row of the moderators' queue. */
 export interface ReportedTarget {
-  kind: TargetKind
+  kind: ReportTargetKind
   targetId: string
   targetOwnerId: string
   /** Newest first. */
@@ -264,13 +343,15 @@ export interface ReportedTarget {
   latestAt: number
   /** Each reason given, most-given first (ties by code). */
   reasonCounts: Array<{ code: number; count: number }>
+  /** True when any report gives the urgent reason ({@link isUrgentReason}). */
+  urgent: boolean
 }
 
-const targetKey = (kind: TargetKind, targetId: string) => `${kind}:${targetId}`
+const targetKey = (kind: ReportTargetKind, targetId: string) => `${kind}:${targetId}`
 
 /**
- * Groups reports by what they report, newest-reported target first. A report
- * seen twice (overlapping pages) counts once.
+ * Groups reports by what they report: urgent targets first, then the
+ * newest-reported. A report seen twice (overlapping pages) counts once.
  */
 export function groupReports(reports: readonly ReportRecord[]): ReportedTarget[] {
   const byTarget = new Map<string, Map<string, ReportRecord>>()
@@ -292,6 +373,7 @@ export function groupReports(reports: readonly ReportRecord[]): ReportedTarget[]
       reports: sorted,
       latestAt: newest.createdAt,
       reasonCounts: Array.from(counts, ([code, count]) => ({ code, count })).sort((a, b) => b.count - a.count || a.code - b.code),
+      urgent: sorted.some((report) => isUrgentReason(report.reason)),
     }
-  }).sort((a, b) => b.latestAt - a.latestAt || targetKey(a.kind, a.targetId).localeCompare(targetKey(b.kind, b.targetId)))
+  }).sort((a, b) => Number(b.urgent) - Number(a.urgent) || b.latestAt - a.latestAt || targetKey(a.kind, a.targetId).localeCompare(targetKey(b.kind, b.targetId)))
 }

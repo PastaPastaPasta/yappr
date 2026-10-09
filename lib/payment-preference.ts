@@ -1,5 +1,5 @@
 import type { PayWith } from '@/lib/store'
-import { declaredActionFee, tokenCostFor, type ActionFeeDeclaration, type DocumentAction, type GasFeesPaidBy } from '@/lib/contract-topology'
+import { declaredActionFee, tokenCostFor, yappIsPausedForGood, type ActionFeeDeclaration, type DocumentAction, type GasFeesPaidBy } from '@/lib/contract-topology'
 
 /**
  * What one document write is going to cost and how it will be paid, decided
@@ -24,8 +24,12 @@ export interface PaymentPlan {
   gasMayBeSponsored: boolean
   /** The credit action fee the transition must agree to, or null. */
   actionFee: ActionFeeDeclaration | null
-  /** Why the plan is not what the user asked for, when it is not. */
-  fallbackReason: 'insufficient-yapp' | 'token-required' | null
+  /**
+   * Why the plan is not what the user asked for, when it is not. `yapp-locked`:
+   * the token is paused for good, and from Platform 5.0.0-beta.3 a paused
+   * token cannot pay a `tokenCost` (a PAID 40711 refusal), so credits it is.
+   */
+  fallbackReason: 'insufficient-yapp' | 'token-required' | 'yapp-locked' | null
 }
 
 /**
@@ -34,10 +38,14 @@ export interface PaymentPlan {
  * - An unpriced type spends credits, whatever the setting.
  * - A REQUIRED token cost (every priced type on v2) spends YAPP; the
  *   setting cannot override consensus.
- * - An OPTIONAL token cost follows the setting, except that `yapp` with a
- *   balance below the cost falls back to credits: with `$tokenPaymentInfo`
- *   present an insufficient balance is a 40700 rejection, never a credits
- *   fallback, so the choice has to be made here.
+ * - An OPTIONAL token cost on a contract whose YAPP is paused for good
+ *   ({@link yappIsPausedForGood}: v10–v13) always spends credits, whatever
+ *   the setting and the balance: Platform 5.0.0-beta.3 refuses a paused
+ *   token's payment with a PAID 40711.
+ * - Otherwise an OPTIONAL token cost follows the setting, except that `yapp`
+ *   with a balance below the cost falls back to credits: with
+ *   `$tokenPaymentInfo` present an insufficient balance is a 40700 rejection,
+ *   never a credits fallback, so the choice has to be made here.
  */
 export function planPayment(docType: string, action: DocumentAction, balance: bigint | null, payWith: PayWith): PaymentPlan {
   const cost = tokenCostFor(docType)
@@ -62,14 +70,18 @@ export function planPayment(docType: string, action: DocumentAction, balance: bi
     fallbackReason,
   })
   if (!cost.optional) return inYapp(payWith === 'credits' ? 'token-required' : null)
+  if (yappIsPausedForGood()) return inCredits(payWith === 'yapp' ? 'yapp-locked' : null)
   const canAfford = balance !== null && balance >= amount
   if (payWith === 'yapp' && canAfford) return inYapp(null)
   return inCredits(payWith === 'yapp' ? 'insufficient-yapp' : null)
 }
 
-/** True when the user may choose the currency of `docType` creates at all. */
+/**
+ * True when the user may choose the currency of `docType` creates at all: the
+ * token cost is optional and YAPP can actually be spent.
+ */
 export function paymentIsChoosable(docType: string): boolean {
-  return tokenCostFor(docType)?.optional === true
+  return tokenCostFor(docType)?.optional === true && !yappIsPausedForGood()
 }
 
 /**
@@ -89,6 +101,8 @@ export function paymentHintCopy(plan: PaymentPlan, balance: bigint | null, credi
     const text = plan.gasMayBeSponsored ? `Pays ${plan.yapp.toString()} YAPP, ${covered} covered by Yappr` : `Pays ${plan.yapp.toString()} YAPP${fee}`
     return { text, toggle: 'Use credits instead' }
   }
+  // Paused YAPP cannot be spent at all: there is no other currency to offer.
+  if (yappIsPausedForGood()) return { text: `Pays in credits${fee}`, toggle: null }
   if (plan.fallbackReason !== 'insufficient-yapp') return { text: `Pays in credits${fee}`, toggle: 'Use YAPP instead' }
   // `null` means the balance query itself failed, not that it came back empty.
   return { text: `Pays in credits${balance === null ? ' (YAPP balance unavailable)' : ' (not enough YAPP)'}${fee}`, toggle: null }

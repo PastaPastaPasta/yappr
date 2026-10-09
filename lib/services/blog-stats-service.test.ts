@@ -86,3 +86,37 @@ describe('blog rankings', () => {
     expect(sdk.documents.ranked).not.toHaveBeenCalled();
   });
 });
+
+describe('blog v7 rankings', () => {
+  beforeEach(() => {
+    vi.stubEnv('NEXT_PUBLIC_BLOG_TOPOLOGY', 'v7');
+    sdk.documents.ranked.mockResolvedValue({ entries: [{ groupValue: 'x', value: 3n }] });
+  });
+
+  it('reads trending blogs off followersTrend: the 72h grid, a new window every 24h, the full window', async () => {
+    expect(await blogStatsService.trendingBlogs(5)).toEqual([{ id: 'x', count: 3 }]);
+    expect(sdk.documents.ranked.mock.calls[0][0]).toMatchObject({
+      documentTypeName: 'blogFollow', groupBy: 'blogId',
+      timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } }],
+    });
+  });
+
+  it('reads most discussed posts off discussedRecent (v7 has no all-time comment ranking)', async () => {
+    await blogStatsService.mostDiscussedPosts(5);
+    expect(sdk.documents.ranked.mock.calls[0][0]).toMatchObject({
+      documentTypeName: 'blogComment', groupBy: 'blogPostId',
+      timeRange: [{ field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } }],
+    });
+  });
+
+  it('keeps most followed all-time (the merged followers index, ranked at blogId)', async () => {
+    await blogStatsService.mostFollowedBlogs(5);
+    expect(sdk.documents.ranked.mock.calls[0][0]).toMatchObject({ documentTypeName: 'blogFollow', groupBy: 'blogId' });
+    expect(sdk.documents.ranked.mock.calls[0][0]).not.toHaveProperty('timeRange');
+  });
+
+  it('treats a cold window as the empty ranking', async () => {
+    sdk.documents.ranked.mockRejectedValue(new Error('a single-path axis read must produce exactly one axis descent; the walk produced 0'));
+    expect(await blogStatsService.mostDiscussedPosts(5)).toEqual([]);
+  });
+});

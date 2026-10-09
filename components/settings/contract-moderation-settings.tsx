@@ -11,7 +11,8 @@ import { CharterReasonPicker, useSeatedReasons } from '@/components/moderation/c
 import { ElectionStatusPanel } from '@/components/moderation/election-status-panel'
 import { ReportQueue } from '@/components/moderation/report-queue'
 import { TeamActionsPanel } from '@/components/moderation/team-actions-panel'
-import { contractTakesReports, deletesAreTombstones, type TargetKind } from '@/lib/contract-topology'
+import { barredAuthorsCanTombstone, contractTakesReports, deletesAreTombstones } from '@/lib/contract-topology'
+import type { ReportTargetKind } from '@/lib/reports'
 import { CREDITS_PER_DASH } from '@/lib/services/tip-service'
 import {
   moderationService,
@@ -34,6 +35,17 @@ type KindedRemoval = DocumentRemoval & { kind: 'post' | 'reply' }
 const removalKey = (removal: KindedRemoval) => `${removal.kind}:${removal.documentId}`
 
 const dayLabel = (days: number) => `${days} day${days === 1 ? '' : 's'}`
+
+/**
+ * What the ban panel adds about a barred author's own posts and replies: on
+ * v9/v11 a delete there is a tombstone, an edit the bar refuses; v12 lets that
+ * tombstone through (`retractedWhen`), so it goes as any delete does.
+ */
+function barredOwnDeleteNote(): string {
+  if (!deletesAreTombstones()) return '.'
+  if (barredAuthorsCanTombstone()) return ', and taking down their own posts and replies (blanking them is the one edit still allowed).'
+  return ': a post or reply is deleted by blanking it, which is an edit, so they cannot take those down.'
+}
 
 /**
  * Contract moderation for the social contract's moderation team (its owner
@@ -214,7 +226,7 @@ export function ContractModerationSettings() {
   }
 
   /** From a report: the author goes in the identity field and the reported post or reply is cited. */
-  const moderateAuthor = (authorId: string, kind: TargetKind, documentId: string) => {
+  const moderateAuthor = (authorId: string, kind: ReportTargetKind, documentId: string) => {
     setTargetId(authorId)
     setCitedPosts(kind === 'post' ? documentId : '')
     setCitedReplies(kind === 'reply' ? documentId : '')
@@ -248,7 +260,7 @@ export function ContractModerationSettings() {
             A banned identity cannot write anything to the social contract until unbanned; a suspended one until the
             suspension lapses. Both refusals are recorded with your reason, which anyone can read. Only deleting their
             own documents (an unlike, an unfollow) still goes through for them
-            {deletesAreTombstones() ? ': a post or reply is deleted by blanking it, which is an edit, so they cannot take those down.' : '.'}
+            {barredOwnDeleteNote()}
             {canWarn && ' A warning bars nothing: it is a public, reasoned note, and at most 16 accumulate until cleared.'}
           </CardDescription>
         </CardHeader>

@@ -1,9 +1,9 @@
 import { TtlMap } from '@/lib/caches/ttl-map'
 import { YAPPR_CONTRACT_ID } from '@/lib/constants'
-import { contractTakesReports, electedModeration } from '@/lib/contract-topology'
-import { isReportGoneError, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
+import { blocksContractId, contractTakesReports } from '@/lib/contract-topology'
+import { isReportGoneError, isReportResolvedError, reportCanBeWithdrawn, reportInputProblem, withdrawFailureMessage, type ReportStatus } from '@/lib/reports'
 import { blockService } from '@/lib/services/block-service'
-import { moderationElectionService } from '@/lib/services/moderation-election-service'
+import { moderationService } from '@/lib/services/moderation-service'
 import { reportService } from '@/lib/services/report-service'
 import { RpcError } from '../protocol/envelope'
 import { assertAtMost, badRequest, loadUserSummaries, notSupported, readFailure, requireViewer } from '../dto/hydrate'
@@ -17,7 +17,7 @@ import type { BlockSourceDTO, Page, UserSummaryDTO } from './dto'
 
 /** `block.message` (`blockService.blockUser` keeps the first 280). */
 const BLOCK_MESSAGE_MAX = 280
-/** `components/settings/blocked-users.tsx` reads the list whole (up to 100); the engine pages it. */
+/** `components/settings/blocked-users.tsx` reads the list whole; the engine pages it. */
 const BLOCKED_PAGE = 30
 
 /** `use-block.ts`: an unblock that leaves the user blocked by a followed block list. */
@@ -38,6 +38,12 @@ export interface OwnReportDTO {
   status: ReportStatus | null
   resolution: string | null
   moderatedAt: Date | null
+  /**
+   * Whether the viewer may still withdraw it: false on v14 once the
+   * moderators resolved it (the network refuses that delete, paid), so the
+   * UI offers no Withdraw. Always true before v14.
+   */
+  withdrawable: boolean
 }
 
 interface BlockArgs {
@@ -57,11 +63,23 @@ interface WithdrawReportArgs {
 
 const blockLists = new TtlMap<string, { blockedId: string; message?: string }[]>(60_000)
 
-/** The viewer's own blocks (`getUserBlocks`' query), rejecting when the read fails: lib's answers a failure with `[]`. */
+/** Every one of the viewer's own blocks (`getUserBlocks`), rejecting when the read fails. */
 async function ownBlocks(viewer: string): Promise<{ blockedId: string; message?: string }[]> {
   try {
-    const { documents } = await blockService.query({ where: [['$ownerId', '==', viewer]], limit: 100 })
-    return documents.filter(block => block.blockedId)
+    return (await blockService.getUserBlocks(viewer)).filter(block => block.blockedId)
+  } catch (error) {
+    throw readFailure(error)
+  }
+}
+
+/**
+ * Whether `docType` can be written now: false while the registered contract's
+ * interim is `notYetUsable` (mainnet v13) and no team is seated, as web's
+ * `useModeratedTypeOpen` reads it. A failed read rejects.
+ */
+async function moderatedTypeOpen(docType: string): Promise<boolean> {
+  try {
+    return await moderationService.moderatedTypeOpen(docType)
   } catch (error) {
     throw readFailure(error)
   }
@@ -89,7 +107,8 @@ export function createSafetyModule(tickets: TicketStore) {
     persistArgs: true,
     async run({ targetId, message }, ctx) {
       const result = await blockService.blockUser(signer(ctx), targetId, message)
-      return fromTransitionResult(result, createdDocument(result, YAPPR_CONTRACT_ID, 'block'))
+      // v13: the block lands in the blocks contract (blockUser refuses when there is none).
+      return fromTransitionResult(result, createdDocument(result, blocksContractId() ?? YAPPR_CONTRACT_ID, 'block'))
     },
     probe: ownBlock(true),
   })
@@ -129,6 +148,10 @@ export function createSafetyModule(tickets: TicketStore) {
       if (!result.success && isReportGoneError(result.error)) {
         return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'REPORT_GONE') }
       }
+      // v14: resolved since the sheet read it (refused before signing, or a paid 40147).
+      if (!result.success && isReportResolvedError(result.error)) {
+        return { state: 'failed', error: new RpcError(withdrawFailureMessage(result.error), 'REPORT_RESOLVED') }
+      }
       return fromTransitionResult(result)
     },
     // The default probe: the report proved absent (its `delete` document).
@@ -154,7 +177,7 @@ export function createSafetyModule(tickets: TicketStore) {
     unblock: async (targetId: string): Promise<WriteTicket> => submitBlock('unblock', targetId),
 
     /**
-     * The accounts the viewer blocked (up to 100, as the web settings page),
+     * Every account the viewer blocked, as the web settings page lists them,
      * 30 a page, each with the message given. Rejects when the list cannot be
      * read (never an empty list). A block or unblock that settles drops the
      * list held for paging, so no page is stale.
@@ -205,10 +228,13 @@ export function createSafetyModule(tickets: TicketStore) {
 
     /**
      * Report a post or reply to the contract's moderators. `reason` is a code
-     * from `lib/reports.ts` `REPORT_REASONS` (0–8); "something else" (8)
-     * needs a note, and a note is at most 500 characters. One report per
-     * reporter and target: a second fails `DUPLICATE`, so read `ownReport`
-     * first, as web's dialog does. Gated by `capabilities.reports`.
+     * from `lib/reports.ts` `REPORT_REASONS` up to `capabilities.reportReasonMax`
+     * (0–8, and 9 on v13); "something else" (8) needs a note, and a note is at
+     * most 500 characters. One report per reporter and target: a second fails
+     * `DUPLICATE`, so read `ownReport` first, as web's dialog does. On v13 a
+     * report pays `capabilities.reportFeeCredits` to the moderators. The engine
+     * reads no private feeds, so its reports carry no moderators' box. Gated by
+     * `capabilities.reports`.
      */
     async report(target: TargetRef, reason: number, note?: string): Promise<WriteTicket> {
       assertTarget(target)
@@ -227,7 +253,9 @@ export function createSafetyModule(tickets: TicketStore) {
      * Withdraw the viewer's own report (`ownReport().id`) on a target: the
      * reporter deletes it (`reportService.withdrawReport`), and the
      * moderators never see it again. A report that is already gone fails
-     * `REPORT_GONE`, with web's message. Gated by `capabilities.reports`.
+     * `REPORT_GONE`, with web's message. On v14 only an unresolved report can
+     * be withdrawn (`ownReport().withdrawable`): one resolved meanwhile fails
+     * `REPORT_RESOLVED`, with web's message. Gated by `capabilities.reports`.
      */
     async withdrawReport(target: TargetRef, reportId: string): Promise<WriteTicket> {
       assertTarget(target)
@@ -265,13 +293,18 @@ export function createSafetyModule(tickets: TicketStore) {
      */
     async reportsOpen(): Promise<boolean> {
       if (!contractTakesReports()) return false
-      const elected = electedModeration()
-      if (elected?.interim !== 'notYetUsable' || !elected.moderatedDocumentTypes.report) return true
-      try {
-        return (await moderationElectionService.getSeatedTeam()) !== null
-      } catch (error) {
-        throw readFailure(error)
-      }
+      return moderatedTypeOpen('report')
+    },
+
+    /**
+     * Whether posts and replies can be written now: false while the contract
+     * refuses them until its first elected moderation team is seated (a
+     * `notYetUsable` interim, mainnet v13), when RN shows "posting opens when
+     * moderators are elected" instead of the composer. Every other contract
+     * answers without a read. Rejects when the team cannot be read.
+     */
+    async postingOpen(): Promise<boolean> {
+      return moderatedTypeOpen('post')
     },
 
     /** The viewer's own report on a target, or `null`. Rejects when it cannot be read, so the UI never offers a second (paid) report. */
@@ -289,6 +322,7 @@ export function createSafetyModule(tickets: TicketStore) {
         status: report.status,
         resolution: report.resolution,
         moderatedAt: report.moderatedAt === null ? null : new Date(report.moderatedAt),
+        withdrawable: reportCanBeWithdrawn(report),
       }
     },
   }

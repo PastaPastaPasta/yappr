@@ -1,7 +1,7 @@
 # Devnet content seeding — ops runbook
 
-Seeds the devnet (sakura on 5.0.0-beta.1: social contract
-`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v11) with synthetic
+Seeds the devnet (sakura on 5.0.0-beta.3: social contract
+`NEXT_PUBLIC_YAPPR_CONTRACT_ID` in `.env.devnet`, topology v13) with synthetic
 users and content. Built for a 10-user /
 ~1100-op pilot first, but resumable and parallel from the start so the same
 scripts scale to 500 users / 50k posts.
@@ -13,7 +13,7 @@ scripts/seed/
   asset-lock-lib.mjs             split tx + DIP-2 type-8 asset-lock construction, Insight API
   provision-seed-identities.mjs  treasury → funded/registered/profiled/named/YAPP'd identities
   run-seeder.mjs                 corpus executor (checkpointed, per-author sequential, parallel across authors)
-  media-hash.mjs                 sha256 + pinned 9x8 dHash of a mediaUrl's bytes (v10 mediaHash/mediaFingerprint)
+  media-hash.mjs                 sha256 + pinned 9x8 dHash of a mediaUrl's bytes (v10–v12 mediaHash/mediaFingerprint, one v13 mediaDigests item)
 ```
 
 Everything state-bearing lives in gitignored, chmod-600 files at the repo root.
@@ -117,26 +117,36 @@ Exit code is non-zero while any selected identity is not `ready`.
 NETWORK=devnet node scripts/seed/run-seeder.mjs \
   --personas scripts/seed/personas.pilot.json \
   --corpus  scripts/seed/corpus.pilot.jsonl \
-  [--concurrency 10] [--max-ops 50] [--credits-fraction 0.25]
+  [--concurrency 10] [--max-ops 50] [--credits-fraction 1]
 ```
 
-- `--credits-fraction` (default 0.25) is the share of actors that pay
+- `--credits-fraction` (default 1 where YAPP is paused for good, v10–v13;
+  0.25 otherwise, v14 included) is the share of actors that pay
   their token-priced writes in CREDITS — the create carries no
   `$tokenPaymentInfo` at all, which is what makes the `optional: true` token
   costs charge credits — while the rest pay YAPP and offer the gas to the
-  contract owner. An actor's currency is fixed by its persona index, so a
+  contract owner. From Platform 5.0.0-beta.3 a paused token can't pay a
+  document's token cost (a PAID 40711 refusal), so pass a fraction below 1
+  only against a beta.2 chain. An actor's currency is fixed by its persona index, so a
   resumed run never moves an author between funding models. Every
   post/reply create is also a hand-built batch carrying the contract's action
   fee agreement (`sdk.documents.create` cannot express one; 40132 without).
-- The seeder writes v10/v11 documents only (v11 keeps every create shape it
-  writes), and refuses to run unless `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env /
-  `.env.devnet`) is `v10` or `v11`. The corpus
+- The seeder writes v10/v11/v12/v13/v14 documents only (v11 and v12 keep every create
+  shape it writes: v12 changes only how the like author and hashtag indexes
+  store, as counters, and who may tombstone; v13 adds `live: true` to posts and
+  `rootOwnerId` to replies, drops `likeReply.replyAuthor` and writes media as
+  one-item arrays; v14 writes v13's shapes but a reply stores no owner, neither
+  `parentOwnerId` nor `rootOwnerId`, since its notification windows derive both;
+  all built by `SOCIAL_SHAPES` off the configured file), and
+  refuses to run unless `NEXT_PUBLIC_CONTRACT_TOPOLOGY` (env / `.env.devnet`) is
+  `v10`, `v11`, `v12`, `v13` or `v14`. The corpus
   `"hashtag": ""` convention means "untagged", and the seeder **omits the
   hashtag property** on untagged posts and on their likes (a `where` entry's
   both-absent; `''` is consensus error 40127). Tags longer than 61 characters
   are rejected at parse time. A like is one transition (no `beat`), a post
   carries no `language`, and every `mediaUrl` is fetched once before the run
-  so its post or reply can carry `mediaHash`/`mediaFingerprint`.
+  so its post or reply can carry `mediaHash`/`mediaFingerprint` (v13: one
+  `mediaDigests` item, sha256 then dHash).
 - Per-author ops are strictly sequential (identity contract nonce); different
   authors run in parallel behind a global in-flight cap (`--concurrency`).
 - `--max-ops N` executes at most N new ops then stops cleanly (useful as a
@@ -185,5 +195,7 @@ NETWORK=devnet node scripts/seed/run-seeder.mjs \
 
 ```bash
 node scripts/seed/provision-seed-identities.mjs --self-test   # split/asset-lock construction, validation, ledger states
-node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, v10 document shapes
+node scripts/seed/run-seeder.mjs --self-test                  # corpus parsing, ref resolution, scheduling, resume, max-ops, document shapes
+NEXT_PUBLIC_CONTRACT_TOPOLOGY=v13 node scripts/seed/run-seeder.mjs --self-test   # the same against another cut's shapes
+node scripts/social-shapes.mjs --self-test                    # every social write built for v10–v14, judged by rs-dpp's rules offline
 ```

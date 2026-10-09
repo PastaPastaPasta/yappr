@@ -2,12 +2,14 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 import {
+  LEGACY_REASON_MAX,
   OTHER_REASON_CODE,
   REPORT_NOTE_MAX_LENGTH,
   REPORT_REASONS,
   REPORT_STATUSES,
   reportIsValid,
   reportReasonLabel,
+  reportReasonsUpTo,
   reportStatusLabel,
 } from './report-reasons';
 
@@ -43,6 +45,14 @@ describe('report reasons', () => {
     expect(reportIsValid(OTHER_REASON_CODE, 'A scam link')).toBe(true);
     expect(reportIsValid(1, 'x'.repeat(REPORT_NOTE_MAX_LENGTH))).toBe(true);
     expect(reportIsValid(1, 'x'.repeat(REPORT_NOTE_MAX_LENGTH + 1))).toBe(false);
+  });
+
+  it('offers reason 9 only to a contract that accepts it, and always by email', () => {
+    expect(reportIsValid(9, '')).toBe(true);
+    expect(reportIsValid(9, '', 9)).toBe(true);
+    expect(reportIsValid(9, '', LEGACY_REASON_MAX)).toBe(false);
+    expect(reportReasonsUpTo(LEGACY_REASON_MAX).map((reason) => reason.code)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(reportReasonsUpTo().map((reason) => reason.code)).toContain(9);
   });
 
   it('labels known and unknown codes', () => {

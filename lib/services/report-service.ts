@@ -1,28 +1,62 @@
 import { logger } from '@/lib/logger';
 import { extractErrorMessage } from '../error-utils';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { contractTakesReports, reportsAreResolved, type TargetKind } from '../contract-topology';
-import { toReportRecord, type ReportRecord, type ReportView } from '../reports';
+import { contractTakesReports, reportShape, reportsAreResolved, reportsWithdrawOnlyWhilePending, type TargetKind } from '../contract-topology';
+import { ABOUT_PROFILE, REPORT_RESOLVED_MESSAGE, reportCanBeWithdrawn, toReportRecord, type ReportRecord, type ReportTargetKind, type ReportView } from '../reports';
 import { getEvoSdk } from './evo-sdk-service';
 import { queryRawDocuments } from './document-service';
 import { paginateFetchAll } from './pagination-utils';
 import { identifierStringToDocumentBytes, type DocumentOrderByClause, type DocumentWhereClause } from './sdk-helpers';
 import { stateTransitionService, type StateTransitionResult } from './state-transition-service';
 
-/** The property naming a report's target, and the unique index it shares with `$ownerId`. */
+/** The property naming a post or reply report's target. */
 const targetField = (kind: TargetKind) => (kind === 'post' ? 'postId' : 'replyId');
+
+/**
+ * The equality clauses that pin a report's target: `postId` or `replyId`
+ * (v13 `byPost` / `byReply`, which serve the target's reports and, with
+ * `$ownerId` after them, the reporter's own), or a profile report's
+ * `targetOwnerId == T && about == 1` (`byTarget`).
+ */
+function targetClauses(kind: ReportTargetKind, targetId: string): DocumentWhereClause[] {
+  if (kind === 'profile') return [['targetOwnerId', '==', targetId], ['about', '==', ABOUT_PROFILE]];
+  return [[targetField(kind), '==', targetId]];
+}
 
 /** Reports on one target read before a dismissal; each one is its own moderation transition. */
 const MAX_REPORTS_PER_TARGET = 500;
 
 export interface ReportInput {
-  kind: TargetKind;
+  kind: ReportTargetKind;
+  /** The post or reply; for a profile report the reported identity (the same as `targetOwnerId`). */
   targetId: string;
   /** The target's author: consensus refuses anyone else (40127), and the reporter (10419). */
   targetOwnerId: string;
   reason: number;
   /** Omitted when blank; required for "something else". */
   note?: string;
+  /** v13, a private post or reply only: the moderators' key to it (`lib/report-box.ts`). */
+  box?: Uint8Array;
+}
+
+/**
+ * Why consensus would refuse a report of this shape, or null: a profile
+ * report where the contract takes none, one whose target is not the identity
+ * it names, a box on a profile report (`boxOnContent`) or a box the contract
+ * would not hold.
+ */
+export function reportInputShapeProblem(input: Pick<ReportInput, 'kind' | 'targetId' | 'targetOwnerId' | 'box'>): string | null {
+  const { profiles, boxMaxBytes } = reportShape();
+  if (input.kind === 'profile') {
+    if (!profiles) return 'Profiles cannot be reported on this network';
+    if (input.targetId !== input.targetOwnerId) return 'A profile report names the reported identity as its target';
+    if (input.box) return 'A profile report carries no box';
+  }
+  if (input.box) {
+    if (boxMaxBytes === null) return 'Reports carry no box on this network';
+    if (input.box.length === 0 || input.box.length > boxMaxBytes) return `The moderators' box must be 1 to ${boxMaxBytes} bytes`;
+  }
+  return null;
 }
 
 const records = (docs: Record<string, unknown>[]): ReportRecord[] =>
@@ -75,25 +109,40 @@ class ReportService {
    * THROWS when the read fails, so a caller never offers a second report
    * (a paid 40105) because it could not check for the first.
    */
-  async getOwnReport(reporterId: string, kind: TargetKind, targetId: string): Promise<ReportRecord | null> {
+  async getOwnReport(reporterId: string, kind: ReportTargetKind, targetId: string): Promise<ReportRecord | null> {
     if (!contractTakesReports()) return null;
+    if (kind === 'profile' && !reportShape().profiles) return null;
+    // The unique index's own order: target first on v13, the reporter first before it.
+    const owner: DocumentWhereClause = ['$ownerId', '==', reporterId];
+    const target = targetClauses(kind, targetId);
     const docs = await queryRawDocuments({
       dataContractId: YAPPR_CONTRACT_ID,
       documentTypeName: 'report',
-      where: [['$ownerId', '==', reporterId], [targetField(kind), '==', targetId]],
+      where: reportShape().targetFirst ? [...target, owner] : [owner, ...target],
       limit: 1,
     });
     return records(docs)[0] ?? null;
   }
 
+  /**
+   * File a report. On v13 a report pays the contract's moderators action fee
+   * (50M credits), which the create agrees to from the contract JSON
+   * (`declaredActionFee('report', 'create')`).
+   */
   async fileReport(reporterId: string, input: ReportInput): Promise<StateTransitionResult> {
     if (!contractTakesReports()) return { success: false, error: 'This contract takes no reports' };
+    const problem = reportInputShapeProblem(input);
+    if (problem) return { success: false, error: problem };
     const note = input.note?.trim();
+    const target = input.kind === 'profile'
+      ? { about: ABOUT_PROFILE }
+      : { [targetField(input.kind)]: identifierStringToDocumentBytes(input.targetId) };
     return stateTransitionService.createDocument(YAPPR_CONTRACT_ID, 'report', reporterId, {
-      [targetField(input.kind)]: identifierStringToDocumentBytes(input.targetId),
+      ...target,
       targetOwnerId: identifierStringToDocumentBytes(input.targetOwnerId),
       reason: input.reason,
       ...(note ? { note } : {}),
+      ...(input.box ? { box: input.box } : {}),
     });
   }
 
@@ -102,9 +151,32 @@ class ReportService {
    * carries a 90-day \`ttl\`, so it refunds nothing, and a delete after it expired
    * (before the platform's cleanup reached it) still passes: only a replace or a
    * restore is refused (40140), and a report is never replaced.
+   *
+   * On v14 only an unresolved report can be withdrawn (the `pending` delete
+   * rule; a resolved one is refused with a PAID 40147). The report is read
+   * again first, since a moderator may have resolved it after the reporter's
+   * screen loaded, and a resolved one is refused here with
+   * {@link REPORT_RESOLVED_MESSAGE} before anything is signed. A report the
+   * read does not find goes on to the delete, which reports it gone (40101);
+   * only a node lagging behind a resolution it has not seen yet can still let
+   * a paid 40147 through.
    */
   async withdrawReport(reporterId: string, reportId: string): Promise<StateTransitionResult> {
     if (!contractTakesReports()) return { success: false, error: 'This contract takes no reports' };
+    if (reportsWithdrawOnlyWhilePending()) {
+      let stored: ReportRecord | undefined;
+      try {
+        stored = records(await queryRawDocuments({
+          dataContractId: YAPPR_CONTRACT_ID,
+          documentTypeName: 'report',
+          where: [['$id', '==', reportId]],
+          limit: 1,
+        }))[0];
+      } catch (error) {
+        return { success: false, error: extractErrorMessage(error) };
+      }
+      if (stored && !reportCanBeWithdrawn(stored)) return { success: false, error: REPORT_RESOLVED_MESSAGE };
+    }
     return stateTransitionService.deleteDocument(YAPPR_CONTRACT_ID, 'report', reportId, reporterId);
   }
 
@@ -174,8 +246,8 @@ class ReportService {
     return { reports, ...(docs.length === limit && last ? { next: { id: last.id, createdAt: orderValueOf(last, orderBy) } } : {}) };
   }
 
-  /** Every report on one post or reply (`byPost` / `byReply`), up to {@link MAX_REPORTS_PER_TARGET}. */
-  async listForTarget(kind: TargetKind, targetId: string): Promise<ReportRecord[]> {
+  /** Every report on one post, reply (`byPost` / `byReply`) or profile (`byTarget`), up to {@link MAX_REPORTS_PER_TARGET}. */
+  async listForTarget(kind: ReportTargetKind, targetId: string): Promise<ReportRecord[]> {
     if (!contractTakesReports()) return [];
     const sdk = await getEvoSdk();
     const { documents } = await paginateFetchAll(
@@ -183,7 +255,7 @@ class ReportService {
       () => ({
         dataContractId: YAPPR_CONTRACT_ID,
         documentTypeName: 'report',
-        where: [[targetField(kind), '==', targetId]],
+        where: targetClauses(kind, targetId),
       }),
       (doc) => doc,
       { maxResults: MAX_REPORTS_PER_TARGET }

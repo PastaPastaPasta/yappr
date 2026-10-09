@@ -26,7 +26,7 @@ import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Spinner } from '@/components/ui/spinner'
-import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRangeDisplay } from '@/components/store'
+import { ShippingZoneModal, PaymentMethodModal, InventoryUploadModal, PriceRangeDisplay, DigitalBadge } from '@/components/store'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
 import { formatPrice } from '@/lib/utils/format'
 import { getStoreStatusLabel, getStoreStatusDescription } from '@/lib/utils/store-status'
@@ -42,6 +42,7 @@ import { storefrontIsV2 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import type { Store, StoreItem, ShippingZone } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 function StoreManagePage() {
   const router = useRouter()
@@ -108,9 +109,9 @@ function StoreManagePage() {
         const [itemsResult, zonesResult, ordersResult, encKeyResult] = await Promise.allSettled([
           storeItemService.getAllByStore(currentStoreId),
           shippingZoneService.getByStore(currentStoreId),
-          // v2: O(1) countable index; v1: the legacy capped page length.
+          // v2: O(1) countable index (v6: on the store); v1: the legacy capped page length.
           storefrontIsV2()
-            ? storeStatsService.countSellerOrders(user.identityId)
+            ? storeStatsService.countSellerOrders(user.identityId, currentStoreId)
             : storeOrderService.getSellerOrders(user.identityId, { limit: 100 }).then((result) => result.orders.length),
           identityService.hasEncryptionKey(user.identityId)
         ])
@@ -374,7 +375,7 @@ function StoreManagePage() {
             <div className="px-4 pb-4 flex items-center gap-4">
               <div className="w-16 h-16 rounded-xl bg-gray-200 dark:bg-gray-800 overflow-hidden flex-shrink-0">
                 {store.logoUrl ? (
-                  <img src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
+                  <IpfsImage src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <BuildingStorefrontIcon className="h-8 w-8 text-gray-400" />
@@ -568,6 +569,7 @@ function StoreManagePage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h4 className="font-medium truncate">{item.title}</h4>
+                          {item.fulfillment === 'digital' && <DigitalBadge />}
                           <PriceRangeDisplay
                             minPrice={priceRange.min}
                             maxPrice={priceRange.max}

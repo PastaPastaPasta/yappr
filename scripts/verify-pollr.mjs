@@ -1,25 +1,37 @@
 /**
- * Registration-day battery for the **Pollr contract**
+ * Registration-day battery for the **Pollr v6 contract**
  * (`contracts/pollr-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run live on a
- * beta.1+ devnet. Actors are seed-ledger personas: a CREATOR (who owns the polls
- * and pays for the preallocated ballot trees) and two VOTERS. Ballots are free.
+ * devnet. Actors are seed-ledger personas: a CREATOR (who owns the polls) and two
+ * VOTERS. Ballots are free.
  *
- * Ballots are indexOnly: no id-addressable row, so every acceptance is decided by
- * a VALUE query on `byPollChoice`, never by the SDK's throw/no-throw —
- * `documents.create()` can throw post-broadcast for a write that landed.
+ * v6 is v5 plus the owner's delete of a poll until its first ballot: the poll's
+ * `noBallots` deleteConstraints rule counts every ballot naming it (withdrawn
+ * ones included) off `vote.byPoll`, and a delete that breaks it is a paid 40147.
+ * Ballots refer to the poll as a deletableDocument, so one cast after the delete
+ * is a 40120 (p8).
+ *
+ * It has ONE stored, mutable, undeletable ballot doctype, `vote`: a single-choice
+ * voter holds one ballot (slot 0) whose `choice` changes or is dropped (withdrawn);
+ * a multi-choice voter holds one ballot per option (slot = option), ticked
+ * (choice = slot) or unticked (choice dropped). `pollId` binds the copied
+ * pollOptionCount / pollMultiChoice / pollEndsAt to the poll, and every create AND
+ * replace must land by the poll's close (`writtenBeforeClose`). Acceptance is
+ * decided by reading the ballot back (by its byPollVoter key for a create, by id
+ * for a replace), never by the SDK's throw/no-throw.
  *
  *   NETWORK=devnet node scripts/verify-pollr.mjs --contract <id> \
- *     [--creator 230] [--voter 231] [--voter2 232] [--v3 <v3 contract id>] [--only p3,p6]
+ *     [--creator 230] [--voter 231] [--voter2 232] [--close-in 180000] [--only p3,p6]
  *   node scripts/verify-pollr.mjs --self-test   # offline: contract declares what the cases assert
  *
- * p12 (the beta.5 re-cut): a poll whose options skip a slot is refused 10422
- * `optionsContiguous`; the p1 fixtures (options 0-2) are the accepted side.
+ * `--close-in` (ms, default 3 minutes) is the window of the closing poll p1 opens
+ * and p9 waits out to prove the close rule live.
  */
 import {
-  DELETE_FORBIDDEN, DUPLICATE_UNIQUE, FOREIGN_SIGNATURE, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
-  decodeIntGroupKey, ghostIdentity, id32, runBattery, selfTest,
+  DELETE_CONSTRAINT, DELETE_FORBIDDEN, DUPLICATE_UNIQUE, IMMUTABLE_CHANGED, PROPERTY_MISMATCH, REFERENCE_NOT_FOUND,
+  decodeIntGroupKey, ghostIdentity, id32, normalizeId, reportSelfTest, runBattery, selfTest,
 } from './battery-lib.mjs';
-import { buildDocument, describeErr, randomEntropy } from './seed/seed-lib.mjs';
+import { readFileSync } from 'node:fs';
+import { buildDocument, sleep } from './seed/seed-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 
 const CONTRACT_FILE = 'pollr-contract.json';
@@ -27,240 +39,302 @@ const CONTRACT_FILE = 'pollr-contract.json';
 /** Option labels the fixture polls carry, in order; the indices are the choices. */
 const OPTIONS = ['alpha', 'bravo', 'charlie'];
 const ALL_CHOICES = OPTIONS.map((_, index) => index);
-// An `in` (or range) clause on an indexOnly prefix property REQUIRES an explicit
-// orderBy on it ("missing order by for range error"); equality-only reads do not.
-const CHOICE_IN = [['choice', 'in', ALL_CHOICES]];
-const CHOICE_ORDER = [['choice', 'asc']];
-// `isDuplicateVoteError` in lib/services/pollr-vote-service.ts, verbatim. Keep the
-// two in step: the client's duplicate/landed routing hangs off this predicate.
-const CLIENT_DUPLICATE_PREDICATE = /duplicate unique properties|\b40105\b/i;
-// Floor for the extra credits a poll create pays over a byte-identical v3 one (p7):
-// the whole delta is the preallocated ballot trees. Measured delta is ~18M.
-const PREALLOCATION_FLOOR = 5_000_000n;
+const DAY_MS = 86_400_000;
+/** DocumentOwnerIdMismatchError: a delete signed by someone other than the document's owner. */
+const OWNER_MISMATCH = /\b40102\b|mismatch with existing/i;
+/** InvalidDocumentRevisionError: a replace built on a revision that is no longer current. */
+const STALE_REVISION = /\b40106\b|has invalid revision/i;
+/** p9 waits this long past the close, so the block time stamped into $updatedAt is past it too. */
+const CLOSE_MARGIN_MS = 30_000;
+/** The read the client uses for "my ballots on this poll": byPollVoter, in slot order. */
+const VOTER_ORDER = [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']];
+const BALLOT_FIELDS = ['pollId', 'slot', 'choice', 'pollOptionCount', 'pollMultiChoice', 'pollEndsAt'];
 
-const pollData = ({ run, label, multiChoice }) => ({ question: `${label} ${run}?`, ...Object.fromEntries(OPTIONS.map((option, index) => [`option${index}`, option])), ...(multiChoice ? { multiChoice: true } : {}) });
-const ballotData = ({ pollId, pollOwnerId, choice }) => ({ pollId, pollOwnerId, choice });
+const pollData = ({ question, multiChoice, endsAt }) => ({ question, options: OPTIONS, optionCount: OPTIONS.length, multiChoice, endsAt });
+/** What a ballot copies off its poll; a mismatch is 40127. */
+const copied = (poll) => ({ pollOptionCount: OPTIONS.length, pollMultiChoice: poll.multiChoice, pollEndsAt: poll.endsAt });
+/** A ballot on `poll`; `choice` undefined = withdrawn / unticked. */
+const ballotData = (poll, slot, choice, overrides = {}) => ({
+  pollId: id32(poll.id), slot, ...(choice === undefined ? {} : { choice }), ...copied(poll), ...overrides,
+});
 
 // ---- Ballot helpers ----------------------------------------------------------
 
-/** The indexOnly acceptance probe: this voter's entry for (poll, choice). */
-const entryWhere = (pollId, who, choice) => [['pollId', '==', pollId], ['choice', '==', choice], ['$ownerId', '==', who.ownerId]];
-const entryExists = (ctx, docType, pollId, who, choice) => ctx.battery.entryExists(docType, entryWhere(pollId, who, choice));
-
-/** Casts a ballot, deciding acceptance by readback on `byPollChoice`. */
-function castBallot(ctx, docType, who, pollId, choice, { pollOwnerId, accepted } = {}) {
-  const data = ballotData({ pollId: id32(pollId), pollOwnerId: id32(pollOwnerId ?? ctx.creator.ownerId), choice });
-  return ctx.battery.attemptCreateByValues(who, docType, data, entryWhere(pollId, who, choice), { accepted });
+function sameValue(stored, value) {
+  if (value instanceof Uint8Array) return normalizeId(stored) === normalizeId(value);
+  if (typeof value === 'number') return stored !== undefined && stored !== null && Number(stored) === value;
+  return stored === value;
 }
 
-/** A ballot and its verdict in one line; `expect` is null when it must land. */
-async function probeBallot(ctx, label, expect, docType, who, pollId, choice, options) {
-  const outcome = await castBallot(ctx, docType, who, pollId, choice, options);
-  return expect ? ctx.battery.expectRejected(label, outcome, expect) : ctx.battery.expectAccepted(label, outcome);
+/** A stored ballot holds exactly `data`: every field it names, and no `choice` when it names none. */
+const sameBallot = (stored, data) => BALLOT_FIELDS.every((name) => (name in data
+  ? sameValue(stored[name], data[name])
+  : stored[name] === undefined || stored[name] === null));
+
+const showBallots = (docs) => docs.map((doc) => `${Number(doc.slot)}:${doc.choice ?? '-'}@${doc.$revision}`).join(',');
+
+/** The voter's ballot in one slot of a poll, by its unique byPollVoter key. */
+async function ballotAt(ctx, pollId, who, slot) {
+  const found = await ctx.battery.queryDocs('vote', { where: [['pollId', '==', pollId], ['$ownerId', '==', who.ownerId], ['slot', '==', slot]] });
+  return found[0] ?? null;
+}
+
+async function readBallot(ctx, id) {
+  const doc = await ctx.battery.fetchDocument('vote', id);
+  return doc ? { ...doc.toObject(), $revision: BigInt(doc.revision) } : null;
+}
+
+const verdict = (ctx, label, expect, outcome) => (expect
+  ? ctx.battery.expectRejected(label, outcome, expect)
+  : ctx.battery.expectAccepted(label, outcome));
+
+/**
+ * Casts a ballot. Accepted = the voter's (poll, slot) ballot reads back holding
+ * `data` under an id it did not have before the write, so a refused duplicate
+ * cannot score the ballot it collided with as its own. `key` names the ballot
+ * in `ctx.ids` for the cases that edit it later.
+ */
+async function probeBallot(ctx, label, expect, who, data, key) {
+  const pollId = normalizeId(data.pollId);
+  const before = normalizeId((await ballotAt(ctx, pollId, who, data.slot))?.$id);
+  let id = null;
+  const outcome = await ctx.battery.attemptCreate(who, 'vote', data, {
+    accepted: async () => {
+      const now = await ballotAt(ctx, pollId, who, data.slot);
+      if (!now || normalizeId(now.$id) === before || !sameBallot(now, data)) return false;
+      id = normalizeId(now.$id);
+      return true;
+    },
+  });
+  if (outcome.ok && key) ctx.ids.set(key, id);
+  return verdict(ctx, label, expect, { ...outcome, id });
+}
+
+function idOf(ctx, key) {
+  const id = ctx.ids.get(key);
+  if (!id) throw new Error(`the ${key} ballot is unavailable (did its case run?)`);
+  return id;
 }
 
 /**
- * Re-casts a ballot the voter has ALREADY cast verbatim. Entry existence cannot
- * decide this one — the first entry is already there — so acceptance means "a
- * SECOND entry appeared". Sound only because the battery is the sole writer of
- * these fixture polls: a concurrent voter on the same option would read as accepted.
+ * Replaces a ballot with `data` at an explicit `revision` (the one the replace
+ * CARRIES; default: stored + 1). Accepted = the ballot reads back at exactly that
+ * revision holding exactly `data` — battery-lib's `attemptReplace` only checks
+ * the revision moved, which a stale replace's target revision already satisfies.
  */
-async function probeRecast(ctx, label, docType, who, pollId, choice) {
-  const entries = async () => (await ctx.battery.queryDocs(docType, { where: [['pollId', '==', pollId], ['choice', '==', choice]] })).length;
-  const before = await entries();
-  const outcome = await castBallot(ctx, docType, who, pollId, choice, { accepted: async () => (await entries()) > before });
-  return ctx.battery.expectRejected(label, outcome, DUPLICATE_UNIQUE);
+async function probeEdit(ctx, label, expect, who, key, data, revision) {
+  const { battery, contractId } = ctx;
+  const id = idOf(ctx, key);
+  const next = revision ?? (await battery.revisionOf('vote', id)) + 1n;
+  const { document } = buildDocument({ contractId, docType: 'vote', ownerId: who.ownerId, data, revision: next, id: id32(id) });
+  const outcome = await battery.attemptWrite(
+    { accepted: async () => { const stored = await readBallot(ctx, id); return stored !== null && stored.$revision === next && sameBallot(stored, data); } },
+    () => battery.sdk.documents.replace({ document, identityKey: who.identityKey, signer: who.signer })
+  );
+  return verdict(ctx, label, expect, { ...outcome, id });
 }
 
-const tallyOf = (ctx, docType, pollId) => ctx.battery.groupedCount(docType, [['pollId', '==', pollId], ...CHOICE_IN], ['choice'], decodeIntGroupKey);
+const tallyOf = (ctx, pollId) => ctx.battery.groupedCount('vote', [['pollId', '==', pollId], ['choice', 'in', ALL_CHOICES]], ['choice'], decodeIntGroupKey);
 const sameTally = (got, want) => got.size === want.size && [...want].every(([choice, count]) => got.get(choice) === count);
 const showTally = (tally) => JSON.stringify(Object.fromEntries([...tally].sort(([a], [b]) => a - b)));
+const myBallots = (ctx, poll, who) => ctx.battery.queryDocs('vote', { where: [['pollId', '==', poll.id], ['$ownerId', '==', who.ownerId]], orderBy: VOTER_ORDER });
 
 // ---- Cases ------------------------------------------------------------------
 
 async function caseP1Fixtures(ctx) {
-  const { battery, creator, run } = ctx;
-  console.log('\n--- p1. fixtures: single-choice, multi-choice and never-voted polls ---');
-  for (const [key, label, multiChoice] of [['pollS', 'Single', false], ['pollM', 'Multi', true], ['pollZ', 'Untouched', false]]) {
-    const created = await battery.probeCreate(`p1 ${key} created`, null, creator, 'poll', pollData({ run, label, multiChoice }));
-    ctx[key] = created.ok ? created.id : null;
+  const { battery, creator, voter, run, args } = ctx;
+  console.log('\n--- p1. fixtures: single-choice, multi-choice, never-voted and closing polls ---');
+  // The closing poll goes LAST, with its pre-close ballot straight after, and its
+  // close is taken from the clock right before its own create, so the window only
+  // has to cover those two writes.
+  for (const [key, label, multiChoice, closesIn] of [
+    ['pollS', 'Single', false, DAY_MS], ['pollM', 'Multi', true, DAY_MS],
+    ['pollZ', 'Untouched', false, DAY_MS], ['pollC', 'Closing', false, args['close-in']],
+  ]) {
+    const endsAt = Date.now() + closesIn;
+    const created = await battery.probeCreate(`p1 ${key} created (multiChoice ${multiChoice}, closes ${new Date(endsAt).toISOString()})`, null, creator, 'poll', pollData({ question: `${label} ${run}?`, multiChoice, endsAt }));
+    ctx[key] = created.ok ? { id: created.id, multiChoice, endsAt } : null;
   }
-  if (!ctx.pollS || !ctx.pollM || !ctx.pollZ) throw new Error('fixture polls unavailable');
-  // The "a poll may attest an author who is not its creator" gap is GONE: ballots
-  // bind pollOwnerId to the poll's $ownerId, set from the signature. p2c/p2d prove it.
+  if (!ctx.pollS || !ctx.pollM || !ctx.pollZ || !ctx.pollC) throw new Error('fixture polls unavailable');
+  await probeBallot(ctx, 'p1e a ballot on the closing poll, cast before its close (choice 1)', null, voter, ballotData(ctx.pollC, 0, 1), 'C/voter');
+
+  const stored = (await battery.fetchDocument('poll', ctx.pollS.id))?.toObject();
+  battery.check('p1f the single-choice poll reads back with its options in order, optionCount, and multiChoice false WRITTEN (not absent)',
+    JSON.stringify(stored?.options) === JSON.stringify(OPTIONS) && Number(stored?.optionCount) === OPTIONS.length && stored?.multiChoice === false && Number(stored?.endsAt) === ctx.pollS.endsAt,
+    `options=${JSON.stringify(stored?.options)} optionCount=${stored?.optionCount} multiChoice=${stored?.multiChoice} endsAt=${stored?.endsAt}`);
 }
 
 async function caseP2References(ctx) {
-  const { voter, voter2 } = ctx;
-  console.log('\n--- p2. refersTo: ghost polls (40120) and forged pollOwnerId (40127) ---');
-  const ghost = ghostIdentity();
-  const forged = { pollOwnerId: voter2.ownerId };
-  // Every probe uses a (poll, voter, choice) the signer has NOT used: the structural
-  // duplicate check fires before the reference checks.
-  for (const [label, expect, docType, who, pollId, choice, options] of [
-    ['p2a vote on a nonexistent poll is rejected (40120)', REFERENCE_NOT_FOUND, 'vote', voter, ghost, 0, undefined],
-    ['p2b multiVote on a nonexistent poll is rejected (40120)', REFERENCE_NOT_FOUND, 'multiVote', voter, ghost, 0, undefined],
-    ['p2c vote carrying the WRONG pollOwnerId is rejected (40127)', PROPERTY_MISMATCH, 'vote', voter2, ctx.pollS, 2, forged],
-    ['p2d multiVote carrying the WRONG pollOwnerId is rejected (40127)', PROPERTY_MISMATCH, 'multiVote', voter2, ctx.pollM, 2, forged],
-  ]) await probeBallot(ctx, label, expect, docType, who, pollId, choice, options);
+  const { voter2 } = ctx;
+  console.log('\n--- p2. refersTo: ghost polls (40120) and wrong copied poll fields (40127) ---');
+  // voter2 holds no ballot on pollS yet, so no unique-index collision can fire first.
+  for (const [label, expect, overrides] of [
+    ['p2a a ballot on a nonexistent poll is rejected (40120)', REFERENCE_NOT_FOUND, { pollId: id32(ghostIdentity()) }],
+    ['p2b a ballot copying the WRONG pollOptionCount is rejected (40127)', PROPERTY_MISMATCH, { pollOptionCount: OPTIONS.length + 1 }],
+    ['p2c a ballot claiming pollMultiChoice true on a single-choice poll is rejected (40127)', PROPERTY_MISMATCH, { pollMultiChoice: true }],
+    ['p2d a ballot copying a LATER pollEndsAt (voting past the close) is rejected (40127)', PROPERTY_MISMATCH, { pollEndsAt: ctx.pollS.endsAt + 60_000 }],
+  ]) await probeBallot(ctx, label, expect, voter2, ballotData(ctx.pollS, 0, 0, overrides));
 }
 
 async function caseP3SingleChoice(ctx) {
-  const { battery, creator, voter, voter2 } = ctx;
-  console.log('\n--- p3. single choice is structural: one entry per (poll, voter) ---');
-  await probeBallot(ctx, 'p3a voter ballot for choice 0 accepted', null, 'vote', voter, ctx.pollS, 0);
-  const changed = await probeBallot(ctx, 'p3b the SAME voter changing to choice 1 is rejected (40105 — byPoll admits one entry per voter)', DUPLICATE_UNIQUE, 'vote', voter, ctx.pollS, 1);
-  // The client routes this rejection by TEXT: a duplicate that reads as an ordinary
-  // error goes to the landed probe, which finds the EARLIER entry and calls the
-  // rejected write a cast ballot. Pin the wording the structural rule produces.
-  battery.check("p3b' the rejection matches pollrVoteService.isDuplicateVoteError's predicate verbatim", CLIENT_DUPLICATE_PREDICATE.test(changed.error ?? ''), (changed.error ?? '').slice(0, 160));
-  await probeRecast(ctx, 'p3c the same voter repeating choice 0 verbatim is rejected (40105)', 'vote', voter, ctx.pollS, 0);
-  await probeBallot(ctx, 'p3d a SECOND voter is unaffected (choice 1)', null, 'vote', voter2, ctx.pollS, 1);
-  await probeBallot(ctx, 'p3e the creator may vote on their own poll (choice 1)', null, 'vote', creator, ctx.pollS, 1);
-  ctx.expectedSingle = new Map([[0, 1], [1, 2]]); // {0: voter, 1: voter2 + creator}
+  const { creator, voter, voter2 } = ctx;
+  const S = ctx.pollS;
+  console.log('\n--- p3. single choice: one ballot (slot 0), changed or withdrawn by replace ---');
+  await probeBallot(ctx, 'p3a voter ballot for choice 0 accepted', null, voter, ballotData(S, 0, 0), 'S/voter');
+  await probeBallot(ctx, 'p3b a SECOND create on the same (poll, voter, slot 0) is rejected (40105)', DUPLICATE_UNIQUE, voter, ballotData(S, 0, 1));
+  await probeEdit(ctx, 'p3c changing the vote to choice 1 by replace is accepted', null, voter, 'S/voter', ballotData(S, 0, 1));
+  await probeEdit(ctx, 'p3d withdrawing (replace without choice) is accepted', null, voter, 'S/voter', ballotData(S, 0, undefined));
+  await probeEdit(ctx, 'p3e re-picking choice 2 after the withdrawal is accepted', null, voter, 'S/voter', ballotData(S, 0, 2));
+  await probeBallot(ctx, 'p3f a second voter is unaffected (choice 1)', null, voter2, ballotData(S, 0, 1), 'S/voter2');
+  await probeBallot(ctx, 'p3g the creator may vote on their own poll (choice 0)', null, creator, ballotData(S, 0, 0), 'S/creator');
+  await probeEdit(ctx, 'p3h the creator withdraws and stays withdrawn (p5 must not count it)', null, creator, 'S/creator', ballotData(S, 0, undefined));
+  await probeEdit(ctx, 'p3i moving a ballot to another poll by replace is rejected (40128 — pollId is immutable)', IMMUTABLE_CHANGED, voter, 'S/voter', ballotData(ctx.pollZ, 0, 2));
+  await probeBallot(ctx, 'p3j a slot-1 ballot on a single-choice poll is rejected (10422 singleUsesSlotZero)', constraintViolation('singleUsesSlotZero'), voter2, ballotData(S, 1, 1));
+  ctx.expectedSingle = new Map([[1, 1], [2, 1]]); // {1: voter2, 2: voter}; the creator's is withdrawn
 }
 
 async function caseP4MultiChoice(ctx) {
   const { voter, voter2 } = ctx;
-  console.log('\n--- p4. multi choice: one entry per (poll, voter, choice) ---');
-  await probeBallot(ctx, 'p4a voter selects choice 0', null, 'multiVote', voter, ctx.pollM, 0);
-  await probeBallot(ctx, 'p4b the SAME voter adds choice 2 (accepted — the entry differs)', null, 'multiVote', voter, ctx.pollM, 2);
-  await probeRecast(ctx, 'p4c repeating choice 0 is rejected (40105)', 'multiVote', voter, ctx.pollM, 0);
-  await probeBallot(ctx, 'p4d a second voter selects choice 2', null, 'multiVote', voter2, ctx.pollM, 2);
-  ctx.expectedMulti = new Map([[0, 1], [2, 2]]); // {0: voter, 2: voter + voter2}
+  const M = ctx.pollM;
+  console.log('\n--- p4. multi choice: one ballot per option (slot = option), ticked or unticked ---');
+  await probeBallot(ctx, 'p4a voter ticks option 0 (slot 0)', null, voter, ballotData(M, 0, 0), 'M/voter/0');
+  await probeBallot(ctx, 'p4b the SAME voter ticks option 2 (slot 2 — a separate ballot)', null, voter, ballotData(M, 2, 2), 'M/voter/2');
+  await probeBallot(ctx, 'p4c ticking option 2 again with a second create is rejected (40105)', DUPLICATE_UNIQUE, voter, ballotData(M, 2, 2));
+  await probeEdit(ctx, 'p4d unticking option 0 (replace without choice) is accepted', null, voter, 'M/voter/0', ballotData(M, 0, undefined));
+  await probeBallot(ctx, 'p4e a second voter ticks option 2', null, voter2, ballotData(M, 2, 2), 'M/voter2/2');
+  await probeBallot(ctx, 'p4f a slot-0 ballot holding choice 1 is rejected (10422 multiChoiceIsSlot)', constraintViolation('multiChoiceIsSlot'), voter2, ballotData(M, 0, 1));
+  await probeEdit(ctx, 'p4g moving the unticked slot-0 ballot to slot 1 by replace is rejected (40128 — slot is immutable)', IMMUTABLE_CHANGED, voter, 'M/voter/0', ballotData(M, 1, undefined));
+  ctx.expectedMulti = new Map([[2, 2]]); // {2: voter + voter2}; voter's option 0 is unticked
 }
 
 async function caseP5Tallies(ctx) {
   const { battery } = ctx;
-  console.log('\n--- p5. per-choice tallies off the count tree ---');
-  const single = await tallyOf(ctx, 'vote', ctx.pollS);
-  battery.check('p5a single-choice grouped count matches the ballots cast', sameTally(single, ctx.expectedSingle), `got=${showTally(single)} want=${showTally(ctx.expectedSingle)}`);
-  const multi = await tallyOf(ctx, 'multiVote', ctx.pollM);
-  battery.check('p5b multi-choice grouped count matches the selections cast', sameTally(multi, ctx.expectedMulti), `got=${showTally(multi)} want=${showTally(ctx.expectedMulti)}`);
-  const total = [...single.values()].reduce((sum, count) => sum + count, 0);
-  battery.check('p5c the single-choice grouped total is the VOTER count (one ballot each)', total === 3, `total=${total}`);
-  const untouched = await tallyOf(ctx, 'vote', ctx.pollZ);
-  battery.check('p5d a never-voted poll has no groups (count trees do not materialise empty branches)', untouched.size === 0, `got=${showTally(untouched)}`);
-  // A count on `pollId` ALONE is a prefix count, which boolean `rankedCountable`
-  // does not give: it puts the count tree at the `choice` level only. (The
-  // `rankedCountable: {at}` form would, but `byPoll` terminates at exactly that
-  // level and prefix-exclusivity refuses it.) The client sums the grouped tally.
-  for (const [label, docType, pollId] of [['p5e `vote`', 'vote', ctx.pollS], ['p5f multiVote', 'multiVote', ctx.pollM]]) {
-    let outcome = 'accepted';
-    try { await battery.countBy(docType, [['pollId', '==', pollId]]); } catch (e) { outcome = describeErr(e); }
-    battery.check(`${label} refuses a bare prefix count on pollId (the count tree lives at the choice level)`, /countable/i.test(outcome), outcome.slice(0, 150));
-  }
+  console.log('\n--- p5. per-choice tallies off the byPollChoice count tree (skipIfAbsent choice) ---');
+  const single = await tallyOf(ctx, ctx.pollS.id);
+  battery.check('p5a single-choice grouped count matches the ballots after the edits', ctx.expectedSingle.size > 0 && sameTally(single, ctx.expectedSingle), `got=${showTally(single)} want=${showTally(ctx.expectedSingle)}`);
+  const multi = await tallyOf(ctx, ctx.pollM.id);
+  battery.check('p5b multi-choice grouped count counts ticked options only', ctx.expectedMulti.size > 0 && sameTally(multi, ctx.expectedMulti), `got=${showTally(multi)} want=${showTally(ctx.expectedMulti)}`);
+  const rows = await battery.queryDocs('vote', { where: [['pollId', '==', ctx.pollS.id]], orderBy: VOTER_ORDER });
+  const tallied = [...single.values()].reduce((total, count) => total + count, 0);
+  battery.check('p5c a withdrawn ballot is still a document but leaves the tally (3 ballots, 2 counted)', rows.length === 3 && tallied === 2, `ballots=${rows.length} tallied=${tallied}`);
+  const equality = await Promise.all(ALL_CHOICES.map((choice) => battery.countBy('vote', [['pollId', '==', ctx.pollS.id], ['choice', '==', choice]])));
+  battery.check('p5d per-choice equality counts agree with the grouped count', equality.every((count, choice) => count === (ctx.expectedSingle.get(choice) ?? 0)), `counts=${JSON.stringify(equality)}`);
+  const untouched = await tallyOf(ctx, ctx.pollZ.id);
+  battery.check('p5e a never-voted poll has no groups (count trees do not materialise empty branches)', untouched.size === 0, `got=${showTally(untouched)}`);
+  battery.workingShapes.push({ label: 'poll tally (byPollChoice grouped count)', shape: { documentTypeName: 'vote', where: [['pollId', '==', '<pollId>'], ['choice', 'in', ALL_CHOICES]], groupBy: ['choice'] } });
 }
 
-async function caseP6RankedWinner(ctx) {
-  const { battery } = ctx;
-  console.log('\n--- p6. ranked winner: groupBy choice with the poll pinned ---');
-  const winner = await battery.ranked('vote', 'choice', { type: 'count' }, { where: [['pollId', '==', ctx.pollS]], limit: 1 });
-  const top = winner.page.entries?.[0];
-  battery.check('p6a the ranked top-1 group is the winning option (choice 1, two ballots)', decodeIntGroupKey(top?.groupValue) === 1 && Number(top?.value) === 2, `groupValue=${JSON.stringify(top?.groupValue)} value=${top?.value}`);
-  // decodeIntGroupKey accepts both forms, but pollrVoteService.getWinner does a bare
-  // Number(). Pin the form docs/NON_SOCIAL_CONTRACTS.md claims ranked values arrive in.
-  battery.check("p6a' ranked integer group values arrive DECODED, not as the 0x80-offset hex grouped counts use", typeof top?.groupValue === 'number', `typeof groupValue=${typeof top?.groupValue}`);
-  battery.workingShapes.push({ label: 'poll winner (ranked, byPollChoice terminal level)', shape: { ...winner.shape, dataContractId: '<contractId>', where: [['pollId', '==', '<pollId>']] } });
-
-  const full = await battery.ranked('vote', 'choice', { type: 'count' }, { where: [['pollId', '==', ctx.pollS]] });
-  const page = new Map((full.page.entries ?? []).map((entry) => [decodeIntGroupKey(entry.groupValue), Number(entry.value)]));
-  // `every` over an empty expectation is vacuously true — require p3 to have run.
-  battery.check('p6b the full ranked page carries every voted option with exact counts', ctx.expectedSingle.size > 0 && [...ctx.expectedSingle].every(([choice, count]) => page.get(choice) === count), `page=${showTally(page)} want=${showTally(ctx.expectedSingle)}`);
-
-  const multi = await battery.ranked('multiVote', 'choice', { type: 'count' }, { where: [['pollId', '==', ctx.pollM]], limit: 1 });
-  const multiTop = multi.page.entries?.[0];
-  battery.check('p6c the multi-choice ranked top-1 group is choice 2 (two selections)', decodeIntGroupKey(multiTop?.groupValue) === 2 && Number(multiTop?.value) === 2, `groupValue=${JSON.stringify(multiTop?.groupValue)} value=${multiTop?.value}`);
-}
-
-async function caseP7Preallocation(ctx) {
-  const { battery, creator } = ctx;
-  console.log('\n--- p7. preallocation: the poll creator pays for the ballot trees ---');
-  if (!ctx.args.v3) { battery.check('p7 preallocation cost comparison', true, 'skipped — pass --v3 <v3 contract id> to measure'); return; }
-  const costOf = async (contract, label) => {
-    const before = await battery.balanceOf(creator.ownerId);
-    // Identical payloads on both contracts, so the delta is preallocation alone.
-    const created = await battery.attemptCreate(creator, 'poll', { question: `Cost ${label} ${ctx.run}?`, option0: OPTIONS[0], option1: OPTIONS[1] }, { contract });
-    if (!created.ok) throw new Error(`${label} poll create failed: ${(created.error ?? '').slice(0, 160)}`);
-    return before - (await battery.balanceOf(creator.ownerId));
-  };
-  const v3Cost = await costOf(ctx.args.v3, 'v3');
-  const cost = await costOf(ctx.contractId, 'current');
-  battery.check(`p7a a poll create costs at least ${PREALLOCATION_FLOOR} credits more than the BYTE-IDENTICAL v3 poll — the preallocated vote.byPoll / vote.byPollOwner trees are billed to the creator`, cost - v3Cost >= PREALLOCATION_FLOOR, `v3=${v3Cost} credits, current=${cost} credits, delta=${cost - v3Cost}`);
-}
-
-async function caseP8Unvote(ctx) {
+async function caseP6MyBallots(ctx) {
   const { battery, voter } = ctx;
-  console.log('\n--- p8. unvote: query-recovered tuple, delete-by-values, re-vote ---');
-  // NOTHING from the create call is reused (its Document is unreliable for indexOnly
-  // types). A projection carries only what ITS OWN index path holds, so byPollChoice
-  // yields pollId + choice and NOT pollOwnerId — that comes off the poll's $ownerId,
-  // where the write took it from. With no `$createdAt` there is nothing else.
-  const mine = await battery.queryDocs('vote', { where: [['pollId', '==', ctx.pollS], ...CHOICE_IN, ['$ownerId', '==', voter.ownerId]], orderBy: CHOICE_ORDER });
-  const choice = mine[0] === undefined ? null : Number(mine[0].choice);
-  const pollFields = (await battery.fetchDocument('poll', ctx.pollS))?.toObject();
-  const pollOwner = pollFields?.$ownerId ? battery.b58(pollFields.$ownerId) : null;
-  battery.check("p8a the delete tuple recovers: choice from the byPollChoice projection, pollOwnerId from the poll's $ownerId", choice === 0 && pollOwner === ctx.creator.ownerId, `choice=${choice} pollOwnerId=${pollOwner} entries=${mine.length} (projection keys: ${Object.keys(mine[0] ?? {}).join(',')})`);
-  if (choice === null || pollOwner === null) return;
-
-  const before = await tallyOf(ctx, 'vote', ctx.pollS);
-  const { document } = buildDocument({ contractId: ctx.contractId, docType: 'vote', ownerId: voter.ownerId, data: ballotData({ pollId: id32(ctx.pollS), pollOwnerId: id32(pollOwner), choice }), entropy: randomEntropy() });
-  const deleted = battery.expectAccepted('p8b delete-by-values with the query-recovered tuple is accepted (no $createdAt needed)', await battery.attemptDeleteByValues(voter, document, async () => !(await entryExists(ctx, 'vote', ctx.pollS, voter, choice))));
-  if (!deleted.ok) return;
-  const after = await tallyOf(ctx, 'vote', ctx.pollS);
-  battery.check('p8c the count tree decrements after the unvote', (before.get(choice) ?? 0) - (after.get(choice) ?? 0) === 1, `before=${showTally(before)} after=${showTally(after)}`);
-  await probeBallot(ctx, 'p8d re-voting after the unvote is accepted (structural uniqueness cleared)', null, 'vote', voter, ctx.pollS, choice);
+  console.log('\n--- p6. my ballots on a poll: byPollVoter, in slot order (the client read) ---');
+  const multi = showBallots(await myBallots(ctx, ctx.pollM, voter));
+  battery.check('p6a my multi-choice ballots: slot 0 unticked at revision 2, slot 2 ticked at revision 1', multi === '0:-@2,2:2@1', `ballots=${multi}`);
+  const single = showBallots(await myBallots(ctx, ctx.pollS, voter));
+  battery.check('p6b my single-choice ballot: slot 0 holding choice 2 at revision 4 (create, change, withdraw, re-pick)', single === '0:2@4', `ballots=${single}`);
+  battery.workingShapes.push({ label: 'my ballots on one poll (byPollVoter)', shape: { documentTypeName: 'vote', where: [['pollId', '==', '<pollId>'], ['$ownerId', '==', '<me>']], orderBy: VOTER_ORDER } });
 }
 
-async function caseP9ForeignDelete(ctx) {
+async function caseP7StaleRevision(ctx) {
+  const { battery, voter2 } = ctx;
+  const S = ctx.pollS;
+  console.log('\n--- p7. a replace built on a stale revision is refused ---');
+  // voter2's pollS ballot is at revision 1 (choice 1, p3f). One device moves it
+  // to revision 2; a second device still holding revision 1 tries the same.
+  const moved = await probeEdit(ctx, 'p7a changing choice 1 → 0 at revision 2 is accepted', null, voter2, 'S/voter2', ballotData(S, 0, 0), 2n);
+  if (!moved.ok) return;
+  await probeEdit(ctx, 'p7b a second replace built on revision 1 (carrying revision 2 again) is rejected', STALE_REVISION, voter2, 'S/voter2', ballotData(S, 0, 2), 2n);
+  const stored = await readBallot(ctx, idOf(ctx, 'S/voter2'));
+  battery.check('p7c the ballot still holds the first replace (choice 0, revision 2)', stored !== null && sameBallot(stored, ballotData(S, 0, 0)) && stored.$revision === 2n, `choice=${stored?.choice} revision=${stored?.$revision}`);
+  ctx.expectedSingle = new Map([[0, 1], [2, 1]]);
+}
+
+/** A fresh single-choice poll for one delete case, open for a day. */
+async function deleteFixture(ctx, key, label) {
+  const endsAt = Date.now() + DAY_MS;
+  const created = await ctx.battery.probeCreate(`${key} fixture poll created`, null, ctx.creator, 'poll', pollData({ question: `${label} ${ctx.run}?`, multiChoice: false, endsAt }));
+  if (!created.ok) throw new Error(`the ${key} fixture poll is unavailable`);
+  return { id: created.id, multiChoice: false, endsAt };
+}
+
+/** Every ballot on a poll, withdrawn ones included: the byPoll count the noBallots rule reads. */
+const ballotCount = (ctx, pollId) => ctx.battery.countBy('vote', [['pollId', '==', pollId]]);
+
+async function caseP8Deletes(ctx) {
+  const { battery, creator, voter } = ctx;
+  console.log('\n--- p8. deletes: never a ballot; a poll only by its owner, until its first ballot (40147 noBallots) ---');
+  await battery.probeDelete('p8a deleting a ballot is rejected (canBeDeleted:false)', DELETE_FORBIDDEN, voter, 'vote', idOf(ctx, 'S/voter'));
+  await battery.probeDelete('p8b deleting a poll with ballots (pollS) is rejected (40147 noBallots)', DELETE_CONSTRAINT, creator, 'poll', ctx.pollS.id);
+
+  // No ballot: only the owner deletes it, and then a ballot can no longer name it.
+  const empty = await deleteFixture(ctx, 'p8c', 'Deleted');
+  battery.check('p8c a poll nobody voted on has no ballots (byPoll count 0)', (await ballotCount(ctx, empty.id)) === 0);
+  await battery.probeDelete('p8d a stranger deleting it is rejected (40102)', OWNER_MISMATCH, voter, 'poll', empty.id);
+  const removed = await battery.probeDelete('p8e the owner deletes a poll with no ballots', null, creator, 'poll', empty.id);
+  if (removed.ok) await probeBallot(ctx, 'p8f a ballot on the deleted poll is rejected (40120)', REFERENCE_NOT_FOUND, voter, ballotData(empty, 0, 0));
+
+  // One ballot: permanent.
+  const voted = await deleteFixture(ctx, 'p8g', 'Voted');
+  const cast = await probeBallot(ctx, 'p8g a ballot on the fresh poll is accepted', null, voter, ballotData(voted, 0, 1), 'V/voter');
+  if (cast.ok) {
+    await battery.probeDelete('p8h deleting it after one ballot is rejected (40147 noBallots)', DELETE_CONSTRAINT, creator, 'poll', voted.id);
+    battery.check('p8i the poll still reads back after the refused delete', (await battery.fetchDocument('poll', voted.id)) !== null);
+  }
+
+  // One withdrawn ballot: it leaves the tally but still counts for noBallots.
+  const withdrawn = await deleteFixture(ctx, 'p8j', 'Withdrawn');
+  const first = await probeBallot(ctx, 'p8j a ballot on the fresh poll is accepted', null, voter, ballotData(withdrawn, 0, 2), 'W/voter');
+  const pulled = first.ok && (await probeEdit(ctx, 'p8k withdrawing it (replace without choice) is accepted', null, voter, 'W/voter', ballotData(withdrawn, 0, undefined))).ok;
+  if (pulled) {
+    const tally = await tallyOf(ctx, withdrawn.id);
+    const ballots = await ballotCount(ctx, withdrawn.id);
+    battery.check('p8l the withdrawn ballot leaves the tally but byPoll still counts it', tally.size === 0 && ballots === 1, `tally=${showTally(tally)} ballots=${ballots}`);
+    await battery.probeDelete('p8m deleting a poll whose only ballot is withdrawn is rejected (40147 noBallots)', DELETE_CONSTRAINT, creator, 'poll', withdrawn.id);
+  }
+  battery.workingShapes.push({ label: 'ballots on a poll, withdrawn included (byPoll count)', shape: { documentTypeName: 'vote', where: [['pollId', '==', '<pollId>']] } });
+}
+
+async function caseP9CloseRule(ctx) {
   const { battery, voter, voter2 } = ctx;
-  console.log("\n--- p9. deleting someone ELSE'S ballot is refused ---");
-  // voter2's entry on pollS is choice 1 (p3d); voter signs a delete carrying it.
-  const { document } = buildDocument({ contractId: ctx.contractId, docType: 'vote', ownerId: voter2.ownerId, data: ballotData({ pollId: id32(ctx.pollS), pollOwnerId: id32(ctx.creator.ownerId), choice: 1 }), entropy: randomEntropy() });
-  battery.expectRejected("p9a deleting the other voter's ballot with our own signature is rejected", await battery.attemptDeleteByValues(voter, document, async () => !(await entryExists(ctx, 'vote', ctx.pollS, voter2, 1))), FOREIGN_SIGNATURE);
-  battery.check('p9b the victim entry survives the attack', await entryExists(ctx, 'vote', ctx.pollS, voter2, 1));
+  const C = ctx.pollC;
+  console.log('\n--- p9. the close: after endsAt no ballot is created or changed (10422 writtenBeforeClose) ---');
+  const waitMs = C.endsAt + CLOSE_MARGIN_MS - Date.now();
+  if (waitMs > 0) {
+    console.log(`     waiting ${Math.ceil(waitMs / 1000)} s for the closing poll (endsAt ${new Date(C.endsAt).toISOString()}) to close…`);
+    await sleep(waitMs);
+  }
+  const closed = constraintViolation('writtenBeforeClose');
+  await probeBallot(ctx, 'p9a a new ballot after the close is rejected', closed, voter2, ballotData(C, 0, 0));
+  await probeEdit(ctx, 'p9b changing a ballot after the close is rejected', closed, voter, 'C/voter', ballotData(C, 0, 2));
+  await probeEdit(ctx, 'p9c withdrawing a ballot after the close is rejected', closed, voter, 'C/voter', ballotData(C, 0, undefined));
+  const stored = await readBallot(ctx, idOf(ctx, 'C/voter'));
+  battery.check('p9d the ballot cast before the close reads back unchanged (choice 1, revision 1)', stored !== null && sameBallot(stored, ballotData(C, 0, 1)) && stored.$revision === 1n, `choice=${stored?.choice} revision=${stored?.$revision}`);
+  const tally = await tallyOf(ctx, C.id);
+  battery.check('p9e the closed poll\'s tally is final: {1: 1}', sameTally(tally, new Map([[1, 1]])), `got=${showTally(tally)}`);
 }
 
-async function caseP10ReadSurfaces(ctx) {
-  const { battery, voter, creator } = ctx;
-  console.log('\n--- p10. read surfaces: my votes, my choices on a poll, votes on my polls ---');
-  const choicesOf = (docs) => docs.map((doc) => Number(doc.choice)).sort((a, b) => a - b).join(',');
-  const myVotes = await battery.queryDocs('vote', { where: [['$ownerId', '==', voter.ownerId]] });
-  battery.check('p10a byVoterChoice lists my single-choice ballots (poll id + choice)', myVotes.map((doc) => battery.b58(doc.pollId)).includes(ctx.pollS), `polls=${myVotes.length}`);
-  battery.workingShapes.push({ label: 'my votes (byVoterChoice)', shape: { documentTypeName: 'vote', where: [['$ownerId', '==', '<me>']] } });
-
-  const myMulti = await battery.queryDocs('multiVote', { where: [['$ownerId', '==', voter.ownerId]] });
-  const mine = choicesOf(myMulti.filter((doc) => battery.b58(doc.pollId) === ctx.pollM));
-  battery.check('p10b byVoterChoice lists every multi-choice selection I cast', mine === '0,2', `choices=[${mine}]`);
-
-  const onPoll = await battery.queryDocs('multiVote', { where: [['pollId', '==', ctx.pollM], ...CHOICE_IN, ['$ownerId', '==', voter.ownerId]], orderBy: CHOICE_ORDER });
-  battery.check('p10c the per-poll choice read (pollId ==, choice in [...], $ownerId ==) returns exactly my selections', choicesOf(onPoll) === '0,2', `choices=[${choicesOf(onPoll)}]`);
-  battery.workingShapes.push({ label: 'my choices on one poll (byPollChoice)', shape: { documentTypeName: 'multiVote', where: [['pollId', '==', '<pollId>'], ['choice', 'in', ALL_CHOICES], ['$ownerId', '==', '<me>']], orderBy: CHOICE_ORDER } });
-
-  // Pinned to THIS run's poll: the creator persona is reused, so a bare `length >= 3`
-  // would be satisfied by earlier runs even if this run's entries never landed.
-  const onMyPolls = await battery.queryDocs('vote', { where: [['pollOwnerId', '==', creator.ownerId]] });
-  const onThisPoll = onMyPolls.filter((doc) => battery.b58(doc.pollId) === ctx.pollS);
-  battery.check('p10d byPollOwner answers "votes on my polls", including every ballot on this run\'s poll', onThisPoll.length === 3, `thisPoll=${onThisPoll.length} allTime=${onMyPolls.length}`);
-}
-
-async function caseP11Permanence(ctx) {
-  console.log('\n--- p11. the poll is permanent (a ballot can always resolve its reference) ---');
-  await ctx.battery.probeDelete('p11a deleting a poll is rejected (canBeDeleted:false)', DELETE_FORBIDDEN, ctx.creator, 'poll', ctx.pollZ);
-}
-
-async function caseP12PropertyConstraints(ctx) {
-  const { battery, creator, run } = ctx;
-  console.log('\n--- p12. propertyConstraints: poll options are contiguous (10422) ---');
+async function caseP10PropertyConstraints(ctx) {
+  const { creator, run } = ctx;
+  console.log('\n--- p10. propertyConstraints: the refused create cases, live (10422) ---');
+  // The poll cases' endsAt is anchored to CASE_NOW (this process's start): the
+  // optionCountMatches case closes a day after it, the born-closed one a second
+  // before it, so both still break exactly their own rule here.
   for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'poll')) {
-    await battery.probeCreate(`p12 ${label} is refused (10422 ${rule})`, constraintViolation(rule), creator, 'poll', { ...data, question: `${data.question} ${run}` });
+    await ctx.battery.probeCreate(`p10 ${label} is refused (10422 ${rule})`, constraintViolation(rule), creator, 'poll', { ...data, question: `${data.question} ${run}` });
+  }
+  // A ballot on a random pollId would be refused 40120 first, so each vote case
+  // is re-pointed at a real fixture poll of its mode, with that poll's copied
+  // fields; the creator holds no ballot on either, so no 40105 can fire.
+  // writtenBeforeClose is p9's, on a poll that really closed.
+  for (const [label, data, rule] of refusedCreates(CONTRACT_FILE, 'vote').filter(([, , refusedBy]) => refusedBy !== 'writtenBeforeClose')) {
+    const poll = data.pollMultiChoice ? ctx.pollM : ctx.pollZ;
+    await probeBallot(ctx, `p10 ${label} is refused (10422 ${rule})`, constraintViolation(rule), creator, { ...data, pollId: id32(poll.id), ...copied(poll) });
   }
 }
 
 const CASES = new Map([
   ['p1', caseP1Fixtures], ['p2', caseP2References], ['p3', caseP3SingleChoice], ['p4', caseP4MultiChoice],
-  ['p5', caseP5Tallies], ['p6', caseP6RankedWinner], ['p7', caseP7Preallocation], ['p8', caseP8Unvote],
-  ['p9', caseP9ForeignDelete], ['p10', caseP10ReadSurfaces], ['p11', caseP11Permanence], ['p12', caseP12PropertyConstraints],
+  ['p5', caseP5Tallies], ['p6', caseP6MyBallots], ['p7', caseP7StaleRevision], ['p8', caseP8Deletes],
+  ['p9', caseP9CloseRule], ['p10', caseP10PropertyConstraints],
 ]);
 
 await runBattery({
@@ -268,12 +342,37 @@ await runBattery({
   contract: { env: 'POLLR_CONTRACT_ID' },
   cases: CASES,
   actors: { creator: 230, voter: 231, voter2: 232 },
-  flags: { v3: process.env.POLLR_V3_CONTRACT_ID?.trim() || null },
-  extraContracts: (args) => [args.v3],
-  banner: ({ args }) => (args.v3 ? `; v3 baseline ${args.v3}` : ''),
-  // p2c/p2d: a ballot can only ever name the poll's real creator.
-  // p12: the options rule (beta.5).
-  selfTest: () => selfTest(CONTRACT_FILE, { vote: { where: { pollId: { $ownerId: 'pollOwnerId' } } }, multiVote: { where: { pollId: { $ownerId: 'pollOwnerId' } } }, poll: { constraints: DECLARED_RULES[CONTRACT_FILE].poll } }),
-  setup: () => ({ expectedSingle: new Map(), expectedMulti: new Map() }),
-  summary: (ctx) => `pollS=${ctx.pollS} pollM=${ctx.pollM} pollZ=${ctx.pollZ}`,
+  flags: { 'close-in': 180_000 },
+  validate: (args) => {
+    if (!Number.isFinite(args['close-in']) || args['close-in'] < 60_000 || args['close-in'] > DAY_MS) {
+      throw new Error('--close-in takes milliseconds between 60000 (two writes must land before the close) and 86400000');
+    }
+  },
+  // p2: the copied poll fields. p3i/p4g: the frozen ballot fields. p3j/p4f/p9/p10: the rules.
+  // p8: the poll's delete rule.
+  selfTest: () => {
+    const declared = selfTest(CONTRACT_FILE, {
+      poll: {
+        constraints: DECLARED_RULES[CONTRACT_FILE].poll,
+        deleteConstraints: { noBallots: { equal: [{ countOf: ['vote', { pollId: '$id' }] }, 0] } },
+      },
+      vote: {
+        where: { pollId: { optionCount: 'pollOptionCount', multiChoice: 'pollMultiChoice', endsAt: 'pollEndsAt' } },
+        immutable: ['pollId', 'slot'],
+        constraints: DECLARED_RULES[CONTRACT_FILE].vote,
+      },
+    });
+    // What else p8 relies on: the poll is deletable at all, ballots may refer to
+    // a deletable poll, and noBallots has its plain countable index to count off.
+    const { poll, vote } = JSON.parse(readFileSync(new URL(`../contracts/${CONTRACT_FILE}`, import.meta.url), 'utf8')).documentSchemas;
+    const byPoll = vote.indices.find((index) => index.name === 'byPoll');
+    const shape = reportSelfTest(`contracts/${CONTRACT_FILE} (v6 delete shape)`, [
+      ['poll.canBeDeleted is true', poll.canBeDeleted === true],
+      ['vote.pollId is a deletableDocument reference', vote.properties.pollId.refersTo?.type === 'deletableDocument'],
+      ['vote.byPoll is a plain countable [pollId] index', JSON.stringify(byPoll?.properties) === '[{"pollId":"asc"}]' && byPoll?.countable === 'countable' && !byPoll?.unique],
+    ]);
+    return declared || shape;
+  },
+  setup: () => ({ ids: new Map(), expectedSingle: new Map(), expectedMulti: new Map() }),
+  summary: (ctx) => `pollS=${ctx.pollS?.id} pollM=${ctx.pollM?.id} pollZ=${ctx.pollZ?.id} pollC=${ctx.pollC?.id}`,
 });

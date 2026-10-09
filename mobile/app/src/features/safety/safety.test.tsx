@@ -869,6 +869,21 @@ describe('ReportScreen', () => {
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
   });
 
+  it('discloses the moderation fee before a report is sent, only where the contract charges one', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue(null);
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, reportFeeCredits: 50_000_000 } } });
+    const charged = withProviders(<ReportScreen />);
+    await settle();
+    expect(screen.getByTestId('report-fee')).toHaveTextContent(/about 0\.0005 DASH/);
+    charged.unmount();
+
+    fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, reportFeeCredits: null } } });
+    withProviders(<ReportScreen />);
+    await settle();
+    expect(screen.getByTestId('report-sheet')).toBeTruthy();
+    expect(screen.queryByTestId('report-fee')).toBeNull();
+  });
+
   it("shows the form at once while it reads the viewer's report, and the report once it is found", async () => {
     let found: (report: OwnReportDTO | null) => void = () => undefined;
     fakeEngine.method('safety.ownReport').mockReturnValue(new Promise((resolve) => (found = resolve)));
@@ -878,7 +893,7 @@ describe('ReportScreen', () => {
     expect(screen.queryByText(/Checking/)).toBeNull();
 
     await act(async () =>
-      found({ id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null }),
+      found({ id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null, withdrawable: true }),
     );
     expect(screen.getByTestId('report-existing')).toBeTruthy();
     expect(screen.queryByTestId('report-submit')).toBeNull();
@@ -898,7 +913,7 @@ describe('ReportScreen', () => {
     expect(fakeEngine.method('safety.report')).toHaveBeenCalledTimes(1);
 
     fakeEngine.method('safety.ownReport').mockResolvedValue({
-      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null,
+      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30), status: null, resolution: null, moderatedAt: null, withdrawable: true,
     });
     await act(async () => fakeEngine.emit('write.status', advance(pending, refused('DUPLICATE'))));
     await settle();
@@ -944,6 +959,7 @@ describe('ReportScreen', () => {
       status,
       resolution: null,
       moderatedAt: status === null ? null : new Date(2026, 9, 1, 12),
+      withdrawable: true,
     };
     fakeEngine.method('safety.ownReport').mockResolvedValue(report);
     withProviders(<ReportScreen />);
@@ -955,6 +971,20 @@ describe('ReportScreen', () => {
     expect(screen.queryByTestId('report-submit')).toBeNull();
   });
 
+  it('offers no Withdraw on a report the network keeps (v14: resolved)', async () => {
+    fakeEngine.method('safety.ownReport').mockResolvedValue({
+      id: 'r1', reason: 0, note: null, createdAt: new Date(2026, 8, 30, 12), status: 2, resolution: null,
+      moderatedAt: new Date(2026, 9, 1, 12), withdrawable: false,
+    });
+    withProviders(<ReportScreen />);
+    await settle();
+
+    expect(screen.getByTestId('report-existing')).toBeTruthy();
+    expect(screen.queryByTestId('report-withdraw')).toBeNull();
+    expect(screen.getByText(copy.report.resolvedKept)).toBeTruthy();
+    expect(screen.getByTestId('report-done')).toBeTruthy();
+  });
+
   describe('withdrawing an existing report (SAFE-04)', () => {
     const report: OwnReportDTO = {
       id: 'r1',
@@ -964,6 +994,7 @@ describe('ReportScreen', () => {
       status: null,
       resolution: null,
       moderatedAt: null,
+      withdrawable: true,
     };
     let answer: (choice: 'Withdraw' | 'Cancel') => void = () => undefined;
 
@@ -1044,6 +1075,16 @@ describe('ReportScreen', () => {
       await settle();
       expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: 'This report was already closed.' });
       expect(fakeEngine.method('safety.ownReport')).toHaveBeenCalledTimes(2);
+    });
+
+    it('says so in a neutral toast when the moderators resolved the report meanwhile (v14), and reads it again', async () => {
+      const { pending } = await withdraw();
+      fakeEngine.method('safety.ownReport').mockResolvedValue({ ...report, status: 2, withdrawable: false });
+      await act(async () => fakeEngine.emit('write.status', advance(pending, refused('REPORT_RESOLVED'))));
+      await settle();
+      expect(useToastStore.getState().current).toMatchObject({ kind: 'info', message: copy.toast.reportResolved });
+      expect(fakeEngine.method('safety.ownReport')).toHaveBeenCalledTimes(2);
+      expect(queryClient.getQueryData(queryKeys.post.ownReport('p1'))).toMatchObject({ status: 2, withdrawable: false });
     });
 
     it('never keeps the closed report cached once its sheet is gone', async () => {

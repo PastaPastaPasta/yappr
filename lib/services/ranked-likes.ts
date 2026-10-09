@@ -14,6 +14,13 @@
  * Server-side `SELECT count(*) GROUP BY postId ORDER BY count DESC LIMIT n`,
  * O(log n + k) with a proof — no scan, no client-side sorting.
  *
+ * v12: `byAuthorPost` and `byHashtagPost` are `summableOffCountIndex`
+ * counters of `byPost` (one counter per post, no like entries). A ranked
+ * `count(*)` reads their sums, and their `rankedCountable {at: …}` is merged
+ * into that sum ranking, so every query here keeps its shape: grouped at
+ * `postId` under a pin, or at `postAuthor` / `hashtag` with none. Nothing
+ * here reads like documents, which the counters no longer hold.
+ *
  * Zero-count groups are filtered here, on every topology: a ranked page on a
  * PREALLOCATED index carries one for every post or author (v11's like trees,
  * `likeTreesArePreallocated()`), and a fully drained group reports 0 too.
@@ -32,8 +39,9 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
+import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
 import { getEvoSdk } from './evo-sdk-service';
-import { referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
+import { postOwnerIndexPrefix, referencesMayDangle, windowedRankingFor, windowedRankingsAvailable, type RankingAxis, type WindowedRanking } from '../contract-topology';
 
 /**
  * Which slice of time a ranking covers. `'all'` is the all-time axis;
@@ -58,7 +66,7 @@ function windowFor(axis: RankingAxis, window: RankingWindow): WindowedRanking | 
  * all-time. The grid is named explicitly, which keeps the query unambiguous on
  * a doctype that buckets `$createdAt` by more than one grid.
  */
-function windowClause(windowed: WindowedRanking | null): { timeRange: { field: string; selector: WindowedRanking['selector']; grid: { range: number; step: number } }[] } | Record<string, never> {
+export function windowClause(windowed: Pick<WindowedRanking, 'grid' | 'selector'> | null): { timeRange: { field: string; selector: WindowedRanking['selector']; grid: { range: number; step: number } }[] } | Record<string, never> {
   if (!windowed) return {};
   return { timeRange: [{ field: '$createdAt', selector: windowed.selector, grid: { ...windowed.grid } }] };
 }
@@ -175,7 +183,8 @@ async function rankedGroupCounts(
   groupBy: string,
   limit: number,
   windowed: WindowedRanking | null = null,
-  throwOnError = false
+  throwOnError = false,
+  pins: DocumentsIndexPin[] = []
 ): Promise<RankedGroupCount[]> {
   try {
     const sdk = await getEvoSdk();
@@ -186,6 +195,7 @@ async function rankedGroupCounts(
       aggregate: { type: 'count' },
       direction: 'desc',
       limit,
+      ...(pins.length > 0 ? { where: pins } : {}),
       ...windowClause(windowed),
     });
 
@@ -243,11 +253,12 @@ export async function mostFollowedUsers(limit: number = 10): Promise<RankedGroup
 /**
  * The authors with the most posts — v10's ranked chain on `post.ownerAndTime
  * [$ownerId, $createdAt]` (`rankedCountable {at: $ownerId}`), which counts
- * bare reposts too (they are posts). Keys are base58 identity ids. Rejects on
- * failure so the caller can fall back to its scan.
+ * bare reposts too (they are posts). On v13 the index starts at `live`, so the
+ * ranking pins `live == true` and counts no tombstones. Keys are base58
+ * identity ids. Rejects on failure so the caller can fall back to its scan.
  */
 export async function topAuthorsByPostCount(limit: number = 100): Promise<RankedGroupCount[]> {
-  return rankedGroupCounts('post', '$ownerId', limit, null, true);
+  return rankedGroupCounts('post', '$ownerId', limit, null, true, postOwnerIndexPrefix());
 }
 
 export interface HydratedTopPostsOptions {

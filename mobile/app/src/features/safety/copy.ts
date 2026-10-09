@@ -49,6 +49,7 @@ export const copy = {
     reportCopied: 'Report address copied. Send it from any email app.',
     reportWithdrawn: 'Report withdrawn',
     reportGone: 'This report was already closed.',
+    reportResolved: "The moderators already resolved this report, so it can't be withdrawn.",
     withdrawFailed: "Couldn't withdraw your report. Try again.",
   },
   blocked: {
@@ -64,6 +65,8 @@ export const copy = {
     title: (noun: ReportNoun) => `Report ${noun}`,
     /** The one required disclosure: a report is a public document, and its author sees who filed it. */
     disclosure: 'Reports are public. Anyone, including the author, can see that you reported this, your reason and any details.',
+    /** v13: the moderators' action fee every report pays, scaled by the network's fee multiplier. */
+    fee: (dash: string) => `Reporting pays a moderation fee of about ${dash} to the moderators, plus the network fee.`,
     question: 'What is wrong with it?',
     details: (required: boolean) => (required ? 'Details (required)' : 'Details (optional)'),
     placeholder: 'Anything the moderators should know',
@@ -80,6 +83,8 @@ export const copy = {
     sentBody: 'Thanks for letting us know.',
     alsoBlock: (handle: string) => `Also block ${handle}`,
     withdraw: 'Withdraw report',
+    /** v14: the network keeps a report once the moderators resolved it. */
+    resolvedKept: "A resolved report can't be withdrawn. It closes 90 days after you sent it.",
     withdrawing: 'Withdrawing…',
     withdrawTitle: 'Withdraw your report?',
     withdrawBody: 'The moderators will no longer see it.',

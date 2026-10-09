@@ -1,11 +1,15 @@
 /**
  * Publishes any checked-in contract JSON from `contracts/` as a brand-new
- * contract on a devnet, owned by a seed-ledger persona or an e2e bot.
+ * contract on the network `NETWORK` names, owned by a seed-ledger persona or
+ * an e2e bot.
  *
- * Every feature-contract re-cut (storefront, blog, DM, pollr, key-exchange)
- * goes through here. Doctypes priced in YAPP name the social contract through the
- * `SOCIAL_CONTRACT_ID` placeholder, which is replaced with the deployment's
- * social contract id as a 32-byte array (the form registration requires).
+ * Every feature-contract re-cut (storefront, blog, DM, pollr, key-exchange,
+ * blocks) goes through here, and so can a social cut: its `tokens` block (the
+ * YAPP), `$formatVersion` and `version` are carried over from the file. Doctypes
+ * priced in YAPP name the social contract through the `SOCIAL_CONTRACT_ID`
+ * placeholder, which is replaced with the deployment's social contract id as a
+ * 32-byte array (the form registration requires); a file without the
+ * placeholder (the blocks contract, a social cut) needs no social id.
  *
  * A contract file may carry its own `config` block beside `documentSchemas`
  * (the beta.3 cuts do: `config.moderation` declares the banlist, the
@@ -14,10 +18,17 @@
  * owner at publish time; every one must exist on chain (41110), so they are
  * fetched before anything is signed.
  *
+ * An ELECTED declaration registers with the network's interim (`withInterim`
+ * in register-lib.mjs): on mainnet `notYetUsable`, elsewhere the file's own
+ * (the committed social cut says `contractOwner`, which a devnet needs).
+ * `--interim <kind>` overrides it (testnet's interim is undecided).
+ *
  * Run:
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --dry-run
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blog-contract.json --persona 260
  *   NETWORK=devnet node scripts/register-feature-contract.mjs --file … --bot 0 --owner <identityId> --moderators <id,id>
+ *   NETWORK=devnet node scripts/register-feature-contract.mjs --file yappr-blocks-contract.json --dry-run
+ *   NETWORK=mainnet node scripts/register-feature-contract.mjs --file yappr-social-contract-v13.json --dry-run   # interim notYetUsable
  */
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
@@ -26,7 +37,8 @@ import bs58 from 'bs58';
 import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { REPO_ROOT, createSdkHandle, ledgerEntry, loadLedger, socialContractId, wifFromHex } from './seed/seed-lib.mjs';
-import { auditModeration, requireModeratorsExist, withModerators } from './register-lib.mjs';
+import { network } from './sdk-env.mjs';
+import { auditModeration, requireModeratorsExist, renderModeration, withInterim, withModerators } from './register-lib.mjs';
 
 const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
@@ -47,13 +59,15 @@ function contractPath(name) {
   return name.includes('/') || isAbsolute(name) ? name : join(REPO_ROOT, 'contracts', name);
 }
 
+/** Does the file price a doctype in the social contract's YAPP (and so need its id)? */
+const needsSocialId = (file) => readFileSync(contractPath(file), 'utf8').includes(`"${SOCIAL_PLACEHOLDER}"`);
+
 /** Loads a contract file, substituting the social contract id where priced. */
 function loadContractFile(file, socialId) {
   const text = readFileSync(contractPath(file), 'utf8');
-  const bytes = JSON.stringify(Array.from(bs58.decode(socialId)));
-  const parsed = JSON.parse(text.replaceAll(`"${SOCIAL_PLACEHOLDER}"`, bytes));
+  const parsed = JSON.parse(socialId ? text.replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(Array.from(bs58.decode(socialId)))) : text);
   return parsed.documentSchemas
-    ? { documentSchemas: parsed.documentSchemas, config: parsed.config ?? DEFAULT_CONFIG }
+    ? { ...parsed, config: parsed.config ?? DEFAULT_CONFIG }
     : { documentSchemas: parsed, config: DEFAULT_CONFIG };
 }
 
@@ -62,14 +76,21 @@ export function loadSchemas(file, socialId) {
   return loadContractFile(file, socialId).documentSchemas;
 }
 
-function buildContract({ file, ownerId, identityNonce, socialId, platformVersion, moderators }) {
-  const { documentSchemas, config } = loadContractFile(file, socialId);
+function buildContract({ file, ownerId, identityNonce, socialId, platformVersion, moderators, interim }) {
+  const source = loadContractFile(file, socialId);
+  const config = withModerators(withInterim(source.config, { network: network(), interim }), moderators);
   const json = {
-    $formatVersion: '1',
+    $formatVersion: source.$formatVersion ?? '1',
     id: DataContract.generateId(ownerId, identityNonce).toBase58(),
-    ownerId, version: 1, config: withModerators(config, moderators), documentSchemas,
+    ownerId, version: source.version ?? 1, config, documentSchemas: source.documentSchemas,
+    ...(source.tokens ? { tokens: source.tokens } : {}),
   };
-  return { dataContract: DataContract.fromJSON(json, true, platformVersion), documentSchemas };
+  if (config.moderation) console.log(`  registers with moderation ${renderModeration(config.moderation)} on ${network()}`);
+  const dataContract = DataContract.fromJSON(json, true, platformVersion);
+  // A token block lost in assembly would only show up as an unpayable first post.
+  const declaredTokens = Object.keys(source.tokens ?? {}).length;
+  if (declaredTokens !== Object.keys(dataContract.toJSON(platformVersion).tokens ?? {}).length) throw new Error(`${file} declares ${declaredTokens} token(s), but the parsed contract carries a different number`);
+  return { dataContract, documentSchemas: source.documentSchemas };
 }
 
 /**
@@ -146,7 +167,7 @@ export async function personaSigner(sdk, personaIdx) {
 }
 
 function parseArgs(argv) {
-  const args = { file: null, bot: null, persona: null, ownerId: null, social: null, moderators: [], dryRun: false };
+  const args = { file: null, bot: null, persona: null, ownerId: null, social: null, moderators: [], interim: undefined, dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
       case '--file': args.file = argv[++i]; break;
@@ -155,6 +176,7 @@ function parseArgs(argv) {
       case '--owner': args.ownerId = argv[++i]; break;
       case '--social': args.social = argv[++i]; break;
       case '--moderators': args.moderators = argv[++i].split(',').map((id) => id.trim()).filter(Boolean); break;
+      case '--interim': args.interim = argv[++i]; if (!args.interim) throw new Error('--interim takes a kind (contractOwner, notYetUsable or noModeration)'); break;
       case '--dry-run': args.dryRun = true; break;
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
@@ -169,23 +191,24 @@ try {
   args = parseArgs(process.argv.slice(2));
 } catch (e) {
   console.error(e.message);
-  console.error('Usage: NETWORK=devnet node scripts/register-feature-contract.mjs --file <json> (--bot <index> [--owner <id>] | --persona <idx>) [--social <id>] [--moderators <id,id>] [--dry-run]');
+  console.error('Usage: NETWORK=devnet node scripts/register-feature-contract.mjs --file <json> (--bot <index> [--owner <id>] | --persona <idx>) [--social <id>] [--moderators <id,id>] [--interim <kind>] [--dry-run]');
   process.exit(1);
 }
 
 try {
   await ensureInitialized();
   const platformVersion = PlatformVersion.current();
-  const socialId = args.social ?? socialContractId();
+  const socialId = needsSocialId(args.file) ? args.social ?? socialContractId() : null;
+  const build = (ownerId, identityNonce) => buildContract({ file: args.file, ownerId, identityNonce, socialId, platformVersion, moderators: args.moderators, interim: args.interim });
 
   if (args.dryRun) {
-    const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: DRY_RUN_OWNER, identityNonce: 1n, socialId, platformVersion, moderators: args.moderators });
-    console.log(`dry run: ${contractPath(args.file)} — ${Object.keys(dataContract.toJSON(platformVersion).documentSchemas).length} document types, YAPP from ${socialId}`);
+    const { dataContract, documentSchemas } = build(DRY_RUN_OWNER, 1n);
+    console.log(`dry run: ${contractPath(args.file)} — ${Object.keys(dataContract.toJSON(platformVersion).documentSchemas).length} document types${socialId ? `, YAPP from ${socialId}` : ''}`);
     printAudit(documentSchemas, dataContract);
     process.exit(0);
   }
 
-  const handle = createSdkHandle({ contractIds: [socialId] });
+  const handle = createSdkHandle({ contractIds: socialId ? [socialId] : [] });
   const { protocolVersion } = await handle.connect();
   const sdk = handle.sdk;
   console.log(`connected (PV${protocolVersion})`);
@@ -199,7 +222,7 @@ try {
   console.log(`owner=${owner.label}`);
   await requireModeratorsExist(sdk, args.moderators);
   const identityNonce = ((await sdk.identities.nonce(owner.ownerId)) ?? 0n) + 1n;
-  const { dataContract, documentSchemas } = buildContract({ file: args.file, ownerId: owner.ownerId, identityNonce, socialId, platformVersion, moderators: args.moderators });
+  const { dataContract, documentSchemas } = build(owner.ownerId, identityNonce);
   printAudit(documentSchemas, dataContract);
   console.log(`publishing ${args.file} (${Object.keys(documentSchemas).length} document types) …`);
   const published = await sdk.contracts.publish({ dataContract, identityKey: owner.identityKey, signer: owner.signer });

@@ -3,7 +3,7 @@ import { Document, PlatformVersion } from '@dashevo/evo-sdk';
 import type { EvoSDK, Identity, IdentitySigner } from '@dashevo/evo-sdk';
 import type { ContractModerationReason, ContractModerationStatus, ContractTeamActionEntry, ContractTeamActionStatus, ContractWarning } from '@dashevo/wasm-sdk';
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants';
-import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, isV11, moderationListsKept, moderatorDeletableTypes, moderatorDeleteWindowSeconds, moderatorDeletionKeepsRecord, reportsAreResolved, settledDeletionFor, type SettledDeletionRule, type TargetKind } from '@/lib/contract-topology';
+import { authorDeletesLeaveHoles, contractIsModerated, contractKeepsWarnings, electedModeration, isV11, moderationListsKept, moderatorDeletableTypes, moderatorDeleteWindowSeconds, moderatorDeletionKeepsRecord, reportsAreResolved, settledDeletionFor, type ElectedModerationDeclaration, type SettledDeletionRule, type TargetKind } from '@/lib/contract-topology';
 import { matchIdentityKey } from '@/lib/crypto/keys';
 import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys';
 import { classifyModerationError, extractErrorMessage, hasConsensusCode, isDocumentExpiredError, isTimeoutError, isUnverifiedOutcomeError, type ModerationErrorKind } from '@/lib/error-utils';
@@ -415,6 +415,36 @@ export function resolveModerationTeam(
   return { ownerId, appointed, elected: false, ownerModerates: true };
 }
 
+/** Who moderates an elected contract until a team is seated, as it was registered. */
+export type InterimKind = ElectedModerationDeclaration['interim'];
+
+/** What one read of the moderation team holds. */
+interface TeamRead {
+  team: ModerationTeam;
+  seated: SeatedTeamSeats | null;
+  /** The registered elected declaration's interim; null off one. */
+  interim: InterimKind | null;
+}
+
+/**
+ * Pure: whether a moderated document type can be written, given the
+ * registered interim and the seated team. Only a `notYetUsable` interim with
+ * no team seated refuses (41200); every other declaration lets writes through.
+ */
+export function moderatedTypeOpenFor(interim: InterimKind | null, seated: unknown): boolean {
+  return interim !== 'notYetUsable' || seated !== null;
+}
+
+/**
+ * Everyone who may moderate right now, as Drive decides it: a seated team's
+ * leader and members, or the interim's appointed moderators and the owner
+ * when it moderates. Empty under a `notYetUsable` or `noModeration` interim
+ * with no team seated. A report's box is sealed to exactly these.
+ */
+export function moderatorIdsOf(team: ModerationTeam): string[] {
+  return [...new Set([...team.appointed, ...(team.ownerModerates ? [team.ownerId] : [])])];
+}
+
 /**
  * The identities no moderation may act on, mirroring Drive's
  * `ContractModerators::protects`: everyone who may moderate right now, and the
@@ -557,7 +587,7 @@ class ModerationService {
    * per card. Short-lived, because on an elected contract a team can be seated
    * mid-session, which moves moderation from the interim to the team.
    */
-  private team: { promise: Promise<{ team: ModerationTeam; seated: SeatedTeamSeats | null }>; at: number } | null = null;
+  private team: { promise: Promise<TeamRead>; at: number } | null = null;
   private static readonly TEAM_TTL_MS = 60_000;
   private standingCache = new Map<string, { standing: ModerationStanding; at: number }>();
   /** Standing rarely changes; a page of cards must not re-query it per card. */
@@ -568,10 +598,13 @@ class ModerationService {
   /**
    * The contract's moderation team, from the contract and, when it declares
    * elected moderation, the seated charter. Cached for {@link TEAM_TTL_MS} and
-   * dropped after every moderation action. Null when the topology declares no
-   * moderation.
+   * dropped after every moderation action; `fresh` reads it again now (and
+   * refreshes the cache), for a decision that must not trust a minute-old
+   * team, such as whom a report's private-feed key is sealed to. Null when
+   * the topology declares no moderation. Throws when the read fails.
    */
-  async getTeam(): Promise<ModerationTeam | null> {
+  async getTeam({ fresh = false }: { fresh?: boolean } = {}): Promise<ModerationTeam | null> {
+    if (fresh) this.invalidateTeam();
     const read = this.readTeam();
     return read === null ? null : (await read).team;
   }
@@ -586,7 +619,31 @@ class ModerationService {
     return read === null ? null : (await read).seated;
   }
 
-  private readTeam(): Promise<{ team: ModerationTeam; seated: SeatedTeamSeats | null }> | null {
+  /**
+   * The interim the REGISTERED contract declares (mainnet registers v13 with
+   * `notYetUsable`, while the committed JSON says `contractOwner`), or null
+   * off an elected declaration. Same cached read as {@link getTeam}.
+   */
+  async getInterim(): Promise<InterimKind | null> {
+    const read = this.readTeam();
+    return read === null ? null : (await read).interim;
+  }
+
+  /**
+   * Whether `docType` can be written now: false while the registered
+   * contract's interim is `notYetUsable` and no team is seated (41200,
+   * paid). Off a moderated topology, or for a type the team does not
+   * moderate, true without a read. Rejects when the contract cannot be read.
+   */
+  async moderatedTypeOpen(docType: string): Promise<boolean> {
+    if (!electedModeration()?.moderatedDocumentTypes[docType]) return true;
+    const read = this.readTeam();
+    if (read === null) return true;
+    const { interim, seated } = await read;
+    return moderatedTypeOpenFor(interim, seated);
+  }
+
+  private readTeam(): Promise<TeamRead> | null {
     if (!contractIsModerated()) return null;
     if (!this.team || Date.now() - this.team.at >= ModerationService.TEAM_TTL_MS) {
       const promise = (async () => {
@@ -595,7 +652,8 @@ class ModerationService {
         if (!contract) throw new Error('Social contract not found');
         const moderators = contract.config.moderation?.moderators;
         const seated = moderators?.$type === 'elected' ? await this.seatedTeam(sdk, moderators.maxAddedModerators ?? 0) : null;
-        return { team: resolveModerationTeam(contract.ownerId.toBase58(), moderators, seated), seated };
+        const interim = moderators?.$type === 'elected' ? moderators.interim.$type as InterimKind : null;
+        return { team: resolveModerationTeam(contract.ownerId.toBase58(), moderators, seated), seated, interim };
       })();
       const entry = { promise, at: Date.now() };
       this.team = entry;
@@ -1494,6 +1552,7 @@ const MODERATION_ERROR_MESSAGES: Record<ModerationErrorKind, string> = {
   SETTLED_DELETION_NOT_RESTORABLE: 'The seated team removed this together, and a team removal can never be undone',
   TEAM_ACTION_COMPLETED: 'That team action already ran',
   TEAM_ACTION_DOCUMENT_CHANGED: 'The document changed since the removal was proposed, so it can no longer be approved: propose it again',
+  TEAM_MEMBER_ADDED_AFTER_DOCUMENT: 'You joined the team after this was posted, so your approval does not count toward removing it: the leader or an elected member must act',
   ALREADY_BANNED: 'That identity is already banned',
   NOT_BANNED: 'That identity is not banned',
   NOT_SUSPENDED: 'That identity is not suspended (a suspension that ran out is cleared by its next write)',

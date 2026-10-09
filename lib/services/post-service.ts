@@ -8,7 +8,7 @@ import { isPublishedBlogPost } from '@/lib/blog/content-utils';
 import { identifierToBase58, RequestDeduplicator, identifierStringToDocumentBytes, normalizeBytes, getCurrentUserId as getSessionUserId, createDefaultUser } from './sdk-helpers';
 import { chunk, mapLimit, documentCount, groupedDocumentCount } from './pagination-utils';
 import { fetchBatchPostStats, fetchBatchUserInteractions, fetchPostStats, fetchUserInteractions, type PostInteractionState } from './post-stats-helpers';
-import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
+import { HASHTAG_MAX_LENGTH, deletesAreTombstones, likesAreIndexOnly, groupByInteractionSurface, hashtagsAreInline, mentionsAreInline, ownQuoteIndexFor, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, postsHaveLanguage, quoteFieldFor, repostsAreQuotes, tombstonePreservationFor, type KindedTarget, type TargetKind } from '@/lib/contract-topology';
 import { ownQuoteOf, type OwnQuote } from '@/lib/feed/quote-reposts';
 import { firstIndexedTag, firstMention } from '@/lib/post-helpers';
 import { tombstoneDocument } from './tombstone-helpers';
@@ -16,8 +16,7 @@ import { enrichPostFull as enrichPostFullHelper, enrichPostsBatch as enrichPosts
 import { fetchAuthorPostCounts, fetchFollowingFeed, fetchQuotePosts, fetchTopPostsByLikes } from './post-query-helpers';
 import { extractPostEmbedFields, type PostEmbed } from '@/lib/poll-embed';
 import { privateFeedKeyFields } from '@/lib/contract-topology';
-import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
-import type { MediaHashes } from '@/lib/media/media-fingerprint';
+import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
 
 /**
  * Encryption options for creating private posts
@@ -81,6 +80,7 @@ export function replyToPost(reply: Reply): Post {
     parentId: reply.parentId,
     parentOwnerId: reply.parentOwnerId,
     rootPostId: reply.rootPostId,
+    rootOwnerId: reply.rootOwnerId,
     replyToReplyId: reply.replyToReplyId,
     deleted: reply.deleted,
     sensitive: reply.sensitive,
@@ -379,14 +379,15 @@ class PostService extends BaseDocumentService<Post> {
 
   /**
    * The author's delete, whatever it means on this topology: a tombstone where
-   * posts are permanent ({@link deletesAreTombstones}: v9, v11), a document
+   * posts are permanent ({@link deletesAreTombstones}: v9, v11, v12), a document
    * delete elsewhere. On v11 this is also how a repost is undone: the
    * tombstone clears the bare repost's quote, which frees the author's
    * one-quote-per-target slot (`ownerAndQuotedPost`), so reposting again is a
    * new bare repost.
    *
-   * Throws the refusal when the author is banned or suspended (41107/41108,
-   * {@link tombstoneDocument}); false for any other failure.
+   * Throws the refusal of a banned or suspended author's tombstone
+   * (41107/41108, v9/v11 only, {@link tombstoneDocument}); false for any
+   * other failure.
    */
   async deleteOwnPost(postId: string, ownerId: string): Promise<boolean> {
     return deletesAreTombstones() ? this.tombstonePost(postId, ownerId) : this.deletePost(postId, ownerId);
@@ -406,9 +407,8 @@ class PostService extends BaseDocumentService<Post> {
     ownerId: string,
     content: string,
     options: {
-      mediaUrl?: string;
-      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
-      mediaHashes?: MediaHashes;
+      /** Stored URLs, with their hashes from v10 on (see `mediaDocumentFields`). One item before v13, up to four on v13. */
+      media?: MediaItemInput[];
       quotedPostId?: string;
       quotedPostOwnerId?: string;
       /** v9 only: quoting a reply instead of a post (mutually exclusive with quotedPostId). */
@@ -496,12 +496,12 @@ class PostService extends BaseDocumentService<Post> {
     }
 
     // Add optional fields (use contract field names)
-    if (options.mediaUrl && options.encryption) {
-      // A plaintext mediaUrl on an encrypted post would leak the private media
+    if (options.media?.length && options.encryption) {
+      // A plaintext media URL on an encrypted post would leak the private media
       // reference; callers must keep it inside the encrypted content instead.
-      throw new Error('mediaUrl cannot be combined with encryption');
+      throw new Error('Media URLs cannot be combined with encryption');
     }
-    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
+    Object.assign(data, mediaDocumentFields(options.media));
     if (options.quotedPostId) data.quotedPostId = identifierStringToDocumentBytes(options.quotedPostId);
     if (options.quotedReplyId) data.quotedReplyId = identifierStringToDocumentBytes(options.quotedReplyId);
     if (options.quotedPostOwnerId) data.quotedPostOwnerId = identifierStringToDocumentBytes(options.quotedPostOwnerId);
@@ -511,6 +511,9 @@ class PostService extends BaseDocumentService<Post> {
       data.embedDocType = options.embed.docType;
       data.embedId = identifierStringToDocumentBytes(options.embed.id);
     }
+    // v13: a post is in its author's `ownerAndTime` while it carries `live`;
+    // the tombstone leaves it out (the `live` rule refuses anything else).
+    if (postsCarryLiveMarker()) data.live = true;
 
     return this.create(ownerId, data);
   }
@@ -591,12 +594,14 @@ class PostService extends BaseDocumentService<Post> {
    * Get posts by user
    */
   async getUserPosts(userId: string, options: QueryOptions & { forDisplay?: boolean } = {}): Promise<DocumentResult<Post> & { preloaded?: PreloadedEnrichment }> {
+    // v13 pins `live == true` first: tombstones are not on the author's timeline.
     const queryOptions: QueryOptions = {
       where: [
+        ...postOwnerIndexPrefix(),
         ['$ownerId', '==', userId],
         ['$createdAt', '>', 0]
       ],
-      orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']],
+      orderBy: [...postOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'desc']],
       limit: 20,
       ...options
     };
@@ -640,7 +645,8 @@ class PostService extends BaseDocumentService<Post> {
   /**
    * Count posts by user via the `byOwner` count tree (O(1)); on v10
    * `$ownerId ==` is served by the rangeCountable `ownerAndTime`. v10 counts
-   * the author's bare reposts too: they are posts.
+   * the author's bare reposts too: they are posts. v13 counts live posts only
+   * (`live == true` first; a tombstone leaves the index).
    * Deduplicates in-flight requests.
    */
   async countUserPosts(userId: string): Promise<number> {
@@ -652,7 +658,7 @@ class PostService extends BaseDocumentService<Post> {
         return await documentCount(sdk, {
           dataContractId: this.contractId,
           documentTypeName: 'post',
-          where: [['$ownerId', '==', userId]],
+          where: [...postOwnerIndexPrefix(), ['$ownerId', '==', userId]],
         });
       } catch (error) {
         logger.error('Error counting user posts:', error);

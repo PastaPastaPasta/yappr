@@ -18,22 +18,52 @@
  *   reply-like-first / reply-like-later
  *   post, post-tagged, quote, repost, reply
  *   tombstone                         design M only (a post's author replace)
- *   unlike                            the refund (a negative cost)
+ *   unlike, unlike-tagged, reply-unlike   the refunds (negative costs)
+ *   v13 only (media arrays, profile reports; the copy then also holds report):
+ *   post-media-1 / post-media-4       one and four images (mediaUrls, mediaDigests, mediaKinds)
+ *   report-post / report-profile      a liker reports the post, and a fresh identity's
+ *                                     profile (`about: 1`); the 50M moderators action fee
+ *                                     the published file charges is printed beside it
  *
- * Usage (NETWORK=devnet, the devnet from the env):
- *   node scripts/measure-social-fees.mjs --contract-file contracts/yappr-social-contract-v11.json \
- *     --bot 1 --bot 0 --bot 2 --identity-id <id> --key-wif-file <file> [--json <out>]
- * The first identity registers the contract and writes the posts; the other
- * three like and reply. Never the maker.
+ * Every write is built for the cut by scripts/social-shapes.mjs: on v13 posts
+ * carry `live: true`, replies `rootOwnerId`, and a reply like is `{ replyId }`.
+ * On v14 a reply names no owner (`{ rootPostId }`: its windows derive the
+ * root and parent owners), so the `reply` row prices one fewer identifier;
+ * the installed 5.0.0-beta.2 SDK cannot parse v14 (countPresent,
+ * deleteConstraints), which `--dry-run` reports as one FAIL line for the cut
+ * (its write shapes still judged by the shape checker) and exits 1.
+ *
+ * Several cuts in one run (`--contract-file` repeated) are measured one after
+ * the other by the same identities on the same network, then compared side by
+ * side: v12 (counter author/hashtag indexes) against a v11 copy registered on
+ * the same 5.0.0-beta.2 chain is the comparison docs/SOCIAL_V12.md records.
+ * What the file declares picks the writes (a tombstone when post has
+ * `deleted`); nothing keys on the file's name.
+ *
+ * Usage (NETWORK=devnet, the devnet from the env or .env.devnet):
+ *   node scripts/measure-social-fees.mjs --contract-file contracts/yappr-social-contract-v12.json \
+ *     --contract-file contracts/yappr-social-contract-v11.json \
+ *     --bot 1 --bot 0 --bot 2 --bot 3 [--json <out>]
+ *   node scripts/measure-social-fees.mjs --contract-file contracts/yappr-social-contract-v12.json --reuse <id> ...
+ *     # measure again on a measurement contract an earlier run registered (printed as
+ *     # "measurement contract <id>"), instead of registering another throwaway copy
+ *   node scripts/measure-social-fees.mjs --contract-file <file> [--contract-file <file>] --dry-run
+ *     # offline: build and parse each throwaway copy, print documentCreateCost's estimates
+ * Identities: `--bot <n>[:<id>]` (seed index n of E2E_SEED_PHRASE, identity id n of
+ * DEVNET_IDENTITY_IDS / E2E_IDENTITY_IDS) or `--identity-id <id> --key-wif-file <file>`, four
+ * in all. The first (P) registers each contract and writes the posts; the other three like
+ * and reply. Never the maker. Each registration costs P about 40 × 10⁹ credits.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { DataContract, PlatformVersion, PrivateKey, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
+import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
 import bs58 from 'bs58';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { devnetConfig, devnetSdk, envValue } from './sdk-env.mjs';
-import { REPO_ROOT, createdId, findRecentByValues } from './seed/seed-lib.mjs';
+import { REPO_ROOT, asBase58, createdId, findRecentByValues } from './seed/seed-lib.mjs';
 import { buildDocument, randomIdBytes } from './verify-lib.mjs';
+import { actionFeeOf, reportRecoveryWhere, socialShapes } from './social-shapes.mjs';
 
 const RUNS = 3;
 const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
@@ -64,10 +94,17 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const CENTS_PER_CREDIT = 60 * 100 / 1e11;
 
 function parseArgs(argv) {
-  const args = { actors: [], contractFile: null, json: null };
+  const args = { actors: [], cuts: [], json: null, dryRun: false };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
-      case '--contract-file': args.contractFile = isAbsolute(argv[i + 1]) ? argv[++i] : join(REPO_ROOT, argv[++i]); break;
+      case '--contract-file': args.cuts.push({ file: isAbsolute(argv[i + 1]) ? argv[++i] : join(REPO_ROOT, argv[++i]), reuse: null }); break;
+      case '--reuse': {
+        const cut = args.cuts.at(-1);
+        if (!cut || cut.reuse) throw new Error('--reuse <contractId> follows its --contract-file');
+        cut.reuse = argv[++i];
+        break;
+      }
+      case '--dry-run': args.dryRun = true; break;
       case '--json': args.json = argv[++i]; break;
       case '--bot': { const [index, id] = argv[++i].split(':'); args.actors.push({ kind: 'bot', index: Number(index), id: id || null }); break; }
       case '--identity-id': args.actors.push({ kind: 'wif', id: argv[++i], wifFile: null }); break;
@@ -75,15 +112,20 @@ function parseArgs(argv) {
       default: throw new Error(`Unknown argument: ${argv[i]}`);
     }
   }
-  if (!args.contractFile || args.actors.length !== 4) throw new Error('need --contract-file and four identities (the poster, then three likers)');
+  if (args.cuts.length === 0) throw new Error('need at least one --contract-file');
+  if (!args.dryRun && args.actors.length !== 4) throw new Error('need four identities (the poster, then three likers)');
   return args;
 }
 
-/** post, reply, like and likeReply as the file declares them, minus token costs and action fees. */
+/**
+ * post, reply, like and likeReply as the file declares them, minus token costs and action fees;
+ * on v13 report too (its profile target and its action fee are new).
+ */
 function measureContractSource(file) {
   const social = JSON.parse(readFileSync(file, 'utf8'));
   const documentSchemas = {};
-  for (const type of ['post', 'reply', 'like', 'likeReply']) {
+  const types = ['post', 'reply', 'like', 'likeReply', ...(socialShapes(social).cut.profileReports ? ['report'] : [])];
+  for (const type of types) {
     const schema = structuredClone(social.documentSchemas[type]);
     delete schema.actionFees;
     delete schema.tokenCost;
@@ -110,22 +152,159 @@ async function resolveActor(sdk, actor, label) {
   return { label, ownerId: actor.id, ...(await signerFor(sdk, { ownerId: actor.id, keyId: key.keyId, wif })) };
 }
 
+const fileName = (file) => file.replace(/^.*\//, '');
+const M = (n) => `${(n / 1e6).toFixed(1)}M`;
+/** The rows the measurement copy strips an action fee from, keyed as the results are: the fee the published file charges. */
+function strippedActionFees(file) {
+  const schemas = JSON.parse(readFileSync(file, 'utf8')).documentSchemas;
+  const moderators = (type) => Number(actionFeeOf(schemas, type)?.moderators ?? 0);
+  return { 'report-post': moderators('report'), 'report-profile': moderators('report') };
+}
+/** One media item of fixed bytes: the fee depends on the sizes, not the values. */
+const mediaItems = (n) => Array.from({ length: n }, (_, i) => ({ url: `ipfs://bafyfeemeasure${i}`, sha256: new Uint8Array(32).fill(i + 1), fingerprint: new Uint8Array(8).fill(i + 1) }));
+
+/**
+ * documentCreateCost (#5159) for each measured create on `contract`, keyed as the live
+ * results are: storage exact, processing estimated, new / known index values.
+ */
+function estimatesFor(contract, source) {
+  const pv = PlatformVersion.latest();
+  const { cut } = socialShapes(source);
+  const plainPost = { content: { length: 140 } };
+  // v13: every post carries `live` and every reply `rootOwnerId`, so neither is priced as absent.
+  // v14's reply declares no parentOwnerId, so the reply row below keeps only what the file has.
+  const always = { post: cut.liveMarker ? ['live'] : [], reply: cut.rootOwner ? ['rootOwnerId'] : [] };
+  const absent = (type, keep) => Object.fromEntries(Object.keys(source.documentSchemas[type].properties).filter((p) => !keep.includes(p) && !(always[type] ?? []).includes(p)).map((p) => [p, { present: false }]));
+  const estimate = (type, fields) => documentCreateCost(contract, type, { fields }, pv).totalCredits;
+  /** `n` media items: n URLs (typed-array length), 40 n digest bytes, n kind bytes. */
+  const media = (n) => ({ mediaUrls: { present: true, length: n }, mediaDigests: { present: true, length: 40 * n }, mediaKinds: { present: true, length: n } });
+  const MEDIA = ['mediaUrls', 'mediaDigests', 'mediaKinds'];
+  return {
+    'post': estimate('post', { ...absent('post', ['content']), ...plainPost }),
+    'post-tagged': estimate('post', { ...absent('post', ['content', 'hashtag']), ...plainPost, hashtag: { present: true } }),
+    'quote': estimate('post', { ...absent('post', ['content', 'quotedPostId', 'quotedPostOwnerId']), ...plainPost }),
+    'repost': estimate('post', { ...absent('post', ['quotedPostId', 'quotedPostOwnerId']) }),
+    'reply': estimate('reply', { ...absent('reply', ['content', 'rootPostId', 'parentOwnerId']), ...plainPost }),
+    'like-first': estimate('like', { hashtag: { present: false } }),
+    'like-later': estimate('like', { hashtag: { present: false } }),
+    'tagged-first': estimate('like', { hashtag: { present: true } }),
+    'tagged-later': estimate('like', { hashtag: { present: true } }),
+    'reply-like-first': estimate('likeReply', {}),
+    'reply-like-later': estimate('likeReply', {}),
+    ...(cut.mediaArrays ? {
+      'post-media-1': estimate('post', { ...absent('post', ['content', ...MEDIA]), ...plainPost, ...media(1) }),
+      'post-media-4': estimate('post', { ...absent('post', ['content', ...MEDIA]), ...plainPost, ...media(4) }),
+    } : {}),
+    ...(cut.profileReports ? {
+      'report-post': estimate('report', absent('report', ['postId', 'targetOwnerId', 'reason'])),
+      'report-profile': estimate('report', absent('report', ['about', 'targetOwnerId', 'reason'])),
+    } : {}),
+  };
+}
+
+/** Offline: each cut's throwaway copy parses under both parsers, with the estimator's figures. */
+async function dryRun(args) {
+  await initWasmDpp2();
+  const placeholder = '11111111111111111111111111111111';
+  let unparsed = 0;
+  for (const { file, reuse } of args.cuts) {
+    const source = measureContractSource(file);
+    const json = { ...source, id: placeholder, ownerId: placeholder };
+    // A cut newer than the installed SDK (v14 on 5.0.0-beta.2) is one FAIL line: its write shapes
+    // are still judged by the shape checker, but there is nothing to estimate against.
+    let contract = null;
+    try {
+      contract = DataContract.fromJSON(json, true, PlatformVersion.latest());
+      NodeRulesDataContract.fromJSON(json, true, NodeRulesPlatformVersion.latest());
+    } catch (e) {
+      contract = null;
+      unparsed += 1;
+      console.error(`\nFAIL  ${fileName(file)}: the measurement copy does not parse with the installed SDK (a newer cut needs a newer SDK; no estimates): ${describeErr(e).slice(0, 200)}`);
+    }
+    const counters = source.documentSchemas.like.indices.filter((index) => index.summableOffCountIndex).map((index) => `${index.name}→${index.summableOffCountIndex}`);
+    if (contract) console.log(`\n${fileName(file)}: the measurement copy parses (wasm-sdk + wasm-dpp2); ${reuse ? `would reuse ${reuse}` : 'would register it'}; tombstone ${source.documentSchemas.post.properties.deleted !== undefined ? 'measured' : 'not on this cut'}; like counters ${counters.join(', ') || 'none'}`);
+    // The live run's writes, as `create` / `like` fit them to the cut: each must be a valid create here.
+    const shapes = socialShapes(source);
+    const [x, y] = [randomIdBytes(), randomIdBytes()];
+    const writes = [
+      ['post', { content: 'x' }], ['post', { content: 'x', hashtag: 'feemeasure' }], ['post', { content: 'x', quotedPostId: x, quotedPostOwnerId: y }],
+      ['post', { quotedPostId: x, quotedPostOwnerId: y }], ['reply', { content: 'x', rootPostId: x, parentOwnerId: y }],
+      ['like', { postId: x, postAuthor: y }], ['like', { postId: x, postAuthor: y, hashtag: 'feemeasure' }], ['likeReply', { replyId: x, replyAuthor: y }],
+      ...(shapes.cut.mediaArrays ? [1, 4].map((n) => ['post', { content: 'x', ...shapes.media(mediaItems(n)) }]) : []),
+      ...(shapes.cut.profileReports ? [['report', shapes.report({ postId: x, targetOwnerId: y, reason: 1 })], ['report', shapes.report({ about: 1, targetOwnerId: y, reason: 1 })]] : []),
+    ];
+    for (const [docType, written] of writes) {
+      const data = shapes.fit(docType, written);
+      const { document } = buildDocument({ contractId: placeholder, docType, ownerId: placeholder, data, entropy: randomIdBytes(), createdAt: Date.now() });
+      const problems = shapes.check(docType, data);
+      const broken = contract?.checkDocumentPropertyConstraints(document);
+      if (problems.length > 0 || broken) throw new Error(`${fileName(file)}: the ${docType} write ${JSON.stringify(Object.keys(data))} is not valid: ${problems.join('; ')}${broken ? ` 10422 ${broken.rule}` : ''}`);
+    }
+    console.log(`  the ${writes.length} measured write shapes are valid creates of this cut (${Object.entries(shapes.cut).filter(([, on]) => on).map(([flag]) => flag).join(', ')})${contract ? '' : ' by the shape checker alone'}`);
+    if (!contract) continue;
+    const stripped = strippedActionFees(file);
+    for (const [key, estimate] of Object.entries(estimatesFor(contract, source))) {
+      console.log(`  ${key.padEnd(18)} estimate ${M(Number(estimate.newValues)).padStart(8)} / ${M(Number(estimate.knownValues))}${stripped[key] ? `   + ${M(stripped[key])} moderators action fee (the published file's)` : ''}`);
+    }
+  }
+  const { devnetName, addresses } = devnetConfig();
+  console.log(`\nwould measure on devnet "${devnetName}" via ${addresses[0]} (+${addresses.length - 1} more)`);
+  if (unparsed > 0) console.error(`every other offline check passed; exiting 1 for the ${unparsed} cut(s) the installed SDK cannot parse`);
+  return unparsed > 0 ? 1 : 0;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   await ensureInitialized();
-  const source = measureContractSource(args.contractFile);
+  if (args.dryRun) return dryRun(args);
   session.config = devnetConfig();
   await connectSession();
   const [P, ...likers] = await Promise.all(args.actors.map((actor, i) => resolveActor(sdk, actor, ['P', 'L1', 'L2', 'L3'][i])));
-  const nonce = ((await sdk.identities.nonce(P.ownerId)) ?? 0n) + 1n;
-  const draft = DataContract.fromJSON({ ...source, id: DataContract.generateId(P.ownerId, nonce).toBase58(), ownerId: P.ownerId }, true, PlatformVersion.latest());
-  const contractId = (await sdk.contracts.publish({ dataContract: draft, identityKey: P.identityKey, signer: P.signer })).id.toBase58();
+  const measured = [];
+  for (const cut of args.cuts) measured.push(await measureCut(cut, { P, likers }));
+  if (measured.length > 1) {
+    console.log(`\nside by side (live mean credits; the delta is each cut against ${fileName(measured[1].file)}):`);
+    const keys = [...new Set(measured.flatMap((m) => Object.keys(m.table)))];
+    console.log(`  ${'write'.padEnd(18)} ${measured.map((m) => fileName(m.file).replace(/^yappr-social-contract-|\.json$/g, '').padStart(10)).join(' ')}`);
+    for (const key of keys) {
+      const means = measured.map((m) => m.table[key]?.mean);
+      const base = means[1];
+      const cells = means.map((mean, i) => (mean === undefined ? '—' : `${M(mean)}${i !== 1 && base ? ` (${mean >= base ? '+' : ''}${(((mean - base) / Math.abs(base)) * 100).toFixed(0)}%)` : ''}`).padStart(10));
+      console.log(`  ${key.padEnd(18)} ${cells.join(' ')}`);
+    }
+  }
+  if (args.json) writeFileSync(args.json, `${JSON.stringify({ network: session.config.devnetName, measured }, null, 2)}\n`);
+  return 0;
+}
+
+/**
+ * One cut: register its throwaway copy (or reuse `cut.reuse`), measure every write RUNS
+ * times, print the table beside the estimator's, and answer `{ file, contractId, table }`.
+ */
+async function measureCut(cut, { P, likers }) {
+  const source = measureContractSource(cut.file);
+  let contractId = cut.reuse;
+  if (contractId) {
+    const stored = await withReconnect(() => sdk.contracts.fetch(contractId));
+    const post = stored?.toJSON?.(PlatformVersion.latest())?.documentSchemas?.post;
+    if (!post) throw new Error(`--reuse ${contractId}: no contract with a post type`);
+    if (post.actionFees || post.tokenCost) throw new Error(`--reuse ${contractId} carries action fees or token costs: name a measurement contract this script registered, not a published social contract`);
+    if (source.documentSchemas.report && !stored.toJSON(PlatformVersion.latest()).documentSchemas.report) throw new Error(`--reuse ${contractId} has no report type: it predates the v13 report rows, so register a fresh copy`);
+    console.log(`\nmeasurement contract ${contractId} (${fileName(cut.file)}), reused`);
+  } else {
+    const nonce = ((await sdk.identities.nonce(P.ownerId)) ?? 0n) + 1n;
+    const draft = DataContract.fromJSON({ ...source, id: DataContract.generateId(P.ownerId, nonce).toBase58(), ownerId: P.ownerId }, true, PlatformVersion.latest());
+    contractId = (await sdk.contracts.publish({ dataContract: draft, identityKey: P.identityKey, signer: P.signer })).id.toBase58();
+    console.log(`\nmeasurement contract ${contractId} (${fileName(cut.file)}), registered by P=${P.ownerId}`);
+    await sleep(3000);
+  }
   session.contracts.push(contractId);
-  console.log(`measurement contract ${contractId} (${args.contractFile.replace(/^.*\//, '')}), registered by P=${P.ownerId}`);
-  await sleep(3000);
-  const contract = await sdk.contracts.fetch(contractId);
+  const contract = await withReconnect(() => sdk.contracts.fetch(contractId));
   const id = (value) => bs58.decode(value);
   const tombstones = source.documentSchemas.post.properties.deleted !== undefined;
+  /** The writes below are v12-shaped; `fit` adapts them to the cut (v13: live, rootOwnerId, `{ replyId }` likes). */
+  const shapes = socialShapes(source);
+  const stripped = strippedActionFees(cut.file);
 
   // ---- balances ----
   const balanceOf = async (who) => BigInt((await withReconnect(() => sdk.identities.fetch(who.ownerId)))?.balance ?? 0);
@@ -151,7 +330,8 @@ async function main() {
   }
 
   // ---- writes ----
-  async function create(who, docType, data) {
+  async function create(who, docType, written) {
+    const data = shapes.fit(docType, written);
     const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
     const since = Date.now();
     try {
@@ -165,10 +345,18 @@ async function main() {
     }
     for (let tries = 0; tries < 6; tries++) {
       await sleep(2500);
-      const found = await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
+      const found = docType === 'report'
+        ? await findReport(who, data).catch(() => null)
+        : await findRecentByValues(sdk, { contractId, docType, ownerId: who.ownerId, data, since }).catch(() => null);
       if (found) return { ok: true, id: found };
     }
     return { ok: false, error: 'no document after the write' };
+  }
+  /** A report's id, read back on its unique target-first index (no v13 report index serves `$ownerId` alone). */
+  async function findReport(who, data) {
+    const rows = await withReconnect(() => sdk.documents.query({ dataContractId: contractId, documentTypeName: 'report', where: reportRecoveryWhere(data, who.ownerId), limit: 1 }));
+    const [doc] = [...(rows instanceof Map ? rows.values() : Object.values(rows ?? {}))].filter(Boolean);
+    return doc ? asBase58(doc.toObject?.().$id ?? doc.id) : null;
   }
   const targetField = (docType) => (docType === 'like' ? 'postId' : 'replyId');
   const liked = async (who, docType, data) => {
@@ -186,11 +374,11 @@ async function main() {
     return { ok: false, error: 'the liked state did not change' };
   }
   const like = (who, docType, data) => indexOnlyWrite(who, docType, data, () => {
-    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data, entropy: randomIdBytes() });
+    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data: shapes.fit(docType, data), entropy: randomIdBytes() });
     return sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer });
   }, true);
   const unlike = (who, docType, data) => indexOnlyWrite(who, docType, data, () => {
-    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data });
+    const { document } = buildDocument({ contractId, docType, ownerId: who.ownerId, data: shapes.fit(docType, data) });
     return sdk.documents.delete({ document, identityKey: who.identityKey, signer: who.signer });
   }, false);
   async function tombstone(who, docId, data) {
@@ -236,40 +424,35 @@ async function main() {
       record(`${prefix}-later`, await costOf(likers[2], () => like(likers[2], docType, data)));
     }
     record('unlike', await costOf(likers[2], () => unlike(likers[2], 'like', postLike)));
+    record('unlike-tagged', await costOf(likers[2], () => unlike(likers[2], 'like', taggedLike)));
+    record('reply-unlike', await costOf(likers[2], () => unlike(likers[2], 'likeReply', replyLike)));
     if (tombstones) record('tombstone', await costOf(P, () => tombstone(P, quoteTarget.id, { deleted: true })));
+    if (shapes.cut.mediaArrays) {
+      for (const n of [1, 4]) record(`post-media-${n}`, await costOf(P, () => create(P, 'post', { content: text(run), ...shapes.media(mediaItems(n)) })));
+    }
+    if (shapes.cut.profileReports) {
+      // One report per reporter and target: a liker reports this run's post, and a fresh identity's profile.
+      const reporter = likers[run % 3];
+      record('report-post', await costOf(reporter, () => create(reporter, 'report', shapes.report({ postId: id(post.id), targetOwnerId: id(P.ownerId), reason: 1 }))));
+      record('report-profile', await costOf(reporter, () => create(reporter, 'report', shapes.report({ about: 1, targetOwnerId: randomIdBytes(), reason: 1 }))));
+    }
     // A deliberate pause keeps a run's writes clear of the next run's quorum checks.
     await sleep(2000);
   }
 
   // ---- the estimator, on the same contract ----
-  const pv = PlatformVersion.latest();
-  const plainPost = { content: { length: 140 } };
-  const absent = (type, keep) => Object.fromEntries(Object.keys(source.documentSchemas[type].properties).filter((p) => !keep.includes(p)).map((p) => [p, { present: false }]));
-  const estimate = (type, fields) => documentCreateCost(contract, type, { fields }, pv).totalCredits;
-  const estimates = {
-    'post': estimate('post', { ...absent('post', ['content']), ...plainPost }),
-    'post-tagged': estimate('post', { ...absent('post', ['content', 'hashtag']), ...plainPost, hashtag: { present: true } }),
-    'quote': estimate('post', { ...absent('post', ['content', 'quotedPostId', 'quotedPostOwnerId']), ...plainPost }),
-    'repost': estimate('post', { ...absent('post', ['quotedPostId', 'quotedPostOwnerId']) }),
-    'reply': estimate('reply', { ...absent('reply', ['content', 'rootPostId', 'parentOwnerId']), ...plainPost }),
-    'like-first': estimate('like', { hashtag: { present: false } }),
-    'like-later': estimate('like', { hashtag: { present: false } }),
-    'tagged-first': estimate('like', { hashtag: { present: true } }),
-    'tagged-later': estimate('like', { hashtag: { present: true } }),
-    'reply-like-first': estimate('likeReply', {}),
-    'reply-like-later': estimate('likeReply', {}),
-  };
-  const M = (n) => `${(n / 1e6).toFixed(1)}M`;
-  console.log(`\n${args.contractFile.replace(/^.*\//, '')} on ${contractId}: live credits (mean of ${RUNS}+, min–max) vs documentCreateCost (new / known values), ¢ at $60/DASH`);
+  const estimates = estimatesFor(contract, source);
+  console.log(`\n${fileName(cut.file)} on ${contractId}: live credits (mean of ${RUNS}+, min–max) vs documentCreateCost (new / known values), ¢ at $60/DASH`);
   const table = {};
   for (const [key, values] of Object.entries(results)) {
     const mean = values.reduce((a, b) => a + b, 0) / values.length;
     const est = estimates[key];
-    table[key] = { mean, min: Math.min(...values), max: Math.max(...values), n: values.length, estimateNew: est ? Number(est.newValues) : null, estimateKnown: est ? Number(est.knownValues) : null };
-    console.log(`  ${key.padEnd(18)} live ${M(mean).padStart(8)} (${(mean * CENTS_PER_CREDIT).toFixed(2)}¢; ${M(Math.min(...values))}–${M(Math.max(...values))}, n=${values.length})${est ? `   estimate ${M(Number(est.newValues))} / ${M(Number(est.knownValues))}` : ''}`);
+    // A report's moderators action fee is stripped from the measurement copy (it is a contract charge, not a fee): add it back for the total.
+    const actionFee = stripped[key] ?? 0;
+    table[key] = { mean, min: Math.min(...values), max: Math.max(...values), n: values.length, estimateNew: est ? Number(est.newValues) : null, estimateKnown: est ? Number(est.knownValues) : null, ...(actionFee ? { actionFee } : {}) };
+    console.log(`  ${key.padEnd(18)} live ${M(mean).padStart(8)} (${(mean * CENTS_PER_CREDIT).toFixed(2)}¢; ${M(Math.min(...values))}–${M(Math.max(...values))}, n=${values.length})${est ? `   estimate ${M(Number(est.newValues))} / ${M(Number(est.knownValues))}` : ''}${actionFee ? `   + ${M(actionFee)} action fee = ${M(mean + actionFee)} (${((mean + actionFee) * CENTS_PER_CREDIT).toFixed(2)}¢)` : ''}`);
   }
-  if (args.json) writeFileSync(args.json, `${JSON.stringify({ contractFile: args.contractFile, contractId, table }, null, 2)}\n`);
-  return 0;
+  return { file: cut.file, contractId, table };
 }
 
 main().then((code) => process.exit(code), (e) => { console.error('ERROR:', describeErr(e)); process.exit(1); });

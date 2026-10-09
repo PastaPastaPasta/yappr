@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social v10 id> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v14)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -16,18 +16,33 @@
  * week, read through the `timeRange` option (the current window, `newest`, and
  * the previous one by its start, `byStart`), which a composite refuses, so each
  * window stays one plain query.
- * Likes are permanent but keyed by target: byAuthorPostTime /
+ * Likes are permanent but keyed by target: on v10 byAuthorPostTime /
  * byAuthorReplyTime put the liked post or reply before `$createdAt`, so "who
- * liked it since" is one `target in [recent]` read per kind. There is no
- * postMention: a post or reply names at most one mentionedUserId. */
+ * liked it since" is one `target in [recent]` read per kind. v11's author
+ * indexes keep no time: one author-pinned `target in [recent]` liker read per
+ * kind. On v12 they are counters (`summableOffCountIndex` of byPost /
+ * byReply) holding no like documents: the counters must agree with byPost /
+ * byReply per target, and the likers are read one target at a time on byPost /
+ * byReply. v13 drops the reply author counter (a reply like names no author),
+ * so only the post counters are compared, and its author post pages pin
+ * `live == true` first (`post.ownerAndTime` is [live, $ownerId, $createdAt]).
+ * v14 stores no owner on a reply: its windows name the owner derived by
+ * consensus, `reply.rootOwnerRecent` (`rootPostId.$ownerId ==`, every reply in
+ * the owner's threads) and `reply.parentOwnerRecent` (`replyToReplyId.$ownerId
+ * ==`, replies to the owner's replies), each read alone like v13's one window.
+ * What the contract under test declares (fetched by id, not the
+ * environment's topology) picks the like reads and the notification grids.
+ * There is no postMention: a post or reply names at most one mentionedUserId. */
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
+import { PlatformVersion } from '@dashevo/evo-sdk';
 import { connectSdk, devnetName, envValue } from './sdk-env.mjs';
+import { socialShapes } from './social-shapes.mjs';
 
 const social = process.env.V10_CONTRACT_ID;
 if (!social) {
-  console.error('Set V10_CONTRACT_ID to the social v10 contract under test (there is no default).');
+  console.error('Set V10_CONTRACT_ID to the social contract under test, a v10, v11, v12 or v13 cut (there is no default).');
   process.exit(1);
 }
 /** A contract id from the environment or `.env.devnet`; the devnet's own, never a baked-in chain's. */
@@ -111,7 +126,14 @@ await verify('permanent notification sources', [['follow', 'followingId'], ['pos
   orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
 })));
 
-const V10 = JSON.parse(readFileSync(new URL('../contracts/yappr-social-contract-v10.json', import.meta.url), 'utf8'));
+/** The social contract under test as published (v10 to v14): its declarations pick the reads below. */
+const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
+/** v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts). */
+const SOCIAL = socialShapes(V10);
+/** v10: the author index carries `$createdAt` after the target (byAuthorPostTime). */
+const LIKES_KEEP_TIME = V10.documentSchemas.like.indices.some(index => index.name === 'byAuthorPostTime');
+/** v12: the author indexes are counters of byPost / byReply (no like documents through them). */
+const LIKE_COUNTERS = V10.documentSchemas.like.indices.some(index => index.summableOffCountIndex !== undefined);
 /**
  * The current and the previous window of `documentTypeName`'s windowed
  * notification index, the grid named (like and post bucket $createdAt on
@@ -138,30 +160,85 @@ async function verifyAlone(name, queries) {
     console.error(`FAIL ${name}: ${message}`);
   }
 }
+/** The reply windows' recipients: stored up to v13, derived from the referenced post or reply on v14. */
+const REPLY_WINDOWS = SOCIAL.cut.storedReplyOwners
+  ? [['reply', 'parentOwnerRecent', 'parentOwnerId']]
+  : [['reply', 'rootOwnerRecent', 'rootPostId.$ownerId'], ['reply', 'parentOwnerRecent', 'replyToReplyId.$ownerId']];
 await verifyAlone('notification windows (current and previous)', [
-  ['reply', 'parentOwnerRecent', 'parentOwnerId'], ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
+  ...REPLY_WINDOWS, ['post', 'quotedPostOwnerRecent', 'quotedPostOwnerId'],
 ].flatMap(([documentTypeName, indexName, field]) => windowsOf(documentTypeName, indexName).map(timeRange => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner]], timeRange, limit: 100,
 }))));
 // "Liked your post / reply": the likes of the owner's twenty most recent posts
 // and replies since the start, newest first, one `target in` read per kind.
-const recentOwn = async (documentTypeName) => records(await sdk.documents.query({
-  dataContractId: social, documentTypeName, where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-  orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20,
-}));
+const recentOwn = async (documentTypeName) => {
+  const query = { where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]], orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']] };
+  return records(await sdk.documents.query({ dataContractId: social, documentTypeName, limit: 20, ...(documentTypeName === 'post' ? SOCIAL.ownerPosts(query) : query) }));
+};
 const likesSince = (documentTypeName, author, target, docs) => ({
   dataContractId: social, documentTypeName,
   where: [[author, '==', owner], [target, 'in', docs.map(doc => id(doc.$id))], ['$createdAt', '>', 0]],
   orderBy: [[author, 'asc'], [target, 'asc'], ['$createdAt', 'desc']], limit: 100,
 });
 const [ownPosts, ownReplies] = [await recentOwn('post'), await recentOwn('reply')];
-await verifyAlone('like notifications (one target-in read per kind)', [
-  ...(ownPosts.length ? [likesSince('like', 'postAuthor', 'postId', ownPosts)] : []),
-  ...(ownReplies.length ? [likesSince('likeReply', 'replyAuthor', 'replyId', ownReplies)] : []),
-]);
+const likeTargets = [['like', 'postAuthor', 'postId', ownPosts], ['likeReply', 'replyAuthor', 'replyId', ownReplies]].filter(([, , , docs]) => docs.length);
+/** The kinds whose like names the liked target's author (v13's reply like does not, so it has no author index). */
+const likeKinds = likeTargets.filter(([documentTypeName, author]) => V10.documentSchemas[documentTypeName].properties[author] !== undefined);
+if (LIKES_KEEP_TIME) {
+  await verifyAlone('like notifications (one target-in read per kind)', likeKinds.map(([type, author, target, docs]) => likesSince(type, author, target, docs)));
+} else if (!LIKE_COUNTERS) {
+  // v11: the author index keeps no time; one author-pinned liker read per kind, diffed on the device.
+  await verifyAlone('like notifications (one author-pinned target-in liker read per kind, no time)', likeKinds.map(([documentTypeName, author, target, docs]) => ({
+    dataContractId: social, documentTypeName,
+    where: [[author, '==', owner], [target, 'in', docs.map(doc => id(doc.$id))]],
+    orderBy: [[author, 'asc'], [target, 'asc']], limit: 100,
+  })));
+} else {
+  // v12: the counters answer "did my likes move" per target; the likers come off byPost / byReply.
+  for (const [documentTypeName, author, target, docs] of likeKinds) await verifyCounters(documentTypeName, author, target, docs);
+  await verifyAlone('like notifications (the likers of each target on byPost / byReply, one read per target)', likeTargets.flatMap(([documentTypeName, , target, docs]) => docs.slice(0, 5).map(doc => ({
+    dataContractId: social, documentTypeName,
+    where: [[target, '==', id(doc.$id)]], orderBy: [[target, 'asc'], ['$ownerId', 'asc']], limit: 100,
+  }))));
+}
+
+/**
+ * v12: the author counter of each of the owner's recent targets equals the target index's own
+ * count. Both answers must be keyed by the targets asked for, and either some target has a like
+ * or the counters list every target: two empty (or differently keyed) answers would otherwise
+ * agree at 0 everywhere.
+ */
+async function verifyCounters(documentTypeName, author, target, docs) {
+  const name = `${documentTypeName} author counters agree with the target index`;
+  try {
+    const ids = docs.map(doc => id(doc.$id));
+    const [counters, sources] = await Promise.all([
+      sdk.documents.count({ dataContractId: social, documentTypeName, where: [[author, '==', owner], [target, 'in', ids]], groupBy: [target] }),
+      sdk.documents.count({ dataContractId: social, documentTypeName, where: [[target, 'in', ids]], groupBy: [target] }),
+    ]);
+    const asked = new Set(ids.map(targetId => Buffer.from(bs58.decode(targetId)).toString('hex')));
+    // A zero group may be listed (a preallocated counter) or left out (the target index), so the
+    // non-zero groups are what must match; every listed group must be one of the asked targets.
+    const nonZero = (map) => [...map.entries()].filter(([key]) => key !== '').map(([key, n]) => [key, Number(n)]).filter(([, n]) => n !== 0).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    for (const [label, map] of [['counter', counters], ['target index', sources]]) {
+      const stray = [...map.keys()].filter(key => key !== '' && !asked.has(key));
+      assert.equal(stray.length, 0, `the ${label} answer is keyed by something other than the asked targets: ${stray.slice(0, 3).join(', ')}`);
+    }
+    // Something must be compared: a like on some target, or every target's (preallocated) counter listed.
+    const listed = [...asked].filter(key => counters.has(key)).length;
+    assert.ok(nonZero(sources).length > 0 || listed === asked.size, `none of the owner's ${ids.length} recent ${target} targets has a like and the counter answer lists only ${listed} of them, so a match would prove nothing`);
+    assert.deepEqual(nonZero(counters), nonZero(sources), 'the non-zero groups differ');
+    reports.push({ name, before: 2, after: 2, rows: ids.length, equivalent: true });
+    console.log(`PASS ${name}: ${ids.length} targets, ${nonZero(sources).length} liked`);
+  } catch (error) {
+    const message = String(error.message || error.reason || error.toJSON?.() || JSON.stringify(error));
+    reports.push({ name, equivalent: false, error: message });
+    console.error(`FAIL ${name}: ${message}`);
+  }
+}
 // A followed author's reposts are posts: their own post pages carry them.
-await verify('following post pages (reposts included)', owners.map(ownerId => ({
+await verify('following post pages (reposts included)', owners.map(ownerId => SOCIAL.ownerPosts({
   dataContractId: social, documentTypeName: 'post',
   where: [['$ownerId', '==', ownerId], ['$createdAt', '>', 0]],
   orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 100,
@@ -212,9 +289,9 @@ async function verifyEnrichment(kind) {
     // a repliesOf count slot is refused ("lands at the merged root").
     const root = kind === 'reply' ? await threadRoot() : null;
     const pageQuery = kind === 'post'
-      ? { dataContractId: social, documentTypeName: kind,
+      ? SOCIAL.ownerPosts({ dataContractId: social, documentTypeName: kind,
         where: [['$ownerId', '==', owner], ['$createdAt', '>', 0]],
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 }
+        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'desc']], limit: 20 })
       : { dataContractId: social, documentTypeName: kind,
         where: [['rootPostId', '==', root], ['replyToReplyId', '==', null]],
         orderBy: [['$createdAt', 'asc']], limit: 20 };

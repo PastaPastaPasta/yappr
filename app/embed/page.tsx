@@ -9,7 +9,7 @@ import { dpnsService } from '@/lib/services/dpns-service'
 import type { BlogPost } from '@/lib/types'
 import { EMBED_STYLES } from '@/lib/embed/embed-styles'
 import { renderEmbedHtml } from '@/lib/embed/embed-renderer'
-import { blogPostDate, isPublishedBlogPost } from '@/lib/blog/content-utils'
+import { blogPostDate, isBlogPostTombstone, isPublishedBlogPost } from '@/lib/blog/content-utils'
 import type { EmbedTheme } from '@/lib/embed/embed-types'
 
 interface EmbedState {
@@ -50,10 +50,12 @@ function EmbedPageContent() {
 
       try {
         const post = await blogPostService.getPost(postId)
-        // A draft is not public: it embeds no more than it lists.
+        // A draft is not public: it embeds no more than it lists. A deleted
+        // post (a v7 tombstone) says so rather than that it never existed.
         if (!post || !isPublishedBlogPost(post)) {
           if (!cancelled) {
-            setState({ post: null, author: 'unknown', loading: false, error: 'Post not found.' })
+            const error = post && isBlogPostTombstone(post) ? 'This post was deleted by its author.' : 'Post not found.'
+            setState({ post: null, author: 'unknown', loading: false, error })
           }
           return
         }

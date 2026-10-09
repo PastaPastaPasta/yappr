@@ -17,7 +17,7 @@ import {
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
-import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner } from '@/components/store'
+import { ReviewCard, PoliciesDisplay, MobileCartFab, RatingStars, PriceRangeDisplay, BlockedOwnerBanner, DigitalBadge } from '@/components/store'
 import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useAuth } from '@/contexts/auth-context'
@@ -32,6 +32,7 @@ import { cartService } from '@/lib/services/cart-service'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { saveStoreViewCache, loadStoreViewCache } from '@/lib/caches/store-view-cache'
 import type { Store, StoreItem, StoreReview, StoreRatingSummary, StorePolicy, ItemRatingSummary } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 function LoadingFallback() {
   return (
@@ -136,7 +137,7 @@ function StoreDetailContent() {
           // Per-item averages from the store-pinned ranked read (v2).
           storefrontIsV2() ? storeStatsService.topItemsInStore(storeId) : Promise.resolve([])
         ])
-        const itemCounts = await storeStatsService.getItemReviewCounts(rankedItems.map((entry) => entry.id))
+        const itemCounts = await storeStatsService.getItemReviewCounts(rankedItems.map((entry) => entry.id), storeId)
         const ratings: Record<string, ItemRatingSummary> = {}
         for (const entry of rankedItems) {
           // A ranked entry proves at least one review; the count query refines it.
@@ -433,7 +434,7 @@ function StoreDetailContent() {
           <div>
             {store.bannerUrl ? (
               <div className="h-32 bg-gray-200 dark:bg-gray-800">
-                <img src={store.bannerUrl} alt="" className="w-full h-full object-cover" />
+                <IpfsImage src={store.bannerUrl} alt="" className="w-full h-full object-cover" />
               </div>
             ) : (
               <div className="h-32 bg-gradient-to-r from-yappr-400 to-yappr-600" />
@@ -443,7 +444,7 @@ function StoreDetailContent() {
               <div className="flex gap-4">
                 <div className="w-24 h-24 rounded-xl bg-white dark:bg-gray-900 border-4 border-white dark:border-gray-900 overflow-hidden flex-shrink-0">
                   {store.logoUrl ? (
-                    <img src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
+                    <IpfsImage src={store.logoUrl} alt={store.name} className="w-full h-full object-cover" />
                   ) : (
                     <div className="w-full h-full bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
                       <BuildingStorefrontIcon className="h-10 w-10 text-gray-400" />
@@ -658,6 +659,7 @@ function StoreDetailContent() {
                                 <span className="text-white font-medium">Out of Stock</span>
                               </div>
                             )}
+                            {item.fulfillment === 'digital' && <DigitalBadge className="absolute top-2 left-2 shadow" />}
                           </div>
                           <div className="mt-2">
                             <h3 className="font-medium truncate">{item.title}</h3>

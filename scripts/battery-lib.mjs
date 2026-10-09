@@ -24,7 +24,9 @@ import {
   STARTER_GRANT,
   YAPP_TOKEN_POSITION,
   buildDocument,
+  createDocument,
   createSdkHandle,
+  createWithAgreement,
   createdId,
   describeErr,
   findRecentByValues,
@@ -54,6 +56,13 @@ export const PROPERTY_MISMATCH = /\b40127\b|does not agree with the referenced d
 /** DocumentImmutablePropertyChangedError: a replace touched a frozen property. */
 export const IMMUTABLE_CHANGED = /\b40128\b|is immutable and cannot be changed/i;
 export const DELETE_FORBIDDEN = /can ?not be deleted/i;
+/**
+ * DocumentDeleteConstraintViolatedError (5.0.0-beta.3): the owner's delete
+ * breaks a `deleteConstraints` rule. Its message also says "can not be
+ * deleted", so DELETE_FORBIDDEN matches it too; this one does not match a
+ * `canBeDeleted: false` refusal.
+ */
+export const DELETE_CONSTRAINT = /\b40147\b|deleteConstraints rule/i;
 export const DUPLICATE_UNIQUE = /\b40105\b|duplicate unique properties/i;
 export const TOKEN_AGREEMENT_MISSING = /token|payment|agree/i;
 export const FOREIGN_SIGNATURE = /invalid.{0,40}signature|signature.{0,40}(invalid|mismatch)|4020\d/i;
@@ -117,7 +126,7 @@ const PERSONAL_PERSONA_IDX = 900;
 export const MODERATOR_FLAG = { parse: (raw) => raw };
 
 /** Creates a battery context: SDK handle, reporting state, and the helper set bound to it. */
-export function createBattery({ handle, contractId, socialId }) {
+export function createBattery({ handle, contractId, socialId, agreementFor }) {
   let failures = 0;
   const capturedErrors = [];
   const workingShapes = [];
@@ -282,9 +291,18 @@ export function createBattery({ handle, contractId, socialId }) {
    * row and is reported for the log only; `document` is the SDK's confirmed instance when the
    * create returned (it carries the consensus `$createdAt` a delete-by-values needs), else the
    * local placeholder.
+   *
+   * A create on the battery's contract carries the agreement the battery's `agreementFor(sdk,
+   * docType)` returns (a `DocumentActionFeeAgreement`, or undefined when the type is unpriced),
+   * unless the case names its own `agreement` or opts out with `noAgreement`. One is sent as a
+   * hand-built batch (seed-lib `createDocument`), the only shape that carries
+   * `$actionFeeAgreement`; the facade has no option for it, and a priced type created without
+   * one is a paid 40132.
    */
-  async function attemptCreate(who, docType, data, { tokenCost, noPayment, accepted, contract = contractId } = {}) {
-    const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy: randomEntropy() });
+  async function attemptCreate(who, docType, data, { tokenCost, noPayment, noAgreement, agreement: named, accepted, contract = contractId } = {}) {
+    const agreement = named ?? (noAgreement || contract !== contractId ? undefined : await agreementFor?.(sdk, docType));
+    const entropy = randomEntropy();
+    const { document } = buildDocument({ contractId: contract, docType, ownerId: who.ownerId, data, entropy });
     let id = null;
     const since = Date.now();
     // A value-identical document that existed BEFORE this create cannot be
@@ -304,9 +322,20 @@ export function createBattery({ handle, contractId, socialId }) {
       id = found;
       return id !== null && (await fetchDocument(docType, id, contract)) !== null;
     };
+    const payment = noPayment ? {} : paymentInfo(tokenCost);
+    const onDerivedId = (derived) => { id = derived; };
     const outcome = await attemptWrite(
       { accepted: accepted ?? storedById },
-      () => sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...(noPayment ? {} : paymentInfo(tokenCost)) })
+      () => (agreement
+        // The derived id is kept before the broadcast, so a create whose wait throws after it
+        // landed is still found by id (v7 blogPost/blogComment have no owner index to search).
+        ? createDocument(sdk, { contractId: contract, actor: who, docType, document, data, entropy, agreement, payment, onDerivedId })
+        // A case that opts out of a priced type's agreement (40132) is sent hand-built too, with
+        // the nonce read off the chain: this actor's agreed creates moved its nonce by hand, and
+        // the facade's cached nonce can still be behind, which reuses a spent one instead.
+        : noAgreement && who.wif
+          ? createWithAgreement(sdk, { contractId: contract, docType, ownerId: who.ownerId, wif: who.wif, identityKey: who.identityKey, data, entropy, payment, onDerivedId })
+          : sdk.documents.create({ document, identityKey: who.identityKey, signer: who.signer, ...payment }))
     );
     if (accepted && outcome.ok) id = createdId(outcome.result);
     return { ...outcome, id, document: outcome.result ?? document };
@@ -352,7 +381,8 @@ export function createBattery({ handle, contractId, socialId }) {
    * `attemptCreate` guards against for stored types, which it cannot do here
    * because an index entry carries no id to compare. A case asserting that a
    * duplicate is refused MUST pass its own `accepted` that measures a CHANGE,
-   * e.g. a count delta across the write (see `probeRecast` in verify-pollr.mjs).
+   * e.g. a count delta across the write (the pollr v4 battery's `probeRecast`
+   * did this; it is in git history since pollr v5 made ballots stored documents).
    */
   function attemptCreateByValues(who, docType, data, where, options = {}) {
     const contract = options.contract ?? contractId;
@@ -556,7 +586,7 @@ export async function runBattery(spec) {
     const extra = (spec.extraContracts?.(args) ?? []).filter(Boolean);
     const handle = createSdkHandle({ contractIds: [socialId, contractId, ...extra] });
     const { protocolVersion } = await handle.connect();
-    const battery = createBattery({ handle, contractId, socialId });
+    const battery = createBattery({ handle, contractId, socialId, agreementFor: spec.agreementFor });
     console.log(`connected (PV${protocolVersion}); ${spec.label} ${contractId}${spec.banner?.({ args, socialId }) ?? ''}`);
 
     const names = Object.keys(spec.actors ?? {});
@@ -606,6 +636,8 @@ export async function runBattery(spec) {
  *   immutableWhen: { <property>: <condition> } for its conditional
  *                  `{ property, when }` entries (5.0.0-beta.1, which refuses
  *                  the `immutableAllowSetting` they replaced), exact match
+ *   constraints:   the names of its `propertyConstraints` rules, order-insensitive
+ *   deleteConstraints: { <rule>: <body> } (5.0.0-beta.3), exact match
  *
  * Returns a process exit code.
  */
@@ -643,6 +675,9 @@ export function selfTest(file, expect) {
     // The names of the propertyConstraints rules (property-constraint-cases.mjs holds their cases).
     if (rules.constraints !== undefined) {
       compare(`${docType} propertyConstraints`, sortedNames(Object.keys(schema.propertyConstraints ?? {})), sortedNames(rules.constraints));
+    }
+    if (rules.deleteConstraints !== undefined) {
+      compare(`${docType} deleteConstraints`, sortedPairs(schema.deleteConstraints), sortedPairs(rules.deleteConstraints));
     }
   }
 

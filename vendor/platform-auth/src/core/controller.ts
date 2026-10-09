@@ -199,8 +199,8 @@ export class PlatformAuthController {
       await this.deps.clientIdentity?.setIdentity(identityId)
       await this.emit({ type: 'session-restored', user: snapshot.user })
 
-      if (!snapshot.user.username && this.deps.usernames) {
-        void this.backfillUsername(identityId)
+      if (this.deps.usernames) {
+        void this.syncUsername(identityId)
       }
 
       this.startBalanceRefresh()
@@ -236,7 +236,17 @@ export class PlatformAuthController {
         throw new Error('Identity not found')
       }
 
-      const username = this.deps.usernames ? await this.deps.usernames.resolveUsername(identity.id) : null
+      let username: string | null = null
+      let usernameKnown = true
+      if (this.deps.usernames) {
+        try {
+          username = await this.deps.usernames.resolveUsername(identity.id)
+        } catch (error) {
+          // A failed lookup is not "no username": skip the gate and retry in the background.
+          this.logger.warn('platform-auth: username lookup failed during login', error)
+          usernameKnown = false
+        }
+      }
       const user: AuthUser = {
         identityId: identity.id,
         balance: identity.balance,
@@ -256,8 +266,11 @@ export class PlatformAuthController {
       await this.emit({ type: 'login-succeeded', user })
       this.startBalanceRefresh()
       this.tryAutoDeriveEncryptionKey(identity.id, privateKey, user.publicKeys)
+      if (!usernameKnown) {
+        void this.syncUsername(identity.id)
+      }
 
-      if (this.features.usernameGate && !skipUsernameCheck && !user.username) {
+      if (this.features.usernameGate && !skipUsernameCheck && usernameKnown && !user.username) {
         await this.emit({ type: 'username-required', identityId: identity.id })
         return {
           user,
@@ -607,15 +620,7 @@ export class PlatformAuthController {
     }
 
     await this.deps.usernames.clearCache?.(undefined, identityId)
-    const username = await this.deps.usernames.resolveUsername(identityId)
-    if (!username || username === this.state.user?.username) {
-      return
-    }
-
-    await this.updateSessionUser((current) => ({
-      ...current,
-      username,
-    }))
+    await this.applyResolvedUsername(identityId)
   }
 
   public async setUsername(username: string): Promise<void> {
@@ -643,19 +648,32 @@ export class PlatformAuthController {
     }))
   }
 
-  private async backfillUsername(identityId: string): Promise<void> {
+  private async syncUsername(identityId: string): Promise<void> {
     try {
-      const username = await this.deps.usernames?.resolveUsername(identityId)
-      if (!username) return
-      if (!this.isSessionActive(identityId)) return
-
-      await this.updateSessionUser((current) => ({
-        ...current,
-        username,
-      }))
+      await this.applyResolvedUsername(identityId)
     } catch (error) {
-      await this.emit({ type: 'background-error', operation: 'backfill-username', error })
+      await this.emit({ type: 'background-error', operation: 'sync-username', error })
     }
+  }
+
+  /**
+   * A successful lookup replaces the stored username, or clears it when the identity has none.
+   * A failed lookup rejects before touching the session, so the stored username is kept.
+   */
+  private async applyResolvedUsername(identityId: string): Promise<void> {
+    const usernames = this.deps.usernames
+    if (!usernames) return
+
+    const stored = this.state.user?.username
+    const username = (await usernames.resolveUsername(identityId)) ?? undefined
+    // Skip if the session changed hands or setUsername() ran while the lookup was in flight.
+    if (!this.isSessionActive(identityId) || this.state.user?.username !== stored) return
+    if (username === stored) return
+
+    await this.updateSessionUser((current) => ({
+      ...current,
+      username,
+    }))
   }
 
   private async ensureVaultForCurrentSession(

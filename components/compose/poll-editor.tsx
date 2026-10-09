@@ -4,60 +4,61 @@ import { motion } from 'framer-motion'
 import { PlusIcon, TrashIcon, XMarkIcon } from '@heroicons/react/24/outline'
 import { Switch } from '@/components/ui/switch'
 import { IconButton } from '@/components/ui/icon-button'
+import { POLLR_TOPOLOGY, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants'
 import {
+  DEFAULT_POLL_DURATION,
+  POLL_DURATIONS,
   POLL_MAX_OPTIONS,
   POLL_MIN_OPTIONS,
-  POLL_OPTION_MAX_LENGTH,
-} from '@/lib/constants'
-
-/** How long the poll stays open. `none` leaves the poll open indefinitely. */
-export type PollDuration = 'none' | '1d' | '3d' | '7d'
+  pollEndsAt,
+  pollLimits,
+  pollOptionsError,
+  pollQuestionError,
+  trimPollOptions,
+  type PollDuration,
+} from '@/lib/pollr-rules'
 
 export interface PollDraft {
   options: string[]
   multiChoice: boolean
+  /** How long the poll stays open; every poll closes (v5 requires it, within 31 days). */
   duration: PollDuration
 }
 
-const DURATION_LABELS: Record<PollDuration, string> = {
-  none: 'No end time',
-  '1d': '1 day',
-  '3d': '3 days',
-  '7d': '7 days',
-}
-
-const DURATION_DAYS: Record<Exclude<PollDuration, 'none'>, number> = {
-  '1d': 1,
-  '3d': 3,
-  '7d': 7,
-}
+const LIMITS = pollLimits(POLLR_TOPOLOGY)
+const LOCKED_NOTE = 'This poll is already on Platform and can no longer be edited — retrying the post re-uses it.'
+const VOTING_NOTE = pollrPollsDeletable()
+  ? 'Polls live on the Pollr contract. You can delete your poll until someone votes. Voters can change their vote until the poll closes; after that the results are final.'
+  : pollrHasV5Ballots()
+    ? 'Polls live on the Pollr contract. Voters can change their vote until the poll closes; after that the results are final.'
+    : 'Polls live on the Pollr contract. Votes are permanent and cannot be changed.'
 
 export function createPollDraft(): PollDraft {
-  return { options: ['', ''], multiChoice: false, duration: 'none' }
+  return { options: ['', ''], multiChoice: false, duration: DEFAULT_POLL_DURATION }
 }
 
 /** Filled-in, trimmed options — what actually gets written to the contract. */
 export function pollDraftOptions(draft: PollDraft): string[] {
-  return draft.options.map((option) => option.trim()).filter((option) => option.length > 0)
+  return trimPollOptions(draft.options)
 }
 
-export function isPollDraftValid(draft: PollDraft): boolean {
-  const options = pollDraftOptions(draft)
-  return (
-    options.length >= POLL_MIN_OPTIONS &&
-    options.length <= POLL_MAX_OPTIONS &&
-    options.every((option) => option.length <= POLL_OPTION_MAX_LENGTH)
-  )
+/**
+ * Why this poll can't be posted yet, or null. `question` is the post text the
+ * poll takes as its question (without appended attachment URLs).
+ */
+export function pollDraftProblem(draft: PollDraft, question: string): string | null {
+  return pollOptionsError(pollDraftOptions(draft), LIMITS) ?? pollQuestionError(question.trim(), LIMITS)
 }
 
-/** Advisory close time in ms since epoch, or undefined for an open-ended poll. */
-export function pollDraftEndsAt(draft: PollDraft): number | undefined {
-  if (draft.duration === 'none') return undefined
-  return Date.now() + DURATION_DAYS[draft.duration] * 24 * 60 * 60 * 1000
+/** Close time in ms since epoch, computed at the moment of posting. */
+export function pollDraftEndsAt(draft: PollDraft): number {
+  return pollEndsAt(draft.duration)
 }
 
 interface PollEditorProps {
   draft: PollDraft
+  /** The post text, which becomes the poll's question. */
+  question: string
   onChange: (draft: PollDraft) => void
   onRemove: () => void
   disabled?: boolean
@@ -65,10 +66,12 @@ interface PollEditorProps {
   locked?: boolean
 }
 
-export function PollEditor({ draft, onChange, onRemove, disabled = false, locked = false }: PollEditorProps) {
+export function PollEditor({ draft, question, onChange, onRemove, disabled = false, locked = false }: PollEditorProps) {
   // A poll that already landed on Platform is immutable, but the user may still
   // detach it and post without the embed.
   const fieldsDisabled = disabled || locked
+  // Only once there is something to judge: an untouched draft isn't an error.
+  const problem = locked || pollDraftOptions(draft).length < POLL_MIN_OPTIONS ? null : pollDraftProblem(draft, question)
 
   const setOption = (index: number, value: string) => {
     const options = [...draft.options]
@@ -109,7 +112,7 @@ export function PollEditor({ draft, onChange, onRemove, disabled = false, locked
               value={option}
               onChange={(e) => setOption(index, e.target.value)}
               disabled={fieldsDisabled}
-              maxLength={POLL_OPTION_MAX_LENGTH}
+              maxLength={LIMITS.optionMaxChars}
               placeholder={`Choice ${index + 1}`}
               className="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent outline-none focus:border-yappr-500 placeholder:text-gray-400 dark:placeholder:text-gray-600"
             />
@@ -155,19 +158,19 @@ export function PollEditor({ draft, onChange, onRemove, disabled = false, locked
               disabled={fieldsDisabled}
               className="px-2 py-1 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent outline-none focus:border-yappr-500"
             >
-              {(Object.keys(DURATION_LABELS) as PollDuration[]).map((value) => (
+              {POLL_DURATIONS.map(({ value, label }) => (
                 <option key={value} value={value} className="dark:bg-neutral-900">
-                  {DURATION_LABELS[value]}
+                  {label}
                 </option>
               ))}
             </select>
           </label>
         </div>
 
+        {problem && <p className="text-xs text-red-500">{problem}</p>}
+
         <p className="text-xs text-gray-400">
-          {locked
-            ? 'This poll is already on Platform and can no longer be edited — retrying the post re-uses it.'
-            : 'Polls live on the Pollr contract. Votes are permanent and cannot be changed.'}
+          {locked ? LOCKED_NOTE : VOTING_NOTE}
         </p>
       </div>
     </motion.div>

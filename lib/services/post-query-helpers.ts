@@ -6,7 +6,7 @@ import type { PostStats } from './post-service';
 import { identifierToHex, type DocumentWhereClause } from './sdk-helpers';
 import { chunk, mapLimit, rangeDistinctCount } from './pagination-utils';
 import { getEvoSdk } from './evo-sdk-service';
-import { authorPostCountsAreRanked, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
+import { authorPostCountsAreRanked, postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsCarryLiveMarker, quoteListingOrderProperty, targetOf, type KindedTarget } from '../contract-topology';
 
 function normalizeIdentifier(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -73,14 +73,16 @@ export async function fetchFollowingFeed(
       const pages = await mapLimit(ownerBatches, 2, ids => queryRawDocuments({
         dataContractId: contractId, documentTypeName: 'post',
         where: whereClause.map(clause => clause[0] === '$ownerId' ? ['$ownerId', 'in', ids] : clause),
-        orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100,
+        orderBy: [...postOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'asc']], limit: 100,
       }));
       const documents = pages.flat().slice(0, 100);
       return documents.map((doc) => transformDocument(doc));
     };
 
     const buildWhere = (startMs: number, endMs?: number): DocumentWhereClause[] => {
+      // v13: `live == true` first, so tombstones never reach the feed.
       const where: DocumentWhereClause[] = [
+        ...postOwnerIndexPrefix(),
         ['$ownerId', 'in', followingIds],
         ['$createdAt', '>=', startMs],
       ];
@@ -248,11 +250,21 @@ async function fetchAuthorPostCountsViaRanking(): Promise<Map<string, number> | 
   }
 }
 
+/**
+ * Posts per author, at most 100 authors from the proved ranking or count
+ * tree, else a timeline scan of up to 10,000 posts.
+ *
+ * v13 counts live posts only: its ranking pins `live == true`, so an empty
+ * ranking is a proved answer (no author has a live post) and is returned as
+ * is, and the scan, reached only when the ranked read fails, counts only
+ * documents carrying `live` (a tombstone stays on the global timeline).
+ */
 export async function fetchAuthorPostCounts(contractId: string): Promise<Map<string, number>> {
+  const liveOnly = postsCarryLiveMarker();
   const grouped = authorPostCountsAreRanked()
     ? await fetchAuthorPostCountsViaRanking()
     : await fetchAuthorPostCountsViaCountTree(contractId);
-  if (grouped && grouped.size > 0) return grouped;
+  if (grouped && (grouped.size > 0 || liveOnly)) return grouped;
 
   const authorCounts = new Map<string, number>();
 
@@ -272,7 +284,7 @@ export async function fetchAuthorPostCounts(contractId: string): Promise<Map<str
       });
 
       for (const doc of documents) {
-        if (doc.$ownerId) {
+        if (doc.$ownerId && (!liveOnly || doc.live === true)) {
           const ownerId = doc.$ownerId as string;
           authorCounts.set(ownerId, (authorCounts.get(ownerId) || 0) + 1);
         }

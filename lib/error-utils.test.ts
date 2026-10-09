@@ -7,6 +7,7 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import {
+  brokenPropertyRule,
   CREATE_NOT_RECORDED_ERROR,
   isConsensusRefusal,
   categorizeError,
@@ -18,6 +19,7 @@ import {
   isAlreadyExistsError,
   isContestNotJoinableError,
   isNonFatalWaitError,
+  isDeleteConstraintError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
   isModeratorsShareMismatchError,
@@ -42,6 +44,7 @@ import {
   isContestFundError,
   isFrozenBalanceError,
   isInsufficientTokenError,
+  isTokenPausedError,
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
   isTimeoutError,
@@ -262,6 +265,52 @@ describe('protocol-14 rejections', () => {
     expect(v10.categorizeError(shortOfYapp)).not.toMatch(/buy/i)
   })
 
+  describe('40711 TokenIsPausedError (a paused token paying a tokenCost, beta.3)', () => {
+    // rs-dpp token_is_paused_error.rs: #[error("Token {} is paused.", token_id)]
+    const paused = [
+      'Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is paused.',
+      'TokenIsPausedError: Token AwyQ is paused.',
+      'state transition rejected, code=40711',
+      'Consensus error code: 40711',
+    ]
+
+    it.each(paused)('recognises %s', (message) => {
+      expect(isTokenPausedError(new Error(message))).toBe(true)
+      expect(isPermanentProtocol14Error(new Error(message))).toBe(true)
+    })
+
+    it('names the way out each cut offers, with no error code and no "buy" or "frozen" advice', async () => {
+      const copies: Record<string, string> = {
+        // Paused for good: every write already plans credits.
+        v13: 'YAPP can\'t be spent right now. Try again to pay with credits instead.',
+        // The owner paused it; the cost is optional, so credits are a setting away.
+        v9: 'YAPP payments are paused right now. Switch to paying in credits in Settings.',
+        // The owner paused it; the cost is required, so there is no other way.
+        v2: 'YAPP payments are paused right now, so this can\'t go through. Try again later.',
+      }
+      for (const [topology, expected] of Object.entries(copies)) {
+        vi.resetModules()
+        vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+        const scoped = await import('./error-utils')
+        for (const message of paused) {
+          const copy = scoped.categorizeError(new Error(message))
+          expect(copy, topology).toBe(expected)
+          expect(copy).not.toMatch(/40711|buy|frozen/i)
+        }
+      }
+    })
+
+    it.each([
+      // A paused STORE is a storefront status, not a token.
+      'Store is paused and cannot take orders',
+      'Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment',
+      'Identity 9t2e does not have enough token balance, code=40700',
+      'state transition rejected, code=40712',
+    ])('does not claim %s', (message) => {
+      expect(isTokenPausedError(new Error(message))).toBe(false)
+    })
+  })
+
   it('keeps the frozen-account message for a frozen token account, not the moderation one', () => {
     expect(categorizeError(new Error('Identity 9t2e account is frozen for token AwyQ. Action attempted: Document create token payment')))
       .toMatch(/suspended \(frozen\)/i)
@@ -294,7 +343,7 @@ describe('4.2.0-beta.4 rejections', () => {
       "Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 40000000, which is not the seated moderation charter's 60% share of it", /moderator fee share didn't match .*seated moderation charter/i],
     ['40307 by labelled code', isPermanentProtocol14Error, 'rejected: code=40307', /report this/i],
     ['41200 ContractModeratedDocumentTypeNotYetUsableError', isModerationNotYetSeatedError,
-      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /isn't available yet/i],
+      'Documents of type post on contract 8Xv3 can not be used until a moderation team is seated', /opens when Yappr's first moderators are elected/i],
   ]
 
   it.each(cases)('%s is recognised, permanent and given its own message', (_label, matcher, message, expected) => {
@@ -314,6 +363,24 @@ describe('4.2.0-beta.4 rejections', () => {
       expect(copy).not.toMatch(/nothing was charged/i)
     }
     expect(categorizeError(new Error('rejected: code=10419'))).toMatch(/yourself/i)
+  })
+
+  it('words a deleteConstraints refusal (40147) as final and not free', () => {
+    // Transcribed from rs-dpp's `#[error(...)]` at tag v5.0.0-beta.3.
+    for (const message of [
+      'Document 8Xv3 of type "poll" can not be deleted: it breaks its deleteConstraints rule "noVotes": it does not hold',
+      'rejected: code=40147',
+    ]) {
+      const error = new Error(message)
+      expect(isDeleteConstraintError(error)).toBe(true)
+      expect(isPermanentProtocol14Error(error)).toBe(true)
+      // Not a propertyConstraints refusal, and no rule name for propertyRuleCopy.
+      expect(isDocumentPropertyRuleError(error)).toBe(false)
+      expect(brokenPropertyRule(error)).toBeNull()
+      const copy = categorizeError(error)
+      expect(copy).toMatch(/can't be deleted anymore/i)
+      expect(copy).not.toMatch(/nothing was charged/i)
+    }
   })
 
   it('never tells a 40139 to reload: it is a share mismatch, not a stale client', () => {
@@ -444,6 +511,7 @@ describe('5.0.0-beta.1 settled-deletion rejections', () => {
     ['SETTLED_DELETION_NOT_RESTORABLE', 'Document D1 on contract 8Xv3 was deleted at 1759800000000 by the approvals of the seated moderation team, and a deletion the team agreed on is not restored'],
     ['TEAM_ACTION_COMPLETED', 'Team action A1 on contract 8Xv3 already ran'],
     ['TEAM_ACTION_DOCUMENT_CHANGED', 'Document D1 changed since team action A1 on contract 8Xv3 proposed its deletion'],
+    ['TEAM_MEMBER_ADDED_AFTER_DOCUMENT', 'Member 9t2e of the moderation team of contract 8Xv3 was added at 1759800000000, not before document D1 was created at 1759700000000, so it can not approve the document\'s deletion'],
     ['NOT_SETTLED_DELETABLE', 'consensus error code=41204'],
     ['TEAM_NOT_SEATED', '{"code":41205}'],
     ['NOT_SETTLED', 'refused (code=41206)'],
@@ -452,6 +520,7 @@ describe('5.0.0-beta.1 settled-deletion rejections', () => {
     ['SETTLED_DELETION_NOT_RESTORABLE', 'refused (code=41209)'],
     ['TEAM_ACTION_COMPLETED', 'refused (code=41210)'],
     ['TEAM_ACTION_DOCUMENT_CHANGED', 'refused (code=41211)'],
+    ['TEAM_MEMBER_ADDED_AFTER_DOCUMENT', 'refused (code=41212)'],
     ['ALREADY_BANNED', 'Identity 9t2e is already banned on contract 8Xv3'],
     ['NOT_BANNED', 'Identity 9t2e is not banned on contract 8Xv3'],
     ['NOT_SUSPENDED', 'Identity 9t2e is not suspended on contract 8Xv3'],
@@ -587,6 +656,7 @@ describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platf
     [40722, isOncePerIdentityAlreadyClaimedError],
     [10421, isPropertyMaxBytesError],
     [10422, isDocumentPropertyRuleError],
+    [40147, isDeleteConstraintError],
     [40135, isReferenceRequirementError],
     [41200, isModerationNotYetSeatedError],
     [40140, isDocumentExpiredError],
@@ -664,7 +734,7 @@ describe('every consensus code against every matcher', () => {
     isWriteGateError, isImmutablePropertyChangedError, isInvalidDocumentIdError, isModerationBarredError,
     isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
     isFeeMultiplierNotToleratedError, isGasSponsorShortError, isReferencedTypeNotDeletableError,
-    isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError,
+    isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError, isDeleteConstraintError,
     isReferenceRequirementError, isModerationNotYetSeatedError, isDocumentExpiredError, isContestFundError,
     isContestNotJoinableError, isContestFullError, isTrailingBytesError, isContestedDocumentsNotYetAllowedError,
   }
@@ -689,6 +759,7 @@ describe('every consensus code against every matcher', () => {
     10421: ['isPropertyMaxBytesError'],
     10419: ['isDocumentPropertyRuleError'],
     10422: ['isDocumentPropertyRuleError'],
+    40147: ['isDeleteConstraintError'],
     40135: ['isReferenceRequirementError'],
     40136: ['isReferenceRequirementError'],
     40137: ['isReferenceRequirementError'],
@@ -816,5 +887,32 @@ describe('isUnverifiedOutcomeError', () => {
     [new Error('offline')],
   ])('never reads a verdict or an unrelated failure %o as unverified', (error) => {
     expect(isUnverifiedOutcomeError(error)).toBe(false)
+  })
+})
+
+describe('v13 propertyConstraints rules', () => {
+  const broken = (rule: string) => new Error(`A document of type "reply" breaks its propertyConstraints rule "${rule}": not satisfied`)
+
+  it('names the rule a 10422 broke', () => {
+    expect(brokenPropertyRule(broken('parentIsRoot'))).toBe('parentIsRoot')
+    expect(brokenPropertyRule(new Error('offline'))).toBeNull()
+  })
+
+  it.each([
+    ['parentIsRoot', /wrong post owner/],
+    ['media', /attached media/],
+    ['blankTombstone', /emptied completely/],
+    ['live', /live marker/],
+    ['oneTarget', /exactly one post, reply or profile/],
+    ['boxOnContent', /profile report/],
+    ['otherNote', /Say what is wrong/],
+  ])('explains the v13 rule %s', (rule, copy) => {
+    expect(categorizeError(broken(rule))).toMatch(copy)
+  })
+
+  it('keeps the generic copy for a rule it does not know, another contract\'s rule, or an inherited key', () => {
+    expect(categorizeError(broken('minPrice <= maxPrice'))).toMatch(/combination of values/)
+    expect(categorizeError(new Error('A document of type "listing" breaks its propertyConstraints rule "media": no'))).toMatch(/combination of values/)
+    expect(categorizeError(broken('constructor'))).toMatch(/combination of values/)
   })
 })

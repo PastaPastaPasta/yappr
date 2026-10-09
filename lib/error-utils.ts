@@ -2,7 +2,7 @@
  * Utility functions for error handling and message extraction.
  */
 import { paymentIsChoosable } from '@/lib/payment-preference'
-import { authorDeletesLeaveHoles, yappIsLocked } from '@/lib/contract-topology'
+import { authorDeletesLeaveHoles, yappIsLocked, yappIsPausedForGood } from '@/lib/contract-topology'
 
 const MAX_ERROR_DEPTH = 5
 
@@ -246,6 +246,25 @@ export function isInsufficientTokenError(error: unknown): boolean {
     msg.includes('enough balance for token') ||
     msg.includes('insufficient token') ||
     hasConsensusCode(error, [40700])
+  )
+}
+
+/**
+ * Checks if an error is Platform refusing a token payment because the token is
+ * paused: `TokenIsPausedError`, state code **40711**. From 5.0.0-beta.3
+ * (dashpay/platform#5325) this covers a document `tokenCost` too, refused as a
+ * PAID error. Where YAPP is paused for good ({@link yappIsPausedForGood}) the
+ * client plans credits, so a retry pays credits; elsewhere the token's owner
+ * paused it, and the way out depends on whether the cost is optional.
+ *
+ * Drive phrasing (rs-dpp token_is_paused_error.rs): "Token X is paused."
+ */
+export function isTokenPausedError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('tokenispaused') ||
+    /\btoken \S+ is paused\b/.test(msg) ||
+    hasConsensusCode(error, [40711])
   )
 }
 
@@ -681,6 +700,73 @@ export function isDocumentPropertyRuleError(error: unknown): boolean {
   )
 }
 
+/**
+ * **40147** `DocumentDeleteConstraintViolatedError` (5.0.0-beta.3): the
+ * owner's delete of a document breaks a rule of its type's `deleteConstraints`,
+ * judged on the stored document (a poll that already has votes, say). Only the
+ * owner's delete is judged; moderators and a `ttl` delete as before. It is a
+ * state error, so it is paid, and retrying cannot help while the stored state
+ * holds. Message: 'Document <id> of type "<t>" can not be deleted: it breaks
+ * its deleteConstraints rule "<rule>": <why>'.
+ */
+export function isDeleteConstraintError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /documentdeleteconstraintviolated/i.test(msg) ||
+    /can not be deleted: it breaks its deleteconstraints rule/i.test(msg) ||
+    hasConsensusCode(error, [40147])
+  )
+}
+
+/**
+ * The `propertyConstraints` rule a 10422 names ("breaks its
+ * propertyConstraints rule "<rule>""), or null.
+ */
+export function brokenPropertyRule(error: unknown): string | null {
+  return /propertyconstraints rule "([^"]+)"/i.exec(extractErrorMessage(error))?.[1] ?? null
+}
+
+/** The document type a 10422 names ('A document of type "<t>" breaks ...'), or null. */
+function ruleDocumentType(error: unknown): string | null {
+  return /document of type "([^"]+)" breaks/i.exec(extractErrorMessage(error))?.[1] ?? null
+}
+
+/** The social types {@link PROPERTY_RULE_COPY} speaks for; other contracts reuse rule names like `media`. */
+const SOCIAL_RULE_TYPES: ReadonlySet<string> = new Set(['post', 'reply', 'report'])
+
+/** The copy for a 10422 on a social post, reply or report, or null for any other rule. */
+function propertyRuleCopy(error: unknown): string | null {
+  const rule = brokenPropertyRule(error)
+  const docType = ruleDocumentType(error)
+  if (!rule || (docType !== null && !SOCIAL_RULE_TYPES.has(docType))) return null
+  return PROPERTY_RULE_COPY.get(rule) ?? null
+}
+
+/**
+ * What each social-contract rule's 10422 means to a user (v13 names, and the
+ * v9-v12 names they replaced). Each is a client bug or a stale client rather
+ * than something the user typed, so the copy says what went wrong, not how
+ * to fix the input.
+ */
+const INCOMPLETE_PRIVATE = 'The private post was incomplete. Try again.'
+const UNBLANK_TOMBSTONE = 'Deleting it failed: the network expects it emptied completely. Reload and try again.'
+const OTHER_NEEDS_NOTE = 'Say what is wrong with it in the details.'
+const PROPERTY_RULE_COPY: ReadonlyMap<string, string> = new Map([
+  ['parentIsRoot', 'This reply named the wrong post owner. Reload the thread and reply again.'],
+  ['media', 'The attached media did not match its details. Remove it, attach it again and retry.'],
+  ['privateNoMedia', 'A private post can\'t carry a public media link.'],
+  ['privateAllOrNone', INCOMPLETE_PRIVATE],
+  ['private', INCOMPLETE_PRIVATE],
+  ['notEmpty', 'A post needs some text, media, a quote or a poll.'],
+  ['blankTombstone', UNBLANK_TOMBSTONE],
+  ['tombstoneIsBlank', UNBLANK_TOMBSTONE],
+  ['live', 'This post was missing its live marker. Reload the app and try again.'],
+  ['oneTarget', 'A report names exactly one post, reply or profile.'],
+  ['boxOnContent', 'A profile report can\'t carry private content.'],
+  ['otherNote', OTHER_NEEDS_NOTE],
+  ['otherHasNote', OTHER_NEEDS_NOTE],
+])
+
 /** The 10419 (`distinctFrom`) member of {@link isDocumentPropertyRuleError}. */
 function isPropertyNotDistinctError(error: unknown): boolean {
   const msg = extractErrorMessage(error)
@@ -753,6 +839,13 @@ function isVoteChoiceNotAllowedError(error: unknown): boolean {
     hasConsensusCode(error, [40307])
   )
 }
+
+/**
+ * What a 41200 means to a user: on a `notYetUsable` contract (mainnet v13)
+ * posts, replies, reports and profile changes open once masternodes elect the
+ * first moderation team.
+ */
+export const POSTING_CLOSED_COPY = 'Posting opens when Yappr\'s first moderators are elected. Until then posts, replies, reports and profile changes are closed.'
 
 /**
  * **41200** `ContractModeratedDocumentTypeNotYetUsableError` (elected
@@ -942,6 +1035,7 @@ export type ModerationErrorKind =
   | 'SETTLED_DELETION_NOT_RESTORABLE'
   | 'TEAM_ACTION_COMPLETED'
   | 'TEAM_ACTION_DOCUMENT_CHANGED'
+  | 'TEAM_MEMBER_ADDED_AFTER_DOCUMENT'
   | 'ALREADY_BANNED'
   | 'NOT_BANNED'
   | 'NOT_SUSPENDED'
@@ -1002,6 +1096,13 @@ const MODERATION_ERRORS: ReadonlyArray<readonly [ModerationErrorKind, readonly n
   ['SETTLED_DELETION_NOT_RESTORABLE', [41209], /settleddeletionnotrestorable|a deletion the team agreed on is not restored/i],
   ['TEAM_ACTION_COMPLETED', [41210], /contractteamactionalreadycompleted|team action .* on contract .* already ran/i],
   ['TEAM_ACTION_DOCUMENT_CHANGED', [41211], /contractteamactiondocumentchanged|changed since team action .* proposed its deletion/i],
+  // 5.0.0-beta.2 (platform#5260): with `approvals` above 1,
+  // `approversPredateDocument` defaults to true, and then a member the leader
+  // added counts only for documents created strictly AFTER its addition (an
+  // addition in the same block does not count). Its proposal or approval of
+  // an older document's deletion is a 41212. The leader and elected members
+  // always count, and `approversPredateDocument: false` lifts the rule.
+  ['TEAM_MEMBER_ADDED_AFTER_DOCUMENT', [41212], /contractteammemberaddedafterdocument|was added at \d+, not before document .* was created/i],
   // The identity lists (rs-dpp at v5.0.0-beta.1): 41103 a ban of a banned
   // identity, 41104 an unban of one that is not banned, 41105 an unsuspend of
   // one that is not suspended (a lapsed suspension is swept by the identity's
@@ -1046,12 +1147,14 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
   return (
     isInvalidDocumentIdError(error) ||
     isModerationBarredError(error) ||
+    isTokenPausedError(error) ||
     isGasPayerError(error) ||
     isActionFeeAgreementError(error) ||
     isReferencedTypeNotDeletableError(error) ||
     isOncePerIdentityAlreadyClaimedError(error) ||
     isPropertyMaxBytesError(error) ||
     isDocumentPropertyRuleError(error) ||
+    isDeleteConstraintError(error) ||
     isReferenceRequirementError(error) ||
     isVoteChoiceNotAllowedError(error) ||
     isModerationNotYetSeatedError(error) ||
@@ -1073,7 +1176,7 @@ export function categorizeError(error: unknown): string {
     return 'Your account has been banned or suspended here by a moderator, so this action isn\'t allowed right now.'
   }
   if (isModerationNotYetSeatedError(error)) {
-    return 'This isn\'t available yet. Try again later.'
+    return POSTING_CLOSED_COPY
   }
   if (isPropertyMaxBytesError(error)) {
     // maxLength counts characters and the UI enforces it; maxBytes counts
@@ -1086,7 +1189,11 @@ export function categorizeError(error: unknown): string {
     return 'The network doesn\'t allow this combination: you can\'t do this to yourself.'
   }
   if (isDocumentPropertyRuleError(error)) {
-    return 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
+    return propertyRuleCopy(error) ?? 'The network doesn\'t allow this combination of values. Check what you entered and try again.'
+  }
+  if (isDeleteConstraintError(error)) {
+    // Paid, like the 10422 above, so no "nothing was charged".
+    return 'This can\'t be deleted anymore.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'
@@ -1177,6 +1284,16 @@ export function categorizeError(error: unknown): string {
     return 'This is out of date — reload the page and try again.'
   }
 
+  // A paused token can't pay at all, whatever the balance. Where it is paused
+  // for good every write already plans credits, so trying again pays credits;
+  // where its owner paused it, credits are the way out only on an optional cost.
+  if (isTokenPausedError(error)) {
+    if (yappIsPausedForGood()) return 'YAPP can\'t be spent right now. Try again to pay with credits instead.'
+    return paymentIsChoosable('post')
+      ? 'YAPP payments are paused right now. Switch to paying in credits in Settings.'
+      : 'YAPP payments are paused right now, so this can\'t go through. Try again later.'
+  }
+
   // Check frozen before insufficient-balance: a frozen account can't spend even
   // with a positive balance, and buying more YAPP won't unfreeze it.
   if (isFrozenBalanceError(error)) {
@@ -1188,8 +1305,11 @@ export function categorizeError(error: unknown): string {
     // way to act, and a balance that went stale between planning and signing
     // lands here: offering only to sell more would hide the free option. The
     // way out is read through the topology, so the advice never names one the
-    // contract does not offer. Where YAPP is locked (v10) it cannot be bought.
-    if (yappIsLocked()) return 'You don\'t have enough YAPP. Switch to paying in credits in Settings.'
+    // contract does not offer. Where YAPP is locked (v10 onwards) it cannot be
+    // bought. Trying again pays credits: on v10–v13 (paused for good) YAPP is
+    // never planned for a social write, and on v14 a balance below the cost
+    // plans credits.
+    if (yappIsLocked()) return 'You don\'t have enough YAPP. Try again to pay with credits instead.'
     return paymentIsChoosable('post')
       ? 'You don\'t have enough YAPP. Buy more, or switch to paying in credits in Settings.'
       : 'You don\'t have enough YAPP. Buy more to keep posting.'

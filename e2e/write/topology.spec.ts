@@ -31,14 +31,14 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Locator, Page } from '@playwright/test'
+import type { Browser, Locator, Page } from '@playwright/test'
 import { appUrl } from '../fixtures/app'
-import { expect, hasSeedPhrase, NO_SEED_REASON, seedContext, test } from '../fixtures/auth'
+import { expect, hasSeedPhrase, NO_SEED_REASON, otherBotIdentity, seedContext, test, type BotIdentity } from '../fixtures/auth'
 import { expectedSocialContractId, expectedTopology } from '../fixtures/contracts'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
 import { CONTRACT_TOPOLOGIES } from '../../lib/constants'
-import { deletesAreTombstones, repostsAreQuotes, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
+import { deletesAreTombstones, tombstonesAreHidden, repostsAreQuotes, windowedRankingFor, type RankingAxis, type WindowedRanking } from '../../lib/contract-topology'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -108,7 +108,7 @@ function topologyFacts(topology: string) {
       hashtags: windowedRankingFor('hashtags'),
       creators: windowedRankingFor('creators'),
     }
-    return { deletesAreTombstones: deletesAreTombstones(), repostsAreQuotes: repostsAreQuotes(), windows }
+    return { deletesAreTombstones: deletesAreTombstones(), tombstonesAreHidden: tombstonesAreHidden(), repostsAreQuotes: repostsAreQuotes(), windows }
   } finally {
     if (saved === undefined) delete process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY
     else process.env.NEXT_PUBLIC_CONTRACT_TOPOLOGY = saved
@@ -116,6 +116,12 @@ function topologyFacts(topology: string) {
 }
 const FACTS = topologyFacts(SPEC_TOPOLOGY)
 const DELETES_ARE_REAL = FACTS?.deletesAreTombstones === false
+/**
+ * v11/v12: an author's tombstone is hidden, and a tombstoned reply with no live
+ * replies under it is dropped from the thread (one with live replies stays as a
+ * "deleted by its author" stub). v9 keeps a deleted card in place.
+ */
+const TOMBSTONES_ARE_HIDDEN = FACTS?.tombstonesAreHidden === true
 /** v10: a repost is a bare quote post, so a reply can be reposted too. */
 const REPOSTS_ARE_QUOTES = FACTS?.repostsAreQuotes === true
 const WINDOWS = FACTS?.windows
@@ -129,6 +135,57 @@ function windowLabel(axis: RankingAxis): string {
   const window = WINDOWS?.[axis]
   if (!window) throw new Error(`${SPEC_TOPOLOGY} has no ${axis} window`)
   return window.label
+}
+
+/**
+ * A post's like button in a LOADED state: `pressed` for the viewer and exactly
+ * `count` likes. The detail page renders the post unenriched first (0 likes,
+ * not pressed), so a count of 1 or more can only come from the chain-backed
+ * enrichment, which carries the viewer's own like state with it.
+ */
+const likeState = (p: Page, postId: string, pressed: boolean, count: number) =>
+  p.getByTestId(`like-btn-${postId}`)
+    .and(p.locator(`[aria-pressed="${pressed}"][aria-label="Like, ${count} like${count === 1 ? '' : 's'}"]`))
+
+/**
+ * `who` (a second pool identity) adds (`pressed`) or takes back its like on a
+ * run's target whose only other like is the run's bot's: 1 like without it, 2
+ * with. It waits for the loaded state before deciding, clicks only from the
+ * loaded opposite state, and accepts only the loaded target state with its count.
+ *
+ * Why the profile Top cases need it: the bot's Top list is capped at 10, ranked
+ * by like count, with ties ordered by post id, and every run leaves its targets
+ * on the bot's profile at one like. Once ten of them pile up, a run's one-like
+ * target ranks in only by the luck of its id; a second like lifts it above all of
+ * them for as long as the assertion needs, and each describe takes it back after.
+ */
+async function setSecondLike(browser: Browser, who: BotIdentity, postId: string, pressed: boolean): Promise<void> {
+  const [from, to] = pressed ? [1, 2] : [2, 1]
+  const context = await browser.newContext()
+  try {
+    await seedContext(context, who)
+    const page = await context.newPage()
+    await page.goto(appUrl(`/post?id=${postId}`))
+    const before = likeState(page, postId, !pressed, from)
+    await expect(before.or(likeState(page, postId, pressed, to))).toBeVisible({ timeout: 60_000 })
+    if (await before.isVisible()) {
+      await before.click()
+      await expect(page.getByTestId(`like-btn-${postId}`)).toBeEnabled({ timeout: 60_000 })
+    }
+    await reloadUntilVisible(page, appUrl(`/post?id=${postId}`), (p) => likeState(p, postId, pressed, to))
+  } finally {
+    await context.close()
+  }
+}
+
+/** Best effort {@link setSecondLike} undo: a failure only leaves one target at two likes. */
+async function takeBackSecondLike(browser: Browser, who: BotIdentity | null, postId: string, surface: string): Promise<void> {
+  if (!who || !postId) return
+  try {
+    await setSecondLike(browser, who, postId, false)
+  } catch (error) {
+    console.warn(`${surface}: the second like on ${postId} was not taken back: ${String(error).slice(0, 200)}`)
+  }
 }
 
 // The first describe covers the document graph: flat threads, likeReply,
@@ -324,8 +381,14 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     await expect(page.getByRole('menuitem', { name: /Quote|View your/ })).toHaveCount(0)
 
     // Undo deletes the bare quote post: the count and the slot come back.
+    // The control stays disabled until the tombstone is broadcast, and a navigation before then
+    // drops the write: the read-back below used to reload mid-write and wait on a repost that
+    // was never undone. A refused undo rolls the name back to "1 repost, reposted".
     await page.getByRole('menuitem', { name: 'Undo Repost' }).click()
-    await expect(page.getByTestId(`repost-menu-btn-${firstReplyId}`)).toHaveAccessibleName('Repost or quote, 0 reposts')
+    const undone = page.getByTestId(`repost-menu-btn-${firstReplyId}`)
+    await expect(undone).toHaveAccessibleName('Repost or quote, 0 reposts')
+    await expect(undone).toBeEnabled({ timeout: COMPOSE_TIMEOUT })
+    await expect(undone).toHaveAccessibleName('Repost or quote, 0 reposts')
     await reloadUntilVisible(page, appUrl(`/post?id=${rootPostId}`), (p) =>
       p.getByTestId(`repost-menu-btn-${firstReplyId}`).and(p.getByRole('button', { name: 'Repost or quote, 0 reposts' }))
     )
@@ -375,9 +438,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     )
   })
 
-  test(DELETES_ARE_REAL ? 'deleting the nested reply removes it' : 'deleting the nested reply leaves a tombstone card', async ({ page }) => {
-    // v9: reply is canBeDeleted:false, so this is a replace that blanks the
-    // content and sets deleted:true; the document and every reference to it
+  test(DELETES_ARE_REAL ? 'deleting the nested reply removes it'
+    : TOMBSTONES_ARE_HIDDEN ? 'deleting the nested reply tombstones it out of the thread'
+    : 'deleting the nested reply leaves a tombstone card', async ({ page }) => {
+    // v9/v11/v12: reply is canBeDeleted:false, so this is a replace that blanks
+    // the content and sets deleted:true; the document and every reference to it
     // survive. v10: reply is owner-deletable, so the document is removed.
     test.setTimeout(300_000)
 
@@ -395,9 +460,11 @@ test.describe(`${SPEC_TOPOLOGY} interaction topology on the devnet contract`, ()
     await confirm.getByRole('button', { name: 'Delete', exact: true }).click()
     await expect(confirm).toBeHidden({ timeout: COMPOSE_TIMEOUT })
 
-    if (DELETES_ARE_REAL) {
-      // The document is gone: once the thread re-reads, its text is nowhere,
-      // while the reply it answered (and the root) are still there.
+    if (DELETES_ARE_REAL || TOMBSTONES_ARE_HIDDEN) {
+      // v10: the document is gone. v11/v12: it is a tombstone, and a tombstoned
+      // leaf reply (nothing live under it) is dropped from the thread. Either
+      // way, once the thread re-reads, its text is nowhere, while the reply it
+      // answered (and the root) are still there.
       await expect.poll(async () => {
         await page.goto(appUrl(`/post?id=${rootPostId}`))
         await expect(page.getByTestId(`post-card-${firstReplyId}`)).toBeVisible({ timeout: 60_000 })
@@ -454,6 +521,13 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
   let hashtag = ''
   let taggedPostId = ''
   let untaggedPostId = ''
+  /** A second pool identity whose like lifts the tagged target to 2 for the profile Top (null on a one-identity pool). */
+  let secondLiker: BotIdentity | null = null
+
+  test.afterAll(async ({ browser }) => {
+    test.setTimeout(300_000)
+    await takeBackSecondLike(browser, secondLiker, taggedPostId, 'profile Top')
+  })
 
   /** Compose a top-level post from the feed and return its document id. */
   const composePost = async (page: Page, identityId: string, text: string): Promise<string> => {
@@ -642,8 +716,15 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     }
   })
 
-  test('the profile Top tab still serves the terminal ranking of the same index', async ({ page, bot }) => {
-    test.setTimeout(180_000)
+  test('the profile Top tab still serves the terminal ranking of the same index', async ({ browser, page, bot }) => {
+    test.setTimeout(420_000)
+
+    // The Top list is capped (10) and ranked by like count, and every earlier run
+    // leaves its tagged and untagged targets on the bot's profile at one like each,
+    // so this run's one-like target only ranks in while fewer than ten others do.
+    // A second like (taken back in afterAll) lifts it above all of them.
+    secondLiker = await otherBotIdentity()
+    if (secondLiker) await setSecondLike(browser, secondLiker, taggedPostId, true)
 
     // The at-form covers [postAuthor, postId]: the leaderboard groups at the
     // prefix, the profile Top tab at the terminal. Both must answer.
@@ -657,6 +738,7 @@ test.describe(`${SPEC_TOPOLOGY} inline hashtags, indexOnly likes and prefix rank
     await expect(
       page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
     ).toBeVisible({ timeout: 60_000 })
+    if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toHaveAttribute('aria-label', 'Like, 2 likes')
   })
 })
 
@@ -676,6 +758,8 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
   let runTag = ''
   let hashtag = ''
   let taggedPostId = ''
+  /** A second pool identity whose like lifts the run's target to 2 (null on a one-identity pool). */
+  let secondLiker: BotIdentity | null = null
 
   test.beforeAll(async ({ browser, bot }) => {
     test.setTimeout(420_000)
@@ -712,6 +796,20 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     } finally {
       await context.close()
     }
+    // A second like from another pool identity. Every earlier run leaves its own
+    // target on the bot's profile at one like, so with two this run's target
+    // outranks all of them on the bot's capped Top list, however many there are
+    // and however ties order (afterAll takes the second like back).
+    secondLiker = await otherBotIdentity()
+    if (secondLiker) await setSecondLike(browser, secondLiker, taggedPostId, true)
+  })
+
+  test.afterAll(async ({ browser }) => {
+    // Leave the target at one like like every earlier run's, so the next run's
+    // two-like target still outranks it. A failure here only leaves one target
+    // at two likes, which does not fail a later run.
+    test.setTimeout(300_000)
+    await takeBackSecondLike(browser, secondLiker, taggedPostId, 'windowed rankings')
   })
 
   test(`the tag page's Top → recent window lists the liked post (${windowIndex('hashtags')}, tag + window pinned)`, async ({ page }) => {
@@ -734,9 +832,12 @@ test.describe(`${SPEC_TOPOLOGY} windowed rankings on the devnet contract`, () =>
     await expect(topFilter).toBeVisible({ timeout: 60_000 })
     await topFilter.click()
     if (!WINDOWS?.creators) {
+      // The Top list is capped (10) and earlier runs' targets sit at one like each;
+      // this run's target carries two (beforeAll), so it must rank in, with its count.
       await expect(
         page.locator('[data-testid^="post-card-"]').filter({ hasText: runTag }).first()
       ).toBeVisible({ timeout: 60_000 })
+      if (secondLiker) await expect(page.getByTestId(`like-btn-${taggedPostId}`)).toHaveAttribute('aria-label', 'Like, 2 likes')
       await expect(page.getByTestId('profile-top-window')).toHaveCount(0)
       return
     }

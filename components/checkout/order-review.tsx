@@ -1,7 +1,9 @@
 import { LockClosedIcon, BuildingStorefrontIcon } from '@heroicons/react/24/outline'
 import { formatPrice } from '@/lib/utils/format'
 import { cartService } from '@/lib/services/cart-service'
+import { DigitalBadge } from '@/components/store/digital-badge'
 import type { CartItem, ShippingAddress, Store } from '@/lib/types'
+import { IpfsImage } from '@/components/ui/ipfs-image'
 
 interface OrderReviewProps {
   store: Store | null
@@ -32,7 +34,7 @@ export function OrderReview({
       {/* Store */}
       <div className="p-4 bg-gray-50 dark:bg-gray-950 rounded-lg flex items-center gap-3">
         {store?.logoUrl ? (
-          <img src={store.logoUrl} alt={store.name} className="w-10 h-10 rounded-lg object-cover" />
+          <IpfsImage src={store.logoUrl} alt={store.name} className="w-10 h-10 rounded-lg object-cover" />
         ) : (
           <div className="w-10 h-10 rounded-lg bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
             <BuildingStorefrontIcon className="h-5 w-5 text-gray-400" />
@@ -56,6 +58,7 @@ export function OrderReview({
             </div>
             <div className="flex-1 min-w-0">
               <p className="font-medium truncate">{item.title}</p>
+              {item.fulfillment === 'digital' && <DigitalBadge className="mt-0.5" />}
               {item.variantKey && (
                 <p className="text-sm text-gray-500">{cartService.getVariantDisplay(item.variantKey)}</p>
               )}

@@ -81,7 +81,7 @@ vi.stubGlobal('localStorage', {
 
 import {
   SETTLE_MARGIN_MS, countedSigners, deletionPhase, missingDocumentState, moderationService, neededApprovals, protectedIdentities, teamActionTargetState,
-  postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
+  moderatedTypeOpenFor, postedOnLabel, removalRouteFor, resolveModerationTeam, teamCanApprove, toKeptFields, toModerationReason, toRemoval, toTeamAction, toWarning,
 } from './moderation-service'
 import { removalHashOf, saveSnapshot } from '@/lib/moderation-snapshots'
 
@@ -149,6 +149,16 @@ describe('who moderates (mirrors Drive ContractModerators::may_moderate)', () =>
     expect(await moderationService.isModerator(LEADER)).toBe(true)
     expect(await moderationService.isModerator(MEMBER)).toBe(true)
     expect(free).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the team again on a fresh request, inside the cache\'s minute', async () => {
+    const contract = { ownerId: { toBase58: () => OWNER }, config: { moderation: { moderators: elected({ $type: 'contractOwner' }) } } }
+    sdk.contracts.fetch.mockResolvedValue(contract)
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [{ toBase58: () => MEMBER }], electedMembers: [], seats: () => 2, free: vi.fn() })
+    expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
+    sdk.moderationCharters.team.mockResolvedValue({ leaderId: { toBase58: () => LEADER }, members: [], electedMembers: [], seats: () => 1, free: vi.fn() })
+    expect((await moderationService.getTeam())?.appointed).toEqual([LEADER, MEMBER])
+    expect((await moderationService.getTeam({ fresh: true }))?.appointed).toEqual([LEADER])
   })
 
   it('re-reads the team after its TTL', async () => {
@@ -749,6 +759,7 @@ describe('the team\'s settled-deletion writes and reads', () => {
   it.each([
     [41206, 'NOT_SETTLED'],
     [41205, 'TEAM_NOT_SEATED'],
+    [41212, 'TEAM_MEMBER_ADDED_AFTER_DOCUMENT'],
   ])('maps a proposal refused %s to %s', async (code, errorCode) => {
     sdk.contracts.moderatorDeleteSettledDocument.mockRejectedValue({ code, message: 'refused' })
     expect(await moderationService.proposeSettledDeletion(MEMBER, 'post', 'P1', { text: 'x', reasonDocumentId: 'RD1' })).toMatchObject({ success: false, errorCode })
@@ -764,6 +775,7 @@ describe('the team\'s settled-deletion writes and reads', () => {
     [41208, 'TEAM_ACTION_ALREADY_SIGNED'],
     [41210, 'TEAM_ACTION_COMPLETED'],
     [41211, 'TEAM_ACTION_DOCUMENT_CHANGED'],
+    [41212, 'TEAM_MEMBER_ADDED_AFTER_DOCUMENT'],
   ])('maps an approval refused %s to %s', async (code, errorCode) => {
     sdk.contracts.moderatorApproveTeamAction.mockRejectedValue({ code, message: 'refused' })
     expect(await moderationService.approveTeamAction(LEADER, 'A1')).toMatchObject({ success: false, errorCode })
@@ -968,5 +980,15 @@ describe('team actions that can never run (QA 2026-10-01, sakura)', () => {
     expect(v11.error).not.toMatch(/author deleted/)
     topology.authorsDelete = true
     expect((await moderationService.approveTeamAction(LEADER, 'A1')).error).toMatch(/or its author deleted it/)
+  })
+})
+
+describe('moderatedTypeOpenFor (the registered interim, not the committed file)', () => {
+  it('closes moderated writes only under a notYetUsable interim with no team seated', () => {
+    expect(moderatedTypeOpenFor('notYetUsable', null)).toBe(false)
+    expect(moderatedTypeOpenFor('notYetUsable', { leaderId: 'L', members: [] })).toBe(true)
+    for (const interim of ['contractOwner', 'appointedModerators', 'noModeration', null] as const) {
+      expect(moderatedTypeOpenFor(interim, null), String(interim)).toBe(true)
+    }
   })
 })

@@ -43,6 +43,12 @@ export interface TombstoneParams {
    * frozen property is rejected with 40128 exactly like one that changes it.
    */
   preserve: TombstonePreservation;
+  /**
+   * What the tombstone writes beyond the preserved fields, when not the social
+   * contract's own ({@link tombstoneBase}). Blog v7 posts write `deleted` and
+   * `commentsEnabled: false` (`BLOG_POST_TOMBSTONE`).
+   */
+  base?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -85,10 +91,14 @@ function tombstoneBase(): Record<string, unknown> {
  * contract does not let go, is reported rather than guessed at.
  *
  * THROWS the refusal when the author is banned or suspended from the contract
- * (41107/41108): Drive lets a barred identity delete but refuses it every
- * replace, a tombstone included, so on a `canBeDeleted: false` type a barred
- * author cannot take its own post down at all. The caller says so (with the
- * moderators' reason, `reportBarredWrite`) instead of a silent "failed".
+ * (41107/41108). On v9 and v11 Drive lets a barred identity delete but
+ * refuses it every replace, a tombstone included, so on a
+ * `canBeDeleted: false` type a barred author cannot take its own post down at
+ * all. The caller says so (with the moderators' reason, `reportBarredWrite`)
+ * instead of a silent "failed". On v12 post and reply declare
+ * `retractedWhen: { present: "deleted" }` (`barredAuthorsCanTombstone()`):
+ * a barred author's replace that writes `deleted` (this tombstone) is
+ * accepted, and only a refusal of something else would still land here.
  */
 export async function tombstoneDocument(params: TombstoneParams): Promise<boolean> {
   const { contractId, documentType, documentId, ownerId } = params;
@@ -108,7 +118,7 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
     // the outcome asked for holds, and a second replace would only cost fees.
     if ((data.deleted ?? raw.deleted) === true) return true;
 
-    const replacement = tombstoneBase();
+    const replacement = params.base ? { ...params.base } : tombstoneBase();
 
     for (const field of params.preserve.identifiers) {
       const stored = data[field] ?? raw[field];
@@ -165,7 +175,7 @@ export async function tombstoneDocument(params: TombstoneParams): Promise<boolea
       if (isImmutablePropertyChangedError(result.error)) {
         logger.error(
           `Failed to tombstone ${documentType} ${documentId}: the replacement dropped or changed an immutable ` +
-            `property, so tombstonePreservationFor('${documentType}') is out of sync with the contract.`,
+            `property, so the preserve set for ${documentType} (tombstonePreservationFor, on the social contract) is out of sync with the contract.`,
           result.error
         );
       } else {

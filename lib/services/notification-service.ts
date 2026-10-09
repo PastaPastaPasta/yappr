@@ -6,7 +6,7 @@ import { identifierToBase58, queryDocuments, QueryDocumentsOptions } from './sdk
 import { YAPPR_CONTRACT_ID, blogIsV2 } from '../constants';
 import { Notification, User, Post } from '../../types';
 import { truncateId } from '../utils';
-import { isPublishedBlogPost } from '../blog/content-utils';
+import { isBlogPostTombstone, isPublishedBlogPost } from '../blog/content-utils';
 import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTarget, likeSurfacesAreSplit, likeIndexFor, mentionDocTypes, mentionsAreInline, notificationWindowFor, notificationsAreWindowed, replyLinkage, repostsAreQuotes, type TargetKind } from '../contract-topology';
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
@@ -299,8 +299,8 @@ class NotificationService {
   }
 
   /**
-   * v11: no like index keeps a like's time, so new likes are found by diffing
-   * ({@link diffLikeSnapshot}). Returns the retained batches no completed
+   * v11, v12: no like index keeps a like's time, so new likes are found by
+   * diffing ({@link diffLikeSnapshot}). Returns the retained batches no completed
    * fetch of this session has returned yet.
    */
   private async getTimelessLikeNotifications(userId: string): Promise<RawNotification[]> {
@@ -326,9 +326,11 @@ class NotificationService {
   }
 
   /**
-   * One poll of the v11 like diff. Per kind: the like counts of the user's
-   * recent posts or replies (one composite, as on v10), then the likers of
-   * every target whose count moved (`likeService.getLikersOf`), folded into
+   * One poll of the v11/v12 like diff. Per kind: the like counts of the
+   * user's recent posts or replies (one composite, as on v10), then the likers
+   * of every target whose count moved (`likeService.getLikersOf`: one
+   * author-pinned read on v11, one `byPost`/`byReply` read per moved target on
+   * v12, where the author index is a counter), folded into
    * this device's snapshot (lib/like-notification-snapshot.ts). A kind whose
    * reads fail is skipped and retried next poll.
    *
@@ -430,8 +432,10 @@ class NotificationService {
 
   /**
    * Get replies to user's content since timestamp (for notification queries).
-   * Uses the parentOwnerAndTime index (v10: the parentOwnerRecent window) via
-   * replyService.getRepliesToMyContent()
+   * Uses the parentOwnerAndTime index (v10: the parentOwnerRecent window; v14:
+   * that window and rootOwnerRecent, each reply once) via
+   * replyService.getRepliesToMyContent(). "Replied to your post" or "your
+   * reply" follows from the reply's own linkage ({@link repliedToKind}).
    */
   async getReplyNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[]): Promise<RawNotification[]> {
     const { replyService } = await import('./reply-service');
@@ -572,8 +576,9 @@ class NotificationService {
       // `blogPostOwnerId` up to v5, derived through `blogPostId` from v6),
       // so a row on this index is by construction a comment on this user's
       // post — this drops only rows whose post did not come back (a read
-      // failure), since there is no title or link to render without it.
-      if (!post) return [];
+      // failure), since there is no title or link to render without it, and
+      // rows on a post its author has since deleted (a v7 tombstone).
+      if (!post || isBlogPostTombstone(post)) return [];
       return [{
         id: `blogComment-${comment.id}`, type: 'blogComment' as const, fromUserId: comment.ownerId,
         postId: post.id, blogId: post.blogId, blogPostTitle: post.title, blogPostSlug: post.slug,
@@ -994,11 +999,12 @@ class NotificationService {
    * v10: follows, mentions (post and reply) and follow requests stay permanent
    * and ride one bundle (four members). Replies and quotes/reposts are two
    * open windows each, and `timeRange` is refused in a composite, so each
-   * window is its own plain query, all in parallel: five requests a poll, plus
-   * a page per full window. Likes (like design C) are per recent target,
+   * window is its own plain query, all in parallel: five requests a poll (seven
+   * on v14, whose replies come from two windows of their own), plus a page per
+   * full window. Likes (like design C) are per recent target,
    * outside the bundle ({@link likeNotificationsPinTarget}): per kind one
-   * composite plus one read (v11: plus a liker read only when a count moved,
-   * {@link getTimelessLikeNotifications}).
+   * composite plus one read (v11, v12: plus liker reads only when a count
+   * moved, {@link getTimelessLikeNotifications}).
    */
   private async fetchWindowedSources(userId: string, sinceTimestamp: number, failures: SourceFailures): Promise<RawNotification[]> {
     const kinds: TargetKind[] = likeSurfacesAreSplit() ? ['post', 'reply'] : ['post'];

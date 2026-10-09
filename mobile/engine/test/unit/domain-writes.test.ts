@@ -44,12 +44,13 @@ const m = vi.hoisted(() => ({
   replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn(), getUserReplies: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
-    blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), query: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
+    blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
     getBlockFollow: vi.fn(),
   },
   /** `electedModeration()`: null off an elected contract. */
   elected: null as { interim: string; moderatedDocumentTypes: Record<string, string[]> } | null,
   election: { getSeatedTeam: vi.fn() },
+  moderation: { moderatedTypeOpen: vi.fn() },
   reportService: { fileReport: vi.fn(), getOwnReport: vi.fn(), withdrawReport: vi.fn() },
   profileService: { updateProfile: vi.fn(), getProfile: vi.fn(), profileExists: vi.fn(), getStoredAvatar: vi.fn() },
   settleReplaces: vi.fn(async () => 0),
@@ -95,6 +96,7 @@ vi.mock('@/lib/services/follow-service', () => ({ followService: m.followService
 vi.mock('@/lib/services/block-service', () => ({ blockService: m.blockService }))
 vi.mock('@/lib/services/report-service', () => ({ reportService: m.reportService }))
 vi.mock('@/lib/services/moderation-election-service', () => ({ moderationElectionService: m.election }))
+vi.mock('@/lib/services/moderation-service', async (load) => ({ ...await load<object>(), moderationService: m.moderation }))
 vi.mock('@/lib/services/hashtag-service', () => ({ hashtagService: m.hashtagService }))
 vi.mock('@/lib/services/notification-service', () => ({ notificationService: m.notificationService }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
@@ -112,6 +114,7 @@ vi.mock('@/lib/services/identity-nonce', async (load) => ({ ...await load<object
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 
 const { ABSENCE_AFTER_MS, createTicketStore } = await import('../../src/writes/tickets')
+const { REPORT_RESOLVED_MESSAGE } = await import('@/lib/reports')
 const { PARENT_WAIT_ROUNDS } = await import('../../src/writes/handler-kit')
 const { createEngageWrites } = await import('../../src/api/engage')
 const { createGraphWrites } = await import('../../src/api/graph')
@@ -357,11 +360,11 @@ describe('graph and safety writes', () => {
     expect(await outcome(safety.block(AUTHOR, { message: '  spam  ' }))).toMatchObject({ state: 'confirmed' })
     expect(m.blockService.blockUser).toHaveBeenCalledWith(VIEWER, AUTHOR, 'spam')
 
-    m.blockService.query.mockResolvedValue({ documents: [{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }] })
+    m.blockService.getUserBlocks.mockResolvedValue([{ blockedId: AUTHOR, message: 'spam' }, { blockedId: id('Other') }])
     const blocked = await safety.blocked()
     expect(validate(page(blockedUserDTO), blocked)).toEqual([])
     expect(blocked.items.map(item => [item.id, item.message])).toEqual([[AUTHOR, 'spam'], [id('Other'), null]])
-    expect(m.blockService.query).toHaveBeenCalledWith({ where: [['$ownerId', '==', VIEWER]], limit: 100 })
+    expect(m.blockService.getUserBlocks).toHaveBeenCalledWith(VIEWER)
 
     // check reads the block document itself, never lib's optimistic block cache.
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block'), confirmed: false })
@@ -380,34 +383,34 @@ describe('graph and safety writes', () => {
   it('re-reads the blocked list after a block or unblock lands, on every page, and rejects an unreadable list', async () => {
     const { outcome, safety } = engine()
     const many = (count: number) => Array.from({ length: count }, (_, n) => ({ blockedId: id(`B${n + 1}`) }))
-    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(40))
     const first = await safety.blocked()
     // A continuation reads from the list held for paging...
-    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(31))
     expect((await safety.blocked(first.cursor)).items).toHaveLength(10)
     // ...until a block lands: then even a continuation re-reads.
     m.blockService.blockUser.mockResolvedValue({ success: true, transactionHash: id('Block') })
     expect(await outcome(safety.block(AUTHOR))).toMatchObject({ state: 'confirmed' })
     expect((await safety.blocked(first.cursor)).items).toHaveLength(1)
 
-    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(40))
     const again = await safety.blocked()
     m.blockService.unblockUser.mockResolvedValue({ success: true, confirmed: false })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: false, isOwnBlock: false, inheritedFrom: null })
     expect(await outcome(safety.unblock(id('B1')))).toMatchObject({ state: 'unconfirmed' })
-    m.blockService.query.mockResolvedValue({ documents: many(30) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(30))
     expect((await safety.blocked(again.cursor)).items).toEqual([])
 
     // An unblock a followed list overrides still deleted the own block: the held list drops too.
-    m.blockService.query.mockResolvedValue({ documents: many(40) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(40))
     const held = await safety.blocked()
     m.blockService.unblockUser.mockResolvedValue({ success: true })
     m.blockService.getBlockProvenance.mockResolvedValue({ isBlocked: true, isOwnBlock: false, inheritedFrom: id('Lister') })
     expect(await outcome(safety.unblock(id('B2')))).toMatchObject({ state: 'failed', error: { code: 'STILL_BLOCKED' } })
-    m.blockService.query.mockResolvedValue({ documents: many(31) })
+    m.blockService.getUserBlocks.mockResolvedValue(many(31))
     expect((await safety.blocked(held.cursor)).items).toHaveLength(1)
 
-    m.blockService.query.mockRejectedValue(new Error('no available addresses to retry'))
+    m.blockService.getUserBlocks.mockRejectedValue(new Error('no available addresses to retry'))
     await expect(safety.blocked()).rejects.toMatchObject({ code: 'NETWORK' })
   })
 
@@ -432,25 +435,24 @@ describe('graph and safety writes', () => {
     await expect(safety.followedBlockLists()).rejects.toBeInstanceOf(Error)
   })
 
-  it('says whether reports open before the form: only an unseated notYetUsable team keeps them shut', async () => {
+  it('says whether reports and posting are open, as lib reads the registered contract, and rejects an unreadable one', async () => {
     const { safety } = engine()
+    m.moderation.moderatedTypeOpen.mockResolvedValue(true)
     expect(await safety.reportsOpen()).toBe(true)
-    m.elected = { interim: 'contractOwner', moderatedDocumentTypes: { report: ['delete'] } }
-    expect(await safety.reportsOpen()).toBe(true)
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { post: ['delete'] } }
-    expect(await safety.reportsOpen()).toBe(true)
-    expect(m.election.getSeatedTeam).not.toHaveBeenCalled()
+    expect(await safety.postingOpen()).toBe(true)
+    expect(m.moderation.moderatedTypeOpen.mock.calls.map(([docType]) => docType)).toEqual(['report', 'post'])
 
-    m.elected = { interim: 'notYetUsable', moderatedDocumentTypes: { report: ['delete'] } }
-    m.election.getSeatedTeam.mockResolvedValue(null)
+    m.moderation.moderatedTypeOpen.mockResolvedValue(false)
     expect(await safety.reportsOpen()).toBe(false)
-    m.election.getSeatedTeam.mockResolvedValue({ leaderId: AUTHOR, members: [] })
-    expect(await safety.reportsOpen()).toBe(true)
-    m.election.getSeatedTeam.mockRejectedValue(new Error('Request timeout'))
+    expect(await safety.postingOpen()).toBe(false)
+    m.moderation.moderatedTypeOpen.mockRejectedValue(new Error('Request timeout'))
     await expect(safety.reportsOpen()).rejects.toBeInstanceOf(Error)
+    await expect(safety.postingOpen()).rejects.toBeInstanceOf(Error)
 
     m.topology.contractTakesReports = false
+    m.moderation.moderatedTypeOpen.mockClear()
     expect(await safety.reportsOpen()).toBe(false)
+    expect(m.moderation.moderatedTypeOpen).not.toHaveBeenCalled()
   })
 
   it('reports with lib\'s reason rules, gated by the topology', async () => {
@@ -487,6 +489,18 @@ describe('graph and safety writes', () => {
       state: 'failed', retryable: false,
       error: { code: 'REPORT_GONE', userMessage: expect.stringMatching(/already gone/) },
     })
+
+    // v14: resolved by the moderators, so the network keeps it (a paid 40147, or refused before signing).
+    for (const error of [
+      `Document ${REPORT} of type "report" can not be deleted: it breaks its deleteConstraints rule "pending": it does not hold (code=40147)`,
+      REPORT_RESOLVED_MESSAGE,
+    ]) {
+      m.reportService.withdrawReport.mockResolvedValue({ success: false, error })
+      expect(await outcome(safety.withdrawReport(TARGET, REPORT))).toMatchObject({
+        state: 'failed', retryable: false,
+        error: { code: 'REPORT_RESOLVED', userMessage: REPORT_RESOLVED_MESSAGE },
+      })
+    }
 
     // A gateway timeout may have landed: the report proved absent confirms it.
     m.reportService.withdrawReport.mockResolvedValue({ success: false, error: 'Request timeout' })
@@ -696,11 +710,11 @@ describe('posts.publish and posts.delete', () => {
     creating(1, FEE_CHANGED)
     const draft = { parts: [{ text: 'one' }, { text: 'two' }], mediaUrl: 'https://img.example/a.png' }
     const ticket = await outcome(posts.publish(draft))
-    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ mediaUrl: 'https://img.example/a.png' }))
+    expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'one', expect.objectContaining({ media: [{ url: 'https://img.example/a.png' }] }))
     m.replyService.createReply.mockClear()
     await tickets.retry(ticket.id)
     expect(await settled(tickets, ticket.id)).toMatchObject({ state: 'confirmed' })
-    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
 
     // A silent re-send, the same.
     const silent = engine({ autoRetryDelaysMs: [0] })
@@ -708,13 +722,13 @@ describe('posts.publish and posts.delete', () => {
     m.replyService.createReply.mockClear()
     expect(await silent.outcome(silent.posts.publish(draft))).toMatchObject({ state: 'confirmed' })
     expect(m.replyService.createReply).toHaveBeenCalledTimes(2)
-    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenLastCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
 
     // The host's own resume, the same.
     creating()
     m.replyService.createReply.mockClear()
     await outcome(posts.publish({ ...draft, resume: { postedIds: [id('post0'), null] } }))
-    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.objectContaining({ mediaUrl: undefined }))
+    expect(m.replyService.createReply).toHaveBeenCalledWith(VIEWER, 'two', expect.anything(), expect.not.objectContaining({ media: expect.anything() }))
   })
 
   it('names each part on the ticket as it lands, so a restart mid-thread keeps what posted (SR-03)', async () => {
@@ -937,7 +951,7 @@ describe('posts.publish and posts.delete', () => {
     const withMedia = await outcome(posts.publish({ parts: [{ text: 'pic' }], mediaUrl: 'https://img.example/a.png' }))
     expect(withMedia.state).toBe('confirmed')
     expect(m.postService.createPost).toHaveBeenCalledWith(VIEWER, 'pic', expect.objectContaining({
-      mediaUrl: 'https://img.example/a.png', mediaHashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) },
+      media: [{ url: 'https://img.example/a.png', hashes: { mediaHash: new Uint8Array(32), mediaFingerprint: new Uint8Array(8) } }],
     }))
   })
 

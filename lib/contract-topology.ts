@@ -25,10 +25,14 @@
  * app believes it is talking to part-way through a session.
  */
 
-import { DASHPAY_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
+import { CONTRACT_TOPOLOGIES, DASHPAY_CONTRACT_ID, YAPPR_BLOCKS_CONTRACT_ID, YAPPR_CONTRACT_ID, getContractTopology, type ContractTopology } from './constants'
 import socialContractV9 from '@/contracts/yappr-social-contract-v9.json'
 import socialContractV10 from '@/contracts/yappr-social-contract-v10.json'
 import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
+import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
+import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
+import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
+import blocksContract from '@/contracts/yappr-blocks-contract.json'
 
 /**
  * Whether a Post-shaped object is backed by a `post` document or a `reply`
@@ -89,8 +93,13 @@ export interface OwnedTargetIndex {
  * the target document rather than computing anything.
  */
 export interface IndexOnlyLikeShape {
-  /** Property naming the target's author — agreement-bound to `<target>.$ownerId`. */
-  authorField: string
+  /**
+   * Property naming the target's author — agreement-bound to
+   * `<target>.$ownerId` — or null when the doctype carries none (v13
+   * `likeReply`: no `replyAuthor`, no author index). Nothing then reads likes
+   * by author; likers come off the target index.
+   */
+  authorField: string | null
   /**
    * Property carrying the post's hashtag (agreement-bound to `post.hashtag`),
    * or null on a doctype without one (`likeReply`). The property is optional
@@ -126,6 +135,15 @@ export interface IndexOnlyLikeShape {
    * window expires (up to 72 h for posts, 24 h for tags).
    */
   deleteNamesCreatedAt: boolean
+  /**
+   * True when the author index (`like.byAuthorPost [postAuthor, postId]`,
+   * `likeReply.byAuthorReply [replyAuthor, replyId]`) keeps one counter per
+   * target instead of an entry per like (v12: `summableOffCountIndex` on
+   * `byPost` / `byReply`, platform#5250). Counts, sums and rankings read the
+   * same through it, but it returns no like documents: who liked a target is
+   * only ever read through the target index (`byPost` / `byReply`).
+   */
+  authorIndexIsCounter: boolean
 }
 
 /** The doctypes and fields one target kind's engagements live in. */
@@ -227,6 +245,18 @@ const REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
   scalars: [],
 }
 
+/** v13 adds `rootOwnerId` to a reply's frozen linkage. */
+const V13_REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
+  identifiers: ['rootPostId', 'rootOwnerId', 'replyToReplyId', 'parentOwnerId'],
+  scalars: [],
+}
+
+/** v14 stores no owner on a reply: its frozen linkage is the root and the parent alone. */
+const V14_REPLY_LINKAGE_PRESERVED: TombstonePreservation = {
+  identifiers: ['rootPostId', 'replyToReplyId'],
+  scalars: [],
+}
+
 /**
  * v2's engagement surface, encoded exactly as the chain declares it.
  *
@@ -280,13 +310,13 @@ const V2_DESCRIPTOR: ContractTopologyDescriptor = {
 const V9_POST_INTERACTIONS: InteractionSurface = {
   ...V2_INTERACTIONS,
   like: { docType: 'like', field: 'postId', ownerFirst: true, ownerField: 'postAuthor' },
-  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false, deleteNamesCreatedAt: true },
+  indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorTimePost', authorTimeKeysTarget: false, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
   replyCountField: 'rootPostId',
 }
 
 const V9_REPLY_INTERACTIONS: InteractionSurface = {
   like: { docType: 'likeReply', field: 'replyId', ownerFirst: true, ownerField: 'replyAuthor' },
-  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false, deleteNamesCreatedAt: true },
+  indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorTimeReply', authorTimeKeysTarget: false, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
   repost: null,
   bookmark: null,
   quoteField: 'quotedReplyId',
@@ -353,13 +383,13 @@ const V10_DESCRIPTOR: ContractTopologyDescriptor = {
     post: {
       ...V9_POST_INTERACTIONS,
       like: { docType: 'like', field: 'postId', ownerFirst: false, ownerField: 'postAuthor', ownerIsTerminal: true },
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: 'byAuthorPostTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
       repost: null,
     },
     reply: {
       ...V9_REPLY_INTERACTIONS,
       like: { docType: 'likeReply', field: 'replyId', ownerFirst: false, ownerField: 'replyAuthor', ownerIsTerminal: true },
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: 'byAuthorReplyTime', authorTimeKeysTarget: true, deleteNamesCreatedAt: true, authorIndexIsCounter: false },
     },
   },
 }
@@ -397,13 +427,93 @@ const V11_DESCRIPTOR: ContractTopologyDescriptor = {
   interactions: {
     post: {
       ...V10_DESCRIPTOR.interactions.post,
-      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false },
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: false },
     },
     reply: {
       ...V10_DESCRIPTOR.interactions.reply,
-      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false },
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: false },
     },
   },
+}
+
+/**
+ * v12 — `contracts/yappr-social-contract-v12.json`, the 5.0.0-beta.2 devnet
+ * (docs/SOCIAL_V12.md). v11 with two beta.2 keywords:
+ *
+ * - **Counter author indexes** (`summableOffCountIndex`, platform#5250).
+ *   `like.byAuthorPost`, `like.byHashtagPost` and `likeReply.byAuthorReply`
+ *   keep one counter per post (reply) of how many entries `byPost` (`byReply`)
+ *   holds for it, instead of an entry per like. Counts and rankings read the
+ *   same; documents do not exist there any more, so likers are read through
+ *   the target index only ({@link IndexOnlyLikeShape.authorIndexIsCounter}).
+ * - **`retractedWhen: { present: "deleted" }`** (platform#5253) on post and
+ *   reply: a banned or suspended author can still tombstone its own post or
+ *   reply ({@link barredAuthorsCanTombstone}), and nothing else.
+ */
+const V12_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V11_DESCRIPTOR,
+  topology: 'v12',
+  interactions: {
+    post: {
+      ...V11_DESCRIPTOR.interactions.post,
+      indexOnlyLike: { authorField: 'postAuthor', hashtagField: 'hashtag', authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: true },
+    },
+    reply: {
+      ...V11_DESCRIPTOR.interactions.reply,
+      indexOnlyLike: { authorField: 'replyAuthor', hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: true },
+    },
+  },
+}
+
+/**
+ * v13 — `contracts/yappr-social-contract-v13.json`, the mainnet candidate
+ * (docs/SOCIAL_V13.md). v12 with:
+ *
+ * - **Replies bound to their thread.** A reply carries `rootOwnerId` (the root
+ *   post's owner, `where`-checked), a top-level reply's `parentOwnerId` must be
+ *   that owner (`parentIsRoot`), and a nested reply's parent must be in the
+ *   same thread ({@link repliesNameRootOwner}).
+ * - **No reply-like author.** `likeReply` keeps only `replyId` and `byReply`:
+ *   no `replyAuthor`, no `byAuthorReply` counter, so a reply like and unlike
+ *   name the reply alone.
+ * - Reports of profiles and private content ({@link reportShape}), media
+ *   arrays ({@link mediaIsArrays}), the `live` marker ({@link postsCarryLiveMarker})
+ *   and the blocks contract ({@link blocksContractId}), outside this descriptor.
+ */
+const V13_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V12_DESCRIPTOR,
+  topology: 'v13',
+  tombstonePreserves: { ...V12_DESCRIPTOR.tombstonePreserves, reply: V13_REPLY_LINKAGE_PRESERVED },
+  interactions: {
+    post: V12_DESCRIPTOR.interactions.post,
+    reply: {
+      ...V12_DESCRIPTOR.interactions.reply,
+      like: { ...V12_DESCRIPTOR.interactions.reply.like, ownerField: null },
+      indexOnlyLike: { authorField: null, hashtagField: null, authorTimeIndex: null, authorTimeKeysTarget: true, deleteNamesCreatedAt: false, authorIndexIsCounter: false },
+    },
+  },
+}
+
+/**
+ * v14 — `contracts/yappr-social-contract-v14.json`, the 5.0.0-beta.3 re-cut
+ * (docs/SOCIAL_V14.md). v13's surfaces, with:
+ *
+ * - **Replies that store no owner.** `parentOwnerId`, `rootOwnerId` and
+ *   `parentIsRoot` are gone ({@link replyOwnersAreDerived}). The notification
+ *   windows read the owners off the referenced documents: `rootOwnerRecent
+ *   [$createdAt, rootPostId.$ownerId]` holds every reply of a thread under its
+ *   root post's owner, and `parentOwnerRecent [$createdAt,
+ *   replyToReplyId.$ownerId]` (skipping top-level replies) every nested reply
+ *   under its parent reply's owner ({@link notificationWindowFor}).
+ * - Reports withdrawable only while unresolved ({@link reportsWithdrawOnlyWhilePending})
+ *   and an unpaused YAPP that pays token costs again ({@link yappIsPausedForGood}
+ *   is false; {@link yappIsLocked} stays true: no buying, no transfers offered),
+ *   outside this descriptor.
+ */
+const V14_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V13_DESCRIPTOR,
+  topology: 'v14',
+  tombstonePreserves: { ...V13_DESCRIPTOR.tombstonePreserves, reply: V14_REPLY_LINKAGE_PRESERVED },
 }
 
 /** Recursively freezes a plain-object descriptor. */
@@ -420,6 +530,9 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v9: V9_DESCRIPTOR,
   v10: V10_DESCRIPTOR,
   v11: V11_DESCRIPTOR,
+  v12: V12_DESCRIPTOR,
+  v13: V13_DESCRIPTOR,
+  v14: V14_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -428,6 +541,15 @@ let resolved: ContractTopologyDescriptor | null = null
 export function topologyDescriptor(): ContractTopologyDescriptor {
   if (!resolved) resolved = deepFreeze(DESCRIPTORS[getContractTopology()])
   return resolved
+}
+
+/**
+ * True on `cut` and on every cut after it, in {@link CONTRACT_TOPOLOGIES}
+ * order (v2 < v9 < v10 < v11 < v12 < v13 < v14). Each later cut keeps what the
+ * earlier ones introduced unless a predicate says otherwise.
+ */
+function isAtLeast(cut: ContractTopology): boolean {
+  return CONTRACT_TOPOLOGIES.indexOf(topologyDescriptor().topology) >= CONTRACT_TOPOLOGIES.indexOf(cut)
 }
 
 /**
@@ -441,24 +563,93 @@ function isDevnetCut(): boolean {
 }
 
 /**
- * True on the 4.2.0-beta.7 cut (v10) and on its 5.0.0-beta.1 successor (v11),
- * which keeps every v10 surface: real deletes, no `beat`, no
+ * True on the 4.2.0-beta.7 cut (v10) and on its 5.0 successors (v11, v12),
+ * which keep every v10 surface: real deletes, no `beat`, no
  * `post.language`, `keyGeneration` for the private feed, media hashes,
  * moderator-resolved reports, the DashPay-based profile and a paused,
  * unpriced YAPP. What v11 changes on top asks {@link isV11}.
  */
 export function isV10(): boolean {
-  const { topology } = topologyDescriptor()
-  return topology === 'v10' || topology === 'v11'
+  return isAtLeast('v10')
 }
 
 /**
- * True on the 5.0.0-beta.1 cut (v11): v10 plus timeless likes
- * (`outlivesDelete`), removal records that keep fields, and settled posts and
- * replies only the seated team deletes together.
+ * True on the 5.0.0-beta.1 cut (v11) and on its 5.0.0-beta.2 successor (v12),
+ * which keeps every v11 rule: v10 plus timeless likes (`outlivesDelete`),
+ * removal records that keep fields, and settled posts and replies only the
+ * seated team deletes together. What v12 changes on top asks
+ * {@link IndexOnlyLikeShape.authorIndexIsCounter} and
+ * {@link barredAuthorsCanTombstone}.
  */
 export function isV11(): boolean {
-  return topologyDescriptor().topology === 'v11'
+  return isAtLeast('v11')
+}
+
+/**
+ * True when a banned or suspended author may still tombstone its own post or
+ * reply (v12: `retractedWhen: { present: "deleted" }`, platform#5253). On v11
+ * Drive refuses a barred identity every replace, so a barred author cannot
+ * take its own post down at all (41107/41108).
+ */
+export function barredAuthorsCanTombstone(): boolean {
+  return isAtLeast('v12')
+}
+
+/**
+ * True when a reply names its thread root's owner (v13 `reply.rootOwnerId`,
+ * required and `where`-bound to the root post's `$ownerId`), and a top-level
+ * reply's `parentOwnerId` must equal it (`parentIsRoot`, 10422): a reply can
+ * no longer name a stranger as the owner it answers. False on v14, where a
+ * reply names no owner at all ({@link replyOwnersAreDerived}).
+ */
+export function repliesNameRootOwner(): boolean {
+  return isAtLeast('v13') && !replyOwnersAreDerived()
+}
+
+/**
+ * True when a reply stores neither `parentOwnerId` nor `rootOwnerId` (v14):
+ * consensus reads both owners off the referenced post and reply to file the
+ * reply in its notification windows (`rootPostId.$ownerId`,
+ * `replyToReplyId.$ownerId`), so there is nothing to write, nothing to forge
+ * and nothing to check on a read.
+ */
+export function replyOwnersAreDerived(): boolean {
+  return isAtLeast('v14')
+}
+
+/**
+ * True when every live post carries `live: true` and a tombstone leaves it out
+ * (v13). `post.ownerAndTime` is `[live, $ownerId, $createdAt]` with
+ * `skipIfAbsent`, so author timelines, author post counts and the top-creators
+ * ranking read it with `live == true` pinned first ({@link postOwnerIndexPrefix})
+ * and never see a tombstone.
+ */
+export function postsCarryLiveMarker(): boolean {
+  return isAtLeast('v13')
+}
+
+/**
+ * The `where` clauses every read of `post.ownerAndTime` starts with: `live ==
+ * true` on v13, nothing elsewhere. Paired with {@link postOwnerIndexOrderPrefix}.
+ */
+export function postOwnerIndexPrefix(): Array<['live', '==', true]> {
+  return postsCarryLiveMarker() ? [['live', '==', true]] : []
+}
+
+/** The `orderBy` entries matching {@link postOwnerIndexPrefix}. */
+export function postOwnerIndexOrderPrefix(): Array<['live', 'asc']> {
+  return postOwnerIndexPrefix().map(([field]): ['live', 'asc'] => [field, 'asc'])
+}
+
+/**
+ * The contract holding `block`, `blockFilter` and `blockFollow`: the social
+ * contract up to v12, the standalone blocks contract on v13
+ * (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`). Null on v13 when no blocks
+ * contract is configured: block reads then answer nothing and writes refuse.
+ */
+export function blocksContractId(): string | null {
+  if (!isAtLeast('v13')) return YAPPR_CONTRACT_ID
+  return YAPPR_BLOCKS_CONTRACT_ID || null
 }
 
 /** How reply documents name their parents on this topology. */
@@ -607,11 +798,10 @@ export function referencesAreEnforced(): boolean {
 /**
  * True when post and reply documents are permanent (`canBeDeleted: false`) and a
  * "delete" is therefore an edit that blanks the content and sets `deleted: true`
- * rather than a document removal (v9, v11). On v10 a delete removes the document.
+ * rather than a document removal (v9, v11, v12). On v10 a delete removes the document.
  */
 export function deletesAreTombstones(): boolean {
-  const { topology } = topologyDescriptor()
-  return topology === 'v9' || topology === 'v11'
+  return topologyDescriptor().topology === 'v9' || isAtLeast('v11')
 }
 
 /**
@@ -651,7 +841,8 @@ export function tombstonesAreHidden(): boolean {
 /**
  * True when the like trees of a post or reply are built when it is created,
  * paid by its creator (`preallocated` on like.byPost/byAuthorPost/
- * byHashtagPost and likeReply.byReply/byAuthorReply, v11). Every like then
+ * byHashtagPost and likeReply.byReply/byAuthorReply, v11 and v12, where the
+ * author and hashtag indexes hold a zero counter). Every like then
  * costs the same, and a post with no likes still sits in its trees with a
  * count of zero: ranked reads and grouped counts can return ZERO-count
  * groups, which a leaderboard must drop.
@@ -714,8 +905,8 @@ export function likeNotificationsPinTarget(): boolean {
 }
 
 /**
- * True when no like index keeps the time of a like (v11): like notifications
- * are found by diffing a recent target's likers (`byPost`/`byReply`) against
+ * True when no like index keeps the time of a like (v11, v12): like
+ * notifications are found by diffing a recent target's likers against
  * what this device saw last, and are dated when the app first noticed them.
  * A new device starts from a baseline (no backlog), and an unlike is a
  * delete-by-values without `$createdAt`.
@@ -798,14 +989,19 @@ export interface WindowedRanking {
   readonly label: string
 }
 
-type LikeIndexJson = { name: string; timeRange?: { range: number; step: number } }
+type TimeRangeIndexJson = { name: string; timeRange?: { range: number; step: number } }
+
+/** The `timeRange` grid `docType.index` declares in a contract's schemas (any contract); throws when it declares none. */
+export function timeRangeOf(schemas: unknown, docType: string, index: string): WindowedRanking['grid'] {
+  const timeRange = (schemas as Record<string, { indices?: TimeRangeIndexJson[] }>)[docType]?.indices
+    ?.find((entry) => entry.name === index)?.timeRange
+  if (!timeRange) throw new Error(`${docType}.${index} declares no timeRange`)
+  return { range: timeRange.range, step: timeRange.step }
+}
 
 /** A windowed index of `docType` in `contract`, read off the committed JSON so the grid cannot drift. */
 function windowOf(contract: SocialContractJson, docType: 'like' | 'beat', index: string, selector: WindowedRanking['selector'], label: string): WindowedRanking {
-  const schemas = contract.documentSchemas as unknown as Record<string, { indices?: LikeIndexJson[] }>
-  const timeRange = schemas[docType]?.indices?.find((entry) => entry.name === index)?.timeRange
-  if (!timeRange) throw new Error(`${docType}.${index} declares no timeRange`)
-  return { docType, index, grid: { range: timeRange.range, step: timeRange.step }, selector, label }
+  return { docType, index, grid: timeRangeOf(contract.documentSchemas, docType, index), selector, label }
 }
 
 let windowedRankings: Readonly<Record<RankingAxis, WindowedRanking | null>> | null = null
@@ -881,15 +1077,23 @@ export function mentionDocTypes(): readonly ('post' | 'reply' | 'postMention')[]
  * refuses a windowed document read of an indexOnly type, so like
  * notifications are read over the recent targets off the permanent `byAuthorPostTime`/`byAuthorReplyTime`
  * ({@link likeNotificationsPinTarget}).
+ *
+ * `threadReply` exists from v14 only: every reply of the recipient's threads
+ * (see {@link notificationWindowFor}).
  */
-export type WindowedNotificationSource = 'reply' | 'quote'
+export type WindowedNotificationSource = 'reply' | 'quote' | 'threadReply'
 
 /** How one windowed notification source is read (v10). */
 export interface NotificationWindow {
   readonly docType: string
   /** The index (documentation and tests; the query names the grid, not the index). */
   readonly index: string
-  /** The recipient property the read pins with `==`: the index's second property. */
+  /**
+   * The recipient property the read pins with `==`: the index's second
+   * property. On v14's reply windows it is a derived one
+   * (`rootPostId.$ownerId`, `replyToReplyId.$ownerId`), which a cursor may
+   * page through only because the read fixes it with `==`.
+   */
   readonly recipientField: string
   /**
    * The window grid in seconds, as the contract declares it: non-overlapping
@@ -917,7 +1121,7 @@ function notificationWindowOf(docType: string, index: string): NotificationWindo
   }
 }
 
-let notificationWindows: Readonly<Record<WindowedNotificationSource, NotificationWindow>> | null = null
+let notificationWindows: Readonly<Record<WindowedNotificationSource, NotificationWindow | null>> | null = null
 
 /**
  * The rolling windows a notification source is read from (v10), or null
@@ -932,12 +1136,23 @@ let notificationWindows: Readonly<Record<WindowedNotificationSource, Notificatio
  * clause and no orderBy: entries come back in index order, not time order, so
  * the dedupe, the since-filter and the newest-first sort are client-side.
  * `timeRange` is refused in composite queries, so each read is its own query.
+ *
+ * Replies on v10-v13: `reply` is `parentOwnerRecent [$createdAt,
+ * parentOwnerId]`, every reply naming the recipient as its parent's owner.
+ * On v14 a reply stores no owner, and the replies to the recipient come from
+ * two windows: `reply` is `parentOwnerRecent [$createdAt,
+ * replyToReplyId.$ownerId]`, the nested replies whose parent reply is the
+ * recipient's (top-level replies are skipped), and `threadReply` is
+ * `rootOwnerRecent [$createdAt, rootPostId.$ownerId]`, EVERY reply of the
+ * recipient's threads, of which only the top-level ones answer the recipient.
+ * `threadReply` is null before v14.
  */
 export function notificationWindowFor(source: WindowedNotificationSource): NotificationWindow | null {
   if (!isV10()) return null
   notificationWindows ??= deepFreeze({
     reply: notificationWindowOf('reply', 'parentOwnerRecent'),
     quote: notificationWindowOf('post', 'quotedPostOwnerRecent'),
+    threadReply: replyOwnersAreDerived() ? notificationWindowOf('reply', 'rootOwnerRecent') : null,
   })
   return notificationWindows[source]
 }
@@ -1003,6 +1218,24 @@ export function contentLimits(): ContentLimits {
  */
 export function mediaCarriesHashes(): boolean {
   return isV10()
+}
+
+/**
+ * True when a post or reply holds up to {@link mediaItemLimit} items in three
+ * parallel arrays (v13): `mediaUrls`, `mediaDigests` (40 bytes per item: the
+ * sha256 then the 8-byte fingerprint, see {@link mediaCarriesHashes}) and
+ * `mediaKinds` (one byte per item: 0 image, 1 video, 2 gif). The `media` rule
+ * makes their lengths agree, so the three are written together or not at all.
+ * Elsewhere a post or reply carries one `mediaUrl`.
+ */
+export function mediaIsArrays(): boolean {
+  return isAtLeast('v13')
+}
+
+/** The most media items a post or reply may carry: `mediaUrls.maxItems` on v13, one elsewhere. */
+export function mediaItemLimit(): number {
+  if (!mediaIsArrays()) return 1
+  return devnetSchemas().post.properties?.mediaUrls?.maxItems ?? 1
 }
 
 /**
@@ -1086,6 +1319,31 @@ export function replyLinkageTo(target: ThreadBearing): { rootPostId: string; rep
     rootPostId,
     replyToReplyId: target.id === rootPostId ? undefined : target.id,
   }
+}
+
+/** The owners a reply names, as `createReply` writes them (up to v13; v14 writes neither). */
+export interface ReplyOwners {
+  /** Set when the reply nests under another reply. */
+  replyToReplyId?: string
+  /** The direct target's owner. */
+  parentOwnerId: string
+  /** v13: the thread root's owner. */
+  rootOwnerId?: string
+}
+
+/**
+ * Why consensus would refuse a reply naming these owners, or null when it
+ * would not: on v13 every reply names its root's owner, and a top-level reply's
+ * `parentOwnerId` IS that owner (`parentIsRoot`, a paid 10422). Checked before
+ * signing, so a client bug costs nothing.
+ */
+export function replyOwnersProblem(owners: ReplyOwners): string | null {
+  if (!repliesNameRootOwner()) return null
+  if (!owners.rootOwnerId) return 'A reply must name its thread\'s owner (rootOwnerId)'
+  if (!owners.replyToReplyId && owners.parentOwnerId !== owners.rootOwnerId) {
+    return 'A reply to the thread\'s post must name that post\'s owner as its parent owner'
+  }
+  return null
 }
 
 /**
@@ -1239,21 +1497,40 @@ interface SocialDocumentSchema {
     maxLength?: number
     maxBytes?: number
     maxItems?: number
+    maximum?: number
   }>
+  indices?: Array<{ name: string }>
   tokenCost?: { create?: { amount: number; optional?: boolean; gasFeesPaidBy?: number } }
   actionFees?: { pricing?: string } & Partial<Record<DocumentAction, { owner?: number; moderators?: number }>>
+  /** 5.0.0-beta.3 (v14): rules the stored document must meet for its owner to delete it (40147). */
+  deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
-  if (isV11()) return socialContractV11
-  return isV10() ? socialContractV10 : socialContractV9
+  switch (topologyDescriptor().topology) {
+    case 'v14': return socialContractV14
+    case 'v13': return socialContractV13
+    case 'v12': return socialContractV12
+    case 'v11': return socialContractV11
+    case 'v10': return socialContractV10
+    default: return socialContractV9
+  }
 }
 
 function devnetSchemas(): Record<string, SocialDocumentSchema> {
   return devnetContract().documentSchemas as unknown as Record<string, SocialDocumentSchema>
+}
+
+/** The block types' contract file on v13 (bare schemas, no wrapper). */
+const BLOCK_TYPES: ReadonlySet<string> = new Set(Object.keys(blocksContract))
+
+/** The schema of `docType` wherever the configured cut keeps it: the blocks contract for block types on v13, social otherwise. */
+function schemaOf(docType: string): SocialDocumentSchema | undefined {
+  if (isAtLeast('v13') && BLOCK_TYPES.has(docType)) return (blocksContract as unknown as Record<string, SocialDocumentSchema>)[docType]
+  return devnetSchemas()[docType]
 }
 
 function starterGrant(): { amount: number } | undefined {
@@ -1436,9 +1713,12 @@ export function tokenCostFor(docType: string): TokenCostDeclaration | null {
  */
 export function declaredActionFee(docType: string, action: DocumentAction): ActionFeeDeclaration | null {
   if (!isDevnetCut()) return null
-  const fees = devnetSchemas()[docType]?.actionFees
-  if (!fees) return null
-  const fee = fees[action]
+  return actionFeeOf(devnetSchemas()[docType]?.actionFees, action)
+}
+
+/** A doctype's declared `actionFees` (any contract's JSON) for `action`, or null when it charges nothing. */
+export function actionFeeOf(fees: SocialDocumentSchema['actionFees'], action: DocumentAction): ActionFeeDeclaration | null {
+  const fee = fees?.[action]
   if (!fee) return null
   return {
     owner: BigInt(fee.owner ?? 0),
@@ -1458,19 +1738,48 @@ export function starterGrantAmount(): bigint | null {
   return BigInt(grant.amount)
 }
 
+interface YappTokenRules {
+  startAsPaused?: boolean
+  emergencyActionRules: { authorizedToMakeChange: { $type: string } }
+  distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
+}
+
 /**
- * True when YAPP can neither be transferred nor bought (v10): the token starts
- * paused and no one can ever unpause it or set a direct-purchase price. Posting
- * and liking still pay YAPP (a token cost is not a transfer), the starter grant
- * still pays out, and the contract owner still mints. Tips must be credit tips.
+ * True when the configured contract's YAPP is paused for good (v10–v13): it
+ * starts paused and no one may ever unpause it (`emergencyActionRules` is
+ * `noOne`). From Platform 5.0.0-beta.3 (dashpay/platform#5325) a document
+ * `tokenCost` paid with a paused token is refused 40711 as a PAID error, so
+ * posts, replies and likes must pay credits (`planPayment` in
+ * lib/payment-preference.ts). A cut whose YAPP starts unpaused (v2, v9, and
+ * v14, cut for beta.3 to keep YAPP spendable) pays YAPP exactly as before.
+ *
+ * Read off the configured contract's committed JSON rather than the chain: a
+ * pause no one can lift never changes, so the two can't disagree, and every
+ * write plans its payment synchronously from this.
+ */
+export function yappIsPausedForGood(): boolean {
+  if (!isDevnetCut()) return false
+  const token = devnetContract().tokens['0'] as YappTokenRules
+  return token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+}
+
+/**
+ * True when YAPP is an in-app token that Yappr never sells and never sends
+ * (v10 onwards): no one can ever set a direct-purchase price, and its pause
+ * state is fixed for good (`emergencyActionRules` is `noOne`). Buying, YAPP
+ * tips and other transfers are not offered; tips are credit tips; the
+ * starter grant still pays out and the contract owner still mints.
+ *
+ * On v10–v13 the token is also {@link yappIsPausedForGood}, so YAPP cannot
+ * move at all. v14's starts unpaused so that it can pay token costs under
+ * beta.3; since beta.3 has no non-transferable flag a transfer would land on
+ * chain, and Yappr deliberately offers none. Whether YAPP can pay for a post
+ * is {@link yappIsPausedForGood}'s question, not this one's.
  */
 export function yappIsLocked(): boolean {
   if (!isDevnetCut()) return false
-  const token = devnetContract().tokens['0'] as {
-    startAsPaused?: boolean
-    distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
-  }
-  return token.startAsPaused === true
+  const token = devnetContract().tokens['0'] as YappTokenRules
+  return token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
     && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
 }
 
@@ -1488,8 +1797,10 @@ export interface ElectedModerationDeclaration {
   readonly joinWindowSeconds: number
   /** Seconds masternodes vote once the join window closed. */
   readonly voteWindowSeconds: number
-  /** Whether a seated team can ever be challenged (v9: no). */
+  /** Whether a seated team can ever be challenged (v9: no; v13: yes, once challenges ship after protocol 14). */
   readonly seatContestable: boolean
+  /** Seconds a seated team is safe from a challenge after each seat change (v13: 30 days); null when not declared. */
+  readonly challengeCoolDownSeconds: number | null
   /** Seconds after the contract's creation before the first charter; null = at once. */
   readonly electionDelaySeconds: number | null
   /** Members a seated leader may add from the proposal's join requests. */
@@ -1507,6 +1818,7 @@ interface DeclaredElectedModeration {
     joinWindow: number
     voteWindow: number
     seatContestable: boolean
+    challengeCoolDown?: number
     electionDelay?: number
     maxAddedModerators?: number
     moderatedDocumentTypes: Record<string, ModerationAbility[]>
@@ -1538,6 +1850,7 @@ function buildElectedDeclaration(): ElectedModerationDeclaration {
     joinWindowSeconds: elected.joinWindow,
     voteWindowSeconds: elected.voteWindow,
     seatContestable: elected.seatContestable,
+    challengeCoolDownSeconds: elected.challengeCoolDown ?? null,
     electionDelaySeconds: elected.electionDelay ?? null,
     maxAddedModerators: elected.maxAddedModerators ?? 0,
     moderatedDocumentTypes: elected.moderatedDocumentTypes,
@@ -1554,7 +1867,7 @@ function buildElectedDeclaration(): ElectedModerationDeclaration {
  */
 export function ownerDistinctProperties(docType: string): readonly string[] {
   if (!isDevnetCut()) return []
-  return Object.entries(devnetSchemas()[docType]?.properties ?? {})
+  return Object.entries(schemaOf(docType)?.properties ?? {})
     .filter(([, property]) => (property.distinctFrom ?? property.items?.distinctFrom) === '$ownerId')
     .map(([name]) => name)
 }
@@ -1604,4 +1917,63 @@ export function reportResolutionFields(): readonly string[] {
 /** True when the moderators mark reports handled instead of deleting them (v10). */
 export function reportsAreResolved(): boolean {
   return reportResolutionFields().length > 0
+}
+
+/**
+ * True when a reporter may withdraw a report only while no moderator has
+ * resolved it (v14: `report.deleteConstraints.pending` is `{ absent: status }`).
+ * Withdrawing a resolved report is then refused with 40147, a PAID state
+ * error, so the client stops offering it; the resolved report stays until its
+ * 90-day `ttl`. Elsewhere a reporter may withdraw any of its reports.
+ */
+export function reportsWithdrawOnlyWhilePending(): boolean {
+  if (!contractTakesReports()) return false
+  return JSON.stringify(devnetSchemas().report?.deleteConstraints?.pending) === JSON.stringify({ absent: 'status' })
+}
+
+/** What the configured contract's `report` type accepts beyond a post or reply target. */
+export interface ReportShape {
+  /** The highest `reason` code (v12: 8; v13: 9, sexual content involving minors). */
+  readonly maxReason: number
+  /**
+   * True when a report can name a profile (v13 `about: 1`, no post or reply
+   * id), one per reporter and identity (`byTarget [targetOwnerId, about,
+   * $ownerId]`, unique).
+   */
+  readonly profiles: boolean
+  /**
+   * The most bytes a post or reply report's `box` may hold (v13: 5,120): the
+   * private-feed key the moderators need to read a reported private post,
+   * wrapped to each current moderator. Null where reports carry none.
+   */
+  readonly boxMaxBytes: number | null
+  /**
+   * True when the per-target report indexes key the target first (v13 `byPost
+   * [postId, $ownerId]` / `byReply [replyId, $ownerId]`, unique: "my report
+   * of X" and "the reports of X" read the same index); false where they key
+   * the reporter first (v9-v12 `ownerAndPost [$ownerId, postId]`).
+   */
+  readonly targetFirst: boolean
+}
+
+/** True when profiles can be reported to the moderators (v13 `about: 1`). */
+export function profilesAreReportable(): boolean {
+  return contractTakesReports() && reportShape().profiles
+}
+
+let reportShapeCache: ReportShape | null = null
+
+/** The report type's shape on the configured contract, read off its JSON (v2 reads v9's, and takes no reports). */
+export function reportShape(): ReportShape {
+  if (!reportShapeCache) {
+    const report = devnetSchemas().report
+    const properties = report?.properties ?? {}
+    reportShapeCache = deepFreeze({
+      maxReason: properties.reason?.maximum ?? 8,
+      profiles: properties.about !== undefined,
+      boxMaxBytes: properties.box?.maxItems ?? null,
+      targetFirst: !(report?.indices ?? []).some((index) => index.name === 'ownerAndPost'),
+    })
+  }
+  return reportShapeCache
 }

@@ -3,9 +3,9 @@ import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { stateTransitionService } from './state-transition-service';
 import { YAPPR_CONTRACT_ID } from '../constants';
-import { postsHaveLanguage } from '@/lib/contract-topology';
+import { postOwnerIndexOrderPrefix, postOwnerIndexPrefix, postsHaveLanguage } from '@/lib/contract-topology';
 import { documentToPlainObject, queryDocuments, type QueryDocumentsOptions, type DocumentWhereClause, type DocumentOrderByClause } from './sdk-helpers';
-import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES } from './pagination-utils';
+import { chunk, mapLimit, MAX_IN_CLAUSE_VALUES, paginateFetchAll, type PaginateFetchResult } from './pagination-utils';
 
 export interface QueryOptions {
   where?: DocumentWhereClause[];
@@ -31,26 +31,83 @@ export async function queryRawDocuments(options: QueryDocumentsOptions): Promise
 }
 
 /**
- * Query posts by owner IDs newer than a timestamp.
+ * How many posts one batch of owners may contribute to a new-posts check.
+ * The check covers seconds to minutes, so reaching this is unusual; when it
+ * happens the walk is logged and the newest posts read so far are kept.
+ */
+const NEW_POSTS_BATCH_CAP = 1000;
+
+/** `docs` de-duplicated by `$id`, newest `$createdAt` first, at most `limit`. */
+export function newestDistinctDocuments(
+  docs: Record<string, unknown>[],
+  limit: number
+): Record<string, unknown>[] {
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const doc of docs) {
+    const id = doc.$id as string | undefined;
+    if (id && !byId.has(id)) byId.set(id, doc);
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => Number(b.$createdAt ?? 0) - Number(a.$createdAt ?? 0))
+    .slice(0, limit);
+}
+
+/**
+ * The newest `limit` posts by any of `ownerIds` created after
+ * `sinceTimestamp`. Platform caps `in` at 100 values and the
+ * `[$ownerId, $createdAt]` index returns owner by owner, so one capped query
+ * would be refused past 100 owners and would drop the newest posts of
+ * high-id owners. Instead each batch of at most 100 owners is read to the
+ * end, and the limit applies after merging.
+ *
+ * `complete` is false when a batch stopped early (a continuation page
+ * failed, or it reached NEW_POSTS_BATCH_CAP) and kept only the posts read
+ * before that: owners later in that batch may have newer posts than some
+ * returned, so a caller must not treat the scan as covering everything up
+ * to the newest post it got.
  */
 export async function queryPostsByOwnersSince(
   ownerIds: string[],
   sinceTimestamp: number,
   limit = 50,
   contractId = YAPPR_CONTRACT_ID
-): Promise<Record<string, unknown>[]> {
-  if (ownerIds.length === 0) return [];
+): Promise<{ posts: Record<string, unknown>[]; complete: boolean }> {
+  const owners = Array.from(new Set(ownerIds.filter(Boolean)));
+  if (owners.length === 0) return { posts: [], complete: true };
+  let complete = true;
 
-  return queryRawDocuments({
-    dataContractId: contractId,
-    documentTypeName: 'post',
-    where: [
-      ['$ownerId', 'in', ownerIds],
-      ['$createdAt', '>', sinceTimestamp],
-    ],
-    orderBy: [['$ownerId', 'asc'], ['$createdAt', 'asc']],
-    limit,
+  const sdk = await getEvoSdk();
+  const batches = await mapLimit(chunk(owners, MAX_IN_CLAUSE_VALUES), 3, async (batch) => {
+    const query = {
+      dataContractId: contractId,
+      documentTypeName: 'post',
+      // v13's `ownerAndTime` starts at `live`: pin it first (tombstones are not new posts).
+      where: [
+        ...postOwnerIndexPrefix(),
+        ['$ownerId', 'in', batch],
+        ['$createdAt', '>', sinceTimestamp],
+      ] as DocumentWhereClause[],
+      orderBy: [...postOwnerIndexOrderPrefix(), ['$ownerId', 'asc'], ['$createdAt', 'asc']] as DocumentOrderByClause[],
+    };
+    // Read to the end, collecting as it goes: a continuation that fails keeps
+    // the pages already read, so the check never comes back empty for that.
+    const read: Record<string, unknown>[] = [];
+    try {
+      const { reachedLimit } = await paginateFetchAll(sdk, () => ({ ...query }), (doc) => {
+        read.push(doc);
+        return doc;
+      }, { maxResults: NEW_POSTS_BATCH_CAP, inClause: true });
+      // Owner-ordered: a capped batch may have left newer posts of later owners unread.
+      if (reachedLimit) complete = false;
+    } catch (error) {
+      if (read.length === 0) throw error;
+      complete = false;
+      logger.warn('queryPostsByOwnersSince: a continuation page failed; keeping the posts read so far', error);
+    }
+    return read;
   });
+
+  return { posts: newestDistinctDocuments(batches.flat(), limit), complete };
 }
 
 /**
@@ -157,38 +214,71 @@ export abstract class BaseDocumentService<T> {
   }
 
   /**
+   * One cursor page of `options`: the documents, and the next page's
+   * `startAfter` (the last id) when the page came back full. A short page is
+   * the end, so this is for queries without an `in` clause.
+   */
+  protected async cursorPage(options: QueryOptions & { limit: number }): Promise<{ documents: T[]; nextCursor?: string }> {
+    const { documents } = await this.query(options);
+    return { documents, nextCursor: documents.length === options.limit ? (documents[documents.length - 1] as { id?: string }).id : undefined };
+  }
+
+  /** One page of every document, newest first, on a `timeline [$createdAt]` index. */
+  protected newestFirstPage(limit: number, startAfter?: string): Promise<{ documents: T[]; nextCursor?: string }> {
+    return this.cursorPage({ where: [['$createdAt', '>', 0]], orderBy: [['$createdAt', 'desc']], limit, startAfter });
+  }
+
+  /**
+   * Every document matching `options`, walked 100 at a time with `startAfter`
+   * (`paginateFetchAll`). `maxResults` bounds the walk (default: none); a
+   * walk it stops reports `reachedLimit`. `orderBy` must name an index.
+   */
+  protected async queryAll(
+    options: Pick<QueryOptions, 'where' | 'orderBy'>,
+    maxResults = Infinity
+  ): Promise<PaginateFetchResult<T>> {
+    const sdk = await getEvoSdk();
+    return paginateFetchAll(
+      sdk,
+      () => ({
+        dataContractId: this.contractId,
+        documentTypeName: this.documentType,
+        ...(options.where && { where: options.where }),
+        ...(options.orderBy && { orderBy: options.orderBy }),
+      }),
+      (doc) => this.transformDocument(doc),
+      { maxResults }
+    );
+  }
+
+  /**
    * Get a single document by ID
    */
   async get(documentId: string): Promise<T | null> {
     try {
-      // Check cache
-      const cached = this.cache.get(documentId);
-      if (cached !== undefined) return cached;
-
-      const sdk = await getEvoSdk();
-
-      const response = await sdk.documents.get(
-        this.contractId,
-        this.documentType,
-        documentId
-      );
-
-      if (!response) {
-        return null;
-      }
-
-      // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
-      const docData = documentToPlainObject(response);
-      const transformed = this.transformDocument(docData);
-
-      // Cache the result
-      this.cache.set(documentId, transformed);
-
-      return transformed;
+      return await this.getOrThrow(documentId);
     } catch (error) {
       logger.error(`Error getting ${this.documentType} document:`, error);
       return null;
     }
+  }
+
+  /**
+   * {@link get} without the catch: null only when Platform says the document
+   * does not exist, and a failed read throws.
+   */
+  protected async getOrThrow(documentId: string): Promise<T | null> {
+    const cached = this.cache.get(documentId);
+    if (cached !== undefined) return cached;
+
+    const sdk = await getEvoSdk();
+    const response = await sdk.documents.get(this.contractId, this.documentType, documentId);
+    if (!response) return null;
+
+    // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
+    const transformed = this.transformDocument(documentToPlainObject(response));
+    this.cache.set(documentId, transformed);
+    return transformed;
   }
 
   /**

@@ -1,9 +1,20 @@
+import type { PollrTopology } from '@/lib/pollr-rules'
+
 /**
  * Application constants
  */
 
 // Contract IDs
 export const YAPPR_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_CONTRACT_ID || '9oDC6xdg8WRixTD2j3FCBq3vtsrf6bRGjXSJbhtFoma9' // Testnet - v2 (protocol v12: count trees + YAPP token + tokenCost; documentsCountable + countable byOwner on post)
+
+/**
+ * The standalone blocks contract (`contracts/yappr-blocks-contract.json`):
+ * `block`, `blockFilter` and `blockFollow` moved out of social v13. Read only
+ * where the topology says so (`blocksContractId()` in lib/contract-topology);
+ * on v2 and v9-v12 the three types live in the social contract. Blank where
+ * the deployment has no blocks contract.
+ */
+export const YAPPR_BLOCKS_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID ?? ''
 
 // YAPP token (defined at position 0 of the v2 social contract)
 export const YAPP_TOKEN_POSITION = 0
@@ -26,7 +37,7 @@ export const YAPP_TOKEN_COSTS = {
   likeReply: 1,
   repost: 1,
 } as const
-// Storefront v2 reviews are priced in YAPP too, charged from the social
+// Storefront v2–v5 reviews are priced in YAPP too (v6 charges an action fee), charged from the social
 // contract's token through `tokenCost.create.contractId` (a cross-contract
 // token cost), so their payment agreement must name the social contract.
 export const STOREFRONT_YAPP_TOKEN_COSTS = {
@@ -113,7 +124,22 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // QA D-25: an order carries `storeStatus`, consensus-bound to its store's
 // `status` and required to be `active`, so a paused or closed store cannot be
 // ordered from (10422 `storeIsOpen`; 40127 if the copy is stale).
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'] as const
+// `v6` is v5 plus digital products: `storeItem.fulfillment` (`shipped` |
+// `digital`), the seller's encrypted `itemDeliverable` kit per digital item
+// (writer-gated to the item's owner) and the seller-written, buyer-bound
+// `orderDelivery` that carries the encrypted goods (docs/DIGITAL_PRODUCTS.md).
+// Below v6 the digital UI is hidden: the doctypes do not exist and v5 refuses
+// the unknown `fulfillment` property.
+// v6 is also the mainnet re-cut (docs/NON_SOCIAL_CONTRACTS.md): no YAPP at
+// all (`store`/`storeItem`/`storeReview`/`itemReview` creates carry an
+// action-fee agreement instead), elected moderators who may delete stores
+// and items, a required `store.category` slug with proved discovery indexes
+// (`byStatus`, `byCategory`), seller order lists and counts on `storeId`, no
+// stored `buyerId` on status updates or deliveries (the buyer's feeds are
+// derived `orderId.$ownerId` indexes), item ratings only per store
+// (`storeItemRating`), smaller encrypted payloads and variants (5,120 B),
+// and an order's seller can never be its buyer.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -125,6 +151,12 @@ const storefrontTopologyAtLeast = (topology: StorefrontTopology) =>
 export const storefrontArraysAreTyped = () => storefrontTopologyAtLeast('v4')
 /** True on v5 and later: an order must copy its store's `status` into `storeStatus`, and only an active store takes orders. */
 export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5')
+/** True on v6 and later: the mainnet re-cut's fees, indexes and write shapes (see above). */
+export const storefrontIsV6 = () => storefrontTopologyAtLeast('v6')
+/** True on v6 and later: items can be digital, and sellers deliver them on chain. */
+export const storefrontSupportsDigital = () => storefrontIsV6()
+/** True on v2–v5: store and item reviews cost YAPP (v6 charges an action fee instead). */
+export const storefrontReviewsCostYapp = () => storefrontIsV2() && !storefrontIsV6()
 export const ENCRYPTED_KEY_BACKUP_CONTRACT_ID = process.env.NEXT_PUBLIC_ENCRYPTED_KEY_BACKUP_CONTRACT_ID ?? '8fmYhuM2ypyQ9GGt4KpxMc9qe5mLf55i8K3SZbHvS9Ts' // Testnet - Encrypted key backup contract (1B max iterations)
 export const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7' // Dash Pay contacts contract
 export const KEY_EXCHANGE_CONTRACT_ID = process.env.NEXT_PUBLIC_KEY_EXCHANGE_CONTRACT_ID ?? '7UaqHGBJBbRLJ4fUWS45cnud8PPUugJWoGTt1SKwHJ2P' // Key exchange protocol contract
@@ -172,7 +204,27 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // `moderatedDocument` references (after a takedown they resolve to the removal
 // record), and `publishedAt` is frozen by a conditional `immutable` entry
 // instead of `immutableAllowSetting`, which 5.0 refuses.
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6'] as const
+//
+// `v7` (5.0.0-beta.2, the mainnet-ready cut; docs/NON_SOCIAL_CONTRACTS.md) is
+// v6 with ELECTED moderation and these client-visible changes:
+//   - no YAPP on comments: `blog`, `blogPost` and `blogComment` creates carry
+//     an action fee agreement instead (40132 without it), read off the
+//     committed contract JSON (lib/blog/blog-contract.ts);
+//   - `blog.timeline` / `blogPost.timeline [$createdAt]` list new blogs and
+//     the latest posts everywhere, newest first, with no client-side sort;
+//   - the count twins are merged: comment counts read `postAndTime`, follower
+//     counts and "most followed" read `followers` (same query shapes);
+//   - `followersByDay` (a daily grid) is `followersTrend` (72h, a new window
+//     every 24h), and `discussedRecent` ranks posts by comments over the same
+//     window; there is no all-time comment ranking;
+//   - `blogPost.ownerAndTime`, `blogComment.ownerAndTime` and
+//     `blogFollow.following` are gone (a reader's follows ride `ownerAndBlog`);
+//   - an author deletes a post by writing a TOMBSTONE (`deleted`, comments
+//     off, every content field absent; slug, blogId and publishedAt kept),
+//     which a banned or suspended author may still write (`retractedWhen`);
+//   - `publishedAt` may not run more than 10 minutes past `$updatedAt`, and
+//     image URLs must be https:// or ipfs://.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
@@ -185,6 +237,15 @@ export const blogLabelsAreTyped = () => blogTopologyAtLeast('v4')
 export const blogCommentsCopyPostFlag = () => blogTopologyAtLeast('v5')
 /** True on v6 and later: a comment's post owner is derived through `blogPostId`, not copied into `blogPostOwnerId`. */
 export const blogCommentsDerivePostOwner = () => blogTopologyAtLeast('v6')
+/**
+ * True on v7 and later: the action-fee cut. Creates carry an action fee
+ * agreement and comments cost no YAPP; posts list on `timeline`, blogs on
+ * `blog.timeline`; the trend windows are 72h rolling; an author's delete is a
+ * tombstone.
+ */
+export const blogIsV7 = () => blogTopologyAtLeast('v7')
+/** True on v2–v6: a comment costs {@link BLOG_YAPP_TOKEN_COSTS} YAPP (v7 charges an action fee instead). */
+export const blogCommentsCostYapp = () => blogIsV2() && !blogIsV7()
 // ---- profile topology ----
 // `v1` is the unified profile contract live on testnet/production:
 // `paymentUris` and `socialLinks` are JSON strings. `v2` (4.2.0-beta.4,
@@ -197,9 +258,10 @@ export const profileTopology = (): ProfileTopology =>
   PROFILE_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_PROFILE_TOPOLOGY) ?? 'v1'
 /** True on v2: profile `paymentUris`/`socialLinks` are written as lists. */
 export const profileArraysAreTyped = () => profileTopology() === 'v2'
-// Blog comments are priced in YAPP, charged from the SOCIAL contract's token
-// through `tokenCost.create.contractId` (a cross-contract token cost), so their
-// payment agreement must name that contract — see resolveTokenPayment.
+// Blog comments on v2–v6 are priced in YAPP, charged from the SOCIAL contract's
+// token through `tokenCost.create.contractId` (a cross-contract token cost), so
+// their payment agreement must name that contract — see resolveTokenPayment.
+// v7 drops the token cost for an action fee (blogCommentsCostYapp()).
 export const BLOG_YAPP_TOKEN_COSTS = {
   blogComment: 1,
 } as const
@@ -213,19 +275,30 @@ export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (lea
 // Testnet pollr v3: count trees plus a per-mode ballot doctype, maker-owned
 // (Yappr only reads/writes documents).
 export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
-// Pollr contract topology. `v3` is the testnet contract: stored ballots whose
-// single-choice rule is a `unique` index, and no reference integrity — a vote
-// may name a poll that does not exist. `v4` (contracts/pollr-contract.json,
-// docs/NON_SOCIAL_CONTRACTS.md) makes both ballot doctypes indexOnly (the entries ARE the
-// ballot), binds `pollId` to a real poll with a `pollOwnerId` agreement against
-// the poll's own `$ownerId`, and adds the ranked winner query. The two BALLOT
-// shapes are incompatible — a v4 ballot carries no `$createdAt`, which v3
-// requires, and its `pollOwnerId` is consensus-bound where v3's is unchecked —
-// so the switch must match the deployed contract. (A v4 POLL is written exactly
-// like a v3 one.)
-export const POLLR_TOPOLOGY: 'v3' | 'v4' =
-  process.env.NEXT_PUBLIC_POLLR_TOPOLOGY === 'v4' ? 'v4' : 'v3'
+// Pollr contract topology. `v3` is the testnet contract: stored, immutable
+// ballots whose single-choice rule is a `unique` index, and no reference
+// integrity — a vote may name a poll that does not exist. `v4` (the beta.7 cut
+// still registered on the sakura devnet) made both ballot doctypes indexOnly;
+// it is READ-ONLY here, since its write path needed indexOnly confirmation the
+// client no longer carries. `v5` (contracts/pollr-contract.json,
+// docs/NON_SOCIAL_CONTRACTS.md) stores `options[]`, requires a close time
+// within 31 days, and keeps one mutable `vote` doctype whose ballots stay
+// editable until the poll closes and are final after. `v6` (5.0.0-beta.3) is
+// v5 plus the owner's delete of a poll before its first ballot (the poll's
+// `noBallots` deleteConstraints rule; withdrawn ballots count, so after the
+// first vote a poll is permanent). The ballot shapes are incompatible, so the
+// switch must match the deployed contract.
+const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v5', 'v6']
+export const POLLR_TOPOLOGY: PollrTopology =
+  POLLR_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_POLLR_TOPOLOGY) ?? 'v3'
+export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
+/** v5 and v6 share the poll shape and the editable `vote` ballots. */
+export const pollrHasV5Ballots = () => POLLR_TOPOLOGY === 'v5' || POLLR_TOPOLOGY === 'v6'
+/** v6: a poll's owner may delete it until its first ballot. */
+export const pollrPollsDeletable = () => POLLR_TOPOLOGY === 'v6'
+/** False when the deployment blanks NEXT_PUBLIC_POLLR_CONTRACT_ID: polls are off (no embeds read, no polls created). */
+export const pollrIsConfigured = () => POLLR_CONTRACT_ID !== ''
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
 // JSON in byte arrays; v2 had a single `vote` doctype whose uniqueness rule could
 // not enforce single-choice ballots). Their ids are recorded in git history and
@@ -238,12 +311,10 @@ export const POLLR_APP_CONTRACT_ID = 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr
 // ---- end pollr block ----
 
 /**
- * `VOTE` and `MULTI_VOTE` are the two ballot doctypes. A poll's immutable
- * `multiChoice` flag picks which one holds its ballots, and each carries the
- * uniqueness rule that mode needs: `vote` is unique per (poll, voter), so
- * Platform rejects a second single-choice selection; `multiVote` is unique per
- * (poll, voter, choice). Documents written to the doctype a poll doesn't use
- * are never read, so they can't reach a tally.
+ * Ballot doctypes. On v3/v4 a poll's immutable `multiChoice` flag picks which
+ * of `vote` and `multiVote` holds its ballots, and each carries the uniqueness
+ * rule that mode needs: `vote` is unique per (poll, voter), `multiVote` per
+ * (poll, voter, choice). v5 has only `vote`, unique per (poll, voter, slot).
  */
 export const POLLR_DOCUMENT_TYPES = {
   POLL: 'poll',
@@ -251,16 +322,10 @@ export const POLLR_DOCUMENT_TYPES = {
   MULTI_VOTE: 'multiVote',
 } as const
 
-/** The doctype holding a poll's ballots, chosen by its `multiChoice` flag. */
+/** The doctype holding a poll's ballots: by its `multiChoice` flag before v5, always `vote` on v5. */
 export function pollrVoteDocType(multiChoice: boolean): string {
-  return multiChoice ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
+  return multiChoice && !pollrHasV5Ballots() ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
 }
-
-// Poll limits — mirror the pollr v3 contract schema (option0..option9, 1-100 chars each).
-export const POLL_MIN_OPTIONS = 2
-export const POLL_MAX_OPTIONS = 10
-export const POLL_QUESTION_MAX_LENGTH = 512
-export const POLL_OPTION_MAX_LENGTH = 100
 
 // App URL (custom domain on GitHub Pages)
 export const APP_URL = 'https://yap.pr'
@@ -341,6 +406,28 @@ export function keyNetwork(): KeyNetwork {
 // week is deleted only by the seated team's leader plus two members
 // (`deleteWithin` + `deleteSettled`).
 //
+// `v12` — the 5.0.0-beta.2 devnet (sakura after its 2026-10-06 wipe),
+// `contracts/yappr-social-contract-v12.json` (docs/SOCIAL_V12.md). v11 with
+// the like and reply-like author indexes (and the hashtag index) kept as one
+// counter per post (`summableOffCountIndex`), and `retractedWhen` on post and
+// reply so a banned or suspended author can still tombstone its own writing.
+//
+// `v13` — the mainnet candidate, `contracts/yappr-social-contract-v13.json`
+// (docs/SOCIAL_V13.md). v12 with replies bound to their thread (`rootOwnerId`),
+// no reply-like author counter, reports of profiles and private content (a
+// moderators' `box`) carrying a 50M action fee, media arrays (`mediaUrls`,
+// `mediaDigests`, `mediaKinds`), a `live` marker that takes tombstones out of
+// `ownerAndTime`, mainnet election windows, and `block`/`blockFilter`/
+// `blockFollow` moved to the blocks contract (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`).
+//
+// `v14` — the 5.0.0-beta.3 re-cut, `contracts/yappr-social-contract-v14.json`
+// (docs/SOCIAL_V14.md). v13 with the rules rewritten in `countPresent`, reports
+// withdrawable only while no moderator resolved them (`deleteConstraints`,
+// 40147), replies that store no owner (`rootOwnerRecent` and
+// `parentOwnerRecent` read `rootPostId.$ownerId` / `replyToReplyId.$ownerId`
+// off the referenced documents), and a YAPP that starts unpaused, so the
+// optional YAPP token costs can be paid again under beta.3.
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -348,7 +435,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 
@@ -441,8 +528,10 @@ export const STOREFRONT_DOCUMENT_TYPES = {
   STORE: 'store',
   STORE_ITEM: 'storeItem',
   SHIPPING_ZONE: 'shippingZone',
+  ITEM_DELIVERABLE: 'itemDeliverable',
   STORE_ORDER: 'storeOrder',
   ORDER_STATUS_UPDATE: 'orderStatusUpdate',
+  ORDER_DELIVERY: 'orderDelivery',
   STORE_REVIEW: 'storeReview',
   ITEM_REVIEW: 'itemReview',
   SAVED_ADDRESS: 'savedAddress'

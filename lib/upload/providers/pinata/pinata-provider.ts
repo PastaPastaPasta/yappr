@@ -8,7 +8,7 @@ import { logger } from '@/lib/logger';
  * Unlike Storacha, Pinata uses API key (JWT) authentication - no email verification needed.
  */
 
-import type { UploadProvider, ProviderStatus, UploadOptions, UploadResult } from '../../types'
+import type { UploadProvider, ProviderStatus, UploadOptions, FileUploadOptions, UploadResult } from '../../types'
 import type { PinataCredentials } from './types'
 import { UploadException, UploadErrorCode } from '../../errors'
 import {
@@ -233,18 +233,33 @@ export class PinataProvider implements UploadProvider {
       throw new UploadException(UploadErrorCode.INVALID_FILE, 'Image must be under 15MB')
     }
 
+    return this.uploadFile(file, { ...options, maxBytes: MAX_SIZE })
+  }
+
+  /**
+   * Upload any file up to `maxBytes`
+   */
+  async uploadFile(file: File, options: FileUploadOptions): Promise<UploadResult> {
+    if (!this.client || this.status !== 'connected') {
+      throw new UploadException(UploadErrorCode.NOT_CONNECTED, 'Not connected to Pinata')
+    }
+
+    if (file.size > options.maxBytes) {
+      throw new UploadException(UploadErrorCode.INVALID_FILE, `File must be under ${Math.floor(options.maxBytes / (1024 * 1024))}MB`)
+    }
+
     try {
       // Report initial progress
-      options?.onProgress?.(0)
+      options.onProgress?.(0)
 
       // Upload the file using public upload
       logger.debug('[Pinata] Uploading file:', file.name, file.size)
-      options?.onProgress?.(25)
+      options.onProgress?.(25)
 
       const result = await this.client.upload.public.file(file)
 
       // Report completion
-      options?.onProgress?.(100)
+      options.onProgress?.(100)
 
       logger.debug('[Pinata] Upload complete:', result.cid)
 

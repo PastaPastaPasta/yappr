@@ -6,8 +6,7 @@ import { unifiedProfileService } from './unified-profile-service';
 import { identifierToBase58, normalizeSDKResponse, identifierStringToDocumentBytes, normalizeBytes, createDefaultUser } from './sdk-helpers';
 import type { EncryptionOptions } from './post-service';
 import { getEvoSdk } from './evo-sdk-service';
-import { mediaDocumentFields, mediaFromDocument } from '@/lib/media/media-fields';
-import type { MediaHashes } from '@/lib/media/media-fingerprint';
+import { mediaDocumentFields, mediaFromDocument, type MediaItemInput } from '@/lib/media/media-fields';
 import { documentCount, groupedDocumentCount, groupIdsByRoot, mapLimit } from './pagination-utils';
 import type { DocumentWhereClause } from './sdk-helpers';
 import { profileDataByOwnerId } from './post-enrichment-helpers';
@@ -22,6 +21,9 @@ import {
   replyCountFieldFor,
   replyCountNeedsRoot,
   replyLinkage,
+  replyOwnersProblem,
+  replyOwnersAreDerived,
+  repliesNameRootOwner,
   threadRootIdOf,
   tombstonePreservationFor,
   type TargetKind,
@@ -41,8 +43,18 @@ export interface ReplyTarget {
   rootPostId: string;
   /** Set when replying to a reply rather than to the root post (v9 only). */
   replyToReplyId?: string;
-  /** Owner of the DIRECT target — what notification queries key on. */
+  /**
+   * Owner of the DIRECT target — what notification queries key on. Not
+   * written on v14, where consensus reads it off the parent itself
+   * ({@link replyOwnersAreDerived}).
+   */
   parentOwnerId: string;
+  /**
+   * v13: the root post's owner, written as `rootOwnerId`. Consensus binds it
+   * to the root (40127), and a top-level reply's `parentOwnerId` must equal
+   * it (`parentIsRoot`); see {@link replyOwnersProblem}.
+   */
+  rootOwnerId?: string;
 }
 
 /**
@@ -87,6 +99,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       return identifierToBase58(value) || undefined;
     };
     const rootPostId = replyToReplyField ? toBase58(data[rootField] ?? doc[rootField]) : undefined;
+    const rootOwnerId = toBase58(data.rootOwnerId ?? doc.rootOwnerId);
     const replyToReplyId = replyToReplyField
       ? toBase58(data[replyToReplyField] ?? doc[replyToReplyField])
       : undefined;
@@ -124,6 +137,7 @@ class ReplyService extends BaseDocumentService<Reply> {
       parentId,
       parentOwnerId,
       rootPostId,
+      rootOwnerId,
       replyToReplyId,
       deleted: (data.deleted ?? doc.deleted) === true ? true : undefined,
       sensitive: (data.sensitive ?? doc.sensitive) === true ? true : undefined,
@@ -184,9 +198,10 @@ class ReplyService extends BaseDocumentService<Reply> {
 
   /**
    * The author's delete, whatever it means on this topology: a tombstone where
-   * replies are permanent ({@link deletesAreTombstones}: v9, v11), a document
-   * delete elsewhere. Throws the refusal when the author is banned or suspended
-   * (41107/41108, {@link tombstoneDocument}); false for any other failure.
+   * replies are permanent ({@link deletesAreTombstones}: v9, v11, v12), a
+   * document delete elsewhere. Throws the refusal of a banned or suspended
+   * author's tombstone (41107/41108, v9/v11 only, {@link tombstoneDocument});
+   * false for any other failure.
    */
   async deleteOwnReply(replyId: string, ownerId: string): Promise<boolean> {
     return deletesAreTombstones() ? this.tombstoneReply(replyId, ownerId) : this.deleteReply(replyId, ownerId);
@@ -205,14 +220,15 @@ class ReplyService extends BaseDocumentService<Reply> {
     content: string,
     target: ReplyTarget,
     options: {
-      mediaUrl?: string;
-      /** v10: required with `mediaUrl` (see `mediaCarriesHashes()`). */
-      mediaHashes?: MediaHashes;
+      /** Stored URLs, with their hashes from v10 on (see `mediaDocumentFields`). One item before v13, up to four on v13. */
+      media?: MediaItemInput[];
       sensitive?: boolean;
       encryption?: EncryptionOptions;
     } = {}
   ): Promise<Reply> {
     const PRIVATE_REPLY_PLACEHOLDER = '🔒';
+    const ownersProblem = replyOwnersProblem(target);
+    if (ownersProblem) throw new Error(ownersProblem);
     const { root: rootField, replyToReply: replyToReplyField } = replyLinkage();
     const data: Record<string, unknown> = {
       // On v2 the single `parentId` names the DIRECT parent, which is
@@ -221,10 +237,14 @@ class ReplyService extends BaseDocumentService<Reply> {
       [rootField]: identifierStringToDocumentBytes(
         replyToReplyField ? target.rootPostId : target.replyToReplyId ?? target.rootPostId
       ),
-      parentOwnerId: identifierStringToDocumentBytes(target.parentOwnerId),
     };
+    // v14 stores no owner: its windows read them off the root and the parent.
+    if (!replyOwnersAreDerived()) data.parentOwnerId = identifierStringToDocumentBytes(target.parentOwnerId);
     if (replyToReplyField && target.replyToReplyId) {
       data[replyToReplyField] = identifierStringToDocumentBytes(target.replyToReplyId);
+    }
+    if (repliesNameRootOwner() && target.rootOwnerId) {
+      data.rootOwnerId = identifierStringToDocumentBytes(target.rootOwnerId);
     }
 
     // Handle encryption if provided
@@ -262,12 +282,12 @@ class ReplyService extends BaseDocumentService<Reply> {
       data.content = content;
     }
 
-    if (options.mediaUrl && options.encryption) {
-      // A plaintext mediaUrl on an encrypted reply would leak the private media
+    if (options.media?.length && options.encryption) {
+      // A plaintext media URL on an encrypted reply would leak the private media
       // reference; callers must keep it inside the encrypted content instead.
-      throw new Error('mediaUrl cannot be combined with encryption');
+      throw new Error('Media URLs cannot be combined with encryption');
     }
-    Object.assign(data, mediaDocumentFields(options.mediaUrl, options.mediaHashes));
+    Object.assign(data, mediaDocumentFields(options.media));
     if (options.sensitive !== undefined) data.sensitive = options.sensitive;
 
     // v10: the one indexed mention, by the rule posts use — the first
@@ -384,6 +404,10 @@ class ReplyService extends BaseDocumentService<Reply> {
    * `parentOwnerRecent [$createdAt, parentOwnerId]` windows, read whole (paged)
    * and since-filtered client-side (see readNotificationWindow).
    *
+   * On v14 a reply names no owner, so the answer is two sources
+   * ({@link repliesToMeOnV14}): the nested replies to the user's replies, and
+   * the top-level replies of the user's threads.
+   *
    * Rejects when the read fails: an empty answer would let the notification
    * watermark move past the replies it missed.
    *
@@ -395,6 +419,8 @@ class ReplyService extends BaseDocumentService<Reply> {
     const sdk = await getEvoSdk();
 
     const sinceTimestamp = since?.getTime() || 0;
+
+    if (!preloaded && replyOwnersAreDerived()) return this.repliesToMeOnV14(userId, sinceTimestamp);
 
     const window = notificationWindowFor('reply');
     const response = preloaded ?? (window
@@ -415,6 +441,48 @@ class ReplyService extends BaseDocumentService<Reply> {
   }
 
   /**
+   * v14's replies to `userId`'s content since `since`, each once:
+   *
+   * - `parentOwnerRecent` (keyed by `replyToReplyId.$ownerId`): the nested
+   *   replies whose parent reply is the user's. Top-level replies are skipped
+   *   by the index, so all of these are "replied to your reply".
+   * - `rootOwnerRecent` (keyed by `rootPostId.$ownerId`): EVERY reply of the
+   *   user's threads, nested replies between other people included. Only the
+   *   top-level ones answer the user's post; a nested one is either already in
+   *   the first window (its parent is the user's) or not addressed to the user
+   *   at all, and is dropped.
+   *
+   * Consensus derives both keys from the referenced documents, so nothing here
+   * can be forged and no root needs re-reading. A failed read rejects.
+   *
+   * The root window holds every reply of the user's threads, so a busy thread
+   * fills it: each window read stops at `NOTIFICATION_WINDOW_MAX_PAGES` pages
+   * (notification-windows.ts), in id order, and past that top-level replies
+   * can be missed (docs/SOCIAL_V14.md).
+   */
+  private async repliesToMeOnV14(userId: string, since: number): Promise<Reply[]> {
+    const toMyReplies = notificationWindowFor('reply');
+    const inMyThreads = notificationWindowFor('threadReply');
+    if (!toMyReplies || !inMyThreads) throw new Error('v14 reads replies off rootOwnerRecent and parentOwnerRecent');
+    const [nested, thread] = await Promise.all([
+      readNotificationWindow(toMyReplies, userId, since),
+      readNotificationWindow(inMyThreads, userId, since),
+    ]);
+    const toMe = [
+      ...nested.map((doc) => this.transformDocument(doc)),
+      ...thread.map((doc) => this.transformDocument(doc)).filter((reply) => !reply.replyToReplyId),
+    ];
+    // The two sources cannot overlap (one holds only nested replies, the other
+    // keeps only top-level ones); the id check is a guard, not a merge.
+    const seen = new Set<string>();
+    return toMe.filter((reply) => {
+      if (seen.has(reply.id)) return false;
+      seen.add(reply.id);
+      return true;
+    });
+  }
+
+  /**
    * Drops replies that name `userId` as their parent's owner falsely. On v9 the
    * contract binds `parentOwnerId` to the parent reply's `$ownerId` only when
    * `replyToReplyId` is present; a DIRECT reply (to the thread root) is not
@@ -425,7 +493,8 @@ class ReplyService extends BaseDocumentService<Reply> {
    * changes there.
    */
   private async withTrueParentOwner(userId: string, replies: Reply[]): Promise<Reply[]> {
-    if (!replyLinkage().replyToReply) return replies;
+    // v13 binds a direct reply's parentOwnerId to its root's owner (`parentIsRoot`).
+    if (!replyLinkage().replyToReply || repliesNameRootOwner() || replyOwnersAreDerived()) return replies;
     const direct = replies.filter((reply) => !reply.replyToReplyId && reply.rootPostId);
     if (direct.length === 0) return replies;
     const { postService } = await import('./post-service');

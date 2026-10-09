@@ -1,10 +1,10 @@
 import { logger } from '@/lib/logger';
-import { BaseDocumentService, QueryOptions } from './document-service'
+import { BaseDocumentService } from './document-service'
 import { stateTransitionService } from './state-transition-service'
 import { identifierStringToDocumentBytes, identifierToBase58, normalizeSDKResponse, normalizeBytes, RequestDeduplicator } from './sdk-helpers'
 import { getEvoSdk } from './evo-sdk-service'
 import { DOCUMENT_TYPES } from '../constants'
-import { blockFollowsAreTyped } from '../contract-topology'
+import { blockFollowsAreTyped, blocksContractId } from '../contract-topology'
 import { decodeBlockFollowIds, encodeBlockFollowIds } from '../typed-array-codecs'
 import { BloomFilter, BLOOM_FILTER_VERSION } from '../bloom-filter'
 import { BlockDocument, BlockFollowData } from '../types'
@@ -14,6 +14,7 @@ import {
   addOwnBlock,
   removeOwnBlock,
   getOwnBlocksFromCache,
+  getRecordedOwnBlocks,
   setOwnBlocks,
   getConfirmedBlock,
   addConfirmedBlocksBatch,
@@ -33,6 +34,13 @@ interface InheritedBlock {
   message?: string
 }
 
+/** A bloom filter holding exactly `ids`. */
+export function buildBloomFilter(ids: Iterable<string>): BloomFilter {
+  const filter = new BloomFilter()
+  for (const id of new Set(ids)) filter.add(id)
+  return filter
+}
+
 /** Whether a blocked target is blocked by the viewer's own block or only by a followed list. */
 export type BlockSource = 'own' | 'inherited'
 
@@ -44,6 +52,9 @@ export interface BlockProvenance {
   /** A followed blocker whose list blocks the target, if any. */
   inheritedFrom: string | null
 }
+
+/** What a block write answers on a deployment without its blocks contract. */
+const BLOCKS_UNAVAILABLE = 'Blocking is not available on this network yet.'
 
 /**
  * Block Service - Manages enhanced blocking with bloom filters and block following.
@@ -66,42 +77,36 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
   /** Share the complete owner list across auth, cards and feed enrichment. */
   private async getOwnBlockedIds(userId: string): Promise<string[]> {
+    if (!this.available) return []
     const cached = getOwnBlocksFromCache(userId)
     if (cached !== null) return cached
 
     return this.ownBlocksInFlight.dedupe(userId, async () => {
-      const blockedIds: string[] = []
-      let startAfter: string | undefined
-      let version = this.ownBlockVersions.get(userId)
-      while (true) {
-        // Use the ownerAndBlocked index; never treat a capped page as a full list.
-        const { documents } = await this.query({
-          where: [['$ownerId', '==', userId]],
-          orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
-          limit: 100,
-          startAfter,
-        })
+      for (;;) {
+        const version = this.ownBlockVersions.get(userId)
+        // Every page of the ownerAndBlocked index; never a capped page.
+        const blockedIds = (await this.getUserBlocks(userId)).map(block => block.blockedId)
         // A local block/unblock completed while this snapshot was loading.
-        // Restart the shared read so an older result cannot undo that mutation.
-        if (version !== this.ownBlockVersions.get(userId)) {
-          version = this.ownBlockVersions.get(userId)
-          blockedIds.length = 0
-          startAfter = undefined
-          continue
-        }
-        blockedIds.push(...documents.map(block => block.blockedId))
-        if (documents.length < 100) break
-        const nextCursor = documents[documents.length - 1].$id
-        if (!nextCursor || nextCursor === startAfter) throw new Error('Block list cursor did not advance')
-        startAfter = nextCursor
+        // Read again so an older result cannot undo that mutation.
+        if (version !== this.ownBlockVersions.get(userId)) continue
+        setOwnBlocks(userId, blockedIds)
+        return blockedIds
       }
-      setOwnBlocks(userId, blockedIds)
-      return blockedIds
     })
   }
 
   constructor() {
-    super(DOCUMENT_TYPES.BLOCK)
+    // v13 keeps block, blockFilter and blockFollow in the blocks contract.
+    super(DOCUMENT_TYPES.BLOCK, blocksContractId() ?? '')
+  }
+
+  /**
+   * False on v13 when the deployment names no blocks contract: nothing is
+   * read (nobody is blocked) and every write refuses, instead of querying a
+   * contract that is not there.
+   */
+  private get available(): boolean {
+    return this.contractId !== ''
   }
 
   /**
@@ -142,6 +147,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     targetUserId: string,
     message?: string
   ): Promise<{ success: boolean; error?: string; autoRevoked?: boolean }> {
+    if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       if (blockerId === targetUserId) {
         return { success: false, error: 'Cannot block yourself' }
@@ -240,6 +246,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     blockerId: string,
     targetUserId: string
   ): Promise<{ success: boolean; error?: string }> {
+    if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       const block = await this.getBlock(targetUserId, blockerId)
       if (!block) {
@@ -256,7 +263,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
 
       if (result.success) {
         this.updateOwnBlock(blockerId, targetUserId, false)
-        // Note: Bloom filter is add-only. False positives may occur until rebuilt.
+        // A bloom filter cannot drop one item: rebuild it from the blocks left.
+        await this.rebuildBloomFilter(blockerId, targetUserId)
       }
 
       return result
@@ -273,6 +281,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get a specific block document.
    */
   async getBlock(targetUserId: string, blockerId: string): Promise<BlockDocument | null> {
+    if (!this.available) return null
     try {
       const result = await this.query({
         where: [
@@ -289,20 +298,17 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
-   * Get all blocks by a user.
+   * Every block a user made, read to the end on the ownerAndBlocked index
+   * (`$ownerId ==`, ordered by blockedId). Rejects when the read fails, so a
+   * failure never passes for "no blocks".
    */
-  async getUserBlocks(userId: string, options: QueryOptions = {}): Promise<BlockDocument[]> {
-    try {
-      const result = await this.query({
-        where: [['$ownerId', '==', userId]],
-        limit: 100,
-        ...options
-      })
-      return result.documents
-    } catch (error) {
-      logger.error('Error getting user blocks:', error)
-      return []
-    }
+  async getUserBlocks(userId: string): Promise<BlockDocument[]> {
+    if (!this.available) return []
+    const { documents } = await this.queryAll({
+      where: [['$ownerId', '==', userId]],
+      orderBy: [['$ownerId', 'asc'], ['blockedId', 'asc']],
+    })
+    return documents
   }
 
   // ============================================================
@@ -313,6 +319,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get the bloom filter for a user.
    */
   async getBloomFilter(userId: string): Promise<{ filter: BloomFilter; documentId: string; revision: number } | null> {
+    if (!this.available) return null
     try {
       const sdk = await getEvoSdk()
       const response = await sdk.documents.query({
@@ -354,7 +361,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    */
   async getBloomFiltersBatch(userIds: string[]): Promise<Map<string, BloomFilter>> {
     const result = new Map<string, BloomFilter>()
-    if (userIds.length === 0) return result
+    if (userIds.length === 0 || !this.available) return result
 
     try {
       const sdk = await getEvoSdk()
@@ -384,48 +391,71 @@ class BlockService extends BaseDocumentService<BlockDocument> {
   }
 
   /**
+   * Write `filter` as the user's blockFilter: an update of `existing`, or the
+   * first one. An empty filter is still a full-size byte array (filterData
+   * has minItems 1), so a user with no blocks left keeps a filter that
+   * matches nobody.
+   */
+  private async writeBloomFilter(
+    userId: string,
+    filter: BloomFilter,
+    existing: { documentId: string; revision: number } | null
+  ): Promise<void> {
+    const data = {
+      filterData: filter.serialize(),
+      itemCount: filter.itemCount,
+      version: BLOOM_FILTER_VERSION
+    }
+    const result = existing
+      ? await stateTransitionService.updateDocument(
+        this.contractId,
+        DOCUMENT_TYPES.BLOCK_FILTER,
+        existing.documentId,
+        userId,
+        data,
+        existing.revision
+      )
+      : await stateTransitionService.createDocument(this.contractId, DOCUMENT_TYPES.BLOCK_FILTER, userId, data)
+    if (!result.success) throw new Error(result.error || 'blockFilter write failed')
+  }
+
+  /**
    * Add a blocked user ID to the bloom filter.
    * Creates the filter document if it doesn't exist.
    */
   async addToBloomFilter(userId: string, blockedId: string): Promise<void> {
     try {
       const existing = await this.getBloomFilter(userId)
-
-      if (existing) {
-        // Add to existing filter
-        existing.filter.add(blockedId)
-
-        await stateTransitionService.updateDocument(
-          this.contractId,
-          DOCUMENT_TYPES.BLOCK_FILTER,
-          existing.documentId,
-          userId,
-          {
-            filterData: existing.filter.serialize(),
-            itemCount: existing.filter.itemCount,
-            version: BLOOM_FILTER_VERSION
-          },
-          existing.revision
-        )
-      } else {
-        // Create new filter
-        const filter = new BloomFilter()
-        filter.add(blockedId)
-
-        await stateTransitionService.createDocument(
-          this.contractId,
-          DOCUMENT_TYPES.BLOCK_FILTER,
-          userId,
-          {
-            filterData: filter.serialize(),
-            itemCount: filter.itemCount,
-            version: BLOOM_FILTER_VERSION
-          }
-        )
-      }
+      const filter = existing?.filter ?? new BloomFilter()
+      filter.add(blockedId)
+      await this.writeBloomFilter(userId, filter, existing)
     } catch (error) {
       logger.error('Error adding to bloom filter:', error)
       // Non-fatal - block still succeeded
+    }
+  }
+
+  /**
+   * Rebuild the user's bloom filter from their remaining blocks, after
+   * `unblockedId` was unblocked: followers who inherit this user's blocks
+   * pre-screen against it, so a stale bit keeps flagging the unblocked user.
+   * The just-deleted block is left out even if a read still returns it.
+   */
+  async rebuildBloomFilter(userId: string, unblockedId: string): Promise<void> {
+    try {
+      const existing = await this.getBloomFilter(userId)
+      // No filter means nothing stale to correct.
+      if (!existing) return
+      // A fresh read: this tab's cached list misses blocks made elsewhere, and
+      // a filter that misses a block hides nothing (a miss is a definite "not
+      // blocked"). Every block this tab recorded is added too, complete list
+      // or not, for those it broadcast that the read may not show yet.
+      const fresh = (await this.getUserBlocks(userId)).map(block => block.blockedId)
+      const remaining = [...fresh, ...getRecordedOwnBlocks(userId)].filter(id => id && id !== unblockedId)
+      await this.writeBloomFilter(userId, buildBloomFilter(remaining), existing)
+    } catch (error) {
+      logger.error('Error rebuilding bloom filter:', error)
+      // Non-fatal - the unblock still succeeded; the filter only pre-screens
     }
   }
 
@@ -459,6 +489,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * mistake a transient error for "no document".
    */
   private async fetchBlockFollow(userId: string): Promise<BlockFollowData | null> {
+    if (!this.available) return null
     const sdk = await getEvoSdk()
     const response = await sdk.documents.query({
       dataContractId: this.contractId,
@@ -501,6 +532,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     userId: string,
     targetUserId: string
   ): Promise<{ success: boolean; error?: string }> {
+    if (!this.available) return { success: false, error: BLOCKS_UNAVAILABLE }
     try {
       if (userId === targetUserId) {
         return { success: false, error: 'Cannot follow your own blocks' }
@@ -628,6 +660,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Get list of users whose blocks are being followed.
    */
   async getBlockFollows(userId: string): Promise<string[]> {
+    if (!this.available) return []
     // Check cache first — null means "never cached", while an empty
     // array is a valid cached result (the common case) and must not
     // trigger a refetch.
@@ -670,7 +703,8 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * vs. manage followed block lists). A failed own-list read rejects.
    */
   async getBlockProvenance(targetUserId: string, viewerId: string): Promise<BlockProvenance> {
-    if (!viewerId || !targetUserId || viewerId === targetUserId) {
+    // No blocks contract (v13 without one): nobody is blocked, whatever a cache recorded.
+    if (!viewerId || !targetUserId || viewerId === targetUserId || !this.available) {
       return { isBlocked: false, isOwnBlock: false, inheritedFrom: null }
     }
 
@@ -739,6 +773,10 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     const result = new Map<string, boolean>()
 
     if (!viewerId || targetIds.length === 0) {
+      return result
+    }
+    if (!this.available) {
+      for (const targetId of targetIds) result.set(targetId, false)
       return result
     }
 
@@ -849,7 +887,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
     followedBlockers: string[]
   ): Promise<{ blocks: Map<string, InheritedBlock>; complete: boolean }> {
     const result = new Map<string, InheritedBlock>()
-    if (targetIds.length === 0 || followedBlockers.length === 0) return { blocks: result, complete: true }
+    if (targetIds.length === 0 || followedBlockers.length === 0 || !this.available) return { blocks: result, complete: true }
     let complete = true
 
     try {
@@ -905,6 +943,7 @@ class BlockService extends BaseDocumentService<BlockDocument> {
    * Queries all necessary data and populates sessionStorage cache.
    */
   async initializeBlockData(userId: string): Promise<void> {
+    if (!this.available) return
     // Check if cache already exists and is fresh
     const existingCache = loadBlockCache(userId)
     if (getOwnBlocksFromCache(userId) !== null && existingCache?.blockFollows.timestamp) {

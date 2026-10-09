@@ -25,8 +25,28 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { AlsoKnownAs } from '@/components/ui/also-known-as'
 import { ProfileHoverCard } from '@/components/profile/profile-hover-card'
 import { formatNumber } from '@/lib/utils'
+import { useHydratedPages } from '@/hooks/use-hydrated-pages'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { InfiniteScrollSentinel } from '@/components/ui/infinite-scroll-sentinel'
+import type { HydratedPages } from '@/lib/hydrated-pages'
 
 export type ConnectionKind = 'following' | 'followers'
+
+/** Users hydrated (profile, names, counts) per page of a connection list. */
+const PAGE_SIZE = 50
+
+/**
+ * Followers read before the list shows. A followers list is written by other
+ * people and can be long; past this the page says it shows only the first.
+ * (A following list is the user's own writes, and is read whole.)
+ */
+const FOLLOWERS_CAP = 5000
+
+/** What the connection list caches: the hydrated pages and whether the id list is complete. */
+interface CachedConnections {
+  pages: HydratedPages<string, ConnectionUser>
+  complete: boolean
+}
 
 interface ConnectionUser {
   id: string
@@ -127,9 +147,10 @@ function plural(count: number, one: string, many: string): string {
 }
 
 /**
- * The /following and /followers pages: one list of enriched users for the
- * viewer or for `?id=`, with follow/unfollow on your own lists and, on your
- * own following list, a DPNS search for people to follow.
+ * The /following and /followers pages: the whole list of ids for the viewer
+ * or for `?id=`, enriched a page at a time as it scrolls, with
+ * follow/unfollow on your own lists and, on your own following list, a DPNS
+ * search for people to follow.
  */
 export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const copy = COPY[kind]
@@ -138,7 +159,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const { user: viewer } = useAuth()
   const viewerId = viewer?.identityId
   const { requireAuth, openLoginPrompt } = useRequireAuth()
-  const { data, loading, error, setLoading, setError, setData } = useAsyncState<ConnectionUser[]>(null)
+  const { loading, error, setLoading, setError } = useAsyncState<ConnectionUser[]>(null)
   const [actionInProgress, setActionInProgress] = useState<Set<string>>(new Set())
   const [targetUserName, setTargetUserName] = useState<string | null>(null)
   const loadGeneration = useRef(0)
@@ -150,8 +171,37 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const [searchError, setSearchError] = useState<string | null>(null)
 
   const targetUserId = searchParams.get('id')
+  const userIdToLoad = targetUserId || viewerId
   const isOwnProfile = !!viewerId && (!targetUserId || targetUserId === viewerId)
   const canSearch = kind === 'following' && isOwnProfile
+
+  const hydrateUsers = useCallback(async (ids: string[]): Promise<ConnectionUser[]> => {
+    const [usernamesById, enrichment, followStatus] = await Promise.all([
+      dpnsService.getAllUsernamesSortedBatch(ids),
+      fetchEnrichment(ids),
+      // Everyone on a following list is followed by definition. On your own
+      // followers list the button depends on whether you follow them back.
+      kind === 'followers' && isOwnProfile && viewerId
+        ? followService.getFollowStatusBatch(ids, viewerId)
+        : Promise.resolve(new Map<string, boolean>()),
+    ])
+    return enrichment.map((entry) =>
+      toUser(entry, usernamesById.get(entry.id) ?? [], kind === 'following' || (followStatus.get(entry.id) ?? false))
+    )
+  }, [kind, isOwnProfile, viewerId])
+  const list = useHydratedPages(hydrateUsers, PAGE_SIZE)
+  const { reset: resetList, clear: clearList, setPages, drop: dropFromList } = list
+  const data = list.pages?.items ?? null
+  const total = list.pages?.keys.length ?? 0
+  // False when the followers list stopped at FOLLOWERS_CAP.
+  const [complete, setComplete] = useState(true)
+  const scroll = useInfiniteScroll({
+    hasMore: list.hasMore,
+    isLoading: list.loadingMore,
+    onLoadMore: list.loadMore,
+    disabled: !!searchQuery,
+    resetKey: `${kind}:${userIdToLoad}`,
+  })
 
   // The header names whoever's list this is, when it is not the viewer's own.
   useEffect(() => {
@@ -173,47 +223,33 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     setLoading(true)
     setError(null)
     try {
-      const userIdToLoad = targetUserId || viewerId
       if (!userIdToLoad) {
-        setData([])
+        clearList()
         return
       }
 
       const cacheKey = `${kind}_${userIdToLoad}`
       if (!forceRefresh) {
-        const cached = cacheManager.get<ConnectionUser[]>(kind, cacheKey)
+        const cached = cacheManager.get<CachedConnections>(kind, cacheKey)
         if (cached) {
-          setData(cached)
+          setPages(cached.pages)
+          setComplete(cached.complete)
           return
         }
       }
 
-      const follows = kind === 'following'
-        ? await followService.getFollowing(userIdToLoad, { throwOnError: true })
-        : await followService.getFollowers(userIdToLoad, { throwOnError: true })
+      // The list of ids (following whole, followers up to the cap); only the
+      // first page is enriched now.
+      const { follows, complete: readAll } = kind === 'following'
+        ? { follows: await followService.getFollowing(userIdToLoad, { throwOnError: true }), complete: true }
+        : await followService.listFollowers(userIdToLoad, FOLLOWERS_CAP)
       if (generation !== loadGeneration.current) return
-      const ids = follows.map((f) => (kind === 'following' ? f.followingId : f.$ownerId)).filter(Boolean)
-      if (ids.length === 0) {
-        setData([])
-        return
+      const ids = Array.from(new Set(follows.map((f) => (kind === 'following' ? f.followingId : f.$ownerId)).filter(Boolean)))
+      const pages = await resetList(ids)
+      if (pages && generation === loadGeneration.current) {
+        setComplete(readAll)
+        cacheManager.set<CachedConnections>(kind, cacheKey, { pages, complete: readAll })
       }
-
-      const [usernamesById, enrichment, followStatus] = await Promise.all([
-        dpnsService.getAllUsernamesSortedBatch(ids),
-        fetchEnrichment(ids),
-        // Everyone on a following list is followed by definition. On your own
-        // followers list the button depends on whether you follow them back.
-        kind === 'followers' && isOwnProfile && viewerId
-          ? followService.getFollowStatusBatch(ids, viewerId)
-          : Promise.resolve(new Map<string, boolean>()),
-      ])
-
-      const users = enrichment.map((entry) =>
-        toUser(entry, usernamesById.get(entry.id) ?? [], kind === 'following' || (followStatus.get(entry.id) ?? false))
-      )
-      if (generation !== loadGeneration.current) return
-      cacheManager.set(kind, cacheKey, users)
-      setData(users)
     } catch (error) {
       logger.error(`${kind}: failed to load list:`, error)
       if (generation === loadGeneration.current) {
@@ -222,13 +258,15 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     } finally {
       if (generation === loadGeneration.current) setLoading(false)
     }
-  }, [kind, isOwnProfile, setLoading, setError, setData, viewerId, targetUserId])
+  }, [kind, setLoading, setError, userIdToLoad, resetList, clearList, setPages])
 
+  // hydrateUsers changes when the viewer resolves: reload so follow-back state is theirs.
   useEffect(() => {
-    setData(null)
+    clearList()
+    setComplete(true)
     load().catch((error) => logger.error(`Failed to load ${kind}:`, error))
     return invalidateLoad
-  }, [load, kind, setData, invalidateLoad])
+  }, [load, kind, clearList, invalidateLoad, hydrateUsers])
 
   const withProgress = async (userId: string, run: () => Promise<void>) => {
     setActionInProgress((prev) => new Set(prev).add(userId))
@@ -246,9 +284,9 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
   const applyFollowChange = (userId: string, isFollowing: boolean) => {
     setSearchResults((prev) => prev.map((u) => (u.id === userId ? { ...u, isFollowing } : u)))
     if (kind === 'followers') {
-      setData((prev) => (prev ?? []).map((u) => (u.id === userId ? { ...u, isFollowing } : u)))
+      setPages((prev) => prev && { ...prev, items: prev.items.map((u) => (u.id === userId ? { ...u, isFollowing } : u)) })
     } else if (!isFollowing) {
-      setData((prev) => (prev ?? []).filter((u) => u.id !== userId))
+      dropFromList((id) => id !== userId, (u) => u.id !== userId)
     }
   }
 
@@ -316,7 +354,8 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
         logger.error('Search: profile enrichment failed:', error)
         return ids.map((id) => ({ id, profile: undefined, followersCount: 0, followingCount: 0 }))
       })
-      const followed = new Set(data?.map((u) => u.id))
+      // The whole following list, not just the enriched pages.
+      const followed = new Set(list.pages?.keys)
       setSearchResults(enrichment.map((entry) => toUser(entry, sortUsernames(namesByOwner.get(entry.id) ?? []), followed.has(entry.id))))
     } catch (error) {
       logger.error('Search error:', error)
@@ -325,7 +364,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     } finally {
       setIsSearching(false)
     }
-  }, [searchQuery, data])
+  }, [searchQuery, list.pages])
 
   useEffect(() => {
     if (!searchQuery) return
@@ -345,7 +384,7 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
     ? plural(searchResults.length, 'search result', 'search results')
     : loading && data === null
       ? 'Loading...'
-      : data === null ? 'Unavailable' : plural(data.length, ...copy.noun)
+      : data === null ? 'Unavailable' : `${plural(total, ...copy.noun)}${complete ? '' : '+'}`
 
   const renderRow = (u: ConnectionUser) => (
     <ConnectionRow
@@ -467,13 +506,26 @@ export function ConnectionListPage({ kind }: { kind: ConnectionKind }) {
               <LoadingState
                 loading={loading && data === null}
                 error={data === null ? error : null}
-                isEmpty={!loading && data !== null && data.length === 0}
+                isEmpty={!loading && data !== null && total === 0}
                 onRetry={() => load(true)}
                 loadingText={copy.loadingText}
                 emptyText={copy.emptyText}
                 emptyDescription={copy.emptyDescription}
               >
+                {!complete && (
+                  <p className="px-4 py-2 text-center text-xs text-gray-500">
+                    Showing the first {FOLLOWERS_CAP.toLocaleString()} followers.
+                  </p>
+                )}
                 <div>{data?.map(renderRow)}</div>
+                {list.hasMore && (
+                  <InfiniteScrollSentinel
+                    sentinelRef={scroll.sentinelRef}
+                    isLoading={list.loadingMore}
+                    isSuspended={scroll.isSuspended}
+                    onLoadMore={scroll.loadMore}
+                  />
+                )}
               </LoadingState>
               </>
             )}

@@ -16,7 +16,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
-  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
   buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
@@ -153,8 +153,9 @@ const MAX_ATTEMPTS = 4;
 /**
  * Creates one document and decides the outcome by READING THE CHAIN. `accepted(id)` is the per-doctype probe:
  * `documents.get` for a stored type, an index-entry query for an indexOnly one (which has no row under its `$id`).
- * `duplicateIsSuccess` accepts a 40105 only when the exact entry is on chain — on a single-choice poll an earlier
- * ballot for a DIFFERENT choice raises the same code, and recording it would corrupt the tally.
+ * `duplicateIsSuccess` accepts a 40105 only when the `accepted` probe then finds the document on chain — the probe,
+ * not the code, decides what counts as this write's document (pollr's ballot probe accepts any ballot in the voter's
+ * slot, because the seeder replaces it to the planned choice next).
  */
 export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
@@ -336,11 +337,11 @@ export function createRecorder({ writer, state, file }) {
 }
 
 /**
- * A social v10 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
+ * A social v10–v13 `post` (its only caller, pollr, refuses any other topology through `requireSeededTopology`):
  * `additionalProperties: false`, no `author`, no `language`, and `hashtag` omitted entirely rather than sent empty
- * when the post is untagged.
+ * when the post is untagged; v13 adds `live: true`.
  */
-export const socialPost = ({ content, hashtag, ...rest }) => ({ content, ...(hashtag ? { hashtag } : {}), ...rest });
+export const socialPost = ({ content, hashtag, ...rest }) => SOCIAL_SHAPES.post({ content, ...(hashtag ? { hashtag } : {}), ...rest });
 
 /**
  * Tops each persona up to the YAPP its share of the plan will spend (its starter claim, then an owner mint: v10's YAPP
