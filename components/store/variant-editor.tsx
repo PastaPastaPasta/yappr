@@ -25,6 +25,8 @@ interface VariantEditorProps {
   imageUrls: string[]
   /** Per-combination weights (storefront v7 only). */
   showWeight: boolean
+  /** v1–v6: each combination's stock is tracked on its own (an empty entry stops tracking it). */
+  perCombinationStock?: boolean
   /**
    * The listing is saved with this table (v7): it may shrink but never empty,
    * since its option-id counter lives in it and a new table would hand old ids
@@ -76,7 +78,7 @@ function DraftInput({ value, onDraft, ...props }: { value: string; onDraft: (tex
   )
 }
 
-export function VariantEditor({ variants, onChange, currency, defaultPrice, imageUrls, showWeight, keepTable = false, disabled = false }: VariantEditorProps) {
+export function VariantEditor({ variants, onChange, currency, defaultPrice, imageUrls, showWeight, perCombinationStock = false, keepTable = false, disabled = false }: VariantEditorProps) {
   // With no combinations there is nothing to read tracking from, so remember the seller's choice.
   const [trackWhenEmpty, setTrackWhenEmpty] = useState(() => tracksStock(variants))
   const trackStock = variants.combinations.length > 0 ? tracksStock(variants) : trackWhenEmpty
@@ -372,6 +374,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
                       currency={currency}
                       trackStock={trackStock}
                       showWeight={showWeight}
+                      perCombinationStock={perCombinationStock}
                       imageUrls={imageUrls}
                       disabled={disabled}
                       onUpdate={(patch) => onChange(updateCombination(variants, combination.id, patch))}
@@ -504,13 +507,14 @@ interface CombinationRowProps {
   currency: string
   trackStock: boolean
   showWeight: boolean
+  perCombinationStock?: boolean
   imageUrls: string[]
   disabled: boolean
   onUpdate: (patch: Partial<CombinationData>) => void
   onRemove: () => void
 }
 
-function CombinationRow({ combination, label, currency, trackStock, showWeight, imageUrls, disabled, onUpdate, onRemove }: CombinationRowProps) {
+function CombinationRow({ combination, label, currency, trackStock, showWeight, perCombinationStock = false, imageUrls, disabled, onUpdate, onRemove }: CombinationRowProps) {
   const imageUrl = combination.image ? imageUrls[combination.image - 1] : undefined
   return (
     <tr>
@@ -539,12 +543,16 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
             aria-label={`Stock for ${label}`}
             value={combination.stock === undefined ? '' : String(combination.stock)}
             onDraft={(text) => {
+              if (perCombinationStock && text.trim() === '') {
+                onUpdate({ stock: undefined })
+                return true
+              }
               const stock = parseCountInput(text, VARIANT_LIMITS.maxStock)
               if (stock === undefined) return false
               onUpdate({ stock })
               return true
             }}
-            placeholder="0"
+            placeholder={perCombinationStock ? 'Not tracked' : '0'}
             disabled={disabled}
             className={`${cellClass} w-20`}
           />

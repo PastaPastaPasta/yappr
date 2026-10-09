@@ -172,6 +172,13 @@ export interface StoreItem {
   stockQuantity?: number
   sku?: string
   variants?: ItemVariants
+  /**
+   * A variants table the listing stores but this client cannot read (no
+   * usable combination). Kept exactly as read so a replace writes it back
+   * unchanged; such a listing cannot be bought and its options cannot be
+   * edited here. Never set together with `variants`.
+   */
+  unreadableVariants?: unknown
   fulfillment?: ItemFulfillment
   // Enriched fields
   storeName?: string

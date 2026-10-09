@@ -171,6 +171,22 @@ describe('storefront v7 typed variants', () => {
     } finally { restore(); }
   });
 
+  it('treats a stored table it cannot read as unbuyable, keeps it on other edits, and refuses to edit its options', async () => {
+    try {
+      const service = await v7();
+      // Contract-valid, but the only selector names an option the table does not have.
+      const unreadable = { axes: ['Color'], options: ['Red'], optionIds: [1], optionAxes: [0], nextOptionId: 2, selectors: [Uint8Array.of(2)], prices: [100] };
+      get.mockResolvedValue({ ...variantItem, variants: unreadable });
+      const item = defined(await service.getById('item'));
+      expect(item.variants).toBeUndefined();
+      expect(service.getStock(item)).toBe(0);
+      expect(service.isOutOfStock(item)).toBe(true);
+      await service.updateItem('item', 'owner', storeId, { status: 'paused' });
+      expect(updateDocument.mock.calls[0][4].variants).toEqual(unreadable);
+      await expect(service.updateItem('item', 'owner', storeId, { variants: undefined, basePrice: 5 }, 4)).rejects.toThrow(/could not be read/);
+    } finally { restore(); }
+  });
+
   it('refuses a gallery with the same image twice when a combination names images by position', async () => {
     try {
       const service = await v7();

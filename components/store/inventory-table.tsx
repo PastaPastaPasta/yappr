@@ -16,9 +16,10 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils/format'
 import { storeItemService } from '@/lib/services/store-item-service'
-import { combinationImageUrl, findCombination, tracksStock, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
+import { combinationImageUrl, findCombination, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
 import { parseCountInput } from '@/lib/storefront/variant-editor-model'
 import { ListLimitError } from '@/lib/typed-array-codecs'
+import { storefrontVariantsAreTyped } from '@/lib/constants'
 import { StaleRevisionError } from '@/lib/services/document-service'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
@@ -41,13 +42,19 @@ type SortField = 'title' | 'price' | 'stock' | 'status' | 'createdAt'
 type SortDirection = 'asc' | 'desc'
 
 /** Unsaved stock per combination of one item: variant id → units. */
-type StockDrafts = Record<string, number>
+/** Unsaved stock edits by combination id; null stops tracking that combination (v1–v6 only). */
+type StockDrafts = Record<string, number | null>
+
+/** A combination's stock with its unsaved edit, undefined when untracked. */
+const draftedStock = (combination: VariantCombination, drafts: StockDrafts = {}): number | undefined =>
+  combination.id in drafts ? drafts[combination.id] ?? undefined : combination.stock
 
 /** An item's units in all (with unsaved edits), or Infinity when it does not track stock. */
 function totalStock(item: StoreItem, drafts: StockDrafts = {}): number {
   if (!item.variants) return storeItemService.getStock(item)
-  if (!tracksStock(item.variants)) return Infinity
-  return item.variants.combinations.reduce((sum, combination) => sum + (drafts[combination.id] ?? combination.stock ?? 0), 0)
+  const stocks = item.variants.combinations.map((combination) => draftedStock(combination, drafts))
+  if (stocks.every((stock) => stock === undefined)) return Infinity
+  return stocks.reduce<number>((sum, stock) => sum + (stock ?? 0), 0)
 }
 
 /** A typed stock count, or null when it is not a whole number the contract stores (0 to 4,294,967,295). */
@@ -252,11 +259,11 @@ export function InventoryTable({
   }, [])
 
   /** Keep a combination's typed stock as an unsaved edit (dropped when it matches what is saved). */
-  const setStockDraft = useCallback((item: StoreItem, variantId: string, stock: number) => {
+  const setStockDraft = useCallback((item: StoreItem, variantId: string, stock: number | null) => {
     const saved = findCombination(item.variants, variantId)?.stock
     setStockDrafts((prev) => {
       const drafts = { ...prev[item.id] }
-      if (stock === saved) delete drafts[variantId]
+      if ((stock ?? undefined) === saved) delete drafts[variantId]
       else drafts[variantId] = stock
       const next = { ...prev }
       if (Object.keys(drafts).length > 0) next[item.id] = drafts
@@ -278,7 +285,7 @@ export function InventoryTable({
     const drafts = stockDrafts[item.id]
     if (!drafts || !item.variants || savingItemId) return
     const variants = Object.entries(drafts).reduce(
-      (table, [variantId, stock]) => updateCombination(table, variantId, { stock }),
+      (table, [variantId, stock]) => updateCombination(table, variantId, { stock: stock ?? undefined }),
       item.variants
     )
     setSavingItemId(item.id)
@@ -310,7 +317,12 @@ export function InventoryTable({
     if (!item) return
 
     if (editingStock.variantId) {
-      // Every combination of a variant item is tracked or none is, so an empty or invalid entry changes nothing.
+      // v7 tracks every combination or none, so an empty or invalid entry changes
+      // nothing; v1–v6 track each on its own, where an empty entry stops tracking it.
+      if (!storefrontVariantsAreTyped() && editingStock.value.trim() === '') {
+        setStockDraft(item, editingStock.variantId, null)
+        return
+      }
       const stock = parseStock(editingStock.value)
       if (stock !== null) setStockDraft(item, editingStock.variantId, stock)
       return
@@ -366,7 +378,7 @@ export function InventoryTable({
             if (e.key === 'Enter') e.currentTarget.blur()
             if (e.key === 'Escape') setEditingStock(null)
           }}
-          placeholder={variantId ? undefined : 'Not tracked'}
+          placeholder={variantId && storefrontVariantsAreTyped() ? undefined : 'Not tracked'}
           aria-label="Stock"
           min="0"
           autoFocus
@@ -375,8 +387,9 @@ export function InventoryTable({
       )
     }
 
-    // A variant item that does not track stock tracks none of its combinations.
-    if (variantId !== undefined && stock === Infinity) {
+    // On v7 a variant item that does not track stock tracks none of its
+    // combinations; on v1–v6 an untracked one can start tracking here.
+    if (variantId !== undefined && stock === Infinity && storefrontVariantsAreTyped()) {
       return <span className="px-2 py-1 text-gray-400">Not tracked</span>
     }
 
@@ -557,7 +570,7 @@ export function InventoryTable({
                           {formatPrice(combo.price, currency)}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          {renderStockCell(item, drafts[combo.id] ?? combo.stock ?? Infinity, combo.id)}
+                          {renderStockCell(item, draftedStock(combo, drafts) ?? Infinity, combo.id)}
                         </td>
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2"></td>

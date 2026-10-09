@@ -101,13 +101,17 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (typeof fields.storeId === 'string') fields.storeId = fields.storeId ? identifierStringToDocumentBytes(fields.storeId) : undefined;
     if (Array.isArray(fields.tags)) fields.tags = storedList(fields.tags as string[], TAG_LIMITS);
     if (Array.isArray(fields.imageUrls)) fields.imageUrls = storedList(fields.imageUrls as string[], imageLimits());
+    delete fields.unreadableVariants;
     if (doc.variants) fields.variants = storedVariants(doc.variants, doc.imageUrls);
+    // A table this client cannot read goes back exactly as it was stored.
+    else if (doc.unreadableVariants !== undefined) fields.variants = doc.unreadableVariants;
     return fields;
   }
 
   protected transformDocument(doc: Record<string, unknown>): StoreItem {
     const data = (doc.data || doc) as StoreItemDocument;
     const imageUrls = listOf(data.imageUrls);
+    const variants = readVariants(data.variants, imageUrls);
 
     return {
       id: (doc.$id || doc.id) as string,
@@ -128,7 +132,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       weight: data.weight,
       stockQuantity: data.stockQuantity,
       sku: data.sku,
-      variants: readVariants(data.variants, imageUrls),
+      variants,
+      ...(data.variants !== undefined && data.variants !== null && !variants ? { unreadableVariants: data.variants } : {}),
       fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined
     };
   }
@@ -287,6 +292,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       throw new Error('Item not found');
     }
     if (baseRevision !== undefined && existing.$revision !== undefined && existing.$revision !== baseRevision) throw new StaleRevisionError();
+    if (existing.unreadableVariants !== undefined && 'variants' in data) throw new ListLimitError("This product's options could not be read, so they can't be changed here. List it again as a new product.");
 
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(storeId),
@@ -394,6 +400,8 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
    * it no longer offers), else stockQuantity. Infinity when untracked.
    */
   getStock(item: StoreItem, variantId?: string): number {
+    // A table that cannot be read offers nothing that can be bought.
+    if (item.unreadableVariants !== undefined) return 0;
     if (item.variants) {
       const combination = this.getCombination(item, variantId);
       if (!combination) return 0;
@@ -404,6 +412,7 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
 
   /** Whether nothing can be bought: every combination at 0, or a tracked stockQuantity of 0. */
   isOutOfStock(item: StoreItem): boolean {
+    if (item.unreadableVariants !== undefined) return true;
     if (item.variants) return !item.variants.combinations.some(isInStock);
     if (item.stockQuantity === undefined || item.stockQuantity === null) return false;
     return item.stockQuantity <= 0;
