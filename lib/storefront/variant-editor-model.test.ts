@@ -134,6 +134,8 @@ describe('variantGrowthProblem', () => {
   it('refuses more options than a product can have', () => {
     const names = Array.from({ length: VARIANT_LIMITS.options + 1 }, (_, index) => `O${index}`)
     expect(variantGrowthProblem(addAxis(emptyVariants(), 'Many', names, { price: 1 }))).toContain(`at most ${VARIANT_LIMITS.options} options`)
+    // v1–v6 cap no option count.
+    expect(variantGrowthProblem(addAxis(emptyVariants(), 'Many', names, { price: 1 }), true)).toBeUndefined()
   })
 })
 

@@ -25,8 +25,12 @@ interface VariantEditorProps {
   imageUrls: string[]
   /** Per-combination weights (storefront v7 only). */
   showWeight: boolean
-  /** v1–v6: each combination's stock is tracked on its own (an empty entry stops tracking it). */
-  perCombinationStock?: boolean
+  /**
+   * The listing stores the v1–v6 JSON, which has none of v7's per-field caps:
+   * names and SKUs of any length, any number of option types and options, and
+   * each combination's stock tracked on its own (an empty entry stops it).
+   */
+  legacy?: boolean
   /**
    * The listing is saved with this table (v7): it may shrink but never empty,
    * since its option-id counter lives in it and a new table would hand old ids
@@ -78,7 +82,7 @@ function DraftInput({ value, onDraft, ...props }: { value: string; onDraft: (tex
   )
 }
 
-export function VariantEditor({ variants, onChange, currency, defaultPrice, imageUrls, showWeight, perCombinationStock = false, keepTable = false, disabled = false }: VariantEditorProps) {
+export function VariantEditor({ variants, onChange, currency, defaultPrice, imageUrls, showWeight, legacy = false, keepTable = false, disabled = false }: VariantEditorProps) {
   // With no combinations there is nothing to read tracking from, so remember the seller's choice.
   const [trackWhenEmpty, setTrackWhenEmpty] = useState(() => tracksStock(variants))
   const trackStock = variants.combinations.length > 0 ? tracksStock(variants) : trackWhenEmpty
@@ -95,7 +99,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
 
   /** Apply an edit unless it makes the table larger than a product may be; whether it was applied. */
   const apply = (next: ItemVariants): boolean => {
-    const problem = variantGrowthProblem(next)
+    const problem = variantGrowthProblem(next, legacy)
     if (problem) {
       setNotice(problem)
       return false
@@ -124,7 +128,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
     onChange(next)
   }
 
-  const canAddAxis = variants.axes.length < VARIANT_LIMITS.axes
+  const canAddAxis = legacy || variants.axes.length < VARIANT_LIMITS.axes
   const handleAddAxis = () => {
     const name = newAxisName.trim()
     const names = splitOptionNames(newAxisOptions)
@@ -184,6 +188,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
           disabled={disabled}
           onRename={(name) => onChange(renameAxis(variants, axisIndex, name))}
           onMove={(to) => onChange(moveAxis(variants, axisIndex, to))}
+          legacy={legacy}
           canRemove={!keepTable || variants.axes.length > 1}
           canRemoveLastOption={!keepTable || variants.axes.length > 1}
           onRemove={() => handleRemoveAxis(axisIndex)}
@@ -197,7 +202,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
       {canAddAxis ? (
         <div className="p-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
           <p className="text-sm text-gray-500 mb-3">
-            Add an option type, such as Size or Color (up to {VARIANT_LIMITS.axes})
+            Add an option type, such as Size or Color{legacy ? '' : ` (up to ${VARIANT_LIMITS.axes})`}
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
             <input
@@ -207,7 +212,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
               onChange={(event) => setNewAxisName(event.target.value)}
               onKeyDown={onEnter(handleAddAxis)}
               placeholder="Option type (e.g., Size)"
-              maxLength={VARIANT_LIMITS.axisNameLength}
+              maxLength={legacy ? undefined : VARIANT_LIMITS.axisNameLength}
               disabled={disabled}
               className={fieldClass}
             />
@@ -374,7 +379,7 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
                       currency={currency}
                       trackStock={trackStock}
                       showWeight={showWeight}
-                      perCombinationStock={perCombinationStock}
+                      legacy={legacy}
                       imageUrls={imageUrls}
                       disabled={disabled}
                       onUpdate={(patch) => onChange(updateCombination(variants, combination.id, patch))}
@@ -401,6 +406,8 @@ interface AxisCardProps {
   disabled: boolean
   onRename: (name: string) => void
   onMove: (to: number) => void
+  /** The listing stores the v1–v6 JSON (no name caps). */
+  legacy: boolean
   /** Whether the option type can go (a kept table keeps one). */
   canRemove: boolean
   /** Whether its only option can go (which removes the option type too). */
@@ -412,7 +419,7 @@ interface AxisCardProps {
   onRemoveOption: (optionId: number) => void
 }
 
-function AxisCard({ axis, axisIndex, axisCount, disabled, canRemove, canRemoveLastOption, onRename, onMove, onRemove, onAddOptions, onRenameOption, onMoveOption, onRemoveOption }: AxisCardProps) {
+function AxisCard({ axis, axisIndex, axisCount, disabled, legacy, canRemove, canRemoveLastOption, onRename, onMove, onRemove, onAddOptions, onRenameOption, onMoveOption, onRemoveOption }: AxisCardProps) {
   const [newOptions, setNewOptions] = useState('')
   const axisName = axis.name.trim() || `option type ${axisIndex + 1}`
   const names = splitOptionNames(newOptions, axis.options.map((option) => option.name))
@@ -431,7 +438,7 @@ function AxisCard({ axis, axisIndex, axisCount, disabled, canRemove, canRemoveLa
           value={axis.name}
           onChange={(event) => onRename(event.target.value)}
           onKeyDown={keepEnter}
-          maxLength={VARIANT_LIMITS.axisNameLength}
+          maxLength={legacy ? undefined : VARIANT_LIMITS.axisNameLength}
           disabled={disabled}
           className={`${fieldClass} flex-1 min-w-0 font-medium bg-white dark:bg-gray-800`}
         />
@@ -463,7 +470,7 @@ function AxisCard({ axis, axisIndex, axisCount, disabled, canRemove, canRemoveLa
                 value={option.name}
                 onChange={(event) => onRenameOption(option.id, event.target.value)}
                 onKeyDown={keepEnter}
-                maxLength={VARIANT_LIMITS.optionNameLength}
+                maxLength={legacy ? undefined : VARIANT_LIMITS.optionNameLength}
                 disabled={disabled}
                 className="w-24 px-1.5 py-1 bg-transparent rounded text-sm focus:outline-none focus:ring-2 focus:ring-yappr-500"
               />
@@ -507,14 +514,14 @@ interface CombinationRowProps {
   currency: string
   trackStock: boolean
   showWeight: boolean
-  perCombinationStock?: boolean
+  legacy?: boolean
   imageUrls: string[]
   disabled: boolean
   onUpdate: (patch: Partial<CombinationData>) => void
   onRemove: () => void
 }
 
-function CombinationRow({ combination, label, currency, trackStock, showWeight, perCombinationStock = false, imageUrls, disabled, onUpdate, onRemove }: CombinationRowProps) {
+function CombinationRow({ combination, label, currency, trackStock, showWeight, legacy = false, imageUrls, disabled, onUpdate, onRemove }: CombinationRowProps) {
   const imageUrl = combination.image ? imageUrls[combination.image - 1] : undefined
   return (
     <tr>
@@ -543,7 +550,7 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
             aria-label={`Stock for ${label}`}
             value={combination.stock === undefined ? '' : String(combination.stock)}
             onDraft={(text) => {
-              if (perCombinationStock && text.trim() === '') {
+              if (legacy && text.trim() === '') {
                 onUpdate({ stock: undefined })
                 return true
               }
@@ -552,7 +559,7 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
               onUpdate({ stock })
               return true
             }}
-            placeholder={perCombinationStock ? 'Not tracked' : '0'}
+            placeholder={legacy ? 'Not tracked' : '0'}
             disabled={disabled}
             className={`${cellClass} w-20`}
           />
@@ -566,7 +573,7 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
           onChange={(event) => onUpdate({ sku: event.target.value || undefined })}
           onKeyDown={keepEnter}
           placeholder="Optional"
-          maxLength={VARIANT_LIMITS.skuLength}
+          maxLength={legacy ? undefined : VARIANT_LIMITS.skuLength}
           disabled={disabled}
           className={`${cellClass} w-28`}
         />

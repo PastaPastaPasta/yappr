@@ -723,7 +723,7 @@ function AddItemPage() {
                 defaultPrice={defaultCombinationPrice(basePrice, currency, variants)}
                 imageUrls={imageUrls}
                 showWeight={variantsAreTyped}
-                perCombinationStock={!variantsAreTyped}
+                legacy={!variantsAreTyped}
                 keepTable={keepVariants}
                 disabled={isSubmitting}
               />

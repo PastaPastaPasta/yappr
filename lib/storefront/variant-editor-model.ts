@@ -98,9 +98,10 @@ export function missingCombinationCount(variants: ItemVariants): number {
 }
 
 /** Why an edit that leads to `variants` is refused (too many combinations or options), else undefined. */
-export function variantGrowthProblem(variants: ItemVariants): string | undefined {
+export function variantGrowthProblem(variants: ItemVariants, legacy = false): string | undefined {
   const optionCount = variants.axes.reduce((total, axis) => total + axis.options.length, 0)
-  if (optionCount > VARIANT_LIMITS.options) return `A product can have at most ${VARIANT_LIMITS.options} options in all.`
+  // v1–v6 cap no option count; a table past 256 combinations cannot fit their JSON either.
+  if (!legacy && optionCount > VARIANT_LIMITS.options) return `A product can have at most ${VARIANT_LIMITS.options} options in all.`
   if (variants.combinations.length > VARIANT_LIMITS.combinations) {
     return `That would make ${variants.combinations.length} combinations, and a product can offer at most ${VARIANT_LIMITS.combinations}. Use fewer options, or split it into several listings.`
   }
