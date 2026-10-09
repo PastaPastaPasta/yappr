@@ -201,20 +201,19 @@ STORES.push({ key: 'toys', category: 'toys', persona: 203, name: 'Squish & Pop T
 const STORE_BY_KEY = new Map(STORES.map((store) => [store.key, store]));
 
 /**
- * A listing's variants table as the app models it: options numbered from 1 in first-seen order per row, one
- * combination per row, its id the sorted option ids joined with ".".
+ * A listing's variants table as the app models it: one combination per row, its id the sorted option ids
+ * joined with ".". Options are numbered from 1 axis by axis, each axis in first-seen order, which is how the
+ * app reads a v1–v6 JSON table back (lib/storefront/legacy-variants.ts), so an order's variant id names the
+ * same combination on every topology (v7 stores the ids themselves).
  */
 function variantTable([axisNames, rows]) {
-  const axes = axisNames.map((name) => ({ name, options: [] }));
   let nextOptionId = 1;
-  const optionId = (axis, name) => {
-    const found = axes[axis].options.find((option) => option.name === name);
-    if (found) return found.id;
-    axes[axis].options.push({ id: nextOptionId, name });
-    return nextOptionId++;
-  };
+  const axes = axisNames.map((name, axis) => ({
+    name,
+    options: [...new Set(rows.map((row) => row[axis]))].map((optionName) => ({ id: nextOptionId++, name: optionName })),
+  }));
   const combinations = rows.map((row) => {
-    const optionIds = axisNames.map((_, axis) => optionId(axis, row[axis]));
+    const optionIds = axisNames.map((_, axis) => axes[axis].options.find((option) => option.name === row[axis]).id);
     const [price, stock, sku, weight, image] = row.slice(axisNames.length);
     return { id: [...optionIds].sort((a, b) => a - b).join('.'), optionIds, label: row.slice(0, axisNames.length).join(' / '), price, stock, sku, weight, image };
   });
@@ -242,6 +241,20 @@ function legacyVariants(table, imageUrls) {
       ...(c.image && imageUrls[c.image - 1] ? { imageUrl: imageUrls[c.image - 1] } : {}),
     })),
   });
+}
+
+/**
+ * The combinations of a stored v1–v6 table by the id the app reads each with, mapped to its label: options
+ * numbered axis by axis in stored order, as lib/storefront/legacy-variants.ts `decodeLegacyVariants` does.
+ */
+function legacyCombinationIds(json) {
+  const { axes, combinations } = JSON.parse(json);
+  let next = 1;
+  const ids = axes.map((axis) => new Map(axis.options.map((name) => [name, next++])));
+  return new Map(combinations.map((c) => {
+    const names = c.key.split('|');
+    return [names.map((name, axis) => ids[axis].get(name)).sort((a, b) => a - b).join('.'), names.join(' / ')];
+  }));
 }
 
 /** One combination of a variant item, by its option names in axis order. */
@@ -756,7 +769,8 @@ async function run({ args, handle, battery, socialId, contractId }) {
         ? Array.isArray(variants?.selectors) && variants.selectors.length === table.combinations.length
           && variants.prices.map(Number).join() === table.combinations.map((c) => c.price).join()
           && variants.axes.join() === table.axes.map((axis) => axis.name).join() && stored.basePrice === undefined
-        : typeof variants === 'string' && JSON.parse(variants).combinations.length === table.combinations.length;
+        : typeof variants === 'string' && JSON.parse(variants).combinations.length === table.combinations.length
+          && table.combinations.every((c) => legacyCombinationIds(variants).get(c.id) === c.label);
       check(`${item.title}: ${table.axes.length} option types, ${table.combinations.length} combinations read back`, ok,
         `id=${id ?? 'missing'} stored=${variantsTyped() ? `${variants?.selectors?.length ?? 0} selectors` : typeof variants}`);
     }
@@ -849,6 +863,22 @@ function selfTest() {
     }
   };
   const [v6Cube, v7Cube] = [cubeUnder('v6'), cubeUnder('v7')];
+  /** Under v6, whether every order line's variant id reads back from its listing's stored JSON as that combination. */
+  const legacyOrderIdsMatch = () => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = 'v6';
+    try {
+      return ORDERS.every((order) => order.lines.every(([key, , label]) => {
+        if (!label) return true;
+        const store = storeOf(order);
+        const item = store.items.find((candidate) => candidate.key === key);
+        const stored = itemData(store, item, new Uint8Array(32)).variants;
+        return typeof stored === 'string' && legacyCombinationIds(stored).get(combinationOf(item, label).id) === label;
+      }));
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
   const typed = v7Squishy.variants;
   const aligned = (list) => list === undefined || list.length === typed.selectors.length;
   const analog = plan.perStore.get('analog').ratings;
@@ -875,6 +905,7 @@ function selfTest() {
       const item = storeOf(order).items.find((candidate) => candidate.key === key);
       return label ? Boolean(item.variants && variantTable(item.variants).combinations.some((c) => c.label === label)) : !item.variants;
     }))],
+    ['on v6 every variant order line\'s id reads back from its listing\'s stored JSON as that combination', legacyOrderIdsMatch()],
     ['every order has a shipping zone covering its destination (an unmatched zone BLOCKS checkout)',
       ORDERS.every((order) => findMatchingZone(storeOf(order).zones, BUYERS[order.buyer].country))],
     ['every order line names an item its store actually lists',
