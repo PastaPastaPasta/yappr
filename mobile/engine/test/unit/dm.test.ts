@@ -1235,6 +1235,29 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     expect(await blockedNow(user)).toEqual([])
   })
 
+  it('blocks again, after a restart, someone unblocked in Messages whose followed account block was made again since', async () => {
+    const ledger = ledgerNow()
+    const kv = new MapKv()
+    const account = accountOn([bob])
+    account.madeAt.set(bob, ledger.time - 60_000)
+    const first = await ready(userOn(ledger, alice, {}, kv, { account }))
+    await vi.waitFor(async () => expect(await blockedNow(first)).toEqual([bob]))
+    expect(JSON.parse(first.local.getItem(followedKey) as string)).toEqual([bob])
+    // Message settings' Unblock: Messages only. The account's (older) block leaves it standing.
+    expect(await first.dm.setBlocked(bob, false)).toBe(true)
+    const unblockedAt = ledger.time
+    await account.refresh(alice)
+    expect(await blockedNow(first)).toEqual([])
+    await first.hooks.stop()
+
+    // While the app is closed, another device removes the account's block and makes it again.
+    account.madeAt.set(bob, unblockedAt + 60_000)
+    ledger.time = unblockedAt + BLOCK_SETTLING_MS + 60_000
+    const user = await ready(userOn(ledger, alice, {}, kv, { storage: first.storage, local: first.local, account }))
+    await vi.waitFor(async () => expect(await blockedNow(user)).toEqual([bob]))
+    expect(JSON.parse(user.local.getItem(followedKey) as string)).toEqual([bob])
+  })
+
   it('follows a block and unblock confirmed here, and an unblock a followed list overrides, over stale reads', async () => {
     const user = await ready(userOn(ledgerNow(), alice))
     let unblocked: WriteResult = { state: 'confirmed' }

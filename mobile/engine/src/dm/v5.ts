@@ -423,11 +423,11 @@ export function createV5Backend(options: V5BackendOptions) {
    * everyone on `blocked` (the whole list, as read) whom this device never
    * blocked in Messages for it, and lift the blocks it made for people no
    * longer on it. A block already standing in Messages is adopted, so the
-   * account's unblock lifts it too. Someone it already followed and whose
-   * Messages block was lifted since (Message settings' Unblock) stays
-   * unblocked there, as does anyone whose Messages block was lifted, on any
-   * device, after the account blocked them (the newer change wins, as in a
-   * merge). A block changed in Messages lately is never lifted by a read
+   * account's unblock lifts it too. Anyone whose Messages block was lifted,
+   * on any device (Message settings' Unblock), after the account blocked
+   * them stays unblocked there, and a block the account made later (one
+   * removed and made again) blocks them again: the newer change wins, as in
+   * a merge. A block changed in Messages lately is never lifted by a read
    * (one from a node that has not caught up yet must not undo it). People
    * with a block or unblock of their own settling are left to it
    * (`followAccountBlock`).
@@ -439,9 +439,11 @@ export function createV5Backend(options: V5BackendOptions) {
     const standing = new Set(running.getSnapshot().blocked)
     let changed = false
     for (const [peerId, createdAt] of blocked) {
-      if (followed.has(peerId) || settling.has(peerId)) continue
-      // An unknown age counts as the newest: the account's block wins.
-      const madeAt = Number.isFinite(createdAt) ? createdAt : Number.POSITIVE_INFINITY
+      if (settling.has(peerId) || (followed.has(peerId) && standing.has(peerId))) continue
+      // An unknown age: the newest for a block not yet followed (the account's
+      // block wins), else the one already followed (a Messages unblock stands).
+      const unknown = followed.has(peerId) ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY
+      const madeAt = Number.isFinite(createdAt) ? createdAt : unknown
       if (!standing.has(peerId) && savedBlockChange(running, peerId) > madeAt) continue
       applyBlock(running, peerId, true)
       followed.add(peerId)
