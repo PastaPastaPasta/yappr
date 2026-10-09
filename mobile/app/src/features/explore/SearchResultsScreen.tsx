@@ -12,7 +12,7 @@ import { Screen } from '~/ui/Screen';
 import { FollowableUserRow } from './FollowableUserRow';
 import { postItemType } from './PagedPostList';
 import { useRecentSearches } from './recent-searches';
-import { LoadingRow, OfflineBanner, readErrorMessage, useOffline } from './states';
+import { LoadingRow, OfflineBanner, searchFailedMessage, searchFailedTitle, useOffline } from './states';
 import { TagRow } from './TagRow';
 import { isSearchKind, SEARCH_TITLES, useSearch } from './use-search';
 
@@ -43,7 +43,8 @@ export function SearchResultsScreen({ kind: kindParam, query }: { kind: string |
   if (active.isError) {
     empty = (
       <ErrorState
-        message={readErrorMessage(active.error, offline)}
+        title={searchFailedTitle(SEARCH_TITLES[kind].toLowerCase())}
+        message={searchFailedMessage(active.error, offline)}
         onRetry={() => {
           active.refetch().catch(() => undefined);
         }}

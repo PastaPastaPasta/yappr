@@ -1,9 +1,10 @@
-import { TextInput, View, useWindowDimensions, type TextInputProps } from 'react-native';
+import { useState } from 'react';
+import { Platform, TextInput, View, useWindowDimensions, type TextInputProps } from 'react-native';
 import { PaperAirplaneIcon } from 'react-native-heroicons/solid';
 
 import { cn } from '~/lib-allowlist';
 import { ScalePressable } from '~/ui/ScalePressable';
-import { GrowMirror, useGrowHeight } from '~/ui/grow';
+import { GrowMirror, LinesMirror, useContentGrowHeight, useGrowHeight } from '~/ui/grow';
 import { InputSlot } from '~/ui/InputSlot';
 import { useNativeText } from '~/ui/native-text';
 import { Text } from '~/ui/Text';
@@ -47,7 +48,7 @@ export function Composer({ value, onChangeText, onSend, disabled = false, restor
     resetToken: restoreToken,
   });
   /** The same input for the live box and the one it replaced: only its handlers, text and test id differ. */
-  const field = (props: TextInputProps, testID: string, ref?: (input: TextInput | null) => void) => (
+  const field = (props: TextInputProps, key: number, testID: string, ref?: (input: TextInput | null) => void) => (
     <TextInput
       ref={ref}
       {...props}
@@ -60,22 +61,31 @@ export function Composer({ value, onChangeText, onSend, disabled = false, restor
       selectionColor={c.accent}
       className="text-gray-900 dark:text-gray-100"
       style={inputStyle}
+      onContentSizeChange={grownOnAndroid.onContentSizeChange(key)}
       testID={testID}
     />
   );
-  // The line height as given: React Native scales it with the font, as it does the font size, so a
+  // iOS: the line height as given. React Native scales it with the font, as it does the font size, so a
   // line is `LINE * scale` tall on screen, and that is what the box is measured in (QA rc14 c3).
-  const textStyle = { fontSize: 16, lineHeight: LINE };
-  const lineOnScreen = LINE * scale;
+  // Android draws typed text at the font's own line spacing whatever it is given (`LinesMirror`): it
+  // gets none, and 5 of its lines are measured, at the font scale of the moment (QA rc16 A-08).
+  const android = Platform.OS === 'android';
+  const textStyle = android ? { fontSize: 16 } : { fontSize: 16, lineHeight: LINE };
+  const [linesOnScreen, setLinesOnScreen] = useState<number | null>(null);
+  const lineOnScreen = android && linesOnScreen !== null ? linesOnScreen / MAX_LINES : LINE * scale;
   const minHeight = Math.max(40, lineOnScreen + PADDING);
-  const maxHeight = lineOnScreen * MAX_LINES + PADDING;
-  // Grows a line at a time up to 5 full lines, then scrolls (UX_SPEC §4.20); iOS needs the measured height (`useGrowHeight`).
+  const maxHeight =
+    android && linesOnScreen !== null ? Math.ceil(linesOnScreen) + PADDING : lineOnScreen * MAX_LINES + PADDING;
+  // Grows a line at a time up to 5 full lines, then scrolls (UX_SPEC §4.20), by the height measured
+  // on each platform: iOS from a copy of the text (`useGrowHeight`), Android from the field's own
+  // layout (`useContentGrowHeight`), which a font scale change does not reset.
   const grow = useGrowHeight({ min: minHeight, max: maxHeight, padding: PADDING });
+  const grownOnAndroid = useContentGrowHeight({ min: minHeight, max: maxHeight, input: inputKey });
   const inputStyle = {
     ...textStyle,
     minHeight,
     maxHeight,
-    height: grow.height,
+    height: grow.height ?? grownOnAndroid.height,
     paddingTop: 9,
     paddingBottom: 9,
     textAlignVertical: 'center' as const,
@@ -101,13 +111,19 @@ export function Composer({ value, onChangeText, onSend, disabled = false, restor
           // The input that held the sent text, until the fresh one below has the focus. Hidden by its
           // slot only: its own props stay as they were, so it keeps the keyboard until then.
           <InputSlot key={retiring.key} retired>
-            {field(retiring.inputProps, 'dm-composer-retiring')}
+            {field(retiring.inputProps, retiring.key, 'dm-composer-retiring')}
           </InputSlot>
         ) : null}
         <InputSlot key={inputKey}>
-          {field(inputProps, 'dm-composer', attach)}
+          {field(inputProps, inputKey, 'dm-composer', attach)}
           <GrowMirror text={value} style={textStyle} onLayout={grow.onMirrorLayout} testID="dm-composer-mirror" />
         </InputSlot>
+        <LinesMirror
+          lines={MAX_LINES}
+          style={textStyle}
+          onLayout={(event) => setLinesOnScreen(event.nativeEvent.layout.height)}
+          testID="dm-composer-lines"
+        />
       </View>
       <ScalePressable
         android_ripple={sendRipple}

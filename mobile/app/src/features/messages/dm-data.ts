@@ -104,13 +104,40 @@ export function useMessages(key: string, enabled: boolean) {
   );
 }
 
-/** Names and avatars for member ids (`profiles.batch`, at most 100), by id. */
+/**
+ * The last name and avatar loaded for each person, by id: shown over the
+ * fallback of a later read that failed, however many fail in a row.
+ */
+const knownPeople = new Map<string, UserSummaryDTO>();
+
+/**
+ * Names and avatars for member ids (`profiles.batch`, at most 100), by id.
+ * A name or profile read that failed comes back `resolved: false` with a
+ * fallback name (the handle): it shows, unless an earlier read loaded the
+ * name, which shows instead. Either way the row stays `resolved: false`, so
+ * the people are read again next time rather than kept for ten minutes
+ * (QA rc17 D-010).
+ */
 export function usePeople(ids: readonly string[], enabled = true) {
   const sorted = useMemo(() => Array.from(new Set(ids)).sort().slice(0, 100), [ids]);
-  const query = useEngineQuery<UserSummaryDTO[]>(queryKeys.dm.people(sorted), (api) => api.profiles.batch(sorted), {
-    enabled: enabled && sorted.length > 0,
-    staleTime: 10 * 60_000,
-  });
+  const query = useEngineQuery<UserSummaryDTO[]>(
+    queryKeys.dm.people(sorted),
+    async (api) => {
+      const users = await api.profiles.batch(sorted);
+      return users.map((user) => {
+        if (user.resolved) {
+          knownPeople.set(user.id, user);
+          return user;
+        }
+        const known = knownPeople.get(user.id);
+        return known ? { ...known, resolved: false } : user;
+      });
+    },
+    {
+      enabled: enabled && sorted.length > 0,
+      staleTime: (q) => (q.state.data?.every((user) => user.resolved) === false ? 0 : 10 * 60_000),
+    },
+  );
   const byId = useMemo(() => new Map((query.data ?? []).map((user) => [user.id, user])), [query.data]);
   return { ...query, byId };
 }

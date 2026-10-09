@@ -16,9 +16,9 @@ export const SUPPORT_EMAIL = 'support@yap.pr';
 const site = `https://yap.pr${config.webBasePath}`;
 
 export const links = {
-  /** The terms and privacy policy cover every network, so they come from the root site. */
-  terms: 'https://yap.pr/terms',
-  privacy: 'https://yap.pr/privacy',
+  /** This network's copies, so the notice on them names the network the app is on (D-013). */
+  terms: `${site}/terms`,
+  privacy: `${site}/privacy`,
   web: site,
   registerUsername: `${site}/dpns/register`,
 };

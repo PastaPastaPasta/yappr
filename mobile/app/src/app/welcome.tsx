@@ -8,13 +8,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import pbdeDark from '@assets/images/pbde-dark.png';
 import pbdeLight from '@assets/images/pbde-light.png';
 import { config } from '~/config';
-import { useEngineStatus } from '~/engine/hooks';
 import { copy } from '~/features/auth/copy';
 import { links, openInApp, setWelcomed } from '~/features/auth/onboarding';
 import { Wordmark } from '~/features/auth/Wordmark';
+import { useChipState } from '~/features/network/NetworkChipButton';
 import { cn } from '~/lib-allowlist';
 import { Button } from '~/ui/Button';
-import { chipStateOf, NetworkChip } from '~/ui/NetworkChip';
+import { NetworkChip } from '~/ui/NetworkChip';
 import { Text } from '~/ui/Text';
 import { tw, useIsDark } from '~/ui/tokens';
 
@@ -31,7 +31,7 @@ const ENTER = new Keyframe({
 export default function WelcomeScreen() {
   const insets = useSafeAreaInsets();
   const dark = useIsDark();
-  const chipState = chipStateOf(useEngineStatus().state);
+  const chipState = useChipState();
   const navigation = useNavigation();
 
   // Leaving by any route (Android back included) counts as "Browse": Welcome is shown once.

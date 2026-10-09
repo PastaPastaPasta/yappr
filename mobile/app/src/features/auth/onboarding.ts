@@ -43,9 +43,9 @@ export const useOnboarding = create<Onboarding>()(
 export const setWelcomed = (welcomed: boolean) => useOnboarding.setState({ welcomed, welcomeDue: !welcomed });
 
 export const links = {
-  /** The terms and privacy policy cover every network, so they come from the root site. */
-  terms: 'https://yap.pr/terms',
-  privacy: 'https://yap.pr/privacy',
+  /** This network's copies (devnet: under `/devnet`), so the notice on them names the network the app is on (D-013). */
+  terms: `https://yap.pr${config.webBasePath}/terms`,
+  privacy: `https://yap.pr${config.webBasePath}/privacy`,
   /** The identity bridge, for the network this build talks to (web `identityBridgeUrl`). */
   identityBridge: `https://bridge.thepasta.org/?network=${encodeURIComponent(engineNetworkKey)}`,
   /** Web's DASH_WALLET_DOWNLOAD_URL. */

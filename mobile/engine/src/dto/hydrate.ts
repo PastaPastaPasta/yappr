@@ -161,7 +161,11 @@ export async function listToDTOs(posts: Post[], preloaded?: PreloadedEnrichment,
 /**
  * User rows from lib's batch identity reads (`loadIdentityBatch`: names,
  * profiles), as the engagements and followers pages build them. `counts` adds
- * follower/following counts; signed in, `viewerFollows` is set.
+ * follower/following counts; signed in, `viewerFollows` is set. lib answers a
+ * failed profile or name read as "none", so a row is `resolved` only when
+ * both reads answered (lib cached the document or its proven absence):
+ * otherwise its name is a fallback, such as the handle standing in for a
+ * display name that did not load (QA rc16 A-06).
  */
 export async function loadUserSummaries(
   ids: string[],
@@ -182,8 +186,11 @@ export async function loadUserSummaries(
     viewer ? followService.getFollowStatusBatch(unique, viewer) : undefined,
   ])
   const profileOf = new Map(profiles.map(profile => [profile.$ownerId, profile]))
+  const answered = (id: string) =>
+    (options.usernames !== undefined || dpnsService.hasCachedUsername(id)) && unifiedProfileService.hasCachedProfile(id)
   return new Map(unique.map(id => [id, toUserSummaryDTO({
     id,
+    resolved: answered(id),
     username: usernames?.get(id),
     profile: profileOf.get(id),
     followers: followerCounts?.get(id) ?? (options.counts ? 0 : undefined),
@@ -197,13 +204,13 @@ export async function loadUserSummaries(
  * the best of its matching names (`getPrimaryUsername`), as web's search
  * page and mention autocomplete build them. `exactFallback` adds an exact
  * name resolution when the prefix search finds nothing (search page).
+ * A failed name read rejects (`readFailure`), so an empty list always means
+ * no one matched, and a stale quorum reaches `retryReadsOnStaleQuorum`.
  */
 export async function searchUserSummaries(prefix: string, limit: number, exactFallback = false): Promise<UserSummaryDTO[]> {
-  const results = await dpnsService.searchUsernamesWithDetails(prefix, limit)
-  if (results.length === 0 && exactFallback) {
-    const ownerId = await dpnsService.resolveIdentity(prefix)
-    if (ownerId) results.push({ username: `${prefix.toLowerCase().replace(/\.dash$/, '')}.dash`, ownerId })
-  }
+  const results = await findNames(prefix, limit, exactFallback).catch((error: unknown) => {
+    throw readFailure(error)
+  })
   const namesOf = new Map<string, string[]>()
   for (const { username, ownerId } of results) {
     if (ownerId) namesOf.set(ownerId, [...(namesOf.get(ownerId) ?? []), username])
@@ -211,4 +218,11 @@ export async function searchUserSummaries(prefix: string, limit: number, exactFa
   const usernames = new Map(Array.from(namesOf, ([id, names]) => [id, getPrimaryUsername(names) ?? names[0]]))
   const users = await loadUserSummaries(Array.from(namesOf.keys()), { usernames, viewerFollows: false })
   return Array.from(namesOf.keys()).flatMap(id => users.get(id) ?? [])
+}
+
+async function findNames(prefix: string, limit: number, exactFallback: boolean): Promise<Array<{ username: string; ownerId: string }>> {
+  const results = await dpnsService.findUsernamesByPrefix(prefix, limit)
+  if (results.length > 0 || !exactFallback) return results
+  const ownerId = await dpnsService.findIdentityByName(prefix)
+  return ownerId ? [{ username: `${prefix.toLowerCase().replace(/\.dash$/, '')}.dash`, ownerId }] : []
 }

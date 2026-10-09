@@ -9,7 +9,8 @@ import { Text } from './Text';
 import { colors, hitSlopFor, motion } from './tokens';
 
 export type ChipNetwork = 'devnet' | 'testnet' | 'mainnet';
-export type EngineState = 'ready' | 'booting' | 'unavailable';
+/** `offline` is the device's own connection (D-014): no engine state can be "Connected" without one. */
+export type EngineState = 'ready' | 'booting' | 'unavailable' | 'offline';
 
 /**
  * The chip's look for the supervisor's state (PRD NET-01, UX_SPEC §2.17),
@@ -19,7 +20,7 @@ export type EngineState = 'ready' | 'booting' | 'unavailable';
  * transient: the supervisor restarts the engine on its own (UX_SPEC §4.34),
  * so it pulses as booting, like the sheet's "Restarting".
  */
-export function chipStateOf(state: SupervisorState): EngineState {
+export function chipStateOf(state: SupervisorState): Exclude<EngineState, 'offline'> {
   if (state === 'ready') return 'ready';
   if (state === 'degraded' || state === 'failed' || state === 'unsupported') return 'unavailable';
   return 'booting';
@@ -30,6 +31,7 @@ const STATE_WORD: Record<EngineState, string> = {
   ready: 'Connected',
   booting: 'Connecting',
   unavailable: "Can't connect",
+  offline: 'Offline',
 };
 
 /** UX_SPEC §5.13: "Testnet. Data may be reset. Connected." */
@@ -47,14 +49,14 @@ const DOT_PULSE = {
   animationTimingFunction: 'ease-in-out',
 } satisfies CSSAnimationProperties;
 
-/** The 6 pt dot: steady when ready, pulsing while booting, hollow when unavailable. */
+/** The 6 pt dot: steady when ready, pulsing while booting, hollow when unavailable or offline. */
 function StateDot({ state }: { state: EngineState }) {
   const style = usePulse(DOT_PULSE, state === 'booting');
   return (
     <Animated.View style={style}>
       <View
         testID={`network-dot-${state}`}
-        className={cn('h-1.5 w-1.5 rounded-full border border-black', state !== 'unavailable' && 'bg-black')}
+        className={cn('h-1.5 w-1.5 rounded-full border border-black', (state === 'ready' || state === 'booting') && 'bg-black')}
       />
     </Animated.View>
   );

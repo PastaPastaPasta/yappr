@@ -1,6 +1,7 @@
 import type { AccountDTO, CapabilitiesDTO, EngineInfo, SessionDTO, SettingsDTO } from '@engine/api';
+import NetInfo from '@react-native-community/netinfo';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
@@ -191,6 +192,22 @@ describe('Settings root (SET-01)', () => {
     expect(byId('network-chip')).toHaveAccessibleName('Devnet. Data may be reset. Connecting.');
     act(() => fakeEngine.setStatus({ state: 'failed' }));
     expect(byId('network-chip')).toHaveAccessibleName("Devnet. Data may be reset. Can't connect.");
+  });
+
+  it('the chip and its sheet say offline while the device is, even with the engine ready (D-014)', () => {
+    const netInfo = jest.mocked(NetInfo.useNetInfo);
+    const online = netInfo.getMockImplementation();
+    netInfo.mockReturnValue({ isConnected: false } as ReturnType<typeof NetInfo.useNetInfo>);
+    try {
+      renderScreen(<SettingsScreen />);
+      expect(byId('network-chip')).toHaveAccessibleName('Devnet. Data may be reset. Offline.');
+      expect(within(byId('network-chip')).getByTestId('network-dot-offline')).toBeTruthy();
+      fireEvent.press(byId('network-chip'));
+      expect(byId('network-sheet-status')).toHaveTextContent("You're offline");
+      expect(screen.queryByText('Connected')).toBeNull();
+    } finally {
+      if (online) netInfo.mockImplementation(online);
+    }
   });
 
   it('every chip maps a crash as transient: booting while the supervisor restarts, unavailable when it cannot connect', () => {
@@ -761,9 +778,10 @@ describe('About (SET-06, SET-07)', () => {
     expect(toastMessage()).toBe('Version info copied');
 
     fireEvent.press(byId('about-terms'));
-    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/terms');
+    // This network's copies: the devnet build's notice must say devnet (D-013).
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/terms');
     fireEvent.press(byId('about-privacy'));
-    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/privacy');
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/privacy');
   });
 
   it('has one Community rules row: the summary first, then the full rules the terms gate shows', () => {

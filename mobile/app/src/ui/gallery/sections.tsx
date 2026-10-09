@@ -314,6 +314,7 @@ function NavigationSection() {
           <NetworkChip network="devnet" state="ready" onPress={noop} />
           <NetworkChip network="testnet" state="booting" onPress={noop} />
           <NetworkChip network="devnet" state="unavailable" onPress={noop} />
+          <NetworkChip network="devnet" state="offline" onPress={noop} />
         </Row>
       </Section>
     </>

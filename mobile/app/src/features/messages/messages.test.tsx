@@ -34,7 +34,7 @@ import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
 import { NewGroupScreen } from './NewGroupScreen';
 import { NewMessageScreen } from './NewMessageScreen';
-import { UNAVAILABLE_MESSAGE, useMessagesBadge } from './dm-data';
+import { UNAVAILABLE_MESSAGE, useMessagesBadge, usePeople } from './dm-data';
 import { ARCHIVE_UNDO_MS, archiveConversation, setBlockedInMessages } from './dm-actions';
 import { resetKeyResends } from './group-keys';
 import { forgetDmDrafts, useDraft, useDrafts } from './drafts';
@@ -680,11 +680,65 @@ describe('Conversation (DM-03, DM-04)', () => {
       }
     });
 
-    it('leaves the box to measure itself on Android', async () => {
+    it('grows the box by its own laid-out text on Android, capped at 5 of its drawn lines (QA rc16 A-08)', async () => {
       await onAndroid(async () => {
         await typeHello();
+        const style = () => StyleSheet.flatten(composer().props.style);
+        const lines = () => screen.getByTestId('dm-composer-lines', { includeHiddenElements: true });
+        const contentSize = (height: number) =>
+          fireEvent(composer(), 'contentSizeChange', { nativeEvent: { contentSize: { width: 300, height } } });
         expect(screen.queryByTestId('dm-composer-mirror', { includeHiddenElements: true })).toBeNull();
-        expect(StyleSheet.flatten(composer().props.style).height).toBeUndefined();
+        // Android draws typed text at the font's own spacing: the box is given no line height, and
+        // its cap is 5 of those lines, measured.
+        expect(style().lineHeight).toBeUndefined();
+        expect(StyleSheet.flatten(lines().props.style)).toMatchObject({ fontSize: 16, opacity: 0 });
+        expect(StyleSheet.flatten(lines().props.style).lineHeight).toBeUndefined();
+        expect(lines().props.children).toBe('\u200b\n\u200b\n\u200b\n\u200b\n\u200b');
+        expect(style().height).toBeUndefined();
+        fireEvent(lines(), 'layout', { nativeEvent: { layout: { height: 18.75 * 5 } } });
+        expect(style().maxHeight).toBe(94 + 18);
+        expect(style().minHeight).toBe(40);
+
+        // The field's text layout and padding, as it reports them.
+        contentSize(18.75 * 3 + 18);
+        expect(style().height).toBe(75);
+        contentSize(18.75 * 9 + 18);
+        expect(style().height).toBe(style().maxHeight);
+
+        // A larger text size: the field keeps the height its text has, under the new cap once
+        // the lines are measured again, instead of the one empty line Fabric measures until the
+        // next keystroke.
+        const initial = Dimensions.get('window').fontScale;
+        const setFontScale = (fontScale: number) =>
+          act(() =>
+            Dimensions.set({
+              window: { ...Dimensions.get('window'), fontScale },
+              screen: { ...Dimensions.get('screen'), fontScale },
+            }),
+          );
+        setFontScale(1.3);
+        try {
+          expect(style().height).toBe(112);
+          fireEvent(lines(), 'layout', { nativeEvent: { layout: { height: 24.4 * 5 } } });
+          expect(style().maxHeight).toBe(122 + 18);
+          contentSize(24.4 * 9 + 18);
+          expect(style().height).toBe(140);
+        } finally {
+          setFontScale(initial);
+        }
+        fireEvent(lines(), 'layout', { nativeEvent: { layout: { height: 18.75 * 5 } } });
+
+        // The fresh box after Send is sized by its own report, not the sent text's: not even by a
+        // late one from the box it replaced.
+        fireEvent.press(screen.getByTestId('dm-send'));
+        await act(async () => {});
+        expect(style().height).toBeUndefined();
+        fireEvent(screen.getByTestId('dm-composer-retiring', { includeHiddenElements: true }), 'contentSizeChange', {
+          nativeEvent: { contentSize: { width: 300, height: 18.75 * 2 + 18 } },
+        });
+        expect(style().height).toBeUndefined();
+        contentSize(18.75 + 18);
+        expect(style().height).toBe(40);
       });
     });
 
@@ -1537,6 +1591,96 @@ describe('queryKeys.dm', () => {
   it('nests every DM query under one prefix', () => {
     expect(queryKeys.dm.messages('k').slice(0, 3)).toEqual(queryKeys.dm.all);
     expect(queryKeys.dm.people(['a', 'b']).slice(0, 3)).toEqual(queryKeys.dm.all);
+    expect(queryKeys.dm.people(['a', 'b']).slice(0, 4)).toEqual(queryKeys.dm.peopleAll);
+  });
+});
+
+describe('usePeople (group sender names)', () => {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  const CAROL_ID = 'CarolId11111111111111111111111111111111111111';
+  const person = (id: string, displayName: string, resolved: boolean) => ({
+    id,
+    username: displayName.toLowerCase(),
+    displayName,
+    avatar: { uri: null, dicebear: null },
+    resolved,
+  });
+  const nameOf = (ids: string[], id: string) => {
+    const { result, unmount } = renderHook(() => usePeople(ids), { wrapper });
+    return { name: () => result.current.byId.get(id)?.displayName, unmount };
+  };
+
+  it('shows a fallback name once, reads it again next time, and keeps a loaded name over a later fallback (QA rc17 D-010)', async () => {
+    const batch = fakeEngine.method('profiles.batch');
+    // The profile read failed: the handle stands in for the display name.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'bob', false)]);
+    const first = nameOf([BOB_ID], BOB_ID);
+    await act(async () => {});
+    expect(first.name()).toBe('bob');
+    first.unmount();
+
+    // Not kept as final: the next screen reads Bob again and gets his name.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'Bob Builder', true)]);
+    const second = nameOf([BOB_ID], BOB_ID);
+    await act(async () => {});
+    expect(second.name()).toBe('Bob Builder');
+    second.unmount();
+    expect(batch).toHaveBeenCalledTimes(2);
+
+    // Loaded, it is kept: no read on the next screen.
+    const third = nameOf([BOB_ID], BOB_ID);
+    await act(async () => {});
+    expect(third.name()).toBe('Bob Builder');
+    third.unmount();
+    expect(batch).toHaveBeenCalledTimes(2);
+
+    // Another group's read falls back for Bob: the name loaded earlier stays.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'bob', false), person(CAROL_ID, 'Carol', true)]);
+    const group = nameOf([BOB_ID, CAROL_ID], BOB_ID);
+    await act(async () => {});
+    expect(group.name()).toBe('Bob Builder');
+    group.unmount();
+    expect(batch).toHaveBeenCalledTimes(3);
+
+    // The kept name still counts as a failed read: reopening the group reads again, and uses what it gets.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'Robert Builder', true), person(CAROL_ID, 'Carol', true)]);
+    const reopened = nameOf([BOB_ID, CAROL_ID], BOB_ID);
+    await act(async () => {});
+    expect(batch).toHaveBeenCalledTimes(4);
+    expect(reopened.name()).toBe('Robert Builder');
+    reopened.unmount();
+  });
+
+  it('keeps a loaded name through failed reads in a row, and still reads again each time (QA rc17 D-010)', async () => {
+    // Dave, so no other test's read holds a loaded copy of him.
+    const DAVE_ID = 'DaveId111111111111111111111111111111111111111';
+    const batch = fakeEngine.method('profiles.batch');
+    batch.mockResolvedValueOnce([person(DAVE_ID, 'Dave Diver', true)]);
+    const loaded = nameOf([DAVE_ID], DAVE_ID);
+    await act(async () => {});
+    expect(loaded.name()).toBe('Dave Diver');
+    loaded.unmount();
+
+    // His name is kept for ten minutes; a refresh reads it again, and that read fails.
+    queryClient.invalidateQueries({ queryKey: queryKeys.dm.people([DAVE_ID]) }).catch(() => undefined);
+    // Two failed reads in a row: the second is read again on its own (a failed read is never final), and his name stays.
+    for (const reads of [2, 3]) {
+      batch.mockResolvedValueOnce([person(DAVE_ID, 'dave', false)]);
+      const failed = nameOf([DAVE_ID], DAVE_ID);
+      await act(async () => {});
+      expect(batch).toHaveBeenCalledTimes(reads);
+      expect(failed.name()).toBe('Dave Diver');
+      failed.unmount();
+    }
+
+    // The last failed read stays stale: the next open reads again.
+    batch.mockResolvedValueOnce([person(DAVE_ID, 'Dave Diver', true)]);
+    const recovered = nameOf([DAVE_ID], DAVE_ID);
+    await act(async () => {});
+    expect(batch).toHaveBeenCalledTimes(4);
+    recovered.unmount();
   });
 });
 

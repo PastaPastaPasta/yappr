@@ -403,7 +403,7 @@ export function createTicketStore(options: TicketStoreOptions) {
 
   function fail(id: string, error: unknown, documents?: TicketDocument[]): void {
     const notSent = error instanceof NotSentError
-    const classified = classify(notSent ? error.cause : error)
+    const classified = classify(notSent ? error.cause : error, recordOf(id).ticket.op)
     const merged = withDocuments(id, documents)
     // Any failure during run() may come after the broadcast: lib signs, broadcasts and waits in
     // one call. Only a handler's NotSentError, or a failure while it still reported
@@ -758,7 +758,7 @@ export function createTicketStore(options: TicketStoreOptions) {
           return update(id, { error: NOT_FOUND_ERROR, retryable: true, lastCheckedAt, documents })
         }
         case 'unknown':
-          return update(id, { error: { ...classify(result.error), retryable: false }, retryable: false, lastCheckedAt, documents })
+          return update(id, { error: { ...classify(result.error, ticket.op), retryable: false }, retryable: false, lastCheckedAt, documents })
       }
     },
 

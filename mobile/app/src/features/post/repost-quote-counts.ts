@@ -3,7 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { EngagementCountsDTO, PostDTO } from '@engine/api';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineQuery } from '~/data/queries';
+import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import type { RepostQuoteCounts } from '~/ui/post/PostCard';
 
 /**
@@ -42,16 +42,12 @@ export function splitIsStale(stats: PostDTO['stats'], counts: EngagementCountsDT
 export function useRepostQuoteCounts(post: PostDTO, enabled: boolean): RepostQuoteCounts | null | undefined {
   const { id, kind, stats } = post;
   const read = enabled && stats.quotes > 0 && !post.deleted;
-  // Past the engine's cached split: the quote list changed since it was read.
-  const fresh = useRef(false);
+  // Past the engine's cached split while a re-split runs, its retry included: the quote list changed since.
+  const fresh = usePullToRefresh();
   // The engagements screen reads the same query: opening it from the row shows these counts at once.
   const { data, isError, isFetching, refetch } = useEngineQuery(
     queryKeys.post.engagementCounts(id),
-    (api) => {
-      const reread = fresh.current;
-      fresh.current = false;
-      return api.posts.engagementCounts({ id, kind }, reread);
-    },
+    (api) => api.posts.engagementCounts({ id, kind }, fresh.params().refresh === true),
     { enabled: read },
   );
   // A refresh (or someone's quote) moved the quote count: split the list again, once per count,
@@ -61,9 +57,8 @@ export function useRepostQuoteCounts(post: PostDTO, enabled: boolean): RepostQuo
   useEffect(() => {
     if (!stale || rereadFor.current === stats.quotes) return;
     rereadFor.current = stats.quotes;
-    fresh.current = true;
-    refetch().catch(() => undefined);
-  }, [stale, stats.quotes, refetch]);
+    fresh.during(refetch).catch(() => undefined);
+  }, [stale, stats.quotes, refetch, fresh]);
   if (!enabled || (isError && !data)) return undefined;
   return splitRepostCounts(stats, data);
 }

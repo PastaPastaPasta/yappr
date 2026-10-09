@@ -304,25 +304,35 @@ class DpnsService {
    * Resolve an identity ID from a username. A name resolves only to the
    * identity that registered it (`dpnsRecordOwner`); a name whose record
    * points at someone else resolves to nobody. The SDK's `dpns.resolveName`
-   * returns `records.identity` unchecked, so it is not used.
+   * returns `records.identity` unchecked, so it is not used. A failed read
+   * reports nobody too; {@link findIdentityByName} tells the two apart.
    */
   async resolveIdentity(username: string): Promise<string | null> {
     try {
-      // Normalize: lowercase and remove .dash suffix
-      const normalizedUsername = username.toLowerCase().replace(/\.dash$/, '');
-
-      // Check cache first
-      const cached = this.cache.get(normalizedUsername);
-      if (cached !== undefined) return cached;
-
-      const doc = await this.findDomain(normalizedUsername);
-      const identityId = doc ? dpnsRecordOwner(doc) : null;
-      if (identityId) this._cacheEntry(normalizedUsername, identityId);
-      return identityId;
+      return await this.findIdentityByName(username);
     } catch (error) {
       logger.error('DPNS: Error resolving identity:', error);
       return null;
     }
+  }
+
+  /**
+   * {@link resolveIdentity}, rejecting when the read fails: `null` only when
+   * DPNS answered that no identity owns the name.
+   * @public used by the mobile engine
+   */
+  async findIdentityByName(username: string): Promise<string | null> {
+    // Normalize: lowercase and remove .dash suffix
+    const normalizedUsername = username.toLowerCase().replace(/\.dash$/, '');
+
+    // Check cache first
+    const cached = this.cache.get(normalizedUsername);
+    if (cached !== undefined) return cached;
+
+    const doc = await this.findDomain(normalizedUsername);
+    const identityId = doc ? dpnsRecordOwner(doc) : null;
+    if (identityId) this._cacheEntry(normalizedUsername, identityId);
+    return identityId;
   }
 
   /**
@@ -350,68 +360,79 @@ class DpnsService {
   }
 
   /**
-   * Search for usernames by prefix with full details
+   * Search for usernames by prefix with full details. A failed read finds
+   * nothing; {@link findUsernamesByPrefix} rejects instead.
    */
   async searchUsernamesWithDetails(prefix: string, limit: number = 10): Promise<Array<{ username: string; ownerId: string }>> {
     try {
-      const sdk = await getEvoSdk();
-
-      // Remove .dash suffix if present for search
-      const cleanPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
-
-      // Normalize the search prefix to match how DPNS stores normalizedLabel
-      const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
-
-      const query = {
-        dataContractId: DPNS_CONTRACT_ID,
-        documentTypeName: DPNS_DOCUMENT_TYPE,
-        where: [
-          ['normalizedLabel', 'startsWith', searchPrefix],
-          ['normalizedParentDomainName', '==', 'dash'],
-        ] as DocumentWhereClause[],
-        orderBy: [['normalizedLabel', 'asc']] as DocumentOrderByClause[], limit,
-      };
-      let documents: Record<string, unknown>[] | undefined;
-      if (likesAreIndexOnly()) {
-        try {
-          // One sub-query per profile document type (v10: the DashPay profile and the extension).
-          const sources = profileSources();
-          const result = await sdk.documents.composite({
-            dataContractId: DPNS_CONTRACT_ID, documentType: DPNS_DOCUMENT_TYPE,
-            where: query.where, orderBy: query.orderBy, limit,
-            subQueries: sources.map(({ source }) => ({ dataContractId: source.contractId, documentType: source.documentType,
-              bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } })),
-          });
-          const profiles = result.subResults ?? [];
-          if (!Array.isArray(result.pageDocuments) || profiles.length !== sources.length ||
-              profiles.some(sub => sub?.kind !== 'documents' || !Array.isArray(sub.documents))) {
-            throw new Error('DPNS search: incomplete composite response');
-          }
-          documents = result.pageDocuments.map(documentToPlainObject);
-          const owners = documents.map(doc => String(doc.$ownerId || doc.ownerId));
-          const { unifiedProfileService } = await import('./unified-profile-service');
-          sources.forEach(({ role }, i) => {
-            const sub = profiles[i];
-            if (sub.kind === 'documents') unifiedProfileService.seedProfileDocuments(sub.documents.map(documentToPlainObject), owners, role);
-          });
-        } catch (error) {
-          logger.warn('DPNS search composite failed; using ordinary search', error);
-        }
-      }
-      documents ??= extractDocuments(await sdk.documents.query(query));
-      // A name whose record points at another identity resolves to nobody, so it is no search hit either.
-      return documents.flatMap((doc) => {
-        const ownerId = dpnsRecordOwner(doc);
-        if (!ownerId) return [];
-        const data = (doc.data || doc) as Record<string, unknown>;
-        const label = (data.label || data.normalizedLabel || 'unknown') as string;
-        const parentDomain = (data.normalizedParentDomainName || 'dash') as string;
-        return [{ username: `${label}.${parentDomain}`, ownerId }];
-      });
+      return await this.findUsernamesByPrefix(prefix, limit);
     } catch (error) {
       logger.error('DPNS: Error searching usernames with details:', error);
       return [];
     }
+  }
+
+  /**
+   * {@link searchUsernamesWithDetails}, rejecting when the read fails, so an
+   * empty list always means no name starts with `prefix`.
+   * @public used by the mobile engine
+   */
+  async findUsernamesByPrefix(prefix: string, limit: number = 10): Promise<Array<{ username: string; ownerId: string }>> {
+    const sdk = await getEvoSdk();
+
+    // Remove .dash suffix if present for search
+    const cleanPrefix = prefix.toLowerCase().replace(/\.dash$/, '');
+
+    // Normalize the search prefix to match how DPNS stores normalizedLabel
+    const searchPrefix = await sdk.dpns.convertToHomographSafe(cleanPrefix);
+
+    const query = {
+      dataContractId: DPNS_CONTRACT_ID,
+      documentTypeName: DPNS_DOCUMENT_TYPE,
+      where: [
+        ['normalizedLabel', 'startsWith', searchPrefix],
+        ['normalizedParentDomainName', '==', 'dash'],
+      ] as DocumentWhereClause[],
+      orderBy: [['normalizedLabel', 'asc']] as DocumentOrderByClause[], limit,
+    };
+    let documents: Record<string, unknown>[] | undefined;
+    if (likesAreIndexOnly()) {
+      try {
+        // One sub-query per profile document type (v10: the DashPay profile and the extension).
+        const sources = profileSources();
+        const result = await sdk.documents.composite({
+          dataContractId: DPNS_CONTRACT_ID, documentType: DPNS_DOCUMENT_TYPE,
+          where: query.where, orderBy: query.orderBy, limit,
+          subQueries: sources.map(({ source }) => ({ dataContractId: source.contractId, documentType: source.documentType,
+            bind: { source: 'page', sourceProperty: '$ownerId', field: '$ownerId' } })),
+        });
+        const profiles = result.subResults ?? [];
+        if (!Array.isArray(result.pageDocuments) || profiles.length !== sources.length ||
+            profiles.some(sub => sub?.kind !== 'documents' || !Array.isArray(sub.documents))) {
+          throw new Error('DPNS search: incomplete composite response');
+        }
+        documents = result.pageDocuments.map(documentToPlainObject);
+        const owners = documents.map(doc => String(doc.$ownerId || doc.ownerId));
+        const { unifiedProfileService } = await import('./unified-profile-service');
+        sources.forEach(({ role }, i) => {
+          const sub = profiles[i];
+          if (sub.kind === 'documents') unifiedProfileService.seedProfileDocuments(sub.documents.map(documentToPlainObject), owners, role);
+        });
+      } catch (error) {
+        // As every composite read in lib: the lighter ordinary search may still answer, and rejects if it can't.
+        logger.warn('DPNS search composite failed; using ordinary search', error);
+      }
+    }
+    documents ??= extractDocuments(await sdk.documents.query(query));
+    // A name whose record points at another identity resolves to nobody, so it is no search hit either.
+    return documents.flatMap((doc) => {
+      const ownerId = dpnsRecordOwner(doc);
+      if (!ownerId) return [];
+      const data = (doc.data || doc) as Record<string, unknown>;
+      const label = (data.label || data.normalizedLabel || 'unknown') as string;
+      const parentDomain = (data.normalizedParentDomainName || 'dash') as string;
+      return [{ username: `${label}.${parentDomain}`, ownerId }];
+    });
   }
 
   /**

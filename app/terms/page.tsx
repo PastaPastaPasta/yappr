@@ -1,16 +1,20 @@
 'use client'
 
 import { DocumentTextIcon } from '@heroicons/react/24/outline'
-import { InfoPage, InfoSection, Prose, TestnetNotice } from '@/components/layout/info-page'
+import { InfoPage, InfoSection, Prose, NetworkNotice, testNetwork } from '@/components/layout/info-page'
 
 export default function TermsPage() {
+  const faucetNetwork = testNetwork()
   return (
     <InfoPage icon={DocumentTextIcon} title="Terms of Use" subtitle="Understanding how Yappr works as a decentralized platform" updated="January 2025">
-      <TestnetNotice>
-        Yappr is currently running on Dash Platform&apos;s testnet. This means all data, including your posts, profile, and social
-        connections, may be wiped at any time when the network resets or when we migrate to mainnet. Do not rely on testnet data
-        being permanent.
-      </TestnetNotice>
+      <NetworkNotice>
+        {({ name, where }) => (
+          <>
+            Yappr is currently running on {where}. This means all data, including your posts, profile, and social connections, may
+            be wiped at any time when the network resets or when we migrate to mainnet. Do not rely on {name} data being permanent.
+          </>
+        )}
+      </NetworkNotice>
 
       <InfoSection title="No Central Authority">
         <Prose>
@@ -60,7 +64,7 @@ export default function TermsPage() {
         <Prose>
           Creating posts, updating your profile, and other actions require Dash Platform credits. These credits are a form of
           cryptocurrency used to pay for storing data on the blockchain. You are responsible for maintaining sufficient credits in
-          your identity to perform actions. On testnet, credits can be obtained from faucets for free.
+          your identity to perform actions.{faucetNetwork && ` On ${faucetNetwork}, credits can be obtained from faucets for free.`}
         </Prose>
       </InfoSection>
 

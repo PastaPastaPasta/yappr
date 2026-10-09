@@ -53,12 +53,15 @@ vi.mock('../../src/writes/lib-results', async (load) => ({ ...await load<object>
 vi.mock('@/lib/services/pollr-vote-service', async (load) => ({ ...await load<object>(), pollrVoteService: { getTally: m.getTally, getMyVotes: m.getMyVotes } }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => {
   const actual = await load<{ unifiedProfileService: object }>()
-  return { ...actual, unifiedProfileService: { getProfilesByIdentityIds: async () => [], getProfile: async () => null } }
+  return { ...actual, unifiedProfileService: { getProfilesByIdentityIds: async () => [], getProfile: async () => null, hasCachedProfile: () => true } }
 })
 vi.mock('@/lib/services/identity-batch', () => ({ loadIdentityBatch: async () => ({ usernames: new Map(), profiles: [], avatars: new Map() }) }))
 vi.mock('@/lib/services/dpns-service', async (load) => ({
   ...await load<object>(),
-  dpnsService: { getAllUsernamesSortedBatch: async (ids: string[]) => new Map(ids.map(id => [id, [`${id.slice(-4)}.dash`]])) },
+  dpnsService: {
+    getAllUsernamesSortedBatch: async (ids: string[]) => new Map(ids.map(id => [id, [`${id.slice(-4)}.dash`]])),
+    hasCachedUsername: () => true,
+  },
 }))
 
 const { feed } = await import('../../src/api/feed')

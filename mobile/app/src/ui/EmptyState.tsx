@@ -80,7 +80,9 @@ export function RetryingNote({ testID }: { testID?: string }) {
 }
 
 export interface ErrorStateProps {
-  /** The categorized message (UX_SPEC §5.12); the title stays "Something went wrong". */
+  /** What failed, when the screen can say ("Couldn't search right now"); "Something went wrong" otherwise. */
+  title?: string;
+  /** The categorized message (UX_SPEC §5.12). */
   message?: string;
   onRetry?: () => void;
   /** The read is being read again by itself (a query's `isRetrying`): shows {@link RetryingNote}. */
@@ -89,11 +91,11 @@ export interface ErrorStateProps {
 }
 
 /** The error variant: a warning triangle and "Try again" (`primary`, not the web's purple). */
-export function ErrorState({ message, onRetry, retrying = false, testID }: ErrorStateProps) {
+export function ErrorState({ title = 'Something went wrong', message, onRetry, retrying = false, testID }: ErrorStateProps) {
   const c = useColors();
   return (
     <EmptyState
-      title="Something went wrong"
+      title={title}
       description={message}
       icon={ExclamationTriangleIcon}
       iconColor={c.warning}

@@ -4,6 +4,7 @@ import type { ComponentType, ReactNode } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { ArrowLeftIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
+import { getConfiguredNetwork } from '@/lib/constants'
 import { cn } from '@/lib/utils'
 
 type Icon = ComponentType<{ className?: string }>
@@ -94,15 +95,31 @@ export function Prose({ children, className }: { children: ReactNode; className?
   return <div className={cn('text-gray-600 dark:text-gray-400 leading-relaxed', className)}>{children}</div>
 }
 
-/** The amber "this is testnet" box at the top of the legal pages. */
-export function TestnetNotice({ children }: { children: ReactNode }) {
+/** The networks that are not mainnet. */
+type TestNetwork = 'testnet' | 'devnet'
+
+/** The test network this build runs on, or null on mainnet. The legal pages' copy follows it (D-013). */
+export function testNetwork(): TestNetwork | null {
+  const network = getConfiguredNetwork()
+  return network === 'mainnet' ? null : network
+}
+
+const NOTICE: Record<TestNetwork, { title: string; where: string }> = {
+  testnet: { title: 'Testnet Notice', where: 'Dash Platform\u2019s testnet' },
+  devnet: { title: 'Devnet Notice', where: 'a Dash Platform devnet' },
+}
+
+/** The amber box atop the legal pages naming the test network this build runs on; nothing on mainnet. */
+export function NetworkNotice({ children }: { children: (network: { name: TestNetwork; where: string }) => ReactNode }) {
+  const name = testNetwork()
+  if (!name) return null
   return (
     <div className="bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 rounded-xl p-6">
       <div className="flex items-start gap-4">
         <ExclamationTriangleIcon className="h-6 w-6 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
         <div>
-          <h2 className="font-semibold text-amber-800 dark:text-amber-200 mb-2">Testnet Notice</h2>
-          <p className="text-amber-700 dark:text-amber-300 text-sm">{children}</p>
+          <h2 className="font-semibold text-amber-800 dark:text-amber-200 mb-2">{NOTICE[name].title}</h2>
+          <p className="text-amber-700 dark:text-amber-300 text-sm">{children({ name, where: NOTICE[name].where })}</p>
         </div>
       </div>
     </div>

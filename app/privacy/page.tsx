@@ -1,7 +1,7 @@
 'use client'
 
 import { ShieldCheckIcon, EyeIcon, LockClosedIcon } from '@heroicons/react/24/outline'
-import { InfoPage, InfoSection, Prose, TestnetNotice } from '@/components/layout/info-page'
+import { InfoPage, InfoSection, Prose, NetworkNotice } from '@/components/layout/info-page'
 
 const PUBLIC_DATA = [
   'Your profile (display name, bio, website, location)',
@@ -19,10 +19,14 @@ const PUBLIC_DATA = [
 export default function PrivacyPage() {
   return (
     <InfoPage icon={ShieldCheckIcon} title="Privacy Policy" subtitle="How your data works on a decentralized platform" updated="January 2025">
-      <TestnetNotice>
-        Yappr is currently running on Dash Platform&apos;s testnet. All data may be wiped at any time during network resets. Do not
-        store sensitive information during the testnet phase.
-      </TestnetNotice>
+      <NetworkNotice>
+        {({ name, where }) => (
+          <>
+            Yappr is currently running on {where}. All data may be wiped at any time during network resets. Do not store sensitive
+            information during the {name} phase.
+          </>
+        )}
+      </NetworkNotice>
 
       <InfoSection title="Public by Design">
         <Prose>
