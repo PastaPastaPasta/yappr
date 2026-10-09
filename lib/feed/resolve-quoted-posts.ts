@@ -101,22 +101,48 @@ function needsQuoteResolution(post: Post): boolean {
 const resolvedQuoteCache = new Map<string, Post>();
 const pendingQuoteResolutions = new Map<string, Promise<Post | null>>();
 
+// Bumped per id by `forgetQuotedPosts`. A lookup that started before a forget
+// carries the generation it saw at start; if the id's generation has moved on
+// by the time the lookup resolves, its result is stale and must not overwrite
+// a cache a forget already cleared (or a newer lookup already repopulated).
+const quoteGenerations = new Map<string, number>();
+
+/**
+ * The current generation of a quote target: bumped every time
+ * {@link forgetQuotedPosts} is given this id. Callers that cache an already
+ * hydrated `quotedPost` outside this module's own cache (the ranked "Top"
+ * surfaces' hydrated-page cache in `ranked-likes.ts`) snapshot this at cache
+ * time and compare it on a hit, so a forget invalidates their cache too.
+ */
+export function generationOf(id: string): number {
+  return quoteGenerations.get(id) ?? 0;
+}
+
 /** One network pass over the given posts' targets, per topology. */
 function fetchQuoteTargets(pending: Post[]): Promise<Post[]> {
   return quoteFieldsAreSplit() ? resolveByField(pending) : resolveByProbe(pending);
 }
 
 /**
- * Drop resolved quote targets so the next pass reads them again: `ids`, or
- * every one when omitted. Returns the ids it dropped. Web keeps them for the
- * session; the mobile engine forgets them on a delete and on a refresh, so a
- * quote of a deleted post stops showing the text it had.
+ * Drop resolved quote targets so the next pass reads them again. Returns the
+ * ids it actually dropped (those that were cached). Web keeps them for the
+ * session; the mobile engine forgets the ones in a page it loads and the one
+ * a delete targets, so a quote of a deleted post stops showing the text it
+ * had. Also bumps each id's generation and drops its in-flight lookup (if
+ * any), so a resolution already underway when the forget runs cannot
+ * repopulate the cache with the stale text it was about to find — a caller
+ * started after this point starts its own fresh lookup instead of joining it.
  *
  * @public Used only by the mobile engine, which root knip doesn't scan.
  */
-export function forgetQuotedPosts(ids?: Iterable<string>): string[] {
-  const dropped = ids ? Array.from(ids).filter((id) => resolvedQuoteCache.has(id)) : Array.from(resolvedQuoteCache.keys());
-  for (const id of dropped) resolvedQuoteCache.delete(id);
+export function forgetQuotedPosts(ids: Iterable<string>): string[] {
+  const list = Array.from(ids);
+  const dropped = list.filter((id) => resolvedQuoteCache.has(id));
+  for (const id of list) {
+    resolvedQuoteCache.delete(id);
+    pendingQuoteResolutions.delete(id);
+    quoteGenerations.set(id, generationOf(id) + 1);
+  }
   return dropped;
 }
 
@@ -171,6 +197,10 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
       // Register every target of this batch so concurrent passes (another
       // surface, or a card's fallback fetch) join it instead of refetching.
       const ids = Array.from(new Set(stillNeeded.map((entry) => entry.targetId)));
+      // Each id's generation as of this lookup's start: if a forget bumps it
+      // before the batch resolves, this lookup's result is stale and must not
+      // land in the cache.
+      const startGenerations = new Map(ids.map((id) => [id, generationOf(id)]));
       for (const id of ids) {
         // Failures resolve to null (never reject): a joiner treats that as a
         // miss, and an unjoined entry can't become an unhandled rejection.
@@ -186,7 +216,7 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
           const found = byId.get(targetId);
           if (found) {
             post.quotedPost = found;
-            resolvedQuoteCache.set(found.id, found);
+            if (generationOf(targetId) === startGenerations.get(targetId)) resolvedQuoteCache.set(found.id, found);
           }
         }
       } finally {
@@ -222,6 +252,10 @@ export async function resolveQuotedPost(post: Post): Promise<Post | null> {
   const pending = pendingQuoteResolutions.get(target.id);
   if (pending) return pending;
 
+  // This target's generation as of this lookup's start: if a forget bumps it
+  // before the request resolves, the result is stale and must not be cached.
+  const startGeneration = generationOf(target.id);
+
   const request = (async () => {
     try {
       // A shallow probe keeps the caller's (React state) object unmutated.
@@ -243,7 +277,7 @@ export async function resolveQuotedPost(post: Post): Promise<Post | null> {
         found = await attempt();
       }
 
-      if (found) resolvedQuoteCache.set(target.id, found);
+      if (found && generationOf(target.id) === startGeneration) resolvedQuoteCache.set(target.id, found);
       return found;
     } finally {
       pendingQuoteResolutions.delete(target.id);

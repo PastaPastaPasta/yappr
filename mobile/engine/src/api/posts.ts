@@ -18,8 +18,8 @@ import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
 import {
-  enrichToDTOs, loadUserSummaries, notSupported, readFailure, requireViewer, rereadQuotedPosts, searchUserSummaries, toPostDTOs, viewerId,
-  withLoadingAuthor,
+  enrichToDTOs, loadUserSummaries, notSupported, quoteTargetIds, readFailure, requireViewer, rereadQuotedPosts, searchUserSummaries, toPostDTOs,
+  viewerId, withLoadingAuthor,
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
@@ -313,7 +313,6 @@ export const posts = {
   // alongside replyPages if long threads get slow.
   async thread(id: string, cursor?: string | null): Promise<ThreadDTO> {
     const pages = 1 + (cursorInt(decodeCursor<{ pages: number }>(cursor, `thread:${id}`)?.pages ?? 0))
-    if (!cursor) rereadQuotedPosts()
     const focus = await loadFocus(id)
     if (!focus) return { focus: null, ancestors: [], removedAncestorIds: [], replies: emptyPage() }
 
@@ -325,8 +324,11 @@ export const posts = {
 
     // One enrichment batch for the page; deleted-reply stubs are not documents and skip it.
     const live = replies.filter(entry => !entry.reply.deletedStub)
-    const enriched = await postService.enrichPostsBatch(
-      [focus, ...chain, ...live.map(entry => replyToPost(entry.reply))].map(withLoadingAuthor))
+    const batch = [focus, ...chain, ...live.map(entry => replyToPost(entry.reply))]
+    // This page's own quote targets, read again: a quote of a post deleted
+    // since the last load must not keep showing the text it had (RC16-I-04).
+    rereadQuotedPosts(quoteTargetIds(batch))
+    const enriched = await postService.enrichPostsBatch(batch.map(withLoadingAuthor))
     // Stub authors have id '', which the avatar read skips; the stub's author is blanked below.
     const stubs = replies.filter(entry => entry.reply.deletedStub).map(entry => ({ ...replyToPost(entry.reply), deleted: true }))
     const dtos = new Map((await toPostDTOs([...enriched, ...stubs])).map(dto => [dto.id, dto]))

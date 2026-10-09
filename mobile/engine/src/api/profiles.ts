@@ -23,8 +23,8 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import {
-  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, requireViewer, rereadQuotedPosts, toPostDTOs, viewerId,
-  visibleDTOs, withLoadingAuthor,
+  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, quoteTargetIds, requireViewer, rereadQuotedPosts,
+  toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
 } from '../dto/hydrate'
 import { onePage, pageAfter, pageOfList } from '../dto/paging'
 import { assertMediaUrl, characters, relationProbe, signer } from '../writes/handler-kit'
@@ -78,6 +78,7 @@ function postsTab(id: string, cursor: string | null | undefined): Promise<Page<P
       heldReposts.prune()
       heldReposts.set(id, held.filter(post => !shown.includes(post)))
       const posts = [...result.documents.map(withLoadingAuthor), ...shown].sort(byNewestActivity)
+      rereadQuotedPosts(quoteTargetIds(posts))
       return {
         items: await listToDTOs(posts, result.preloaded, { dropBlocked: false }),
         next: isLast || !oldest ? null : oldest.id,
@@ -103,6 +104,7 @@ function repliesTab(id: string, cursor: string | null | undefined): Promise<Page
       // The parents are context: a failed lookup leaves the cards without it, as on web.
       const { parents, missing } = await fetchReplyParents(replies).catch(() => ({ parents: new Map<string, Post>(), missing: new Map() }))
       const parentList = Array.from(new Map(Array.from(parents.values(), post => [post.id, post])).values())
+      rereadQuotedPosts(quoteTargetIds([...replies, ...parentList]))
       const enriched = await postService.enrichPostsBatch([...replies, ...parentList.map(withLoadingAuthor)])
       const replyDTOs = await visibleDTOs(enriched.slice(0, replies.length), { dropBlocked: false })
       const parentDTOs = new Map((await toPostDTOs(enriched.slice(replies.length))).map(dto => [dto.id, dto]))
@@ -127,6 +129,7 @@ function mentionsTab(id: string, cursor: string | null | undefined): Promise<Pag
     load: async () => (await mentionService.getPostsMentioningUser(id)).sort((a, b) => b.$createdAt - a.$createdAt),
     hydrate: async (slice) => {
       const { posts, preloaded } = await mentionService.loadMentioningPosts(slice)
+      rereadQuotedPosts(quoteTargetIds(posts))
       return listToDTOs(posts.map(withLoadingAuthor), preloaded, { dropBlocked: false })
     },
   })
@@ -189,7 +192,6 @@ export const profiles = {
    * (the profile shows the block).
    */
   async posts(query: ProfilePostsQuery): Promise<Page<PostDTO | ProfileReplyDTO>> {
-    if (!query.cursor) rereadQuotedPosts()
     switch (query.tab) {
       case 'posts': return postsTab(query.id, query.cursor)
       case 'replies': return repliesTab(query.id, query.cursor)

@@ -1235,7 +1235,7 @@ Each screen lists: route, stories, layout from top to bottom, states, interactio
 - **Route** `/settings/messages` (shared; opened from Settings and from the inbox gear) · **Story** DM-12.
 - Section "Delete old sent messages": radio rows "Never", "After 30 days", "After 90 days", "After 1 year"; the footer below (copy 5.8 `dm.retention.footer`), which keeps the privacy caveat. Never called "disappearing messages".
 - Section "Blocked": rows with "Unblock"; empty: "No blocked accounts" with the caption "Messages and group invites from people you block are ignored."
-- **Legacy (testnet):** nothing to set; the screen goes back to the one underneath, or to the inbox when a link opened it on its own.
+- **Legacy (testnet):** nothing to set; the screen goes back to the one underneath, or to the inbox when there is nothing to go back to.
 
 ### 4.24 Bookmarks
 

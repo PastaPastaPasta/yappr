@@ -256,12 +256,12 @@ export const PostItem = memo(function PostItem({
   const safety = usePostSafety(listed, shownPost, removal, safetyViewerId);
   const safePost = safety.post;
   // The quoted post deleted on this device: its embed is the deleted line at once, as its own card goes.
-  const quotedRemoved = usePostRemoved(safePost.quoted?.id ?? '');
+  const quotedDeletedLocally = usePostRemoved(safePost.quoted?.id ?? '');
   const post = useMemo(() => {
-    const quoted = quotedRemoved && safePost.quoted ? { ...safePost.quoted, deleted: true } : safePost.quoted;
+    const quoted = quotedDeletedLocally && safePost.quoted ? { ...safePost.quoted, deleted: true } : safePost.quoted;
     const shown = quoted === safePost.quoted ? safePost : { ...safePost, quoted };
     return asStub ? { ...shown, deleted: true } : shown;
-  }, [asStub, quotedRemoved, safePost]);
+  }, [asStub, quotedDeletedLocally, safePost]);
   // A post compose is still publishing: the optimistic card with its write status (PRD COMP-10).
   const pending = usePendingWriteStatus(listed.id);
   const capabilities = useCapabilities();

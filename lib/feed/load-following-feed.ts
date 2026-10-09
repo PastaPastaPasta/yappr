@@ -19,6 +19,8 @@ export async function loadFollowingFeed(options: {
   forceRefresh: boolean;
   onBatchReady: (posts: Post[], nextWindow: FollowingFeedWindow | null, hasMore: boolean) => void;
   enrichProgressively: (posts: Post[]) => void;
+  /** Runs on the raw page just before quote targets are resolved (the mobile engine forgets this page's own targets here). */
+  beforeAttachQuotes?: (posts: Post[]) => void;
 }): Promise<void> {
   const MIN_DATE = new Date('2025-01-01T00:00:00Z');
 
@@ -72,6 +74,7 @@ export async function loadFollowingFeed(options: {
     // permalink (see enrich-posts). Never set on v2.
     const posts = result.documents.filter((post) => !post.deleted);
 
+    options.beforeAttachQuotes?.(posts);
     await attachQuotedPosts(posts);
 
     try {

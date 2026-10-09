@@ -2,7 +2,7 @@ import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment'
 import { extractErrorMessage, isRateLimitedError, isTimeoutError } from '@/lib/error-utils'
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
-import { forgetQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
+import { forgetQuotedPosts, quoteTargetOf } from '@/lib/feed/resolve-quoted-posts'
 import { blockService } from '@/lib/services/block-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
@@ -95,17 +95,22 @@ export async function toPostDTOs(posts: Post[]): Promise<PostDTO[]> {
   return posts.map(post => toPostDTO(post, options))
 }
 
+/** The quote target ids a page of raw posts references, deduped. */
+export function quoteTargetIds(posts: readonly Post[]): string[] {
+  return Array.from(new Set(posts.flatMap(post => quoteTargetOf(post)?.id ?? [])))
+}
+
 /**
- * Quoted posts read again on the next enrichment: `ids`, or every one lib has
- * resolved. lib keeps a resolved quote target for the session and its
- * document reads for two minutes, so without this a quote of a post deleted
- * since kept showing the text it had until the app restarted (RC16-I-04).
- * A delete forgets its post; a list's first page (a load or a pull to
- * refresh) forgets them all.
+ * Quoted posts in `ids` read again on the next enrichment. lib keeps a
+ * resolved quote target for the session and its document reads for two
+ * minutes, so without this a quote of a post deleted since kept showing the
+ * text it had until the app restarted (RC16-I-04). A delete forgets its post;
+ * a page's load (first page or further pages) forgets only the quote targets
+ * that page's own posts reference, via {@link quoteTargetIds}.
  */
-export function rereadQuotedPosts(ids?: readonly string[]): void {
-  const dropped = forgetQuotedPosts(ids)
-  for (const id of ids ?? dropped) {
+export function rereadQuotedPosts(ids: readonly string[]): void {
+  forgetQuotedPosts(ids)
+  for (const id of ids) {
     postService.clearCache(id)
     replyService.clearCache(id)
   }

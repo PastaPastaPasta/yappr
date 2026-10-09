@@ -454,6 +454,19 @@ describe('review fixes', () => {
     );
   });
 
+  it("keeps a deleted quote's stale text out of its label (item 5)", () => {
+    const quoted = POSTS.quote.quoted;
+    if (!quoted) throw new Error('fixture missing quoted post');
+    render(
+      <PostCard
+        post={{ ...POSTS.quote, id: 'quote-deleted-label', quoted: { ...quoted, deleted: true } }}
+      />,
+    );
+    expect(screen.getByTestId('quote-embed').props.accessibilityLabel).toBe(
+      'Quote: Carol, This post was deleted by its author.',
+    );
+  });
+
   it('labels video and GIF thumbnails, and never loads a video URL as an image', () => {
     const post = fixturePost({
       id: 'video-gif',

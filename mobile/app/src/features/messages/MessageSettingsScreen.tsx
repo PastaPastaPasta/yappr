@@ -1,6 +1,6 @@
 import type { DmRetention, DmStatusDTO } from '@engine/api';
-import { Redirect, Stack, useNavigation, useRoute } from 'expo-router';
-import { useEffect } from 'react';
+import { router, Stack, useNavigation } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -110,18 +110,29 @@ function BlockedList({ ids }: { ids: string[] }) {
 
 /**
  * Back to the screen underneath (Settings or the inbox: this screen is pushed
- * on the current tab), or to the inbox for a link that opened it on its own.
- * Never a jump to the Messages tab from another tab's stack, which would leave
- * this screen on top of that stack.
+ * on the current tab), or to the inbox when there is nothing to go back to
+ * (a link that opened this screen on its own). Never a jump to the Messages
+ * tab from another tab's stack, which would leave this screen on top of that
+ * stack (the stuck-tab bug).
+ *
+ * `navigation.canGoBack()` is read fresh inside the effect rather than from a
+ * render-time `isRoot` comparison: that comparison looked at the nav state's
+ * top-level `routes[0]`, which does not reflect the current tab's own stack
+ * under a nested navigator and could leave the redirect armed after a real
+ * back target existed. The ref keeps the one-shot effect from firing twice:
+ * once for the mount, and again if `navigation` changes identity before the
+ * pop or replace completes.
  */
 function LeaveForInbox() {
   const navigation = useNavigation();
-  const { key } = useRoute();
-  const isRoot = navigation.getState()?.routes[0]?.key === key;
+  const left = useRef(false);
   useEffect(() => {
-    if (!isRoot) navigation.goBack();
-  }, [isRoot, navigation]);
-  return isRoot ? <Redirect href="/messages" /> : null;
+    if (left.current || !navigation.isFocused()) return;
+    left.current = true;
+    if (navigation.canGoBack()) navigation.goBack();
+    else router.replace('/messages');
+  }, [navigation]);
+  return null;
 }
 
 /**

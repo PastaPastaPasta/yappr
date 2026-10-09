@@ -37,6 +37,7 @@
 
 import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
+import { generationOf, quoteTargetOf } from '@/lib/feed/resolve-quoted-posts';
 import { YAPPR_CONTRACT_ID } from '../constants';
 import type { Post } from '../types';
 import type { DocumentsIndexPin } from '@dashevo/evo-sdk';
@@ -275,12 +276,43 @@ export interface HydratedTopPostsOptions {
   throwOnError?: boolean;
 }
 
+/** A cached hydrated page, plus the quote-target generations it was hydrated against. */
+interface HydratedCacheEntry {
+  posts: Post[];
+  /** Each quoting post's target id to {@link generationOf} at hydration time. */
+  quoteGenerations: Map<string, number>;
+}
+
 /**
  * Rankings move slowly and every ranked page is a proved read, so hydrated
  * results are held for a minute per pin. Session-scoped: module state lives
  * exactly as long as the page load.
  */
-const hydratedCache = new TtlMap<string, Post[]>(60_000);
+const hydratedCache = new TtlMap<string, HydratedCacheEntry>(60_000);
+
+/**
+ * Each hydrated post's quote target id mapped to its generation right now.
+ * Posts here already carry `quotedPost` from the composite proof that
+ * hydrated them (never from `resolve-quoted-posts`' own cache), so a forget
+ * elsewhere does not touch them directly — this snapshot is what lets a later
+ * cache hit notice one happened.
+ */
+function quoteGenerationSnapshot(posts: readonly Post[]): Map<string, number> {
+  const snapshot = new Map<string, number>();
+  for (const post of posts) {
+    const target = quoteTargetOf(post);
+    if (target) snapshot.set(target.id, generationOf(target.id));
+  }
+  return snapshot;
+}
+
+/** True once any quote target a cached page depends on has been forgotten since it was hydrated. */
+function quoteGenerationsStale(snapshot: ReadonlyMap<string, number>): boolean {
+  for (const [id, generation] of snapshot) {
+    if (generationOf(id) !== generation) return true;
+  }
+  return false;
+}
 
 /**
  * A ranked top-liked page hydrated into renderable posts: the proved ranking
@@ -359,6 +391,16 @@ export async function topLikedPostsByAuthorsHydrated(options: HydratedTopPostsBy
  * Keys carry the page size, so callers asking for different limits never
  * share (and truncate) each other's page. `rank` must reject failed reads so
  * fail-soft callers cannot cache an empty or partial page for strict callers.
+ *
+ * A cache hit is still rejected if any post on the page quotes a target that
+ * has been forgotten since hydration (a delete elsewhere, via
+ * `forgetQuotedPosts`): the composite proof that filled this cache attached
+ * `quotedPost` directly from that read, never through `resolve-quoted-posts`'
+ * own cache, so nothing re-resolves a cached page's quotes on its own
+ * (RC16-I-04 on the ranked "Top" surfaces). Most hits carry no quotes whose
+ * targets changed, so this still serves the fast path for every other
+ * refresh — only a page actually holding a since-deleted quote target pays
+ * for a fresh read.
  */
 async function hydrateRankedCached(
   cacheKey: string,
@@ -370,12 +412,12 @@ async function hydrateRankedCached(
   const currentUserId = getCurrentUserId() ?? undefined;
   const viewerKey = `${currentUserId ?? 'anonymous'}:${cacheKey}`;
   const cached = force ? undefined : hydratedCache.get(viewerKey);
-  if (cached) return cached;
+  if (cached && !quoteGenerationsStale(cached.quoteGenerations)) return cached.posts;
 
   try {
     const ranked = await rank();
     const posts = await hydrateRankedPosts(ranked, currentUserId);
-    hydratedCache.set(viewerKey, posts);
+    hydratedCache.set(viewerKey, { posts, quoteGenerations: quoteGenerationSnapshot(posts) });
     return posts;
   } catch (error) {
     logger.error('topLikedPostsHydrated: hydration failed:', error);

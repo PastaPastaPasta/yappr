@@ -33,6 +33,7 @@ describe('toAppRoute: web links', () => {
     ['https://yap.pr/search?q=hello%20world', '/explore/search?q=hello%20world'],
     [`https://yap.pr/mentions?user=${X}`, `/user/${X}?tab=mentions`],
     ['https://yap.pr/settings?section=privacy', '/settings/privacy'],
+    ['https://yap.pr/settings?section=messages', '/settings/messages'],
     ['https://yap.pr/settings?section=wallet', '/settings'],
   ])('%s → %s', (url, route) => {
     expect(toAppRoute(url, release)).toBe(route);

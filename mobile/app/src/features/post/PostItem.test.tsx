@@ -422,6 +422,42 @@ describe('PostItem removal', () => {
     expect(screen.getByTestId('quote-embed')).toBeTruthy();
     expect(screen.getByText('This reply was deleted by its author.')).toBeTruthy();
   });
+
+  it("restores a quote's original text when the delete that hid it fails (RC16-I-04 rollback, item 11)", async () => {
+    const reply = fixturePost({ id: 'my-reply-undo', kind: 'reply', author: AUTHORS.alice, content: 'The reply before its delete' });
+    const quote = fixturePost({ id: 'the-quote-undo', content: 'Quoting it', quotedPostId: 'my-reply-undo', quoted: reply });
+    const pending = ticket({ op: 'post.delete' });
+    fakeEngine.method('posts.delete').mockResolvedValue(pending);
+    queryClient.setQueryData(queryKeys.post.detail(reply.id), reply);
+    queryClient.setQueryData(queryKeys.post.detail(quote.id), quote);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Cached id={reply.id} />
+        <Cached id={quote.id} />
+      </QueryClientProvider>,
+    );
+    expect(screen.getAllByText('The reply before its delete')).toHaveLength(2);
+
+    selectMenu('my-reply-undo', 'delete');
+    await act(async () => alert?.press('Delete'));
+    expect(screen.queryByTestId('post-card-my-reply-undo')).toBeNull();
+    expect(screen.queryByText('The reply before its delete')).toBeNull();
+    expect(screen.getByText('This reply was deleted by its author.')).toBeTruthy();
+
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'failed',
+          error: { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: 'Network error.' },
+          retryable: true,
+        }),
+      ),
+    );
+    expect(screen.getByTestId('post-card-my-reply-undo')).toBeTruthy();
+    expect(screen.getAllByText('The reply before its delete')).toHaveLength(2);
+    expect(screen.queryByText('This reply was deleted by its author.')).toBeNull();
+  });
 });
 
 describe('PostItem bare reposts', () => {

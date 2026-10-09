@@ -81,7 +81,7 @@ const CONVERSATION_ID = /^[1-9A-HJ-NP-Za-km-z]{10,44}$/;
 const TAG = /^\$?[a-z0-9_]{1,63}$/;
 const ENGAGEMENT_KINDS = new Set(['post', 'reply']);
 const PROFILE_TABS = new Set(['posts', 'replies', 'top', 'mentions']);
-const SETTINGS_SECTIONS = new Set(['account', 'notifications', 'privacy', 'appearance', 'about']);
+const SETTINGS_SECTIONS = new Set(['account', 'notifications', 'messages', 'privacy', 'appearance', 'about']);
 
 /**
  * Screens a link must never open, even in dev builds: they take secrets,

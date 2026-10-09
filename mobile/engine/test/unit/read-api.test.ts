@@ -133,26 +133,46 @@ describe('posts.thread on flat threads (v9/v10)', () => {
     await expect(posts.thread(id('Other'), first.replies.cursor)).rejects.toMatchObject({ code: 'BAD_CURSOR' })
   })
 
-  it('reads quoted posts again on a refresh, and keeps them on a continuation (RC16-I-04)', async () => {
+  it('re-reads a thread\'s own quote targets on every load, leaving a quote elsewhere untouched (RC16-I-04, scoped per review item #1)', async () => {
     const quoted = post('Quoted', 1)
-    m.postService.fetchPostsOrReplies.mockResolvedValue([quoted])
-    m.postService.fetchQuotedTargets.mockResolvedValue([quoted])
-    const quote = () => post('Quote', 2, { quotedPostId: quoted.id })
-    await attachQuotedPosts([quote()])
+    // Resolved by some other screen's quote, never referenced by this thread.
+    const elsewhere = post('Elsewhere', 1)
+    m.postService.fetchPostsOrReplies.mockResolvedValue([quoted, elsewhere])
+    m.postService.fetchQuotedTargets.mockResolvedValue([quoted, elsewhere])
+    await attachQuotedPosts([post('ElsewhereQuote', 2, { quotedPostId: elsewhere.id })])
+    expect(getCachedQuotedPost(elsewhere.id)).toEqual(elsewhere)
+
+    // The thread's own root quotes `quoted`.
+    m.postService.getPostById.mockResolvedValue(post('Root', 1, { quotedPostId: quoted.id }))
+    await attachQuotedPosts([post('RootsQuote', 2, { quotedPostId: quoted.id })])
     expect(getCachedQuotedPost(quoted.id)).toEqual(quoted)
 
+    // A plain (non-once) mock: this thread's root has no reply page cached yet,
+    // so the fresh load below always calls through for it regardless.
     m.replyService.getReplies.mockResolvedValue({ documents: [reply('One', 2)], nextCursor: id('One') })
     const first = await posts.thread(id('Root'))
-    // lib's session cache and both document caches let go of it: the next enrichment reads it.
+    // This page's own root referenced it: both document caches and the session
+    // cache let go of it, so the next enrichment reads it again rather than
+    // keep showing text from before a possible delete.
     expect(getCachedQuotedPost(quoted.id)).toBeNull()
     expect(m.postService.clearCache).toHaveBeenCalledWith(quoted.id)
     expect(m.replyService.clearCache).toHaveBeenCalledWith(quoted.id)
+    // A quote this thread never references is left alone: the forget is scoped
+    // to the page's own quote targets, not a blanket wipe of everything known.
+    expect(getCachedQuotedPost(elsewhere.id)).toEqual(elsewhere)
+    expect(m.postService.clearCache).not.toHaveBeenCalledWith(elsewhere.id)
 
-    await attachQuotedPosts([quote()])
+    // A continuation's cumulative batch still carries the root, so its quote
+    // target is read again too — every page load, not only the first.
+    await attachQuotedPosts([post('RootsQuote2', 2, { quotedPostId: quoted.id })])
     m.postService.clearCache.mockClear()
+    // Page 1 (`rootId:`) is served from the engine's own reply-page cache on a
+    // continuation, so only the new page's fetch (`rootId:<cursor>`) actually
+    // calls through here; a plain mock (not `Once`) leaves nothing queued
+    // behind for a later test to accidentally consume.
+    m.replyService.getReplies.mockResolvedValue({ documents: [{ ...reply('Three', 4, 'One'), author: user(id('Other')) }] })
     await posts.thread(id('Root'), first.replies.cursor)
-    expect(getCachedQuotedPost(quoted.id)).toEqual(quoted)
-    expect(m.postService.clearCache).not.toHaveBeenCalled()
+    expect(m.postService.clearCache).toHaveBeenCalledWith(quoted.id)
   })
 
   it('keeps replies under a proved-deleted parent below a blank stub', async () => {

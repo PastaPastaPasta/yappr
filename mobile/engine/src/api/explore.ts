@@ -3,7 +3,7 @@ import { cashtagStorageToDisplay, isCashtagStorage } from '@/lib/post-helpers'
 import { hashtagService } from '@/lib/services/hashtag-service'
 import { postService } from '@/lib/services/post-service'
 import { mostFollowedUsers, topCreatorsByLikes, topLikedPostsHydrated, type RankedGroupCount } from '@/lib/services/ranked-likes'
-import { listToDTOs, loadUserSummaries, notSupported, rereadQuotedPosts, searchUserSummaries, visibleDTOs, withLoadingAuthor } from '../dto/hydrate'
+import { listToDTOs, loadUserSummaries, notSupported, searchUserSummaries, visibleDTOs, withLoadingAuthor } from '../dto/hydrate'
 import type { PostDTO, RankedUserDTO, RankingWindow, TagDTO, UserSummaryDTO } from './dto'
 
 /**
@@ -37,7 +37,10 @@ export const explore = {
   /** The 20 most-liked posts (one proved ranking), blocked authors and hidden NSFW left out; `rankings` capability. */
   async topPosts(query: { window?: RankingWindow } = {}): Promise<PostDTO[]> {
     if (!likesAreIndexOnly()) throw notSupported('Top posts')
-    rereadQuotedPosts()
+    // The ranked path resolves quotes through its own composite proof, never
+    // through resolve-quoted-posts' cache, so rereadQuotedPosts here would do
+    // nothing — ranked-likes' own hydrated-page cache invalidates itself
+    // against a forgotten quote target instead (RC16-I-04).
     return visibleDTOs(await topLikedPostsHydrated({ limit: 20, window: query.window ?? 'all' }))
   },
 
