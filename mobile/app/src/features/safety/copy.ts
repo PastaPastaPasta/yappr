@@ -31,6 +31,10 @@ export const copy = {
     /** The control while a block or unblock may still land: busy, and the opposite action waits. */
     blocking: 'Blocking…',
     unblocking: 'Unblocking…',
+    /** A block or unblock that may have landed, which the app keeps checking (RC16-A-02). */
+    unconfirmed: (block: boolean) =>
+      `Your ${block ? 'block' : 'unblock'} hasn't been confirmed yet. We'll keep checking.`,
+    checkAgain: 'Check again',
     self: 'You cannot block yourself',
     signIn: 'Sign in to block accounts',
     loadFailed: "Couldn't load this account. Try again in a moment.",
@@ -101,5 +105,6 @@ export const copy = {
     emailSubject: (id: string) => `Report: post ${id}`,
   },
   cancel: 'Cancel',
+  close: 'Close',
   signIn: 'Sign in',
 } as const;

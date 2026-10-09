@@ -19,7 +19,8 @@ import type { ReactNode } from 'react';
 
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
-import { resetWriteTracking } from '~/data/writes';
+import { resetWriteTracking, runWrite } from '~/data/writes';
+import { blockWrite, resetBlockDecisions } from '~/features/safety/block-state';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
@@ -134,6 +135,7 @@ beforeEach(() => {
   fakeEngine.setStatus({ state: 'ready', info: { capabilities: { dm: 'v5' } as never } });
   queryClient.clear();
   resetWriteTracking();
+  resetBlockDecisions();
   useOutbox.setState({ entries: [] });
   resetKeyResends();
   useDrafts.getState().clearAll();
@@ -979,16 +981,66 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(useToastStore.getState().current?.message).toBe('Blocked @bob');
     });
 
-    it("lifts the account's own block with the one in Messages", async () => {
+    it("lifts the account's own block, and the one in Messages once that is confirmed", async () => {
       await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
       fakeEngine.method('safety.blockedBy').mockResolvedValue({ [BOB_ID]: 'self' });
-      fakeEngine.method('safety.unblock').mockResolvedValue(ticket({ op: 'unblock', target: { identityId: BOB_ID } }));
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
       fakeEngine.method('dm.setBlocked').mockResolvedValue(undefined);
       await select('unblock');
       await act(async () => {});
       expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(BOB_ID);
+      // On its way: still blocked here, "Unblocking…", and nothing said yet (RC16-A-02).
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(useToastStore.getState().current).toBeNull();
+      expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+      const actions = () => screen.getByTestId('dm-conversation-menu').props.actions as { title: string }[];
+      expect(actions().map((a) => a.title)).toContain('Unblocking…');
+
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
       expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
       expect(useToastStore.getState().current?.message).toBe('Unblocked @bob');
+    });
+
+    it('shows the banner from the same block as the profile, and takes it away when the block fails (RC16-A-02)', async () => {
+      await openConversation([theirs]);
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+      const pending = ticket({ op: 'block', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.block').mockResolvedValue(pending);
+      // Blocked from the profile: the conversation says so at once, though Messages save nothing yet.
+      await act(async () => {
+        await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: true, handle: '@bob' });
+      });
+      expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: false, userMessage: '' },
+          }),
+        ),
+      );
+      // Failed: no banner, the composer is back, and nothing was ever saved in Messages to outlive it.
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+      expect(screen.getByTestId('dm-composer')).toBeTruthy();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+    });
+
+    it('drops a banner Messages show for a block this device has since lifted', async () => {
+      await openConversation([theirs], { flags: { ...FLAGS, blocked: true } });
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(true);
+      await act(async () => {
+        await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: false, handle: '@bob' });
+      });
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      // Messages are told, and until they are read again the conversation follows the confirmed unblock.
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
     });
 
     it("changes nothing when the account's block can't be read, and says so", async () => {

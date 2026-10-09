@@ -339,7 +339,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
   const unblock = () =>
     requireAuth(() => {
       const ownId = viewerId ?? lastIdentity();
-      if (ownId) sendWrite(blockWrite, { viewerId: ownId, userId: profileId, block: false }, safetyCopy.toast.unblocked(handle));
+      if (ownId) sendWrite(blockWrite, { viewerId: ownId, userId: profileId, block: false, handle });
     });
   const onMenu = (id: string) => {
     if (!profileId) return;

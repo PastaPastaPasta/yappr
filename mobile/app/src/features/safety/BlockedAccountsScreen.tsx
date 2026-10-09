@@ -36,7 +36,7 @@ const BlockedRow = memo(function BlockedRow({ user, viewerId }: { user: BlockedU
   // Their block or unblock still on its way: the button says so, and waits for it.
   const busy = useBlockBusy(user.id);
   const unblock = () => {
-    if (!busy) sendWrite(blockWrite, { viewerId, userId: user.id, block: false }, copy.toast.unblocked(handle));
+    if (!busy) sendWrite(blockWrite, { viewerId, userId: user.id, block: false, handle });
   };
   const button = (
     <Button
