@@ -330,3 +330,45 @@ describe('the blockFilter on unblock', () => {
     expect(await blockService.unblockUser(viewer, authors[0])).toEqual({ success: true })
   })
 })
+
+describe('block writes whose lookup of the block fails', () => {
+  /** The owner list reads fine (so this tab holds a complete list); the one-block lookup fails. */
+  const network = (blocked: string[]) => async (q: { documentTypeName: string; where: unknown[][] }) => {
+    if (q.documentTypeName !== 'block') return []
+    if (q.where.length === 2) throw new Error('DAPI unavailable')
+    return blocked.map((id, i) => block(id, i))
+  }
+
+  it('does not report an unblock, or drop the block from a complete cached list, when the lookup fails', async () => {
+    query.mockImplementation(network([authors[0], authors[1]]))
+    expect(await blockService.isBlocked(authors[0], viewer)).toBe(true)
+    expect(getOwnBlocksFromCache(viewer)).toHaveLength(2)
+
+    const result = await blockService.unblockUser(viewer, authors[0])
+    expect(result).toMatchObject({ success: false, lookupFailed: true })
+    expect(deleteDocument).not.toHaveBeenCalled()
+    expect(updateDocument).not.toHaveBeenCalled()
+    expect(getOwnBlocksFromCache(viewer)).toContain(authors[0])
+    expect(await blockService.isBlocked(authors[0], viewer)).toBe(true)
+  })
+
+  it('still answers "nothing to unblock" after a lookup that succeeded and found no block', async () => {
+    query.mockImplementation(async q => (q.documentTypeName === 'block' && q.where.length === 1 ? [block(authors[1])] : []))
+    expect(await blockService.unblockUser(viewer, authors[0])).toEqual({ success: true })
+    expect(deleteDocument).not.toHaveBeenCalled()
+  })
+
+  it('does not send a block when the lookup fails', async () => {
+    query.mockImplementation(network([authors[1]]))
+    const result = await blockService.blockUser(viewer, authors[0])
+    expect(result).toMatchObject({ success: false, lookupFailed: true })
+    expect(createDocument).not.toHaveBeenCalled()
+    expect(updateDocument).not.toHaveBeenCalled()
+  })
+
+  it('keeps answering "no block" to readers that did not ask for the failure', async () => {
+    query.mockRejectedValue(new Error('DAPI unavailable'))
+    expect(await blockService.getBlock(authors[0], viewer)).toBeNull()
+    await expect(blockService.getBlock(authors[0], viewer, { throwOnError: true })).rejects.toThrow('DAPI unavailable')
+  })
+})

@@ -1,5 +1,5 @@
 import type { BlockedUserDTO, BlockSourceDTO, ProfileDTO, WriteTicket } from '@engine/api';
-import { type InvalidateQueryFilters } from '@tanstack/react-query';
+import { hashKey, type InvalidateQueryFilters } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { create } from 'zustand';
 
@@ -7,10 +7,11 @@ import { queryKeys } from '~/data/keys';
 import { setAuthorBlocked } from '~/data/optimistic';
 import { useEngineQuery, type EngineRemote } from '~/data/queries';
 import { getCapabilities, useSessionStore, useViewerId } from '~/data/session';
-import { sendWrite, useLandingIntent, type WriteSpec } from '~/data/writes';
+import { sendWrite, useLandingIntent, useLandingTicket, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { setBlockedInMessages, syncMessagesBlock } from '~/features/messages/dm-actions';
+import { onMessagesBlockChosen, setBlockedInMessages } from '~/features/messages/dm-actions';
+import { inboxReadHeld, inboxReadsSoFar, refreshDm } from '~/features/messages/dm-data';
 import { queryClient } from '~/state/query-client';
 import { errorFeedback } from '~/ui/haptics';
 import { toast } from '~/ui/toast';
@@ -34,6 +35,21 @@ interface Decision {
   user?: BlockedUserDTO;
   /** Blocked only by a followed block list (`STILL_BLOCKED`): no own block to list. */
   listOnly?: boolean;
+  /**
+   * Confirmed (or overtaken by a choice made in Messages here): on DM v5 the
+   * engine has it in Messages, so a read of them numbered from this one on
+   * ({@link inboxReadsSoFar}), begun after, shows it. A read begun before
+   * may still answer with Messages as they were.
+   */
+  readFrom?: number;
+  /**
+   * Once this decision has settled, Messages decide the conversation: a read
+   * of them begun since `readFrom` has answered, so they show it and anything
+   * changed in Messages alone since, here or on another device (Message
+   * settings, a conversation's Block or Unblock). The account's block is
+   * unchanged.
+   */
+  messagesDecide?: boolean;
 }
 
 const useBlockDecisions = create<{ byKey: Readonly<Record<string, Decision>> }>()(() => ({ byKey: {} }));
@@ -51,6 +67,57 @@ useSessionStore.subscribe((state, previous) => {
   if (previous.status !== 'unknown' && state.session?.identityId !== previous.session?.identityId) {
     resetBlockDecisions();
   }
+});
+
+/**
+ * The first read of Messages (by {@link inboxReadsSoFar}) that shows every
+ * block change this device has seen land there. Until one numbered so far
+ * has answered, the inbox is read again after each answer.
+ */
+let readAgainFrom = 0;
+
+/** Messages just changed: only a read begun from now on shows it. Returns that read's number. */
+function messagesChanged(): number {
+  readAgainFrom = inboxReadsSoFar() + 1;
+  return readAgainFrom;
+}
+
+/** `decided`, settled now: Messages decide once a read of them begun from here on has answered. */
+const settledNow = (decided: Decision): Decision => ({ ...decided, readFrom: messagesChanged(), messagesDecide: false });
+
+// A choice made in Messages alone is newer than the decision: the conversation follows Messages from the next read
+// of them on (one begun before the choice still shows them as they were).
+onMessagesBlockChosen((viewerId, peerId) => {
+  const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, peerId)];
+  if (decided && !decided.listOnly) decide(viewerId, peerId, settledNow(decided));
+  else messagesChanged();
+});
+
+// Messages read after a block or unblock was confirmed already follow it (the engine follows it before it reports
+// the confirmation): from then on they decide, so a choice synchronized from another device shows too (DM v5 only;
+// legacy re-reads the account's blocks on its own time). Only a read begun after counts: one begun before (that a
+// refresh joined rather than replaced) may answer with Messages from before, so the inbox is read again. A read
+// patched here (`setQueryData`) is no read.
+const conversationsHash = hashKey(queryKeys.dm.conversations);
+queryClient.getQueryCache().subscribe((event) => {
+  if (event.type !== 'updated' || event.action.type !== 'success' || event.action.manual) return;
+  if (event.query.queryHash !== conversationsHash || getCapabilities()?.dm !== 'v5') return;
+  const viewerId = useSessionStore.getState().session?.identityId;
+  if (!viewerId || !event.query.state.data) return;
+  const held = inboxReadHeld();
+  // Out of this update: a read begun now is numbered at or past `readAgainFrom`, so this asks once.
+  if (held < readAgainFrom) {
+    Promise.resolve()
+      .then(() => queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations }))
+      .catch(() => undefined);
+  }
+  const prefix = decisionKey(viewerId, '');
+  const { byKey } = useBlockDecisions.getState();
+  const read = Object.entries(byKey).filter(
+    ([key, d]) => key.startsWith(prefix) && !d.messagesDecide && d.readFrom !== undefined && held >= d.readFrom,
+  );
+  if (read.length === 0) return;
+  useBlockDecisions.setState({ byKey: { ...byKey, ...Object.fromEntries(read.map(([key, d]) => [key, { ...d, messagesDecide: true }])) } });
 });
 
 /**
@@ -214,34 +281,24 @@ export interface BlockVars {
   message?: string;
   /** Block only: who it is, for the Blocked list's row until the engine lists them. */
   user?: Pick<BlockedUserDTO, 'username' | 'displayName' | 'avatar'>;
+  /** Who, as the screen shows them ("@bob"), for its toasts. */
+  handle?: string;
 }
 
 
-/** Per user, the latest change made in Messages: an older change's undo never overrides a newer one. */
-const messagesChanges = new Map<string, symbol>();
-
 /**
- * DM v5 keeps its own block list (DM-10): a Block also blocks them there,
- * and an Unblock lifts it (PRD SAFE-01, SAFE-02), so one Block covers
- * Messages too. Legacy DMs follow the account's blocks by themselves.
- * Returns the undo, which reverts only what this call changed (a block in
- * Messages made before, on web, stays) and only while it is the latest: the
- * undo waits for the Messages call to answer, which can come after a newer
- * change (a followed list's `STILL_BLOCKED`, a new block). Block writes
- * themselves never overlap (`blockWrite.serial`).
+ * Messages follow the account's blocks by themselves (PRD SAFE-01, SAFE-02):
+ * on DM v5 the engine blocks or unblocks them there once the block or
+ * unblock is confirmed (also when a check confirms it after a relaunch),
+ * and catches up with the account's block list at every start, so one Block
+ * covers Messages too and none outlives a block that never landed
+ * (RC16-A-02). Until then the conversation shows this device's decision
+ * (`useConversationBlocked`). This re-reads Messages' status for Message
+ * settings' Blocked list.
  */
-function blockInMessages(userId: string, block: boolean): () => void {
-  if (getCapabilities()?.dm !== 'v5') return () => undefined;
-  const change = Symbol(userId);
-  messagesChanges.set(userId, change);
-  const changed = syncMessagesBlock(userId, block);
-  return () => {
-    changed
-      .then((did) => {
-        if (did && messagesChanges.get(userId) === change) blockInMessages(userId, !block);
-      })
-      .catch(() => undefined);
-  };
+function refreshMessages(): void {
+  messagesChanged();
+  refreshDm();
 }
 
 function applyBlock(vars: BlockVars): () => void {
@@ -253,20 +310,19 @@ function applyBlock(vars: BlockVars): () => void {
   const undoProfiles = patchProfiles(userId, block);
   // The decision lives in memory; the cached posts carry it across a relaunch (SR-25).
   const undoPosts = setAuthorBlocked(userId, block);
-  const undoMessages = blockInMessages(userId, block);
   return () => {
     decide(viewerId, userId, before);
     undoProfiles();
     undoPosts();
-    undoMessages();
     refetch(queryKeys.profile.detail(userId));
   };
 }
 
 const targetIdentity = (ticket: WriteTicket) => (ticket.target as { identityId?: string } | null)?.identityId;
 
-/** "@alice" for the failure toast: the row being blocked, else the cached profile; null when unknown. */
-function handleOf({ userId, user }: BlockVars): string | null {
+/** "@alice" for the toasts: the handle given, else the row being blocked, else the cached profile; null when unknown. */
+function handleOf({ userId, user, handle }: BlockVars): string | null {
+  if (handle) return handle;
   const username = user?.username ?? queryClient.getQueryData<ProfileDTO | null>(queryKeys.profile.detail(userId))?.username;
   return username ? `@${username}` : null;
 }
@@ -274,11 +330,14 @@ function handleOf({ userId, user }: BlockVars): string | null {
 /**
  * Block or unblock (`safety.block` / `safety.unblock`), one at a time per
  * user. Optimistic: the author's content goes (or comes back) at once, and
- * on DM v5 Messages follows (`blockInMessages`). Confirmed, the lists the
- * engine filters by block status are read again. An unblock that leaves a
- * followed block list blocking the user fails with `STILL_BLOCKED`: the
- * posts stay hidden, the Blocked list drops the own block that is gone (and
- * Messages with it), and the toast says why.
+ * a failure (or a check proving it never landed) brings everything back.
+ * Only a confirmed write says "Blocked @x", reaches Messages (the engine
+ * follows it there, `refreshMessages`), and reads the lists the engine filters by block
+ * status again; one not confirmed yet stays busy ("Blocking…") while the
+ * app checks it. An unblock that leaves a followed block list blocking the
+ * user fails with `STILL_BLOCKED`: the posts stay hidden, the Blocked list
+ * drops the own block that is gone (and Messages with it), and the toast
+ * says why.
  */
 const blockKey = (userId: string) => `block:${userId}`;
 
@@ -296,6 +355,35 @@ export function useBlockBusy(userId: string | undefined): 'blocking' | 'unblocki
   return null;
 }
 
+/** The ticket of a block or unblock of `userId` that may still land (`useLandingTicket`), for "Check again". */
+export function useBlockTicket(userId: string | undefined): WriteTicket | null {
+  return useLandingTicket(userId ? blockKey(userId) : undefined);
+}
+
+/**
+ * Whether a conversation with `peerId` shows them as blocked (the
+ * composer's banner, the menu's Unblock): this device's block decision when
+ * it made one, as the profile and the Blocked list show it, else what
+ * Messages say (`flagged`, which on DM v5 also counts a block made only in
+ * Messages), and what they say again once that decision has settled (it
+ * was confirmed, or a choice was made in Messages here) and a read of
+ * Messages begun since has answered (a choice made in Messages alone after
+ * it then shows, from this device or another); a read begun before may
+ * still show Messages from before. A block that fails or never lands takes the
+ * banner with it, and Messages only follow a block once it is confirmed (`refreshMessages`),
+ * so none outlives it (RC16-A-02). An unblock still on its way keeps it:
+ * Messages block them until it is confirmed.
+ */
+export function useConversationBlocked(peerId: string | undefined, flagged: boolean): boolean {
+  const viewerId = useViewerId();
+  const decided = useBlockDecisions((s) => (viewerId && peerId ? s.byKey[decisionKey(viewerId, peerId)] : undefined));
+  const busy = useBlockBusy(peerId);
+  if (busy === 'unblocking') return true;
+  // Blocked only by a followed list: Messages were lifted with the own block (`onFailed`), so they decide.
+  if (!decided || decided.listOnly || (decided.messagesDecide && busy === null)) return flagged;
+  return decided.blocked;
+}
+
 export const blockWrite: WriteSpec<BlockVars> = {
   key: ({ userId }) => blockKey(userId),
   // A block and an unblock of one user never overlap: the opposite action waits until the first can't land.
@@ -308,12 +396,20 @@ export const blockWrite: WriteSpec<BlockVars> = {
   reconcile: ({ viewerId, userId }) => decide(viewerId, userId, undefined),
   intent: ({ block }) => block,
   matches: (ticket, { userId, block }) => ticket.op === (block ? 'block' : 'unblock') && targetIdentity(ticket) === userId,
-  onConfirmed: (_ticket, { block }) => refetchFiltered(block),
+  onConfirmed: (_ticket, vars) => {
+    const { viewerId, userId, block } = vars;
+    const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, userId)];
+    if (decided?.blocked === block && !decided.listOnly) decide(viewerId, userId, settledNow(decided));
+    refreshMessages();
+    refetchFiltered(block);
+    const handle = handleOf(vars) ?? 'this account';
+    toast.success(block ? copy.toast.blocked(handle) : copy.toast.unblocked(handle));
+  },
   // The own block is gone, but the user stays blocked: their posts stay hidden, their Blocked row goes.
   onFailed: (ticket, { viewerId, userId, block }) => {
     if (block || ticket.error?.code !== 'STILL_BLOCKED') return;
     decide(viewerId, userId, { blocked: true, listOnly: true });
-    blockInMessages(userId, false);
+    refreshMessages();
     refetch(queryKeys.blocked);
   },
   failureText: (ticket) => (ticket.error?.code === 'STILL_BLOCKED' ? copy.toast.stillBlocked : null),
@@ -386,7 +482,7 @@ export function unblockFromConversation(viewerId: string, peerId: string, handle
       return;
     }
     if (source === 'self') {
-      sendWrite(blockWrite, { viewerId, userId: peerId, block: false }, copy.toast.unblocked(handle));
+      sendWrite(blockWrite, { viewerId, userId: peerId, block: false, handle });
     } else {
       await setBlockedInMessages(peerId, false, copy.toast.unblocked(handle));
     }

@@ -231,6 +231,40 @@ describe('DmEngine.pollOwn', () => {
   })
 })
 
+describe('DmEngine.send beforeBroadcast', () => {
+  it("runs before the send's own invite and each message, and a throw refuses the write", async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    engine(ledger, BOB_ID, BOB_PRIV)
+    const key = await alice.startDirect(bob58)
+    const refusal = new Error('given up')
+    await expect(alice.send(key, 'never', { beforeBroadcast: () => { throw refusal } })).rejects.toBe(refusal)
+    expect(ledger.invites).toHaveLength(0)
+    expect(ledger.messages).toHaveLength(0)
+    let writes = 0
+    await alice.send(key, 'hello', { beforeBroadcast: () => { writes += 1 } })
+    // The invite and the one message.
+    expect(writes).toBe(2)
+    expect(ledger.invites).toHaveLength(1)
+    let refused = 0
+    await expect(alice.send(key, 'again', { beforeBroadcast: () => { refused += 1; throw refusal } })).rejects.toBe(refusal)
+    expect(refused).toBe(1)
+    expect(alice.messages(key).map((m) => m.text)).toEqual(['hello'])
+  })
+
+  it('reports each broadcast settled, with how many of its messages are held so far', async () => {
+    const ledger = new MemoryLedger()
+    const alice = await started(engine(ledger, ALICE_ID, ALICE_PRIV))
+    engine(ledger, BOB_ID, BOB_PRIV)
+    const key = await alice.startDirect(bob58)
+    const steps: string[] = []
+    const long = `${'a'.repeat(4081)}${'b'.repeat(10)}`
+    await alice.send(key, long, { beforeBroadcast: () => { steps.push('broadcast') }, afterSettled: (held) => { steps.push(`held ${held}`) } })
+    // The invite (the conversation started, nothing held), then each message.
+    expect(steps).toEqual(['broadcast', 'held 0', 'broadcast', 'held 1', 'broadcast', 'held 2'])
+  })
+})
+
 describe('DmEngine self-state edits across a reload (§5.5)', () => {
   /** What a fresh device reads from the chain. */
   async function savedState(ledger: MemoryLedger, id: Uint8Array, priv: Uint8Array) {

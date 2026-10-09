@@ -522,6 +522,21 @@ export function useLandingIntent(key: string | undefined): unknown {
   });
 }
 
+/**
+ * The ticket of the write for `key` that may still land, once the engine
+ * has made it (null while its call runs, or for one cut short), live: for
+ * a screen that offers "Check again" on a write not confirmed yet.
+ */
+export function useLandingTicket(key: string | undefined): WriteTicket | null {
+  return useWriteTickets(({ byId }) => {
+    if (key === undefined) return null;
+    for (const [id, entry] of tracked) {
+      if (entry.key === key && mayLand(byId[id])) return byId[id] ?? null;
+    }
+    return null;
+  });
+}
+
 /** A write for `key` is about to be sent: if another may still land, the key's writes overlap. */
 function contest(key: string | undefined, except?: string): void {
   if (key !== undefined && landingFor(key, except)) contested.add(key);

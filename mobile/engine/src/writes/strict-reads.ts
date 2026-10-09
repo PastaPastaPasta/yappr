@@ -7,10 +7,10 @@ import { identifierToBase58, type DocumentOrderByClause, type DocumentWhereClaus
 
 /**
  * Reads for "check again" that THROW when the query fails. lib's own lookups
- * for these relations (`getLike`, `getRepost`, `getOwnQuotes`, `getBlock`)
- * answer a failed read as "none", and its block status also answers from a
- * cache its own write fills on an unconfirmed broadcast, so neither can prove
- * a write landed or not. These query the same unique (owner, target) indexes
+ * for these relations (`getLike`, `getRepost`, `getOwnQuotes`, and `getBlock`
+ * unless asked to throw) answer a failed read as "none", and its block status
+ * also answers from a cache its own write fills on an unconfirmed broadcast,
+ * so neither can prove a write landed or not. These query the same unique (owner, target) indexes
  * lib's lookups use, with the same clause order.
  */
 

@@ -277,14 +277,13 @@ describe('blocking', () => {
     renderPosts(bobPosts());
 
     const user = { username: 'bob', displayName: 'Bob', avatar: BOB.avatar };
-    await act(async () =>
-      sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, user }, copy.toast.blocked('@bob')),
-    );
+    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, user, handle: '@bob' }));
     expect(fakeEngine.method('safety.block')).toHaveBeenCalledWith(BOB.id, null);
     expect(screen.queryByTestId('post-card-b1')).toBeNull();
     expect(screen.queryByTestId('post-card-b2')).toBeNull();
     expect(screen.getByTestId('post-card-c1')).toBeTruthy();
-    expect(toastMessage()).toBe('Blocked @bob');
+    // Not confirmed yet: nothing says "Blocked" (RC16-A-02).
+    expect(toastMessage()).toBeUndefined();
     // No Messages capability: nothing to block there.
     expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
 
@@ -397,6 +396,35 @@ describe('blocking', () => {
     expect([keys.stats, keys.ownReport, keys.followers].map(stale)).toEqual([false, false, false]);
   });
 
+  it('says "Blocked @bob" only once the block is confirmed (RC16-A-02)', async () => {
+    const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.block').mockResolvedValue(pending);
+    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, handle: '@bob' }));
+    expect(toastMessage()).toBeUndefined();
+
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(toastMessage()).toBe('Blocked @bob');
+  });
+
+  it('never says blocked for one stalled past its deadline: it stays busy while the app checks (RC16-A-02)', async () => {
+    const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.block').mockResolvedValue(pending);
+    renderPosts(bobPosts());
+    await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, handle: '@bob' }));
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'unconfirmed',
+          error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: '' },
+        }),
+      ),
+    );
+    expect(toastMessage()).toBeUndefined();
+    // It may still land: the author stays hidden, as asked.
+    expect(screen.queryByTestId('post-card-b1')).toBeNull();
+  });
+
   it('says a followed block list still blocks after an unblock', async () => {
     const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
     fakeEngine.method('safety.unblock').mockResolvedValue(pending);
@@ -414,7 +442,7 @@ describe('blocking', () => {
     expect(toastMessage()).toBe('Unblocked, but a block list you follow still hides them.');
   });
 
-  describe('on DM v5, one Block covers Messages too (SAFE-01, SAFE-02)', () => {
+  describe('on DM v5, one Block covers Messages too: the engine follows it there (SAFE-01, SAFE-02)', () => {
     const failed = {
       state: 'failed' as const,
       error: { code: 'UNKNOWN' as const, consensusCode: null, outcome: 'refused' as const, retryable: false, userMessage: '' },
@@ -426,17 +454,50 @@ describe('blocking', () => {
       fakeEngine.method('dm.setBlocked').mockResolvedValue(true);
     });
 
-    it('blocks them in Messages with the block, and lifts that again when the block fails', async () => {
+    it('leaves Messages to the engine, and re-reads their status once the block is confirmed (RC16-A-02)', async () => {
+      const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
       const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
       fakeEngine.method('safety.block').mockResolvedValue(pending);
       await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
-      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB.id, true);
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
 
-      await act(async () => fakeEngine.emit('write.status', advance(pending, failed)));
-      expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([
-        [BOB.id, true],
-        [BOB.id, false],
-      ]);
+      // The engine blocked them in Messages as the block confirmed (also after a relaunch): the app only re-reads.
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      invalidate.mockRestore();
+    });
+
+    it('leaves Messages alone when a block fails, stalls, or is proved never to have landed (RC16-A-02)', async () => {
+      const first = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(first);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      await act(async () => fakeEngine.emit('write.status', advance(first, failed)));
+
+      const second = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(second);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(second, {
+            state: 'unconfirmed',
+            error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: '' },
+          }),
+        ),
+      );
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(second, {
+            state: 'unconfirmed',
+            retryable: true,
+            error: { code: 'NOT_RECORDED', consensusCode: null, outcome: 'not-recorded', retryable: true, userMessage: 'Checked.' },
+          }),
+        ),
+      );
+      // Nothing was saved in Messages, so nothing outlives the block there after a relaunch.
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
     });
 
     describe('a block and an unblock never overlap (QA rc7 review 5419256414)', () => {
@@ -451,12 +512,12 @@ describe('blocking', () => {
         // Nothing sent, nothing changed (Messages included), and a plain word why.
         await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false }));
         expect(fakeEngine.method('safety.unblock')).not.toHaveBeenCalled();
-        expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([[BOB.id, true]]);
+        expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
         expect(toastMessage()).toBe('Still blocking this account. Try again in a moment.');
 
-        // The block confirmed: the unblock goes.
+        // The block confirmed (the engine follows it in Messages), and the unblock goes.
         fakeEngine.method('safety.unblock').mockResolvedValue(ticket({ op: 'unblock', target: { identityId: BOB.id } }));
-        act(() => fakeEngine.emit('write.status', advance(blocking, { state: 'confirmed' })));
+        await act(async () => fakeEngine.emit('write.status', advance(blocking, { state: 'confirmed' })));
         await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false }));
         expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(BOB.id);
       });
@@ -473,8 +534,13 @@ describe('blocking', () => {
         await act(async () => {
           await new Promise((resolve) => setTimeout(resolve, 0));
         });
-        expect(screen.getByTestId('unblock-confirm')).toHaveTextContent('Blocking…');
-        expect(screen.getByTestId('unblock-confirm')).toBeDisabled();
+        // Shown as asked and not done yet: "Block @bob?" with its button busy, and the app checking.
+        expect(screen.getByText('Block @bob?')).toBeTruthy();
+        expect(screen.getByTestId('block-confirm')).toHaveTextContent('Blocking…');
+        expect(screen.getByTestId('block-confirm')).toBeDisabled();
+        expect(screen.getByTestId('block-unconfirmed')).toHaveTextContent(
+          "Your block hasn't been confirmed yet. We'll keep checking.Check again",
+        );
 
         // A check proved it landed: settled, and Unblock is offered again.
         act(() => fakeEngine.emit('write.status', advance(blocking, { state: 'confirmed' })));
@@ -507,21 +573,53 @@ describe('blocking', () => {
       });
     });
 
-    it('keeps a block in Messages made before (on web) when a profile block fails', async () => {
-      const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
-      fakeEngine.method('safety.block').mockResolvedValue(pending);
-      // Already blocked in Messages: the engine changed nothing.
-      fakeEngine.method('dm.setBlocked').mockResolvedValue(false);
-      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
-      await act(async () => fakeEngine.emit('write.status', advance(pending, failed)));
-      expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([[BOB.id, true]]);
+    it('says "Unblocked" once an unblock is confirmed, leaving Messages to the engine', async () => {
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false, handle: '@bob' }));
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(toastMessage()).toBeUndefined();
+
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(toastMessage()).toBe('Unblocked @bob');
     });
 
-    it('lifts the block in Messages with an unblock, also when a followed block list keeps the posts hidden', async () => {
+    it('keeps them blocked, everywhere, when the unblock could not read the block and sent nothing', async () => {
+      const blocking = ticket({ op: 'block', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.block').mockResolvedValue(blocking);
+      renderPosts(bobPosts());
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true, handle: '@bob' }));
+      await act(async () => fakeEngine.emit('write.status', advance(blocking, { state: 'confirmed' })));
+      expect(screen.queryByTestId('post-card-b1')).toBeNull();
+
+      const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
+      const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+      fakeEngine.method('safety.unblock').mockResolvedValue(pending);
+      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false, handle: '@bob' }));
+      await act(async () =>
+        fakeEngine.emit(
+          'write.status',
+          advance(pending, {
+            state: 'failed',
+            retryable: true,
+            error: { code: 'NETWORK', consensusCode: null, outcome: 'not-sent', retryable: true, userMessage: '' },
+          }),
+        ),
+      );
+      // Never "Unblocked", the posts stay hidden, and Messages are neither touched nor re-read.
+      expect(toastMessage()).toBe("Couldn't unblock @bob. Try again.");
+      expect(screen.queryByTestId('post-card-b1')).toBeNull();
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(invalidate).not.toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
+      invalidate.mockRestore();
+    });
+
+    it('re-reads Messages when a followed block list keeps the posts hidden after an unblock', async () => {
+      const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
       const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
       fakeEngine.method('safety.unblock').mockResolvedValue(pending);
       await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: false }));
-      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB.id, false);
 
       await act(async () =>
         fakeEngine.emit(
@@ -532,26 +630,10 @@ describe('blocking', () => {
           }),
         ),
       );
-      // The own block is gone all the same, so Messages stays unblocked: the undo never re-blocks it.
-      expect(fakeEngine.method('dm.setBlocked').mock.calls.every(([, blocked]) => blocked === false)).toBe(true);
-    });
-
-    it('never lets an older undo override a newer choice', async () => {
-      const block = ticket({ op: 'block', target: { identityId: BOB.id } });
-      fakeEngine.method('safety.block').mockResolvedValue(block);
-      let changed: (value: boolean) => void = () => undefined;
-      fakeEngine.method('dm.setBlocked').mockReturnValueOnce(new Promise((resolve) => (changed = resolve)));
-      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
-      await act(async () => fakeEngine.emit('write.status', advance(block, failed)));
-      // A new block before the first call answered: the first one's undo stays out of it.
-      const again = ticket({ op: 'block', target: { identityId: BOB.id } });
-      fakeEngine.method('safety.block').mockResolvedValue(again);
-      await act(async () => sendWrite(blockWrite, { viewerId: VIEWER_ID, userId: BOB.id, block: true }));
-      await act(async () => changed(true));
-      expect(fakeEngine.method('dm.setBlocked').mock.calls).toEqual([
-        [BOB.id, true],
-        [BOB.id, true],
-      ]);
+      // The own block is gone all the same: the engine lifts it in Messages, and the app re-reads them.
+      expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
+      invalidate.mockRestore();
     });
 
     it('never touches Messages on the legacy backend, which follows the account blocks itself', async () => {
@@ -566,9 +648,15 @@ describe('blocking', () => {
 describe('BlockScreen', () => {
   beforeEach(() => params.mockReturnValue({ userId: BOB.id }));
 
-  it('asks first, sends the note, and closes', async () => {
+  const flush = () =>
+    act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+  it('asks first, sends the note, and closes once the block is confirmed', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
-    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
+    const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.block').mockResolvedValue(pending);
     withProviders(<BlockScreen />);
     await settle();
 
@@ -581,8 +669,72 @@ describe('BlockScreen', () => {
     await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
 
     expect(fakeEngine.method('safety.block')).toHaveBeenCalledWith(BOB.id, { message: 'spam bot' });
+    // On its way: the sheet stays, busy, and nothing says "Blocked" yet (RC16-A-02).
+    expect(router.back).not.toHaveBeenCalled();
+    expect(toastMessage()).toBeUndefined();
+    expect(screen.getByTestId('block-confirm')).toHaveTextContent('Blocking…');
+    expect(screen.getByTestId('block-confirm')).toBeDisabled();
+    expect(screen.getByTestId('block-cancel')).toHaveTextContent('Close');
+
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(router.back).toHaveBeenCalled();
     expect(toastMessage()).toBe('Blocked @bob');
+  });
+
+  it('brings the form back and says so when the block fails, with nothing left blocked (RC16-A-02)', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.block').mockResolvedValue(pending);
+    withProviders(<BlockScreen />);
+    await settle();
+    await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
+    expect(screen.getByTestId('block-confirm')).toHaveTextContent('Blocking…');
+
+    act(() =>
+      fakeEngine.emit(
+        'write.status',
+        advance(pending, {
+          state: 'failed',
+          error: { code: 'UNKNOWN', consensusCode: null, outcome: 'refused', retryable: false, userMessage: '' },
+        }),
+      ),
+    );
+    expect(router.back).not.toHaveBeenCalled();
+    expect(toastMessage()).toBe("Couldn't block @bob. Try again.");
+    expect(screen.getByTestId('block-confirm')).toHaveTextContent('Block');
+    expect(screen.getByTestId('block-confirm')).toBeEnabled();
+    expect(screen.getByTestId('block-cancel')).toHaveTextContent('Cancel');
+  });
+
+  it('says a stalled block is not confirmed yet, and "Check again" checks it now (RC16-A-02)', async () => {
+    fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
+    const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.block').mockResolvedValue(pending);
+    withProviders(<BlockScreen />);
+    await settle();
+    await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
+    expect(screen.queryByTestId('block-unconfirmed')).toBeNull();
+
+    const unconfirmed = advance(pending, {
+      state: 'unconfirmed',
+      error: { code: 'STILL_SENDING', consensusCode: null, outcome: 'unknown', retryable: false, userMessage: '' },
+    });
+    act(() => fakeEngine.emit('write.status', unconfirmed));
+    expect(toastMessage()).toBeUndefined();
+    expect(router.back).not.toHaveBeenCalled();
+    expect(screen.getByTestId('block-confirm')).toHaveTextContent('Blocking…');
+    expect(screen.getByTestId('block-unconfirmed')).toHaveTextContent(/Your block hasn't been confirmed yet/);
+
+    fakeEngine.method('writes.check').mockImplementationOnce(async () => {
+      const landed = advance(unconfirmed, { state: 'confirmed' });
+      setTimeout(() => fakeEngine.emit('write.status', landed), 0);
+      return landed;
+    });
+    await act(async () => fireEvent.press(screen.getByTestId('block-check-again')));
+    await flush();
+    expect(fakeEngine.method('writes.check')).toHaveBeenCalledWith(pending.id);
+    expect(toastMessage()).toBe('Blocked @bob');
+    expect(router.back).toHaveBeenCalled();
   });
 
   it('blocks without a note when none was added', async () => {
@@ -623,29 +775,42 @@ describe('BlockScreen', () => {
     expect(screen.queryByText(/message you/)).toBeNull();
   });
 
-  it('on DM v5, blocks them in Messages too from the sheet', async () => {
+  it('on DM v5, a block from the sheet leaves Messages to the engine and re-reads them once confirmed', async () => {
     fakeEngine.setStatus({ state: 'ready', info: { capabilities: { ...CAPABILITIES, dm: 'v5' } } });
     fakeEngine.method('dm.status').mockResolvedValue(dmStatus(false));
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(false));
-    fakeEngine.method('safety.block').mockResolvedValue(ticket({ op: 'block' }));
-    fakeEngine.method('dm.setBlocked').mockResolvedValue(undefined);
+    const pending = ticket({ op: 'block', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.block').mockResolvedValue(pending);
+    const invalidate = jest.spyOn(queryClient, 'invalidateQueries');
     withProviders(<BlockScreen />);
     await settle();
     await act(async () => fireEvent.press(screen.getByTestId('block-confirm')));
-    expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB.id, true);
+    invalidate.mockClear();
+    await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.dm.status });
+    expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
     expect(toastMessage()).toBe('Blocked @bob');
+    invalidate.mockRestore();
   });
 
   it('offers Unblock for an account already blocked', async () => {
     fakeEngine.method('profiles.get').mockResolvedValue(profileOf(true));
-    fakeEngine.method('safety.unblock').mockResolvedValue(ticket({ op: 'unblock' }));
+    const pending = ticket({ op: 'unblock', target: { identityId: BOB.id } });
+    fakeEngine.method('safety.unblock').mockResolvedValue(pending);
     withProviders(<BlockScreen />);
     await settle();
 
     expect(screen.getByText('You blocked @bob')).toBeTruthy();
     await act(async () => fireEvent.press(screen.getByTestId('unblock-confirm')));
     expect(fakeEngine.method('safety.unblock')).toHaveBeenCalledWith(BOB.id);
+    // Still shown as blocked, "Unblocking…", until it is confirmed.
+    expect(screen.getByText('You blocked @bob')).toBeTruthy();
+    expect(screen.getByTestId('unblock-confirm')).toHaveTextContent('Unblocking…');
+    expect(toastMessage()).toBeUndefined();
+
+    act(() => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
     expect(toastMessage()).toBe('Unblocked @bob');
+    expect(router.back).toHaveBeenCalled();
   });
 
   it('keeps the profile it holds when a refetch fails', async () => {

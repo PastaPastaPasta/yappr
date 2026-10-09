@@ -10,7 +10,12 @@ import { ChatBubbleOvalLeftEllipsisIcon, EllipsisHorizontalIcon, LockClosedIcon 
 
 import { errorCode, OFFLINE_MESSAGE } from '~/data/writes';
 import { openUser } from '~/features/post/post-navigation';
-import { blockFromConversation, unblockFromConversation, useBlockBusy } from '~/features/safety/block-state';
+import {
+  blockFromConversation,
+  unblockFromConversation,
+  useBlockBusy,
+  useConversationBlocked,
+} from '~/features/safety/block-state';
 import { copy as safetyCopy } from '~/features/safety/copy';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
@@ -95,7 +100,12 @@ function HeaderTitle({ conversation, onPress }: { conversation: ConversationDTO;
   );
 }
 
-function menuItems(conversation: ConversationDTO, v5: boolean, blockBusy: 'blocking' | 'unblocking' | null): MenuItem[] {
+function menuItems(
+  conversation: ConversationDTO,
+  v5: boolean,
+  blocked: boolean,
+  blockBusy: 'blocking' | 'unblocking' | null,
+): MenuItem[] {
   if (conversation.kind === 'group') {
     return [
       { id: 'info', title: 'Group info', systemImage: 'info.circle' },
@@ -112,7 +122,7 @@ function menuItems(conversation: ConversationDTO, v5: boolean, blockBusy: 'block
           systemImage: 'hand.raised',
           disabled: true,
         }
-      : conversation.flags.blocked
+      : blocked
         ? { id: 'unblock', title: 'Unblock', systemImage: 'hand.raised.slash' }
         : { id: 'block', title: 'Block', systemImage: 'hand.raised', destructive: true },
   ];
@@ -240,7 +250,10 @@ export function ConversationScreen() {
     router.push({ pathname: '/messages/[conversationId]/info', params: { conversationId: key } });
   }, [key]);
   const peerId = conversation?.peer?.id ?? '';
-  const blockBusy = useBlockBusy(conversation?.kind === 'direct' ? peerId || undefined : undefined);
+  const directPeer = conversation?.kind === 'direct' ? peerId || undefined : undefined;
+  const blockBusy = useBlockBusy(directPeer);
+  // The same block the profile and the Blocked list show, not only what Messages saved (RC16-A-02).
+  const peerBlocked = useConversationBlocked(directPeer, conversation?.flags.blocked ?? false);
   const onMenu = (id: string) => {
     if (!conversation) return;
     if (id === 'info') openInfo();
@@ -281,7 +294,7 @@ export function ConversationScreen() {
           : undefined,
         headerRight: conversation
           ? () => (
-              <ContextMenu items={menuItems(conversation, v5, blockBusy)} onSelect={onMenu} testID="dm-conversation-menu">
+              <ContextMenu items={menuItems(conversation, v5, peerBlocked, blockBusy)} onSelect={onMenu} testID="dm-conversation-menu">
                 <IconButton icon={EllipsisHorizontalIcon} accessibilityLabel="Conversation options" />
               </ContextMenu>
             )
@@ -346,7 +359,9 @@ export function ConversationScreen() {
     );
   }
 
-  const blockedReason = composerBlockedReason(conversation);
+  const blockedReason = composerBlockedReason(
+    conversation && { kind: conversation.kind, flags: { ...conversation.flags, blocked: peerBlocked } },
+  );
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = messages;
 
   return (

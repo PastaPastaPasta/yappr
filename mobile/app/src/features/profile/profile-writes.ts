@@ -70,11 +70,12 @@ const stillSaving = (ticket: WriteTicket) => ticket.error?.code === 'PENDING_WRI
 
 /**
  * Edit profile's save. The form waits on the write (it shows "Saving…" and
- * closes once the save is confirmed or may have landed), while the viewer's
- * cached profile shows the change at once: a save whose confirmation timed
- * out counts as done (PRD G-3), and the reconciler checks it. A failure, or
- * a check that proves it absent, undoes it with the failure toast. Once
- * confirmed, everything showing the viewer's name or avatar is read again.
+ * closes once the save is confirmed), while the viewer's cached profile shows
+ * the change at once. A save whose confirmation timed out is never called
+ * saved: the form says it is not confirmed yet, with "Check again", while the
+ * reconciler checks it (RC16-A-01). A failure, or a check that proves it
+ * absent, undoes it with the failure toast. Once confirmed, everything
+ * showing the viewer's name or avatar is read again.
  */
 export const profileUpdateWrite: WriteSpec<ProfileUpdateVars> = {
   key: ({ viewerId }) => `profile:${viewerId}`,

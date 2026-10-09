@@ -13,7 +13,7 @@ import type { DmInvite, IdentityId } from '@/lib/dm/types'
 import { createContext, type DmContext } from './context'
 import { LocalCache } from './local-cache'
 import type { Scheduler } from './self-state-store'
-import type { ChainGroupDoc, ChainInvite, ChainMessage, ChainSelfState, DmChain, InvitePage, KeyValueStore, WriteOutcome } from './types'
+import type { BroadcastOptions, ChainGroupDoc, ChainInvite, ChainMessage, ChainSelfState, DmChain, InvitePage, KeyValueStore, WriteOutcome } from './types'
 import { hexId } from './util'
 
 interface StoredSelfState {
@@ -129,7 +129,9 @@ export class MemoryChain implements DmChain {
     return this.writable
   }
 
-  async createMessage(tag: Uint8Array, body: Uint8Array): Promise<WriteOutcome> {
+  /** `beforeBroadcast` runs first: a `hook` outcome stands for what the broadcast answered. */
+  async createMessage(tag: Uint8Array, body: Uint8Array, options?: BroadcastOptions): Promise<WriteOutcome> {
+    options?.beforeBroadcast?.()
     const forced = this.override('createMessage', [tag, body])
     if (forced) return forced
     if (this.ledger.messages.some((m) => bytesEqual(m.tag, tag))) {
@@ -147,7 +149,8 @@ export class MemoryChain implements DmChain {
     return { ok: true, id, confirmed: true }
   }
 
-  async createInvite(invite: DmInvite): Promise<WriteOutcome> {
+  async createInvite(invite: DmInvite, options?: BroadcastOptions): Promise<WriteOutcome> {
+    options?.beforeBroadcast?.()
     const forced = this.override('createInvite', [invite])
     if (forced) return forced
     const doc: ChainInvite = { id: this.ledger.id(), ownerId: this.me, createdAt: this.ledger.tick(), ...invite }

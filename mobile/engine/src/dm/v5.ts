@@ -3,11 +3,14 @@ import type { RetentionSetting } from '@/lib/dm/types'
 import { NoEncryptionKeyError, type ConversationView, type DmEngine, type MessageView } from '@/lib/services/dm-v5'
 import type { Conv } from '@/lib/services/dm-v5/conversation'
 import { GroupError } from '@/lib/services/dm-v5/groups'
+import { YAPPR_DM_V5_CONTRACT_ID } from '@/lib/constants'
 import { isTimeoutError } from '@/lib/error-utils'
+import { settleSupersededReplaces } from '@/lib/services/identity-nonce'
 import { logger } from '@/lib/logger'
 import { scopedKey } from '@/lib/storage-scope'
 import { RpcError } from '../protocol/envelope'
 import type { AppLifecycleState } from '../shims/lifecycle'
+import { classify } from '../writes/classify'
 import { NotSentError, type ProbeResult, type WriteResult } from '../writes/tickets'
 import { createChangeTracker, unreadCounts, type ConversationRow, type DmEmit, type DmView } from './changes'
 import type { DmGroupAction, DmStatusDTO, MessageDTO } from './types'
@@ -33,7 +36,7 @@ type KeyValueArea = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
  * (PRD AUTH-11).
  */
 export function dmLocalKeys(identityId: string): string[] {
-  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId), blocksKey(identityId)]
+  return [scopedKey(`yappr_dm_v5:${identityId}`), retentionKey(identityId), blocksKey(identityId), followedKey(identityId)]
 }
 
 /**
@@ -49,6 +52,54 @@ const retentionKey = (identityId: string) => scopedKey(`yappr_engine_dm_retentio
  * Messages (PRD SAFE-01), so it is kept here and applied once it can be.
  */
 const blocksKey = (identityId: string) => scopedKey(`yappr_engine_dm_blocks:${identityId}`)
+
+/**
+ * The people this device blocked in Messages because the account blocks
+ * them (PRD SAFE-01), each with the account block it followed: its
+ * `$createdAt`, or a `Local` mark for one confirmed here (or read without
+ * one) whose `$createdAt` it has not read yet. Only these are lifted when
+ * the account's block goes. A block made in Messages alone (web's
+ * conversation menu) is never in it, so following the account's blocks
+ * never lifts one.
+ */
+const followedKey = (identityId: string) => scopedKey(`yappr_engine_dm_account_blocks:${identityId}`)
+
+/**
+ * `local:<the block document's $id>` (empty when not known). Document ids
+ * are nonce-committed, so a block removed and made again has a new one.
+ * Earlier builds kept `local` alone: whatever block is read is that one.
+ */
+type Local = `local${string}`
+type Followed = Map<string, number | Local>
+
+const localMark = (documentId: string | undefined): Local => `local:${documentId ?? ''}`
+
+/**
+ * Whether the block read (`$id`) is the one a `Local` mark followed: always
+ * for an earlier build's mark, never when its id was not known.
+ */
+function isFollowedBlock(seen: Local, documentId: string): boolean {
+  return seen === 'local' || (seen.length > 'local:'.length && seen === localMark(documentId))
+}
+
+function readFollowed(storage: KeyValueArea, identityId: string): Followed {
+  try {
+    const value = JSON.parse(storage.getItem(followedKey(identityId)) ?? '{}') as unknown
+    // Earlier builds kept only the ids.
+    if (Array.isArray(value)) return new Map(value.filter((id): id is string => typeof id === 'string').map(id => [id, 'local']))
+    if (value && typeof value === 'object') {
+      return new Map(Object.entries(value).filter((entry): entry is [string, number | Local] =>
+        (typeof entry[1] === 'string' && entry[1].startsWith('local')) || Number.isFinite(entry[1])))
+    }
+  } catch {
+    // Unreadable: nothing followed yet.
+  }
+  return new Map()
+}
+
+function writeFollowed(storage: KeyValueArea, identityId: string, followed: Followed): void {
+  storage.setItem(followedKey(identityId), JSON.stringify(Object.fromEntries(followed)))
+}
 
 /** A choice kept for later: block or unblock, and when it was made (a newer one from another device wins). */
 interface PendingBlock {
@@ -74,12 +125,16 @@ function readPendingBlocks(storage: KeyValueArea, identityId: string): Record<st
 }
 
 /**
- * Block or unblock `peerId` unless that already stands (an unblock of
- * someone never blocked writes nothing). Returns whether it changed anything.
+ * Block or unblock `peerId` in Messages as a choice made at `at` (ms): set,
+ * or when it already stands, stamped again, unless the saved state holds a
+ * newer change for them (from any device). So a change synchronized later
+ * from another device wins only when it was made after `at`, whatever this
+ * device's DM clock says (lib stamps no earlier than its own `now`). Returns
+ * whether it saved anything.
  */
-function applyBlock(running: DmEngine, peerId: string, blocked: boolean): boolean {
-  if (running.getSnapshot().blocked.includes(peerId) === blocked) return false
-  running.setBlocked(peerId, blocked)
+function applyBlock(running: DmEngine, peerId: string, blocked: boolean, at: number): boolean {
+  if (savedBlockChange(running, peerId) >= at && running.getSnapshot().blocked.includes(peerId) === blocked) return false
+  running.setBlocked(peerId, blocked, at)
   return true
 }
 
@@ -107,20 +162,105 @@ function readPendingRetention(storage: KeyValueArea, identityId: string): Pendin
   return null
 }
 
-/** A send in progress: its broadcasts, and my messages the conversation held at the latest one. */
+/**
+ * How long a send may take before it is given up as not sent, unless it has
+ * broadcast something by then (an invite or a message). It runs from the
+ * moment the send's ticket starts: the wait for an earlier send, the settle
+ * of lib's pending replaces (which waits for the account's write lock, held
+ * by any write in progress through its confirmation), lib's queue, and every
+ * read and build before the broadcast all count. A send is about four DAPI round trips
+ * (about 2 s); this allows three consecutive 8 s SDK timeouts
+ * (`evo-sdk-service` `timeoutMs`). It stays under the 45 s a send may take
+ * to get its ticket (`SEND_SUBMIT_DEADLINE_MS`) and the 60 s after which a
+ * ticket reads "still sending" (`PENDING_DEADLINE_MS`) or the app gives the
+ * text back (`UNTICKETED_WAIT_MS`): a send that never got out reads "Not
+ * delivered" with a retry, not a lasting "Sending" (RC16-A-03).
+ */
+export const SEND_BUDGET_MS = 30_000
+
+/**
+ * The pause before a send whose read before its broadcast failed on the
+ * connection tries once more: the SDK rebuilds its connection in the
+ * background after such a failure, and `getSdk` waits for the rebuild
+ * (RC16-A-05).
+ */
+export const SEND_REATTEMPT_PAUSE_MS = 2_000
+
+/** A send given up before anything went out: the same words wherever a send takes too long. */
+export const SEND_GAVE_UP = "Sending took too long, so it wasn't sent. Try again."
+
+/**
+ * A send in progress: how many broadcasts it made (its conversation's
+ * invite, each message), counted just before each goes out, past every read
+ * and build before it (lib's `beforeBroadcast`, called by `createDocument`
+ * at its broadcast); whether the latest may still land (`inFlight`: lib has
+ * not settled it yet, by starting the conversation or holding the message);
+ * how many of its messages lib holds (`held`, each out); and whether it was
+ * given up as not sent (it may broadcast nothing from then on). Only this
+ * send's own broadcasts count: lib runs group grants, leaves and re-keys
+ * through the same chain, and none of them is this send's.
+ */
 interface SendAttempt {
-  key: string
   broadcasts: number
-  heldAtBroadcast: number
+  inFlight: boolean
+  held: number
+  abandoned: boolean
 }
 
-/** One engine's sends, run one at a time, and the one in progress. */
-interface SendLane {
-  queue: Promise<unknown>
-  attempt: SendAttempt | null
+/**
+ * A send that failed with none of its broadcasts in flight: its first
+ * `held` messages are out (none: nothing of the text is), and the rest never
+ * left the device, so a retry of just the rest cannot send anything twice
+ * (SR-18). Thrown only by the v5 backend's `send`.
+ */
+export class RestNotSentError extends NotSentError {
+  constructor(cause: unknown, readonly held: number) {
+    super(cause)
+    this.name = 'RestNotSentError'
+  }
 }
 
-const ownMessages = (engine: DmEngine, key: string): number => engine.messages(key).filter(m => m.own).length
+/**
+ * Whether a send that failed before broadcasting anything tries once more:
+ * the connection failed (`NETWORK`) or a read timed out (`TIMEOUT`),
+ * typically the first request after the network came back, on connections
+ * the stall left dead. Nothing went out, so it cannot duplicate.
+ */
+function reattempts(error: unknown, attempt: SendAttempt): boolean {
+  if (attempt.broadcasts > 0 || attempt.abandoned) return false
+  const { code } = classify(error)
+  return code === 'NETWORK' || code === 'TIMEOUT'
+}
+
+const pause = (ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms) })
+
+/**
+ * `turn`'s outcome, or, `SEND_BUDGET_MS` after the send started with nothing
+ * broadcast, a retryable not-sent failure (`NETWORK`): the attempt is given
+ * up, so lib's call, which runs on until its own requests end, broadcasts
+ * nothing more (`beforeBroadcast` refuses). Once anything went out, part of
+ * the send may land: this stops timing and waits for lib's answer, and the
+ * ticket reads "still sending" in the meantime (`PENDING_DEADLINE_MS`).
+ */
+function withinBudget(turn: Promise<void>, attempt: SendAttempt): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (attempt.broadcasts > 0) return
+      attempt.abandoned = true
+      reject(new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK')))
+    }, SEND_BUDGET_MS)
+    turn.then(
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
 
 /** My messages in `key` held on trust and not read back yet (`MessageView.pending`), counted without building the views. */
 function pendingIn(engine: DmEngine, key: string): number {
@@ -198,7 +338,36 @@ function view(engine: DmEngine): DmView {
  * maps its views to DTOs and its notifications to events, and stops it with
  * a flush when the session ends. Mirrors `components/messages/messages-v5.tsx`.
  */
-export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit; coalesceMs?: number; storage?: KeyValueArea }) {
+/**
+ * A block list read this soon after a block or unblock settled may not
+ * show it yet (a lagging node): that write, not the read, decides the
+ * person's block in Messages meanwhile.
+ */
+export const BLOCK_SETTLING_MS = 10 * 60_000
+
+/** The account's own block list, read whole: each blocked person, the block's `$id`, and when it was made (block time, ms). */
+export type AccountBlockList = ReadonlyMap<string, { id: string; createdAt: number }>
+
+export interface V5BackendOptions {
+  source: DmEngineSource
+  emit: DmEmit
+  coalesceMs?: number
+  storage?: KeyValueArea
+  /**
+   * An engine started for `identityId` (sign-in, a restored session, an
+   * unlock): read the account's own block list, for `followAccountBlocks`.
+   */
+  onStarted?: (identityId: string) => void
+  /**
+   * The people a block or unblock from this device may still be changing, or
+   * just changed (a list read now may not show it yet): that write decides
+   * their block in Messages (`followAccountBlock`), not a list read. Null
+   * when they can't be told: then no list read changes Messages.
+   */
+  settling?: () => ReadonlySet<string> | null
+}
+
+export function createV5Backend(options: V5BackendOptions) {
   const tracker = createChangeTracker({ emit: options.emit, coalesceMs: options.coalesceMs })
   const storage = (): KeyValueArea => options.storage ?? localStorage
   let current: { identityId: string; engine: DmEngine; unsubscribe: () => void } | null = null
@@ -207,35 +376,13 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
   /** Saves still running for engines already stopped: their end rewrites lib's cache. */
   const flushes = new Map<string, Promise<unknown>>()
   /**
-   * Each engine's sends, one at a time, so a broadcast seen during one is its
-   * own (or, harmlessly, a group write's). Per engine: a send hanging on an
-   * old account's engine never holds up the next account's.
+   * Each engine's sends, one at a time, so a send that tries once more
+   * (RC16-A-05) never lets a later one overtake it. Per engine: a send
+   * hanging on an old account's engine never holds up the next account's.
    */
-  const lanes = new WeakMap<DmEngine, SendLane>()
-
-  /**
-   * The engine's send lane, which counts `createMessage` broadcasts on its
-   * chain for the send in progress. lib sends a long text part by part inside
-   * one call and reports a failure without saying whether the failing part
-   * was broadcast; this tells (SR-17).
-   */
-  function laneOf(running: DmEngine): SendLane {
-    const known = lanes.get(running)
-    if (known) return known
-    const lane: SendLane = { queue: Promise.resolve(), attempt: null }
-    lanes.set(running, lane)
-    const { chain } = running.ctx
-    const createMessage = chain.createMessage.bind(chain)
-    chain.createMessage = (tag, body) => {
-      const { attempt } = lane
-      if (attempt) {
-        attempt.broadcasts += 1
-        attempt.heldAtBroadcast = ownMessages(running, attempt.key)
-      }
-      return createMessage(tag, body)
-    }
-    return lane
-  }
+  const lanes = new WeakMap<DmEngine, Promise<unknown>>()
+  /** The account's block list, read before the saved state loaded: applied once it has. */
+  let heldBlocks: { identityId: string; blocked: AccountBlockList } | null = null
 
   /** The engine for `identityId`, started on first use; null while the device has no encryption key for it. */
   function engineOf(identityId: string): DmEngine | null {
@@ -257,6 +404,9 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
       loaded = true
       restoreRetention(identityId, engine)
       restoreBlocks(identityId, engine)
+      const held = heldBlocks
+      heldBlocks = null
+      if (held?.identityId === identityId) followBlocks(identityId, engine, held.blocked)
     }
     const unsubscribe = engine.subscribe(() => {
       restoreOnceLoaded()
@@ -266,6 +416,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     restoreOnceLoaded()
     engine.start().catch(error => logger.warn('DM v5 engine failed to start:', error))
     if (backgrounded) engine.pause()
+    options.onStarted?.(identityId)
     return engine
   }
 
@@ -314,8 +465,82 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     const pending = readPendingBlocks(storage(), identityId)
     storage().removeItem(blocksKey(identityId))
     for (const [peerId, { blocked, changedAt }] of Object.entries(pending)) {
-      if (savedBlockChange(running, peerId) < changedAt) applyBlock(running, peerId, blocked)
+      if (savedBlockChange(running, peerId) < changedAt) applyBlock(running, peerId, blocked, changedAt)
     }
+  }
+
+  /**
+   * Messages follow the account's own blocks (PRD SAFE-01, SAFE-02): block
+   * everyone on `blocked` (the whole list, as read) for each account block
+   * this device has not followed yet, and lift the blocks it made for people
+   * no longer on it. A block already standing in Messages is adopted, so the
+   * account's unblock lifts it too. An account block already followed here
+   * changes nothing, so a choice made in Messages since (Message settings'
+   * Unblock) stands; a newer one (removed and made again) blocks them again.
+   * One not followed here yet leaves unblocked someone Messages unblocked
+   * after it was made, on another device (the newer change wins, as in a
+   * merge). A block changed in Messages lately is never lifted by a read
+   * (one from a node that has not caught up yet must not undo it). People
+   * with a block or unblock of their own settling are left to it
+   * (`followAccountBlock`).
+   */
+  function followBlocks(identityId: string, running: DmEngine, blocked: AccountBlockList): void {
+    const settling = options.settling ? options.settling() : new Set<string>()
+    if (!settling) return
+    const followed = readFollowed(storage(), identityId)
+    const standing = new Set(running.getSnapshot().blocked)
+    let changed = false
+    for (const [peerId, { id, createdAt }] of blocked) {
+      if (settling.has(peerId)) continue
+      const madeAt = Number.isFinite(createdAt) ? createdAt : null
+      const seen = followed.get(peerId)
+      if (typeof seen === 'string') {
+        // Followed when it was confirmed (or read) here: only its age is new. Another block (removed
+        // and made again since, on another device), or one whose id this device never learnt, is new.
+        if (isFollowedBlock(seen, id)) {
+          if (madeAt !== null) {
+            // Its Messages block (a choice made here since aside) counts as made no earlier than it.
+            if (standing.has(peerId)) applyBlock(running, peerId, true, madeAt)
+            followed.set(peerId, madeAt)
+            changed = true
+          }
+          continue
+        }
+      } else if (seen !== undefined && (madeAt === null || madeAt <= seen)) {
+        // The account block already followed: a choice made in Messages since stands.
+        continue
+      }
+      // Not followed here yet (an unknown age counts as the newest): Messages block them, as of
+      // when it was made, unless Messages lifted their block after that (on another device, or here
+      // since). Stamped so, an older change synchronized later from another device never undoes it.
+      if (madeAt === null) applyBlock(running, peerId, true, Date.now())
+      else if (standing.has(peerId) || savedBlockChange(running, peerId) <= madeAt) applyBlock(running, peerId, true, madeAt)
+      followed.set(peerId, madeAt ?? localMark(id))
+      changed = true
+    }
+    // "Lately" by the DM clock (the latest DM read), which every Messages change is stamped no earlier
+    // than (`DmEngine.setBlocked`): a stale DM clock only waits longer, and a device clock running ahead
+    // never counts another device's recent change as settled.
+    const lately = running.ctx.chain.now() - BLOCK_SETTLING_MS
+    for (const peerId of [...followed.keys()]) {
+      if (blocked.has(peerId) || settling.has(peerId) || savedBlockChange(running, peerId) > lately) continue
+      // When the block went is not known: stamped now, by this device's clock as well as the DM clock
+      // (which may be minutes old), so a Messages change made before this read, synchronized later
+      // from another device, never brings back a block the account has removed.
+      applyBlock(running, peerId, false, Date.now())
+      followed.delete(peerId)
+      changed = true
+    }
+    if (changed) writeFollowed(storage(), identityId, followed)
+  }
+
+  /** `applyBlock` at `at`: now when the saved state has loaded, else kept for when it has. */
+  function blockInMessages(identityId: string, peerId: string, blocked: boolean, at: number): boolean {
+    const running = engineOf(identityId)
+    if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked, at)
+    const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: at } }
+    storage().setItem(blocksKey(identityId), JSON.stringify(pending))
+    return true
   }
 
   /** The engine holding conversation `key` (a closed draft is held but not in the snapshot). */
@@ -342,6 +567,7 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
     async deactivate(): Promise<void> {
       const stopping = current
       current = null
+      heldBlocks = null
       tracker.reset()
       if (!stopping) return
       stopping.unsubscribe()
@@ -452,11 +678,41 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      * anything (kept for later counts as a change).
      */
     setBlocked(identityId: string, peerId: string, blocked: boolean): boolean {
-      const running = engineOf(identityId)
-      if (running?.getSnapshot().ready) return applyBlock(running, peerId, blocked)
-      const pending = { ...readPendingBlocks(storage(), identityId), [peerId]: { blocked, changedAt: Date.now() } }
-      storage().setItem(blocksKey(identityId), JSON.stringify(pending))
-      return true
+      const snapshot = engineOf(identityId)?.getSnapshot()
+      if (snapshot?.ready && snapshot.blocked.includes(peerId) === blocked) return false
+      // Stamped now, and after the account block followed here, whatever the DM clock (the latest DM
+      // read) says: an account block read later, or on another device, counts as older only if it is.
+      const seen = readFollowed(storage(), identityId).get(peerId)
+      return blockInMessages(identityId, peerId, blocked, Math.max(Date.now(), typeof seen === 'number' ? seen + 1 : 0))
+    },
+
+    /**
+     * The account's own block list as just read, whole (never a failed or
+     * partial read): Messages follow it (`followBlocks`). Applied once the
+     * saved state has loaded; ignored while Messages are locked, or for
+     * another account: the next engine start reads the list again.
+     */
+    followAccountBlocks(identityId: string, blocked: AccountBlockList): void {
+      const running = current?.identityId === identityId ? current.engine : null
+      if (!running) return
+      if (running.getSnapshot().ready) followBlocks(identityId, running, blocked)
+      else heldBlocks = { identityId, blocked }
+    },
+
+    /**
+     * The account's own block on `peerId` was confirmed (`blocked`), or
+     * confirmed gone: Messages block or unblock them too, now or once they
+     * can (`setBlocked`), and this device remembers whether it blocked them
+     * there for the account, and which block (`documentId`, when known).
+     */
+    followAccountBlock(identityId: string, peerId: string, blocked: boolean, documentId?: string): void {
+      // As of now (it was just confirmed), even when it already stands: a change synchronized later
+      // from another device wins only when made after it.
+      blockInMessages(identityId, peerId, blocked, Date.now())
+      const followed = readFollowed(storage(), identityId)
+      if (blocked) followed.set(peerId, localMark(documentId))
+      else followed.delete(peerId)
+      writeFollowed(storage(), identityId, followed)
     },
 
     /** "Reclaim message fees": applied at once and saved now, kept on the device until the save lands. */
@@ -487,28 +743,65 @@ export function createV5Backend(options: { source: DmEngineSource; emit: DmEmit;
      * `DmEngine.send` settles uncertain broadcasts itself (it reads the slot
      * back), so a resolve is `confirmed` and a reject is classified
      * (ENGINE.md §7.1). Long text goes out as several messages (§5.7). A
-     * failure before the failing part was broadcast (a read, the group's
-     * state) is a `NotSentError`: nothing of that part can land, so it is
-     * failed, not "maybe sent".
+     * failure with none of its broadcasts in flight (before the first, or
+     * after lib settled each: a read, the group's state, a read inside
+     * `createDocument` before the next part's broadcast) is a
+     * `RestNotSentError`: the parts lib held are out and the rest can never
+     * land, so it is failed, not "maybe sent". A failure while a broadcast
+     * may still land (lib has not held that part) never is.
+     * Its whole run, from the ticket's start, counts against
+     * `SEND_BUDGET_MS`, including the settle of lib's pending replaces
+     * before it (the host runs no other step before a send).
      */
     async send(identityId: string, key: string, text: string): Promise<WriteResult> {
       const running = engine(identityId)
-      const lane = laneOf(running)
-      const turn = lane.queue.then(async () => {
-        const current: SendAttempt = { key, broadcasts: 0, heldAtBroadcast: 0 }
-        lane.attempt = current
+      const current: SendAttempt = { broadcasts: 0, inFlight: false, held: 0, abandoned: false }
+      const gaveUp = () => new NotSentError(new RpcError(SEND_GAVE_UP, 'NETWORK'))
+      // Counts this send's own broadcasts, and refuses them once it was given up.
+      const beforeBroadcast = () => {
+        if (current.abandoned) throw new RpcError(SEND_GAVE_UP, 'NETWORK')
+        current.broadcasts += 1
+        current.inFlight = true
+      }
+      const afterSettled = (held: number) => {
+        current.inFlight = false
+        current.held = held
+      }
+      const turn = (lanes.get(running) ?? Promise.resolve()).then(async () => {
+        // Given up while it waited behind an earlier send: never started.
+        if (current.abandoned) throw gaveUp()
+        // An SDK-signed replace (a roster or self-state save) whose answer was lost but which the
+        // DM engine has since seen land stops holding writes back: lib keeps it pending for 15
+        // minutes otherwise, and every DM write in between fails PENDING_WRITE. It waits for the
+        // account's write lock, which a write in progress holds through its confirmation.
+        await settleSupersededReplaces(identityId, YAPPR_DM_V5_CONTRACT_ID)
+          .catch(error => logger.debug('DM: could not settle pending replaces:', error))
+        // Given up while it waited for the lock: never sent.
+        if (current.abandoned) throw gaveUp()
         try {
-          await running.send(key, text)
+          try {
+            await running.send(key, text, { beforeBroadcast, afterSettled })
+          } catch (error) {
+            if (!reattempts(error, current)) throw error
+            logger.debug('DM send: the connection failed before anything went out; trying once more:', error)
+            await pause(SEND_REATTEMPT_PAUSE_MS)
+            if (current.abandoned) throw error
+            await running.send(key, text, { beforeBroadcast, afterSettled })
+          }
         } catch (error) {
-          // No broadcast at all, or the part last broadcast is held (it landed) and the next failed before its own.
-          if (current.broadcasts === 0 || ownMessages(running, key) > current.heldAtBroadcast) throw new NotSentError(error)
+          // Nothing in flight: the parts lib held are out, and nothing of the rest can land. While a
+          // broadcast is (lib never held its part), that part may have gone out, so the failure is
+          // "may have been sent" and is checked, never sent again.
+          if (!current.inFlight) throw new RestNotSentError(error, current.held)
           throw error
-        } finally {
-          if (lane.attempt === current) lane.attempt = null
         }
       })
-      lane.queue = turn.catch(() => undefined)
-      await turn
+      // The lane stays busy until lib's call ends, even one given up: the next send never starts
+      // beside it. A part that stalls after an earlier part went out is never given up (it may
+      // land), so it holds this lane, and lib's queue, until lib answers; only the ticket's 60 s
+      // deadline ("still sending", PENDING_DEADLINE_MS) covers that wait.
+      lanes.set(running, turn.catch(() => undefined))
+      await withinBudget(turn, current)
       return { state: 'confirmed' }
     },
 
