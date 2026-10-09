@@ -95,9 +95,19 @@ test('the order carries the combination, and the seller reads it with its SKU', 
   await expect(page.getByRole('heading', { name: 'Order Placed!' })).toBeVisible({ timeout: WRITE_TIMEOUT })
 
   const sellerPage = seller.page
-  // The newest order is first; its row (by its status, not the buyer link in it) opens to the decrypted lines.
-  const newest = await reloadUntilVisible(sellerPage, appUrl('/orders/seller/'), (p) => p.getByText('Pending', { exact: true }), { attempts: 10 })
-  await newest.click()
-  await expect(sellerPage.getByText('SKU SQ-RED-4').first()).toBeVisible({ timeout: 60_000 })
-  await expect(sellerPage.getByText('(Red / 4 Pack)').first()).toBeVisible()
+  // The store is reused across runs, so open pending orders one at a time (a row opens by its status, not the
+  // buyer link in it; one row is open at a time) until the decrypted lines name THIS run's listing.
+  const openThisRunsOrder = async (): Promise<boolean> => {
+    await sellerPage.goto(appUrl('/orders/seller/'))
+    const pending = sellerPage.getByText('Pending', { exact: true })
+    await pending.first().waitFor({ timeout: 15_000 }).catch(() => undefined)
+    for (let i = 0; i < await pending.count(); i++) {
+      await pending.nth(i).click()
+      if (await sellerPage.getByText(listing.title).first().waitFor({ timeout: 10_000 }).then(() => true, () => false)) return true
+    }
+    return false
+  }
+  await expect.poll(openThisRunsOrder, { timeout: WRITE_TIMEOUT, intervals: [5_000] }).toBe(true)
+  await expect(sellerPage.getByText('SKU SQ-RED-4')).toBeVisible()
+  await expect(sellerPage.getByText('(Red / 4 Pack)')).toBeVisible()
 })
