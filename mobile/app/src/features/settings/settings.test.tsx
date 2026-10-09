@@ -761,9 +761,10 @@ describe('About (SET-06, SET-07)', () => {
     expect(toastMessage()).toBe('Version info copied');
 
     fireEvent.press(byId('about-terms'));
-    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/terms');
+    // This network's copies: the devnet build's notice must say devnet (D-013).
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/terms');
     fireEvent.press(byId('about-privacy'));
-    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/privacy');
+    expect(WebBrowser.openBrowserAsync).toHaveBeenCalledWith('https://yap.pr/devnet/privacy');
   });
 
   it('has one Community rules row: the summary first, then the full rules the terms gate shows', () => {
