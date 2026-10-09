@@ -13,7 +13,7 @@ import { CASHTAG_SUFFIX, cashtagDisplayToStorage, hashtagDisplayToStorage } from
 import { useSettingsStore } from '@/lib/store'
 import type { Post } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
-import { listToDTOs, notSupported, requireViewer, viewerId, visibleDTOs } from '../dto/hydrate'
+import { listToDTOs, notSupported, requireViewer, rereadQuotedPosts, viewerId, visibleDTOs } from '../dto/hydrate'
 import { nextPage, onePage, pageAfter, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
 import { NewPostsRetry, selectNewPosts } from './new-posts-retry'
@@ -195,6 +195,7 @@ export const feed = {
    * windows (signed in). **Top:** the proved ranking (`rankings` capability).
    */
   async home(query: HomeQuery): Promise<Page<PostDTO>> {
+    if (!query.cursor) rereadQuotedPosts()
     if (query.sort === 'top') return top(query)
     return query.tab === 'following' ? following(query.cursor) : forYou(query.cursor)
   },
@@ -248,6 +249,7 @@ export const feed = {
   async hashtag(query: HashtagQuery): Promise<Page<PostDTO>> {
     const tag = storageTag(query.tag)
     if (!tag || tag === CASHTAG_SUFFIX) throw new RpcError('No tag given', 'BAD_REQUEST')
+    if (!query.cursor) rereadQuotedPosts()
     if (query.sort === 'top') {
       if (!likesAreIndexOnly()) throw notSupported('The Top sort')
       const ranked = await topLikedPostsHydrated({ hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all' })

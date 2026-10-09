@@ -106,6 +106,18 @@ function fetchQuoteTargets(pending: Post[]): Promise<Post[]> {
   return quoteFieldsAreSplit() ? resolveByField(pending) : resolveByProbe(pending);
 }
 
+/**
+ * Drop resolved quote targets so the next pass reads them again: `ids`, or
+ * every one when omitted. Returns the ids it dropped. Web keeps them for the
+ * session; the mobile engine forgets them on a delete and on a refresh, so a
+ * quote of a deleted post stops showing the text it had.
+ */
+export function forgetQuotedPosts(ids?: Iterable<string>): string[] {
+  const dropped = ids ? Array.from(ids).filter((id) => resolvedQuoteCache.has(id)) : Array.from(resolvedQuoteCache.keys());
+  for (const id of dropped) resolvedQuoteCache.delete(id);
+  return dropped;
+}
+
 /** Cache peek for the per-card fallback's synchronous fast path. */
 export function getCachedQuotedPost(targetId: string): Post | null {
   return resolvedQuoteCache.get(targetId) ?? null;

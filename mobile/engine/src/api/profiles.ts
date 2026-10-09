@@ -23,7 +23,8 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import {
-  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, requireViewer, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
+  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, requireViewer, rereadQuotedPosts, toPostDTOs, viewerId,
+  visibleDTOs, withLoadingAuthor,
 } from '../dto/hydrate'
 import { onePage, pageAfter, pageOfList } from '../dto/paging'
 import { assertMediaUrl, characters, relationProbe, signer } from '../writes/handler-kit'
@@ -188,6 +189,7 @@ export const profiles = {
    * (the profile shows the block).
    */
   async posts(query: ProfilePostsQuery): Promise<Page<PostDTO | ProfileReplyDTO>> {
+    if (!query.cursor) rereadQuotedPosts()
     switch (query.tab) {
       case 'posts': return postsTab(query.id, query.cursor)
       case 'replies': return repliesTab(query.id, query.cursor)

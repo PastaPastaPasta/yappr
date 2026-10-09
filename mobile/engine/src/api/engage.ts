@@ -8,7 +8,7 @@ import { likeService } from '@/lib/services/like-service'
 import { postService } from '@/lib/services/post-service'
 import { repostService } from '@/lib/services/repost-service'
 import { RpcError } from '../protocol/envelope'
-import { assertAtMost, enrichToDTOs, notSupported, requireViewer, viewerId, withLoadingAuthor } from '../dto/hydrate'
+import { assertAtMost, enrichToDTOs, notSupported, requireViewer, rereadQuotedPosts, viewerId, withLoadingAuthor } from '../dto/hydrate'
 import { pageOfList } from '../dto/paging'
 import { assertTarget, relationProbe, settleTarget, signer, socialDoc, ticketTarget } from '../writes/handler-kit'
 import { fromBoolean, fromDeleteBoolean, wasConfirmed } from '../writes/lib-results'
@@ -224,6 +224,7 @@ export function createEngageWrites(tickets: TicketStore) {
      */
     async bookmarks(cursor?: string | null): Promise<Page<PostDTO>> {
       const viewer = requireViewer('Bookmarks')
+      if (!cursor) rereadQuotedPosts()
       return pageOfList({
         kind: 'bookmarks',
         key: viewer,

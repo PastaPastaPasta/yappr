@@ -14,9 +14,9 @@ const m = vi.hoisted(() => ({
   viewer: null as string | null,
   postService: {
     enrichPostsBatch: vi.fn(), getPostById: vi.fn(), queryForDisplay: vi.fn(), getUserPosts: vi.fn(),
-    getPostsByIds: vi.fn(), getQuotePosts: vi.fn(),
+    getPostsByIds: vi.fn(), getQuotePosts: vi.fn(), fetchPostsOrReplies: vi.fn(), fetchQuotedTargets: vi.fn(), clearCache: vi.fn(),
   },
-  replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn() },
+  replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn(), clearCache: vi.fn() },
   followService: {
     getFollowers: vi.fn(), getFollowing: vi.fn(), countFollowersBatch: vi.fn(), countFollowingBatch: vi.fn(),
     getFollowStatusBatch: vi.fn(), getFollowingIds: vi.fn(), getFollowingIdsCached: vi.fn(),
@@ -65,6 +65,7 @@ const { feed } = await import('../../src/api/feed')
 const { posts } = await import('../../src/api/posts')
 const { profiles } = await import('../../src/api/profiles')
 const { graph } = await import('../../src/api/graph')
+const { attachQuotedPosts, getCachedQuotedPost } = await import('@/lib/feed/resolve-quoted-posts')
 const { validate, engagementPage, page, postDTO, threadDTO, pollDTO } = await import('../../src/dto/validate')
 
 /** A 44-character base58 id. */
@@ -130,6 +131,28 @@ describe('posts.thread on flat threads (v9/v10)', () => {
     expect(m.replyService.getReplies).toHaveBeenCalledTimes(2)
     expect(m.replyService.getReplies).toHaveBeenLastCalledWith(id('Root'), { skipEnrichment: true, startAfter: id('One') })
     await expect(posts.thread(id('Other'), first.replies.cursor)).rejects.toMatchObject({ code: 'BAD_CURSOR' })
+  })
+
+  it('reads quoted posts again on a refresh, and keeps them on a continuation (RC16-I-04)', async () => {
+    const quoted = post('Quoted', 1)
+    m.postService.fetchPostsOrReplies.mockResolvedValue([quoted])
+    m.postService.fetchQuotedTargets.mockResolvedValue([quoted])
+    const quote = () => post('Quote', 2, { quotedPostId: quoted.id })
+    await attachQuotedPosts([quote()])
+    expect(getCachedQuotedPost(quoted.id)).toEqual(quoted)
+
+    m.replyService.getReplies.mockResolvedValue({ documents: [reply('One', 2)], nextCursor: id('One') })
+    const first = await posts.thread(id('Root'))
+    // lib's session cache and both document caches let go of it: the next enrichment reads it.
+    expect(getCachedQuotedPost(quoted.id)).toBeNull()
+    expect(m.postService.clearCache).toHaveBeenCalledWith(quoted.id)
+    expect(m.replyService.clearCache).toHaveBeenCalledWith(quoted.id)
+
+    await attachQuotedPosts([quote()])
+    m.postService.clearCache.mockClear()
+    await posts.thread(id('Root'), first.replies.cursor)
+    expect(getCachedQuotedPost(quoted.id)).toEqual(quoted)
+    expect(m.postService.clearCache).not.toHaveBeenCalled()
   })
 
   it('keeps replies under a proved-deleted parent below a blank stub', async () => {

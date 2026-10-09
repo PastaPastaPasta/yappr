@@ -39,9 +39,9 @@ const m = vi.hoisted(() => ({
   postService: {
     createPost: vi.fn(), deleteOwnPost: vi.fn(), getOwnQuotes: vi.fn(), getPostById: vi.fn(),
     getPostsByIdsForDisplay: vi.fn(), enrichPostsBatch: vi.fn(async (posts: unknown[]) => posts),
-    getUserPosts: vi.fn(),
+    getUserPosts: vi.fn(), clearCache: vi.fn(),
   },
-  replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn(), getUserReplies: vi.fn() },
+  replyService: { createReply: vi.fn(), deleteOwnReply: vi.fn(), getReplyById: vi.fn(), getUserReplies: vi.fn(), clearCache: vi.fn() },
   followService: { followUser: vi.fn(), unfollowUser: vi.fn(), getFollowing: vi.fn(), getFollowStatusBatch: vi.fn(async () => new Map()) },
   blockService: {
     blockUser: vi.fn(), unblockUser: vi.fn(), getBlockProvenance: vi.fn(), getUserBlocks: vi.fn(), checkBlockedBatch: vi.fn(), getBlockSourcesBatch: vi.fn(),
@@ -1029,6 +1029,22 @@ describe('posts.publish and posts.delete', () => {
     m.postService.getPostById.mockResolvedValue(null)
     m.replyService.getReplyById.mockResolvedValue({ ...post(TARGET.id), parentId: id('P'), deleted: true })
     expect(await tickets.check(ticket.id)).toMatchObject({ state: 'confirmed' })
+  })
+
+  it('makes quotes of a deleted post or reply read it again, even when the delete gave no verdict (RC16-I-04)', async () => {
+    const { outcome, posts } = engine()
+    const own = { ...TARGET, ownerId: VIEWER }
+    m.postService.deleteOwnPost.mockResolvedValue(true)
+    await outcome(posts.delete(own))
+    expect(m.postService.clearCache).toHaveBeenCalledWith(TARGET.id)
+    expect(m.replyService.clearCache).toHaveBeenCalledWith(TARGET.id)
+
+    vi.clearAllMocks()
+    m.topology.deletesAreTombstones = true
+    m.replyService.deleteOwnReply.mockRejectedValue(new Error('Request timeout'))
+    await outcome(posts.delete({ ...own, kind: 'reply' }))
+    expect(m.postService.clearCache).toHaveBeenCalledWith(TARGET.id)
+    expect(m.replyService.clearCache).toHaveBeenCalledWith(TARGET.id)
   })
 
   it('decides a delete\'s `false` with its probe: a send whose wait gave no verdict is not a refusal', async () => {

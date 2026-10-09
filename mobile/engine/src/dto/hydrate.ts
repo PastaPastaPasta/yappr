@@ -2,11 +2,13 @@ import type { PreloadedEnrichment } from '@/hooks/use-progressive-enrichment'
 import { extractErrorMessage, isRateLimitedError, isTimeoutError } from '@/lib/error-utils'
 import { withoutHiddenTombstones } from '@/lib/feed/hidden-tombstones'
 import { repostedAuthorIdOf } from '@/lib/feed/quote-reposts'
+import { forgetQuotedPosts } from '@/lib/feed/resolve-quoted-posts'
 import { blockService } from '@/lib/services/block-service'
 import { dpnsService } from '@/lib/services/dpns-service'
 import { followService } from '@/lib/services/follow-service'
 import { loadIdentityBatch } from '@/lib/services/identity-batch'
 import { postService } from '@/lib/services/post-service'
+import { replyService } from '@/lib/services/reply-service'
 import { getCurrentUserId } from '@/lib/services/sdk-helpers'
 import { unifiedProfileService } from '@/lib/services/unified-profile-service'
 import { filterHiddenSensitive } from '@/lib/sensitive-content'
@@ -91,6 +93,22 @@ export async function toPostDTOs(posts: Post[]): Promise<PostDTO[]> {
   const ids = posts.flatMap(post => [post.author.id, post.quotedPost?.author.id ?? ''])
   const options = { signedIn: viewerId() !== null, avatars: await avatarsOf(ids) }
   return posts.map(post => toPostDTO(post, options))
+}
+
+/**
+ * Quoted posts read again on the next enrichment: `ids`, or every one lib has
+ * resolved. lib keeps a resolved quote target for the session and its
+ * document reads for two minutes, so without this a quote of a post deleted
+ * since kept showing the text it had until the app restarted (RC16-I-04).
+ * A delete forgets its post; a list's first page (a load or a pull to
+ * refresh) forgets them all.
+ */
+export function rereadQuotedPosts(ids?: readonly string[]): void {
+  const dropped = forgetQuotedPosts(ids)
+  for (const id of ids ?? dropped) {
+    postService.clearCache(id)
+    replyService.clearCache(id)
+  }
 }
 
 /** lib's batch enrichment (authors, stats, viewer marks, relations, quoted posts), then DTOs. */

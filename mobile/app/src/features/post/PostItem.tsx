@@ -255,7 +255,13 @@ export const PostItem = memo(function PostItem({
   // Blocks, the NSFW mode and the media gate (PRD G-6, SAFE-06, SAFE-07).
   const safety = usePostSafety(listed, shownPost, removal, safetyViewerId);
   const safePost = safety.post;
-  const post = useMemo(() => (asStub ? { ...safePost, deleted: true } : safePost), [asStub, safePost]);
+  // The quoted post deleted on this device: its embed is the deleted line at once, as its own card goes.
+  const quotedRemoved = usePostRemoved(safePost.quoted?.id ?? '');
+  const post = useMemo(() => {
+    const quoted = quotedRemoved && safePost.quoted ? { ...safePost.quoted, deleted: true } : safePost.quoted;
+    const shown = quoted === safePost.quoted ? safePost : { ...safePost, quoted };
+    return asStub ? { ...shown, deleted: true } : shown;
+  }, [asStub, quotedRemoved, safePost]);
   // A post compose is still publishing: the optimistic card with its write status (PRD COMP-10).
   const pending = usePendingWriteStatus(listed.id);
   const capabilities = useCapabilities();

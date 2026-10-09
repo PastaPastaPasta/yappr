@@ -18,7 +18,8 @@ import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
 import {
-  enrichToDTOs, loadUserSummaries, notSupported, readFailure, requireViewer, searchUserSummaries, toPostDTOs, viewerId, withLoadingAuthor,
+  enrichToDTOs, loadUserSummaries, notSupported, readFailure, requireViewer, rereadQuotedPosts, searchUserSummaries, toPostDTOs, viewerId,
+  withLoadingAuthor,
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
@@ -312,6 +313,7 @@ export const posts = {
   // alongside replyPages if long threads get slow.
   async thread(id: string, cursor?: string | null): Promise<ThreadDTO> {
     const pages = 1 + (cursorInt(decodeCursor<{ pages: number }>(cursor, `thread:${id}`)?.pages ?? 0))
+    if (!cursor) rereadQuotedPosts()
     const focus = await loadFocus(id)
     if (!focus) return { focus: null, ancestors: [], removedAncestorIds: [], replies: emptyPage() }
 
@@ -489,9 +491,14 @@ export function createPostWrites(tickets: TicketStore, emit: (event: 'content.cr
     async run({ target }, ctx) {
       const viewer = signer(ctx)
       const { id, kind } = target
-      // A tombstone where posts are permanent (v9, v11), a delete elsewhere (`deleteOwnPost`).
-      const ok = kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer)
-      return fromDeleteBoolean(ok, ctx.probe)
+      try {
+        // A tombstone where posts are permanent (v9, v11), a delete elsewhere (`deleteOwnPost`).
+        const ok = kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer)
+        return fromDeleteBoolean(ok, ctx.probe)
+      } finally {
+        // Even unconfirmed: quotes of it read it again rather than show the text it had.
+        rereadQuotedPosts([id])
+      }
     },
     // A real delete names the document, proved absent; a tombstone (v9, v11) stays, blanked.
     probe: (ticket, args, kit) => deletesAreTombstones()
