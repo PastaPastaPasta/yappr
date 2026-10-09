@@ -199,6 +199,52 @@ describe('v10 profile writes', () => {
   });
 });
 
+describe('v10 profile saves not confirmed (onUnconfirmed)', () => {
+  const unconfirmed = async (_contract: string, _type: string, id: string, owner: string, data: Record<string, unknown>, revision: number) => ({
+    success: true, confirmed: false, document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data },
+  });
+
+  it('tells the caller when the DashPay replacement was not confirmed', async () => {
+    updateDocument.mockImplementationOnce(unconfirmed);
+    const profiles = await service();
+    const onUnconfirmed = vi.fn();
+    await profiles.updateProfile(ownerId, { bio: 'new bio' }, { onUnconfirmed });
+    expect(onUnconfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the caller when the extension replacement was not confirmed', async () => {
+    updateDocument.mockImplementationOnce(unconfirmed);
+    const profiles = await service();
+    const onUnconfirmed = vi.fn();
+    await profiles.updateProfile(ownerId, { pronouns: 'she/her' }, { onUnconfirmed });
+    expect(updateDocument).toHaveBeenCalledExactlyOnceWith(YAPPR_CONTRACT_ID, 'yapprProfile', 'ext-doc', ownerId, expect.anything(), 1);
+    expect(onUnconfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the caller once per document not confirmed in a two-document save, and never for confirmed ones', async () => {
+    const profiles = await service();
+    const onUnconfirmed = vi.fn();
+    await profiles.updateProfile(ownerId, { bio: 'new bio', pronouns: 'she/her' }, { onUnconfirmed });
+    expect(onUnconfirmed).not.toHaveBeenCalled();
+
+    updateDocument.mockImplementationOnce(unconfirmed).mockImplementationOnce(unconfirmed);
+    await profiles.updateProfile(ownerId, { bio: 'newer bio', pronouns: 'they/them' }, { onUnconfirmed });
+    expect(onUnconfirmed).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells the caller when a new extension was not confirmed', async () => {
+    stored[YAPPR_CONTRACT_ID] = [];
+    createDocument.mockImplementationOnce(async (_contract, type, owner, data) => ({
+      success: true, confirmed: false, document: { $id: `new-${type}`, $ownerId: owner, ...data },
+    }));
+    const profiles = await service();
+    const onUnconfirmed = vi.fn();
+    await profiles.updateProfile(ownerId, { pronouns: 'she/her' }, { onUnconfirmed });
+    expect(createDocument).toHaveBeenCalledExactlyOnceWith(YAPPR_CONTRACT_ID, 'yapprProfile', ownerId, expect.anything());
+    expect(onUnconfirmed).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('v10 profile reads after a save', () => {
   /** Drops the cached profile, as a later screen's read would find it expired or invalidated. */
   async function dropCache() {

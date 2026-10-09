@@ -102,6 +102,38 @@ describe('profile replacements', () => {
   });
 });
 
+describe('a save not confirmed (onUnconfirmed)', () => {
+  it('tells the caller when a replacement was broadcast but never confirmed, and not when it was', async () => {
+    const onUnconfirmed = vi.fn();
+    await unifiedProfileService.updateProfile(ownerId, { bio: 'New bio' }, { onUnconfirmed });
+    expect(onUnconfirmed).not.toHaveBeenCalled();
+
+    updateDocument.mockImplementationOnce(async (_contract, _type, id, owner, data, revision) => ({
+      success: true, confirmed: false, document: { $id: id, $ownerId: owner, $revision: revision + 1, ...data },
+    }));
+    const result = await unifiedProfileService.updateProfile(ownerId, { bio: 'Newer bio' }, { onUnconfirmed });
+    expect(onUnconfirmed).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ bio: 'Newer bio' });
+  });
+
+  it('tells the caller when a first save was broadcast but never confirmed', async () => {
+    query.mockResolvedValue([]);
+    createDocument.mockImplementationOnce(async (_contract, _type, owner, data) => ({
+      success: true, confirmed: false, document: { $id: documentId, $ownerId: owner, $revision: 1, ...data },
+    }));
+    const onUnconfirmed = vi.fn();
+    await unifiedProfileService.updateProfile(ownerId, { displayName: 'Ava' }, { onUnconfirmed });
+    expect(onUnconfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it('never calls it for a save that failed: that rejects', async () => {
+    updateDocument.mockResolvedValueOnce({ success: false, error: 'Replacement rejected' });
+    const onUnconfirmed = vi.fn();
+    await expect(unifiedProfileService.updateProfile(ownerId, { bio: 'New bio' }, { onUnconfirmed })).rejects.toThrow('Replacement rejected');
+    expect(onUnconfirmed).not.toHaveBeenCalled();
+  });
+});
+
 describe('a first edit without a profile', () => {
   beforeEach(() => {
     query.mockResolvedValue([]);
