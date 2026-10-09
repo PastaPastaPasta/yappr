@@ -256,11 +256,15 @@ describe('rows become combinations', () => {
     expect(item.errors[0]).toMatch(/^"Shirt" has 2 rows but no options to tell them apart/)
   })
 
-  it('shortens a SKU past 32 characters and says so', () => {
+  it('on v7 shortens a SKU past 32 characters and says so; v1–v6 keep it whole', async () => {
     const long = 'S'.repeat(40)
-    const { variants, warnings } = onlyVariants(`Group,Item Name,Size,SKU,Price\ng,Shirt,S,${long},10.00\ng,Shirt,M,OK,10.00`)
-    expect(variants.combinations.map((combination) => combination.sku)).toEqual(['S'.repeat(32), 'OK'])
-    expect(warnings).toEqual(['"Shirt": 1 SKU is longer than 32 characters, so it was shortened.'])
+    const csv = `Group,Item Name,Size,SKU,Price\ng,Shirt,S,${long},10.00\ng,Shirt,M,OK,10.00`
+    const [typed] = (await parseUnder('v7', csv)).items
+    expect(defined(typed.variants).combinations.map((combination) => combination.sku)).toEqual(['S'.repeat(32), 'OK'])
+    expect(typed.warnings).toEqual(['"Shirt": 1 SKU is longer than 32 characters, so it was shortened.'])
+    const { variants, warnings } = onlyVariants(csv)
+    expect(variants.combinations.map((combination) => combination.sku)).toEqual([long, 'OK'])
+    expect(warnings).toEqual([])
   })
 
   it('reports what the v7 table cannot store as errors for that product (the v1–v6 JSON has no such cap)', async () => {

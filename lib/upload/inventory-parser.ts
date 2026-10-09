@@ -577,6 +577,8 @@ function collectImages(rows: ParsedInventoryRow[]): string[] {
 
 /** A SKU cut to what a combination can store. */
 function fitSku(sku: string): string {
+  // Only v7 caps a combination's SKU; the v1–v6 JSON keeps it whole.
+  if (!storefrontVariantsAreTyped()) return sku
   let fitted = [...sku].slice(0, VARIANT_LIMITS.skuLength).join('')
   while (new TextEncoder().encode(fitted).length > VARIANT_LIMITS.skuBytes) fitted = [...fitted].slice(0, -1).join('')
   return fitted
