@@ -44,7 +44,7 @@ export function SearchResultsScreen({ kind: kindParam, query }: { kind: string |
     empty = (
       <ErrorState
         title={searchFailedTitle(SEARCH_TITLES[kind].toLowerCase())}
-        message={searchFailedMessage(offline)}
+        message={searchFailedMessage(active.error, offline)}
         onRetry={() => {
           active.refetch().catch(() => undefined);
         }}

@@ -214,7 +214,7 @@ export function SearchScreen({ initialQuery = '' }: SearchScreenProps) {
       body = (
         <ErrorState
           title={searchFailedTitle()}
-          message={searchFailedMessage(offline)}
+          message={searchFailedMessage(running[0]?.error, offline)}
           onRetry={() => running.forEach((query) => query.refetch().catch(() => undefined))}
           retrying={running.some((query) => query.isRetrying)}
           testID="search-error"

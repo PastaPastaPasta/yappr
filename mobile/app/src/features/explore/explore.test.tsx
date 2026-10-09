@@ -470,8 +470,17 @@ describe('Search', () => {
 
     expect(screen.getByTestId('search-error')).toBeTruthy();
     expect(screen.getByText("Couldn't search right now")).toBeTruthy();
-    expect(screen.getByText('Check your connection and try again.')).toBeTruthy();
+    expect(screen.getByText(UNAVAILABLE_MESSAGE)).toBeTruthy();
     expect(screen.queryByTestId('search-no-results')).toBeNull();
+  });
+
+  it('says only to try again when a search fails for no reason it can name', async () => {
+    fakeEngine.method('explore.searchUsers').mockRejectedValue(new Error('proof verification failed'));
+    await renderAt('/explore/search/people?q=bob');
+    await settle();
+
+    expect(screen.getByTestId('search-results-error')).toBeTruthy();
+    expect(screen.getByText('Try again in a moment.')).toBeTruthy();
   });
 
   it('offers a retry when a pasted id finds no one because its lookup failed', async () => {
