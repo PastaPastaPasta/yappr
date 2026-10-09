@@ -4,14 +4,15 @@ import { useId, useState } from 'react'
 import { LockClosedIcon } from '@heroicons/react/24/outline'
 import { DigitalAssetListEditor } from './asset-list-editor'
 import { MAX_INSTRUCTIONS_LENGTH } from '@/lib/services/digital-delivery-plan'
-import type { DeliverWhen, ItemDeliverablePayload } from '@/lib/types'
+import type { DeliverWhen, ItemDeliverablePayload, ItemVariants } from '@/lib/types'
 
 interface DigitalKitEditorProps {
   kit: ItemDeliverablePayload
   /** Receives an updater (like a state setter), so a long upload never undoes later edits. */
   onChange: (update: (kit: ItemDeliverablePayload) => ItemDeliverablePayload) => void
   identityId: string
-  variantKeys?: string[]
+  /** The item's variants table, when it has variants: each asset can then be limited to some of them. */
+  variants?: ItemVariants
   disabled?: boolean
   /** True while a file upload is in flight (see DigitalAssetListEditor). */
   onBusyChange?: (busy: boolean) => void
@@ -31,7 +32,7 @@ const TIMING_OPTIONS: Array<{ value: DeliverWhen; label: string; hint: string }>
  * of unique codes (one per unit sold), instructions for every buyer, and when
  * "Deliver ready orders" may send it. Saved encrypted to the seller's own key.
  */
-export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disabled = false, onBusyChange }: DigitalKitEditorProps) {
+export function DigitalKitEditor({ kit, onChange, identityId, variants, disabled = false, onBusyChange }: DigitalKitEditorProps) {
   const formId = useId()
   // Local text keeps blank lines while typing; the kit holds the parsed keys.
   const [keysText, setKeysText] = useState(kit.licenseKeys?.join('\n') ?? '')
@@ -60,7 +61,7 @@ export function DigitalKitEditor({ kit, onChange, identityId, variantKeys, disab
           assets={kit.assets}
           onChange={(update) => onChange((current) => ({ ...current, assets: update(current.assets) }))}
           identityId={identityId}
-          variantKeys={variantKeys}
+          variants={variants}
           disabled={disabled}
           onBusyChange={onBusyChange}
         />

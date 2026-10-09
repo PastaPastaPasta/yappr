@@ -6,17 +6,18 @@
  */
 
 import bs58 from 'bs58'
-import { sha256 } from '@noble/hashes/sha2.js'
-import { bytesToHex } from '@noble/hashes/utils.js'
 import { bytesEqual } from '../bytes'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
-import { DIGITAL_PAYLOAD_MAX_BYTES } from '../storefront/storefront-contract'
+import { storefrontVariantsAreTyped } from '../constants'
+import { DIGITAL_PAYLOAD_MAX_BYTES, VARIANT_LIMITS } from '../storefront/storefront-contract'
+import { findCombination, findOption, variantLabel } from '../storefront/variant-codec'
 import type {
   DeliverWhen,
   OrderDelivery,
   DeliveredItem,
   DigitalAsset,
   ItemDeliverablePayload,
+  ItemVariants,
   OrderDeliveryPayload,
   OrderItem,
   OrderPayload,
@@ -46,15 +47,21 @@ export const MAX_DELIVERY_MESSAGE_LENGTH = 1000
 export const MAX_VARIANT_LABEL_LENGTH = 60
 
 /**
- * A fixed-size reference to a variant, for matching receipts to order lines
- * (16 hex characters of SHA-256). Receipts carry this, never the variant key,
- * so the listing's variant names cannot make a receipt larger than the kit
- * was checked for.
+ * Longest canonical variant id: at most five option ids (one per axis) of up
+ * to three digits each, dot-joined ("254.254.254.254.254"). Receipts carry the
+ * id, never the listing's variant names, so a receipt's size stays bounded
+ * however the listing is edited later.
  */
-export const variantRef = (variantKey: string) => bytesToHex(sha256(new TextEncoder().encode(variantKey))).slice(0, 16)
+const WORST_VARIANT_ID = '254.254.254.254.254'
+export const MAX_VARIANT_ID_LENGTH = WORST_VARIANT_ID.length
+const VARIANT_ID = /^\d+(\.\d+)*$/
+/** A canonical variant id ("3.9") of bounded length. */
+export const isVariantId = (value: unknown): value is string =>
+  typeof value === 'string' && value.length <= MAX_VARIANT_ID_LENGTH && VARIANT_ID.test(value)
+
 /** A receipt item is for this line: same item, same variant. */
-export const deliveredFor = (item: Pick<DeliveredItem, 'itemId' | 'variantRef'>, line: Pick<OrderItem, 'itemId' | 'variantKey'>) =>
-  item.itemId === line.itemId && (item.variantRef ?? '') === (line.variantKey ? variantRef(line.variantKey) : '')
+export const deliveredFor = (item: Pick<DeliveredItem, 'itemId' | 'variantId'>, line: Pick<OrderItem, 'itemId' | 'variantId'>) =>
+  item.itemId === line.itemId && (item.variantId ?? '') === (line.variantId ?? '')
 
 /** Statuses after which an order is never delivered in bulk. */
 const CLOSED_STATUSES: ReadonlySet<OrderStatus> = new Set(['delivered', 'cancelled', 'refunded', 'disputed'])
@@ -71,12 +78,6 @@ const linesOf = <T>(payload: { items: readonly T[] } | undefined): readonly T[] 
 /** A line the buyer marked digital, whatever else it holds. */
 export const isDigitalLine = (line: Pick<OrderItem, 'fulfillment'> | null | undefined) =>
   typeof line === 'object' && line !== null && line.fulfillment === 'digital'
-/**
- * A digital line whose fields the delivery code reads have the types it reads
- * them as. The payload is buyer-written JSON: a numeric `variantKey` or an
- * object `itemTitle` would otherwise throw (or fail to render) in a scan that
- * runs over every order on the seller's page.
- */
 /** A base58 document id: 32 bytes. Buyer-written ids are queried in batches, where one bad operand fails them all. */
 export function isDocumentId(value: unknown): value is string {
   if (typeof value !== 'string') return false
@@ -86,10 +87,18 @@ export function isDocumentId(value: unknown): value is string {
     return false
   }
 }
+/**
+ * A digital line whose fields the delivery code reads have the types it reads
+ * them as. The payload is buyer-written JSON: a numeric `variantLabel` or an
+ * object `itemTitle` would otherwise throw (or fail to render) in a scan that
+ * runs over every order on the seller's page, and a variant id that is not a
+ * short canonical one would make a receipt larger than its kit was checked for.
+ */
 const isWellFormedLine = (line: Partial<OrderItem>) =>
   isDocumentId(line.itemId) && typeof line.itemTitle === 'string' &&
   typeof line.quantity === 'number' && typeof line.unitPrice === 'number' &&
-  (line.variantKey === undefined || typeof line.variantKey === 'string')
+  (line.variantId === undefined || isVariantId(line.variantId)) &&
+  (line.variantLabel === undefined || typeof line.variantLabel === 'string')
 /** The order's digital lines that are well formed; a malformed one is never planned or delivered (see {@link lineProblems}). */
 export const digitalLines = <T extends Pick<OrderItem, 'fulfillment'>>(payload: { items: readonly T[] }) =>
   linesOf(payload).filter((line) => isDigitalLine(line) && isWellFormedLine(line as Partial<OrderItem>))
@@ -102,15 +111,56 @@ export const digitalOrders = <T extends Pick<StoreOrder, 'id'>>(orders: readonly
 export const isDigitalOnly = (items: ReadonlyArray<Pick<OrderItem, 'fulfillment'>>) =>
   Array.isArray(items) && items.length > 0 && items.every(isDigitalLine)
 
-/** Assets that apply to one variant: those for every variant, plus those for this one. */
-export function assetsForVariant(assets: readonly DigitalAsset[], variantKey?: string): DigitalAsset[] {
-  return assets.filter((asset) => !asset.variantKey || asset.variantKey === variantKey)
+/**
+ * Assets that apply to one variant, given its combination's option ids: those
+ * for every variant, plus those whose options it ALL has (one option: every
+ * variant with it; one per axis: exactly this one). A line whose variant
+ * cannot be resolved (`optionIds` undefined) gets only the untargeted ones.
+ */
+export function assetsForVariant(assets: readonly DigitalAsset[], optionIds: readonly number[] | undefined): DigitalAsset[] {
+  return assets.filter((asset) => !asset.optionIds?.length || (optionIds !== undefined && asset.optionIds.every((id) => optionIds.includes(id))))
 }
 
-const withoutVariant = (asset: DigitalAsset): DigitalAsset => {
+const withoutTarget = (asset: DigitalAsset): DigitalAsset => {
   const copy = { ...asset }
-  delete copy.variantKey
+  delete copy.optionIds
   return copy
+}
+
+/** The asset limited to `optionIds` (to every variant when empty). */
+export function withAssetTarget(asset: DigitalAsset, optionIds: readonly number[]): DigitalAsset {
+  const copy = withoutTarget(asset)
+  return optionIds.length > 0 ? { ...copy, optionIds: [...optionIds] } : copy
+}
+
+/**
+ * An asset's target with axis `axisIndex` set to `optionId` (undefined: any
+ * option of that axis). Ids the listing no longer has are dropped, so editing
+ * the target also clears a removed option.
+ */
+export function retargetAxis(variants: ItemVariants, optionIds: readonly number[] | undefined, axisIndex: number, optionId: number | undefined): number[] {
+  const kept = (optionIds ?? []).filter((id) => {
+    const found = findOption(variants, id)
+    return found !== undefined && found.axisIndex !== axisIndex
+  })
+  return optionId === undefined ? kept : [...kept, optionId]
+}
+
+/**
+ * How an asset's target reads for the seller ("All variants", "Red / XL";
+ * an option since removed from the listing reads "Removed option"), and
+ * whether no variant the listing offers has all of its options.
+ */
+export function describeAssetTarget(variants: ItemVariants | undefined, optionIds: readonly number[] | undefined): { label: string; matchesNone: boolean } {
+  if (!optionIds?.length) return { label: 'All variants', matchesNone: false }
+  const found = optionIds.map((id) => (variants ? findOption(variants, id) : undefined))
+  const known = found
+    .flatMap((entry) => (entry ? [entry] : []))
+    .sort((a, b) => a.axisIndex - b.axisIndex)
+    .map((entry) => entry.option.name)
+  const removed = found.filter((entry) => entry === undefined).map(() => 'Removed option')
+  const matchesNone = !(variants?.combinations ?? []).some((combination) => optionIds.every((id) => combination.optionIds.includes(id)))
+  return { label: [...known, ...removed].join(' / '), matchesNone }
 }
 
 export interface DeliveryPlan {
@@ -139,6 +189,8 @@ export const validQuantity = (quantity: unknown): quantity is number =>
 export function planDelivery(
   payload: Pick<OrderPayload, 'items'>,
   kits: ReadonlyMap<string, ItemDeliverablePayload>,
+  /** The seller's listings, by item id: they say which options each line's variant has. */
+  listings: ReadonlyMap<string, Pick<ItemListing, 'variants'>>,
   message?: string,
   /** Lines that take no unique codes this time (re-sent lines the seller did not ask new codes for). */
   withoutNewKeys?: (line: OrderItem) => boolean
@@ -159,11 +211,17 @@ export function planDelivery(
       missingKits.push(line.itemTitle)
       continue
     }
+    const variants = listings.get(line.itemId)?.variants
+    const combination = findCombination(variants, line.variantId)
+    const label = line.variantLabel || (variants && combination ? variantLabel(variants, combination) : undefined)
     const item: DeliveredItem = {
       itemId: line.itemId,
       itemTitle: line.itemTitle,
-      ...(line.variantKey ? { variantRef: variantRef(line.variantKey), variantLabel: line.variantKey.slice(0, MAX_VARIANT_LABEL_LENGTH) } : {}),
-      assets: assetsForVariant(kit.assets, line.variantKey).map(withoutVariant),
+      ...(line.variantId ? { variantId: line.variantId } : {}),
+      ...(line.variantId && label ? { variantLabel: label.slice(0, MAX_VARIANT_LABEL_LENGTH) } : {}),
+      // Before v7 option ids are numbered by position on every read, so a kit's
+      // targets cannot be trusted there: only its untargeted assets go out.
+      assets: assetsForVariant(kit.assets, storefrontVariantsAreTyped() ? combination?.optionIds : undefined).map(withoutTarget),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
     }
     if (kit.licenseKeys && !withoutNewKeys?.(line)) {
@@ -214,7 +272,7 @@ export interface LineCoverage {
 type DeliveryRecord = Pick<OrderDelivery, 'unconfirmed' | 'payload'>
 
 /** What the order's earlier deliveries hold for this line (same item and variant). */
-export function lineCoverage(line: Pick<OrderItem, 'itemId' | 'variantKey' | 'quantity'>, deliveries: readonly DeliveryRecord[]): LineCoverage {
+export function lineCoverage(line: Pick<OrderItem, 'itemId' | 'variantId' | 'quantity'>, deliveries: readonly DeliveryRecord[]): LineCoverage {
   const coverage: LineCoverage = { possibly: false, confirmed: false, possiblyCodes: 0, confirmedCodes: 0 }
   for (const delivery of deliveries) {
     if (!delivery.payload) {
@@ -254,7 +312,7 @@ export function withHeldDeliveries<T extends Pick<OrderDelivery, 'nonce'>>(fresh
  * unique codes. (A pending receipt that has since confirmed changes neither.)
  */
 export function coverageChanged(
-  lines: ReadonlyArray<Pick<OrderItem, 'itemId' | 'variantKey' | 'quantity'>>,
+  lines: ReadonlyArray<Pick<OrderItem, 'itemId' | 'variantId' | 'quantity'>>,
   before: readonly DeliveryRecord[],
   after: readonly DeliveryRecord[]
 ): boolean {
@@ -283,7 +341,7 @@ export interface LineSending {
  * receipts as just read: one that confirmed since the form opened counts.
  */
 export function deliveryCompletesOrder(
-  lines: ReadonlyArray<Pick<OrderItem, 'itemId' | 'variantKey' | 'quantity'>>,
+  lines: ReadonlyArray<Pick<OrderItem, 'itemId' | 'variantId' | 'quantity'>>,
   deliveries: readonly DeliveryRecord[],
   sending: readonly LineSending[]
 ): boolean {
@@ -305,8 +363,8 @@ const MAX_ID_LENGTH = 44
 /**
  * Why this kit could not go out for one unit in one delivery, or null when it
  * can. A receipt's size depends only on the kit and on fixed limits: a
- * full-length title at its largest once serialized, a fixed-size variant
- * reference and a cut variant label (never the listing's variant names), every
+ * full-length title at its largest once serialized, the longest variant
+ * id and a cut variant label (never the listing's variant names), every
  * asset and the largest unique code. So a kit that passes stays deliverable
  * whatever happens to the listing (a long message aside, which the seller can
  * shorten): an order too big for one receipt can be split line by line, and a
@@ -324,9 +382,9 @@ export function kitDeliveryFitError(kit: ItemDeliverablePayload): string | null 
     items: [{
       itemId: 'x'.repeat(MAX_ID_LENGTH),
       itemTitle: worst(MAX_ITEM_TITLE_LENGTH),
-      variantRef: variantRef(''),
+      variantId: WORST_VARIANT_ID,
       variantLabel: worst(MAX_VARIANT_LABEL_LENGTH),
-      assets: kit.assets.map(withoutVariant),
+      assets: kit.assets.map(withoutTarget),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
       ...(licenseKey ? { licenseKeys: [licenseKey] } : {}),
     }],
@@ -363,12 +421,12 @@ export function kitsAfterDelivery(
 }
 
 /** The seller's own listing of an item, read from the chain. */
-export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants'> & Partial<Pick<StoreItem, 'status'>> & {
+export type ItemListing = Pick<StoreItem, 'storeId' | 'fulfillment' | 'title' | 'basePrice' | 'currency' | 'variants' | 'unreadableVariants'> & Partial<Pick<StoreItem, 'status'>> & {
   /** Required (undefined when untracked), so no listing passes the stock check by leaving it out. */
   stockQuantity: number | undefined
 }
 
-const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantKey'>) => `${line.itemId}|${line.variantKey ?? ''}`
+const lineKey = (line: Pick<OrderItem, 'itemId' | 'variantId'>) => `${line.itemId}|${line.variantId ?? ''}`
 const repeatedLineText = (line: Pick<OrderItem, 'itemTitle'>) => `"${line.itemTitle}" appears more than once in this order. Check it with the buyer.`
 
 /**
@@ -438,26 +496,40 @@ export function lineProblems(
     if (!listing) { problem(`"${line.itemTitle}" could not be checked against your listings. Reload and try again.`, true); continue }
     if (listing.storeId !== storeId) { problem(`"${line.itemTitle}" is not a product of this order's store.`, true); continue }
     if (listing.fulfillment !== 'digital') { problem(`"${line.itemTitle}" is not listed as a digital product.`, true); continue }
+    // Its options could not be read, so nothing about the line can be checked.
+    if (listing.unreadableVariants !== undefined) { problem(`The options of "${listing.title}" could not be read, so this order can't be checked against the listing. Review it with the buyer.`, true); continue }
     // Paused, sold out or deleted since: perhaps a legitimate earlier purchase,
     // but never released without the seller looking (bulk holds any problem).
     if (listing.status !== undefined && listing.status !== 'active') problem(`"${listing.title}" is not on sale right now (${listing.status}).`)
     if (listing.title !== line.itemTitle) problem(`The order calls "${listing.title}" "${line.itemTitle}".`)
-    const combinations = listing.variants?.combinations ?? []
-    const combination = line.variantKey ? combinations.find((c) => c.key === line.variantKey) : undefined
-    if (line.variantKey && !combination) problem(`"${listing.title}" has no variant "${line.variantKey.replace(/\|/g, ' / ')}".`)
-    else if (!line.variantKey && combinations.length > 0) problem(`The order names no variant of "${listing.title}".`)
-    // Tracked stock as checkout reads it (storeItemService.getStock): the
-    // variant's, else the base item's; untracked is unlimited. An active
-    // listing can still be out of stock, which checkout refuses to sell.
-    const stock = combination ? combination.stock : listing.stockQuantity
-    if (typeof stock === 'number' && line.quantity > stock) {
-      problem(stock <= 0
-        ? `"${listing.title}" is out of stock.`
-        : `The order is for ${line.quantity} of "${listing.title}", but only ${stock} ${stock === 1 ? 'is' : 'are'} in stock.`)
+    // Before v7 option ids follow the options' order on every read, so an id
+    // alone can name another combination after the seller reorders: the name
+    // the order carries must match too.
+    const found = findCombination(listing.variants, line.variantId)
+    const combination = found && listing.variants && !storefrontVariantsAreTyped() && line.variantLabel && variantLabel(listing.variants, found) !== line.variantLabel
+      ? undefined
+      : found
+    if (line.variantId && !combination) {
+      // Stock and price are only judged for an option the listing still offers.
+      problem(line.variantLabel
+        ? `"${listing.title}" has no option "${line.variantLabel}" any more.`
+        : `"${listing.title}" no longer has the option this order names.`)
+    } else if (!line.variantId && listing.variants) {
+      problem(`The order does not say which option of "${listing.title}" was bought.`)
+    } else {
+      // Tracked stock as checkout reads it (storeItemService.getStock): the
+      // variant's, else the base item's; untracked is unlimited. An active
+      // listing can still be out of stock, which checkout refuses to sell.
+      const stock = combination ? combination.stock : listing.stockQuantity
+      if (typeof stock === 'number' && line.quantity > stock) {
+        problem(stock <= 0
+          ? `"${listing.title}" is out of stock.`
+          : `The order is for ${line.quantity} of "${listing.title}", but only ${stock} ${stock === 1 ? 'is' : 'are'} in stock.`)
+      }
+      // What checkout charges (storeItemService.getPrice): the variant's price, else the base price, else 0.
+      const listedPrice = combination?.price ?? listing.basePrice ?? 0
+      if (line.unitPrice !== listedPrice) problem(`The order's price for "${listing.title}" differs from your listing.`)
     }
-    // What checkout charges (storeItemService.getPrice): the variant's price, else the base price, else 0.
-    const listedPrice = combination ? combination.price : (listing.basePrice ?? 0)
-    if (line.unitPrice !== listedPrice) problem(`The order's price for "${listing.title}" differs from your listing.`)
     if (listing.currency && payload.currency && payload.currency !== listing.currency) problem(`The order is in ${payload.currency}, but "${listing.title}" is priced in ${listing.currency}.`)
   }
   return problems
@@ -493,7 +565,7 @@ export function isReadyForBulkDelivery({ payload, storeId, latestStatus, already
   if (alreadyDelivered || !hasDigitalLines(payload)) return false
   if (latestStatus && CLOSED_STATUSES.has(latestStatus)) return false
   if (lineProblems(payload, storeId, listings).length > 0) return false
-  const plan = planDelivery(payload, kits)
+  const plan = planDelivery(payload, kits, listings)
   if (planBlockers(plan).length > 0) return false
   // A large key order is the seller's call, not the bulk button's: counted per
   // product, so splitting it over several lines does not get round the cap.
@@ -558,10 +630,28 @@ export function splitPoolEntry(entry: string): { url?: string; code?: string } {
 const safeUrl = (value: unknown): string | undefined =>
   typeof value === 'string' && isSafeDeliveryUrl(value) ? value : undefined
 
+/**
+ * An asset limited to variants this client cannot read (a target written by an
+ * older client, or ids that are not option ids) matches NO variant rather than
+ * every one: a file meant for one variant must never reach the buyers of the
+ * others. Option id 0 never occurs, so the editor shows it as a removed option
+ * the seller can clear.
+ */
+const UNREADABLE_TARGET = { optionIds: [0] }
+
+/** An asset's target: whole option ids from 1 to 254, each once; absent when it has none. */
+function parseOptionIds(asset: Record<string, unknown>): { optionIds?: number[] } {
+  if (asset.optionIds === undefined) return asset.variantKey === undefined ? {} : UNREADABLE_TARGET
+  if (!Array.isArray(asset.optionIds)) return UNREADABLE_TARGET
+  const ids = asset.optionIds.filter((id): id is number => Number.isInteger(id) && id >= 1 && id <= VARIANT_LIMITS.maxOptionId)
+  // Dropping one bad member would WIDEN the target, so any bad member voids it.
+  if (ids.length !== asset.optionIds.length) return UNREADABLE_TARGET
+  return ids.length === 0 ? {} : { optionIds: [...new Set(ids)] }
+}
+
 function parseAsset(value: unknown): DigitalAsset | null {
   if (!isRecord(value)) return null
-  const variantKey = optionalString(value.variantKey)
-  const variant = variantKey ? { variantKey } : {}
+  const variant = parseOptionIds(value)
   const code = optionalString(value.code)
   if (value.kind === 'file') {
     // A file is fetched and decrypted here, which a magnet link cannot be.
@@ -647,15 +737,15 @@ export function decodeDelivery(bytes: Uint8Array): OrderDeliveryPayload {
   const items: DeliveredItem[] = []
   for (const raw of value.items) {
     if (!isRecord(raw) || typeof raw.itemId !== 'string' || typeof raw.itemTitle !== 'string') continue
-    const variantRefValue = optionalString(raw.variantRef)
-    const variantLabel = optionalString(raw.variantLabel)
+    const variantId = isVariantId(raw.variantId) ? raw.variantId : undefined
+    const variantLabel = variantId ? optionalString(raw.variantLabel)?.slice(0, MAX_VARIANT_LABEL_LENGTH) : undefined
     const instructions = optionalString(raw.instructions)
     const licenseKeys = parseKeys(raw.licenseKeys)
     items.push({
       itemId: raw.itemId,
       itemTitle: raw.itemTitle,
       assets: parseAssets(raw.assets),
-      ...(variantRefValue ? { variantRef: variantRefValue } : {}),
+      ...(variantId ? { variantId } : {}),
       ...(variantLabel ? { variantLabel } : {}),
       ...(instructions ? { instructions } : {}),
       ...(licenseKeys ? { licenseKeys } : {}),

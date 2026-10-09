@@ -1,14 +1,13 @@
 'use client'
 
 import { logger } from '@/lib/logger';
-import { useState, useMemo, useEffect, useId, useCallback } from 'react'
+import { useState, useEffect, useId, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   ArrowLeftIcon,
   XMarkIcon,
   PlusIcon,
-  TrashIcon,
   TruckIcon,
   CloudArrowDownIcon
 } from '@heroicons/react/24/outline'
@@ -23,17 +22,21 @@ import { ipfsToGatewayUrl } from '@/lib/utils/ipfs-gateway'
 import { IpfsImage } from '@/components/ui/ipfs-image'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { storeService } from '@/lib/services/store-service'
-import { getCurrencyStep, toSmallestUnit, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
+import { getCurrencyStep, fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
 import { itemDeliverableService, KitWriteUncertainError } from '@/lib/services/item-deliverable-service'
 import { DigitalKitEditor } from '@/components/digital'
-import { storefrontSupportsDigital } from '@/lib/constants'
+import { storefrontSupportsDigital, storefrontVariantsAreTyped } from '@/lib/constants'
 import { encodeKit, kitDeliveryFitError } from '@/lib/services/digital-delivery-plan'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
-import type { VariantAxis, VariantCombination, ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
+import type { ItemVariants, ItemFulfillment, ItemDeliverable, ItemDeliverablePayload } from '@/lib/types'
 import { PageShell, PageHeader } from '@/components/layout/page-shell'
 import { LIST_LIMITS, ListLimitError } from '@/lib/typed-array-codecs'
-import { storefrontCreateFeeCredits, variantsSizeError } from '@/lib/storefront/storefront-contract'
+import { StaleRevisionError } from '@/lib/services/document-service'
+import { itemImageLimit, itemStockCap, storefrontCreateFeeCredits } from '@/lib/storefront/storefront-contract'
+import { clampImages, emptyVariants, variantProblems } from '@/lib/storefront/variant-codec'
+import { convertPrices, defaultCombinationPrice, parseCountInput, parsePriceInput, shiftImagesAfterRemoval, tidyNames } from '@/lib/storefront/variant-editor-model'
+import { VariantEditor } from '@/components/store/variant-editor'
 import { formatCreditsAsDash } from '@/lib/services/dpns-service'
 
 const IMAGE_URL_PATTERN = LIST_LIMITS.storeImageUrls.pattern
@@ -66,6 +69,9 @@ function AddItemPage() {
   const supportsDigital = storefrontSupportsDigital()
   // v6 charges an action fee on each new listing (null before v6).
   const listingFeeCredits = storefrontCreateFeeCredits('storeItem')
+  const imageLimit = itemImageLimit()
+  // Per-combination weights exist from storefront v7 on.
+  const variantsAreTyped = storefrontVariantsAreTyped()
 
   // Digital delivery (storefront v6)
   const [fulfillment, setFulfillment] = useState<ItemFulfillment>('shipped')
@@ -106,13 +112,36 @@ function AddItemPage() {
   const [error, setError] = useState<string | null>(null)
   const [loadedStoreId, setLoadedStoreId] = useState<string | null>(null)
 
-  // Variant state
+  // Variant state: the option types and the combinations offered (saved only while hasVariants is on).
   const [hasVariants, setHasVariants] = useState(false)
-  const [variantAxes, setVariantAxes] = useState<VariantAxis[]>([])
-  const [newAxisName, setNewAxisName] = useState('')
-  const [newAxisOptions, setNewAxisOptions] = useState('')
-  const [combinationPrices, setCombinationPrices] = useState<Record<string, string>>({})
-  const [combinationStocks, setCombinationStocks] = useState<Record<string, string>>({})
+  // A v7 listing saved with options keeps them: its option-id counter lives in
+  // the table, and a new table would give carts' and kits' old ids to other options.
+  const [keepVariants, setKeepVariants] = useState(false)
+  /** The listing's revision this form's edits start from (the last one read or written here). */
+  const [sourceRevision, setSourceRevision] = useState<number | undefined>(undefined)
+  /** A table was sent: the listing keeps its options from now on (and they stay ticked). */
+  const keepSentVariants = useCallback(() => {
+    setKeepVariants(true)
+    setHasVariants(true)
+  }, [])
+  const [variants, setVariantsState] = useState<ItemVariants>(emptyVariants)
+  /**
+   * The listing's options could not be read: its details can be edited, but
+   * its price, stock, currency, options and images are left as they are
+   * (they may depend on the table), so none of them is shown or sent.
+   */
+  const [optionsUnreadable, setOptionsUnreadable] = useState(false)
+  /**
+   * Every table this form holds keeps the highest `nextOptionId` it has seen,
+   * so no edit, reset or retry can hand an old option id (named by carts and
+   * kits) to a different option.
+   */
+  const setVariants = useCallback((update: ItemVariants | ((current: ItemVariants) => ItemVariants)) => {
+    setVariantsState((previous) => {
+      const next = typeof update === 'function' ? update(previous) : update
+      return next.nextOptionId >= previous.nextOptionId ? next : { ...next, nextOptionId: previous.nextOptionId }
+    })
+  }, [])
 
   // Resolve the store default before the new-product form becomes editable.
   useEffect(() => {
@@ -162,6 +191,7 @@ function AddItemPage() {
         const itemCurrency = item.currency || 'USD'
         const decimals = getCurrencyDecimals(itemCurrency)
 
+        setSourceRevision(item.$revision)
         setTitle(item.title || '')
         setDescription(item.description || '')
         setCurrency(itemCurrency)
@@ -178,23 +208,12 @@ function AddItemPage() {
           setStockQuantity(item.stockQuantity.toString())
         }
 
-        // Load variants
+        setOptionsUnreadable(item.unreadableVariants !== undefined)
+        // Load variants (the service hands back the same table on every storefront version)
         if (item.variants && item.variants.axes.length > 0) {
           setHasVariants(true)
-          setVariantAxes(item.variants.axes)
-
-          // Populate combination prices and stocks
-          const prices: Record<string, string> = {}
-          const stocks: Record<string, string> = {}
-          for (const combo of item.variants.combinations) {
-            prices[combo.key] = fromSmallestUnit(combo.price, itemCurrency).toFixed(decimals)
-            // Only set stock if defined (undefined means unlimited/not tracked)
-            if (combo.stock !== undefined && combo.stock !== null) {
-              stocks[combo.key] = combo.stock.toString()
-            }
-          }
-          setCombinationPrices(prices)
-          setCombinationStocks(stocks)
+          setVariants(item.variants)
+          setKeepVariants(storefrontVariantsAreTyped())
         }
       } catch (err) {
         logger.error('Failed to load item:', err)
@@ -205,7 +224,7 @@ function AddItemPage() {
     }
 
     loadItem().catch((err) => logger.error('Failed to load item:', err))
-  }, [sdkReady, isEditMode, itemId])
+  }, [sdkReady, isEditMode, itemId, setVariants])
 
   /** Read and decrypt the item's kit, or mark it locked when this device lacks the key. */
   const loadKit = useCallback(async (id: string, ownerId: string) => {
@@ -247,30 +266,17 @@ function AddItemPage() {
     loadKit(itemId, user.identityId).catch((err) => logger.error(err))
   }, [sdkReady, supportsDigital, itemId, user?.identityId, loadKit])
 
-  // Generate all combinations from axes
-  const combinations = useMemo(() => {
-    if (variantAxes.length === 0) return []
-
-    const generateCombinations = (axes: VariantAxis[], index: number, current: string[]): string[][] => {
-      if (index === axes.length) {
-        return [current]
-      }
-      const results: string[][] = []
-      for (const option of axes[index].options) {
-        results.push(...generateCombinations(axes, index + 1, [...current, option]))
-      }
-      return results
-    }
-
-    return generateCombinations(variantAxes, 0, []).map(combo => combo.join('|'))
-  }, [variantAxes])
-
   const handleAddImage = () => {
     const url = newImageUrl.trim()
-    if (!url || imageUrls.length >= 4) return
+    if (!url || imageUrls.length >= imageLimit) return
     // storefront v4 stores only http(s):// and ipfs:// image URLs (the contract's pattern).
     if (!IMAGE_URL_PATTERN.test(url)) {
       setError('Image URLs must start with https://, http:// or ipfs://')
+      return
+    }
+    // A combination names an image by position, and the stored list keeps one of each URL.
+    if (imageUrls.includes(url)) {
+      setError('That image is already in this listing.')
       return
     }
     setError(null)
@@ -279,26 +285,16 @@ function AddItemPage() {
   }
 
   const handleRemoveImage = (index: number) => {
-    setImageUrls(imageUrls.filter((_, i) => i !== index))
+    const remaining = imageUrls.filter((_, i) => i !== index)
+    setImageUrls(remaining)
+    // Combinations name images by position: the removed one's fall back to the default, later ones move down.
+    setVariants((current) => clampImages(shiftImagesAfterRemoval(current, index), remaining.length))
   }
 
-  const handleAddAxis = () => {
-    if (!newAxisName.trim() || !newAxisOptions.trim()) return
-    if (variantAxes.length >= 2) return // Max 2 axes
-
-    const options = newAxisOptions.split(',').map(o => o.trim()).filter(Boolean)
-    if (options.length === 0) return
-
-    setVariantAxes([...variantAxes, { name: newAxisName.trim(), options }])
-    setNewAxisName('')
-    setNewAxisOptions('')
-  }
-
-  const handleRemoveAxis = (index: number) => {
-    setVariantAxes(variantAxes.filter((_, i) => i !== index))
-    // Clear combination prices/stocks when axes change
-    setCombinationPrices({})
-    setCombinationStocks({})
+  /** Prices are kept in the smallest unit, so a currency change re-expresses them to read the same. */
+  const handleCurrencyChange = (next: string) => {
+    setVariants((current) => convertPrices(current, currency, next))
+    setCurrency(next)
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -343,51 +339,57 @@ function AddItemPage() {
       }
     }
 
+    // Include any pending image URL that wasn't explicitly added, if it is one
+    // the contract accepts; a bad pending URL stops the save rather than vanishing.
+    const pendingUrl = newImageUrl.trim()
+    if (pendingUrl && !IMAGE_URL_PATTERN.test(pendingUrl)) {
+      setError('Image URLs must start with https://, http:// or ipfs://')
+      return
+    }
+    const allImageUrls = pendingUrl
+      ? [...imageUrls, pendingUrl].slice(0, imageLimit)
+      : imageUrls
+
+    const priceInSmallestUnit = basePrice.trim() ? parsePriceInput(basePrice, currency) : undefined
+    if (!hasVariants && basePrice.trim() && priceInSmallestUnit === undefined) {
+      setError('Enter a valid price.')
+      return
+    }
+    const stockInput = stockQuantity.trim() ? parseCountInput(stockQuantity, itemStockCap()) : undefined
+    if (!hasVariants && !optionsUnreadable && stockQuantity.trim() && stockInput === undefined) {
+      setError(`Enter a stock quantity from 0 to ${itemStockCap().toLocaleString()}, or leave it blank for unlimited.`)
+      return
+    }
+
+    // With variants on, the table must be storable as it is; off, any stored table is removed.
+    let savedVariants: ItemVariants | undefined
+    if (hasVariants) {
+      savedVariants = tidyNames(variants)
+      const [problem] = variantProblems(savedVariants, { imageCount: allImageUrls.length, legacy: !variantsAreTyped })
+      if (problem) {
+        setError(problem)
+        return
+      }
+    }
+
     setIsSubmitting(true)
     setError(null)
 
     try {
-      const priceInSmallestUnit = basePrice ? toSmallestUnit(parseFloat(basePrice), currency) : undefined
-
-      // Build variants if enabled
-      let variants: ItemVariants | undefined
-      if (hasVariants && variantAxes.length > 0 && combinations.length > 0) {
-        const variantCombinations: VariantCombination[] = combinations.map(key => ({
-          key,
-          price: combinationPrices[key] ? toSmallestUnit(parseFloat(combinationPrices[key]), currency) : (priceInSmallestUnit || 0),
-          stock: combinationStocks[key] ? parseInt(combinationStocks[key], 10) : undefined
-        }))
-        variants = { axes: variantAxes, combinations: variantCombinations }
-      }
-      // v6 caps the stored variants JSON; refuse here rather than after signing.
-      const variantsError = variantsSizeError(variants)
-      if (variantsError) {
-        setError(variantsError)
-        return
-      }
-
-      // Include any pending image URL that wasn't explicitly added, if it is one
-      // the contract accepts; a bad pending URL stops the save rather than vanishing.
-      const pendingUrl = newImageUrl.trim()
-      if (pendingUrl && !IMAGE_URL_PATTERN.test(pendingUrl)) {
-        setError('Image URLs must start with https://, http:// or ipfs://')
-        return
-      }
-      const allImageUrls = pendingUrl
-        ? [...imageUrls, pendingUrl].slice(0, 4)
-        : imageUrls
-
       const itemData = {
         title: title.trim(),
         description: description.trim() || undefined,
-        basePrice: hasVariants ? undefined : priceInSmallestUnit,
-        currency: currency || undefined,
-        imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
         category: category.trim() || undefined,
-        stockQuantity: hasVariants ? undefined : (stockQuantity ? parseInt(stockQuantity, 10) : undefined),
         // No status: an edit keeps a paused or sold-out product so, and a create defaults to active.
-        // variants is always named, so unticking "has variants" removes the stored ones.
-        variants,
+        // variants is always named, so unticking "has variants" removes the stored ones;
+        // a listing whose options could not be read keeps all of these as stored.
+        ...(optionsUnreadable ? {} : {
+          basePrice: hasVariants ? undefined : priceInSmallestUnit,
+          currency: currency || undefined,
+          imageUrls: allImageUrls.length > 0 ? allImageUrls : undefined,
+          stockQuantity: hasVariants ? undefined : stockInput,
+          variants: savedVariants,
+        }),
         // Only named on v6, which is the first cut that has the property.
         ...(supportsDigital ? { fulfillment } : {})
       }
@@ -446,12 +448,20 @@ function AddItemPage() {
         }
       }
 
+      /** The revision this edit starts from: the form's own, else (a create found later) the listing's now. */
+      const revisionOf = async (id: string) => sourceRevision ?? (await storeItemService.getManyFresh([id]))[0]?.$revision
+
       let savedItemId: string
       if (targetItemId && effectiveStoreId) {
-        await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData)
+        const updated = await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData, await revisionOf(targetItemId))
+        setSourceRevision(updated.$revision)
+        if (itemData.variants && variantsAreTyped) keepSentVariants()
         savedItemId = targetItemId
       } else if (effectiveStoreId) {
         const created = await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+        // Broadcast (confirmed or not) with a table: from here it keeps its options.
+        if (itemData.variants && variantsAreTyped) keepSentVariants()
+        setSourceRevision(created.$revision ?? 1)
         setLoadedStoreId(effectiveStoreId)
         // Broadcast but not seen: the kit cannot reference it yet, and the form
         // must not turn into an edit of a listing that may never exist.
@@ -475,7 +485,11 @@ function AddItemPage() {
       router.push('/store/manage')
     } catch (err) {
       logger.error(`Failed to ${editingItemId ? 'update' : 'create'} item:`, err)
-      setError(err instanceof ListLimitError ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
+      // A write that failed after it was sent may still land with its table.
+      // Refused before signing (a limit, or a listing changed elsewhere): nothing was sent.
+      const refusedBeforeSending = err instanceof ListLimitError || err instanceof StaleRevisionError
+      if (!refusedBeforeSending && hasVariants && variantsAreTyped) keepSentVariants()
+      setError(refusedBeforeSending ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
     }
@@ -615,15 +629,26 @@ function AddItemPage() {
               </fieldset>
             )}
 
+            {optionsUnreadable && (
+              <p role="status" className="p-3 rounded-lg bg-gray-100 dark:bg-gray-900 text-sm text-gray-600 dark:text-gray-400">
+                This product&apos;s options can&apos;t be shown here, so its price, stock, options and photos stay as they are. You can still change its details. To change the rest, list it again as a new product.
+              </p>
+            )}
+
             {/* Images */}
+            {!optionsUnreadable && (
             <div>
-              <p className="block text-sm font-medium mb-2">Product Images (max 4)</p>
+              <p className="block text-sm font-medium mb-2">Product Images (max {imageLimit})</p>
 
               {imageUrls.length > 0 && (
                 <div className="grid grid-cols-4 gap-2 mb-3">
                   {imageUrls.map((url, index) => (
                     <div key={index} className="relative aspect-square bg-gray-100 dark:bg-gray-900 rounded-lg overflow-hidden">
                       <IpfsImage src={url} alt={`Product ${index + 1}`} className="w-full h-full object-cover" />
+                      {hasVariants && (
+                        // Combinations pick an image by this number.
+                        <span aria-hidden="true" className="absolute bottom-1 left-1 px-1.5 rounded bg-black/50 text-xs text-white">{index + 1}</span>
+                      )}
                       <button
                         type="button"
                         aria-label={`Remove product image ${index + 1}`}
@@ -637,11 +662,11 @@ function AddItemPage() {
                 </div>
               )}
 
-              {imageUrls.length < 4 && (
+              {imageUrls.length < imageLimit && (
                 <ProfileImageUpload
                   onUpload={(ipfsUrl) => {
                     const gatewayUrl = ipfsToGatewayUrl(ipfsUrl)
-                    setImageUrls(prev => [...prev, gatewayUrl].slice(0, 4))
+                    setImageUrls(prev => (prev.includes(gatewayUrl) ? prev : [...prev, gatewayUrl].slice(0, imageLimit)))
                   }}
                   aspectRatio="square"
                   label=""
@@ -649,7 +674,7 @@ function AddItemPage() {
                 />
               )}
 
-              {imageUrls.length < 4 && (
+              {imageUrls.length < imageLimit && (
                 <details className="text-sm mt-2">
                   <summary className="cursor-pointer text-gray-500 hover:text-gray-700 dark:hover:text-gray-400">
                     Or paste a URL
@@ -676,6 +701,7 @@ function AddItemPage() {
                 </details>
               )}
             </div>
+            )}
 
             {/* Category */}
             <div>
@@ -691,133 +717,40 @@ function AddItemPage() {
               />
             </div>
 
+            {!optionsUnreadable && (<>
             {/* Variants Toggle */}
             <div className="border-t border-gray-200 dark:border-gray-800 pt-6">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={hasVariants}
-                  onChange={(e) => setHasVariants(e.target.checked)}
+                  disabled={keepVariants || isSubmitting}
+                  onChange={(e) => {
+                    // A fresh table starts empty; one edited before unticking comes back as it was.
+                    if (e.target.checked && variants.axes.length === 0) setVariants({ ...emptyVariants(), nextOptionId: variants.nextOptionId })
+                    setHasVariants(e.target.checked)
+                  }}
                   className="w-5 h-5 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"
                 />
                 <span className="font-medium">This product has variants (e.g., size, color)</span>
               </label>
+              {keepVariants && (
+                <p className="mt-2 text-sm text-gray-500">A product keeps its options once it has been saved with them. To sell it without options, list it again as a new product.</p>
+              )}
             </div>
 
             {hasVariants ? (
-              /* Variants Section */
-              <div className="space-y-4">
-                {/* Existing Axes */}
-                {variantAxes.map((axis, index) => (
-                  <div key={index} className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium">{axis.name}</span>
-                      <button
-                        type="button"
-                        aria-label={`Remove variant option ${axis.name}`}
-                        onClick={() => handleRemoveAxis(index)}
-                        className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded"
-                      >
-                        <TrashIcon className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {axis.options.map((option, optIndex) => (
-                        <span key={optIndex} className="px-2 py-1 bg-white dark:bg-gray-800 rounded text-sm">
-                          {option}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-
-                {/* Add New Axis */}
-                {variantAxes.length < 2 && (
-                  <div className="p-3 border border-dashed border-gray-300 dark:border-gray-700 rounded-lg">
-                    <p className="text-sm text-gray-500 mb-3">
-                      Add variant option (max 2, e.g., Size, Color)
-                    </p>
-                    <div className="grid grid-cols-2 gap-2 mb-2">
-                      <input
-                        type="text"
-                        aria-label="Variant option name"
-                        value={newAxisName}
-                        onChange={(e) => setNewAxisName(e.target.value)}
-                        placeholder="Option name (e.g., Size)"
-                        className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm"
-                      />
-                      <input
-                        type="text"
-                        aria-label="Variant option values"
-                        value={newAxisOptions}
-                        onChange={(e) => setNewAxisOptions(e.target.value)}
-                        placeholder="Values (e.g., S, M, L)"
-                        className="px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm"
-                      />
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={handleAddAxis}
-                      disabled={!newAxisName.trim() || !newAxisOptions.trim()}
-                    >
-                      <PlusIcon className="h-4 w-4 mr-1" />
-                      Add Option
-                    </Button>
-                  </div>
-                )}
-
-                {/* Combinations Table */}
-                {combinations.length > 0 && (
-                  <div>
-                    <p className="block text-sm font-medium mb-2">
-                      Variant Pricing & Stock
-                    </p>
-                    <div className="border border-gray-200 dark:border-gray-800 rounded-lg overflow-hidden">
-                      <table className="w-full text-sm">
-                        <thead className="bg-gray-50 dark:bg-gray-900">
-                          <tr>
-                            <th className="px-3 py-2 text-left font-medium">Variant</th>
-                            <th className="px-3 py-2 text-left font-medium">Price ({currency})</th>
-                            <th className="px-3 py-2 text-left font-medium">Stock</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                          {combinations.map((key) => (
-                            <tr key={key}>
-                              <td className="px-3 py-2 font-medium">{key.replace(/\|/g, ' / ')}</td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  aria-label={`Price for ${key.replace(/\|/g, ' / ')} (${currency})`}
-                                  value={combinationPrices[key] || ''}
-                                  onChange={(e) => setCombinationPrices({ ...combinationPrices, [key]: e.target.value })}
-                                  placeholder="0.00"
-                                  step={getCurrencyStep(currency)}
-                                  min="0"
-                                  className="w-24 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                                />
-                              </td>
-                              <td className="px-3 py-2">
-                                <input
-                                  type="number"
-                                  aria-label={`Stock for ${key.replace(/\|/g, ' / ')}`}
-                                  value={combinationStocks[key] || ''}
-                                  onChange={(e) => setCombinationStocks({ ...combinationStocks, [key]: e.target.value })}
-                                  placeholder="Unlimited"
-                                  min="0"
-                                  className="w-20 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded focus:outline-none focus:ring-2 focus:ring-yappr-500"
-                                />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <VariantEditor
+                variants={variants}
+                onChange={setVariants}
+                currency={currency}
+                defaultPrice={defaultCombinationPrice(basePrice, currency, variants)}
+                imageUrls={imageUrls}
+                showWeight={variantsAreTyped}
+                legacy={!variantsAreTyped}
+                keepTable={keepVariants}
+                disabled={isSubmitting}
+              />
             ) : (
               /* Simple Price & Stock */
               <>
@@ -840,7 +773,7 @@ function AddItemPage() {
                     <select
                       id={`${formId}-currency`}
                       value={currency}
-                      onChange={(e) => setCurrency(e.target.value)}
+                      onChange={(e) => handleCurrencyChange(e.target.value)}
                       className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                     >
                       <option value="USD">USD</option>
@@ -874,7 +807,7 @@ function AddItemPage() {
                 <select
                   id={`${formId}-currency`}
                   value={currency}
-                  onChange={(e) => setCurrency(e.target.value)}
+                  onChange={(e) => handleCurrencyChange(e.target.value)}
                   className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500"
                 >
                   <option value="USD">USD</option>
@@ -885,6 +818,7 @@ function AddItemPage() {
                 </select>
               </div>
             )}
+            </>)}
 
             {/* Digital delivery content */}
             {isDigital && user?.identityId && (
@@ -940,7 +874,8 @@ function AddItemPage() {
                     onChange={updateKit}
                     onBusyChange={setIsKitUploading}
                     identityId={user.identityId}
-                    variantKeys={hasVariants ? combinations : undefined}
+                    // Assets can target options only where option ids are stored (v7).
+                    variants={hasVariants && variantsAreTyped ? variants : undefined}
                     disabled={isSubmitting}
                   />
                 )}

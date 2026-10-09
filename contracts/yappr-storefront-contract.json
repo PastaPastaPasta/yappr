@@ -172,7 +172,7 @@
           "description": "Seller-chosen category as a lowercase slug (e.g. vintage-clothing), so stores group under one key"
         }
       },
-      "description": "A merchant store profile (one per user), listed by status and category. Owners cannot delete one (`closed` is the tombstone); the contract's moderators can remove it, leaving a removal record.",
+      "description": "A merchant store (one per user), listed by status and category. `closed` is the tombstone; moderators can remove it.",
       "additionalProperties": false,
       "canBeDeleted": false,
       "moderatorAbilities": {
@@ -269,7 +269,7 @@
         },
         "imageUrls": {
           "type": "array",
-          "maxItems": 8,
+          "maxItems": 12,
           "uniqueItems": true,
           "position": 7,
           "items": {
@@ -278,13 +278,13 @@
             "maxBytes": 512,
             "pattern": "^(https?|ipfs)://.+$"
           },
-          "description": "Product image URLs (https:// or ipfs://), at most 8, no duplicates"
+          "description": "Product image URLs (https:// or ipfs://), at most 12, no duplicates"
         },
         "basePrice": {
           "type": "integer",
           "minimum": 0,
           "position": 8,
-          "description": "Base price in smallest currency unit (cents/satoshis). Null if variants define pricing.",
+          "description": "Price in the smallest currency unit; absent on a variant item (each combination has its own)",
           "maximum": 9007199254740991
         },
         "currency": {
@@ -317,7 +317,7 @@
           "type": "integer",
           "minimum": 0,
           "position": 12,
-          "description": "Available stock (informational only)",
+          "description": "Available stock; absent when untracked or on a variant item",
           "maximum": 4294967295
         },
         "sku": {
@@ -327,11 +327,142 @@
           "description": "Stock keeping unit identifier"
         },
         "variants": {
-          "type": "string",
+          "type": "object",
           "position": 14,
-          "maxLength": 5120,
-          "description": "JSON object with axes and combinations for product variants",
-          "maxBytes": 5120
+          "additionalProperties": false,
+          "required": [
+            "axes",
+            "options",
+            "optionIds",
+            "optionAxes",
+            "nextOptionId",
+            "selectors",
+            "prices"
+          ],
+          "properties": {
+            "axes": {
+              "type": "array",
+              "position": 0,
+              "minItems": 1,
+              "maxItems": 5,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 32,
+                "maxBytes": 64
+              }
+            },
+            "options": {
+              "type": "array",
+              "position": 1,
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "maxBytes": 80
+              }
+            },
+            "optionIds": {
+              "type": "array",
+              "position": 2,
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 254
+              }
+            },
+            "optionAxes": {
+              "type": "array",
+              "position": 3,
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              }
+            },
+            "nextOptionId": {
+              "type": "integer",
+              "position": 4,
+              "minimum": 2,
+              "maximum": 255
+            },
+            "selectors": {
+              "type": "array",
+              "position": 5,
+              "minItems": 1,
+              "maxItems": 256,
+              "uniqueItems": true,
+              "items": {
+                "type": "array",
+                "byteArray": true,
+                "minItems": 1,
+                "maxItems": 5
+              }
+            },
+            "prices": {
+              "type": "array",
+              "position": 6,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "stocks": {
+              "type": "array",
+              "position": 7,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "skus": {
+              "type": "array",
+              "position": 8,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "string",
+                "maxLength": 32,
+                "maxBytes": 64
+              }
+            },
+            "weights": {
+              "type": "array",
+              "position": 9,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4294967295
+              }
+            },
+            "images": {
+              "type": "array",
+              "position": 10,
+              "minItems": 1,
+              "maxItems": 256,
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 12
+              }
+            }
+          }
         },
         "fulfillment": {
           "type": "string",
@@ -340,11 +471,11 @@
             "digital"
           ],
           "position": 15,
-          "description": "How the product reaches the buyer: `shipped` (a physical parcel; also what an absent value means) or `digital` (delivered on chain as an encrypted orderDelivery, no address or shipping)",
+          "description": "`shipped` (a parcel; also what absent means) or `digital` (delivered on chain as an orderDelivery)",
           "maxLength": 7
         }
       },
-      "description": "A product listing with optional embedded variants. Owners cannot delete one (moderators can, on the record); status `deleted` is the tombstone. Only the store owner can create or edit one, and storeId is frozen. `fulfillment` marks a digital product, whose files/links/keys the seller keeps in an itemDeliverable.",
+      "description": "A product listing, optionally with a variants table. Only the store owner writes it; status `deleted` is the tombstone.",
       "additionalProperties": false,
       "canBeDeleted": false,
       "immutable": [
@@ -365,6 +496,130 @@
             },
             {
               "present": "currency"
+            }
+          ]
+        },
+        "onePrice": {
+          "lessThanOrEqual": [
+            {
+              "countPresent": [
+                "basePrice",
+                "variants"
+              ]
+            },
+            1
+          ]
+        },
+        "oneStock": {
+          "lessThanOrEqual": [
+            {
+              "countPresent": [
+                "stockQuantity",
+                "variants"
+              ]
+            },
+            1
+          ]
+        },
+        "optionTable": {
+          "allOf": [
+            {
+              "equal": [
+                {
+                  "count": "variants.optionIds"
+                },
+                {
+                  "count": "variants.options"
+                }
+              ]
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.optionAxes"
+                },
+                {
+                  "count": "variants.options"
+                }
+              ]
+            }
+          ]
+        },
+        "comboTable": {
+          "equal": [
+            {
+              "count": "variants.selectors"
+            },
+            {
+              "count": "variants.prices"
+            }
+          ]
+        },
+        "comboStocks": {
+          "anyOf": [
+            {
+              "absent": "variants.stocks"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.stocks"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "comboSkus": {
+          "anyOf": [
+            {
+              "absent": "variants.skus"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.skus"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "comboWeights": {
+          "anyOf": [
+            {
+              "absent": "variants.weights"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.weights"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
+            }
+          ]
+        },
+        "comboImages": {
+          "anyOf": [
+            {
+              "absent": "variants.images"
+            },
+            {
+              "equal": [
+                {
+                  "count": "variants.images"
+                },
+                {
+                  "count": "variants.prices"
+                }
+              ]
             }
           ]
         }
@@ -522,7 +777,7 @@
     },
     "itemDeliverable": {
       "type": "object",
-      "description": "The seller's private delivery kit for a digital storeItem: files (encrypted on IPFS, with their keys), links, license keys and instructions, ECIES-encrypted to the seller's OWN encryption key so any of their devices can fulfil an order. One per item; only the item's owner may write it, and itemId is frozen. Mutable because each sale consumes license keys.",
+      "description": "The seller's private kit for a digital item (files, links, codes), encrypted to the seller. One per item.",
       "properties": {
         "itemId": {
           "type": "array",
@@ -665,7 +920,7 @@
           "maxLength": 6
         }
       },
-      "description": "An encrypted order created by a buyer. Permanent so status updates and reviews can reference it. The buyer IS $ownerId, and `sellerId` is consensus-equal to the store's owner, so both parties are facts rather than buyer-supplied claims; reviews and status updates bind to them.",
+      "description": "A buyer's encrypted order. Permanent; `sellerId` is bound to the store's owner, and the buyer is $ownerId.",
       "additionalProperties": false,
       "documentsMutable": false,
       "canBeDeleted": false,
@@ -763,14 +1018,14 @@
           "description": "Optional message to buyer"
         }
       },
-      "description": "A status update for an order: one immutable, undeletable document per change, so the order's documents ARE its history. Only the order's seller can write one (writer gate on sellerId); buyerFeed files it under the order's owner, read through orderId, for buyer notifications.",
+      "description": "One immutable status change for an order, written only by its seller; the order's documents are its history.",
       "additionalProperties": false,
       "documentsMutable": false,
       "canBeDeleted": false
     },
     "orderDelivery": {
       "type": "object",
-      "description": "Digital goods the seller delivered for an order (file keys, links, license keys, a message). Only the order's SELLER can write one (writer gate against the order's sellerId) and buyerDeliveries files it under the order's owner, read through orderId, so the buyer's library carries only real deliveries. Encrypted under a key both parties derive from the order's own ECDH secret; permanent and append-only, so a delivery is a receipt.",
+      "description": "Digital goods a seller delivered for an order, encrypted to the order's ECDH key. Permanent; written only by the seller.",
       "properties": {
         "orderId": {
           "type": "array",
@@ -958,7 +1213,7 @@
           "description": "Review content"
         }
       },
-      "description": "A review of a store from a buyer, one per order. orderId must name an order this signer placed at this store (storeId/sellerId/$ownerId bound), and an order's seller can never be its buyer. It proves an order was placed, not that it was paid or delivered.",
+      "description": "A buyer's review of a store, one per order, bound to an order this signer placed at this store.",
       "additionalProperties": false,
       "documentsMutable": false,
       "moderatorAbilities": {
@@ -974,7 +1229,7 @@
     "itemReview": {
       "type": "object",
       "documentsMutable": false,
-      "description": "A review of one item from an order, one per (order, item). The item must belong to the same store as the order, and only the identity that placed the order may write it (writer gate). Reviewing an item publishes that this order contained it.",
+      "description": "A buyer's review of one item from an order, one per (order, item), written only by the order's owner.",
       "indices": [
         {
           "name": "itemReviews",

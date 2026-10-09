@@ -1,23 +1,26 @@
 /**
  * Store Item Service
  *
- * Manages product listings with embedded variants.
- * Supports two-level variant hierarchy (e.g., Color + Size).
+ * Manages product listings and their variants table (docs/STOREFRONT_V7.md):
+ * up to five option types, combinations named by a canonical variant id. v7
+ * stores the table as typed lists (lib/storefront/variant-codec.ts); v1–v6 as
+ * a JSON string (lib/storefront/legacy-variants.ts). Callers see one model.
  */
 
-import { BaseDocumentService } from './document-service';
+import { BaseDocumentService, StaleRevisionError } from './document-service';
 import { stateTransitionService } from './state-transition-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped } from '../constants';
-import { LIST_LIMITS, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArraysAreTyped, storefrontVariantsAreTyped } from '../constants';
+import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
-import { parseJsonObject } from '../utils/json-parsing';
+import { LEGACY_STRING_LIST_CAPS, itemImageLimit, itemSizeError, itemStockCap } from '../storefront/storefront-contract';
+import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
+import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
   StoreItem,
   StoreItemDocument,
   StoreItemStatus,
   ItemFulfillment,
   ItemVariants,
-  VariantAxis,
   VariantCombination
 } from '../../types';
 
@@ -34,12 +37,86 @@ const storedList = (values: readonly string[], limits: ListLimits) => {
   return encodeStringList(values, typed);
 };
 const TAG_LIMITS = LIST_LIMITS.storeTags;
-const IMAGE_LIMITS = LIST_LIMITS.storeImageUrls;
+/** v7 stores up to 12 images (a variant names one by index); v4–v6 up to 8. */
+const imageLimits = (): ListLimits => ({ ...LIST_LIMITS.storeImageUrls, maxItems: Math.max(itemImageLimit(), LIST_LIMITS.storeImageUrls.maxItems) });
 /** A stored list (either shape) as the app models it; undefined when empty or absent. */
 const listOf = (stored: unknown): string[] | undefined => {
   const values = decodeStringList(stored);
   return values.length > 0 ? values : undefined;
 };
+
+/**
+ * The variants table as the configured cut stores it: the typed lists on v7,
+ * the JSON string before (whose combination images are URLs, so it needs the
+ * listing's `imageUrls`).
+ */
+const storedVariants = (variants: ItemVariants, imageUrls: readonly string[] | undefined) =>
+  storefrontVariantsAreTyped() ? encodeVariants(variants) : encodeLegacyVariants(variants, imageUrls);
+
+/**
+ * A stored gallery as every write stores it (trimmed, one of each: see
+ * `encodeStringList`), with where each stored 1-based position landed. A
+ * replace re-encodes the item as read, so reading the gallery in that shape
+ * keeps the positions a v7 table names in step with what is written back.
+ */
+function readGallery(stored: unknown): { imageUrls?: string[]; positionOf: (stored: number) => number | undefined } {
+  const raw = decodeStringList(stored);
+  const imageUrls = uniqueStrings(raw);
+  const positionOf = (position: number) => {
+    const index = imageUrls.indexOf(raw[position - 1]?.trim() ?? '');
+    return index < 0 ? undefined : index + 1;
+  };
+  return { imageUrls: imageUrls.length > 0 ? imageUrls : undefined, positionOf };
+}
+
+/** The table a stored item carries, read from whichever shape it was written in, its images named in the gallery as read. */
+function readVariants(stored: unknown, gallery: ReturnType<typeof readGallery>): ItemVariants | undefined {
+  if (typeof stored === 'string') return decodeLegacyVariants(stored, gallery.imageUrls);
+  const variants = decodeVariants(stored);
+  if (!variants) return undefined;
+  const combinations = variants.combinations.map(({ image, ...combination }) => {
+    const position = image === undefined ? undefined : gallery.positionOf(image);
+    return position === undefined ? combination : { ...combination, image: position };
+  });
+  return { ...variants, combinations };
+}
+
+/**
+ * Refuse, with a message for the seller, a listing the contract would refuse
+ * after signing: a variants table it cannot store (`table`: the table being
+ * written, or undefined when the write leaves the stored one as it is), an
+ * item-level price or stock beside a v7 table, or a whole document past the
+ * transition budget. `fields` is the document exactly as it will be sent.
+ */
+function assertStorable(fields: Record<string, unknown>, table: ItemVariants | undefined, imageUrls: readonly string[] | undefined): void {
+  const typed = storefrontVariantsAreTyped();
+  const imageCount = imageUrls?.length ?? 0;
+  // The stored list keeps one of each URL, which would move every later image a
+  // combination names by position.
+  if (table?.combinations.some((combination) => combination.image !== undefined) && uniqueStrings(imageUrls ?? []).length !== imageCount) {
+    throw new ListLimitError('The same image is in this listing twice. Remove the copy and save again.');
+  }
+  if (table) {
+    const [problem] = variantProblems(table, { imageCount, legacy: !typed });
+    if (problem) throw new ListLimitError(problem);
+  }
+  // v7 refuses an item-level price or stock beside the table (onePrice, oneStock).
+  if (typed && fields.variants !== undefined && (fields.basePrice !== undefined || fields.stockQuantity !== undefined)) {
+    throw new ListLimitError('A product with options is priced and stocked per combination. Clear its single price and stock first.');
+  }
+  if (typeof fields.stockQuantity === 'number' && fields.stockQuantity > itemStockCap()) {
+    throw new ListLimitError(`Stock can be at most ${itemStockCap().toLocaleString()}.`);
+  }
+  // v1–v3 keep the image addresses and tags as JSON strings, each capped as a whole.
+  if (typeof fields.imageUrls === 'string' && fields.imageUrls.length > LEGACY_STRING_LIST_CAPS.imageUrls) {
+    throw new ListLimitError('The image addresses are too long to store together. Remove an image, or use shorter addresses.');
+  }
+  if (typeof fields.tags === 'string' && fields.tags.length > LEGACY_STRING_LIST_CAPS.tags) {
+    throw new ListLimitError('The tags are too long to store together. Remove some tags.');
+  }
+  const sizeError = itemSizeError(fields);
+  if (sizeError) throw new ListLimitError(sizeError);
+}
 
 class StoreItemService extends BaseDocumentService<StoreItem> {
   constructor() {
@@ -48,22 +125,33 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
 
   /**
    * `update()` rebuilds the full replace from the TRANSFORMED item, where
-   * `tags`/`imageUrls` are arrays, `variants` an object and `storeId` base58.
-   * Re-encode each the way the contract stores it, or a stock edit that names
-   * none of them re-sends parsed values that no cut accepts (lists on
-   * storefront v1–v3, an object for `variants` on every cut).
+   * `tags`/`imageUrls` are arrays, `variants` the app's table and `storeId`
+   * base58. Re-encode each the way the contract stores it, or a stock edit
+   * that names none of them re-sends parsed values that no cut accepts (lists
+   * on storefront v1–v3, the app's table on every cut).
    */
   protected extractContentFields(doc: StoreItem): Record<string, unknown> {
     const fields = super.extractContentFields(doc);
     if (typeof fields.storeId === 'string') fields.storeId = fields.storeId ? identifierStringToDocumentBytes(fields.storeId) : undefined;
     if (Array.isArray(fields.tags)) fields.tags = storedList(fields.tags as string[], TAG_LIMITS);
-    if (Array.isArray(fields.imageUrls)) fields.imageUrls = storedList(fields.imageUrls as string[], IMAGE_LIMITS);
-    if (fields.variants && typeof fields.variants === 'object') fields.variants = JSON.stringify(fields.variants);
+    if (Array.isArray(fields.imageUrls)) fields.imageUrls = storedList(fields.imageUrls as string[], imageLimits());
+    delete fields.unreadableVariants;
+    delete fields.unreadableImageUrls;
+    if (doc.variants) fields.variants = storedVariants(doc.variants, doc.imageUrls);
+    // A table this client cannot read goes back exactly as it was stored, with
+    // the gallery it may name by position.
+    else if (doc.unreadableVariants !== undefined) {
+      fields.variants = doc.unreadableVariants;
+      fields.imageUrls = doc.unreadableImageUrls;
+    }
     return fields;
   }
 
   protected transformDocument(doc: Record<string, unknown>): StoreItem {
     const data = (doc.data || doc) as StoreItemDocument;
+    const gallery = readGallery(data.imageUrls);
+    const imageUrls = gallery.imageUrls;
+    const variants = readVariants(data.variants, gallery);
 
     return {
       id: (doc.$id || doc.id) as string,
@@ -77,14 +165,15 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       category: data.category,
       subcategory: data.subcategory,
       tags: listOf(data.tags),
-      imageUrls: listOf(data.imageUrls),
+      imageUrls,
       basePrice: data.basePrice,
       currency: data.currency,
       status: data.status,
       weight: data.weight,
       stockQuantity: data.stockQuantity,
       sku: data.sku,
-      variants: parseJsonObject<ItemVariants>(data.variants, 'variants'),
+      variants,
+      ...(data.variants !== undefined && data.variants !== null && !variants ? { unreadableVariants: data.variants, unreadableImageUrls: data.imageUrls } : {}),
       fulfillment: data.fulfillment === 'digital' ? 'digital' : undefined
     };
   }
@@ -189,16 +278,17 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if (data.category) documentData.category = data.category;
     if (data.subcategory) documentData.subcategory = data.subcategory;
     if (data.tags) documentData.tags = storedList(data.tags, TAG_LIMITS);
-    if (data.imageUrls) documentData.imageUrls = storedList(data.imageUrls, IMAGE_LIMITS);
+    if (data.imageUrls) documentData.imageUrls = storedList(data.imageUrls, imageLimits());
     if (data.basePrice !== undefined) documentData.basePrice = data.basePrice;
     if (data.currency) documentData.currency = data.currency;
     if (data.weight !== undefined) documentData.weight = data.weight;
     if (data.stockQuantity !== undefined) documentData.stockQuantity = data.stockQuantity;
     if (data.sku) documentData.sku = data.sku;
-    if (data.variants) documentData.variants = JSON.stringify(data.variants);
+    if (data.variants) documentData.variants = storedVariants(data.variants, data.imageUrls);
     // Absent means shipped, so a physical product writes exactly what v5 accepts.
     if (data.fulfillment === 'digital') documentData.fulfillment = 'digital';
 
+    assertStorable(documentData, data.variants, data.imageUrls);
     return this.create(ownerId, documentData);
   }
 
@@ -225,13 +315,29 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
       sku: string;
       variants: ItemVariants;
       fulfillment: ItemFulfillment;
-    }>
+    }>,
+    /**
+     * The revision the edit started from. Required to write `variants`: a
+     * table edited from an older revision could hand an option id another
+     * editor already gave out (and carts and kits name) to a different option,
+     * so it is refused rather than written over the newer one.
+     */
+    baseRevision?: number
   ): Promise<StoreItem> {
-    // Fetch existing item to preserve required fields
+    if ('variants' in data && baseRevision === undefined) throw new Error('updateItem: writing variants needs the revision they were edited from');
+    // The table is re-encoded whenever the images change too: on v1–v6 a
+    // combination's image is stored as its URL, not an index.
+    const writesTable = 'variants' in data || 'imageUrls' in data;
+    // Fetch existing item to preserve required fields (fresh when the edit must match it,
+    // or when it rewrites the table, which it then writes only over that same revision)
+    if (baseRevision !== undefined || writesTable) this.cache.delete(itemId);
     const existing = await this.get(itemId);
     if (!existing) {
       throw new Error('Item not found');
     }
+    if (baseRevision !== undefined && existing.$revision !== undefined && existing.$revision !== baseRevision) throw new StaleRevisionError();
+    // Its options cannot be read, so nothing that touches them (or the images they may name) is written.
+    if (existing.unreadableVariants !== undefined && ('variants' in data || 'imageUrls' in data)) throw new ListLimitError("This product's options could not be read, so they can't be changed here. List it again as a new product.");
 
     const documentData: Record<string, unknown> = {
       storeId: identifierStringToDocumentBytes(storeId),
@@ -247,16 +353,26 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('subcategory' in data) documentData.subcategory = data.subcategory;
     // An empty list clears the field too (the encoder answers undefined for none).
     if ('tags' in data) documentData.tags = data.tags && storedList(data.tags, TAG_LIMITS);
-    if ('imageUrls' in data) documentData.imageUrls = data.imageUrls && storedList(data.imageUrls, IMAGE_LIMITS);
+    if ('imageUrls' in data) documentData.imageUrls = data.imageUrls && storedList(data.imageUrls, imageLimits());
     if ('basePrice' in data) documentData.basePrice = data.basePrice;
     if ('currency' in data) documentData.currency = data.currency;
     if ('weight' in data) documentData.weight = data.weight;
     if ('stockQuantity' in data) documentData.stockQuantity = data.stockQuantity;
     if ('sku' in data) documentData.sku = data.sku;
-    if ('variants' in data) documentData.variants = data.variants && JSON.stringify(data.variants);
+    const imageUrls = 'imageUrls' in data ? data.imageUrls : existing.imageUrls;
+    const variants = 'variants' in data ? data.variants : existing.variants;
+    if (writesTable) documentData.variants = variants && storedVariants(variants, imageUrls);
     if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
 
-    return this.update(itemId, ownerId, documentData);
+    // What update() will send: the stored fields, with these changes over them.
+    // The table is judged only when this edit writes it (or moves its images):
+    // a status or stock edit must never be blocked by a stored v1-v6 table.
+    const merged: Record<string, unknown> = { ...this.extractContentFields(existing), ...documentData };
+    for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
+    assertStorable(merged, writesTable ? variants : undefined, imageUrls);
+    // A table rewritten from `existing` (an image-only edit) is bound to the
+    // revision it was read at, as an explicit edit is to its base revision.
+    return this.update(itemId, ownerId, documentData, baseRevision ?? (writesTable ? existing.$revision : undefined));
   }
 
   /**
@@ -269,154 +385,88 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   }
 
   // =========================================================================
-  // Variant Helper Methods
+  // Variant Helper Methods (a combination is named by its canonical variant id)
   // =========================================================================
 
-  /**
-   * Get variant axes from an item
-   */
-  getVariantAxes(item: StoreItem): VariantAxis[] {
-    return item.variants?.axes || [];
+  /** The combination `variantId` names, if the item still offers it. */
+  getCombination(item: StoreItem, variantId: string | undefined): VariantCombination | undefined {
+    return findCombination(item.variants, variantId);
+  }
+
+  /** The variant's name for a cart line or order ("Red / Large"); the order's size check bounds it. */
+  getVariantLabel(item: StoreItem, variantId: string | undefined): string | undefined {
+    const combination = this.getCombination(item, variantId);
+    return combination && item.variants ? variantLabel(item.variants, combination) : undefined;
+  }
+
+  /** What checkout charges: the variant's price, else the base price, else 0. */
+  getPrice(item: StoreItem, variantId?: string): number {
+    return this.getCombination(item, variantId)?.price ?? item.basePrice ?? 0;
   }
 
   /**
-   * Get available options for an axis, optionally filtered by prior selections
+   * The combination a cart line names. On v7 its id is enough. v1–v6 number
+   * options by position on every read, so once the seller reorders or removes
+   * an option or option type an old id can name a different combination:
+   * there the line's [option type, option] names (kept exactly when it was
+   * added) must agree too, or the line names nothing.
    */
-  getAxisOptions(item: StoreItem, axisName: string, priorSelections?: Record<string, string>): string[] {
-    if (!item.variants) return [];
+  getLineCombination(item: StoreItem, line: { variantId?: string; variantOptions?: VariantOptionPairs }): VariantCombination | undefined {
+    const combination = this.getCombination(item, line.variantId);
+    if (!combination || !item.variants || storefrontVariantsAreTyped()) return combination;
+    return JSON.stringify(line.variantOptions ?? null) === JSON.stringify(variantOptionPairs(item.variants, combination)) ? combination : undefined;
+  }
 
-    const axis = item.variants.axes.find(a => a.name === axisName);
-    if (!axis) return [];
+  /** The SKU of the variant a line names, else the item's own. */
+  getSku(item: StoreItem, line: { variantId?: string; variantOptions?: VariantOptionPairs }): string | undefined {
+    return this.getLineCombination(item, line)?.sku ?? item.sku;
+  }
 
-    if (!priorSelections || Object.keys(priorSelections).length === 0) {
-      return axis.options;
-    }
-
-    // Filter options based on available combinations with prior selections
-    const availableOptions = new Set<string>();
-    const axisIndex = item.variants.axes.findIndex(a => a.name === axisName);
-
-    for (const combo of item.variants.combinations) {
-      const keyParts = combo.key.split('|');
-
-      // Check if this combination matches all prior selections
-      let matches = true;
-      for (const [selAxis, selValue] of Object.entries(priorSelections)) {
-        const selIndex = item.variants.axes.findIndex(a => a.name === selAxis);
-        if (selIndex >= 0 && keyParts[selIndex] !== selValue) {
-          matches = false;
-          break;
-        }
-      }
-
-      // Include option if stock is undefined (unlimited) or > 0
-      if (matches && (combo.stock === undefined || combo.stock === null || combo.stock > 0)) {
-        availableOptions.add(keyParts[axisIndex]);
-      }
-    }
-
-    return axis.options.filter(opt => availableOptions.has(opt));
+  /** The variant's weight in grams, else the item's (for shipping). */
+  getWeight(item: StoreItem, variantId?: string): number | undefined {
+    return this.getCombination(item, variantId)?.weight ?? item.weight;
   }
 
   /**
-   * Find a combination by key
+   * Whether the item (or the named variant) tracks inventory. A v7 variant
+   * item tracks every combination or none.
    */
-  getCombination(item: StoreItem, key: string): VariantCombination | null {
-    if (!item.variants) return null;
-    return item.variants.combinations.find(c => c.key === key) || null;
-  }
-
-  /**
-   * Build a variant key from selections
-   */
-  buildVariantKey(selections: Record<string, string>, axes: VariantAxis[]): string {
-    return axes.map(axis => selections[axis.name] || '').join('|');
-  }
-
-  /**
-   * Get price for an item (base price or variant price)
-   */
-  getPrice(item: StoreItem, variantKey?: string): number {
-    if (variantKey && item.variants) {
-      const combo = this.getCombination(item, variantKey);
-      if (combo) return combo.price;
-    }
-    return item.basePrice || 0;
-  }
-
-  /**
-   * Check if item has inventory tracking enabled.
-   * For variants: tracked if at least one variant has stock defined.
-   * For base items: tracked if stockQuantity is defined.
-   */
-  hasInventoryTracking(item: StoreItem, variantKey?: string): boolean {
-    if (variantKey && item.variants) {
-      const combo = this.getCombination(item, variantKey);
-      return combo?.stock !== undefined && combo?.stock !== null;
-    }
+  hasInventoryTracking(item: StoreItem, variantId?: string): boolean {
     if (item.variants) {
-      // Check if any variant has stock tracking
-      return item.variants.combinations.some(c => c.stock !== undefined && c.stock !== null);
+      if (variantId) return this.getCombination(item, variantId)?.stock !== undefined;
+      return item.variants.combinations.some((combination) => combination.stock !== undefined);
     }
     return item.stockQuantity !== undefined && item.stockQuantity !== null;
   }
 
   /**
-   * Get stock for an item (base stock or variant stock).
-   * Returns Infinity if inventory is not tracked.
+   * Units available: the variant's stock on a variant item (0 for a variant
+   * it no longer offers), else stockQuantity. Infinity when untracked.
    */
-  getStock(item: StoreItem, variantKey?: string): number {
-    if (variantKey && item.variants) {
-      const combo = this.getCombination(item, variantKey);
-      if (combo) {
-        // If variant stock is undefined, inventory is not tracked - return Infinity
-        if (combo.stock === undefined || combo.stock === null) {
-          return Infinity;
-        }
-        return combo.stock;
-      }
+  getStock(item: StoreItem, variantId?: string): number {
+    // A table that cannot be read offers nothing that can be bought.
+    if (item.unreadableVariants !== undefined) return 0;
+    if (item.variants) {
+      const combination = this.getCombination(item, variantId);
+      if (!combination) return 0;
+      return combination.stock ?? Infinity;
     }
-    // If stockQuantity is undefined, inventory is not tracked - return Infinity
-    if (item.stockQuantity === undefined || item.stockQuantity === null) {
-      return Infinity;
-    }
-    return item.stockQuantity;
+    return item.stockQuantity ?? Infinity;
   }
 
-  /**
-   * Check if item is out of stock.
-   * For variants: out of stock only if ALL variants have stock explicitly set to 0.
-   * Variants with undefined stock are considered available (unlimited).
-   * For base items: out of stock only if stockQuantity is explicitly set to 0.
-   */
+  /** Whether nothing can be bought: every combination at 0, or a tracked stockQuantity of 0. */
   isOutOfStock(item: StoreItem): boolean {
-    if (item.variants) {
-      // Out of stock only if ALL variants have stock defined AND all are 0 or less
-      return item.variants.combinations.every(c =>
-        c.stock !== undefined && c.stock !== null && c.stock <= 0
-      );
-    }
-    // If stockQuantity is undefined, inventory is not tracked - item is available
-    if (item.stockQuantity === undefined || item.stockQuantity === null) {
-      return false;
-    }
+    if (item.unreadableVariants !== undefined) return true;
+    if (item.variants) return !item.variants.combinations.some(isInStock);
+    if (item.stockQuantity === undefined || item.stockQuantity === null) return false;
     return item.stockQuantity <= 0;
   }
 
-  /**
-   * Get the lowest and highest prices for an item with variants
-   */
+  /** The lowest and highest prices: over the combinations, or the base price twice. */
   getPriceRange(item: StoreItem): { min: number; max: number } {
-    if (!item.variants || item.variants.combinations.length === 0) {
-      const price = item.basePrice || 0;
-      return { min: price, max: price };
-    }
-
-    const prices = item.variants.combinations.map(c => c.price);
-    return {
-      min: Math.min(...prices),
-      max: Math.max(...prices)
-    };
+    if (item.variants) return priceRange(item.variants);
+    const price = item.basePrice || 0;
+    return { min: price, max: price };
   }
 }
 

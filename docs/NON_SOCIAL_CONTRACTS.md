@@ -66,17 +66,19 @@ contract id is an input to every registration.
 `contracts/yappr-storefront-contract.json` — `store`, `storeItem`,
 `shippingZone`, `itemDeliverable`, `storeOrder`, `orderStatusUpdate`,
 `orderDelivery`, `storeReview`, `itemReview`, `savedAddress`. Client gate:
-`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v6`, resolved in `lib/constants.ts`).
-**The file is storefront v6**, the 5.0.0-beta.2 mainnet-ready cut that also
-carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638). It is
-registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk`
-(re-registered after the 2026-10-08 beta.3 wipe) and `/devnet` runs it
-([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md)).
+`NEXT_PUBLIC_STOREFRONT_TOPOLOGY` (`v1`–`v7`, resolved in `lib/constants.ts`).
+**The file is storefront v7**: v6 (below) with `storeItem.variants` as a typed
+table instead of a JSON string, and up to 12 image URLs per item
+([STOREFRONT_V7.md](STOREFRONT_V7.md)). v6, the 5.0.0-beta.2 mainnet-ready cut
+that also carries digital products (docs/DIGITAL_PRODUCTS.md, PR #638), was
+registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk` after
+the 2026-10-08 beta.3 wipe ([SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md));
+its stores and items are abandoned with the v7 cut (no migration).
 
 | Doctype | Shape | Serves |
 | --- | --- | --- |
 | `store` | `canBeDeleted: false` (`closed` is the tombstone), `moderatorAbilities.delete`; required `category` slug; `byStatus [status, $createdAt]`; `byCategory [status, category, $createdAt]` rangeCountable, ranked at `category`; 1000M action fee | "newest stores", per-category newest, "top categories"; moderatedDocument target |
-| `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); 50M action fee | item reviews, ghost-store rejection, seller-only listings |
+| `storeItem` | `canBeDeleted: false`, `moderatorAbilities.delete`; `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]`; `fulfillment` (`shipped`/`digital`); v7 `variants` table (options with stable ids, a byte-array selector and a price per combination, optional stock/SKU/weight/image lists; 9 alignment rules); 50M action fee | item reviews, ghost-store rejection, seller-only listings, variant pickers |
 | `shippingZone` | `storeId`→store (moderatedDocument) **writer-gated**; `immutable [storeId]` | seller-only zones |
 | `itemDeliverable` | one per item; `itemId`→storeItem (moderatedDocument) **writer-gated**; `immutable [itemId]`; seller-encrypted kit (≤ 5,120 B) | digital products |
 | `storeOrder` | permanent; `storeId`→store `{$ownerId: sellerId, status: storeStatus}`; `sellerId` distinctFrom `$ownerId`; `buyerOrders [$ownerId, $createdAt]` rangeCountable; `storeOrders [storeId, $createdAt]` rangeCountable, ranked at `storeId`; payload ≤ 5,120 B | buyer and seller order lists and counts, "most ordered stores" |
@@ -84,6 +86,31 @@ registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk`
 | `orderDelivery` | `orderId`→storeOrder **writer-gated to the seller**; permanent, append-only; `buyerDeliveries [orderId.$ownerId, $createdAt]` (derived); payload ≤ 5,120 B | encrypted digital delivery, buyer library |
 | `storeReview` | `orderId`→storeOrder **writer-gated to the buyer**; `storeRating` avg ranked; `storeRatingDistribution` grouped count; 16M action fee | averages, distribution, top rated |
 | `itemReview` | one per (order, item); `itemId`→storeItem `{storeId}`; `orderId` **writer-gated**; `storeItemRating [storeId, itemId]` avg+count, avg ranked; 8M action fee | item averages and counts within a store, top items in a store |
+
+### What v7 changed (from v6)
+
+- **Variants are a typed table** (`storeItem.variants`, an object of parallel
+  lists). Options have stable ids, and a combination is one byte-array
+  selector (an option id per axis) with its price and, optionally, its stock,
+  SKU, weight and image index. The table holds up to 5 axes, 64 options and
+  256 combinations; the real cap is the 20,480-byte transition, which the
+  client checks before signing.
+  - The JSON schema requires the core lists and keeps option ids and
+    selectors unique (10101).
+  - Rules keep the lists aligned and a variant item free of `basePrice` and
+    `stockQuantity` (`onePrice`, `oneStock`, `optionTable`, `comboTable`,
+    `comboStocks`, `comboSkus`, `comboWeights`, `comboImages`, all 10422).
+- **Carts, orders and kits name a variant by its canonical id**, the sorted
+  option-id set ("3.9"). Orders carry a label and SKU snapshot. A digital
+  asset targets an option-id subset.
+- **`imageUrls` holds up to 12** (a combination names one by index).
+- **Descriptions** are omitted on the new members and cut to 120 characters
+  elsewhere: 17,661 B serialized, about 17,768 B signed.
+- The seller's 7 × 2 listing that outgrew v6's 5,120-byte JSON (3,582 B as
+  imported) stores in 469 B. A 5-axis, 100-combination listing (9,669 B of
+  JSON, which v6 could not hold) stores in 2,942 B.
+
+Full design, live checks and fees: [STOREFRONT_V7.md](STOREFRONT_V7.md).
 
 ### What v6 changed (from v5)
 
@@ -133,8 +160,8 @@ registered on sakura as `5qh1gpJY36bkEXb4PMPJ2E1VhRxZZ796FHFGWu3oCmhk`
   `buyerReviews`/`sellerRating`, `itemReview.buyerItemReviews`, and the
   ranked count on `storeRating` ("most reviewed stores").
 - **Bounds.** Encrypted payloads (order, kit, delivery) cap at 5,120 B, and
-  `variants` at 5,120 characters and bytes; the client refuses either before
-  signing (checkout, add-item, CSV import). Logo and banner URLs must be
+  `variants` (still a JSON string on v6) at 5,120 characters and bytes; the
+  client refuses either before signing (checkout, add-item, CSV import). Logo and banner URLs must be
   https:// or ipfs://; currencies are free text of at most 10 characters;
   prices may reach 2^53−1 and weight and stock are u32; `fulfillment` is at
   most 7 characters.

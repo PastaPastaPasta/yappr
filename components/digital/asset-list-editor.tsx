@@ -7,8 +7,9 @@ import { ArrowUpTrayIcon, DocumentIcon, KeyIcon, LinkIcon, PlusIcon, TrashIcon }
 import { Button } from '@/components/ui/button'
 import { getUploadErrorMessage, isUploadException, UploadErrorCode } from '@/lib/upload'
 import { formatFileSize, uploadEncryptedFile } from '@/lib/services/digital-file-service'
-import { isSafeDeliveryUrl, MAX_CODE_LENGTH, MAX_DIGITAL_FILE_BYTES, normalizeLinkInput } from '@/lib/services/digital-delivery-plan'
-import type { DigitalAsset } from '@/lib/types'
+import { describeAssetTarget, isSafeDeliveryUrl, MAX_CODE_LENGTH, MAX_DIGITAL_FILE_BYTES, normalizeLinkInput, retargetAxis, withAssetTarget } from '@/lib/services/digital-delivery-plan'
+import { emptyVariants, findOption } from '@/lib/storefront/variant-codec'
+import type { DigitalAsset, ItemVariants } from '@/lib/types'
 
 interface DigitalAssetListEditorProps {
   assets: DigitalAsset[]
@@ -19,8 +20,11 @@ interface DigitalAssetListEditorProps {
    */
   onChange: (update: (assets: DigitalAsset[]) => DigitalAsset[]) => void
   identityId: string
-  /** The item's variant keys; when given, each asset can be limited to one of them. */
-  variantKeys?: string[]
+  /**
+   * The item's variants table; when given, each asset can be limited to the
+   * variants with some options (every "Red" one, or exactly "Red / XL").
+   */
+  variants?: ItemVariants
   disabled?: boolean
   /**
    * Told when an upload starts and ends. A file's key reaches `assets` only
@@ -52,6 +56,62 @@ const ADD_MODES: Array<{ mode: AddMode; label: string }> = [
 
 const inputClass = 'px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outline-none focus:ring-2 focus:ring-yappr-500 text-sm'
 
+interface AssetTargetProps {
+  asset: DigitalAsset
+  /** The item's variants table; undefined for a product without variants. */
+  variants: ItemVariants | undefined
+  onChange: (optionIds: number[]) => void
+  disabled: boolean
+}
+
+/** No option types: a product without variants still shows (and clears) an asset's old target. */
+const NO_VARIANTS = emptyVariants()
+
+/**
+ * Which variants get one asset: all of them, or those with the options
+ * chosen here (one per axis at most; "Any" leaves an axis open).
+ */
+function AssetTarget({ asset, variants = NO_VARIANTS, onChange, disabled }: AssetTargetProps) {
+  const { label, matchesNone } = describeAssetTarget(variants, asset.optionIds)
+  const chosenOn = (axisIndex: number) => asset.optionIds?.find((id) => findOption(variants, id)?.axisIndex === axisIndex)
+  const hasVariants = variants.axes.length > 0
+  return (
+    <div className="flex flex-wrap items-center gap-2 pl-8">
+      <span className="text-xs text-gray-500">
+        For: <span className="font-medium text-gray-700 dark:text-gray-300">{label}</span>
+      </span>
+      {variants.axes.map((axis, axisIndex) => (
+        <select
+          key={axisIndex}
+          aria-label={`${axis.name} for ${assetLabel(asset)}`}
+          value={chosenOn(axisIndex) ?? ''}
+          onChange={(e) => onChange(retargetAxis(variants, asset.optionIds, axisIndex, e.target.value ? Number(e.target.value) : undefined))}
+          disabled={disabled}
+          className={`${inputClass} py-1 text-xs`}
+        >
+          <option value="">Any {axis.name}</option>
+          {axis.options.map((option) => (
+            <option key={option.id} value={option.id}>{option.name}</option>
+          ))}
+        </select>
+      ))}
+      {(asset.optionIds?.length ?? 0) > 0 && (
+        <button
+          type="button"
+          onClick={() => onChange([])}
+          disabled={disabled}
+          className="text-xs text-yappr-600 dark:text-yappr-400 hover:underline disabled:opacity-50"
+        >
+          {hasVariants ? 'All variants' : 'Send to every buyer'}
+        </button>
+      )}
+      {matchesNone && (
+        <p className="w-full text-xs text-yellow-700 dark:text-yellow-300">No variant you sell has all of these options, so no buyer gets this.</p>
+      )}
+    </div>
+  )
+}
+
 /** Secrets: kept out of autofill history and the browser's (possibly cloud) spellcheck. */
 const secretInputProps = { autoComplete: 'off', spellCheck: false } as const
 
@@ -74,7 +134,7 @@ const addOnEnter = (add: () => void) => (e: KeyboardEvent<HTMLInputElement>) => 
  * only the ciphertext is uploaded; the key lives in the asset, which is itself
  * only ever stored encrypted.
  */
-export function DigitalAssetListEditor({ assets, onChange, identityId, variantKeys = [], disabled = false, onBusyChange, forOneOrder = false }: DigitalAssetListEditorProps) {
+export function DigitalAssetListEditor({ assets, onChange, identityId, variants, disabled = false, onBusyChange, forOneOrder = false }: DigitalAssetListEditorProps) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [upload, setUpload] = useState<{ name: string; progress: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -150,14 +210,8 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
     setNeedsProvider(false)
   }
 
-  const setVariant = (index: number, variantKey: string) => {
-    onChange((current) => current.map((asset, i) => {
-      if (i !== index) return asset
-      const copy = { ...asset }
-      if (variantKey) copy.variantKey = variantKey
-      else delete copy.variantKey
-      return copy
-    }))
+  const setTarget = (index: number, optionIds: number[]) => {
+    onChange((current) => current.map((asset, i) => (i === index ? withAssetTarget(asset, optionIds) : asset)))
   }
 
   return (
@@ -167,35 +221,27 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variantKe
           {assets.map((asset, index) => {
             const Icon = ASSET_ICONS[asset.kind]
             return (
-              <li key={`${asset.kind}-${assetLabel(asset)}-${index}`} className="flex items-center gap-3 p-3">
-                <Icon className="h-5 w-5 text-gray-400 flex-shrink-0" aria-hidden="true" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{assetLabel(asset)}</p>
-                  <p className="text-xs text-gray-500 truncate">{assetDetail(asset)}</p>
-                </div>
-                {variantKeys.length > 0 && (
-                  <select
-                    aria-label={`Variant for ${assetLabel(asset)}`}
-                    value={asset.variantKey ?? ''}
-                    onChange={(e) => setVariant(index, e.target.value)}
+              <li key={`${asset.kind}-${assetLabel(asset)}-${index}`} className="p-3 space-y-2">
+                <div className="flex items-center gap-3">
+                  <Icon className="h-5 w-5 text-gray-400 flex-shrink-0" aria-hidden="true" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{assetLabel(asset)}</p>
+                    <p className="text-xs text-gray-500 truncate">{assetDetail(asset)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${assetLabel(asset)}`}
+                    onClick={() => onChange((current) => current.filter((_, i) => i !== index))}
                     disabled={disabled}
-                    className={`${inputClass} max-w-[40%]`}
+                    className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded disabled:opacity-50"
                   >
-                    <option value="">All variants</option>
-                    {variantKeys.map((key) => (
-                      <option key={key} value={key}>{key.replace(/\|/g, ' / ')}</option>
-                    ))}
-                  </select>
+                    <TrashIcon className="h-4 w-4" />
+                  </button>
+                </div>
+                {/* Shown without variants too when the asset still has a target, so it can be cleared. */}
+                {(variants || (asset.optionIds?.length ?? 0) > 0) && (
+                  <AssetTarget asset={asset} variants={variants} onChange={(optionIds) => setTarget(index, optionIds)} disabled={disabled} />
                 )}
-                <button
-                  type="button"
-                  aria-label={`Remove ${assetLabel(asset)}`}
-                  onClick={() => onChange((current) => current.filter((_, i) => i !== index))}
-                  disabled={disabled}
-                  className="p-1 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded disabled:opacity-50"
-                >
-                  <TrashIcon className="h-4 w-4" />
-                </button>
               </li>
             )
           })}

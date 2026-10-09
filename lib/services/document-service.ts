@@ -163,6 +163,14 @@ export function withCreationTime(doc: Record<string, unknown>, startedAt: number
   return doc.$createdAt == null && doc.createdAt == null ? { ...doc, $createdAt: startedAt } : doc;
 }
 
+/** The document changed since the edit being saved was made from it. */
+export class StaleRevisionError extends Error {
+  constructor(message = 'This product was changed somewhere else since you opened it. Reload it and make your changes again.') {
+    super(message)
+    this.name = 'StaleRevisionError'
+  }
+}
+
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
@@ -424,8 +432,13 @@ export abstract class BaseDocumentService<T> {
   /**
    * Update a document through the typed `Document` replace path.
    * Binary fields should already be `Uint8Array` when they reach this layer.
+   *
+   * `expectedRevision`, when given, is the revision the edit was made from:
+   * the replace is refused (`StaleRevisionError`) unless the document is still
+   * at it, and it is sent as that revision's successor, so a write landing
+   * after this read makes Platform refuse it too.
    */
-  async update(documentId: string, ownerId: string, data: Record<string, unknown>): Promise<T> {
+  async update(documentId: string, ownerId: string, data: Record<string, unknown>, expectedRevision?: number): Promise<T> {
     try {
       logger.debug(`Updating ${this.documentType} document ${documentId}:`, data);
 
@@ -439,6 +452,7 @@ export abstract class BaseDocumentService<T> {
       }
       const revision = (currentDoc as Record<string, unknown>).$revision as number || 0;
       logger.debug(`Current revision for ${this.documentType} document ${documentId}: ${revision}`);
+      if (expectedRevision !== undefined && revision !== expectedRevision) throw new StaleRevisionError();
 
       // Merge existing document data with partial update.
       // Document replacement requires ALL fields, not just the changed ones.

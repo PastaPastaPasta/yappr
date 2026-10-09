@@ -7,7 +7,7 @@ import { BuildingStorefrontIcon, ExclamationTriangleIcon } from '@heroicons/reac
 import { CartItemRow } from './cart-item-row'
 import { Button } from '@/components/ui/button'
 import { formatPrice } from '@/lib/utils/format'
-import { cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
+import { cartLineKey, cartService, getCartCurrency, type CartItemAvailability } from '@/lib/services/cart-service'
 import { OWN_STORE_ORDER_MESSAGE, isOwnStore } from '@/lib/storefront/storefront-contract'
 import { useAuth } from '@/contexts/auth-context'
 import type { BlockSource } from '@/lib/services/block-service'
@@ -42,11 +42,11 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
     const hasAvailabilityIssue = availability.some(result => result.reason)
 
     const handleQuantityChange = (item: CartItem, newQuantity: number) => {
-      cartService.updateQuantity(item.itemId, item.variantKey, newQuantity)
+      cartService.updateQuantity(item, newQuantity)
     }
 
     const handleRemoveItem = (item: CartItem) => {
-      cartService.removeItem(item.itemId, item.variantKey)
+      cartService.removeItem(item)
     }
 
     const handleCheckout = () => {
@@ -106,10 +106,10 @@ export const CartStoreSection = forwardRef<HTMLDivElement, CartStoreSectionProps
         <AnimatePresence mode="popLayout">
           {items.map((item) => (
             <CartItemRow
-              key={`${item.itemId}-${item.variantKey || ''}`}
+              key={cartLineKey(item)}
               item={item}
               isCheckingAvailability={isCheckingAvailability}
-              availability={availability.find(result => result.item.itemId === item.itemId && result.item.variantKey === item.variantKey)}
+              availability={availability.find(result => cartLineKey(result.item) === cartLineKey(item))}
               onQuantityChange={(qty) => handleQuantityChange(item, qty)}
               onRemove={() => handleRemoveItem(item)}
             />

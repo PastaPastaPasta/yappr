@@ -6,13 +6,21 @@
  * against the store owner, so a review must come from that order's buyer with matching `sellerId`/`storeId` or the
  * writer gate refuses it. Orders, status updates and reviews are `documentsMutable: false`: editing the tables below
  * only affects a fresh contract.
+ *
+ * Storefront v6 (the mainnet cut) files every store under a category slug, prices store/item/review creates with an
+ * action fee instead of YAPP, and derives the buyer of a status update (no `buyerId`). v7 stores a listing's variants
+ * as the typed table (docs/STOREFRONT_V7.md), so the toy store carries variant listings: the 7 colour × 2 pack-size
+ * squishy toy whose v6 JSON outgrew 5,120 bytes, a 3 × 4 pop-it, and a 5-axis cube with 100 combinations. Before v7
+ * the same tables are written as the v1–v6 JSON string.
  */
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey, getSharedSecret } from '@noble/secp256k1';
 import { decodeIntGroupKey, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { YAPP_TOKEN_POSITION, addressFor, ledgerEntry } from '../seed-lib.mjs';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { REPO_ROOT, YAPP_TOKEN_POSITION, addressFor, feeAgreementFor, ledgerEntry } from '../seed-lib.mjs';
 import {
   actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, fakeId, loadCheckpoint,
   loadLedger, network, personaKeys, phaseRunner, pick, printTable, rngFrom, topologyAtLeast, utf8,
@@ -23,12 +31,17 @@ import {
  * storefront v4 (4.2.0-beta.4) a typed list, v1-v3 a JSON string. Chosen by
  * NEXT_PUBLIC_STOREFRONT_TOPOLOGY, like the app.
  */
-const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5'];
+const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'];
 const storefrontAtLeast = (topology) => topologyAtLeast(STOREFRONT_TOPOLOGIES, 'NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
 const listsTyped = () => storefrontAtLeast('v4');
 /** v5 (QA D-25): an order copies its store's status into `storeStatus`. */
 const ordersCarryStoreStatus = () => storefrontAtLeast('v5');
+/** v6: store categories, action fees instead of YAPP reviews, no stored buyerId on status updates. */
+const isV6 = () => storefrontAtLeast('v6');
+/** v7: `storeItem.variants` is the typed table, not a JSON string. */
+const variantsTyped = () => storefrontAtLeast('v7');
 const storedList = (values) => (listsTyped() ? [...new Set(values)] : JSON.stringify(values));
+const SCHEMAS = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-storefront-contract.json'), 'utf8')).documentSchemas;
 
 const REVIEW_COST = { storeReview: 3n, itemReview: 1n };
 /** Headroom over the computed review spend so a partial re-run never stalls on YAPP. */
@@ -44,7 +57,7 @@ const photo = (seed, size = 900) => `https://picsum.photos/seed/${seed}/${size}/
 const EU = 'AT|BE|BG|HR|CY|CZ|DK|EE|FI|FR|DE|GR|HU|IE|IT|LV|LT|LU|MT|NL|PL|PT|RO|SK|SI|ES|SE';
 
 const STORES = [
-  { key: 'coffee', persona: 200, name: 'Anvil & Ash Coffee', location: 'Portland, Oregon', currency: 'USD',
+  { key: 'coffee', category: 'coffee', persona: 200, name: 'Anvil & Ash Coffee', location: 'Portland, Oregon', currency: 'USD',
     description: 'Small-batch coffee roasted on a drum we rebuilt from a scrapyard find. Single origins rotate every Tuesday; the house blends never move. Roasted the day it ships, which is most days.',
     policies: 'Roasting & shipping: bags leave the roastery within 48 hours of roasting, Monday to Thursday.\nReturns: unopened bags within 30 days for a full refund. If a bag arrives stale or damaged, tell us and we will replace it.\nWholesale: five bags or more, get in touch before ordering.',
     contact: [{ platform: 'email', handle: 'hello@anvilash.coffee' }, { platform: 'twitter', handle: '@anvilash' }],
@@ -63,7 +76,7 @@ const STORES = [
       { key: 'filters', title: 'Bleached Paper Filters, Size 02 (100 ct)', price: 800, stock: 140, weight: 120, section: 'Equipment', category: 'Consumables', tags: ['filters', 'paper', 'consumable'], description: 'Oxygen-bleached, no papery taste, no rinse required if you are in a hurry. One hundred per box.' },
       { key: 'mug', title: 'Anvil Enamel Mug, 12 oz', price: 1400, stock: 0, status: 'sold_out', weight: 260, section: 'Merch', category: 'Drinkware', tags: ['mug', 'enamel', 'camping'], description: 'Speckled enamel over steel, our anvil mark on the side. Campfire-proof, dishwasher-tolerant, chips beautifully with age. Restocking in spring.' },
     ] },
-  { key: 'vintage', persona: 202, name: 'Cygnet Vintage', location: 'Antwerp, Belgium', currency: 'EUR',
+  { key: 'vintage', category: 'vintage-clothing', persona: 202, name: 'Cygnet Vintage', location: 'Antwerp, Belgium', currency: 'EUR',
     description: 'One-of-one vintage pulled from Belgian estate sales and Italian deadstock. Everything is measured flat and photographed unretouched, flaws included. If it is listed, it is the only one.',
     policies: 'Every piece is second-hand and sold as described — read the measurements, they beat any size label.\nReturns accepted within 14 days if the item does not match its description; buyer pays return postage otherwise.\nItems are washed or dry-cleaned before they ship.',
     contact: [{ platform: 'email', handle: 'shop@cygnetvintage.be' }, { platform: 'telegram', handle: '@cygnetvintage' }],
@@ -80,7 +93,7 @@ const STORES = [
       { key: 'beret', title: 'Laulhère Wool Beret, Deadstock, Navy', price: 4800, stock: 3, weight: 140, section: 'Accessories', category: 'Hats', tags: ['beret', 'deadstock', 'wool', 'france'], description: 'Deadstock from a Basque maker, merino felt, leather sweatband, paper label still attached. 11.5 inch diameter. Three left from a shop clearance.' },
       { key: 'tote', title: 'Belgian Linen Market Tote, Repaired Handle', price: 3200, stock: 0, status: 'sold_out', weight: 420, section: 'Accessories', category: 'Bags', tags: ['linen', 'tote', 'repaired'], description: 'Heavy undyed linen from a Ghent market stall, one handle re-stitched by us in waxed thread. Sold — a second one may surface in autumn.' },
     ] },
-  { key: 'ceramics', persona: 270, name: 'Kintsugi Ceramics', location: 'Kyoto, Japan', currency: 'USD',
+  { key: 'ceramics', category: 'ceramics', persona: 270, name: 'Kintsugi Ceramics', location: 'Kyoto, Japan', currency: 'USD',
     description: 'Wood-fired stoneware thrown one at a time, and gold-seam repair for pots you are not ready to lose. Small kiln, small batches, long waits. Worth it, I am told.',
     policies: 'Each piece is thrown and fired individually; colour and size vary by a few percent and that variance is the point.\nWe pack in straw board and double-box. If something arrives broken, send a photo within 7 days and we remake it.\nKintsugi repair commissions: mail the pieces, expect 6 to 10 weeks.',
     contact: [{ platform: 'email', handle: 'mae@kintsugiceramics.jp' }],
@@ -96,7 +109,7 @@ const STORES = [
       { key: 'incense', title: 'Incense Holder, Gold Seam', price: 5400, stock: 11, weight: 220, section: 'Home', category: 'Objects', tags: ['incense', 'kintsugi', 'gold', 'small'], description: 'A small dish that cracked in the kiln and came back better. Gold-seam repaired by hand, sealed, safe for daily ash.' },
       { key: 'yunomi', title: 'Yunomi Tea Cup, Shino Glaze', price: 6800, stock: 0, status: 'sold_out', weight: 300, section: 'Tea', category: 'Drinkware', tags: ['yunomi', 'shino', 'tea'], description: 'Fat shino glaze with carbon trapping along the rim. 180 ml. The whole shino batch went in a day; the next firing is in six weeks.' },
     ] },
-  { key: 'leather', persona: 271, name: 'Brandt Leatherworks', location: 'Madison, Wisconsin', currency: 'USD',
+  { key: 'leather', category: 'leather-goods', persona: 271, name: 'Brandt Leatherworks', location: 'Madison, Wisconsin', currency: 'USD',
     description: 'Veg-tanned leather goods, hand-stitched with waxed linen on a stitching pony my grandfather built. No rivets where a saddle stitch will do. Everything is repairable, by me, forever.',
     policies: 'Lifetime repair on stitching, free, you cover postage one way.\nLeather is a natural material: scars, bug bites and range marks are part of the hide and are not defects.\nMade to order items ship in 3 to 5 weeks. Rush orders are not a thing here.',
     contact: [{ platform: 'email', handle: 'tom@brandtleather.com' }, { platform: 'signal', handle: 'brandtleather.42' }],
@@ -110,7 +123,7 @@ const STORES = [
       { key: 'keyfob', title: 'Key Fob, Offcut Leather, Assorted', price: 2200, stock: 26, weight: 45, section: 'Small Goods', category: 'Keychains', tags: ['keychain', 'offcut', 'cheap', 'gift'], description: 'Made from whatever is left on the bench. Colour is a surprise; the brass hardware is not. A good way to find out whether you like the leather before spending real money.' },
       { key: 'valet', title: 'Desk Valet Tray, Stitched Corners', price: 7800, stock: 7, weight: 380, section: 'Home', category: 'Trays', tags: ['valet', 'tray', 'desk', 'corners'], description: '18 cm square tray, corners pulled up and stitched, sides stiffened with a second layer. Holds keys, a watch, and whatever else you empty out of your pockets.' },
     ] },
-  { key: 'botanic', persona: 272, name: 'Verdant Botanicals', location: 'Lisbon, Portugal', currency: 'EUR',
+  { key: 'botanic', category: 'bath-and-body', persona: 272, name: 'Verdant Botanicals', location: 'Lisbon, Portugal', currency: 'EUR',
     description: 'Herbal soaps, salves and teas from a rooftop garden in Alfama. Everything is grown, dried or infused here, except the olive oil, which comes from my aunt.',
     policies: 'Everything is made in small batches and labelled with its batch date. Soaps cure for six weeks before they ship.\nWe cannot accept returns on opened cosmetics for hygiene reasons; if a batch disagrees with your skin, write to us.\nNot medical advice. Patch-test anything new.',
     contact: [{ platform: 'email', handle: 'ola@verdantbotanicals.pt' }, { platform: 'twitter', handle: '@verdantlx' }],
@@ -128,7 +141,7 @@ const STORES = [
       { key: 'seedkit', title: 'Balcony Herb Seed Kit, Six Varieties', price: 1800, stock: 0, status: 'sold_out', weight: 260, section: 'Garden', category: 'Seeds', tags: ['seeds', 'herbs', 'kit', 'balcony'], description: 'Basil, parsley, coriander, thyme, oregano and the spearmint we use in the tea, with coir pellets and a planting calendar. Next batch after the spring harvest.' },
       { key: 'candle', title: 'Beeswax Pillar Candle, 15 cm', price: 1900, stock: 24, weight: 340, section: 'Home', category: 'Candles', tags: ['candle', 'beeswax', 'unscented'], description: 'Pure beeswax from a keeper outside Sintra, cotton wick, roughly 40 hours. Smells faintly of honey and nothing else. Burns cleanly if you keep the wick short.' },
     ] },
-  { key: 'analog', persona: 273, name: 'Analog Supply Co.', location: 'São Paulo, Brazil', currency: 'USD',
+  { key: 'analog', category: 'film-photography', persona: 273, name: 'Analog Supply Co.', location: 'São Paulo, Brazil', currency: 'USD',
     description: 'Working film cameras, fresh film, and paper worth writing on. Everything is tested before it is listed. Shipping from Brazil is slow and I will not pretend otherwise.',
     policies: 'Cameras are tested (shutter speeds, meter, seals) and the test notes are in the listing. Sold as working unless stated.\n30-day functional warranty on bodies; light seals and batteries are consumables.\nShipping from Brazil takes 2 to 6 weeks internationally. Please do not order if you need it next week.',
     contact: [{ platform: 'email', handle: 'raf@analogsupply.co' }, { platform: 'telegram', handle: '@analogsupplyco' }],
@@ -145,7 +158,111 @@ const STORES = [
       { key: 'canonet', title: 'Canonet QL17 GIII, As-Is', price: 9900, stock: 0, status: 'sold_out', weight: 720, section: 'Cameras', category: 'Rangefinder', tags: ['canon', 'canonet', 'as-is', 'project'], description: 'Sold as a project: shutter fires, meter dead, seals gone, rangefinder patch faint. Sold to someone braver than me. More project bodies land most months.' },
     ] },
 ];
+
+/**
+ * The toy store's variant listings. `variants` is [axis names, rows], one row per offered combination: the option
+ * name on each axis, then price, stock and SKU (and optionally weight in grams and a 1-based image index). Options
+ * get ids axis by axis in first-seen order (see `variantTable`), so a combination's id is stable across runs.
+ */
+const SQUISHY_COLORS = ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'Pink'];
+const SQUISHY_PACKS = [['Single Piece', 100, 45], ['4 Pack', 353, 180]];
+const CUBE_AXES = [['Colour', ['Black', 'White', 'Teal', 'Coral']], ['Size', ['XS', 'S', 'M', 'L', 'XL']],
+  ['Material', ['ABS', 'Silicone', 'Walnut', 'Aluminium', 'Resin']], ['Finish', ['Matte', 'Gloss']], ['Pack', ['Single', 'Duo']]];
+/**
+ * The cube's combinations, axis 0 varying fastest: the first 100 of its 400 on
+ * v7, and the first 50 before it, whose variants JSON is capped at 5,120 bytes
+ * (100 would take about 8 KB).
+ */
+const CUBE_COMBINATIONS = { typed: 100, legacy: 50 };
+const cubeRows = () => Array.from({ length: variantsTyped() ? CUBE_COMBINATIONS.typed : CUBE_COMBINATIONS.legacy }, (_, n) => {
+  let rest = n;
+  const names = CUBE_AXES.map(([, options]) => { const name = options[rest % options.length]; rest = Math.floor(rest / options.length); return name; });
+  return [...names, 1500 + 50 * (n % 9), 3 + (n % 5), `CUBE-${String(n).padStart(3, '0')}`];
+});
+STORES.push({ key: 'toys', category: 'toys', persona: 203, name: 'Squish & Pop Toy Co.', location: 'Austin, Texas', currency: 'USD',
+  description: 'Fidget toys and squishies in every colour we can get, packed by hand in Austin. Singles for trying, multipacks for classrooms.',
+  policies: 'Every toy is tested for leaks and seams before it ships.\nReturns: unopened packs within 30 days.\nClassroom and party orders over 20 packs: write first and we will set aside the stock.',
+  contact: [{ platform: 'email', handle: 'hi@squishandpop.example' }],
+  zones: [{ name: 'United States', countryPattern: 'US', rateType: 'flat', flatRate: 450, priority: 1 },
+    { name: 'Worldwide', rateType: 'flat', flatRate: 1500, priority: 2 }],
+  items: [
+    { key: 'squishy', title: 'Squishy Stress Toy', weight: 45, section: 'Toys', category: 'Squishies', images: 8, tags: ['squishy', 'fidget', 'stress', 'kids'],
+      description: 'Slow-rise foam in seven bright colours. Sold singly or in a 4 pack; every combination is counted separately, so what you see is what is on the shelf.',
+      variants: [['Primary color', 'Pack Size'], SQUISHY_COLORS.flatMap((color, c) => SQUISHY_PACKS.map(([pack, price, grams], p) =>
+        [color, pack, price, 10 + c * 3 + p, `SQ-${color.slice(0, 3).toUpperCase()}-${p === 0 ? '1' : '4'}`, grams, c + 2]))] },
+    { key: 'popit', title: 'Pop-It Fidget Board', weight: 60, section: 'Toys', category: 'Fidgets', images: 3, tags: ['pop-it', 'fidget', 'silicone'],
+      description: 'Food-grade silicone bubbles that pop both ways. Three shapes, four colours, made to order, so they never run out.',
+      variants: [['Shape', 'Color'], ['Circle', 'Square', 'Heart'].flatMap((shape, s) => ['Rainbow', 'Mint', 'Lilac', 'Black'].map((color) => [shape, color, 600 + 100 * s]))] },
+    { key: 'cube', title: 'Custom Fidget Cube', weight: 120, section: 'Toys', category: 'Fidgets', images: 4, tags: ['fidget-cube', 'custom', 'desk'],
+      description: 'Build your own: colour, size, material, finish and a single or a duo, in dozens of combinations.',
+      // Read when used, so the table follows the topology being seeded.
+      get variants() { return [CUBE_AXES.map(([name]) => name), cubeRows()]; } },
+  ] });
 const STORE_BY_KEY = new Map(STORES.map((store) => [store.key, store]));
+
+/**
+ * A listing's variants table as the app models it: one combination per row, its id the sorted option ids
+ * joined with ".". Options are numbered from 1 axis by axis, each axis in first-seen order, which is how the
+ * app reads a v1–v6 JSON table back (lib/storefront/legacy-variants.ts), so an order's variant id names the
+ * same combination on every topology (v7 stores the ids themselves).
+ */
+function variantTable([axisNames, rows]) {
+  let nextOptionId = 1;
+  const axes = axisNames.map((name, axis) => ({
+    name,
+    options: [...new Set(rows.map((row) => row[axis]))].map((optionName) => ({ id: nextOptionId++, name: optionName })),
+  }));
+  const combinations = rows.map((row) => {
+    const optionIds = axisNames.map((_, axis) => axes[axis].options.find((option) => option.name === row[axis]).id);
+    const [price, stock, sku, weight, image] = row.slice(axisNames.length);
+    return { id: [...optionIds].sort((a, b) => a - b).join('.'), optionIds, label: row.slice(0, axisNames.length).join(' / '), price, stock, sku, weight, image };
+  });
+  return { axes, combinations, nextOptionId };
+}
+
+/** The table as v7 stores it: the parallel typed lists (lib/storefront/variant-codec.ts `encodeVariants`). */
+function typedVariants(table) {
+  const options = table.axes.flatMap((axis, axisIndex) => axis.options.map((option) => ({ ...option, axisIndex })));
+  const column = (pick, filler) => (table.combinations.some((c) => pick(c) !== undefined) ? table.combinations.map((c) => pick(c) ?? filler) : undefined);
+  return Object.fromEntries(Object.entries({
+    axes: table.axes.map((axis) => axis.name), options: options.map((o) => o.name), optionIds: options.map((o) => o.id),
+    optionAxes: options.map((o) => o.axisIndex), nextOptionId: table.nextOptionId,
+    selectors: table.combinations.map((c) => Uint8Array.from(c.optionIds)), prices: table.combinations.map((c) => c.price),
+    stocks: column((c) => c.stock, 0), skus: column((c) => c.sku, ''), weights: column((c) => c.weight, 0), images: column((c) => c.image, 0),
+  }).filter(([, value]) => value !== undefined));
+}
+
+/** The table as v1–v6 store it: a JSON string keyed by option names (lib/storefront/legacy-variants.ts). */
+function legacyVariants(table, imageUrls) {
+  return JSON.stringify({
+    axes: table.axes.map((axis) => ({ name: axis.name, options: axis.options.map((option) => option.name) })),
+    combinations: table.combinations.map((c) => ({
+      key: c.label.split(' / ').join('|'), price: c.price, ...(c.stock !== undefined ? { stock: c.stock } : {}), ...(c.sku ? { sku: c.sku } : {}),
+      ...(c.image && imageUrls[c.image - 1] ? { imageUrl: imageUrls[c.image - 1] } : {}),
+    })),
+  });
+}
+
+/**
+ * The combinations of a stored v1–v6 table by the id the app reads each with, mapped to its label: options
+ * numbered axis by axis in stored order, as lib/storefront/legacy-variants.ts `decodeLegacyVariants` does.
+ */
+function legacyCombinationIds(json) {
+  const { axes, combinations } = JSON.parse(json);
+  let next = 1;
+  const ids = axes.map((axis) => new Map(axis.options.map((name) => [name, next++])));
+  return new Map(combinations.map((c) => {
+    const names = c.key.split('|');
+    return [names.map((name, axis) => ids[axis].get(name)).sort((a, b) => a - b).join('.'), names.join(' / ')];
+  }));
+}
+
+/** One combination of a variant item, by its option names in axis order. */
+function combinationOf(item, label) {
+  const found = variantTable(item.variants).combinations.find((c) => c.label === label);
+  if (!found) throw new Error(`${item.key} has no combination "${label}"`);
+  return found;
+}
 
 /** Shipping and billing personas for the buyer identities. */
 const BUYERS = {
@@ -195,6 +312,10 @@ const ORDERS = [
   ['o23', 'mae', 'botanic', [['chamomile', 2], ['candle', 1]], 'delivered3', 'dhl', null, [['chamomile', 5]]],
   ['o24', 'bo', 'botanic', [['bathsalt', 1], ['lipbalm', 2]], 'refunded', 'usps', null, [['bathsalt', 2]]],
   ['o25', 'otto', 'leather', [['bifold', 1], ['keyfob', 2]], 'inflight', null, null, [['bifold', 5]]],
+  // Variant lines name a combination by its option names; the order carries its id, label and SKU.
+  ['o26', 'ivy', 'toys', [['squishy', 2, 'Red / 4 Pack'], ['squishy', 1, 'Blue / Single Piece']], 'delivered3', 'ups', 5, [['squishy', 5]]],
+  ['o27', 'otto', 'toys', [['popit', 1, 'Heart / Mint'], ['cube', 1, 'Teal / M / ABS / Matte / Single']], 'delivered5', 'dhl', 4, [['cube', 4]]],
+  ['o28', 'bo', 'toys', [['squishy', 3, 'Pink / Single Piece']], 'inflight', null, null, []],
 ].map(([key, buyer, store, lines, chain, carrier, rating, items]) => ({ key, buyer, store, lines, chain, carrier, rating, items }));
 
 const REVIEW_TITLES = {
@@ -294,7 +415,7 @@ function sealOrder(order, payload, keys, storeId) {
 }
 
 const storeData = (store, paymentUris) => ({
-  name: store.name, status: 'active', description: store.description,
+  name: store.name, status: 'active', description: store.description, ...(isV6() ? { category: store.category } : {}),
   logoUrl: `https://api.dicebear.com/7.x/shapes/svg?seed=${store.key}`,
   bannerUrl: photo(`${store.key}-banner`, 1200),
   paymentUris: JSON.stringify(paymentUris), defaultCurrency: store.currency,
@@ -303,14 +424,18 @@ const storeData = (store, paymentUris) => ({
 
 function itemData(store, item, storeIdBytes) {
   const rng = rngFrom(`sku/${store.key}/${item.key}`);
-  return {
+  const imageCount = item.images ?? 2 + Math.floor(rng() * 3);
+  const imageUrls = Array.from({ length: imageCount }, (_, n) => photo(`${store.key}-${item.key}-${n}`, 800));
+  const sku = `${store.key.slice(0, 3).toUpperCase()}-${item.key.slice(0, 4).toUpperCase()}-${Math.floor(rng() * 9000 + 1000)}`;
+  const common = {
     storeId: storeIdBytes, title: item.title, status: item.status ?? 'active', description: item.description,
     section: item.section, category: item.category, ...(item.subcategory ? { subcategory: item.subcategory } : {}),
-    tags: storedList(item.tags),
-    imageUrls: storedList(Array.from({ length: 2 + Math.floor(rng() * 3) }, (_, n) => photo(`${store.key}-${item.key}-${n}`, 800))),
-    basePrice: item.price, currency: store.currency, weight: item.weight, stockQuantity: item.stock,
-    sku: `${store.key.slice(0, 3).toUpperCase()}-${item.key.slice(0, 4).toUpperCase()}-${Math.floor(rng() * 9000 + 1000)}`,
+    tags: storedList(item.tags), imageUrls: storedList(imageUrls), currency: store.currency, weight: item.weight,
   };
+  if (!item.variants) return { ...common, basePrice: item.price, stockQuantity: item.stock, sku };
+  // A variant item is priced and stocked per combination: no basePrice or stockQuantity (v7 onePrice/oneStock).
+  const table = variantTable(item.variants);
+  return { ...common, variants: variantsTyped() ? typedVariants(table) : legacyVariants(table, imageUrls) };
 }
 
 const zoneData = (zone, store, storeIdBytes) => ({
@@ -348,12 +473,27 @@ function zoneRate(zone, { totalWeight, subtotal }) {
 function orderPayload(order, store, buyer, paymentUri, itemIdFor) {
   const rng = rngFrom(`payload/${order.key}`);
   const itemOf = (key) => store.items.find((candidate) => candidate.key === key);
-  const items = order.lines.map(([itemKey, quantity]) => ({
-    itemId: itemIdFor(itemKey), itemTitle: itemOf(itemKey).title, quantity,
-    unitPrice: itemOf(itemKey).price, imageUrl: photo(`${store.key}-${itemKey}-0`, 800),
-  }));
+  // A variant line carries the combination's id, its name and SKU at checkout, and its own price and weight.
+  const lineOf = ([itemKey, , label]) => {
+    const item = itemOf(itemKey);
+    const combination = label ? combinationOf(item, label) : null;
+    return { item, combination };
+  };
+  const items = order.lines.map((line) => {
+    const [itemKey, quantity] = line;
+    const { item, combination } = lineOf(line);
+    return {
+      itemId: itemIdFor(itemKey), itemTitle: item.title,
+      ...(combination ? { variantId: combination.id, variantLabel: combination.label, ...(combination.sku ? { sku: combination.sku } : {}) } : {}),
+      quantity, unitPrice: combination ? combination.price : item.price,
+      imageUrl: photo(`${store.key}-${itemKey}-${combination?.image ? combination.image - 1 : 0}`, 800),
+    };
+  });
   const subtotal = items.reduce((total, line) => total + line.unitPrice * line.quantity, 0);
-  const totalWeight = order.lines.reduce((total, [itemKey, quantity]) => total + (itemOf(itemKey).weight ?? 0) * quantity, 0);
+  const totalWeight = order.lines.reduce((total, line) => {
+    const { item, combination } = lineOf(line);
+    return total + (combination?.weight ?? item.weight ?? 0) * line[1];
+  }, 0);
   const zone = findMatchingZone(store.zones, buyer.country);
   if (!zone) throw new Error(`order ${order.key}: ${store.name} has no shipping zone covering ${buyer.country}`);
   const shippingCost = zoneRate(zone, { totalWeight, subtotal });
@@ -416,7 +556,7 @@ function printPlan(plan) {
   console.log(counts({ store: plan.stores, storeItem: plan.items, shippingZone: plan.zones, storeOrder: plan.orders,
     orderStatusUpdate: plan.statuses, storeReview: plan.storeReviews, itemReview: plan.itemReviews },
   ` — ${plan.stores + plan.items + plan.zones + plan.orders + plan.statuses + plan.storeReviews + plan.itemReviews} documents, `
-    + `${plan.storeReviews * 3 + plan.itemReviews} YAPP`));
+    + (isV6() ? 'action fees in credits' : `${plan.storeReviews * 3 + plan.itemReviews} YAPP`)));
   printTable([['store', 24], ['persona', -7], ['items', -5], ['orders', -6], ['reviews', -7], ['expected avg', -12]],
     STORES.map((store) => {
       const bucket = plan.perStore.get(store.key);
@@ -434,8 +574,12 @@ function orderKeys(ledger, order, offline) {
 
 async function run({ args, handle, battery, socialId, contractId }) {
   const plan = buildPlan();
-  const writer = createDocWriter({ handle, contractId, entropyFor: entropySource('yappr/storefront-seed/v1'), paymentInfo: battery.paymentInfo });
-  const tokenId = await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
+  // v6 prices store, item and review creates with an action fee; each create agrees to the declared amount.
+  const writer = createDocWriter({
+    handle, contractId, entropyFor: entropySource('yappr/storefront-seed/v1'), paymentInfo: battery.paymentInfo,
+    ...(isV6() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS) } : {}),
+  });
+  const tokenId = isV6() ? null : await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
   const ledger = loadLedger();
   const actors = await actorsFor(battery, [...STORES.map((s) => s.persona), ...Object.values(BUYERS).map((b) => b.persona)]);
   const payoutAddress = (idx) => {
@@ -534,8 +678,9 @@ async function run({ args, handle, battery, socialId, contractId }) {
         for (const status of CHAINS[order.chain]) {
           // Only the order's seller may write one: the signer IS the store persona,
           // which the writer gate checks against the order's sellerId.
+          // v6 derives the buyer through the order (`orderId.$ownerId`) and refuses a stored buyerId.
           await createDoc(actors.get(store.persona), 'orderStatusUpdate', `status/${order.key}/${status}`, {
-            orderId: id32(orderIds.get(order.key)), buyerId: id32(actors.get(BUYERS[order.buyer].persona).ownerId), status,
+            orderId: id32(orderIds.get(order.key)), ...(isV6() ? {} : { buyerId: id32(actors.get(BUYERS[order.buyer].persona).ownerId) }), status,
             message: pick(rngFrom(`status/${order.key}/${status}`), STATUS_MESSAGE[status]),
             ...(status === 'shipped' && order.carrier ? { trackingCarrier: order.carrier, trackingNumber: trackingFor(order.key, order.carrier) } : {}),
           });
@@ -543,16 +688,21 @@ async function run({ args, handle, battery, socialId, contractId }) {
       }
     });
 
-    const needed = new Map();
-    for (const review of plan.reviews.values()) {
-      const persona = BUYERS[review.order.buyer].persona;
-      const cost = (review.store ? REVIEW_COST.storeReview : 0n) + BigInt(review.items.length) * REVIEW_COST.itemReview;
-      needed.set(persona, (needed.get(persona) ?? 0n) + cost);
+    // v2–v5 price reviews in YAPP; v6 charges an action fee in credits instead.
+    const yappReviews = !isV6();
+    if (yappReviews) {
+      const needed = new Map();
+      for (const review of plan.reviews.values()) {
+        const persona = BUYERS[review.order.buyer].persona;
+        const cost = (review.store ? REVIEW_COST.storeReview : 0n) + BigInt(review.items.length) * REVIEW_COST.itemReview;
+        needed.set(persona, (needed.get(persona) ?? 0n) + cost);
+      }
+      await ensureTokens(battery, tokenId, actors, needed, { headroom: YAPP_HEADROOM });
     }
-    await ensureTokens(battery, tokenId, actors, needed, { headroom: YAPP_HEADROOM });
+    const reviewCost = (docType) => (yappReviews ? { tokenCost: REVIEW_COST[docType] } : {});
     // Reviews are written BY THE ORDER'S BUYER with the order's storeId/sellerId,
     // or the writer gate refuses them.
-    await phase('reviews (3 YAPP store, 1 YAPP item)', [...plan.reviews.values()], (review) => byBuyer(review.order), async (review) => {
+    await phase(yappReviews ? 'reviews (3 YAPP store, 1 YAPP item)' : 'reviews (action fees)', [...plan.reviews.values()], (review) => byBuyer(review.order), async (review) => {
       const { order } = review;
       const store = storeOf(order);
       const orderId = orderIds.get(order.key);
@@ -563,14 +713,14 @@ async function run({ args, handle, battery, socialId, contractId }) {
         await createDoc(actor, 'storeReview', `review/${order.key}`, {
           storeId, orderId: id32(orderId), sellerId: id32(actors.get(store.persona).ownerId),
           rating: review.store.rating, title: review.store.title, content: review.store.content,
-        }, { tokenCost: REVIEW_COST.storeReview });
+        }, reviewCost('storeReview'));
       }
       for (const item of review.items) {
         const itemId = itemIds.get(`${store.key}/${item.itemKey}`);
         if (itemId) {
           await createDoc(actor, 'itemReview', `itemreview/${order.key}/${item.itemKey}`,
             { storeId, itemId: id32(itemId), orderId: id32(orderId), rating: item.rating, content: item.content },
-            { tokenCost: REVIEW_COST.itemReview });
+            reviewCost('itemReview'));
         }
       }
     });
@@ -606,6 +756,24 @@ async function run({ args, handle, battery, socialId, contractId }) {
     check(`${store.name}: ${items.length} items, ${orders} orders, ${avg.count} reviews, avg ${(avg.count ? avg.sum / avg.count : 0).toFixed(2)}`,
       items.length >= store.items.length && orders >= bucket.orders && avg.count >= bucket.ratings.length && avg.count === reviews.length && avg.sum === scanned,
       `seeded items=${store.items.length} orders=${bucket.orders} reviews=${bucket.ratings.length}; average tree {${avg.count},${avg.sum}} vs scanned {${reviews.length},${scanned}}`);
+  }
+
+  // The variant listings read back as written: the typed table on v7, the JSON string before.
+  for (const store of STORES) {
+    for (const item of store.items.filter((candidate) => candidate.variants)) {
+      const id = itemIds.get(`${store.key}/${item.key}`);
+      const stored = id ? (await battery.fetchDocument('storeItem', id))?.toObject?.() : null;
+      const table = variantTable(item.variants);
+      const variants = stored?.variants;
+      const ok = variantsTyped()
+        ? Array.isArray(variants?.selectors) && variants.selectors.length === table.combinations.length
+          && variants.prices.map(Number).join() === table.combinations.map((c) => c.price).join()
+          && variants.axes.join() === table.axes.map((axis) => axis.name).join() && stored.basePrice === undefined
+        : typeof variants === 'string' && JSON.parse(variants).combinations.length === table.combinations.length
+          && table.combinations.every((c) => legacyCombinationIds(variants).get(c.id) === c.label);
+      check(`${item.title}: ${table.axes.length} option types, ${table.combinations.length} combinations read back`, ok,
+        `id=${id ?? 'missing'} stored=${variantsTyped() ? `${variants?.selectors?.length ?? 0} selectors` : typeof variants}`);
+    }
   }
 
   const nameOf = (id) => STORES.find((s) => storeIds.get(s.key) === id)?.name ?? `${id.slice(0, 8)}…`;
@@ -672,16 +840,72 @@ function selfTest() {
     }
   };
   const [v3Item, v4Item] = [itemShape('v3'), itemShape('v4')];
+  const variantShape = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = topology;
+    try {
+      const toys = STORE_BY_KEY.get('toys');
+      return itemData(toys, toys.items[0], new Uint8Array(32));
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
+  const [v6Squishy, v7Squishy] = [variantShape('v6'), variantShape('v7')];
+  const squishy = variantTable(STORE_BY_KEY.get('toys').items[0].variants);
+  const cubeUnder = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = topology;
+    try {
+      const toys = STORE_BY_KEY.get('toys');
+      return { table: variantTable(toys.items[2].variants), stored: itemData(toys, toys.items[2], new Uint8Array(32)).variants };
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
+  const [v6Cube, v7Cube] = [cubeUnder('v6'), cubeUnder('v7')];
+  /** Under v6, whether every order line's variant id reads back from its listing's stored JSON as that combination. */
+  const legacyOrderIdsMatch = () => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = 'v6';
+    try {
+      return ORDERS.every((order) => order.lines.every(([key, , label]) => {
+        if (!label) return true;
+        const store = storeOf(order);
+        const item = store.items.find((candidate) => candidate.key === key);
+        const stored = itemData(store, item, new Uint8Array(32)).variants;
+        return typeof stored === 'string' && legacyCombinationIds(stored).get(combinationOf(item, label).id) === label;
+      }));
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
+  const typed = v7Squishy.variants;
+  const aligned = (list) => list === undefined || list.length === typed.selectors.length;
   const analog = plan.perStore.get('analog').ratings;
   const tiered = zoneRate(STORE_BY_KEY.get('ceramics').zones[1], { totalWeight: 1300, subtotal: 19500 });
   return reportSelfTest('the storefront plan', [
     ['tags/imageUrls are JSON strings for storefront v1–v3', typeof v3Item.tags === 'string' && typeof v3Item.imageUrls === 'string'],
     ['tags/imageUrls are typed lists for storefront v4, the same values',
       Array.isArray(v4Item.tags) && Array.isArray(v4Item.imageUrls) && JSON.stringify(v4Item.tags) === v3Item.tags],
-    [`6 stores / 48 items / 15 zones (${plan.stores}/${plan.items}/${plan.zones})`, plan.stores === 6 && plan.items === 48 && plan.zones === 15],
-    [`25 orders / 81 status updates (${plan.orders}/${plan.statuses})`, plan.orders === 25 && plan.statuses === 81],
-    [`18 store reviews / 30 item reviews (${plan.storeReviews}/${plan.itemReviews})`, plan.storeReviews === 18 && plan.itemReviews === 30],
-    ['the run costs 84 YAPP', plan.storeReviews * 3 + plan.itemReviews === 84],
+    [`7 stores / 51 items / 17 zones (${plan.stores}/${plan.items}/${plan.zones})`, plan.stores === 7 && plan.items === 51 && plan.zones === 17],
+    [`28 orders / 91 status updates (${plan.orders}/${plan.statuses})`, plan.orders === 28 && plan.statuses === 91],
+    [`20 store reviews / 32 item reviews (${plan.storeReviews}/${plan.itemReviews})`, plan.storeReviews === 20 && plan.itemReviews === 32],
+    ['before v6 the run costs 92 YAPP', plan.storeReviews * 3 + plan.itemReviews === 92],
+    ['every store has a v6 category slug', STORES.every((store) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(store.category) && store.category.length <= 20)],
+    [`the squishy toy is 7 colours × 2 packs = 14 combinations (${squishy.axes.map((a) => a.options.length).join('×')})`, squishy.combinations.length === 14 && squishy.axes[0].options.length === 7],
+    [`the cube is 5 option types and 100 combinations on v7 (${v7Cube.table.combinations.length})`, v7Cube.table.axes.length === 5 && v7Cube.table.combinations.length === 100],
+    [`on v6 the cube is 50 combinations whose JSON fits the 5,120-byte variants cap (${utf8(v6Cube.stored).length} B)`,
+      v6Cube.table.combinations.length === 50 && typeof v6Cube.stored === 'string' && utf8(v6Cube.stored).length <= 5120],
+    ['v7 writes the typed table: aligned lists, one 2-byte selector per combination, no basePrice or stockQuantity',
+      Array.isArray(typed.selectors) && typed.selectors.every((selector) => selector.length === 2) && [typed.prices, typed.stocks, typed.skus, typed.weights, typed.images].every(aligned)
+        && typed.optionIds.length === typed.options.length && v7Squishy.basePrice === undefined && v7Squishy.stockQuantity === undefined],
+    ['v6 writes the same table as the JSON string, a combination image as its URL',
+      typeof v6Squishy.variants === 'string' && JSON.parse(v6Squishy.variants).combinations.length === 14 && JSON.parse(v6Squishy.variants).combinations[0].imageUrl === v6Squishy.imageUrls[1]],
+    ['every variant order line names a combination its item offers', ORDERS.every((order) => order.lines.every(([key, , label]) => {
+      const item = storeOf(order).items.find((candidate) => candidate.key === key);
+      return label ? Boolean(item.variants && variantTable(item.variants).combinations.some((c) => c.label === label)) : !item.variants;
+    }))],
+    ['on v6 every variant order line\'s id reads back from its listing\'s stored JSON as that combination', legacyOrderIdsMatch()],
     ['every order has a shipping zone covering its destination (an unmatched zone BLOCKS checkout)',
       ORDERS.every((order) => findMatchingZone(storeOf(order).zones, BUYERS[order.buyer].country))],
     ['every order line names an item its store actually lists',

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// Digital products exist from storefront v6; option-targeted assets only on v7.
+vi.hoisted(() => { process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = 'v7' })
 import bs58 from 'bs58'
 import {
   MAX_BULK_KEYS_PER_ITEM,
@@ -22,14 +25,17 @@ import {
   kitsAfterDelivery,
   lineProblems,
   planDelivery,
-  variantRef,
+  assetsForVariant,
+  describeAssetTarget,
+  retargetAxis,
+  withAssetTarget,
   wholeOrderProblems,
   withHeldDeliveries,
   coverageChanged,
   deliveryCompletesOrder,
 } from './digital-delivery-plan'
 import type { BulkReadinessInput, ItemListing } from './digital-delivery-plan'
-import type { ItemDeliverablePayload, OrderItem, OrderStatus } from '../../types'
+import type { DigitalAsset, ItemDeliverablePayload, ItemVariants, OrderItem, OrderStatus } from '../../types'
 
 /** Products by name, each with a real 32-byte base58 id (the codecs refuse anything else). */
 const NAMES = ['ebook', 'game', 'song', 'now', 'mug', 'other'] as const
@@ -40,8 +46,8 @@ const [EBOOK_ID, GAME_ID, SONG_ID, NOW_ID, MUG_ID, OTHER_ID] = ID_LIST
 const titleOf = (itemId: string) => (IDS.get(itemId) ?? itemId).toUpperCase()
 const KEY = 'A'.repeat(43) + '='
 const CID = 'bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi'
-const file = (name: string, variantKey?: string) =>
-  ({ kind: 'file' as const, name, size: 10, url: `ipfs://${CID}`, key: KEY, ...(variantKey ? { variantKey } : {}) })
+const file = (name: string, optionIds?: number[]) =>
+  ({ kind: 'file' as const, name, size: 10, url: `ipfs://${CID}`, key: KEY, ...(optionIds ? { optionIds } : {}) })
 const line = (itemId: string, quantity = 1, extra: Partial<OrderItem> = {}): OrderItem =>
   ({ itemId, itemTitle: titleOf(itemId), quantity, unitPrice: 100, fulfillment: 'digital', ...extra })
 const kit = (extra: Partial<ItemDeliverablePayload> = {}): ItemDeliverablePayload =>
@@ -50,50 +56,103 @@ const kit = (extra: Partial<ItemDeliverablePayload> = {}): ItemDeliverablePayloa
 const listing = (itemId: string, extra: Partial<ItemListing> = {}): ItemListing =>
   ({ storeId: 'store', fulfillment: 'digital', title: titleOf(itemId), basePrice: 100, currency: 'USD', stockQuantity: undefined, ...extra })
 const listed = (itemIds: string[]) => new Map(itemIds.map((itemId) => [itemId, listing(itemId)]))
+const NO_LISTINGS = new Map<string, ItemListing>()
+
+/** One axis "Format": PDF (option 1) at 100, Deluxe (option 2) at 900. */
+const FORMATS: ItemVariants = {
+  axes: [{ name: 'Format', options: [{ id: 1, name: 'PDF' }, { id: 2, name: 'Deluxe' }] }],
+  combinations: [{ id: '1', optionIds: [1], price: 100 }, { id: '2', optionIds: [2], price: 900 }],
+  nextOptionId: 3,
+}
+/** Color (Red 1, Blue 2) by Size (S 3, XL 4); Blue / XL is not sold. */
+const TEES: ItemVariants = {
+  axes: [
+    { name: 'Color', options: [{ id: 1, name: 'Red' }, { id: 2, name: 'Blue' }] },
+    { name: 'Size', options: [{ id: 3, name: 'S' }, { id: 4, name: 'XL' }] },
+  ],
+  combinations: [
+    { id: '1.3', optionIds: [1, 3], price: 100 },
+    { id: '1.4', optionIds: [1, 4], price: 100 },
+    { id: '2.3', optionIds: [2, 3], price: 100 },
+  ],
+  nextOptionId: 5,
+}
+const withVariants = (itemId: string, variants: ItemVariants, extra: Partial<ItemListing> = {}) =>
+  new Map([[itemId, listing(itemId, { variants, ...extra })]])
+const names = (assets: DigitalAsset[]) => assets.map((asset) => (asset.kind === 'file' ? asset.name : asset.label))
 
 describe('planDelivery', () => {
   it('delivers only digital lines, with the assets of each line\'s variant', () => {
-    const kits = new Map([[EBOOK_ID, kit({ assets: [file('cover.png'), file('book.pdf', 'PDF'), file('book.epub', 'EPUB')], instructions: 'Enjoy' })]])
-    const plan = planDelivery({ items: [line(EBOOK_ID, 1, { variantKey: 'EPUB' }), line(MUG_ID, 1, { fulfillment: undefined })] }, kits, '  thanks  ')
+    const kits = new Map([[EBOOK_ID, kit({ assets: [file('cover.png'), file('book.pdf', [1]), file('book.epub', [2])], instructions: 'Enjoy' })]])
+    const order = { items: [line(EBOOK_ID, 1, { variantId: '2', variantLabel: 'Deluxe' }), line(MUG_ID, 1, { fulfillment: undefined })] }
+    const plan = planDelivery(order, kits, withVariants(EBOOK_ID, FORMATS), '  thanks  ')
     expect(plan.missingKits).toEqual([])
     expect(plan.delivery.message).toBe('thanks')
     expect(plan.delivery.items).toHaveLength(1)
     const [item] = plan.delivery.items
-    expect(item.assets.map((asset) => asset.kind === 'file' && asset.name)).toEqual(['cover.png', 'book.epub'])
-    // The buyer never sees which variant an asset was filed under.
-    expect(item.assets.every((asset) => asset.variantKey === undefined)).toBe(true)
+    expect(names(item.assets)).toEqual(['cover.png', 'book.epub'])
+    // The buyer never sees which options an asset was filed under.
+    expect(item.assets.every((asset) => asset.optionIds === undefined)).toBe(true)
+    expect(item.variantId).toBe('2')
+    expect(item.variantLabel).toBe('Deluxe')
     expect(item.instructions).toBe('Enjoy')
+  })
+
+  it('before v7, where option ids are numbered by position, sends only untargeted assets', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6')
+    try {
+      const legacy = await import('./digital-delivery-plan')
+      const kits = new Map([[EBOOK_ID, kit({ assets: [file('cover.png'), file('book.pdf', [1]), file('book.epub', [2])] })]])
+      const plan = legacy.planDelivery({ items: [line(EBOOK_ID, 1, { variantId: '2', variantLabel: 'Deluxe' })] }, kits, withVariants(EBOOK_ID, FORMATS))
+      expect(names(plan.delivery.items[0].assets)).toEqual(['cover.png'])
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
   })
 
   it('takes license keys from the front of a shared pool, quantity per line', () => {
     const kits = new Map([[GAME_ID, kit({ licenseKeys: ['k1', 'k2', 'k3', 'k4'] })]])
-    const plan = planDelivery({ items: [line(GAME_ID, 2, { variantKey: 'Std' }), line(GAME_ID, 1, { variantKey: 'Deluxe' })] }, kits)
+    const plan = planDelivery({ items: [line(GAME_ID, 2, { variantId: '1' }), line(GAME_ID, 1, { variantId: '2' })] }, kits, withVariants(GAME_ID, FORMATS))
     expect(plan.delivery.items.map((item) => item.licenseKeys)).toEqual([['k1', 'k2'], ['k3']])
     expect(plan.consumedKeys.get(GAME_ID)).toBe(3)
     expect(plan.shortOnKeys).toEqual([])
     expect(kitsAfterDelivery(kits, plan.consumedKeys).get(GAME_ID)?.licenseKeys).toEqual(['k4'])
   })
 
-  it('names a variant in a receipt by a fixed-size reference, never by its key', () => {
-    const variantKey = 'V'.repeat(5000)
+  it('names a variant in a receipt by its id, with its label cut to a fixed length', () => {
     const kits = new Map([[EBOOK_ID, kit({ assets: [file('book.pdf')] })]])
-    const order = line(EBOOK_ID, 1, { variantKey })
-    const [item] = planDelivery({ items: [order] }, kits).delivery.items
-    expect(item.variantRef).toBe(variantRef(variantKey))
-    expect(item.variantRef).toHaveLength(16)
-    expect(item.variantLabel?.length).toBeLessThanOrEqual(60)
+    const order = line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'V'.repeat(5000) })
+    const [item] = planDelivery({ items: [order] }, kits, withVariants(EBOOK_ID, FORMATS)).delivery.items
+    expect(item.variantId).toBe('1')
+    expect(item.variantLabel).toHaveLength(60)
     expect(JSON.stringify(item)).not.toContain('V'.repeat(61))
     // Receipts still match their own line, and only that one.
     expect(deliveredFor(item, order)).toBe(true)
-    expect(deliveredFor(item, line(EBOOK_ID, 1, { variantKey: 'V'.repeat(4999) }))).toBe(false)
+    expect(deliveredFor(item, line(EBOOK_ID, 1, { variantId: '2' }))).toBe(false)
     expect(deliveredFor(item, line(EBOOK_ID))).toBe(false)
     expect(decodeDelivery(encodeDelivery({ v: 1, items: [item] })).items[0]).toEqual(item)
+  })
+
+  it('labels a receipt from the listing when the line carries no label', () => {
+    const kits = new Map([[EBOOK_ID, kit({ assets: [file('book.pdf')] })]])
+    const [item] = planDelivery({ items: [line(EBOOK_ID, 1, { variantId: '2' })] }, kits, withVariants(EBOOK_ID, FORMATS)).delivery.items
+    expect(item.variantLabel).toBe('Deluxe')
+  })
+
+  it('treats a line whose variant id is not a short canonical one as malformed', () => {
+    for (const variantId of ['1.2.3.4.5.6.7.8.9.10', 'Red', '1..2', '', 7]) {
+      const odd = { ...line(EBOOK_ID), variantId } as unknown as OrderItem
+      expect(digitalLines({ items: [odd] })).toEqual([])
+    }
+    expect(digitalLines({ items: [line(EBOOK_ID, 1, { variantId: '254.254.254.254.254' })] })).toHaveLength(1)
   })
 
   it('takes no new codes for lines the seller re-sends without asking for them', () => {
     const kits = new Map([[GAME_ID, kit({ licenseKeys: ['k1', 'k2'] })], [SONG_ID, kit({ licenseKeys: ['s1'] })]])
     const resent = line(GAME_ID)
-    const plan = planDelivery({ items: [resent, line(SONG_ID)] }, kits, undefined, (l) => l === resent)
+    const plan = planDelivery({ items: [resent, line(SONG_ID)] }, kits, NO_LISTINGS, undefined, (l) => l === resent)
     expect(plan.delivery.items[0].licenseKeys).toBeUndefined()
     expect(plan.delivery.items[1].licenseKeys).toEqual(['s1'])
     expect([...plan.consumedKeys]).toEqual([[SONG_ID, 1]])
@@ -101,7 +160,7 @@ describe('planDelivery', () => {
 
   it('reports lines it cannot fulfil', () => {
     const kits = new Map([[GAME_ID, kit({ licenseKeys: ['k1'] })]])
-    const plan = planDelivery({ items: [line(GAME_ID, 2), line(SONG_ID)] }, kits)
+    const plan = planDelivery({ items: [line(GAME_ID, 2), line(SONG_ID)] }, kits, NO_LISTINGS)
     expect(plan.shortOnKeys).toEqual(['GAME'])
     expect(plan.missingKits).toEqual(['SONG'])
     expect(plan.delivery.items[0].licenseKeys).toEqual(['k1'])
@@ -110,7 +169,7 @@ describe('planDelivery', () => {
   it('refuses quantities that are not whole units, since the buyer writes them', () => {
     const kits = new Map([[GAME_ID, kit({ licenseKeys: ['k1', 'k2'] })]])
     for (const quantity of [0, -1, 1.5, Number.NaN, 1001]) {
-      const plan = planDelivery({ items: [line(GAME_ID, quantity)] }, kits)
+      const plan = planDelivery({ items: [line(GAME_ID, quantity)] }, kits, NO_LISTINGS)
       expect(plan.invalidQuantities).toEqual(['GAME'])
       expect(plan.delivery.items).toEqual([])
       expect(plan.consumedKeys.size).toBe(0)
@@ -119,30 +178,80 @@ describe('planDelivery', () => {
   })
 
   it('blocks a line with nothing to deliver for its variant', () => {
-    const kits = new Map([[EBOOK_ID, kit({ deliverWhen: 'on_order', assets: [file('book.pdf', 'PDF')] })]])
-    const order = { items: [line(EBOOK_ID, 1, { variantKey: 'EPUB' })] }
-    const plan = planDelivery(order, kits)
+    const kits = new Map([[EBOOK_ID, kit({ deliverWhen: 'on_order', assets: [file('book.pdf', [1])] })]])
+    const order = { items: [line(EBOOK_ID, 1, { variantId: '2', unitPrice: 900 })] }
+    const listings = withVariants(EBOOK_ID, FORMATS)
+    const plan = planDelivery(order, kits, listings)
     expect(plan.emptyLines).toEqual(['EBOOK'])
     expect(planBlockers(plan)).toHaveLength(1)
-    expect(isReadyForBulkDelivery({ payload: order, storeId: 'store', latestStatus: undefined, alreadyDelivered: false, kits, listings: listed([EBOOK_ID]) })).toBe(false)
+    expect(isReadyForBulkDelivery({ payload: order, storeId: 'store', latestStatus: undefined, alreadyDelivered: false, kits, listings })).toBe(false)
   })
 
   it('leaves pools without license keys alone', () => {
     const kits = new Map([[SONG_ID, kit({ assets: [file('song.mp3')] })]])
-    const plan = planDelivery({ items: [line(SONG_ID, 3)] }, kits)
+    const plan = planDelivery({ items: [line(SONG_ID, 3)] }, kits, NO_LISTINGS)
     expect(plan.delivery.items[0].licenseKeys).toBeUndefined()
     expect(kitsAfterDelivery(kits, plan.consumedKeys).size).toBe(0)
   })
 })
 
+describe('targeting assets at options', () => {
+  const all = file('all.zip')
+  const red = file('red.zip', [1])
+  const xl = file('xl.zip', [4])
+  const redXl = file('red-xl.zip', [4, 1])
+
+  it('applies an asset to every variant that has all of its options', () => {
+    const assets = [all, red, xl, redXl]
+    expect(names(assetsForVariant(assets, [1, 4]))).toEqual(['all.zip', 'red.zip', 'xl.zip', 'red-xl.zip'])
+    expect(names(assetsForVariant(assets, [1, 3]))).toEqual(['all.zip', 'red.zip'])
+    expect(names(assetsForVariant(assets, [2, 3]))).toEqual(['all.zip'])
+    // A variant that cannot be resolved gets only what every variant gets.
+    expect(names(assetsForVariant(assets, undefined))).toEqual(['all.zip'])
+    expect(names(assetsForVariant([{ ...all, optionIds: [] }], undefined))).toEqual(['all.zip'])
+  })
+
+  it('resolves each line\'s options from the listing', () => {
+    const kits = new Map([[GAME_ID, kit({ assets: [all, red, xl, redXl] })]])
+    const order = { items: [line(GAME_ID, 1, { variantId: '1.4' }), line(GAME_ID, 1, { variantId: '2.3' }), line(GAME_ID, 1, { variantId: '2.4' })] }
+    const plan = planDelivery(order, kits, withVariants(GAME_ID, TEES))
+    expect(plan.delivery.items.map((item) => names(item.assets))).toEqual([
+      ['all.zip', 'red.zip', 'xl.zip', 'red-xl.zip'],
+      ['all.zip'],
+      // Blue / XL is not sold: its line gets only the untargeted asset.
+      ['all.zip'],
+    ])
+    // Without the listing, nothing targeted applies.
+    expect(planDelivery(order, kits, NO_LISTINGS).delivery.items.map((item) => names(item.assets))).toEqual([['all.zip'], ['all.zip'], ['all.zip']])
+  })
+
+  it('edits a target axis by axis, dropping options the listing no longer has', () => {
+    expect(retargetAxis(TEES, undefined, 0, 1)).toEqual([1])
+    expect(retargetAxis(TEES, [1], 1, 4)).toEqual([1, 4])
+    expect(retargetAxis(TEES, [1, 4], 0, 2)).toEqual([4, 2])
+    expect(retargetAxis(TEES, [1, 4], 1, undefined)).toEqual([1])
+    expect(retargetAxis(TEES, [99, 4], 0, 1)).toEqual([4, 1])
+    expect(withAssetTarget(red, [])).toEqual(file('red.zip'))
+    expect(withAssetTarget(all, [2])).toEqual(file('all.zip', [2]))
+  })
+
+  it('describes a target for the seller', () => {
+    expect(describeAssetTarget(TEES, undefined)).toEqual({ label: 'All variants', matchesNone: false })
+    expect(describeAssetTarget(TEES, [4, 1])).toEqual({ label: 'Red / XL', matchesNone: false })
+    expect(describeAssetTarget(TEES, [4])).toEqual({ label: 'XL', matchesNone: false })
+    expect(describeAssetTarget(TEES, [2, 4])).toEqual({ label: 'Blue / XL', matchesNone: true })
+    expect(describeAssetTarget(TEES, [1, 99])).toEqual({ label: 'Red / Removed option', matchesNone: true })
+  })
+})
+
 describe('lineProblems', () => {
-  const variants = { axes: [{ name: 'Format', options: ['PDF', 'Deluxe'] }], combinations: [{ key: 'PDF', price: 100 }, { key: 'Deluxe', price: 900 }] }
   const check = (items: OrderItem[], listings: Map<string, ItemListing>, currency = 'USD') =>
     lineProblems({ items, currency }, 'store', listings)
+  const formats = withVariants(EBOOK_ID, FORMATS)
 
   it('passes a line that matches its listing, and ignores shipped lines', () => {
     expect(check([line(EBOOK_ID), line(MUG_ID, 1, { fulfillment: undefined })], listed([EBOOK_ID]))).toEqual([])
-    expect(check([line(EBOOK_ID, 1, { variantKey: 'Deluxe', unitPrice: 900 })], new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]]))).toEqual([])
+    expect(check([line(EBOOK_ID, 1, { variantId: '2', variantLabel: 'Deluxe', unitPrice: 900 })], formats)).toEqual([])
   })
 
   it('blocks a line that names no digital product of this store', () => {
@@ -152,13 +261,13 @@ describe('lineProblems', () => {
   })
 
   it('blocks malformed buyer-written lines instead of throwing', () => {
-    const odd = { ...line(EBOOK_ID), variantKey: 7 } as unknown as OrderItem
-    const withVariants = new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]])
-    expect(() => check([odd], withVariants)).not.toThrow()
-    expect(check([odd], withVariants).map((p) => p.blocking)).toEqual([true])
+    const odd = { ...line(EBOOK_ID), variantId: 7 } as unknown as OrderItem
+    expect(() => check([odd], formats)).not.toThrow()
+    expect(check([odd], formats).map((p) => p.blocking)).toEqual([true])
+    expect(check([{ ...line(EBOOK_ID), variantLabel: 7 } as unknown as OrderItem], formats)[0].blocking).toBe(true)
     expect(check([{ ...line(EBOOK_ID), itemTitle: { x: 1 } } as unknown as OrderItem], listed([EBOOK_ID]))[0].blocking).toBe(true)
     // The well-formed line beside it is still checked, and the order is held.
-    expect(check([odd, line(EBOOK_ID)], withVariants).some((p) => p.blocking)).toBe(true)
+    expect(check([odd, line(EBOOK_ID)], formats).some((p) => p.blocking)).toBe(true)
   })
 
   it('blocks an item id that is not a document id, which would fail a batched lookup', () => {
@@ -173,8 +282,9 @@ describe('lineProblems', () => {
 
   it('blocks an order that repeats an item and variant, so one receipt cannot count twice', () => {
     expect(check([line(EBOOK_ID), line(EBOOK_ID)], listed([EBOOK_ID])).map((p) => p.blocking)).toEqual([true])
-    const variants = { axes: [{ name: 'F', options: ['A', 'B'] }], combinations: [{ key: 'A', price: 100 }, { key: 'B', price: 100 }] }
-    expect(check([line(EBOOK_ID, 1, { variantKey: 'A' }), line(EBOOK_ID, 1, { variantKey: 'B' })], new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]]))).toEqual([])
+    const tees = withVariants(EBOOK_ID, TEES)
+    expect(check([line(EBOOK_ID, 1, { variantId: '1.3' }), line(EBOOK_ID, 1, { variantId: '2.3' })], tees)).toEqual([])
+    expect(check([line(EBOOK_ID, 1, { variantId: '1.3' }), line(EBOOK_ID, 1, { variantId: '1.3' })], tees).map((p) => p.blocking)).toEqual([true])
   })
 
   it('finds repeated lines and invalid quantities over the whole order, whichever part is delivered', () => {
@@ -182,6 +292,7 @@ describe('lineProblems', () => {
     expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID, 0)] })).toHaveLength(1)
     expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID, -2)] })).toHaveLength(1)
     expect(wholeOrderProblems({ items: [line(EBOOK_ID), line(SONG_ID)] })).toEqual([])
+    expect(wholeOrderProblems({ items: [line(EBOOK_ID, 1, { variantId: '1' }), line(EBOOK_ID, 1, { variantId: '2' })] })).toEqual([])
   })
 
   it('blocks an invalid order quantity whatever is delivered of it', () => {
@@ -220,28 +331,54 @@ describe('lineProblems', () => {
     expect(bulk([line(EBOOK_ID, 2)], new Map([[EBOOK_ID, listing(EBOOK_ID, { stockQuantity: 2 })]]))).toBe(true)
     expect(check([line(EBOOK_ID, 5)], listed([EBOOK_ID]))).toEqual([])
     // A variant's own stock decides, untracked (unlimited) when it has none.
-    const stocked = { axes: [{ name: 'Format', options: ['PDF', 'Deluxe'] }], combinations: [{ key: 'PDF', price: 100 }, { key: 'Deluxe', price: 900, stock: 0 }] }
-    const withStock = new Map([[EBOOK_ID, listing(EBOOK_ID, { variants: stocked, stockQuantity: 0 })]])
-    expect(check([line(EBOOK_ID, 1, { variantKey: 'Deluxe', unitPrice: 900 })], withStock).map((p) => p.blocking)).toEqual([false])
-    expect(bulk([line(EBOOK_ID, 1, { variantKey: 'Deluxe', unitPrice: 900 })], withStock)).toBe(false)
-    expect(check([line(EBOOK_ID, 3, { variantKey: 'PDF' })], withStock)).toEqual([])
+    const stocked: ItemVariants = { ...FORMATS, combinations: [{ id: '1', optionIds: [1], price: 100 }, { id: '2', optionIds: [2], price: 900, stock: 0 }] }
+    const withStock = withVariants(EBOOK_ID, stocked, { stockQuantity: 0 })
+    expect(check([line(EBOOK_ID, 1, { variantId: '2', unitPrice: 900 })], withStock).map((p) => p.text)).toEqual(['"EBOOK" is out of stock.'])
+    expect(bulk([line(EBOOK_ID, 1, { variantId: '2', unitPrice: 900 })], withStock)).toBe(false)
+    expect(check([line(EBOOK_ID, 3, { variantId: '1' })], withStock)).toEqual([])
   })
 
   it('flags a title, variant, price or currency the listing does not have, for review', () => {
-    const withVariants = new Map([[EBOOK_ID, listing(EBOOK_ID, { variants })]])
     // The premium variant at the cheap variant's price.
-    expect(check([line(EBOOK_ID, 1, { variantKey: 'Deluxe', unitPrice: 100 })], withVariants)).toHaveLength(1)
-    expect(check([line(EBOOK_ID, 1, { variantKey: 'Gold' })], withVariants)).toHaveLength(1)
-    expect(check([line(EBOOK_ID)], withVariants)).toHaveLength(1)
+    expect(check([line(EBOOK_ID, 1, { variantId: '2', unitPrice: 100 })], formats).map((p) => p.text)).toEqual(['The order\'s price for "EBOOK" differs from your listing.'])
+    // A variant the listing no longer offers, named by the order's own label.
+    expect(check([line(EBOOK_ID, 1, { variantId: '3', variantLabel: 'Gold' })], formats).map((p) => p.text)).toEqual(['"EBOOK" has no option "Gold" any more.'])
+    expect(check([line(EBOOK_ID, 1, { variantId: '3' })], formats)).toHaveLength(1)
+    // A variant on an item without variants, and no variant on one with them.
+    expect(check([line(EBOOK_ID, 1, { variantId: '1' })], listed([EBOOK_ID]))).toHaveLength(1)
+    expect(check([line(EBOOK_ID)], formats)).toHaveLength(1)
     expect(check([line(EBOOK_ID, 1, { itemTitle: 'Something else' })], listed([EBOOK_ID]))).toHaveLength(1)
     expect(check([line(EBOOK_ID)], listed([EBOOK_ID]), 'EUR')).toHaveLength(1)
     expect(check([line(EBOOK_ID, 1, { itemTitle: 'X', unitPrice: 5 })], listed([EBOOK_ID])).every((p) => !p.blocking)).toBe(true)
   })
+
+  it('on v1–v6 checks a variant line by its name too, since option ids follow the options\' order there', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6')
+    try {
+      const legacy = await import('./digital-delivery-plan')
+      const checkLegacy = (items: OrderItem[]) => legacy.lineProblems({ items, currency: 'USD' }, 'store', formats)
+      // The order bought "Deluxe" as id 1; the seller has since moved Deluxe after PDF.
+      expect(checkLegacy([line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'Deluxe', unitPrice: 100 })]).map((p) => p.text)).toEqual(['"EBOOK" has no option "Deluxe" any more.'])
+      expect(checkLegacy([line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'PDF', unitPrice: 100 })])).toEqual([])
+      // v7 ids are fixed, so the id alone decides there.
+      expect(check([line(EBOOK_ID, 1, { variantId: '1', variantLabel: 'Renamed', unitPrice: 100 })], formats)).toEqual([])
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it('checks a variant line against its price as the listing has it now', () => {
+    const repriced = withVariants(EBOOK_ID, { ...FORMATS, combinations: [{ id: '1', optionIds: [1], price: 150 }, { id: '2', optionIds: [2], price: 900 }] })
+    expect(check([line(EBOOK_ID, 1, { variantId: '1' })], repriced)).toHaveLength(1)
+    expect(check([line(EBOOK_ID, 1, { variantId: '1', unitPrice: 150 })], repriced)).toEqual([])
+  })
 })
 
 describe('lineCoverage', () => {
-  const sent = (licenseKeys: string[], unconfirmed = false) =>
-    ({ unconfirmed, payload: { v: 1 as const, items: [{ itemId: GAME_ID, itemTitle: 'GAME', assets: [], licenseKeys }] } })
+  const sent = (licenseKeys: string[], unconfirmed = false, variantId?: string) =>
+    ({ unconfirmed, payload: { v: 1 as const, items: [{ itemId: GAME_ID, itemTitle: 'GAME', ...(variantId ? { variantId } : {}), assets: [], licenseKeys }] } })
 
   it('counts confirmed and pending codes apart', () => {
     const coverage = lineCoverage(line(GAME_ID, 3), [sent(['k1']), sent(['k2'], true)])
@@ -252,8 +389,11 @@ describe('lineCoverage', () => {
     expect(lineCoverage(line(GAME_ID, 3), [{ unconfirmed: false, payload: undefined }])).toEqual({ possibly: true, confirmed: false, possiblyCodes: 3, confirmedCodes: 0 })
   })
 
-  it('ignores other items and variants', () => {
-    expect(lineCoverage(line(GAME_ID, 1, { variantKey: 'Deluxe' }), [sent(['k1'])]).possibly).toBe(false)
+  it('matches receipts by item and variant id', () => {
+    expect(lineCoverage(line(GAME_ID, 1, { variantId: '2' }), [sent(['k1'])]).possibly).toBe(false)
+    expect(lineCoverage(line(GAME_ID, 1, { variantId: '2' }), [sent(['k1'], false, '2')]).confirmedCodes).toBe(1)
+    expect(lineCoverage(line(GAME_ID, 1, { variantId: '1' }), [sent(['k1'], false, '2')]).possibly).toBe(false)
+    expect(lineCoverage(line(GAME_ID), [sent(['k1'], false, '2')]).possibly).toBe(false)
   })
 })
 
@@ -317,6 +457,13 @@ describe('isReadyForBulkDelivery', () => {
     expect(ready([line(NOW_ID), line(SONG_ID)], 'pending')).toBe(false)
   })
 
+  it('holds a line whose listing stores a table that cannot be read', () => {
+    // Contract-valid, but the only selector names an option the table does not have.
+    const unreadableVariants = { axes: ['Color'], options: ['Red'], optionIds: [1], optionAxes: [0], nextOptionId: 2, selectors: [Uint8Array.of(2)], prices: [100] }
+    const listings = new Map([[NOW_ID, listing(NOW_ID, { basePrice: undefined, unreadableVariants })]])
+    expect(ready([line(NOW_ID, 1, { unitPrice: 0 })], undefined, { listings })).toBe(false)
+  })
+
   it('never re-delivers, delivers a closed order, or delivers without a kit', () => {
     expect(ready([line(NOW_ID)], undefined, { alreadyDelivered: true })).toBe(false)
     expect(ready([line(NOW_ID)], 'refunded')).toBe(false)
@@ -336,8 +483,16 @@ describe('isReadyForBulkDelivery', () => {
     expect(ready([line(NOW_ID, 1, { unitPrice: 1 })])).toBe(false)
   })
 
+  it('delivers a variant line with the assets for its options', () => {
+    const tees = withVariants(NOW_ID, TEES)
+    const targeted = new Map([[NOW_ID, kit({ deliverWhen: 'on_order', assets: [file('red.zip', [1])] })]])
+    expect(ready([line(NOW_ID, 1, { variantId: '1.4' })], undefined, { kits: targeted, listings: tees })).toBe(true)
+    // Blue gets nothing from this kit: held, not sent empty.
+    expect(ready([line(NOW_ID, 1, { variantId: '2.3' })], undefined, { kits: targeted, listings: tees })).toBe(false)
+  })
+
   it('holds an order with a malformed digital line without throwing', () => {
-    const odd = { ...line(NOW_ID), variantKey: 7 } as unknown as OrderItem
+    const odd = { ...line(NOW_ID), variantId: 7 } as unknown as OrderItem
     expect(() => ready([odd])).not.toThrow()
     expect(ready([odd])).toBe(false)
     expect(ready([odd, line(NOW_ID)])).toBe(false)
@@ -377,10 +532,49 @@ describe('wire format', () => {
   })
 
   it('round-trips a kit and a delivery', () => {
-    const original = kit({ assets: [file('a.zip', 'Pro'), { kind: 'link', label: 'Site', url: 'https://example.com' }], licenseKeys: ['X'], instructions: 'hi', deliverWhen: 'on_order' })
+    const original = kit({ assets: [file('a.zip', [3, 7]), { kind: 'link', label: 'Site', url: 'https://example.com' }], licenseKeys: ['X'], instructions: 'hi', deliverWhen: 'on_order' })
     expect(decodeKit(encodeKit(original))).toEqual(original)
-    const delivery = { v: 1 as const, items: [{ itemId: 'a', itemTitle: 'A', assets: [file('a.zip')], licenseKeys: ['X'] }], message: 'm' }
+    const delivery = { v: 1 as const, items: [{ itemId: 'a', itemTitle: 'A', variantId: '3.7', variantLabel: 'Red / XL', assets: [file('a.zip')], licenseKeys: ['X'] }], message: 'm' }
     expect(decodeDelivery(encodeDelivery(delivery))).toEqual(delivery)
+  })
+
+  it('reads a target of whole option ids from 1 to 254 once each; a target with any unreadable member matches no variant', () => {
+    const decoded = decodeKit(new TextEncoder().encode(JSON.stringify({
+      v: 1,
+      deliverWhen: 'on_order',
+      assets: [
+        { kind: 'code', label: 'A', code: 'A', optionIds: [3, 254, 3] },
+        { kind: 'code', label: 'F', code: 'F', optionIds: [3, '4'] },
+        { kind: 'code', label: 'G', code: 'G', optionIds: [3, 0, 255, 1.5] },
+        { kind: 'code', label: 'B', code: 'B', optionIds: [0, 'x'] },
+        { kind: 'code', label: 'C', code: 'C', optionIds: 'nope', variantKey: 'Gold' },
+        { kind: 'code', label: 'D', code: 'D', variantKey: 'Gold' },
+        { kind: 'code', label: 'E', code: 'E', optionIds: [] },
+      ],
+    })))
+    expect(decoded.assets).toEqual([
+      { kind: 'code', label: 'A', code: 'A', optionIds: [3, 254] },
+      // One bad member voids the whole target: dropping it would widen who gets the asset.
+      { kind: 'code', label: 'F', code: 'F', optionIds: [0] },
+      { kind: 'code', label: 'G', code: 'G', optionIds: [0] },
+      // Written for some variants, but not in a way this client reads: never sent to every buyer.
+      { kind: 'code', label: 'B', code: 'B', optionIds: [0] },
+      { kind: 'code', label: 'C', code: 'C', optionIds: [0] },
+      { kind: 'code', label: 'D', code: 'D', optionIds: [0] },
+      { kind: 'code', label: 'E', code: 'E' },
+    ])
+    expect(assetsForVariant(decoded.assets, [3, 254]).map((asset) => (asset.kind === 'code' ? asset.label : ''))).toEqual(['A', 'E'])
+  })
+
+  it('reads a receipt\'s variant id only when it is a short canonical one', () => {
+    const receipt = (variantId: unknown) => decodeDelivery(new TextEncoder().encode(JSON.stringify({
+      v: 1,
+      items: [{ itemId: 'a', itemTitle: 'A', assets: [], variantId, variantLabel: 'Red / XL', variantRef: 'abc' }],
+    }))).items[0]
+    expect(receipt('1.4')).toEqual({ itemId: 'a', itemTitle: 'A', assets: [], variantId: '1.4', variantLabel: 'Red / XL' })
+    for (const bad of ['1.2.3.4.5.6.7.8.9.10', 'Red', 7, '']) {
+      expect(receipt(bad)).toEqual({ itemId: 'a', itemTitle: 'A', assets: [] })
+    }
   })
 
   it('drops assets a buyer\'s browser must not open', () => {
@@ -419,7 +613,7 @@ describe('wire format', () => {
         { kind: 'link', label: 'Download', url: 'https://example.com/dl?q=s3cr3t' },
         { kind: 'link', label: 'Members area', url: 'https://example.com/members', code: 'OPEN-SESAME' },
         { kind: 'link', label: 'Torrent', url: 'magnet:?xt=urn:btih:abc123' },
-        { kind: 'code', label: 'Gift card', code: 'GIFT-1234', variantKey: 'Gold' },
+        { kind: 'code', label: 'Gift card', code: 'GIFT-1234', optionIds: [2] },
       ],
     })
     expect(decodeKit(encodeKit(original))).toEqual(original)
@@ -457,7 +651,7 @@ describe('wire format', () => {
   it('sizes unique codes by their UTF-8 bytes, not their length', () => {
     const room = MAX_DELIVERY_PLAINTEXT_BYTES - 1800
     // 150 kana (450 bytes) outweigh 200 ASCII characters.
-    const pool = ['a'.repeat(200), '\u3042'.repeat(150)]
+    const pool = ['a'.repeat(200), 'あ'.repeat(150)]
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room - 300), licenseKeys: pool }))).toMatch(/too large/)
     expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room - 300), licenseKeys: ['a'.repeat(200)] }))).toBeNull()
   })
@@ -466,6 +660,17 @@ describe('wire format', () => {
     // Fits with a 200-byte title, not with the 1,200 bytes 200 escaped control characters take.
     const instructions = 'x'.repeat(MAX_DELIVERY_PLAINTEXT_BYTES - 1000)
     expect(kitDeliveryFitError(kit({ instructions }))).toMatch(/too large/)
+  })
+
+  it('sizes the worst-case receipt with the longest variant id', () => {
+    // Everything but the instructions, at its worst: a 44-character id, a title
+    // and label of escaped control characters, and a 19-character variant id.
+    const envelope = new TextEncoder().encode(JSON.stringify({ v: 1, items: [{
+      itemId: 'x'.repeat(44), itemTitle: '\u0001'.repeat(200), variantId: '254.254.254.254.254', variantLabel: '\u0001'.repeat(60), assets: [], instructions: '',
+    }] })).length
+    const room = MAX_DELIVERY_PLAINTEXT_BYTES - envelope
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room) }))).toBeNull()
+    expect(kitDeliveryFitError(kit({ instructions: 'x'.repeat(room + 1) }))).toMatch(/too large/)
   })
 
   it('refuses a kit that could not go out for one unit in one delivery', () => {
@@ -486,7 +691,7 @@ describe('malformed order payloads', () => {
     for (const payload of [{ items: null }, { items: 'x' }, {}, { items: [null, 5, { fulfillment: 'digital', itemId: 'a', itemTitle: 'A', quantity: 1 }] }]) {
       const cast = payload as unknown as { items: OrderItem[] }
       expect(() => hasDigitalLines(cast)).not.toThrow()
-      expect(() => planDelivery(cast, new Map())).not.toThrow()
+      expect(() => planDelivery(cast, new Map(), NO_LISTINGS)).not.toThrow()
     }
     expect(hasDigitalLines({ items: null } as unknown as { items: OrderItem[] })).toBe(false)
     expect(digitalOrders([{ id: 'o' }], new Map([['o', { items: 7 } as unknown as { items: OrderItem[] }]]))).toEqual([])

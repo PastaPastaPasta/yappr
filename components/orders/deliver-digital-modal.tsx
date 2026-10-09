@@ -12,6 +12,7 @@ import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { coverageChanged, deliveredFor, deliveryCompletesOrder, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, wholeOrderProblems, withHeldDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
+import { orderLineVariantLabel } from '@/lib/storefront/variant-codec'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
 interface DeliverDigitalModalProps {
@@ -147,7 +148,7 @@ export function DeliverDigitalModal({
     })
     return { deliveryPayload: { items }, takesNoCodes: noCodes }
   }, [lines, selected, sellsCodes, codesNow, listings])
-  const plan = useMemo(() => planDelivery(deliveryPayload, effectiveKits, message, (line) => takesNoCodes.has(line)), [deliveryPayload, effectiveKits, message, takesNoCodes])
+  const plan = useMemo(() => planDelivery(deliveryPayload, effectiveKits, listings, message, (line) => takesNoCodes.has(line)), [deliveryPayload, effectiveKits, listings, message, takesNoCodes])
   // The buyer wrote these lines: the kit sent is chosen by itemId, whatever title or price they claim.
   const problems = useMemo(() => lineProblems(selectedPayload, order.storeId, listings), [selectedPayload, order.storeId, listings])
   const blockers = useMemo(() => [
@@ -246,8 +247,9 @@ export function DeliverDigitalModal({
 
         {lines.map((line, index) => {
           const planned = plan.delivery.items.find((item) => deliveredFor(item, line))
+          const variantLabel = orderLineVariantLabel(line)
           return (
-            <div key={`${line.itemId}-${line.variantKey ?? ''}-${index}`} className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg space-y-2 ${selected.has(index) ? '' : 'opacity-60'}`}>
+            <div key={`${line.itemId}-${line.variantId ?? ''}-${index}`} className={`p-3 border border-gray-200 dark:border-gray-800 rounded-lg space-y-2 ${selected.has(index) ? '' : 'opacity-60'}`}>
               <label className="flex items-start gap-2 text-sm font-medium">
                 {lines.length > 1 && (
                   <input
@@ -261,7 +263,7 @@ export function DeliverDigitalModal({
                 )}
                 <span>
                   {line.itemTitle}
-                  {line.variantKey && <span className="text-gray-500 font-normal"> ({line.variantKey.replace(/\|/g, ' / ')})</span>}
+                  {variantLabel && <span className="text-gray-500 font-normal"> ({variantLabel})</span>}
                   <span className="text-gray-500 font-normal"> ×{line.quantity}</span>
                   {coverage[index].confirmed
                     ? <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-300">Sent before</span>
@@ -311,7 +313,7 @@ export function DeliverDigitalModal({
                   <DigitalAssetListEditor
                     assets={extras[line.itemId] ?? []}
                     onChange={(update) => setExtras((prev) => ({ ...prev, [line.itemId]: update(prev[line.itemId] ?? []) }))}
-                    onBusyChange={(busy) => setLineUploading(`${line.itemId}-${line.variantKey ?? ''}-${index}`, busy)}
+                    onBusyChange={(busy) => setLineUploading(`${line.itemId}-${line.variantId ?? ''}-${index}`, busy)}
                     identityId={sellerId}
                     disabled={isSubmitting}
                     forOneOrder

@@ -4,6 +4,7 @@ const query = vi.hoisted(() => vi.fn());
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }));
 import { storeOrderService } from './store-order-service';
+import type { CartItem } from '@/lib/types';
 
 const seller = '11111111111111111111111111111111';
 const order = (index: number) => ({
@@ -97,5 +98,20 @@ describe('the encrypted order size the checkout budget assumes', () => {
     const payload = storeOrderService.buildOrderPayload([], undefined, { email: 'ann@example.com' }, 0, 'dash:X', 'USD', 'leave at the door – thanks');
     const encrypted = await storeOrderService.encryptOrderPayload(payload, key(1), getPublicKey(key(2)), new Uint8Array(24), seller);
     expect(encrypted.length).toBe(new TextEncoder().encode(JSON.stringify(payload)).length + ORDER_CIPHERTEXT_OVERHEAD);
+  });
+});
+
+describe('order lines carry the variant', () => {
+  const line = (overrides: Partial<CartItem>): CartItem => ({ itemId: 'item', storeId: 'store', title: 'Tee', quantity: 1, unitPrice: 500, currency: 'USD', ...overrides });
+  const lines = (cart: CartItem[]) => storeOrderService.buildOrderPayload(cart, undefined, {}, 0, 'dash:X', 'USD').items;
+
+  it("keeps the cart line's variant id, name and SKU", () => {
+    expect(lines([line({ variantId: '1.2', variantLabel: 'Red / Small', sku: 'TEE-R-S' })]))
+      .toEqual([expect.objectContaining({ variantId: '1.2', variantLabel: 'Red / Small', sku: 'TEE-R-S' })]);
+  });
+
+  it('writes no variant fields for a plain item', () => {
+    const [plain] = lines([line({})]);
+    for (const field of ['variantId', 'variantLabel', 'sku', 'variantKey']) expect(plain).not.toHaveProperty(field);
   });
 });

@@ -33,7 +33,7 @@ export const DECLARED_RULES = {
     report: ['oneTarget', 'otherHasNote', 'resolvedHasStatus'],
   },
   'yappr-storefront-contract.json': {
-    storeItem: ['pricedHasCurrency'],
+    storeItem: ['pricedHasCurrency', 'onePrice', 'oneStock', 'optionTable', 'comboTable', 'comboStocks', 'comboSkus', 'comboWeights', 'comboImages'],
     shippingZone: ['flatRateHasCurrency', 'tieredHasTiers'],
     storeOrder: ['storeIsOpen'],
   },
@@ -57,6 +57,47 @@ const media = (mediaUrl) => ({ mediaUrl, mediaHash: bytes(32), mediaFingerprint:
 export const baseOrder = () => ({ storeId: id(), sellerId: id(), encryptedPayload: bytes(64), nonce: bytes(24), storeStatus: 'active' });
 export const baseItem = () => ({ storeId: id(), title: 'constraint probe', status: 'active' });
 export const baseZone = () => ({ storeId: id(), name: 'constraint probe', rateType: 'flat' });
+/**
+ * Storefront v7: a variants table of 2 colours × 2 sizes, every list aligned.
+ * A selector names one option id per axis, in axis order.
+ */
+export const baseVariants = (extra = {}) => ({
+  axes: ['Color', 'Size'],
+  options: ['Red', 'Blue', 'S', 'L'],
+  optionIds: [1, 2, 3, 4],
+  optionAxes: [0, 0, 1, 1],
+  nextOptionId: 5,
+  selectors: [Uint8Array.of(1, 3), Uint8Array.of(1, 4), Uint8Array.of(2, 3), Uint8Array.of(2, 4)],
+  prices: [100, 120, 100, 120],
+  ...extra,
+});
+/** Storefront v7: a variant item (no basePrice, no stockQuantity) priced in `currency`. */
+export const variantItem = (variants = baseVariants(), currency = 'USD') => ({ ...baseItem(), currency, variants });
+/**
+ * Storefront v7 at its caps: 5 axes of 4 options and 256 combinations, with
+ * stock, SKU, weight and image lists. The JSON schema allows it; whether the
+ * whole create fits one state transition is the client's budget.
+ */
+export const fullVariants = () => {
+  const optionIds = Array.from({ length: 20 }, (_, i) => i + 1);
+  const selectors = [];
+  for (let n = 0; n < 256; n += 1) {
+    selectors.push(Uint8Array.from([0, 1, 2, 3, 4].map((axis) => axis * 4 + ((n >> (axis * 2)) % 4) + 1)));
+  }
+  return {
+    axes: ['A', 'B', 'C', 'D', 'E'],
+    options: optionIds.map((option) => `o${option}`),
+    optionIds,
+    optionAxes: optionIds.map((option) => Math.floor((option - 1) / 4)),
+    nextOptionId: 21,
+    selectors,
+    prices: selectors.map((_, n) => 100 + n),
+    stocks: selectors.map(() => 4294967295),
+    skus: selectors.map((_, n) => `SKU-${n}`),
+    weights: selectors.map(() => 250),
+    images: selectors.map((_, n) => n % 13),
+  };
+};
 /**
  * The instant every case is judged at. The pollr rules read `$createdAt` and
  * `$updatedAt`, so a case fixes both (through its `at` option) relative to
@@ -139,9 +180,25 @@ export const CONSTRAINT_CASES = {
   'yappr-storefront-contract.json': [
     ['storeItem: priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD' }, null],
     ['storeItem: unpriced (no price, no variants)', 'storeItem', baseItem(), null],
-    ['storeItem: variants with a currency', 'storeItem', { ...baseItem(), variants: '{"axes":[]}', currency: 'EUR' }, null],
+    ['storeItem: variants with a currency', 'storeItem', variantItem(baseVariants(), 'EUR'), null],
     ['storeItem: a price with no currency', 'storeItem', { ...baseItem(), basePrice: 1000 }, 'pricedHasCurrency'],
-    ['storeItem: variants with no currency', 'storeItem', { ...baseItem(), variants: '{"axes":[]}' }, 'pricedHasCurrency'],
+    ['storeItem: variants with no currency', 'storeItem', { ...baseItem(), variants: baseVariants() }, 'pricedHasCurrency'],
+    // Storefront v7: the variants table (docs/STOREFRONT_V7.md). Each column
+    // stays aligned with its table, and a variant item carries no item-level
+    // price or stock.
+    ['storeItem: variants with stock, SKU, weight and image lists', 'storeItem', variantItem(baseVariants({ stocks: [5, 0, 2, 9], skus: ['R-S', 'R-L', '', 'B-L'], weights: [100, 180, 100, 180], images: [1, 1, 2, 0] })), null],
+    ['storeItem: variants at the caps (5 axes, 256 combinations, every list)', 'storeItem', variantItem(fullVariants(), 'DASH'), null],
+    ['storeItem: variants and a basePrice', 'storeItem', { ...variantItem(), basePrice: 1000 }, 'onePrice'],
+    ['storeItem: variants and an item stockQuantity', 'storeItem', { ...variantItem(), stockQuantity: 4 }, 'oneStock'],
+    ['storeItem: variants with an item SKU and weight (a parent SKU, a default weight)', 'storeItem', { ...variantItem(), sku: 'TEE', weight: 200 }, null],
+    ['storeItem: an option with no id', 'storeItem', variantItem(baseVariants({ optionIds: [1, 2, 3] })), 'optionTable'],
+    ['storeItem: an option with no axis', 'storeItem', variantItem(baseVariants({ optionAxes: [0, 0, 1] })), 'optionTable'],
+    ['storeItem: a combination with no price', 'storeItem', variantItem(baseVariants({ prices: [100, 120, 100] })), 'comboTable'],
+    ['storeItem: a price with no combination', 'storeItem', variantItem(baseVariants({ prices: [100, 120, 100, 120, 140] })), 'comboTable'],
+    ['storeItem: a stock list one short', 'storeItem', variantItem(baseVariants({ stocks: [5, 0, 2] })), 'comboStocks'],
+    ['storeItem: a SKU list one short', 'storeItem', variantItem(baseVariants({ skus: ['a', 'b', 'c'] })), 'comboSkus'],
+    ['storeItem: a weight list one long', 'storeItem', variantItem(baseVariants({ weights: [1, 2, 3, 4, 5] })), 'comboWeights'],
+    ['storeItem: an image list one short', 'storeItem', variantItem(baseVariants({ images: [1, 1, 2] })), 'comboImages'],
     ['shippingZone: flat with rate and currency', 'shippingZone', { ...baseZone(), flatRate: 500, currency: 'USD' }, null],
     ['shippingZone: flat with no rate (free shipping)', 'shippingZone', baseZone(), null],
     ['shippingZone: flat carrying a pricing config in tiers', 'shippingZone', { ...baseZone(), flatRate: 0, currency: 'USD', tiers: '{"weightRate":10}' }, null],
@@ -154,11 +211,11 @@ export const CONSTRAINT_CASES = {
     ['storeOrder: at an active store', 'storeOrder', baseOrder(), null],
     ['storeOrder: at a paused store', 'storeOrder', { ...baseOrder(), storeStatus: 'paused' }, 'storeIsOpen'],
     ['storeOrder: at a closed store', 'storeOrder', { ...baseOrder(), storeStatus: 'closed' }, 'storeIsOpen'],
-    // Storefront v6 (the mainnet re-cut) keeps these three rules as they were; its new shapes
-    // must still pass them: a digital product, variants and an order payload at the 5,120 B caps.
+    // Storefront v6 (the mainnet re-cut) kept these rules; its new shapes must
+    // still pass them: a digital product and an order payload at the 5,120 B cap.
     ['storeItem: a digital product priced with a currency', 'storeItem', { ...baseItem(), basePrice: 1000, currency: 'USD', fulfillment: 'digital' }, null],
     ['storeItem: a digital product priced with no currency', 'storeItem', { ...baseItem(), basePrice: 1000, fulfillment: 'digital' }, 'pricedHasCurrency'],
-    ['storeItem: variants at the 5,120 B cap with a currency', 'storeItem', { ...baseItem(), variants: '{"axes":[]}'.padEnd(5120, ' '), currency: 'DASH' }, null],
+    ['storeItem: a digital product with variants', 'storeItem', { ...variantItem(), fulfillment: 'digital' }, null],
     ['storeItem: a price at 2^53-1 with a currency', 'storeItem', { ...baseItem(), basePrice: Number.MAX_SAFE_INTEGER, currency: 'DASH' }, null],
     ['storeOrder: a 5,120 B payload at an active store', 'storeOrder', { ...baseOrder(), encryptedPayload: bytes(5120) }, null],
   ],

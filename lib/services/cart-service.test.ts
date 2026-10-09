@@ -1,18 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CartItem, StoreItem } from '@/lib/types'
-
-vi.mock('./store-item-service', () => ({
-  storeItemService: {
-    query: vi.fn(),
-    getPrice: (item: StoreItem) => item.basePrice,
-    getStock: (item: StoreItem, key?: string) => key
-      ? item.variants?.combinations.find(combo => combo.key === key)?.stock ?? Infinity
-      : item.stockQuantity ?? Infinity,
-    getCombination: (item: StoreItem, key: string) => item.variants?.combinations.find(combo => combo.key === key)
-  }
-}))
+import type { CartItem, ItemVariants, StoreItem } from '@/lib/types'
+import { findCombination, variantsFromRows, type VariantRow } from '@/lib/storefront/variant-codec'
+import { decodeLegacyVariants } from '@/lib/storefront/legacy-variants'
+import { scopedKey } from '@/lib/storage-scope'
 import { storeItemService } from './store-item-service'
 import { cartService, getCartCurrency } from './cart-service'
+
+/** `value`, failing the test when it is missing. */
+function defined<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error('expected a value')
+  return value
+}
+
+/** A one-axis table; option ids run 1, 2, … in row order, so variant ids are '1', '2', … */
+const sizes = (rows: Array<Omit<VariantRow, 'optionNames'> & { name: string }>): ItemVariants =>
+  variantsFromRows(['Size'], rows.map(({ name, ...data }) => ({ optionNames: [name], ...data }))).variants as ItemVariants
 
 const product = (overrides: Partial<StoreItem> = {}): StoreItem => ({
   id: 'item', storeId: 'store', ownerId: 'seller', createdAt: new Date(),
@@ -28,7 +30,8 @@ const respond = (item: StoreItem | null) => vi.mocked(storeItemService.query).mo
 beforeEach(() => {
   const data = new Map<string, string>()
   vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value) })
-  vi.clearAllMocks()
+  vi.restoreAllMocks()
+  vi.spyOn(storeItemService, 'query').mockResolvedValue({ documents: [] })
   cartService.clearCart()
 })
 
@@ -46,16 +49,105 @@ describe('cart inventory', () => {
   })
 
   it('keeps per-variant additions within their own stock', () => {
-    const item = product({ variants: { axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 100, stock: 1 }, { key: 'M', price: 100, stock: 2 }] } })
-    cartService.addStoreItem(item, 'S')
-    cartService.addStoreItem(item, 'M', 2)
-    expect(() => cartService.addStoreItem(item, 'S')).toThrow('Only 1 available')
+    const item = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'S', price: 100, stock: 1 }, { name: 'M', price: 120, stock: 2 }]) })
+    cartService.addStoreItem(item, '1')
+    cartService.addStoreItem(item, '2', 2)
+    expect(() => cartService.addStoreItem(item, '1')).toThrow('Only 1 available')
     expect(cartService.getItemCount()).toBe(3)
+    expect(cartService.getItems().map(line => [line.variantId, line.variantLabel, line.unitPrice])).toEqual([['1', 'S', 100], ['2', 'M', 120]])
   })
 
-  it('rejects removed variants before adding them', () => {
-    expect(() => cartService.addStoreItem(product({ variants: { axes: [], combinations: [] } }), 'removed')).toThrow('no longer available')
+  it('snapshots the SKU when a line is added: the variant\'s, else the item\'s', () => {
+    const item = product({ basePrice: undefined, stockQuantity: undefined, sku: 'TEE', variants: sizes([{ name: 'S', price: 100, sku: 'TEE-S' }, { name: 'M', price: 100 }]) })
+    cartService.addStoreItem(item, '1')
+    cartService.addStoreItem(item, '2')
+    cartService.addStoreItem(product({ id: 'plain', sku: 'MUG' }))
+    expect(cartService.getItems().map(line => line.sku)).toEqual(['TEE-S', 'TEE', 'MUG'])
+  })
+
+  it('names a line by its variant id and shows the variant image', () => {
+    const variants = sizes([{ name: 'S', price: 100, image: 2 }, { name: 'M', price: 100 }])
+    const item = product({ basePrice: undefined, stockQuantity: undefined, imageUrls: ['https://a/hero.png', 'https://a/small.png'], variants })
+    cartService.addStoreItem(item, '1')
+    cartService.addStoreItem(item, '2')
+    expect(cartService.getItems().map(line => line.imageUrl)).toEqual(['https://a/small.png', 'https://a/hero.png'])
+    const [small, medium] = cartService.getItems()
+    cartService.updateQuantity(small, 4)
+    cartService.removeItem(medium)
+    expect(cartService.getItems()).toMatchObject([{ variantId: '1', quantity: 4 }])
+  })
+
+  it('on v1–v6 never merges a new choice into an old line that shares its positional id', () => {
+    const red = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Red', price: 100, stock: 1 }, { name: 'Blue', price: 200, stock: 1 }]) })
+    cartService.addStoreItem(red, '1')
+    // The seller moved Blue first: id '1' is now Blue.
+    const moved = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Blue', price: 200, stock: 1 }, { name: 'Red', price: 100, stock: 1 }]) })
+    cartService.addStoreItem(moved, '1')
+    expect(cartService.getItems().map(line => [line.variantId, line.variantOptions, line.quantity])).toEqual([['1', [['Size', 'Red']], 1], ['1', [['Size', 'Blue']], 1]])
+    cartService.removeItem(cartService.getItems()[0])
+    expect(cartService.getItems().map(line => line.variantOptions)).toEqual([[['Size', 'Blue']]])
+  })
+
+  it('rejects removed variants, and a variant item named without one, before adding them', () => {
+    const item = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'S', price: 100 }]) })
+    expect(() => cartService.addStoreItem(item, '9')).toThrow('no longer available')
+    expect(() => cartService.addStoreItem(item)).toThrow('no longer available')
     expect(cartService.getItems()).toHaveLength(0)
+  })
+
+  it('a line naming a variant of an item that has none is no longer available', async () => {
+    respond(product())
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: [['Size', 'S']], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+  })
+
+  it('on v1–v6 tells combinations apart by their exact option names, however they read', async () => {
+    // ["A / B", "C"] and ["A", "B / C"] read the same joined; the names tell them apart.
+    const variants = variantsFromRows(['X', 'Y'], [{ optionNames: ['A / B', 'C'], price: 100 }, { optionNames: ['A', 'B / C'], price: 200 }]).variants as ItemVariants
+    // Reversing both option lists swaps which combination positional id '1.3' names.
+    const reversed = variantsFromRows(['X', 'Y'], [{ optionNames: ['A', 'B / C'], price: 200 }, { optionNames: ['A / B', 'C'], price: 100 }]).variants as ItemVariants
+    expect(reversed.combinations[0].id).toBe(variants.combinations[0].id)
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: reversed }))
+    const line = { variantId: variants.combinations[0].id, variantLabel: 'A / B / C', quantity: 1 }
+    expect(await cartService.validateItems([cartItem({ ...line, variantOptions: [['X', 'A / B'], ['Y', 'C']] })])).toMatchObject([{ reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem({ ...line, variantOptions: [['X', 'A'], ['Y', 'B / C']] })])).toEqual([])
+    // A line without its names cannot be checked, so it is not trusted.
+    expect(await cartService.validateItems([cartItem(line)])).toMatchObject([{ reason: 'Selected option is no longer available' }])
+  })
+
+  it('on v7 keeps one line per canonical variant id through renames and axis reorders', async () => {
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v7')
+    vi.resetModules()
+    try {
+      const { cartService: v7Cart } = await import('./cart-service')
+      const { renameOption, moveAxis } = await import('@/lib/storefront/variant-codec')
+      v7Cart.clearCart()
+      const table = variantsFromRows(['Color', 'Size'], [{ optionNames: ['Red', 'S'], price: 100, stock: 3 }, { optionNames: ['Blue', 'S'], price: 100, stock: 3 }]).variants as ItemVariants
+      const listing = (variants: ItemVariants) => product({ basePrice: undefined, stockQuantity: undefined, variants })
+      v7Cart.addStoreItem(listing(table), '1.2')
+      v7Cart.addStoreItem(listing(renameOption(table, 1, 'Crimson')), '1.2')
+      v7Cart.addStoreItem(listing(moveAxis(table, 1, 0)), '1.2')
+      expect(v7Cart.getItems().map(line => [line.variantId, line.quantity])).toEqual([['1.2', 3]])
+      expect(() => v7Cart.addStoreItem(listing(renameOption(table, 1, 'Crimson')), '1.2')).toThrow('Only 3 available')
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it('drops lines saved before variants had ids, and keeps the rest', async () => {
+    const lines = [cartItem(), { ...cartItem({ itemId: 'old' }), variantKey: 'Blue|L' }, cartItem({ itemId: 'v', variantId: '1', variantLabel: 'S' })]
+    localStorage.setItem(scopedKey('yappr_cart'), JSON.stringify({ items: lines, updatedAt: 0 }))
+    vi.resetModules()
+    const { cartService: reloaded } = await import('./cart-service')
+    expect(reloaded.getItems().map(line => line.itemId)).toEqual(['item', 'v'])
+  })
+
+  it('weighs each shipped line by its variant, else by its item', async () => {
+    const item = product({ weight: 500, basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Single', price: 100 }, { name: '4-pack', price: 353, weight: 1800 }]) })
+    vi.spyOn(storeItemService, 'get').mockResolvedValue(item)
+    cartService.addStoreItem(item, '1', 2)
+    cartService.addStoreItem(item, '2')
+    expect(await cartService.getTotalWeight()).toBe(2 * 500 + 1800)
   })
 
   it('returns a maximum for a cart already at available stock', async () => {
@@ -82,8 +174,39 @@ describe('cart inventory', () => {
   })
 
   it('does not mistake a removed option for unlimited inventory', async () => {
-    respond(product({ stockQuantity: undefined, variants: { axes: [], combinations: [] } }))
-    expect(await cartService.validateItems([cartItem({ variantKey: 'old' })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'S', price: 100 }]) }))
+    expect(await cartService.validateItems([cartItem({ variantId: '7' })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem()])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+  })
+
+  it('checks a variant line against that variant\'s stock', async () => {
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'S', price: 100, stock: 1 }, { name: 'M', price: 100, stock: 0 }]) }))
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: [['Size', 'S']], quantity: 1 })])).toEqual([])
+    expect(await cartService.validateItems([cartItem({ variantId: '2', variantOptions: [['Size', 'M']], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Out of stock' }])
+  })
+
+  it('on v1–v6, where ids follow option order, a line whose label no longer matches its id names nothing', async () => {
+    // The seller moved M first: id '1' is now M, but the line was added as S.
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'M', price: 200 }, { name: 'S', price: 100 }]) }))
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: [['Size', 'S']], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+  })
+
+  it('on v1–v6 tells apart option types that share option names, whatever their order', async () => {
+    // Front=[Red, Blue], Back=[Red, Blue], numbered axis by axis: Front=Red/Back=Blue is id '1.4'.
+    const json = (axes: string[]) => JSON.stringify({
+      axes: axes.map((name) => ({ name, options: ['Red', 'Blue'] })),
+      combinations: [{ key: 'Red|Blue', price: 100 }, { key: 'Blue|Red', price: 200 }],
+    })
+    const table = defined(decodeLegacyVariants(json(['Front', 'Back'])))
+    const line = { variantId: '1.4', variantOptions: [['Front', 'Red'], ['Back', 'Blue']] as [string, string][], quantity: 1 }
+    expect(findCombination(table, '1.4')?.price).toBe(100)
+    // The seller moved Back first; re-read, '1.4' now names Back=Red/Front=Blue, with the same option names.
+    const moved = defined(decodeLegacyVariants(json(['Back', 'Front'])))
+    expect(findCombination(moved, '1.4')?.optionIds).toEqual([1, 4])
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: table }))
+    expect(await cartService.validateItems([cartItem(line)])).toEqual([])
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: moved }))
+    expect(await cartService.validateItems([cartItem(line)])).toMatchObject([{ reason: 'Selected option is no longer available' }])
   })
 
   it('preserves the cart through a failed lookup and permits a successful retry', async () => {

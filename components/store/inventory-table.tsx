@@ -16,7 +16,17 @@ import {
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { formatPrice } from '@/lib/utils/format'
 import { storeItemService } from '@/lib/services/store-item-service'
+import { combinationImageUrl, findCombination, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
+import { parseCountInput } from '@/lib/storefront/variant-editor-model'
+import { ListLimitError } from '@/lib/typed-array-codecs'
+import { storefrontVariantsAreTyped } from '@/lib/constants'
+import { StaleRevisionError } from '@/lib/services/document-service'
+import { combinationStockCap, itemStockCap } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
+
+/** What a stock edit changed on an item, for the page to merge into its copy. */
+/** What a save changed, with the revision it wrote (the next variant save must start from it). */
+export type InventoryItemChanges = Partial<Pick<StoreItem, 'stockQuantity' | 'variants' | '$revision'>>
 
 interface InventoryTableProps {
   items: StoreItem[]
@@ -25,11 +35,36 @@ interface InventoryTableProps {
   currency?: string
   onEditItem: (item: StoreItem) => void
   onItemDeleted: (itemId: string) => void
-  onStockUpdate?: (itemId: string, newStock: number, variantKey?: string) => void
+  onItemUpdated?: (itemId: string, changes: InventoryItemChanges) => void
 }
 
 type SortField = 'title' | 'price' | 'stock' | 'status' | 'createdAt'
 type SortDirection = 'asc' | 'desc'
+
+/** Unsaved stock per combination of one item: variant id → units. */
+/** Unsaved stock edits by combination id; null stops tracking that combination (v1–v6 only). */
+type StockDrafts = Record<string, number | null>
+
+/** A combination's stock with its unsaved edit, undefined when untracked. */
+const draftedStock = (combination: VariantCombination, drafts: StockDrafts = {}): number | undefined =>
+  combination.id in drafts ? drafts[combination.id] ?? undefined : combination.stock
+
+/** An item's units in all (with unsaved edits), or Infinity when it does not track stock. */
+function totalStock(item: StoreItem, drafts: StockDrafts = {}): number {
+  if (!item.variants) return storeItemService.getStock(item)
+  const stocks = item.variants.combinations.map((combination) => draftedStock(combination, drafts))
+  if (stocks.every((stock) => stock === undefined)) return Infinity
+  return stocks.reduce<number>((sum, stock) => sum + (stock ?? 0), 0)
+}
+
+/**
+ * A typed stock count, or null when it is not a whole number the store keeps:
+ * a combination's follows {@link combinationStockCap}, a product's own
+ * {@link itemStockCap}.
+ */
+function parseStock(value: string, combination: boolean): number | null {
+  return parseCountInput(value, combination ? combinationStockCap(!storefrontVariantsAreTyped()) : itemStockCap()) ?? null
+}
 
 export function InventoryTable({
   items,
@@ -38,7 +73,7 @@ export function InventoryTable({
   currency = 'USD',
   onEditItem,
   onItemDeleted,
-  onStockUpdate
+  onItemUpdated
 }: InventoryTableProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
@@ -48,9 +83,12 @@ export function InventoryTable({
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set())
   const [editingStock, setEditingStock] = useState<{
     itemId: string
-    variantKey?: string
+    variantId?: string
     value: string
   } | null>(null)
+  // Variant stock edits wait here until the seller saves the item, once for all of them.
+  const [stockDrafts, setStockDrafts] = useState<Record<string, StockDrafts>>({})
+  const [savingItemId, setSavingItemId] = useState<string | null>(null)
   const [deleteItemId, setDeleteItemId] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
 
@@ -105,8 +143,8 @@ export function InventoryTable({
           comparison = storeItemService.getPriceRange(a).min - storeItemService.getPriceRange(b).min
           break
         case 'stock': {
-          const stockA = storeItemService.getStock(a)
-          const stockB = storeItemService.getStock(b)
+          const stockA = totalStock(a)
+          const stockB = totalStock(b)
           comparison = (stockA === Infinity ? 999999 : stockA) - (stockB === Infinity ? 999999 : stockB)
           break
         }
@@ -216,64 +254,95 @@ export function InventoryTable({
     }
   }, [sortField])
 
-  const handleStockEdit = useCallback((itemId: string, currentStock: number, variantKey?: string) => {
+  const handleStockEdit = useCallback((itemId: string, currentStock: number, variantId?: string) => {
     setEditingStock({
       itemId,
-      variantKey,
+      variantId,
       value: currentStock === Infinity ? '' : currentStock.toString()
     })
   }, [])
 
+  /** Keep a combination's typed stock as an unsaved edit (dropped when it matches what is saved). */
+  const setStockDraft = useCallback((item: StoreItem, variantId: string, stock: number | null) => {
+    const saved = findCombination(item.variants, variantId)?.stock
+    setStockDrafts((prev) => {
+      const drafts = { ...prev[item.id] }
+      if ((stock ?? undefined) === saved) delete drafts[variantId]
+      else drafts[variantId] = stock
+      const next = { ...prev }
+      if (Object.keys(drafts).length > 0) next[item.id] = drafts
+      else delete next[item.id]
+      return next
+    })
+  }, [])
+
+  const discardStockDrafts = useCallback((itemId: string) => {
+    setStockDrafts((prev) => {
+      const next = { ...prev }
+      delete next[itemId]
+      return next
+    })
+  }, [])
+
+  /** Save every unsaved stock edit of a variant item in one update. */
+  const saveStockDrafts = useCallback(async (item: StoreItem) => {
+    const drafts = stockDrafts[item.id]
+    if (!drafts || !item.variants || savingItemId) return
+    const variants = Object.entries(drafts).reduce(
+      (table, [variantId, stock]) => updateCombination(table, variantId, { stock: stock ?? undefined }),
+      item.variants
+    )
+    setSavingItemId(item.id)
+    try {
+      const updated = await storeItemService.updateItem(item.id, ownerId, storeId, { variants }, item.$revision)
+      onItemUpdated?.(item.id, { variants, $revision: updated.$revision })
+      // Only the edits this write carried: one typed while it was pending stays unsaved.
+      setStockDrafts((prev) => {
+        const left = Object.fromEntries(Object.entries(prev[item.id] ?? {}).filter(([variantId, stock]) => drafts[variantId] !== stock))
+        const next = { ...prev }
+        if (Object.keys(left).length > 0) next[item.id] = left
+        else delete next[item.id]
+        return next
+      })
+      toast.success('Stock saved')
+    } catch (err) {
+      logger.error('Failed to update stock:', err)
+      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
+    } finally {
+      setSavingItemId(null)
+    }
+  }, [stockDrafts, savingItemId, ownerId, storeId, onItemUpdated])
+
   const handleStockSave = useCallback(async () => {
     if (!editingStock) return
+    setEditingStock(null)
 
-    const newStock = editingStock.value === '' ? undefined : parseInt(editingStock.value, 10)
+    const item = items.find(i => i.id === editingStock.itemId)
+    if (!item) return
 
-    if (newStock !== undefined && (isNaN(newStock) || newStock < 0)) {
-      setEditingStock(null)
+    if (editingStock.variantId) {
+      // v7 tracks every combination or none, so an empty or invalid entry changes
+      // nothing; v1–v6 track each on its own, where an empty entry stops tracking it.
+      if (!storefrontVariantsAreTyped() && editingStock.value.trim() === '') {
+        setStockDraft(item, editingStock.variantId, null)
+        return
+      }
+      const stock = parseStock(editingStock.value, true)
+      if (stock !== null) setStockDraft(item, editingStock.variantId, stock)
       return
     }
 
+    // A product without options saves at once; an empty entry stops tracking its stock.
+    const stockQuantity = editingStock.value.trim() === '' ? undefined : parseStock(editingStock.value, false)
+    if (stockQuantity === null || stockQuantity === item.stockQuantity) return
     try {
-      const item = items.find(i => i.id === editingStock.itemId)
-      if (!item) return
-
-      if (editingStock.variantKey && item.variants) {
-        // Update variant stock
-        const updatedCombinations = item.variants.combinations.map(c =>
-          c.key === editingStock.variantKey
-            ? { ...c, stock: newStock }
-            : c
-        )
-
-        await storeItemService.updateItem(
-          editingStock.itemId,
-          ownerId,
-          storeId,
-          {
-            variants: {
-              ...item.variants,
-              combinations: updatedCombinations
-            }
-          }
-        )
-      } else {
-        // Update base stock
-        await storeItemService.updateItem(
-          editingStock.itemId,
-          ownerId,
-          storeId,
-          { stockQuantity: newStock }
-        )
-      }
-
-      onStockUpdate?.(editingStock.itemId, newStock ?? Infinity, editingStock.variantKey)
+      const updated = await storeItemService.updateItem(item.id, ownerId, storeId, { stockQuantity })
+      onItemUpdated?.(item.id, { stockQuantity, $revision: updated.$revision })
     } catch (err) {
       logger.error('Failed to update stock:', err)
+      toast.error((err instanceof ListLimitError || err instanceof StaleRevisionError) ? err.message : 'Stock could not be saved. Please try again.')
     }
-
-    setEditingStock(null)
-  }, [editingStock, items, ownerId, storeId, onStockUpdate])
+  }, [editingStock, items, ownerId, storeId, onItemUpdated, setStockDraft])
 
   const handleDelete = useCallback(async () => {
     if (!deleteItemId) return
@@ -294,9 +363,12 @@ export function InventoryTable({
   const renderStockCell = useCallback((
     item: StoreItem,
     stock: number,
-    variantKey?: string
+    variantId?: string
   ) => {
-    const isEditing = editingStock?.itemId === item.id && editingStock?.variantKey === variantKey
+    const isEditing = editingStock?.itemId === item.id && editingStock?.variantId === variantId
+    const edited = variantId !== undefined && stockDrafts[item.id]?.[variantId] !== undefined
+    // Edits wait for this item's save: one made meanwhile could be lost or undone by it.
+    const isSaving = savingItemId === item.id
 
     if (isEditing) {
       return (
@@ -306,10 +378,12 @@ export function InventoryTable({
           onChange={(e) => setEditingStock({ ...editingStock, value: e.target.value })}
           onBlur={() => { handleStockSave().catch((err) => logger.error('Failed to save stock:', err)) }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') handleStockSave().catch((err) => logger.error('Failed to save stock:', err))
+            // Enter commits through the blur, so one edit is saved once.
+            if (e.key === 'Enter') e.currentTarget.blur()
             if (e.key === 'Escape') setEditingStock(null)
           }}
-          placeholder="Unlimited"
+          placeholder={variantId && storefrontVariantsAreTyped() ? undefined : 'Not tracked'}
+          aria-label="Stock"
           min="0"
           autoFocus
           className="w-20 px-2 py-1 text-sm bg-white dark:bg-gray-800 border border-yappr-500 rounded focus:outline-none"
@@ -317,13 +391,21 @@ export function InventoryTable({
       )
     }
 
+    // On v7 a variant item that does not track stock tracks none of its
+    // combinations; on v1–v6 an untracked one can start tracking here.
+    if (variantId !== undefined && stock === Infinity && storefrontVariantsAreTyped()) {
+      return <span className="px-2 py-1 text-gray-400">Not tracked</span>
+    }
+
     return (
       <button
-        onClick={() => handleStockEdit(item.id, stock, variantKey)}
-        className="text-right hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-1 rounded transition-colors"
+        onClick={() => handleStockEdit(item.id, stock, variantId)}
+        disabled={isSaving}
+        title={edited ? 'Not saved yet' : undefined}
+        className={`text-right hover:bg-gray-100 dark:hover:bg-gray-800 px-2 py-1 rounded transition-colors ${edited ? 'ring-1 ring-yappr-500' : ''}`}
       >
         {stock === Infinity ? (
-          <span className="text-gray-400">Unlimited</span>
+          <span className="text-gray-400">Not tracked</span>
         ) : stock === 0 ? (
           <span className="text-red-500 font-medium">Out of stock</span>
         ) : stock <= 5 ? (
@@ -333,7 +415,7 @@ export function InventoryTable({
         )}
       </button>
     )
-  }, [editingStock, handleStockEdit, handleStockSave])
+  }, [editingStock, stockDrafts, savingItemId, handleStockEdit, handleStockSave])
 
   const SortButton = useCallback(({ field, children }: { field: SortField; children: React.ReactNode }) => (
     <button
@@ -449,38 +531,39 @@ export function InventoryTable({
             </thead>
             <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
               {filteredItems.map((item) => {
-                const combinations = item.variants?.combinations ?? []
+                const variants = item.variants
+                const combinations = variants?.combinations ?? []
                 const hasVariants = combinations.length > 0
                 const isExpanded = expandedItems.has(item.id)
                 const priceRange = storeItemService.getPriceRange(item)
-                const totalStock = hasVariants
-                  ? combinations.reduce((sum, c) => {
-                      const s = c.stock ?? Infinity
-                      return s === Infinity ? Infinity : (sum === Infinity ? Infinity : sum + s)
-                    }, 0)
-                  : storeItemService.getStock(item)
+                const drafts = stockDrafts[item.id] ?? {}
+                const draftCount = Object.keys(drafts).length
+                const itemStock = totalStock(item, drafts)
 
-                const variantRows = hasVariants && isExpanded
-                  ? combinations.map((combo: VariantCombination) => (
+                const variantRows = variants && hasVariants && isExpanded
+                  ? combinations.map((combo: VariantCombination) => {
+                      const label = variantLabel(variants, combo)
+                      const thumbnail = combinationImageUrl(item.imageUrls, combo)
+                      return (
                       <tr
-                        key={`${item.id}-${combo.key}`}
+                        key={`${item.id}-${combo.id}`}
                         className="bg-gray-50 dark:bg-gray-800/30"
                       >
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-3 pl-6">
-                            {combo.imageUrl ? (
+                            {thumbnail ? (
                               <img
-                                src={combo.imageUrl}
-                                alt={combo.key}
+                                src={thumbnail}
+                                alt={label}
                                 className="w-8 h-8 object-cover rounded"
                               />
                             ) : (
                               <div className="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded" />
                             )}
                             <span className="text-gray-600 dark:text-gray-400">
-                              {combo.key.replace(/\|/g, ' / ')}
+                              {label}
                             </span>
                           </div>
                         </td>
@@ -491,12 +574,13 @@ export function InventoryTable({
                           {formatPrice(combo.price, currency)}
                         </td>
                         <td className="px-3 py-2 text-right">
-                          {renderStockCell(item, combo.stock ?? Infinity, combo.key)}
+                          {renderStockCell(item, draftedStock(combo, drafts) ?? Infinity, combo.id)}
                         </td>
                         <td className="px-3 py-2"></td>
                         <td className="px-3 py-2"></td>
                       </tr>
-                    ))
+                      )
+                    })
                   : null
 
                 return (
@@ -561,11 +645,31 @@ export function InventoryTable({
                       </td>
                       <td className="px-3 py-3 text-right">
                         {hasVariants ? (
-                          <span className="text-gray-500">
-                            {totalStock === Infinity ? 'Varies' : totalStock}
-                          </span>
+                          <div className="flex flex-col items-end gap-1">
+                            <span className={itemStock === Infinity ? 'text-gray-400' : 'text-gray-500'}>
+                              {itemStock === Infinity ? 'Not tracked' : itemStock}
+                            </span>
+                            {draftCount > 0 && (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => { saveStockDrafts(item).catch((err) => logger.error('Failed to save stock:', err)) }}
+                                  disabled={savingItemId !== null}
+                                  className="px-2 py-0.5 text-xs font-medium text-white bg-yappr-500 hover:bg-yappr-600 rounded disabled:opacity-50"
+                                >
+                                  {savingItemId === item.id ? 'Saving…' : `Save ${draftCount === 1 ? 'change' : `${draftCount} changes`}`}
+                                </button>
+                                <button
+                                  onClick={() => discardStockDrafts(item.id)}
+                                  disabled={savingItemId === item.id}
+                                  className="px-2 py-0.5 text-xs text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700 rounded disabled:opacity-50"
+                                >
+                                  Discard
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         ) : (
-                          renderStockCell(item, totalStock)
+                          renderStockCell(item, itemStock)
                         )}
                       </td>
                       <td className="px-3 py-3 text-center">

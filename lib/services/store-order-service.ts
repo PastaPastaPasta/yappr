@@ -151,7 +151,10 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
   }
 
   /**
-   * Helper to build order payload from cart items
+   * The order payload for `cartItems`. Each line keeps the variant id, name
+   * and SKU its cart line took when it was added, as it keeps the price, so
+   * the order reads without the listing and checkout reads nothing more
+   * between its size check and the order.
    */
   buildOrderPayload(
     cartItems: CartItem[],
@@ -166,7 +169,9 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     const orderItems: OrderItem[] = cartItems.map(item => ({
       itemId: item.itemId,
       itemTitle: item.title,
-      variantKey: item.variantKey,
+      ...(item.variantId ? { variantId: item.variantId } : {}),
+      ...(item.variantLabel ? { variantLabel: item.variantLabel } : {}),
+      ...(item.sku ? { sku: item.sku } : {}),
       quantity: item.quantity,
       unitPrice: item.unitPrice,
       imageUrl: item.imageUrl,
