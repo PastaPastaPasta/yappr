@@ -382,14 +382,21 @@ export function createDmModule(options: DmModuleOptions) {
     return options.tickets.submit<GroupArgs>({ op: 'dm.group', args: { identityId, request }, target: { conversationKey: request.key } })
   }
 
+  /**
+   * Conversations with their peers' names and avatars. Only a peer whose
+   * reads all answered is kept for the session; one read while the network
+   * stalls (its handle standing in for its display name, QA rc16 A-06) is
+   * shown this once and read again next time.
+   */
   async function withPeers(rows: ConversationRow[]): Promise<ConversationDTO[]> {
     authors.prune()
     const missing = Array.from(new Set(rows.flatMap(row => (row.peerId && !authors.has(row.peerId) ? [row.peerId] : []))))
-    if (missing.length > 0) {
-      const found = await fetchAuthors(missing).catch(() => new Map<string, AuthorDTO>())
-      for (const [id, author] of found) if (author.resolved) authors.set(id, author)
-    }
-    return rows.map(({ peerId, ...row }) => ({ ...row, peer: peerId ? authors.get(peerId) ?? placeholderAuthor(peerId) : null }))
+    const found = missing.length > 0 ? await fetchAuthors(missing).catch(() => new Map<string, AuthorDTO>()) : new Map<string, AuthorDTO>()
+    for (const [id, author] of found) if (author.resolved) authors.set(id, author)
+    return rows.map(({ peerId, ...row }) => ({
+      ...row,
+      peer: peerId ? authors.get(peerId) ?? found.get(peerId) ?? placeholderAuthor(peerId) : null,
+    }))
   }
 
   const api = {

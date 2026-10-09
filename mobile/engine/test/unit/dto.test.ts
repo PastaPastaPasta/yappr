@@ -125,6 +125,12 @@ describe('toUserSummaryDTO', () => {
     expect(validate(userSummaryDTO, dto)).toEqual([])
     expect(toUserSummaryDTO({ id: ID('U'), username: null }).displayName).toBe(`User ${ID('U').slice(-6)}`)
   })
+
+  it('marks a row whose reads failed as not resolved (QA rc16 A-06)', () => {
+    const dto = toUserSummaryDTO({ id: ID('U'), resolved: false, username: 'carol.dash', profile: null })
+    expect(dto).toMatchObject({ displayName: 'carol', resolved: false })
+    expect(validate(userSummaryDTO, dto)).toEqual([])
+  })
 })
 
 describe('toProfileDTO', () => {

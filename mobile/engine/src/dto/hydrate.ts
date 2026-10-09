@@ -161,7 +161,11 @@ export async function listToDTOs(posts: Post[], preloaded?: PreloadedEnrichment,
 /**
  * User rows from lib's batch identity reads (`loadIdentityBatch`: names,
  * profiles), as the engagements and followers pages build them. `counts` adds
- * follower/following counts; signed in, `viewerFollows` is set.
+ * follower/following counts; signed in, `viewerFollows` is set. lib answers a
+ * failed profile or name read as "none", so a row is `resolved` only when
+ * both reads answered (lib cached the document or its proven absence):
+ * otherwise its name is a fallback, such as the handle standing in for a
+ * display name that did not load (QA rc16 A-06).
  */
 export async function loadUserSummaries(
   ids: string[],
@@ -182,8 +186,11 @@ export async function loadUserSummaries(
     viewer ? followService.getFollowStatusBatch(unique, viewer) : undefined,
   ])
   const profileOf = new Map(profiles.map(profile => [profile.$ownerId, profile]))
+  const answered = (id: string) =>
+    (options.usernames !== undefined || dpnsService.hasCachedUsername(id)) && unifiedProfileService.hasCachedProfile(id)
   return new Map(unique.map(id => [id, toUserSummaryDTO({
     id,
+    resolved: answered(id),
     username: usernames?.get(id),
     profile: profileOf.get(id),
     followers: followerCounts?.get(id) ?? (options.counts ? 0 : undefined),

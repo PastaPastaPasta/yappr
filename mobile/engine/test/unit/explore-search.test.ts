@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
   findUsernamesByPrefix: vi.fn(),
   findIdentityByName: vi.fn(),
   getSdk: vi.fn(),
+  hasCachedProfile: vi.fn(),
 }))
 
 vi.mock('@/lib/services/dpns-service', async (load) => ({
@@ -17,7 +18,7 @@ vi.mock('@/lib/services/dpns-service', async (load) => ({
 }))
 vi.mock('@/lib/services/unified-profile-service', async (load) => ({
   ...await load<object>(),
-  unifiedProfileService: { getProfilesByIdentityIds: async () => [] },
+  unifiedProfileService: { getProfilesByIdentityIds: async () => [], hasCachedProfile: m.hasCachedProfile },
 }))
 vi.mock('@/lib/services/evo-sdk-service', async (load) => {
   const actual = await load<{ evoSdkService: object }>()
@@ -36,6 +37,7 @@ beforeEach(() => {
   m.findUsernamesByPrefix.mockResolvedValue([])
   m.findIdentityByName.mockResolvedValue(null)
   m.getSdk.mockResolvedValue({})
+  m.hasCachedProfile.mockReturnValue(true)
 })
 
 describe('explore.searchUsers', () => {
@@ -44,6 +46,14 @@ describe('explore.searchUsers', () => {
     const users = await explore.searchUsers('ali')
     expect(users.map(user => [user.id, user.username])).toEqual([[ALICE, 'alice']])
     expect(m.findIdentityByName).not.toHaveBeenCalled()
+  })
+
+  it('marks a person whose profile read failed as not resolved, named by handle (QA rc16 A-06)', async () => {
+    m.findUsernamesByPrefix.mockResolvedValue([{ username: 'alice.dash', ownerId: ALICE }])
+    m.hasCachedProfile.mockReturnValue(false)
+    const [user] = await explore.searchUsers('ali')
+    expect(user).toMatchObject({ id: ALICE, displayName: 'alice', resolved: false })
+    expect(m.hasCachedProfile).toHaveBeenCalledWith(ALICE)
   })
 
   it('is empty only when DPNS answered that nothing matches', async () => {

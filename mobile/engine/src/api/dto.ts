@@ -387,6 +387,8 @@ function toAuthorDTO(user: User, avatars: ReadonlyMap<string, AvatarDTO>): Autho
 /** The user rows search, engagements and the graph lists show, from lib's batch identity reads. */
 export function toUserSummaryDTO(input: {
   id: string
+  /** False when a name or profile read failed (`AuthorDTO.resolved`). Default: true. */
+  resolved?: boolean
   username: string | null | undefined
   profile?: { displayName?: string; bio?: string; avatar?: string } | null
   followers?: number
@@ -398,7 +400,7 @@ export function toUserSummaryDTO(input: {
     id,
     ...nameOf(id, profile?.displayName, input.username),
     avatar: avatarFromField(profile?.avatar, id),
-    resolved: true,
+    resolved: input.resolved ?? true,
     bio: profile?.bio || undefined,
     followers: input.followers,
     following: input.following,
