@@ -283,7 +283,14 @@ export function InventoryTable({
     try {
       await storeItemService.updateItem(item.id, ownerId, storeId, { variants })
       onItemUpdated?.(item.id, { variants })
-      discardStockDrafts(item.id)
+      // Only the edits this write carried: one typed while it was pending stays unsaved.
+      setStockDrafts((prev) => {
+        const left = Object.fromEntries(Object.entries(prev[item.id] ?? {}).filter(([variantId, stock]) => drafts[variantId] !== stock))
+        const next = { ...prev }
+        if (Object.keys(left).length > 0) next[item.id] = left
+        else delete next[item.id]
+        return next
+      })
       toast.success('Stock saved')
     } catch (err) {
       logger.error('Failed to update stock:', err)
@@ -291,7 +298,7 @@ export function InventoryTable({
     } finally {
       setSavingItemId(null)
     }
-  }, [stockDrafts, savingItemId, ownerId, storeId, onItemUpdated, discardStockDrafts])
+  }, [stockDrafts, savingItemId, ownerId, storeId, onItemUpdated])
 
   const handleStockSave = useCallback(async () => {
     if (!editingStock) return

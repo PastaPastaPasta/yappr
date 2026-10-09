@@ -252,6 +252,12 @@ export interface CartItem {
   variantLabel?: string
   /** The variant's (or item's) SKU when it was added; the order keeps it for the seller. */
   sku?: string
+  /**
+   * The variant's option names in axis order when it was added. On v1–v6,
+   * whose option ids follow display order, it is what identifies the
+   * combination; never shown.
+   */
+  variantOptions?: string[]
   quantity: number
   unitPrice: number
   imageUrl?: string

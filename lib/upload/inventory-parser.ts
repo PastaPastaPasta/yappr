@@ -670,6 +670,9 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
       sku: row.sku ? fitSku(row.sku) : undefined,
       weight: perCombinationWeight && row.weight !== undefined ? Math.round(row.weight) : undefined,
       image: imageIndex > 0 ? imageIndex : undefined,
+      // v1–v6 store a combination's image as its URL, so one past the gallery's
+      // cap is kept; v7 names images by index only.
+      ...(imageIndex === 0 && ownImage(row) && !storefrontVariantsAreTyped() ? { imageUrl: ownImage(row) } : {}),
     }
   })
 

@@ -592,7 +592,7 @@ function CombinationRow({ combination, label, currency, trackStock, showWeight, 
             <select
               aria-label={`Image for ${label}`}
               value={combination.image ?? ''}
-              onChange={(event) => onUpdate({ image: event.target.value ? Number(event.target.value) : undefined })}
+              onChange={(event) => onUpdate({ image: event.target.value ? Number(event.target.value) : undefined, imageUrl: undefined })}
               disabled={disabled}
               className={`${cellClass} py-1`}
             >

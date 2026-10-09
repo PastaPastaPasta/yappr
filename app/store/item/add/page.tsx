@@ -116,7 +116,18 @@ function AddItemPage() {
   // A v7 listing saved with options keeps them: its option-id counter lives in
   // the table, and a new table would give carts' and kits' old ids to other options.
   const [keepVariants, setKeepVariants] = useState(false)
-  const [variants, setVariants] = useState<ItemVariants>(emptyVariants)
+  const [variants, setVariantsState] = useState<ItemVariants>(emptyVariants)
+  /**
+   * Every table this form holds keeps the highest `nextOptionId` it has seen,
+   * so no edit, reset or retry can hand an old option id (named by carts and
+   * kits) to a different option.
+   */
+  const setVariants = useCallback((update: ItemVariants | ((current: ItemVariants) => ItemVariants)) => {
+    setVariantsState((previous) => {
+      const next = typeof update === 'function' ? update(previous) : update
+      return next.nextOptionId >= previous.nextOptionId ? next : { ...next, nextOptionId: previous.nextOptionId }
+    })
+  }, [])
 
   // Resolve the store default before the new-product form becomes editable.
   useEffect(() => {
@@ -197,7 +208,7 @@ function AddItemPage() {
     }
 
     loadItem().catch((err) => logger.error('Failed to load item:', err))
-  }, [sdkReady, isEditMode, itemId])
+  }, [sdkReady, isEditMode, itemId, setVariants])
 
   /** Read and decrypt the item's kit, or mark it locked when this device lacks the key. */
   const loadKit = useCallback(async (id: string, ownerId: string) => {
@@ -416,9 +427,12 @@ function AddItemPage() {
       let savedItemId: string
       if (targetItemId && effectiveStoreId) {
         await storeItemService.updateItem(targetItemId, user.identityId, effectiveStoreId, itemData)
+        if (itemData.variants && variantsAreTyped) setKeepVariants(true)
         savedItemId = targetItemId
       } else if (effectiveStoreId) {
         const created = await storeItemService.createItem(user.identityId, effectiveStoreId, itemData)
+        // Broadcast (confirmed or not) with a table: from here it keeps its options.
+        if (itemData.variants && variantsAreTyped) setKeepVariants(true)
         setLoadedStoreId(effectiveStoreId)
         // Broadcast but not seen: the kit cannot reference it yet, and the form
         // must not turn into an edit of a listing that may never exist.
@@ -442,6 +456,8 @@ function AddItemPage() {
       router.push('/store/manage')
     } catch (err) {
       logger.error(`Failed to ${editingItemId ? 'update' : 'create'} item:`, err)
+      // A write that failed after it was sent may still land with its table.
+      if (!(err instanceof ListLimitError) && hasVariants && variantsAreTyped) setKeepVariants(true)
       setError(err instanceof ListLimitError ? err.message : `Failed to ${editingItemId ? 'update' : 'create'} product. Please try again.`)
     } finally {
       setIsSubmitting(false)
@@ -671,7 +687,7 @@ function AddItemPage() {
                   disabled={keepVariants}
                   onChange={(e) => {
                     // A fresh table starts empty; one edited before unticking comes back as it was.
-                    if (e.target.checked && variants.axes.length === 0) setVariants(emptyVariants())
+                    if (e.target.checked && variants.axes.length === 0) setVariants({ ...emptyVariants(), nextOptionId: variants.nextOptionId })
                     setHasVariants(e.target.checked)
                   }}
                   className="w-5 h-5 rounded border-gray-300 text-yappr-500 focus:ring-yappr-500"

@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
-import { combinationImageUrl } from '../storefront/variant-codec';
+import { combinationImageUrl, variantOptionNames } from '../storefront/variant-codec';
 import { scopedKey } from '@/lib/storage-scope';
 
 const CART_STORAGE_KEY = scopedKey('yappr_cart');
@@ -166,6 +166,7 @@ class CartService {
     variantId?: string;
     variantLabel?: string;
     sku?: string;
+    variantOptions?: string[];
     quantity: number;
     unitPrice: number;
     imageUrl?: string;
@@ -212,7 +213,8 @@ class CartService {
     }
 
     const variantLabel = storeItemService.getVariantLabel(storeItem, variantId);
-    const sku = storeItemService.getSku(storeItem, { variantId: combination?.id, variantLabel });
+    const variantOptions = combination && storeItem.variants ? variantOptionNames(storeItem.variants, combination) : undefined;
+    const sku = storeItemService.getSku(storeItem, { variantId: combination?.id, variantOptions });
     this.addItem({
       itemId: storeItem.id,
       storeId: storeItem.storeId,
@@ -220,6 +222,7 @@ class CartService {
       ...(combination ? { variantId: combination.id } : {}),
       ...(variantLabel ? { variantLabel } : {}),
       ...(sku ? { sku } : {}),
+      ...(variantOptions ? { variantOptions } : {}),
       quantity,
       unitPrice: storeItemService.getPrice(storeItem, variantId),
       imageUrl: combinationImageUrl(storeItem.imageUrls, combination),

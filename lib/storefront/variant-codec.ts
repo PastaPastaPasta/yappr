@@ -64,6 +64,11 @@ export function findOption(variants: ItemVariants, optionId: number): { axisInde
   return undefined
 }
 
+/** A combination's option names, in axis order. */
+export function variantOptionNames(variants: ItemVariants, combination: Pick<VariantCombination, 'optionIds'>): string[] {
+  return combination.optionIds.map((optionId) => findOption(variants, optionId)?.option.name ?? '')
+}
+
 /** A combination's name: its option names in axis order ("Red / Single Piece"). */
 export function variantLabel(variants: ItemVariants, combination: Pick<VariantCombination, 'optionIds'>): string {
   return combination.optionIds
@@ -566,6 +571,8 @@ export interface VariantRow {
   sku?: string
   weight?: number
   image?: number
+  /** v1–v6 only: the row's own image URL when it is not in the listing's gallery. */
+  imageUrl?: string
 }
 
 /**
@@ -596,6 +603,7 @@ export function variantsFromRows(axisNames: readonly string[], rows: readonly Va
     if (row.sku) combination.sku = row.sku
     if (row.weight) combination.weight = row.weight
     if (row.image) combination.image = row.image
+    else if (row.imageUrl) combination.imageUrl = row.imageUrl
     combinations.push(combination)
   }
   return { variants: { axes, combinations, nextOptionId } }

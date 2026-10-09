@@ -260,6 +260,23 @@ describe('rows become combinations', () => {
     expect(parseInventoryCSV(csv).items[0].errors).toEqual([])
   })
 
+  it('on v1–v6 keeps a combination photo past the gallery cap as its own URL, and round-trips it', async () => {
+    const rows = ['Red', 'Orange', 'Yellow', 'Green', 'Blue'].map((color) => `g,Toy,${color},1.00,https://x.test/${color}.jpg`)
+    const csv = ['Group,Item Name,Color,Price,Image URL', ...rows].join('\n')
+    const [item] = parseInventoryCSV(csv).items
+    expect(item.imageUrls).toHaveLength(4)
+    const blue = defined(item.variants).combinations[4]
+    expect(blue.image).toBeUndefined()
+    expect(blue.imageUrl).toBe('https://x.test/Blue.jpg')
+    const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
+    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Toy', imageUrls: item.imageUrls, variants: item.variants }], 'USD')
+    const [again] = parseInventoryCSV(exported).items
+    expect(defined(again.variants).combinations.map((combination) => combination.image ?? combination.imageUrl)).toEqual([1, 2, 3, 4, 'https://x.test/Blue.jpg'])
+    // v7 names images by index only.
+    const [typed] = (await parseUnder('v7', csv)).items
+    expect(defined(typed.variants).combinations.every((combination) => combination.imageUrl === undefined)).toBe(true)
+  })
+
   it('puts one weight on the product when the rows agree', () => {
     const [item] = parseInventoryCSV('Group,Item Name,Size,Price,Weight\ng,Shirt,S,10.00,200\ng,Shirt,M,10.00,200').items
     expect(item.weight).toBe(200)
