@@ -16,6 +16,7 @@ import { startReadRetry } from '~/data/read-retry';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/production-retry';
 import { queryClient } from '~/state/query-client';
 import { AUTHORS, fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
@@ -113,6 +114,7 @@ beforeAll(() => {
 });
 afterEach(() => {
   queryClient.clear();
+  withoutRetry();
   jest.useRealTimers();
 });
 
@@ -264,6 +266,48 @@ describe('Explore', () => {
 
     expect(fakeEngine.method('explore.topPosts')).toHaveBeenCalledWith({ window: 'all' });
     expect(screen.getByText('most liked post')).toBeTruthy();
+  });
+
+  // A post deleted on another device must show as deleted after a pull to refresh,
+  // not wait out the engine's minute-long Top posts page (RC16-I-04).
+  it('reads Top posts afresh on a pull to refresh, retry included, and only then', async () => {
+    withProductionRetry();
+    useExplorePrefs.setState({ segment: 'top' });
+    const topPosts = fakeEngine.method('explore.topPosts');
+    topPosts.mockResolvedValue([post('t1', 'stale post')]);
+    await renderAt('/explore');
+    expect(topPosts).toHaveBeenLastCalledWith({ window: 'all' });
+
+    // The refresh's first read fails; TanStack's retry must read afresh too.
+    topPosts.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    topPosts.mockResolvedValue([post('t2', 'fresh post')]);
+    const calls = topPosts.mock.calls.length;
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await waitOutRetry();
+    expect(topPosts.mock.calls.slice(calls)).toEqual([[{ window: 'all', refresh: true }], [{ window: 'all', refresh: true }]]);
+    expect(screen.getByText('fresh post')).toBeTruthy();
+
+    // Any other read after it (here a plain refetch) keeps the engine's page.
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.explore.topPosts('all') });
+    });
+    expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all' });
+  });
+
+  it('keeps the Top posts shown when a pull to refresh fails, and says so (FEED-06)', async () => {
+    useExplorePrefs.setState({ segment: 'top' });
+    const topPosts = fakeEngine.method('explore.topPosts');
+    topPosts.mockResolvedValue([post('t1', 'most liked post')]);
+    await renderAt('/explore');
+
+    topPosts.mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    expect(topPosts).toHaveBeenLastCalledWith({ window: 'all', refresh: true });
+    expect(screen.getByText('most liked post')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
   });
 
   it('ranks creators with follow buttons; signed out, Follow asks to sign in (EXPL-04, G-8)', async () => {
@@ -549,6 +593,58 @@ describe('Hashtag page', () => {
       cursor: null,
     });
     expect(screen.getByTestId('hashtag-window')).toBeTruthy();
+  });
+
+  it('reads the tag’s Top afresh on a pull to refresh, retry included, and only then (RC16-I-04)', async () => {
+    withProductionRetry();
+    const hashtag = fakeEngine.method('feed.hashtag');
+    hashtag.mockResolvedValue(page([post('h1', 'stale post')]));
+    await renderAt('/hashtag/mobile');
+    fireEvent(screen.getByTestId('hashtag-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
+    await act(async () => {});
+    const top = { tag: 'mobile', sort: 'top', window: 'all', cursor: null };
+    expect(hashtag).toHaveBeenLastCalledWith(top);
+
+    hashtag.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    hashtag.mockResolvedValue(page([post('h2', 'fresh post')]));
+    const calls = hashtag.mock.calls.length;
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await waitOutRetry();
+    expect(hashtag.mock.calls.slice(calls)).toEqual([[{ ...top, refresh: true }], [{ ...top, refresh: true }]]);
+    expect(screen.getByText('fresh post')).toBeTruthy();
+
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.feed.hashtag({ tag: 'mobile', sort: 'top', window: 'all' }) });
+    });
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith(top);
+  });
+
+  it('keeps the tag’s Top posts shown when a pull to refresh fails, and says so (FEED-06)', async () => {
+    const hashtag = fakeEngine.method('feed.hashtag');
+    hashtag.mockResolvedValue(page([post('h1', 'most liked tagged post')]));
+    await renderAt('/hashtag/mobile');
+    fireEvent(screen.getByTestId('hashtag-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
+    await act(async () => {});
+
+    hashtag.mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    expect(hashtag).toHaveBeenLastCalledWith({ tag: 'mobile', sort: 'top', window: 'all', cursor: null, refresh: true });
+    expect(screen.getByText('most liked tagged post')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
+  });
+
+  it('does not read the tag’s Latest afresh on a pull to refresh', async () => {
+    fakeEngine.method('feed.hashtag').mockResolvedValue(page([post('h1', 'tagged #mobile')]));
+    await renderAt('/hashtag/mobile');
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await act(async () => {});
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenCalledTimes(2);
+    expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith({ tag: 'mobile', sort: 'recent', window: 'all', cursor: null });
   });
 
   it("keeps G-11's error up, with Retrying…, while NET-03's backoff reads the tag again (NEW-R-A-02)", async () => {

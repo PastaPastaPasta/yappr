@@ -14,12 +14,12 @@ const m = vi.hoisted(() => ({
   viewer: null as string | null,
   postService: {
     enrichPostsBatch: vi.fn(), getPostById: vi.fn(), queryForDisplay: vi.fn(), getUserPosts: vi.fn(),
-    getPostsByIds: vi.fn(), getQuotePosts: vi.fn(),
+    getPostsByIds: vi.fn(), getQuotePosts: vi.fn(), fetchPostsOrReplies: vi.fn(), fetchQuotedTargets: vi.fn(), clearCache: vi.fn(),
   },
-  replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn() },
+  replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn(), clearCache: vi.fn() },
   followService: {
     getFollowers: vi.fn(), getFollowing: vi.fn(), countFollowersBatch: vi.fn(), countFollowingBatch: vi.fn(),
-    getFollowStatusBatch: vi.fn(), getFollowingIds: vi.fn(), getFollowingIdsCached: vi.fn(),
+    getFollowStatusBatch: vi.fn(), getFollowingIdsCached: vi.fn(),
   },
   getPostIdsByHashtag: vi.fn(),
   topLikedPostsHydrated: vi.fn(),
@@ -65,6 +65,8 @@ const { feed } = await import('../../src/api/feed')
 const { posts } = await import('../../src/api/posts')
 const { profiles } = await import('../../src/api/profiles')
 const { graph } = await import('../../src/api/graph')
+const { explore } = await import('../../src/api/explore')
+const { attachQuotedPosts, getCachedQuotedPost } = await import('@/lib/feed/resolve-quoted-posts')
 const { validate, engagementPage, page, postDTO, threadDTO, pollDTO } = await import('../../src/dto/validate')
 
 /** A 44-character base58 id. */
@@ -130,6 +132,48 @@ describe('posts.thread on flat threads (v9/v10)', () => {
     expect(m.replyService.getReplies).toHaveBeenCalledTimes(2)
     expect(m.replyService.getReplies).toHaveBeenLastCalledWith(id('Root'), { skipEnrichment: true, startAfter: id('One') })
     await expect(posts.thread(id('Other'), first.replies.cursor)).rejects.toMatchObject({ code: 'BAD_CURSOR' })
+  })
+
+  it('re-reads a thread\'s own quote targets on every load, leaving a quote elsewhere untouched (RC16-I-04, scoped per review item #1)', async () => {
+    const quoted = post('Quoted', 1)
+    // Resolved by some other screen's quote, never referenced by this thread.
+    const elsewhere = post('Elsewhere', 1)
+    m.postService.fetchPostsOrReplies.mockResolvedValue([quoted, elsewhere])
+    m.postService.fetchQuotedTargets.mockResolvedValue([quoted, elsewhere])
+    await attachQuotedPosts([post('ElsewhereQuote', 2, { quotedPostId: elsewhere.id })])
+    expect(getCachedQuotedPost(elsewhere.id)).toEqual(elsewhere)
+
+    // The thread's own root quotes `quoted`.
+    m.postService.getPostById.mockResolvedValue(post('Root', 1, { quotedPostId: quoted.id }))
+    await attachQuotedPosts([post('RootsQuote', 2, { quotedPostId: quoted.id })])
+    expect(getCachedQuotedPost(quoted.id)).toEqual(quoted)
+
+    // A plain (non-once) mock: this thread's root has no reply page cached yet,
+    // so the fresh load below always calls through for it regardless.
+    m.replyService.getReplies.mockResolvedValue({ documents: [reply('One', 2)], nextCursor: id('One') })
+    const first = await posts.thread(id('Root'))
+    // This page's own root referenced it: both document caches and the session
+    // cache let go of it, so the next enrichment reads it again rather than
+    // keep showing text from before a possible delete.
+    expect(getCachedQuotedPost(quoted.id)).toBeNull()
+    expect(m.postService.clearCache).toHaveBeenCalledWith(quoted.id)
+    expect(m.replyService.clearCache).toHaveBeenCalledWith(quoted.id)
+    // A quote this thread never references is left alone: the forget is scoped
+    // to the page's own quote targets, not a blanket wipe of everything known.
+    expect(getCachedQuotedPost(elsewhere.id)).toEqual(elsewhere)
+    expect(m.postService.clearCache).not.toHaveBeenCalledWith(elsewhere.id)
+
+    // A continuation's cumulative batch still carries the root, so its quote
+    // target is read again too — every page load, not only the first.
+    await attachQuotedPosts([post('RootsQuote2', 2, { quotedPostId: quoted.id })])
+    m.postService.clearCache.mockClear()
+    // Page 1 (`rootId:`) is served from the engine's own reply-page cache on a
+    // continuation, so only the new page's fetch (`rootId:<cursor>`) actually
+    // calls through here; a plain mock (not `Once`) leaves nothing queued
+    // behind for a later test to accidentally consume.
+    m.replyService.getReplies.mockResolvedValue({ documents: [{ ...reply('Three', 4, 'One'), author: user(id('Other')) }] })
+    await posts.thread(id('Root'), first.replies.cursor)
+    expect(m.postService.clearCache).toHaveBeenCalledWith(quoted.id)
   })
 
   it('keeps replies under a proved-deleted parent below a blank stub', async () => {
@@ -219,7 +263,7 @@ describe('feed.hashtag', () => {
     ])
     m.postService.getPostsByIds.mockResolvedValue([post('Tagged', 2), post('Forged', 1)])
     expect(ids((await feed.hashtag({ tag: '#Yappr' })).items)).toEqual([id('Tagged')])
-    expect(m.getPostIdsByHashtag).toHaveBeenCalledWith('yappr')
+    expect(m.getPostIdsByHashtag).toHaveBeenCalledWith('yappr', { throwOnError: true })
   })
 })
 
@@ -236,6 +280,42 @@ describe('Top sorts', () => {
     expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 40, window: 'all', force: true, throwOnError: true })
     expect(second.hasMore).toBe(false)
     await expect(feed.home({ tab: 'forYou', sort: 'top', window: 'today', cursor: first.cursor })).rejects.toMatchObject({ code: 'BAD_CURSOR' })
+  })
+
+  it('reads Explore\'s Top posts afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await explore.topPosts({ window: 'today' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: false, throwOnError: true })
+    await explore.topPosts({ window: 'today', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: true, throwOnError: true })
+  })
+
+  it('reads Home\'s first Top page afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await feed.home({ tab: 'forYou', sort: 'top' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'all', force: false, throwOnError: true })
+    await feed.home({ tab: 'forYou', sort: 'top', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'all', force: true, throwOnError: true })
+  })
+
+  it('reads a tag\'s Top posts afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await feed.hashtag({ tag: '#Dash', sort: 'top', window: 'today' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: false, throwOnError: true })
+    await feed.hashtag({ tag: '#Dash', sort: 'top', window: 'today', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: true, throwOnError: true })
+  })
+
+  it('reads a profile\'s Top tab afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
+    m.topology = { likesAreIndexOnly: true }
+    m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
+    await profiles.posts({ id: AUTHOR, tab: 'top' })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: false, throwOnError: true })
+    await profiles.posts({ id: AUTHOR, tab: 'top', refresh: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: true, throwOnError: true })
   })
 })
 

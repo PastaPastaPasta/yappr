@@ -19,9 +19,7 @@ import { postService } from '@/lib/services/post-service';
 import { quoteFieldsAreSplit, quoteFieldFor, targetKindOf } from '@/lib/contract-topology';
 import { YAPPR_BLOG_CONTRACT_ID } from '@/lib/constants';
 import type { PostEmbed } from '@/lib/poll-embed';
-
-/** Document type name used by the cross-contract embed that carries a blog quote. */
-export const BLOG_POST_EMBED_DOC_TYPE = 'blogPost';
+import { BLOG_POST_EMBED_DOC_TYPE, bumpGeneration, generationOf, quoteTargetOf } from './quote-targets';
 
 /** The write-side counterpart of `quoteTargetOf`: where a new quote's reference goes. */
 export interface QuoteReference {
@@ -68,28 +66,6 @@ export function resolveQuoteReference(quotingPost: Post | null | undefined): Quo
   };
 }
 
-/**
- * The quote target a post references, or null when it references nothing.
- * Exactly one of the three fields is ever set on a document.
- *
- * A TOMBSTONE references nothing, whatever it still stores. On v9 the
- * contract freezes the quote and embed fields as `immutable`, so a tombstone
- * carries its reference forever; `PostCard` short-circuits on `deleted` and
- * never renders a quote, so resolving one would be a batch-pass entry plus a
- * per-card fetch whose result is discarded — pure wasted DAPI traffic on every
- * feed holding a deleted quote post. On v11 the tombstone clears the quote and
- * the embed (`tombstoneIsBlank`), so there is nothing to resolve anyway.
- */
-export function quoteTargetOf(post: Post): { id: string; where: 'post' | 'reply' | 'blogPost' } | null {
-  if (post.deleted) return null;
-  if (post.quotedPostId) return { id: post.quotedPostId, where: 'post' };
-  if (post.quotedReplyId) return { id: post.quotedReplyId, where: 'reply' };
-  if (post.embedDocType === BLOG_POST_EMBED_DOC_TYPE && post.embedId) {
-    return { id: post.embedId, where: 'blogPost' };
-  }
-  return null;
-}
-
 /** True when this post references a quote target that has not been resolved yet. */
 function needsQuoteResolution(post: Post): boolean {
   return !post.quotedPost && quoteTargetOf(post) !== null;
@@ -104,6 +80,29 @@ const pendingQuoteResolutions = new Map<string, Promise<Post | null>>();
 /** One network pass over the given posts' targets, per topology. */
 function fetchQuoteTargets(pending: Post[]): Promise<Post[]> {
   return quoteFieldsAreSplit() ? resolveByField(pending) : resolveByProbe(pending);
+}
+
+/**
+ * Drop resolved quote targets so the next pass reads them again. Returns the
+ * ids it actually dropped (those that were cached). Web keeps them for the
+ * session; the mobile engine forgets the ones in a page it loads and the one
+ * a delete targets, so a quote of a deleted post stops showing the text it
+ * had. Also bumps each id's generation and drops its in-flight lookup (if
+ * any), so a resolution already underway when the forget runs cannot
+ * repopulate the cache with the stale text it was about to find — a caller
+ * started after this point starts its own fresh lookup instead of joining it.
+ *
+ * @public Used only by the mobile engine, which root knip doesn't scan.
+ */
+export function forgetQuotedPosts(ids: Iterable<string>): string[] {
+  const list = Array.from(ids);
+  const dropped = list.filter((id) => resolvedQuoteCache.has(id));
+  for (const id of list) {
+    resolvedQuoteCache.delete(id);
+    pendingQuoteResolutions.delete(id);
+    bumpGeneration(id);
+  }
+  return dropped;
 }
 
 /** Cache peek for the per-card fallback's synchronous fast path. */
@@ -157,6 +156,10 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
       // Register every target of this batch so concurrent passes (another
       // surface, or a card's fallback fetch) join it instead of refetching.
       const ids = Array.from(new Set(stillNeeded.map((entry) => entry.targetId)));
+      // Each id's generation as of this lookup's start: if a forget bumps it
+      // before the batch resolves, this lookup's result is stale and must not
+      // land in the cache.
+      const startGenerations = new Map(ids.map((id) => [id, generationOf(id)]));
       for (const id of ids) {
         // Failures resolve to null (never reject): a joiner treats that as a
         // miss, and an unjoined entry can't become an unhandled rejection.
@@ -172,7 +175,7 @@ export async function attachQuotedPosts(posts: Post[]): Promise<void> {
           const found = byId.get(targetId);
           if (found) {
             post.quotedPost = found;
-            resolvedQuoteCache.set(found.id, found);
+            if (generationOf(targetId) === startGenerations.get(targetId)) resolvedQuoteCache.set(found.id, found);
           }
         }
       } finally {
@@ -208,6 +211,10 @@ export async function resolveQuotedPost(post: Post): Promise<Post | null> {
   const pending = pendingQuoteResolutions.get(target.id);
   if (pending) return pending;
 
+  // This target's generation as of this lookup's start: if a forget bumps it
+  // before the request resolves, the result is stale and must not be cached.
+  const startGeneration = generationOf(target.id);
+
   const request = (async () => {
     try {
       // A shallow probe keeps the caller's (React state) object unmutated.
@@ -229,7 +236,7 @@ export async function resolveQuotedPost(post: Post): Promise<Post | null> {
         found = await attempt();
       }
 
-      if (found) resolvedQuoteCache.set(target.id, found);
+      if (found && generationOf(target.id) === startGeneration) resolvedQuoteCache.set(target.id, found);
       return found;
     } finally {
       pendingQuoteResolutions.delete(target.id);

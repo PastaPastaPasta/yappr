@@ -15,7 +15,7 @@ import { RelativeTime } from '../RelativeTime';
 import { PrivatePostPlaceholder } from './PrivatePostPlaceholder';
 import { SensitiveGate, useSensitiveReveal } from './SensitiveGate';
 import { EMBED_FRAME } from './embed-frame';
-import { DeletedLine } from './PostStub';
+import { DeletedLine, stubText } from './PostStub';
 import type { CardPost } from './types';
 
 const FRAME = cn(EMBED_FRAME, 'p-3');
@@ -49,7 +49,13 @@ export function QuoteEmbed({ post, nsfwGated = false, mediaGated = false, onReve
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Quote: ${post.author.displayName}, ${
-        post.encrypted ? 'private post' : nsfwGated && !revealed ? 'NSFW post, hidden' : post.content
+        post.deleted
+          ? stubText('deleted', post.kind)
+          : post.encrypted
+            ? 'private post'
+            : nsfwGated && !revealed
+              ? 'NSFW post, hidden'
+              : post.content
       }`}
       onPress={onPress}
       testID="quote-embed"

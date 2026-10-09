@@ -13,7 +13,7 @@ import {
   type AppStateStatus,
   type KeyboardEvent,
 } from 'react-native';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { renderRouter } from 'expo-router/testing-library';
 import type { ReactNode } from 'react';
 
@@ -102,7 +102,7 @@ async function renderAt(initialUrl: string) {
       'messages/index': InboxScreen,
       'messages/new': NewMessageScreen,
       'messages/new-group': NewGroupScreen,
-      'messages/settings': MessageSettingsScreen,
+      'settings/messages': MessageSettingsScreen,
       'messages/[conversationId]/index': ConversationScreen,
       'messages/[conversationId]/info': GroupInfoScreen,
       'block/[userId]': () => null,
@@ -1757,7 +1757,7 @@ describe('Message settings (DM-12)', () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ retention: 'never' }));
     fakeEngine.method('dm.setRetention').mockRejectedValue(new Error('quorum'));
-    await renderAt('/messages/settings');
+    await renderAt('/settings/messages');
     fireEvent.press(screen.getByTestId('dm-retention-30d'));
     await act(async () => {});
     expect(fakeEngine.method('dm.setRetention')).toHaveBeenCalledWith('30d');
@@ -1768,7 +1768,7 @@ describe('Message settings (DM-12)', () => {
   it('says to unlock, instead of loading forever, while messages are locked (SR-42)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ locked: true, ready: false, retention: null }));
-    await renderAt('/messages/settings');
+    await renderAt('/settings/messages');
     expect(screen.getByText('Unlock your messages to change this setting.')).toBeTruthy();
     expect(screen.getByTestId('dm-blocked-locked')).toBeTruthy();
   });
@@ -1776,7 +1776,7 @@ describe('Message settings (DM-12)', () => {
   it('says the saved state failed to load, instead of loading forever', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ ready: false, retention: null, error: 'Failed to fetch' }));
-    await renderAt('/messages/settings');
+    await renderAt('/settings/messages');
     expect(screen.getByTestId('dm-settings-error')).toBeTruthy();
     fakeEngine.method('dm.status').mockResolvedValue(status({ retention: 'never' }));
     fireEvent.press(screen.getByText('Try again'));
@@ -1788,16 +1788,46 @@ describe('Message settings (DM-12)', () => {
     fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
     fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy' }));
     fakeEngine.method('dm.conversations').mockResolvedValue([]);
-    await renderAt('/messages/settings');
+    await renderAt('/settings/messages');
     expect(pathname()).toBe('/messages');
     expect(screen.queryByTestId('dm-retention')).toBeNull();
     expect(screen.queryByText(/available on this network/)).toBeNull();
   });
 
+  // Pushed on any tab now (Settings on Profile, the inbox gear on Messages): leaving
+  // goes back down this stack, never a jump to the Messages tab that leaves it on top.
+  it('goes back to the screen underneath on legacy, instead of jumping to the inbox', async () => {
+    signIn();
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
+    fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy' }));
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
+    await renderAt('/block/someone');
+    await act(async () => router.push('/settings/messages'));
+    expect(pathname()).toBe('/block/someone');
+    expect(screen.queryByTestId('dm-retention')).toBeNull();
+  });
+
+  // Signing in keeps every tab's stack, so the screen can turn legacy while another
+  // screen covers it: it must leave once it is shown again, not stay blank.
+  it('leaves on legacy once it is shown again, when it turned legacy in the background', async () => {
+    fakeEngine.setStatus({ info: { capabilities: { dm: 'legacy' } as never } });
+    fakeEngine.method('dm.status').mockResolvedValue(status({ backend: 'legacy' }));
+    fakeEngine.method('dm.conversations').mockResolvedValue([]);
+    await renderAt('/settings/messages');
+    expect(pathname()).toBe('/settings/messages');
+    await act(async () => router.push('/block/someone'));
+
+    await act(async () => signIn());
+    expect(pathname()).toBe('/block/someone');
+
+    await act(async () => router.back());
+    expect(pathname()).toBe('/messages');
+  });
+
   it('offers plain retention choices with the privacy caveat, never fee accounting (#14)', async () => {
     signIn();
     fakeEngine.method('dm.status').mockResolvedValue(status({ retention: '30d' }));
-    await renderAt('/messages/settings');
+    await renderAt('/settings/messages');
     expect(screen.getByText('Delete old sent messages')).toBeTruthy();
     for (const option of ['Never', 'After 30 days', 'After 90 days', 'After 1 year']) expect(screen.getByText(option)).toBeTruthy();
     expect(screen.getByTestId('dm-retention-body')).toHaveTextContent(

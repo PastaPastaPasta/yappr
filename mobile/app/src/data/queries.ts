@@ -14,7 +14,7 @@ import {
   type UseInfiniteQueryOptions,
   type UseQueryOptions,
 } from '@tanstack/react-query';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 import { engine } from '~/engine';
 import { cancelRetriedRead, persistedQuery, retriedReadError } from '~/state/query-client';
@@ -190,3 +190,32 @@ export function useFetchNextPageAfterRefetch<R extends { hasNextPage: boolean; i
     [client, hash, fetchNext],
   );
 }
+
+/**
+ * A pull to refresh's ask for a fresh read. `during(refetch)` runs the
+ * refresh's refetch; until it settles (TanStack's retries of a failed read
+ * included), the read spreads `params()` into its engine query, which gives
+ * `{ refresh: true }`, and `{}` at any other time. So the refresh skips the
+ * engine's minute-long ranked cache, and a post deleted on another device
+ * drops out at once, while background refetches keep using the cache.
+ */
+export function usePullToRefresh() {
+  const running = useRef(0);
+  return useMemo(
+    () => ({
+      during: async <T,>(refetch: () => Promise<T>): Promise<T> => {
+        running.current += 1;
+        try {
+          return await refetch();
+        } finally {
+          running.current -= 1;
+        }
+      },
+      params: (): { refresh?: true } => (running.current > 0 ? { refresh: true } : {}),
+    }),
+    [],
+  );
+}
+
+/** {@link usePullToRefresh}'s handle. */
+export type PullToRefresh = ReturnType<typeof usePullToRefresh>;

@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Post } from '@/lib/types'
 import { logger } from '@/lib/logger'
-import { getCachedQuotedPost, quoteTargetOf, resolveQuotedPost } from '@/lib/feed/resolve-quoted-posts'
+import { getCachedQuotedPost, resolveQuotedPost } from '@/lib/feed/resolve-quoted-posts'
+import { quoteTargetOf } from '@/lib/feed/quote-targets'
 
 export interface UseQuotedPostResult {
   /** The quoted post, from the batch pass or the fallback fetch. */

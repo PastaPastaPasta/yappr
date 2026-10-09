@@ -1,17 +1,19 @@
-import type { CapabilitiesDTO, ProfileDTO, SessionDTO } from '@engine/api';
+import type { CapabilitiesDTO, PostDTO, ProfileDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
-import { ActionSheetIOS, StyleSheet } from 'react-native';
+import { ActionSheetIOS, RefreshControl, StyleSheet } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { queryKeys } from '~/data/keys';
 import { useSignInPrompt } from '~/data/require-auth';
 import { useSessionStore } from '~/data/session';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
+import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/production-retry';
 import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { resetBlockDecisions, useAuthorBlocked } from '~/features/safety/block-state';
+import { fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { ProfileScreen } from './ProfileScreen';
@@ -95,7 +97,10 @@ beforeAll(() => {
   queryClient.setDefaultOptions({ queries: { ...queryClient.getDefaultOptions().queries, retry: false } });
 });
 // Unanswered reads would otherwise keep retrying (and Jest from exiting).
-afterEach(() => queryClient.clear());
+afterEach(() => {
+  queryClient.clear();
+  withoutRetry();
+});
 
 let sheet: { options: string[]; choose: (label: string) => void } | null = null;
 
@@ -333,6 +338,59 @@ describe('ProfileScreen', () => {
     renderProfile('not/a valid id');
     await flush();
     expect(screen.getByText('Invalid identity ID')).toBeTruthy();
+  });
+
+  // A post deleted on another device must leave Top on a pull to refresh,
+  // not wait out the engine's minute-long ranked page (RC16-I-04).
+  it('reads the Top tab afresh on a pull to refresh, retry included, and only then', async () => {
+    withProductionRetry();
+    fakeEngine.method('profiles.get').mockResolvedValue(profile());
+    const posts = fakeEngine.method('profiles.posts');
+    renderProfile();
+    await flush();
+    fireEvent.press(screen.getByTestId('profile-tabs-top'));
+    await flush();
+    const top = { id: OTHER, tab: 'top', cursor: null };
+    expect(posts).toHaveBeenLastCalledWith(top);
+
+    // The refresh's first read fails; TanStack's retry must read afresh too.
+    jest.useFakeTimers();
+    posts.mockRejectedValueOnce(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    const calls = posts.mock.calls.length;
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await waitOutRetry();
+    expect(posts.mock.calls.slice(calls)).toEqual([[{ ...top, refresh: true }], [{ ...top, refresh: true }]]);
+
+    await act(async () => {
+      await queryClient.refetchQueries({ queryKey: queryKeys.profile.posts(OTHER, 'top') });
+    });
+    expect(fakeEngine.method('profiles.posts')).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null });
+  });
+
+  it('keeps the Top tab’s posts when a pull to refresh fails, and says so (FEED-06)', async () => {
+    // Posts render here, so the cards need what each kind of post allows.
+    const capabilities = { rankings: true, repostable: { post: true, reply: true }, bookmarkable: { post: true, reply: false } };
+    fakeEngine.setStatus({ info: { capabilities: capabilities as CapabilitiesDTO } });
+    fakeEngine.method('profiles.get').mockResolvedValue(profile());
+    const posts = fakeEngine.method('profiles.posts');
+    posts.mockResolvedValue({ items: [fixturePost({ id: 't1', content: 'most liked of theirs' }) as PostDTO], cursor: null, hasMore: false });
+    renderProfile();
+    await flush();
+    fireEvent.press(screen.getByTestId('profile-tabs-top'));
+    await flush();
+    expect(screen.getByText('most liked of theirs')).toBeTruthy();
+
+    posts.mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await flush();
+
+    expect(posts).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null, refresh: true });
+    expect(screen.getByText('most liked of theirs')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
   });
 
   it('loads the tab picked, with each tab’s own empty state', async () => {

@@ -18,7 +18,8 @@ import { loadEngagementCounts } from '@/lib/services/social-stats-service'
 import type { Post, Reply } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
 import {
-  enrichToDTOs, loadUserSummaries, notSupported, readFailure, requireViewer, searchUserSummaries, toPostDTOs, viewerId, withLoadingAuthor,
+  enrichToDTOs, loadUserSummaries, notSupported, quoteTargetIds, readFailure, requireViewer, rereadQuotedPosts, searchUserSummaries, toPostDTOs,
+  viewerId, withLoadingAuthor,
 } from '../dto/hydrate'
 import { emptyPage, endOnProofDirectionBug, nextPage, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
@@ -323,8 +324,11 @@ export const posts = {
 
     // One enrichment batch for the page; deleted-reply stubs are not documents and skip it.
     const live = replies.filter(entry => !entry.reply.deletedStub)
-    const enriched = await postService.enrichPostsBatch(
-      [focus, ...chain, ...live.map(entry => replyToPost(entry.reply))].map(withLoadingAuthor))
+    const batch = [focus, ...chain, ...live.map(entry => replyToPost(entry.reply))]
+    // This page's own quote targets, read again: a quote of a post deleted
+    // since the last load must not keep showing the text it had (RC16-I-04).
+    rereadQuotedPosts(quoteTargetIds(batch))
+    const enriched = await postService.enrichPostsBatch(batch.map(withLoadingAuthor))
     // Stub authors have id '', which the avatar read skips; the stub's author is blanked below.
     const stubs = replies.filter(entry => entry.reply.deletedStub).map(entry => ({ ...replyToPost(entry.reply), deleted: true }))
     const dtos = new Map((await toPostDTOs([...enriched, ...stubs])).map(dto => [dto.id, dto]))
@@ -489,9 +493,14 @@ export function createPostWrites(tickets: TicketStore, emit: (event: 'content.cr
     async run({ target }, ctx) {
       const viewer = signer(ctx)
       const { id, kind } = target
-      // A tombstone where posts are permanent (v9, v11), a delete elsewhere (`deleteOwnPost`).
-      const ok = kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer)
-      return fromDeleteBoolean(ok, ctx.probe)
+      try {
+        // A tombstone where posts are permanent (v9, v11), a delete elsewhere (`deleteOwnPost`).
+        const ok = kind === 'reply' ? await replyService.deleteOwnReply(id, viewer) : await postService.deleteOwnPost(id, viewer)
+        return fromDeleteBoolean(ok, ctx.probe)
+      } finally {
+        // Even unconfirmed: quotes of it read it again rather than show the text it had.
+        rereadQuotedPosts([id])
+      }
     },
     // A real delete names the document, proved absent; a tombstone (v9, v11) stays, blanked.
     probe: (ticket, args, kit) => deletesAreTombstones()

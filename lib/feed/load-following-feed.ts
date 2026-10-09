@@ -19,6 +19,8 @@ export async function loadFollowingFeed(options: {
   forceRefresh: boolean;
   onBatchReady: (posts: Post[], nextWindow: FollowingFeedWindow | null, hasMore: boolean) => void;
   enrichProgressively: (posts: Post[]) => void;
+  /** Runs on the raw page, reposted posts included, just before quote targets are resolved (the mobile engine forgets this page's own targets here). */
+  beforeAttachQuotes?: (posts: Post[]) => void;
 }): Promise<void> {
   const MIN_DATE = new Date('2025-01-01T00:00:00Z');
 
@@ -71,8 +73,6 @@ export async function loadFollowingFeed(options: {
     // Tombstoned posts are dropped from the feed but still resolve at their
     // permalink (see enrich-posts). Never set on v2.
     const posts = result.documents.filter((post) => !post.deleted);
-
-    await attachQuotedPosts(posts);
 
     try {
       // v10 has no repost documents: a followed user's reposts are bare quote
@@ -134,6 +134,12 @@ export async function loadFollowingFeed(options: {
     } catch (error) {
       logger.error('Feed: Error fetching reposts for following feed:', error);
     }
+
+    // Quotes are resolved once the reposted posts are in, so a quote that
+    // reaches the page only through a followed user's repost gets the same
+    // treatment as one from the timeline itself.
+    options.beforeAttachQuotes?.(posts);
+    await attachQuotedPosts(posts);
 
     const sortedPosts = sortFeedByTimestamp(posts);
     options.onBatchReady(sortedPosts, followingCursor, followingCursor !== null);

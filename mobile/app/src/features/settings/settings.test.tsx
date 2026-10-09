@@ -156,7 +156,7 @@ describe('Settings root (SET-01)', () => {
     fireEvent.press(byId('settings-account'));
     expect(router.push).toHaveBeenCalledWith('/settings/account');
     fireEvent.press(byId('settings-messages'));
-    expect(router.push).toHaveBeenCalledWith('/messages/settings');
+    expect(router.push).toHaveBeenCalledWith('/settings/messages');
   });
 
   it('the footer chip opens the network sheet: what the network means and whether it is connected (NET-07)', () => {

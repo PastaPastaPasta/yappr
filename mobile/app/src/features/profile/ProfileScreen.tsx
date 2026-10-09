@@ -14,7 +14,8 @@ import {
 } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineInfiniteQuery, useEngineQuery } from '~/data/queries';
+import { readErrorMessage } from '~/data/read-error';
+import { useEngineInfiniteQuery, useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useRequireAuth } from '~/data/require-auth';
 import { lastIdentity, useCapabilities, useSession } from '~/data/session';
 import { sendWrite } from '~/data/writes';
@@ -24,11 +25,13 @@ import { PostItem } from '~/features/post/PostItem';
 import { blockWrite, useAuthorBlocked, useBlockBusy } from '~/features/safety/block-state';
 import { copy as safetyCopy } from '~/features/safety/copy';
 import { cn } from '~/lib-allowlist';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { Button } from '~/ui/Button';
 import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
 import { Spinner } from '~/ui/Spinner';
+import { toast } from '~/ui/toast';
 import { TopTabs } from '~/ui/Tabs';
 import { PostSkeleton } from '~/ui/Skeleton';
 import { tw, useColors } from '~/ui/tokens';
@@ -117,15 +120,22 @@ function ProfileTabList({
       });
     }
   };
+  const fresh = usePullToRefresh();
   const posts = useEngineInfiniteQuery<ProfileItem>(
     queryKeys.profile.posts(profileId, tab),
-    (api, cursor) => api.profiles.posts({ id: profileId, tab, cursor }),
+    (api, cursor) => api.profiles.posts({ id: profileId, tab, cursor, ...fresh.params() }),
     { persist: true },
   );
   const [refreshing, setRefreshing] = useState(false);
   const onRefresh = () => {
     setRefreshing(true);
-    Promise.all([onRefreshProfile(), posts.refetch()])
+    // Top reads the author's ranking afresh rather than the engine's minute-old copy.
+    const refetch = () => posts.refetch();
+    Promise.all([onRefreshProfile(), tab === 'top' ? fresh.during(refetch) : refetch()])
+      .then(([, result]) => {
+        // The posts shown stay up; the reader learns the refresh did not land.
+        if (result.isError && posts.items.length > 0) toast.error(readErrorMessage(result.error));
+      })
       .catch(() => undefined)
       .finally(() => setRefreshing(false));
   };
@@ -343,10 +353,11 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
     });
   const onMenu = (id: string) => {
     if (!profileId) return;
-    if (id === 'bookmarks') router.push('/bookmarks');
-    else if (id === 'blocked') router.push('/settings/blocked');
-    else if (id === 'settings') router.push('/settings');
-    else if (id === 'switch') router.push('/settings/accounts');
+    // The own-profile menu, also shown on the viewer's profile opened in another tab.
+    if (id === 'bookmarks') openOnItsTab('/bookmarks');
+    else if (id === 'blocked') openOnItsTab('/settings/blocked');
+    else if (id === 'settings') openOnItsTab('/settings');
+    else if (id === 'switch') openOnItsTab('/settings/accounts');
     else if (id === 'share') shareProfile(profileId, name);
     else if (id === 'copy') copyProfileLink(profileId);
     else if (id === 'block')
@@ -361,7 +372,7 @@ export function ProfileScreen({ idOrName, ownTab = false, requestedTab }: Profil
           icon={Cog6ToothIcon}
           overBanner={overBanner}
           accessibilityLabel="Settings"
-          onPress={() => router.push('/settings')}
+          onPress={() => openOnItsTab('/settings')}
           testID="profile-settings"
         />
       ) : null}

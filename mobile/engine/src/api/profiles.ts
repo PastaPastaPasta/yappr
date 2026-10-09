@@ -23,7 +23,8 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import {
-  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, requireViewer, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
+  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, quoteTargetIds, requireViewer, rereadQuotedPosts,
+  toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
 } from '../dto/hydrate'
 import { onePage, pageAfter, pageOfList } from '../dto/paging'
 import { assertMediaUrl, characters, relationProbe, signer } from '../writes/handler-kit'
@@ -42,6 +43,8 @@ export interface ProfilePostsQuery {
   /** Top only; default `all`. */
   window?: RankingWindow
   cursor?: string | null
+  /** Top only: a pull to refresh, read afresh past lib's minute-long ranked cache. */
+  refresh?: boolean
 }
 
 /** `app/user/page.tsx` and `hooks/use-profile-replies.ts`. */
@@ -77,6 +80,7 @@ function postsTab(id: string, cursor: string | null | undefined): Promise<Page<P
       heldReposts.prune()
       heldReposts.set(id, held.filter(post => !shown.includes(post)))
       const posts = [...result.documents.map(withLoadingAuthor), ...shown].sort(byNewestActivity)
+      rereadQuotedPosts(quoteTargetIds(posts))
       return {
         items: await listToDTOs(posts, result.preloaded, { dropBlocked: false }),
         next: isLast || !oldest ? null : oldest.id,
@@ -102,6 +106,7 @@ function repliesTab(id: string, cursor: string | null | undefined): Promise<Page
       // The parents are context: a failed lookup leaves the cards without it, as on web.
       const { parents, missing } = await fetchReplyParents(replies).catch(() => ({ parents: new Map<string, Post>(), missing: new Map() }))
       const parentList = Array.from(new Map(Array.from(parents.values(), post => [post.id, post])).values())
+      rereadQuotedPosts(quoteTargetIds([...replies, ...parentList]))
       const enriched = await postService.enrichPostsBatch([...replies, ...parentList.map(withLoadingAuthor)])
       const replyDTOs = await visibleDTOs(enriched.slice(0, replies.length), { dropBlocked: false })
       const parentDTOs = new Map((await toPostDTOs(enriched.slice(replies.length))).map(dto => [dto.id, dto]))
@@ -123,9 +128,11 @@ function mentionsTab(id: string, cursor: string | null | undefined): Promise<Pag
     cursor,
     size: MENTIONS_PAGE,
     cache: mentionLists,
-    load: async () => (await mentionService.getPostsMentioningUser(id)).sort((a, b) => b.$createdAt - a.$createdAt),
+    // Strict: a failed read must not be cached as nobody mentioning them.
+    load: async () => (await mentionService.getPostsMentioningUser(id, { throwOnError: true })).sort((a, b) => b.$createdAt - a.$createdAt),
     hydrate: async (slice) => {
       const { posts, preloaded } = await mentionService.loadMentioningPosts(slice)
+      rereadQuotedPosts(quoteTargetIds(posts))
       return listToDTOs(posts.map(withLoadingAuthor), preloaded, { dropBlocked: false })
     },
   })
@@ -194,7 +201,11 @@ export const profiles = {
       case 'mentions': return mentionsTab(query.id, query.cursor)
       case 'top': {
         if (!likesAreIndexOnly()) throw notSupported('The Top tab')
-        const ranked = await topLikedPostsHydrated({ postAuthor: query.id, limit: TOP_LIMIT, window: query.window ?? 'all' })
+        // A pull to refresh reads past the ranked cache, and a failed read
+        // rejects rather than showing no posts, as the home Top view's do.
+        const ranked = await topLikedPostsHydrated({
+          postAuthor: query.id, limit: TOP_LIMIT, window: query.window ?? 'all', force: query.refresh === true, throwOnError: true,
+        })
         return onePage(await visibleDTOs(ranked, { dropBlocked: false }))
       }
       default: throw new RpcError(`Unknown profile tab: ${String(query.tab)}`, 'BAD_REQUEST')

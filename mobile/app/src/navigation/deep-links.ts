@@ -81,7 +81,7 @@ const CONVERSATION_ID = /^[1-9A-HJ-NP-Za-km-z]{10,44}$/;
 const TAG = /^\$?[a-z0-9_]{1,63}$/;
 const ENGAGEMENT_KINDS = new Set(['post', 'reply']);
 const PROFILE_TABS = new Set(['posts', 'replies', 'top', 'mentions']);
-const SETTINGS_SECTIONS = new Set(['account', 'notifications', 'privacy', 'appearance', 'about']);
+const SETTINGS_SECTIONS = new Set(['account', 'notifications', 'messages', 'privacy', 'appearance', 'about']);
 
 /**
  * Screens a link must never open, even in dev builds: they take secrets,
@@ -218,8 +218,8 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
       return t ? `/hashtag/${encodeURIComponent(t)}` : null;
     }
     case 'messages':
-      // /messages/new and /messages/settings are app screens, not conversations.
-      if (value === 'new' || value === 'new-group' || value === 'settings') return undefined;
+      // /messages/new and /messages/new-group are app screens, not conversations.
+      if (value === 'new' || value === 'new-group') return undefined;
       return tail === undefined && CONVERSATION_ID.test(value) ? `/messages/${value}` : null;
     default:
       return undefined;
@@ -230,10 +230,10 @@ function pathFormRoute(path: string, q: Query): string | null | undefined {
  * Screens every tab can push (src/app/(tabs)/(home,explore,...)). A cold link
  * has no current tab, and expo-router would pick the first group
  * alphabetically (Explore), so the launch link opens detail screens in Home
- * and notification settings in Profile, its home under Settings.
+ * and notification and message settings in Profile, their home under Settings.
  */
 const SHARED_ROUTE = /^\/(post|user|hashtag)\//;
-const PROFILE_SHARED_ROUTE = /^\/settings\/notifications(?:$|\?)/;
+const PROFILE_SHARED_ROUTE = /^\/settings\/(notifications|messages)(?:$|\?)/;
 
 /** The launch link's route, pinned to a tab when it is a shared screen. */
 function pinColdRoute(route: string): string {

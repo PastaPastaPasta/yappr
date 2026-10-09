@@ -6,7 +6,7 @@ import { Platform, RefreshControl, View } from 'react-native';
 import { FireIcon, HashtagIcon, TrophyIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineQuery } from '~/data/queries';
+import { useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { openHashtag } from '~/features/post/post-navigation';
 import { PostItem } from '~/features/post/PostItem';
@@ -92,9 +92,10 @@ export function ExploreScreen() {
     (api) => api.explore.trending({ window: trendingWindow }),
     { persist: true, enabled: segment === 'trending' },
   );
+  const freshTop = usePullToRefresh();
   const top = useEngineQuery(
     queryKeys.explore.topPosts(topWindow),
-    (api) => api.explore.topPosts({ window: topWindow }),
+    (api) => api.explore.topPosts({ window: topWindow, ...freshTop.params() }),
     { persist: true, enabled: segment === 'top' },
   );
   const creators = useEngineQuery(
@@ -124,8 +125,8 @@ export function ExploreScreen() {
       return;
     }
     setRefreshing(true);
-    active
-      .refetch()
+    // Top reads its page afresh rather than the engine's minute-old copy.
+    (segment === 'top' ? freshTop.during(() => top.refetch()) : active.refetch())
       .then((result) => {
         if (result.isError && rows.length > 0) {
           toast.error(readErrorMessage(result.error) ?? 'Something went wrong. Try again.');

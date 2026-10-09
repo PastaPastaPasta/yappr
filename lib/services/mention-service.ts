@@ -257,8 +257,10 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
    * `postMention`'s), read in parallel and merged newest first, mapped onto
    * the mention shape with `postId` = the document's id, `$ownerId` its
    * author and `targetKind` its kind.
+   *
+   * A failed read returns `[]` unless `throwOnError` is set.
    */
-  async getPostsMentioningUser(userId: string): Promise<PostMentionDocument[]> {
+  async getPostsMentioningUser(userId: string, options: { throwOnError?: boolean } = {}): Promise<PostMentionDocument[]> {
     const inline = mentionsAreInline();
     try {
       const sdk = await import('../services/evo-sdk-service').then(m => m.getEvoSdk());
@@ -282,6 +284,7 @@ class MentionService extends BaseDocumentService<PostMentionDocument> {
       return perType.flat().sort((a, b) => b.$createdAt - a.$createdAt);
     } catch (error) {
       logger.error('Error getting posts mentioning user:', error);
+      if (options.throwOnError) throw error;
       return [];
     }
   }

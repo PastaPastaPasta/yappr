@@ -6,6 +6,7 @@ import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
 import { copyText } from '~/features/post/post-navigation';
 import { followWrite } from '~/features/post/post-writes';
+import { openOnItsTab } from '~/navigation/tab-routes';
 import { showActionSheet } from '~/ui/action-sheet';
 import { lightImpact } from '~/ui/haptics';
 import { toast } from '~/ui/toast';
@@ -59,7 +60,8 @@ export function toggleFollow(identityId: string, handle: string, following: bool
 export async function messageUser(identityId: string): Promise<void> {
   try {
     const conversationId = await engine.api.dm.startDirect(identityId);
-    router.push({ pathname: '/messages/[conversationId]', params: { conversationId } });
+    // On the Messages tab, whichever tab the profile is on, with the inbox underneath.
+    openOnItsTab({ pathname: '/messages/[conversationId]', params: { conversationId } });
   } catch (error) {
     appendLog('info', 'host', `Opening a conversation from a profile: ${errorMessage(error)}`);
     const code = errorCode(error);

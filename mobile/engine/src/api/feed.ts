@@ -13,7 +13,7 @@ import { CASHTAG_SUFFIX, cashtagDisplayToStorage, hashtagDisplayToStorage } from
 import { useSettingsStore } from '@/lib/store'
 import type { Post } from '@/lib/types'
 import { cursorInt, decodeCursor } from '../dto/cursor'
-import { listToDTOs, notSupported, requireViewer, viewerId, visibleDTOs } from '../dto/hydrate'
+import { listToDTOs, notSupported, quoteTargetIds, requireViewer, rereadQuotedPosts, viewerId, visibleDTOs } from '../dto/hydrate'
 import { nextPage, onePage, pageAfter, pageOfList } from '../dto/paging'
 import { RpcError } from '../protocol/envelope'
 import { NewPostsRetry, selectNewPosts } from './new-posts-retry'
@@ -39,6 +39,8 @@ export interface HomeQuery {
   /** Top only; default `all`. */
   window?: RankingWindow
   cursor?: string | null
+  /** Top only: a pull to refresh, read afresh past lib's minute-long ranked cache. */
+  refresh?: boolean
 }
 
 export interface HashtagQuery {
@@ -47,6 +49,8 @@ export interface HashtagQuery {
   sort?: 'recent' | 'top'
   window?: RankingWindow
   cursor?: string | null
+  /** Top only: a pull to refresh, read afresh past lib's minute-long ranked cache. */
+  refresh?: boolean
 }
 
 /** `hooks/use-top-feed.ts`: each load-more widens the ranking by a page, up to Drive's query limit. */
@@ -80,11 +84,17 @@ function forYou(cursor: string | null | undefined): Promise<Page<PostDTO>> {
   // The language is in the kind: a cursor from another language's index is a BAD_CURSOR.
   return pageAfter(`forYou:${language ?? ''}`, cursor,
     after => loadForYouFeed({ startAfter: after, feedLanguage: language, currentUserId: viewerId() ?? undefined }),
-    async page => ({
-      // Repost attribution and the quotes the page did not attach; drops tombstones.
-      items: await listToDTOs(await enrichPostsWithRepostsAndQuotes(sortFeedByTimestamp(page.posts)), page.preloaded),
-      next: page.hasMore ? page.cursor : null,
-    }))
+    async page => {
+      const sorted = sortFeedByTimestamp(page.posts)
+      // This page's own quote targets, read again: a quote of a post deleted
+      // since the last load must not keep showing the text it had (RC16-I-04).
+      rereadQuotedPosts(quoteTargetIds(sorted))
+      return {
+        // Repost attribution and the quotes the page did not attach; drops tombstones.
+        items: await listToDTOs(await enrichPostsWithRepostsAndQuotes(sorted), page.preloaded),
+        next: page.hasMore ? page.cursor : null,
+      }
+    })
 }
 
 /**
@@ -111,11 +121,19 @@ async function following(cursor: string | null | undefined): Promise<Page<PostDT
     forceRefresh: false,
     onBatchReady: (posts, next) => { batch = { posts, next } },
     enrichProgressively: () => { loaded = true },
+    // This page's own quote targets, read again (RC16-I-04); the ranked Top
+    // view never routes through here, so there is nothing to scope that out.
+    beforeAttachQuotes: posts => rereadQuotedPosts(quoteTargetIds(posts)),
   })
   if (!loaded) throw new RpcError('The Following feed could not be read', 'NETWORK')
   const { next } = batch
   return nextPage(await listToDTOs(batch.posts), kind,
     next && { start: next.start.getTime(), end: next.end.getTime(), hours: next.windowHours })
+}
+
+/** Whom the viewer follows; a failed read rejects rather than reading as nobody. */
+async function followingIds(viewer: string): Promise<string[]> {
+  return (await followService.getFollowing(viewer, { throwOnError: true })).map(follow => follow.followingId).filter(Boolean)
 }
 
 /**
@@ -132,10 +150,12 @@ async function top(query: HomeQuery): Promise<Page<PostDTO>> {
   const fields = decodeCursor<{ limit: number; seen: string[] }>(query.cursor, kind)
   const limit = fields ? Math.min(cursorInt(fields.limit) + TOP_PAGE, MAX_RANKED) : TOP_PAGE
   const seen = new Set(fields?.seen ?? [])
-  // A widening bypasses the minute-long ranked cache, as web's load-more does.
-  const options = { limit, window, force: fields !== null, throwOnError: true }
+  // A widening, or a pull to refresh, bypasses the minute-long ranked cache, as
+  // web's load-more and refresh do: a post deleted on another device bumps no
+  // quote generation here, so only a fresh read drops it (RC16-I-04).
+  const options = { limit, window, force: fields !== null || query.refresh === true, throwOnError: true }
   const ranked = query.tab === 'following'
-    ? await topLikedPostsByAuthorsHydrated({ ...options, authorIds: await followService.getFollowingIds(requireViewer('The Following feed')) })
+    ? await topLikedPostsByAuthorsHydrated({ ...options, authorIds: await followingIds(requireViewer('The Following feed')) })
     : await topLikedPostsHydrated(options)
   // Judged on the ranked page, not the filtered one, as on web.
   const hasMore = ranked.length >= limit && limit < MAX_RANKED
@@ -151,11 +171,15 @@ function hashtagRecentInline(tag: string, cursor: string | null | undefined): Pr
       limit: TAG_PAGE,
       ...(after ? { startAfter: after } : {}),
     }),
-    async page => ({
-      items: await listToDTOs(page.documents.filter(post => !post.deleted), page.preloaded),
-      // The cursor advances over the raw page, including posts the viewer filters hide.
-      next: page.documents.length === TAG_PAGE ? page.documents[TAG_PAGE - 1].id : null,
-    }))
+    async page => {
+      const live = page.documents.filter(post => !post.deleted)
+      rereadQuotedPosts(quoteTargetIds(live))
+      return {
+        items: await listToDTOs(live, page.preloaded),
+        // The cursor advances over the raw page, including posts the viewer filters hide.
+        next: page.documents.length === TAG_PAGE ? page.documents[TAG_PAGE - 1].id : null,
+      }
+    })
 }
 
 /** v2: the tag's postHashtag documents, then the posts, kept only where the tagger wrote the post. */
@@ -169,7 +193,8 @@ function hashtagRecentIndexed(tag: string, cursor: string | null | undefined): P
     load: async () => {
       // Anyone can tag any post; a post counts when one of its taggers wrote it (web's authenticTags).
       const byPost = new Map<string, { postId: string; taggers: Set<string> }>()
-      for (const doc of await hashtagService.getPostIdsByHashtag(tag)) {
+      // Strict: a failed read must not be cached as a tag nobody used.
+      for (const doc of await hashtagService.getPostIdsByHashtag(tag, { throwOnError: true })) {
         const entry = byPost.get(doc.postId) ?? { postId: doc.postId, taggers: new Set<string>() }
         entry.taggers.add(doc.$ownerId)
         byPost.set(doc.postId, entry)
@@ -181,6 +206,7 @@ function hashtagRecentIndexed(tag: string, cursor: string | null | undefined): P
       const posts = (await postService.getPostsByIds(entries.map(entry => entry.postId), { skipEnrichment: true }))
         .filter(post => taggersOf.get(post.id)?.has(post.author.id) && !post.deleted)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+      rereadQuotedPosts(quoteTargetIds(posts))
       return listToDTOs(posts)
     },
   })
@@ -250,7 +276,11 @@ export const feed = {
     if (!tag || tag === CASHTAG_SUFFIX) throw new RpcError('No tag given', 'BAD_REQUEST')
     if (query.sort === 'top') {
       if (!likesAreIndexOnly()) throw notSupported('The Top sort')
-      const ranked = await topLikedPostsHydrated({ hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all' })
+      // A pull to refresh reads past the ranked cache, and a failed read
+      // rejects rather than showing an empty tag, as the home Top view's do.
+      const ranked = await topLikedPostsHydrated({
+        hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all', force: query.refresh === true, throwOnError: true,
+      })
       return onePage(await visibleDTOs(ranked))
     }
     return hashtagsAreInline() ? hashtagRecentInline(tag, query.cursor) : hashtagRecentIndexed(tag, query.cursor)

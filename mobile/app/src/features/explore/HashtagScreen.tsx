@@ -5,7 +5,7 @@ import { View } from 'react-native';
 import { CurrencyDollarIcon, HashtagIcon } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
-import { useEngineInfiniteQuery } from '~/data/queries';
+import { useEngineInfiniteQuery, usePullToRefresh } from '~/data/queries';
 import { useCapabilities } from '~/data/session';
 import { cn } from '~/lib-allowlist';
 import { EmptyState } from '~/ui/EmptyState';
@@ -41,9 +41,10 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
 
   const storage = tag.storage;
   const key = queryKeys.feed.hashtag({ tag: storage, sort, window: rankWindow });
+  const fresh = usePullToRefresh();
   const posts = useEngineInfiniteQuery<PostDTO>(
     key,
-    (api, cursor) => api.feed.hashtag({ tag: storage, sort, window: rankWindow, cursor }),
+    (api, cursor) => api.feed.hashtag({ tag: storage, sort, window: rankWindow, cursor, ...fresh.params() }),
     { persist: true, enabled: storage !== '' },
   );
 
@@ -85,6 +86,7 @@ export function HashtagScreen({ tagParam }: { tagParam: string | undefined }) {
           icon: tag.display.startsWith('$') ? CurrencyDollarIcon : HashtagIcon,
         }}
         offline={offline}
+        pullToRefresh={sort === 'top' ? fresh : undefined}
         testID="hashtag-posts"
       />
     </Screen>

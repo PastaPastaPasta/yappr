@@ -1,5 +1,6 @@
 import type { DmRetention, DmStatusDTO } from '@engine/api';
-import { Redirect, Stack } from 'expo-router';
+import { router, Stack, useFocusEffect, useNavigation } from 'expo-router';
+import { useCallback, useRef } from 'react';
 import { View } from 'react-native';
 
 import { queryKeys } from '~/data/keys';
@@ -108,9 +109,43 @@ function BlockedList({ ids }: { ids: string[] }) {
 }
 
 /**
+ * Back to the screen underneath (Settings or the inbox: this screen is pushed
+ * on the current tab), or to the inbox when there is nothing to go back to
+ * (a link that opened this screen on its own). Never a jump to the Messages
+ * tab from another tab's stack, which would leave this screen on top of that
+ * stack (the stuck-tab bug).
+ *
+ * `navigation.canGoBack()` is read fresh inside the effect rather than from a
+ * render-time `isRoot` comparison: that comparison looked at the nav state's
+ * top-level `routes[0]`, which does not reflect the current tab's own stack
+ * under a nested navigator and could leave the redirect armed after a real
+ * back target existed.
+ *
+ * It leaves when the screen is focused, not merely mounted: a retained screen
+ * can turn into this one in the background (signing in from signed out keeps
+ * every tab's stack), and leaving from there would pop a stack the user is
+ * not looking at. A focus effect waits until the screen is shown again. The
+ * ref keeps it one-shot: a second focus, or `navigation` changing identity
+ * before the pop or replace completes, must not leave twice.
+ */
+function LeaveForInbox() {
+  const navigation = useNavigation();
+  const left = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (left.current) return;
+      left.current = true;
+      if (navigation.canGoBack()) navigation.goBack();
+      else router.replace('/messages');
+    }, [navigation]),
+  );
+  return null;
+}
+
+/**
  * Message settings (UX_SPEC §4.23, PRD DM-12): v5 "Delete old sent messages"
- * and the people blocked in Messages. Legacy (testnet) has none (DM-11): a
- * link here goes to the inbox; its read receipts are in Settings (SET-04).
+ * and the people blocked in Messages. Legacy (testnet) has none (DM-11): it
+ * goes back, or to the inbox; its read receipts are in Settings (SET-04).
  */
 export function MessageSettingsScreen() {
   const { signedIn } = useDmViewer();
@@ -127,8 +162,8 @@ export function MessageSettingsScreen() {
     );
   }
 
-  // Nothing to set on legacy messages: a stale link goes to the inbox (#23).
-  if (backend === 'legacy') return <Redirect href="/messages" />;
+  // Nothing to set on legacy messages (#23).
+  if (backend === 'legacy') return <LeaveForInbox />;
 
   if (status.isError && !status.data) {
     return (

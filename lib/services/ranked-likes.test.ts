@@ -2,7 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ ranked: vi.fn(), hydrate: vi.fn(), viewer: 'viewerA' }));
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { ranked: mocks.ranked } }) }));
-vi.mock('./sdk-helpers', () => ({ getCurrentUserId: () => mocks.viewer }));
+vi.mock('./sdk-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./sdk-helpers')>()),
+  getCurrentUserId: () => mocks.viewer,
+}));
 vi.mock('@/lib/feed/composite-feed-page', () => ({ loadCompositeFeedPage: mocks.hydrate }));
 beforeEach(() => {
   vi.resetModules();
@@ -32,6 +35,117 @@ it('captures the viewer once before ranking and isolates hydrated caches across 
   await topLikedPostsHydrated({ postAuthor: 'author123' });
   expect(mocks.ranked).toHaveBeenCalledTimes(2);
   expect(mocks.hydrate.mock.calls[1][0].currentUserId).toBe('viewerB');
+});
+
+it('re-hydrates a cached page once a post it quotes is forgotten elsewhere (RC16-I-04 on ranked Top surfaces)', async () => {
+  // Logged out: skips the block/follow batch lookups, which are orthogonal to
+  // the quote-staleness behavior under test here.
+  mocks.viewer = '';
+  const { forgetQuotedPosts } = await import('@/lib/feed/resolve-quoted-posts');
+  const { topLikedPostsHydrated } = await import('./ranked-likes');
+
+  const author = { id: 'authorT', username: '', displayName: '', avatar: '', followers: 0, following: 0, joinedAt: new Date(0) };
+  const quotingPost = (quotedContent: string) => ({
+    id: 'post1234', targetKind: 'post', content: 'quoting', createdAt: new Date(0),
+    author, likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0,
+    quotedPostId: 'target1',
+    quotedPost: { id: 'target1', targetKind: 'post', content: quotedContent, createdAt: new Date(0), author, likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0 },
+  });
+
+  mocks.ranked.mockResolvedValue({ entries: [{ groupValue: 'post1234', value: BigInt(1) }] });
+  mocks.hydrate.mockResolvedValue({ rawPosts: [{ $id: 'post1234' }], posts: [quotingPost('original quoted text')], preloaded: {} });
+
+  const first = await topLikedPostsHydrated({ postAuthor: 'authorQ' });
+  expect(first[0].quotedPost?.content).toBe('original quoted text');
+  expect(mocks.ranked).toHaveBeenCalledTimes(1);
+
+  // Still within the 60-second cache window and nothing forgotten: served from cache, no re-rank.
+  await topLikedPostsHydrated({ postAuthor: 'authorQ' });
+  expect(mocks.ranked).toHaveBeenCalledTimes(1);
+
+  // The quoted post is deleted elsewhere (`posts.delete` forgets its own id).
+  forgetQuotedPosts(['target1']);
+  mocks.hydrate.mockResolvedValue({ rawPosts: [{ $id: 'post1234' }], posts: [quotingPost('replacement after the forget')], preloaded: {} });
+
+  const afterForget = await topLikedPostsHydrated({ postAuthor: 'authorQ' });
+  expect(mocks.ranked).toHaveBeenCalledTimes(2);
+  expect(afterForget[0].quotedPost?.content).toBe('replacement after the forget');
+});
+
+const fenceAuthor = { id: 'authorT', username: '', displayName: '', avatar: '', followers: 0, following: 0, joinedAt: new Date(0) };
+/** A ranked page of one post quoting `target1`, whose text is `quotedContent`. */
+function quotingPage(quotedContent: string) {
+  const card = { targetKind: 'post', createdAt: new Date(0), author: fenceAuthor, likes: 0, replies: 0, reposts: 0, quotes: 0, views: 0 };
+  return {
+    rawPosts: [{ $id: 'post1234' }],
+    posts: [{ ...card, id: 'post1234', content: 'quoting', quotedPostId: 'target1', quotedPost: { ...card, id: 'target1', content: quotedContent } }],
+    preloaded: {},
+  };
+}
+
+/** A response the test hands back when it chooses. */
+function deferred<V>() {
+  let resolve: (value: V) => void = () => undefined;
+  let reject: (error: unknown) => void = () => undefined;
+  const promise = new Promise<V>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+it('does not cache a page whose quote target was forgotten while it hydrated (RC16-I-04)', async () => {
+  mocks.viewer = '';
+  const { forgetQuotedPosts } = await import('@/lib/feed/resolve-quoted-posts');
+  const { topLikedPostsHydrated } = await import('./ranked-likes');
+  mocks.ranked.mockResolvedValue({ entries: [{ groupValue: 'post1234', value: BigInt(1) }] });
+  const before = deferred<ReturnType<typeof quotingPage>>();
+  mocks.hydrate.mockReturnValueOnce(before.promise);
+
+  const earlier = topLikedPostsHydrated({ postAuthor: 'authorQ' });
+  await vi.waitFor(() => expect(mocks.hydrate).toHaveBeenCalledTimes(1));
+  // The quoted post is deleted elsewhere while the page hydrates...
+  forgetQuotedPosts(['target1']);
+  // ...and the hydration from before the delete lands after it.
+  before.resolve(quotingPage('text from before the delete'));
+  expect((await earlier)[0].quotedPost?.content).toBe('text from before the delete');
+
+  // The next read is not served that page: it reads again.
+  mocks.hydrate.mockResolvedValueOnce(quotingPage('text after the delete'));
+  expect((await topLikedPostsHydrated({ postAuthor: 'authorQ' }))[0].quotedPost?.content).toBe('text after the delete');
+  expect(mocks.ranked).toHaveBeenCalledTimes(2);
+});
+
+it('lets no read that started before a forced read overwrite its page', async () => {
+  mocks.viewer = '';
+  const { topLikedPostsHydrated } = await import('./ranked-likes');
+  mocks.ranked.mockResolvedValue({ entries: [{ groupValue: 'post1234', value: BigInt(1) }] });
+  const slow = deferred<ReturnType<typeof quotingPage>>();
+  mocks.hydrate.mockReturnValueOnce(slow.promise);
+
+  // A background read starts, then a pull to refresh overtakes it.
+  const background = topLikedPostsHydrated({ postAuthor: 'authorQ' });
+  await vi.waitFor(() => expect(mocks.hydrate).toHaveBeenCalledTimes(1));
+  mocks.hydrate.mockResolvedValueOnce(quotingPage('the refreshed page'));
+  await topLikedPostsHydrated({ postAuthor: 'authorQ', force: true });
+  slow.resolve(quotingPage('the older page'));
+  await background;
+
+  expect((await topLikedPostsHydrated({ postAuthor: 'authorQ' }))[0].quotedPost?.content).toBe('the refreshed page');
+  expect(mocks.ranked).toHaveBeenCalledTimes(2);
+});
+
+it('drops the cached page when a forced read fails, so no later read falls back to it', async () => {
+  mocks.viewer = '';
+  const { topLikedPostsHydrated } = await import('./ranked-likes');
+  mocks.ranked.mockResolvedValue({ entries: [{ groupValue: 'post1234', value: BigInt(1) }] });
+  mocks.hydrate.mockResolvedValueOnce(quotingPage('the stale page'));
+  await topLikedPostsHydrated({ postAuthor: 'authorQ' });
+
+  mocks.hydrate.mockRejectedValueOnce(new Error('timeout'));
+  await expect(topLikedPostsHydrated({ postAuthor: 'authorQ', force: true, throwOnError: true })).rejects.toThrow('timeout');
+
+  // Its retry (or any later read) without force reads afresh.
+  mocks.hydrate.mockResolvedValueOnce(quotingPage('the fresh page'));
+  expect((await topLikedPostsHydrated({ postAuthor: 'authorQ' }))[0].quotedPost?.content).toBe('the fresh page');
+  expect(mocks.ranked).toHaveBeenCalledTimes(3);
 });
 
 const WINDOWED_READS = {
