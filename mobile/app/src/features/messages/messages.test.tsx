@@ -1096,6 +1096,68 @@ describe('Conversation (DM-03, DM-04)', () => {
       expect(result.current).toBe(false);
     });
 
+    it('keeps a confirmed block over a read of Messages begun before it, and hands over to the next read', async () => {
+      // The inbox's first read is still on its way, with Messages from before the block.
+      let answerStale: (rows: ConversationDTO[]) => void = () => undefined;
+      signIn();
+      fakeEngine.method('dm.status').mockResolvedValue(status());
+      fakeEngine.method('dm.conversations').mockReturnValueOnce(
+        new Promise<ConversationDTO[]>((resolve) => {
+          answerStale = resolve;
+        }),
+      );
+      fakeEngine.method('dm.messages').mockResolvedValue(page([theirs]));
+      await renderAt(`/messages/${encodeURIComponent(KEY)}`);
+      const pending = ticket({ op: 'block', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.block').mockResolvedValue(pending);
+      await act(async () => {
+        await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: true, handle: '@bob' });
+      });
+      // Confirmed: the engine blocked them in Messages too, so a read begun from now on says so.
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: true } })]);
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      expect(fakeEngine.method('dm.conversations')).toHaveBeenCalledTimes(1);
+
+      // The old read answers late, from before the block: the conversation keeps it, and Messages are read again.
+      await act(async () => answerStale([conversation({ key: KEY, flags: { ...FLAGS, blocked: false } })]));
+      await act(async () => {});
+      expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+      expect(fakeEngine.method('dm.conversations')).toHaveBeenCalledTimes(2);
+
+      // That read began after the block: from then on Messages decide (lifted alone on another device).
+      await synchronized(false);
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+      const { result } = renderHook(() => useAuthorBlocked(BOB_ID));
+      expect(result.current).toBe(true);
+    });
+
+    it('reads Messages again after a block lifted there alone, when a read begun before answers late', async () => {
+      // The inbox's first read is still on its way, with Messages from before: blocked there (made on web).
+      let answerStale: (rows: ConversationDTO[]) => void = () => undefined;
+      signIn();
+      fakeEngine.method('dm.status').mockResolvedValue(status());
+      fakeEngine.method('dm.conversations').mockReturnValueOnce(
+        new Promise<ConversationDTO[]>((resolve) => {
+          answerStale = resolve;
+        }),
+      );
+      fakeEngine.method('dm.messages').mockResolvedValue(page([theirs]));
+      await renderAt(`/messages/${encodeURIComponent(KEY)}`);
+      // Message settings' Unblock: Messages only, no account block.
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(true);
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: false } })]);
+      await act(async () => {
+        await setBlockedInMessages(BOB_ID, false);
+      });
+      expect(fakeEngine.method('dm.conversations')).toHaveBeenCalledTimes(1);
+
+      await act(async () => answerStale([conversation({ key: KEY, flags: { ...FLAGS, blocked: true } })]));
+      await act(async () => {});
+      expect(fakeEngine.method('dm.conversations')).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+      expect(screen.getByTestId('dm-composer')).toBeTruthy();
+    });
+
     it('shows a conversation unblocked once Message settings lift a block the account still has', async () => {
       await openConversation([theirs]);
       const pending = ticket({ op: 'block', target: { identityId: BOB_ID } });
