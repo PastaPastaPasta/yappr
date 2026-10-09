@@ -81,7 +81,8 @@ describeRead('feed', 'feed', () => {
     const posts = await sampleFeed()
     const newest = new Date(Math.max(...posts.map(post => post.createdAt.getTime())))
     const none = await timed('feed.checkNew', () => engine.feed.checkNew({ tab: 'forYou', since: newest }))
-    expect(none).toEqual({ count: 0, posts: [] })
+    // For You reads one query, so its answer is always complete (only a Following scan can stop early).
+    expect(none).toEqual({ count: 0, posts: [], complete: true })
     const known = await engine.feed.checkNew({ tab: 'forYou', since: newest, knownIds: [] })
     expect(known.posts.map(post => post.id)).toContain(posts.find(post => post.createdAt.getTime() === newest.getTime())?.id)
     const all = await engine.feed.checkNew({ tab: 'forYou', since: new Date(posts[posts.length - 1].createdAt.getTime() - 1) })
