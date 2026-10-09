@@ -88,15 +88,21 @@ default weight.
   - Adding or removing an axis makes a different product grid, so every
     combination gets a new id. A cart line naming an old one reads "Selected
     option is no longer available".
-- If the 254 ids run out, the editor renumbers the options. That changes
-  every combination id, but it is rare.
+- Ids are never renumbered, since that would give an old cart line or kit
+  target another combination's id. A listing that has used all 254 (options
+  added over its life, not at once) takes no more options; the seller lists
+  the product again.
 
 ## Orders, carts and kits
 
-- **Cart lines and order lines** carry `variantId`, a `variantLabel` snapshot
-  ("Red / 4 Pack", at most 120 characters) and, on orders, a `sku` snapshot.
-  These travel in the encrypted payload, so a past order reads without the
-  listing.
+- **Cart lines and order lines** carry `variantId` and `variantLabel`
+  ("Red / 4 Pack", at most 120 characters) and `sku` snapshots, taken when the
+  line is added, like its price. The order copies them into the encrypted
+  payload, so a past order reads without the listing, and checkout reads
+  nothing between its pre-payment size check and the order.
+- **On v1–v6** option ids are numbered by position on every read, so a cart
+  line there must match its label too, and kit assets cannot target options
+  (only untargeted assets are delivered).
 - **Checkout** charges the combination's price. Shipping weighs each line by
   its combination's weight, else the item's.
 - **Digital kit assets** target an option-id subset. An asset applies to every

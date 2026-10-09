@@ -8,7 +8,7 @@ import type { ItemVariants, VariantAxis, VariantCombination } from '@/lib/types'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import {
   addAxis, addOption, findOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
-  renumberOptions, restoreCombinations, sameName, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
+  restoreCombinations, sameName, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
   type CombinationData, type CombinationDefaults,
 } from '@/lib/storefront/variant-codec'
 import {
@@ -78,8 +78,6 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   const [notice, setNotice] = useState<string | null>(null)
   /** What an edit changed beyond what the seller typed (shown, not an error). */
   const [info, setInfo] = useState<string | null>(null)
-  // Option ids are never reused; once they run out the seller chooses to renumber.
-  const [offerRenumber, setOfferRenumber] = useState(false)
 
   const [newAxisName, setNewAxisName] = useState('')
   const [newAxisOptions, setNewAxisOptions] = useState('')
@@ -103,18 +101,10 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   /** Add `count` options through `add`, unless the product has no option numbers left for them. */
   const addOptions = (count: number, add: () => ItemVariants): boolean => {
     if (count > optionIdsLeft(variants)) {
-      setNotice('This product has used all its option numbers. Renumber the options to add more.')
-      setOfferRenumber(true)
+      setNotice('This product has used all its option numbers. To offer more options, list it again as a new product.')
       return false
     }
     return apply(add())
-  }
-
-  const handleRenumber = () => {
-    onChange(renumberOptions(variants))
-    setOfferRenumber(false)
-    setNotice(null)
-    setInfo('Options renumbered. Shoppers who already have one of these options in their cart will need to choose it again.')
   }
 
   const handleRemoveAxis = (axisIndex: number) => {
@@ -240,11 +230,6 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
       {notice && (
         <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-600 dark:text-red-400">
           <p>{notice}</p>
-          {offerRenumber && (
-            <Button type="button" variant="outline" size="sm" onClick={handleRenumber} disabled={disabled}>
-              Renumber options
-            </Button>
-          )}
         </div>
       )}
       {info && <p role="status" className="text-sm text-gray-600 dark:text-gray-400">{info}</p>}

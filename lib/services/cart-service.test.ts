@@ -50,6 +50,14 @@ describe('cart inventory', () => {
     expect(cartService.getItems().map(line => [line.variantId, line.variantLabel, line.unitPrice])).toEqual([['1', 'S', 100], ['2', 'M', 120]])
   })
 
+  it('snapshots the SKU when a line is added: the variant\'s, else the item\'s', () => {
+    const item = product({ basePrice: undefined, stockQuantity: undefined, sku: 'TEE', variants: sizes([{ name: 'S', price: 100, sku: 'TEE-S' }, { name: 'M', price: 100 }]) })
+    cartService.addStoreItem(item, '1')
+    cartService.addStoreItem(item, '2')
+    cartService.addStoreItem(product({ id: 'plain', sku: 'MUG' }))
+    expect(cartService.getItems().map(line => line.sku)).toEqual(['TEE-S', 'TEE', 'MUG'])
+  })
+
   it('names a line by its variant id and shows the variant image', () => {
     const variants = sizes([{ name: 'S', price: 100, image: 2 }, { name: 'M', price: 100 }])
     const item = product({ basePrice: undefined, stockQuantity: undefined, imageUrls: ['https://a/hero.png', 'https://a/small.png'], variants })

@@ -133,9 +133,12 @@ export function priceRange(variants: ItemVariants): { min: number; max: number }
   return { min: Math.min(...prices), max: Math.max(...prices) }
 }
 
-/** The image a combination shows: its own (1-based index into `imageUrls`), else the item's first. */
-export function combinationImageUrl(imageUrls: readonly string[] | undefined, combination: Pick<VariantCombination, 'image'> | undefined): string | undefined {
-  const own = combination?.image ? imageUrls?.[combination.image - 1] : undefined
+/**
+ * The image a combination shows: its own (1-based index into `imageUrls`, or
+ * on v1–v6 a URL of its own), else the item's first.
+ */
+export function combinationImageUrl(imageUrls: readonly string[] | undefined, combination: Pick<VariantCombination, 'image' | 'imageUrl'> | undefined): string | undefined {
+  const own = combination?.image ? imageUrls?.[combination.image - 1] : combination?.imageUrl
   return own ?? imageUrls?.[0]
 }
 
@@ -309,11 +312,11 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
       if (legacy && name.includes('|')) add(`Option names cannot contain "|" ("${name.slice(0, 20)}").`)
       if (axis.options.some((other, otherIndex) => otherIndex < optionIndex && sameName(other.name, option.name))) add(`"${axisName}" lists "${name}" twice.`)
       const badId = !Number.isInteger(option.id) || option.id < 1 || ids.has(option.id) || option.id >= variants.nextOptionId || (capped && option.id > limits.maxOptionId)
-      if (badId) add('The options need renumbering. Use "Renumber options" in the editor.')
+      if (badId) add('Some options are numbered incorrectly. Remove the variants and add them again.')
       ids.add(option.id)
     }
   }
-  if (capped && variants.nextOptionId > limits.maxOptionId + 1) add('This product has used up its option numbers. Use "Renumber options" in the editor.')
+  if (capped && variants.nextOptionId > limits.maxOptionId + 1) add('This product has used all its option numbers. To offer more options, list it again as a new product.')
 
   if (combinations.length === 0 && axes.length > 0) add('Offer at least one combination of options.')
   if (capped && combinations.length > limits.combinations) add(`A product can offer at most ${limits.combinations} combinations (this one has ${combinations.length}). Remove some options, or split it into several listings.`)
@@ -375,32 +378,14 @@ export function optionIdsLeft(variants: ItemVariants): number {
 
 /**
  * Options with fresh ids from `nextOptionId`. Ids are never reused, so this
- * refuses (throws) rather than renumber behind the seller's back: callers
- * check {@link optionIdsLeft} first and offer {@link renumberOptions}.
+ * refuses (throws) when they run out: renumbering would give an old cart line
+ * or kit target a different combination's id. Callers check
+ * {@link optionIdsLeft} first; a listing past 254 options is listed again.
  */
 function allocate(variants: ItemVariants, names: readonly string[]): { variants: ItemVariants; options: VariantOption[] } {
-  if (names.length > optionIdsLeft(variants)) throw new Error('option ids exhausted: renumber the options first')
+  if (names.length > optionIdsLeft(variants)) throw new Error('option ids exhausted: list the product again')
   const options = names.map((name, index) => ({ id: variants.nextOptionId + index, name }))
   return { variants: { ...variants, nextOptionId: variants.nextOptionId + names.length }, options }
-}
-
-/**
- * Give the options ids 1, 2, 3… in display order. Every combination gets a
- * new id, so carts and kits that named the old ones no longer match: only
- * when the 254 ids have run out, and only on the seller's say-so.
- */
-export function renumberOptions(variants: ItemVariants): ItemVariants {
-  const renumber = new Map<number, number>()
-  const axes = variants.axes.map((axis) => ({
-    ...axis,
-    options: axis.options.map((option) => {
-      renumber.set(option.id, renumber.size + 1)
-      return { ...option, id: renumber.size }
-    }),
-  }))
-  const combinations = variants.combinations.map((combination) =>
-    combinationOf(combination.optionIds.map((optionId) => renumber.get(optionId) ?? optionId), dataOf(combination)))
-  return { axes, combinations, nextOptionId: renumber.size + 1 }
 }
 
 /**

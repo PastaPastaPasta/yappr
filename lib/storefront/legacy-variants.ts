@@ -32,7 +32,7 @@ const KEY_SEPARATOR = '|'
  * The table a v1–v6 item stores as JSON, or undefined when there is none
  * usable. A combination whose key names an unknown option, or repeats
  * another, is dropped. A combination image that is one of `imageUrls`
- * becomes its index; any other is dropped.
+ * becomes its index; any other is kept as its own URL.
  */
 export function decodeLegacyVariants(json: unknown, imageUrls: readonly string[] = []): ItemVariants | undefined {
   if (typeof json !== 'string' || !json) return undefined
@@ -42,7 +42,7 @@ export function decodeLegacyVariants(json: unknown, imageUrls: readonly string[]
   } catch {
     return undefined
   }
-  if (!Array.isArray(parsed.axes) || parsed.axes.length === 0 || !Array.isArray(parsed.combinations)) return undefined
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.axes) || parsed.axes.length === 0 || !Array.isArray(parsed.combinations)) return undefined
 
   let nextOptionId = 1
   const axes: VariantAxis[] = []
@@ -68,8 +68,9 @@ export function decodeLegacyVariants(json: unknown, imageUrls: readonly string[]
     const combination: VariantCombination = { id, optionIds: ids, price: legacy.price }
     if (typeof legacy.stock === 'number' && Number.isSafeInteger(legacy.stock) && legacy.stock >= 0) combination.stock = legacy.stock
     if (typeof legacy.sku === 'string' && legacy.sku) combination.sku = legacy.sku
-    const image = legacy.imageUrl ? imageUrls.indexOf(legacy.imageUrl) + 1 : 0
+    const image = typeof legacy.imageUrl === 'string' ? imageUrls.indexOf(legacy.imageUrl) + 1 : 0
     if (image > 0) combination.image = image
+    else if (typeof legacy.imageUrl === 'string' && legacy.imageUrl) combination.imageUrl = legacy.imageUrl
     combinations.push(combination)
   }
   return combinations.length > 0 ? { axes, combinations, nextOptionId } : undefined
@@ -87,7 +88,7 @@ export function encodeLegacyVariants(variants: ItemVariants, imageUrls: readonly
       }
       if (combination.stock !== undefined) entry.stock = combination.stock
       if (combination.sku) entry.sku = combination.sku
-      const imageUrl = combination.image ? imageUrls[combination.image - 1] : undefined
+      const imageUrl = combination.image ? imageUrls[combination.image - 1] : combination.imageUrl
       if (imageUrl) entry.imageUrl = imageUrl
       return entry
     }),

@@ -802,7 +802,8 @@ function AddItemPage() {
                     onChange={updateKit}
                     onBusyChange={setIsKitUploading}
                     identityId={user.identityId}
-                    variants={hasVariants ? variants : undefined}
+                    // Assets can target options only where option ids are stored (v7).
+                    variants={hasVariants && variantsAreTyped ? variants : undefined}
                     disabled={isSubmitting}
                   />
                 )}

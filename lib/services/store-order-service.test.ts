@@ -4,8 +4,7 @@ const query = vi.hoisted(() => vi.fn());
 vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => ({ documents: { query } }) }));
 vi.mock('./state-transition-service', () => ({ stateTransitionService: {} }));
 import { storeOrderService } from './store-order-service';
-import { variantsFromRows } from '@/lib/storefront/variant-codec';
-import type { CartItem, ItemVariants, StoreItem } from '@/lib/types';
+import type { CartItem } from '@/lib/types';
 
 const seller = '11111111111111111111111111111111';
 const order = (index: number) => ({
@@ -103,30 +102,16 @@ describe('the encrypted order size the checkout budget assumes', () => {
 });
 
 describe('order lines carry the variant', () => {
-  const variants = variantsFromRows(['Color', 'Size'], [
-    { optionNames: ['Red', 'Small'], price: 500, sku: 'TEE-R-S' },
-    { optionNames: ['Red', 'Large'], price: 600 },
-  ]).variants as ItemVariants;
-  const listing = { id: 'item', storeId: 'store', ownerId: seller, createdAt: new Date(), title: 'Tee', status: 'active', sku: 'TEE', variants } as StoreItem;
   const line = (overrides: Partial<CartItem>): CartItem => ({ itemId: 'item', storeId: 'store', title: 'Tee', quantity: 1, unitPrice: 500, currency: 'USD', ...overrides });
-  const lines = (cart: CartItem[], storeItems?: ReadonlyMap<string, StoreItem>) =>
-    storeOrderService.buildOrderPayload(cart, undefined, {}, 0, 'dash:X', 'USD', undefined, undefined, storeItems).items;
-  const [small, large] = variants.combinations;
+  const lines = (cart: CartItem[]) => storeOrderService.buildOrderPayload(cart, undefined, {}, 0, 'dash:X', 'USD').items;
 
-  it("keeps the cart line's variant id and name, and the variant's SKU from the listing", () => {
-    expect(lines([line({ variantId: small.id, variantLabel: 'Red / Small' })], new Map([['item', listing]])))
-      .toEqual([expect.objectContaining({ variantId: small.id, variantLabel: 'Red / Small', sku: 'TEE-R-S' })]);
+  it("keeps the cart line's variant id, name and SKU", () => {
+    expect(lines([line({ variantId: '1.2', variantLabel: 'Red / Small', sku: 'TEE-R-S' })]))
+      .toEqual([expect.objectContaining({ variantId: '1.2', variantLabel: 'Red / Small', sku: 'TEE-R-S' })]);
   });
 
-  it("falls back to the item's SKU, and names the variant from the listing when the line has no name", () => {
-    expect(lines([line({ variantId: large.id })], new Map([['item', listing]])))
-      .toEqual([expect.objectContaining({ variantId: large.id, variantLabel: 'Red / Large', sku: 'TEE' })]);
-  });
-
-  it('omits what is unknown without the listing, and writes no variant fields for a plain item', () => {
-    const [variant, plain] = lines([line({ variantId: small.id, variantLabel: 'Red / Small' }), line({ itemId: 'plain' })]);
-    expect(variant).toMatchObject({ variantId: small.id, variantLabel: 'Red / Small' });
-    expect(variant).not.toHaveProperty('sku');
+  it('writes no variant fields for a plain item', () => {
+    const [plain] = lines([line({})]);
     for (const field of ['variantId', 'variantLabel', 'sku', 'variantKey']) expect(plain).not.toHaveProperty(field);
   });
 });

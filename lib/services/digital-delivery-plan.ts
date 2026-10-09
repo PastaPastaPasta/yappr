@@ -8,6 +8,7 @@
 import bs58 from 'bs58'
 import { bytesEqual } from '../bytes'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
+import { storefrontVariantsAreTyped } from '../constants'
 import { DIGITAL_PAYLOAD_MAX_BYTES, VARIANT_LIMITS } from '../storefront/storefront-contract'
 import { findCombination, findOption, variantLabelSnapshot } from '../storefront/variant-codec'
 import type {
@@ -218,7 +219,9 @@ export function planDelivery(
       itemTitle: line.itemTitle,
       ...(line.variantId ? { variantId: line.variantId } : {}),
       ...(line.variantId && label ? { variantLabel: label.slice(0, MAX_VARIANT_LABEL_LENGTH) } : {}),
-      assets: assetsForVariant(kit.assets, combination?.optionIds).map(withoutTarget),
+      // Before v7 option ids are numbered by position on every read, so a kit's
+      // targets cannot be trusted there: only its untargeted assets go out.
+      assets: assetsForVariant(kit.assets, storefrontVariantsAreTyped() ? combination?.optionIds : undefined).map(withoutTarget),
       ...(kit.instructions ? { instructions: kit.instructions } : {}),
     }
     if (kit.licenseKeys && !withoutNewKeys?.(line)) {
@@ -633,8 +636,9 @@ function parseOptionIds(asset: Record<string, unknown>): { optionIds?: number[] 
   if (asset.optionIds === undefined) return asset.variantKey === undefined ? {} : UNREADABLE_TARGET
   if (!Array.isArray(asset.optionIds)) return UNREADABLE_TARGET
   const ids = asset.optionIds.filter((id): id is number => Number.isInteger(id) && id >= 1 && id <= VARIANT_LIMITS.maxOptionId)
-  if (ids.length === 0) return asset.optionIds.length === 0 ? {} : UNREADABLE_TARGET
-  return { optionIds: [...new Set(ids)] }
+  // Dropping one bad member would WIDEN the target, so any bad member voids it.
+  if (ids.length !== asset.optionIds.length) return UNREADABLE_TARGET
+  return ids.length === 0 ? {} : { optionIds: [...new Set(ids)] }
 }
 
 function parseAsset(value: unknown): DigitalAsset | null {

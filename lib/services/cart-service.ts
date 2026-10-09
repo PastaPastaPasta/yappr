@@ -165,6 +165,7 @@ class CartService {
     title: string;
     variantId?: string;
     variantLabel?: string;
+    sku?: string;
     quantity: number;
     unitPrice: number;
     imageUrl?: string;
@@ -211,12 +212,14 @@ class CartService {
     }
 
     const variantLabel = storeItemService.getVariantLabel(storeItem, variantId);
+    const sku = storeItemService.getSku(storeItem, { variantId: combination?.id, variantLabel });
     this.addItem({
       itemId: storeItem.id,
       storeId: storeItem.storeId,
       title: storeItem.title,
       ...(combination ? { variantId: combination.id } : {}),
       ...(variantLabel ? { variantLabel } : {}),
+      ...(sku ? { sku } : {}),
       quantity,
       unitPrice: storeItemService.getPrice(storeItem, variantId),
       imageUrl: combinationImageUrl(storeItem.imageUrls, combination),

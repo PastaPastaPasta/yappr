@@ -109,6 +109,12 @@ export interface VariantCombination {
   weight?: number
   /** 1-based index into the item's imageUrls; undefined means the item's first image. */
   image?: number
+  /**
+   * v1–v6 only: the combination's own image URL when it is not one of the
+   * listing's images (the old CSV import wrote these). Kept so an unrelated
+   * edit does not drop it; v7 names images by index only.
+   */
+  imageUrl?: string
 }
 
 /** A listing's variants table (storefront v7 stores it as typed lists, docs/STOREFRONT_V7.md). */
@@ -244,6 +250,8 @@ export interface CartItem {
   variantId?: string
   /** The variant's name when it was added ("Red / Large"), for display only. */
   variantLabel?: string
+  /** The variant's (or item's) SKU when it was added; the order keeps it for the seller. */
+  sku?: string
   quantity: number
   unitPrice: number
   imageUrl?: string

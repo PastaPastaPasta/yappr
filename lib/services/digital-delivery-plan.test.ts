@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// Digital products exist from storefront v6; option-targeted assets only on v7.
+vi.hoisted(() => { process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = 'v7' })
 import bs58 from 'bs58'
 import {
   MAX_BULK_KEYS_PER_ITEM,
@@ -93,6 +96,20 @@ describe('planDelivery', () => {
     expect(item.variantId).toBe('2')
     expect(item.variantLabel).toBe('Deluxe')
     expect(item.instructions).toBe('Enjoy')
+  })
+
+  it('before v7, where option ids are numbered by position, sends only untargeted assets', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', 'v6')
+    try {
+      const legacy = await import('./digital-delivery-plan')
+      const kits = new Map([[EBOOK_ID, kit({ assets: [file('cover.png'), file('book.pdf', [1]), file('book.epub', [2])] })]])
+      const plan = legacy.planDelivery({ items: [line(EBOOK_ID, 1, { variantId: '2', variantLabel: 'Deluxe' })] }, kits, withVariants(EBOOK_ID, FORMATS))
+      expect(names(plan.delivery.items[0].assets)).toEqual(['cover.png'])
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
   })
 
   it('takes license keys from the front of a shared pool, quantity per line', () => {
@@ -497,12 +514,14 @@ describe('wire format', () => {
     expect(decodeDelivery(encodeDelivery(delivery))).toEqual(delivery)
   })
 
-  it('keeps only whole option ids from 1 to 254 in a target, each once; an unreadable target matches no variant', () => {
+  it('reads a target of whole option ids from 1 to 254 once each; a target with any unreadable member matches no variant', () => {
     const decoded = decodeKit(new TextEncoder().encode(JSON.stringify({
       v: 1,
       deliverWhen: 'on_order',
       assets: [
-        { kind: 'code', label: 'A', code: 'A', optionIds: [3, 0, 255, 1.5, '4', 3, 254] },
+        { kind: 'code', label: 'A', code: 'A', optionIds: [3, 254, 3] },
+        { kind: 'code', label: 'F', code: 'F', optionIds: [3, '4'] },
+        { kind: 'code', label: 'G', code: 'G', optionIds: [3, 0, 255, 1.5] },
         { kind: 'code', label: 'B', code: 'B', optionIds: [0, 'x'] },
         { kind: 'code', label: 'C', code: 'C', optionIds: 'nope', variantKey: 'Gold' },
         { kind: 'code', label: 'D', code: 'D', variantKey: 'Gold' },
@@ -511,6 +530,9 @@ describe('wire format', () => {
     })))
     expect(decoded.assets).toEqual([
       { kind: 'code', label: 'A', code: 'A', optionIds: [3, 254] },
+      // One bad member voids the whole target: dropping it would widen who gets the asset.
+      { kind: 'code', label: 'F', code: 'F', optionIds: [0] },
+      { kind: 'code', label: 'G', code: 'G', optionIds: [0] },
       // Written for some variants, but not in a way this client reads: never sent to every buyer.
       { kind: 'code', label: 'B', code: 'B', optionIds: [0] },
       { kind: 'code', label: 'C', code: 'C', optionIds: [0] },

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { decodeLegacyVariants, encodeLegacyVariants } from './legacy-variants'
+import { combinationImageUrl } from './variant-codec'
 
 /** `value`, failing the test when it is missing. */
 function defined<T>(value: T | null | undefined): T {
@@ -35,8 +36,17 @@ describe('the v1–v6 variants JSON', () => {
     expect(encodeLegacyVariants(defined(decodeLegacyVariants(json, IMAGES)), IMAGES)).toBe(json)
   })
 
+  it('keeps a combination image that is not in the gallery, shows it, and writes it back', () => {
+    const json = JSON.stringify({ axes: [{ name: 'Size', options: ['S', 'M'] }], combinations: [{ key: 'S', price: 1000, imageUrl: 'https://a/fifth.png' }, { key: 'M', price: 1500 }] })
+    const table = defined(decodeLegacyVariants(json, IMAGES))
+    expect(table.combinations[0]).toMatchObject({ imageUrl: 'https://a/fifth.png' })
+    expect(combinationImageUrl(IMAGES, table.combinations[0])).toBe('https://a/fifth.png')
+    expect(combinationImageUrl(IMAGES, table.combinations[1])).toBe(IMAGES[0])
+    expect(encodeLegacyVariants(table, IMAGES)).toBe(json)
+  })
+
   it('reads nothing from a missing or broken value', () => {
-    for (const value of [undefined, '', 'not json', '{"axes":[]}', '{"axes":[{"name":"S","options":[]}],"combinations":[]}', '{"axes":[{"name":"S","options":["a"]}],"combinations":[{"key":"b","price":1}]}']) {
+    for (const value of [undefined, '', 'not json', 'null', '0', '{"axes":[]}', '{"axes":[{"name":"S","options":[]}],"combinations":[]}', '{"axes":[{"name":"S","options":["a"]}],"combinations":[{"key":"b","price":1}]}']) {
       expect(decodeLegacyVariants(value)).toBeUndefined()
     }
   })

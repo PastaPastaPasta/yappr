@@ -3,7 +3,7 @@ import type { ItemVariants } from '@/lib/types'
 import {
   addAxis, addOption, clampImages, combinationForSelection, combinationImageUrl, decodeVariants, emptyVariants, encodeVariants,
   findCombination, missingCombinations, moveAxis, moveOption, optionIdsLeft, priceRange, removeAxis, removeCombination, removeOption, renameAxis,
-  renameOption, renumberOptions, restoreCombinations, selectableOptionIds, setStockTracking, tracksStock, updateCombination,
+  renameOption, restoreCombinations, selectableOptionIds, setStockTracking, tracksStock, updateCombination,
   updateCombinations, variantIdOf, variantLabel, variantProblems, variantsFromRows, type VariantRow,
 } from './variant-codec'
 import { encodeLegacyVariants } from './legacy-variants'
@@ -188,22 +188,15 @@ describe('editing', () => {
     expect(tracksStock(setStockTracking(table, false))).toBe(false)
   })
 
-  it('never reuses or silently renumbers ids; renumbering is explicit', () => {
+  it('never reuses an id: once the 254 run out, no option can be added', () => {
     const table = { ...shirt(), nextOptionId: VARIANT_LIMITS.maxOptionId }
     expect(optionIdsLeft(table)).toBe(1)
     const grown = addOption(table, 1, 'M', DEFAULTS)
     expect(grown.axes[1].options.map((option) => option.id)).toEqual([2, 3, 254])
     expect(optionIdsLeft(grown)).toBe(0)
     expect(variantProblems(grown, { imageCount: 0 })).toEqual([])
-    expect(() => addOption(grown, 1, 'XL', DEFAULTS)).toThrow(/renumber/)
-    expect(optionIdsLeft(renumberOptions(grown))).toBe(249)
-    // Display order: Red, Blue, S, L become 1–4, and every combination follows.
-    const renumbered = renumberOptions(shirt())
-    expect(renumbered.axes.map((axis) => axis.options.map((option) => option.id))).toEqual([[1, 2], [3, 4]])
-    expect(renumbered.combinations.map((combination) => [combination.id, variantLabel(renumbered, combination), combination.price])).toEqual([
-      ['1.3', 'Red / S', 100], ['1.4', 'Red / L', 120], ['2.3', 'Blue / S', 100], ['2.4', 'Blue / L', 120],
-    ])
-    expect(renumbered.nextOptionId).toBe(5)
+    expect(() => addOption(grown, 1, 'XL', DEFAULTS)).toThrow(/list the product again/)
+    expect(() => addAxis(grown, 'Fit', ['Slim'], DEFAULTS)).toThrow(/list the product again/)
   })
 
   it('forgets images the listing no longer has', () => {
@@ -248,7 +241,7 @@ describe('validation', () => {
     expect(problems(updateCombination(table, '1.2', { sku: 'S'.repeat(33) }))[0]).toMatch(/SKUs/)
     expect(problems(updateCombination(table, '1.2', { image: 3 }), 2)[0]).toMatch(/image/)
     expect(problems({ ...table, combinations: [...table.combinations, table.combinations[0]] })[0]).toMatch(/twice/)
-    expect(problems({ ...table, nextOptionId: 3 })[0]).toMatch(/renumbering/)
+    expect(problems({ ...table, nextOptionId: 3 })[0]).toMatch(/numbered incorrectly/)
     const sixAxes = ['A', 'B', 'C', 'D', 'E', 'F'].reduce((t, name) => addAxis(t, name, ['x'], DEFAULTS), emptyVariants())
     expect(problems(sixAxes)[0]).toMatch(/at most 5 option types/)
   })
