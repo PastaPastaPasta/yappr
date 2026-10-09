@@ -13,7 +13,7 @@ import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontArra
 import { LIST_LIMITS, ListLimitError, type ListLimits, assertListLimits, decodeStringList, encodeStringList, uniqueStrings } from '../typed-array-codecs';
 import { identifierToBase58, identifierStringToDocumentBytes } from './sdk-helpers';
 import { itemImageLimit, itemSizeError } from '../storefront/storefront-contract';
-import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionNames, variantProblems } from '../storefront/variant-codec';
+import { decodeVariants, encodeVariants, findCombination, isInStock, priceRange, variantLabel, variantOptionPairs, variantProblems, type VariantOptionPairs } from '../storefront/variant-codec';
 import { decodeLegacyVariants, encodeLegacyVariants } from '../storefront/legacy-variants';
 import type {
   StoreItem,
@@ -357,18 +357,18 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
   /**
    * The combination a cart line names. On v7 its id is enough. v1–v6 number
    * options by position on every read, so once the seller reorders or removes
-   * an option an old id can name a different combination: there the line's
-   * option names (kept exactly when it was added) must agree too, or the line
-   * names nothing.
+   * an option or option type an old id can name a different combination:
+   * there the line's [option type, option] names (kept exactly when it was
+   * added) must agree too, or the line names nothing.
    */
-  getLineCombination(item: StoreItem, line: { variantId?: string; variantOptions?: readonly string[] }): VariantCombination | undefined {
+  getLineCombination(item: StoreItem, line: { variantId?: string; variantOptions?: VariantOptionPairs }): VariantCombination | undefined {
     const combination = this.getCombination(item, line.variantId);
     if (!combination || !item.variants || storefrontVariantsAreTyped()) return combination;
-    return JSON.stringify(line.variantOptions ?? null) === JSON.stringify(variantOptionNames(item.variants, combination)) ? combination : undefined;
+    return JSON.stringify(line.variantOptions ?? null) === JSON.stringify(variantOptionPairs(item.variants, combination)) ? combination : undefined;
   }
 
   /** The SKU of the variant a line names, else the item's own. */
-  getSku(item: StoreItem, line: { variantId?: string; variantOptions?: readonly string[] }): string | undefined {
+  getSku(item: StoreItem, line: { variantId?: string; variantOptions?: VariantOptionPairs }): string | undefined {
     return this.getLineCombination(item, line)?.sku ?? item.sku;
   }
 

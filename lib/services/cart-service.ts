@@ -9,7 +9,7 @@ import { logger } from '@/lib/logger';
 import type { Cart, CartItem, StoreItem } from '../../types';
 import { storeItemService } from './store-item-service';
 import { MAX_LINE_QUANTITY } from './digital-delivery-plan';
-import { combinationImageUrl, variantOptionNames } from '../storefront/variant-codec';
+import { combinationImageUrl, variantOptionPairs, type VariantOptionPairs } from '../storefront/variant-codec';
 import { storefrontVariantsAreTyped } from '../constants';
 import { scopedKey } from '@/lib/storage-scope';
 
@@ -51,7 +51,7 @@ export type CartLineIdentity = Pick<CartItem, 'itemId' | 'variantId' | 'variantO
  * The one key every surface uses for a cart line (adding, stock counts,
  * quantity changes, removal, availability, list keys). On v7 the canonical
  * variant id is stable through renames and reorders, so it is the identity.
- * On v1–v6 ids follow option order, so the exact option names join it.
+ * On v1–v6 ids follow option order, so the [option type, option] names join it.
  */
 export function cartLineKey(line: CartLineIdentity): string {
   return JSON.stringify(storefrontVariantsAreTyped()
@@ -179,7 +179,7 @@ class CartService {
     variantId?: string;
     variantLabel?: string;
     sku?: string;
-    variantOptions?: string[];
+    variantOptions?: VariantOptionPairs;
     quantity: number;
     unitPrice: number;
     imageUrl?: string;
@@ -208,7 +208,7 @@ class CartService {
     return {
       itemId: storeItem.id,
       ...(combination ? { variantId: combination.id } : {}),
-      ...(combination && storeItem.variants ? { variantOptions: variantOptionNames(storeItem.variants, combination) } : {}),
+      ...(combination && storeItem.variants ? { variantOptions: variantOptionPairs(storeItem.variants, combination) } : {}),
     };
   }
 

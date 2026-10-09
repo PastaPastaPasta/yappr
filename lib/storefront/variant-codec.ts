@@ -64,9 +64,20 @@ export function findOption(variants: ItemVariants, optionId: number): { axisInde
   return undefined
 }
 
-/** A combination's option names, in axis order. */
-export function variantOptionNames(variants: ItemVariants, combination: Pick<VariantCombination, 'optionIds'>): string[] {
-  return combination.optionIds.map((optionId) => findOption(variants, optionId)?.option.name ?? '')
+/** A variant spelled out as [option type, option] name pairs, in axis order. */
+export type VariantOptionPairs = [string, string][]
+
+/**
+ * A combination spelled out by name: [option type, option] for each axis, in
+ * axis order. With the option type named, two option types that share option
+ * names (Front and Back, both Red and Blue) cannot be confused, whatever their
+ * order.
+ */
+export function variantOptionPairs(variants: ItemVariants, combination: Pick<VariantCombination, 'optionIds'>): VariantOptionPairs {
+  return combination.optionIds.map((optionId) => {
+    const found = findOption(variants, optionId)
+    return [found ? variants.axes[found.axisIndex].name : '', found?.option.name ?? '']
+  })
 }
 
 /** A combination's name: its option names in axis order ("Red / Single Piece"). */
@@ -94,9 +105,9 @@ export function orderLineVariantLabel(line: { variantLabel?: unknown; variantKey
   return label ? label.slice(0, VARIANT_LABEL_MAX_LENGTH) : undefined
 }
 
-/** An order line's SKU snapshot for the seller, when it is a string (cut to the contract's SKU length). */
+/** An order line's complete SKU snapshot for the seller, when it is a nonempty string. */
 export function orderLineSku(line: { sku?: unknown }): string | undefined {
-  return typeof line.sku === 'string' && line.sku ? line.sku.slice(0, VARIANT_LIMITS.skuLength) : undefined
+  return typeof line.sku === 'string' && line.sku ? line.sku : undefined
 }
 
 /** The combination made of `selection` (one option id per axis, in axis order), if offered. */

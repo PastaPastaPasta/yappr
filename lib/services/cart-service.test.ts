@@ -1,9 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CartItem, ItemVariants, StoreItem } from '@/lib/types'
-import { variantsFromRows, type VariantRow } from '@/lib/storefront/variant-codec'
+import { findCombination, variantsFromRows, type VariantRow } from '@/lib/storefront/variant-codec'
+import { decodeLegacyVariants } from '@/lib/storefront/legacy-variants'
 import { scopedKey } from '@/lib/storage-scope'
 import { storeItemService } from './store-item-service'
 import { cartService, getCartCurrency } from './cart-service'
+
+/** `value`, failing the test when it is missing. */
+function defined<T>(value: T | null | undefined): T {
+  if (value === null || value === undefined) throw new Error('expected a value')
+  return value
+}
 
 /** A one-axis table; option ids run 1, 2, … in row order, so variant ids are '1', '2', … */
 const sizes = (rows: Array<Omit<VariantRow, 'optionNames'> & { name: string }>): ItemVariants =>
@@ -76,9 +83,9 @@ describe('cart inventory', () => {
     // The seller moved Blue first: id '1' is now Blue.
     const moved = product({ basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Blue', price: 200, stock: 1 }, { name: 'Red', price: 100, stock: 1 }]) })
     cartService.addStoreItem(moved, '1')
-    expect(cartService.getItems().map(line => [line.variantId, line.variantOptions, line.quantity])).toEqual([['1', ['Red'], 1], ['1', ['Blue'], 1]])
+    expect(cartService.getItems().map(line => [line.variantId, line.variantOptions, line.quantity])).toEqual([['1', [['Size', 'Red']], 1], ['1', [['Size', 'Blue']], 1]])
     cartService.removeItem(cartService.getItems()[0])
-    expect(cartService.getItems().map(line => line.variantOptions)).toEqual([['Blue']])
+    expect(cartService.getItems().map(line => line.variantOptions)).toEqual([[['Size', 'Blue']]])
   })
 
   it('rejects removed variants, and a variant item named without one, before adding them', () => {
@@ -90,7 +97,7 @@ describe('cart inventory', () => {
 
   it('a line naming a variant of an item that has none is no longer available', async () => {
     respond(product())
-    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: ['S'], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: [['Size', 'S']], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
   })
 
   it('on v1–v6 tells combinations apart by their exact option names, however they read', async () => {
@@ -101,8 +108,8 @@ describe('cart inventory', () => {
     expect(reversed.combinations[0].id).toBe(variants.combinations[0].id)
     respond(product({ stockQuantity: undefined, basePrice: undefined, variants: reversed }))
     const line = { variantId: variants.combinations[0].id, variantLabel: 'A / B / C', quantity: 1 }
-    expect(await cartService.validateItems([cartItem({ ...line, variantOptions: ['A / B', 'C'] })])).toMatchObject([{ reason: 'Selected option is no longer available' }])
-    expect(await cartService.validateItems([cartItem({ ...line, variantOptions: ['A', 'B / C'] })])).toEqual([])
+    expect(await cartService.validateItems([cartItem({ ...line, variantOptions: [['X', 'A / B'], ['Y', 'C']] })])).toMatchObject([{ reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem({ ...line, variantOptions: [['X', 'A'], ['Y', 'B / C']] })])).toEqual([])
     // A line without its names cannot be checked, so it is not trusted.
     expect(await cartService.validateItems([cartItem(line)])).toMatchObject([{ reason: 'Selected option is no longer available' }])
   })
@@ -174,14 +181,32 @@ describe('cart inventory', () => {
 
   it('checks a variant line against that variant\'s stock', async () => {
     respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'S', price: 100, stock: 1 }, { name: 'M', price: 100, stock: 0 }]) }))
-    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: ['S'], quantity: 1 })])).toEqual([])
-    expect(await cartService.validateItems([cartItem({ variantId: '2', variantOptions: ['M'], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Out of stock' }])
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: [['Size', 'S']], quantity: 1 })])).toEqual([])
+    expect(await cartService.validateItems([cartItem({ variantId: '2', variantOptions: [['Size', 'M']], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Out of stock' }])
   })
 
   it('on v1–v6, where ids follow option order, a line whose label no longer matches its id names nothing', async () => {
     // The seller moved M first: id '1' is now M, but the line was added as S.
     respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'M', price: 200 }, { name: 'S', price: 100 }]) }))
-    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: ['S'], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantOptions: [['Size', 'S']], quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
+  })
+
+  it('on v1–v6 tells apart option types that share option names, whatever their order', async () => {
+    // Front=[Red, Blue], Back=[Red, Blue], numbered axis by axis: Front=Red/Back=Blue is id '1.4'.
+    const json = (axes: string[]) => JSON.stringify({
+      axes: axes.map((name) => ({ name, options: ['Red', 'Blue'] })),
+      combinations: [{ key: 'Red|Blue', price: 100 }, { key: 'Blue|Red', price: 200 }],
+    })
+    const table = defined(decodeLegacyVariants(json(['Front', 'Back'])))
+    const line = { variantId: '1.4', variantOptions: [['Front', 'Red'], ['Back', 'Blue']] as [string, string][], quantity: 1 }
+    expect(findCombination(table, '1.4')?.price).toBe(100)
+    // The seller moved Back first; re-read, '1.4' now names Back=Red/Front=Blue, with the same option names.
+    const moved = defined(decodeLegacyVariants(json(['Back', 'Front'])))
+    expect(findCombination(moved, '1.4')?.optionIds).toEqual([1, 4])
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: table }))
+    expect(await cartService.validateItems([cartItem(line)])).toEqual([])
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: moved }))
+    expect(await cartService.validateItems([cartItem(line)])).toMatchObject([{ reason: 'Selected option is no longer available' }])
   })
 
   it('preserves the cart through a failed lookup and permits a successful retry', async () => {
