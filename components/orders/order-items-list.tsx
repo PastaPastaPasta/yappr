@@ -25,15 +25,15 @@ export function OrderItemsList({ items, currency, subtotal, shippingCost, total,
           const variantLabel = orderLineVariantLabel(item)
           const sku = showSku ? orderLineSku(item) : undefined
           return (
-          <div key={idx} className="flex justify-between text-sm">
-            <span>
+          <div key={idx} className="flex justify-between gap-2 text-sm">
+            <span className="min-w-0 break-words">
               {item.itemTitle}
               {variantLabel && <span className="text-gray-500"> ({variantLabel})</span>}
               <span className="text-gray-500"> x{item.quantity}</span>
               {item.fulfillment === 'digital' && <DigitalBadge className="ml-2 align-middle" />}
               {sku && <span className="block text-xs text-gray-400">SKU {sku}</span>}
             </span>
-            <span>{formatPrice(item.unitPrice * item.quantity, currency)}</span>
+            <span className="shrink-0">{formatPrice(item.unitPrice * item.quantity, currency)}</span>
           </div>
           )
         })}

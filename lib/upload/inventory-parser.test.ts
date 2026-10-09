@@ -222,7 +222,7 @@ describe('rows become combinations', () => {
     expect(variants.combinations.map((combination) => combination.stock)).toEqual([4, undefined])
     expect(warnings).toEqual([])
     const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
-    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Shirt', variants }], 'USD')
+    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Shirt', variants }], 'USD').csv
     const [again] = parseInventoryCSV(exported).items
     expect(defined(again.variants).combinations.map((combination) => combination.stock)).toEqual([4, undefined])
   })
@@ -283,7 +283,7 @@ describe('rows become combinations', () => {
     expect(blue.image).toBeUndefined()
     expect(blue.imageUrl).toBe('https://x.test/Blue.jpg')
     const { inventoryToCsv } = await import('@/lib/storefront/inventory-csv')
-    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Toy', imageUrls: item.imageUrls, variants: item.variants }], 'USD')
+    const exported = inventoryToCsv([{ id: 'g', ownerId: 'o', storeId: 's', createdAt: new Date(0), status: 'active', currency: 'USD', title: 'Toy', imageUrls: item.imageUrls, variants: item.variants }], 'USD').csv
     const [again] = parseInventoryCSV(exported).items
     expect(defined(again.variants).combinations.map((combination) => combination.image ?? combination.imageUrl)).toEqual([1, 2, 3, 4, 'https://x.test/Blue.jpg'])
     // v7 names images by index only.
@@ -300,6 +300,17 @@ describe('rows become combinations', () => {
       expect(items).toHaveLength(1)
       expect(items[0].errors.join(' ')).toMatch(/at most 5 option types/)
     }
+  })
+
+  it('reads sparse OptionN numbers as one pair each, in number order, without allocating up to them', () => {
+    const csv = [
+      'Group,Title,Price,Option1000000000 Name,Option1000000000 Value,Option9 Name,Option9 Value',
+      'g,Toy,1.00,Color,Red,Size,S',
+      'g,Toy,1.00,Color,Blue,Size,S',
+    ].join('\n')
+    const { variants, errors } = onlyVariants(csv)
+    expect(errors).toEqual([])
+    expect(axesOf(variants)).toEqual([['Size', ['S']], ['Color', ['Red', 'Blue']]])
   })
 
   it('puts one weight on the product when the rows agree', () => {

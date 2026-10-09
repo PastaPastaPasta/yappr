@@ -39,9 +39,6 @@ export interface CombinationDefaults {
   stock?: number
 }
 
-/** Longest variant name an order or cart line keeps as its snapshot. */
-export const VARIANT_LABEL_MAX_LENGTH = 120
-
 // ---- identity and lookups ---------------------------------------------------
 
 /** The canonical variant id of a combination: its option ids, ascending, dot-joined. */
@@ -87,22 +84,17 @@ export function variantLabel(variants: ItemVariants, combination: Pick<VariantCo
     .join(' / ')
 }
 
-/** {@link variantLabel} cut to what a cart line or order keeps. */
-export function variantLabelSnapshot(variants: ItemVariants, combination: Pick<VariantCombination, 'optionIds'>): string {
-  return variantLabel(variants, combination).slice(0, VARIANT_LABEL_MAX_LENGTH)
-}
-
 /**
- * The variant name an order line shows, read defensively: an order payload is
- * buyer-written JSON, so anything but a string shows nothing. Orders placed
- * before variants had ids (testnet production's) name theirs by its key,
- * "Blue|Large".
+ * The variant name an order line shows, whole (the seller fulfils by it), read
+ * defensively: an order payload is buyer-written JSON, so anything but a
+ * string shows nothing. Orders placed before variants had ids (testnet
+ * production's) name theirs by its key, "Blue|Large".
  */
 export function orderLineVariantLabel(line: { variantLabel?: unknown; variantKey?: unknown }): string | undefined {
   let label: string | undefined
   if (typeof line.variantLabel === 'string') label = line.variantLabel
   else if (typeof line.variantKey === 'string') label = line.variantKey.split('|').join(' / ')
-  return label ? label.slice(0, VARIANT_LABEL_MAX_LENGTH) : undefined
+  return label || undefined
 }
 
 /** An order line's complete SKU snapshot for the seller, when it is a nonempty string. */

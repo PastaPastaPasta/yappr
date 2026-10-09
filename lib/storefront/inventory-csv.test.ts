@@ -40,7 +40,7 @@ function shapeOf(variants: ItemVariants | undefined) {
 
 describe('inventory CSV export', () => {
   it('writes one row per combination with Shopify-style option columns', () => {
-    const [header, first, second] = inventoryToCsv([toy()], 'USD').split('\n')
+    const [header, first, second] = inventoryToCsv([toy()], 'USD').csv.split('\n')
     expect(header).toBe('Group,Title,Description,Section,Category,Subcategory,Tags,SKU,Price,Quantity,Weight,Option1 Name,Option1 Value,Option2 Name,Option2 Value,Image1,Image2,Image3,Image URL')
     expect(first).toBe('toyId,Squishy toy,"Soft, ""squishy"", and')
     expect(second).toBe('washable",,Toys,,"toy, soft",TOY-0-0,1.00,0,120,Primary color,Red,Pack Size,Single Piece,https://x.test/toy.jpg,https://x.test/red.jpg,https://x.test/blue.jpg,https://x.test/red.jpg')
@@ -54,7 +54,7 @@ describe('inventory CSV export', () => {
     })
     const original = [toy(), plain, untracked]
 
-    const result = parseInventoryCSV(inventoryToCsv(original, 'USD'), 'USD')
+    const result = parseInventoryCSV(inventoryToCsv(original, 'USD').csv, 'USD')
     expect(result.errors).toEqual([])
     expect(result.items.flatMap((item) => [...item.errors, ...item.warnings])).toEqual([])
     const [toyBack, mugBack, capBack] = result.items
@@ -70,13 +70,23 @@ describe('inventory CSV export', () => {
     const item = toy()
     const variants = defined(item.variants)
     const first = { ...variants.combinations[0], image: undefined, imageUrl: 'https://x.test/fifth.jpg' }
-    const csv = inventoryToCsv([{ ...item, variants: { ...variants, combinations: [first, ...variants.combinations.slice(1)] } }], 'USD')
+    const csv = inventoryToCsv([{ ...item, variants: { ...variants, combinations: [first, ...variants.combinations.slice(1)] } }], 'USD').csv
     expect(csv).toMatch(/,https:\/\/x\.test\/fifth\.jpg\n/)
   })
 
   it('writes prices in the item currency', () => {
     const coin = storeItem({ id: 'c', title: 'Coin', currency: 'DASH', basePrice: 12345678 })
-    expect(inventoryToCsv([coin], 'USD').split('\n')[1]).toContain(',0.12345678,')
+    expect(inventoryToCsv([coin], 'USD').csv.split('\n')[1]).toContain(',0.12345678,')
+  })
+
+  it('leaves out a listing whose options could not be read, rather than writing it as a free product', () => {
+    // As the item service reads a table it cannot name: no variants, no price, no stock.
+    const unreadable = storeItem({ id: 'u', title: 'Mystery box', unreadableVariants: { axes: ['Color'], selectors: [[new Uint8Array([9])]] } })
+    const { csv, omitted } = inventoryToCsv([toy(), unreadable], 'USD')
+    expect(omitted.map((item) => item.id)).toEqual(['u'])
+    expect(csv).not.toContain('Mystery box')
+    const result = parseInventoryCSV(csv, 'USD')
+    expect(result.items.map((item) => item.title)).toEqual(['Squishy toy'])
   })
 })
 

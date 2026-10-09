@@ -121,7 +121,11 @@ function InventoryPage() {
     }
 
     // One row per combination, in the format the import reads (an upload creates new listings).
-    const csv = inventoryToCsv(items, store?.defaultCurrency || 'USD')
+    const { csv, omitted } = inventoryToCsv(items, store?.defaultCurrency || 'USD')
+    if (omitted.length === items.length) {
+      toast.error("These items' options couldn't be read, so there is nothing to export")
+      return
+    }
 
     // Download
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
@@ -134,7 +138,11 @@ function InventoryPage() {
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
 
-    toast.success('Inventory exported')
+    if (omitted.length > 0) {
+      toast.success(`Inventory exported, except ${omitted.length} item${omitted.length !== 1 ? 's' : ''} whose options couldn't be read`)
+    } else {
+      toast.success('Inventory exported')
+    }
   }, [items, store?.name, store?.defaultCurrency])
 
   const handleUploadComplete = useCallback((addedCount: number) => {

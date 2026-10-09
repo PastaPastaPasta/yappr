@@ -31,6 +31,17 @@ function headerRow(axisCount: number, imageCount: number): string[] {
 
 const text = (value: number | string | undefined) => (value === undefined ? '' : String(value))
 
+/** An inventory export: the CSV text, and the listings it leaves out. */
+export interface InventoryExport {
+  csv: string
+  /**
+   * Listings whose options could not be read (`unreadableVariants`): as rows
+   * they would come back as free, unlimited products without options, so they
+   * are not exported.
+   */
+  omitted: StoreItem[]
+}
+
 /**
  * `items` as an inventory CSV. A product with options is one row per
  * combination (grouped by the listing id), naming each option type and its
@@ -38,7 +49,9 @@ const text = (value: number | string | undefined) => (value === undefined ? '' :
  * `Image URL` is the combination's own image. Prices are written in the
  * item's currency (else `defaultCurrency`), as the seller types them.
  */
-export function inventoryToCsv(items: readonly StoreItem[], defaultCurrency: string): string {
+export function inventoryToCsv(allItems: readonly StoreItem[], defaultCurrency: string): InventoryExport {
+  const omitted = allItems.filter((item) => item.unreadableVariants !== undefined)
+  const items = allItems.filter((item) => item.unreadableVariants === undefined)
   const axisCount = Math.max(0, ...items.map((item) => item.variants?.axes.length ?? 0))
   const imageCount = Math.max(0, ...items.map((item) => item.imageUrls?.length ?? 0))
   const rows: string[][] = [headerRow(axisCount, imageCount)]
@@ -77,7 +90,7 @@ export function inventoryToCsv(items: readonly StoreItem[], defaultCurrency: str
       ])
     }
   }
-  return toCsv(rows)
+  return { csv: toCsv(rows), omitted }
 }
 
 /** A sample file showing every column: a product with two option types and a single product. */

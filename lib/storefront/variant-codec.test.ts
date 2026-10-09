@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ItemVariants } from '@/lib/types'
 import {
   addAxis, addOption, clampImages, combinationForSelection, combinationImageUrl, decodeVariants, emptyVariants, encodeVariants,
-  findCombination, missingCombinations, moveAxis, moveOption, optionIdsLeft, priceRange, removeAxis, removeCombination, removeOption, renameAxis,
+  findCombination, missingCombinations, moveAxis, moveOption, optionIdsLeft, orderLineVariantLabel, priceRange, removeAxis, removeCombination, removeOption, renameAxis,
   renameOption, restoreCombinations, selectableOptionIds, setStockTracking, tracksStock, updateCombination,
   updateCombinations, variantIdOf, variantLabel, variantProblems, variantsFromRows, type VariantRow,
 } from './variant-codec'
@@ -70,6 +70,14 @@ describe('variant identity', () => {
     expect(findCombination(table, '1.3')?.optionIds).toEqual([3, 1])
     expect(variantLabel(table, defined(findCombination(table, '1.3')))).toBe('L / Crimson')
     expect(variantProblems(table, { imageCount: 0 })).toEqual([])
+  })
+
+  it('shows an order line its whole variant name, however long, and nothing for a non-string', () => {
+    const long = ['a'.repeat(40), 'b'.repeat(40), 'c'.repeat(40), 'Size L'].join(' / ')
+    expect(orderLineVariantLabel({ variantLabel: long })).toBe(long)
+    expect(orderLineVariantLabel({ variantKey: `${'x'.repeat(130)}|Large` })).toBe(`${'x'.repeat(130)} / Large`)
+    expect(orderLineVariantLabel({ variantLabel: 7 })).toBeUndefined()
+    expect(orderLineVariantLabel({ variantLabel: '' })).toBeUndefined()
   })
 })
 

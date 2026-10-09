@@ -115,15 +115,17 @@ const AXIS_NAME_OF_HEADER: Record<string, string> = { color: 'Color', colour: 'C
 
 const SHOPIFY_OPTION_HEADER = /^option[\s_]*([1-9]\d*)[\s_]*(name|value)$/
 const IMAGE_HEADER = /^(?:image|img|picture|photo)[\s_]*(\d{1,2})$/
-/** How many `OptionN` column pairs the file has (every one is read; more than 5 option types is reported, not cut). */
-const optionColumnCount = (columns: ColumnMap) => Math.max(columns.optionNames.length, columns.optionValues.length)
 
 interface ColumnMap {
   fields: Partial<Record<Column, number>>
   /** Header text of the variant / subVariant columns, for naming their axes. */
   headers: Partial<Record<Column, string>>
-  optionNames: (number | undefined)[]
-  optionValues: (number | undefined)[]
+  /**
+   * The file's `OptionN Name` / `OptionN Value` column pairs, in N order and
+   * packed (N only orders them, so a sparse "Option1000000000" is one pair).
+   * Every pair is read; more than 5 option types is reported, not cut.
+   */
+  options: { name?: number; value?: number }[]
   /** Item image columns, in their number order. */
   images: number[]
 }
@@ -198,17 +200,20 @@ function parseCSV(content: string): string[][] {
  * Map CSV headers to column indices
  */
 function mapHeaders(headers: string[]): ColumnMap {
-  const map: ColumnMap = { fields: {}, headers: {}, optionNames: [], optionValues: [], images: [] }
+  const map: ColumnMap = { fields: {}, headers: {}, options: [], images: [] }
   const imageColumns: { number: number; index: number }[] = []
+  const optionColumns = new Map<string, { name?: number; value?: number }>()
 
   for (let i = 0; i < headers.length; i++) {
     const header = normalizeHeader(headers[i])
 
     const option = SHOPIFY_OPTION_HEADER.exec(header)
     if (option) {
-      const list = option[2] === 'name' ? map.optionNames : map.optionValues
-      const slot = Number(option[1]) - 1
-      if (list[slot] === undefined) list[slot] = i
+      // Keyed by the number's digits, which also orders them (shorter is smaller).
+      const pair = optionColumns.get(option[1]) ?? {}
+      const kind = option[2] === 'name' ? 'name' : 'value'
+      if (pair[kind] === undefined) pair[kind] = i
+      optionColumns.set(option[1], pair)
       continue
     }
     const image = IMAGE_HEADER.exec(header)
@@ -226,6 +231,9 @@ function mapHeaders(headers: string[]): ColumnMap {
   }
 
   map.images = imageColumns.sort((a, b) => a.number - b.number).map((column) => column.index)
+  map.options = [...optionColumns]
+    .sort(([a], [b]) => a.length - b.length || (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, pair]) => pair)
   return map
 }
 
@@ -519,7 +527,7 @@ interface AxisPlan {
  * is a single product without options.
  */
 function planAxes(rows: ParsedInventoryRow[], columns: ColumnMap, title: string): AxisPlan | null {
-  const shopifySlots = Array.from({ length: optionColumnCount(columns) }, (_, slot) => slot)
+  const shopifySlots = columns.options.map((_, slot) => slot)
     .filter((slot) => rows.some((row) => row.options[slot]?.value))
   if (shopifySlots.length > 0) {
     // Shopify writes a product without options as Title: "Default Title".
@@ -786,9 +794,9 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     const shippingCostStr = getValue('shippingCost')
     const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, currency) : undefined
 
-    const options = Array.from({ length: optionColumnCount(columns) }, (_, slot) => ({
-      name: cell(columns.optionNames[slot]) || undefined,
-      value: cell(columns.optionValues[slot]) || undefined,
+    const options = columns.options.map((pair) => ({
+      name: cell(pair.name) || undefined,
+      value: cell(pair.value) || undefined,
     }))
 
     parsedRows.push({

@@ -10,7 +10,7 @@ import { bytesEqual } from '../bytes'
 import { DELIVERY_CIPHERTEXT_OVERHEAD, KIT_CIPHERTEXT_OVERHEAD } from '../crypto/digital-delivery'
 import { storefrontVariantsAreTyped } from '../constants'
 import { DIGITAL_PAYLOAD_MAX_BYTES, VARIANT_LIMITS } from '../storefront/storefront-contract'
-import { findCombination, findOption, variantLabelSnapshot } from '../storefront/variant-codec'
+import { findCombination, findOption, variantLabel } from '../storefront/variant-codec'
 import type {
   DeliverWhen,
   OrderDelivery,
@@ -213,7 +213,7 @@ export function planDelivery(
     }
     const variants = listings.get(line.itemId)?.variants
     const combination = findCombination(variants, line.variantId)
-    const label = line.variantLabel || (variants && combination ? variantLabelSnapshot(variants, combination) : undefined)
+    const label = line.variantLabel || (variants && combination ? variantLabel(variants, combination) : undefined)
     const item: DeliveredItem = {
       itemId: line.itemId,
       itemTitle: line.itemTitle,
