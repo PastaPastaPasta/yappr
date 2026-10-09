@@ -33,7 +33,7 @@ import { GroupInfoScreen } from './GroupInfoScreen';
 import { MessageSettingsScreen } from './MessageSettingsScreen';
 import { NewGroupScreen } from './NewGroupScreen';
 import { NewMessageScreen } from './NewMessageScreen';
-import { UNAVAILABLE_MESSAGE, useMessagesBadge } from './dm-data';
+import { UNAVAILABLE_MESSAGE, useMessagesBadge, usePeople } from './dm-data';
 import { ARCHIVE_UNDO_MS, archiveConversation } from './dm-actions';
 import { resetKeyResends } from './group-keys';
 import { forgetDmDrafts, useDraft, useDrafts } from './drafts';
@@ -1351,6 +1351,57 @@ describe('queryKeys.dm', () => {
   it('nests every DM query under one prefix', () => {
     expect(queryKeys.dm.messages('k').slice(0, 3)).toEqual(queryKeys.dm.all);
     expect(queryKeys.dm.people(['a', 'b']).slice(0, 3)).toEqual(queryKeys.dm.all);
+    expect(queryKeys.dm.people(['a', 'b']).slice(0, 4)).toEqual(queryKeys.dm.peopleAll);
+  });
+});
+
+describe('usePeople (group sender names)', () => {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+  const CAROL_ID = 'CarolId11111111111111111111111111111111111111';
+  const person = (id: string, displayName: string, resolved: boolean) => ({
+    id,
+    username: displayName.toLowerCase(),
+    displayName,
+    avatar: { uri: null, dicebear: null },
+    resolved,
+  });
+  const nameOf = (ids: string[], id: string) => {
+    const { result, unmount } = renderHook(() => usePeople(ids), { wrapper });
+    return { name: () => result.current.byId.get(id)?.displayName, unmount };
+  };
+
+  it('shows a fallback name once, reads it again next time, and keeps a loaded name over a later fallback (QA rc17 D-010)', async () => {
+    const batch = fakeEngine.method('profiles.batch');
+    // The profile read failed: the handle stands in for the display name.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'bob', false)]);
+    const first = nameOf([BOB_ID], BOB_ID);
+    await act(async () => {});
+    expect(first.name()).toBe('bob');
+    first.unmount();
+
+    // Not kept as final: the next screen reads Bob again and gets his name.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'Bob Builder', true)]);
+    const second = nameOf([BOB_ID], BOB_ID);
+    await act(async () => {});
+    expect(second.name()).toBe('Bob Builder');
+    second.unmount();
+    expect(batch).toHaveBeenCalledTimes(2);
+
+    // Loaded, it is kept: no read on the next screen.
+    const third = nameOf([BOB_ID], BOB_ID);
+    await act(async () => {});
+    expect(third.name()).toBe('Bob Builder');
+    third.unmount();
+    expect(batch).toHaveBeenCalledTimes(2);
+
+    // Another group's read falls back for Bob: the name loaded earlier stays.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'bob', false), person(CAROL_ID, 'Carol', true)]);
+    const group = nameOf([BOB_ID, CAROL_ID], BOB_ID);
+    await act(async () => {});
+    expect(group.name()).toBe('Bob Builder');
+    group.unmount();
   });
 });
 
