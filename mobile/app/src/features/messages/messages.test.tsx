@@ -1642,6 +1642,15 @@ describe('usePeople (group sender names)', () => {
     await act(async () => {});
     expect(group.name()).toBe('Bob Builder');
     group.unmount();
+    expect(batch).toHaveBeenCalledTimes(3);
+
+    // The kept name still counts as a failed read: reopening the group reads again, and uses what it gets.
+    batch.mockResolvedValueOnce([person(BOB_ID, 'Robert Builder', true), person(CAROL_ID, 'Carol', true)]);
+    const reopened = nameOf([BOB_ID, CAROL_ID], BOB_ID);
+    await act(async () => {});
+    expect(batch).toHaveBeenCalledTimes(4);
+    expect(reopened.name()).toBe('Robert Builder');
+    reopened.unmount();
   });
 });
 

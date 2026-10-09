@@ -61,14 +61,20 @@ async function searchPeople(api: EngineRemote, q: string): Promise<UserSummaryDT
 /**
  * The identity a pasted id names. `profiles.batch` answers for any id, so a
  * row with no name, profile name or bio (a mistyped id, or an identity with
- * nothing to show) is left out. A failed read finds no one, with its error.
+ * nothing to show) is left out. A failed read finds no one, with its error:
+ * one that rejects, or a row whose name or profile read failed
+ * (`resolved: false`) with nothing to show, which `profiles.batch` answers
+ * rather than rejecting.
  */
 async function findById(api: EngineRemote, id: string): Promise<{ users: UserSummaryDTO[]; error?: unknown }> {
   try {
-    const users = await api.profiles.batch([id]);
-    return {
-      users: users.filter((user) => user.username !== null || user.bio || user.displayName !== `User ${id.slice(-6)}`),
-    };
+    const rows = await api.profiles.batch([id]);
+    const users = rows.filter((user) => user.username !== null || user.bio || user.displayName !== `User ${id.slice(-6)}`);
+    if (users.length === 0 && rows.some((user) => !user.resolved)) {
+      appendLog('warn', 'host', 'Identity lookup failed: its name or profile could not be read');
+      return { users, error: Object.assign(new Error('Identity lookup failed'), { code: 'UNAVAILABLE' }) };
+    }
+    return { users };
   } catch (error) {
     appendLog('warn', 'host', `Identity lookup failed: ${errorMessage(error)}`);
     return { users: [], error };

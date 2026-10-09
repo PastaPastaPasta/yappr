@@ -496,6 +496,21 @@ describe('Search', () => {
     expect(screen.queryByTestId('search-no-results')).toBeNull();
   });
 
+  it('offers a retry when a pasted id finds no one because its name and profile reads failed', async () => {
+    const id = AUTHORS.carol.id.padEnd(44, 'x').slice(0, 44).replace(/[0OIl]/g, 'x');
+    fakeEngine.method('explore.searchUsers').mockResolvedValue([]);
+    fakeEngine.method('explore.searchHashtags').mockResolvedValue([]);
+    fakeEngine.method('explore.searchPosts').mockResolvedValue([]);
+    // profiles.batch answers a failed read with a fallback row rather than rejecting.
+    const fallback = { ...user('carol', { username: null }), id, displayName: `User ${id.slice(-6)}`, bio: '', resolved: false };
+    fakeEngine.method('profiles.batch').mockResolvedValue([fallback]);
+    await renderAt(`/explore/search?q=${id}`);
+    await settle();
+
+    expect(screen.getByTestId('search-retry-people')).toBeTruthy();
+    expect(screen.queryByTestId('search-no-results')).toBeNull();
+  });
+
   it('shows See all people failing as a failure, not as no results', async () => {
     fakeEngine.method('explore.searchUsers').mockRejectedValueOnce(timedOut()).mockResolvedValue([user('bob')]);
     await renderAt('/explore/search/people?q=bob');
