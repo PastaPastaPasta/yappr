@@ -621,15 +621,26 @@ const safeUrl = (value: unknown): string | undefined =>
   typeof value === 'string' && isSafeDeliveryUrl(value) ? value : undefined
 
 /** An asset's target: whole option ids from 1 to 254, each once; absent when none is valid. */
-function parseOptionIds(value: unknown): { optionIds?: number[] } {
-  if (!Array.isArray(value)) return {}
-  const ids = value.filter((id): id is number => Number.isInteger(id) && id >= 1 && id <= VARIANT_LIMITS.maxOptionId)
-  return ids.length > 0 ? { optionIds: [...new Set(ids)] } : {}
+/**
+ * An asset limited to variants this client cannot read (a target written by an
+ * older client, or ids that are not option ids) matches NO variant rather than
+ * every one: a file meant for one variant must never reach the buyers of the
+ * others. Option id 0 never occurs, so the editor shows it as a removed option
+ * the seller can clear.
+ */
+const UNREADABLE_TARGET = { optionIds: [0] }
+
+function parseOptionIds(asset: Record<string, unknown>): { optionIds?: number[] } {
+  if (asset.optionIds === undefined) return asset.variantKey === undefined ? {} : UNREADABLE_TARGET
+  if (!Array.isArray(asset.optionIds)) return UNREADABLE_TARGET
+  const ids = asset.optionIds.filter((id): id is number => Number.isInteger(id) && id >= 1 && id <= VARIANT_LIMITS.maxOptionId)
+  if (ids.length === 0) return asset.optionIds.length === 0 ? {} : UNREADABLE_TARGET
+  return { optionIds: [...new Set(ids)] }
 }
 
 function parseAsset(value: unknown): DigitalAsset | null {
   if (!isRecord(value)) return null
-  const variant = parseOptionIds(value.optionIds)
+  const variant = parseOptionIds(value)
   const code = optionalString(value.code)
   if (value.kind === 'file') {
     // A file is fetched and decrypted here, which a magnet link cannot be.

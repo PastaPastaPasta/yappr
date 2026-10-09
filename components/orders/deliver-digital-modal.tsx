@@ -12,6 +12,7 @@ import { DigitalAssetListEditor } from '@/components/digital'
 import { fulfillOrder, fulfillmentErrorText, KeyRecoveryError, loggableFulfillmentError, type FulfillOrderResult } from '@/lib/services/digital-fulfillment'
 import { coverageChanged, deliveredFor, deliveryCompletesOrder, digitalLines, isDigitalOnly, lineCoverage, lineProblems, MAX_DELIVERY_MESSAGE_LENGTH, planBlockers, planDelivery, wholeOrderProblems, withHeldDeliveries, type ItemListing, type LineCoverage } from '@/lib/services/digital-delivery-plan'
 import type { SellerKit } from '@/lib/services/item-deliverable-service'
+import { orderLineVariantLabel } from '@/lib/storefront/variant-codec'
 import type { DigitalAsset, ItemDeliverablePayload, OrderDelivery, OrderItem, OrderPayload, StoreOrder } from '@/lib/types'
 
 interface DeliverDigitalModalProps {
@@ -261,7 +262,7 @@ export function DeliverDigitalModal({
                 )}
                 <span>
                   {line.itemTitle}
-                  {line.variantLabel && <span className="text-gray-500 font-normal"> ({line.variantLabel})</span>}
+                  {orderLineVariantLabel(line) && <span className="text-gray-500 font-normal"> ({orderLineVariantLabel(line)})</span>}
                   <span className="text-gray-500 font-normal"> ×{line.quantity}</span>
                   {coverage[index].confirmed
                     ? <span className="ml-2 text-xs font-normal text-green-700 dark:text-green-300">Sent before</span>

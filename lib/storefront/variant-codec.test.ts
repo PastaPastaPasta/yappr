@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ItemVariants } from '@/lib/types'
 import {
   addAxis, addOption, clampImages, combinationForSelection, combinationImageUrl, decodeVariants, emptyVariants, encodeVariants,
-  findCombination, missingCombinations, moveAxis, moveOption, priceRange, removeAxis, removeCombination, removeOption, renameAxis,
+  findCombination, missingCombinations, moveAxis, moveOption, optionIdsLeft, priceRange, removeAxis, removeCombination, removeOption, renameAxis,
   renameOption, renumberOptions, restoreCombinations, selectableOptionIds, setStockTracking, tracksStock, updateCombination,
   updateCombinations, variantIdOf, variantLabel, variantProblems, variantsFromRows, type VariantRow,
 } from './variant-codec'
@@ -188,12 +188,15 @@ describe('editing', () => {
     expect(tracksStock(setStockTracking(table, false))).toBe(false)
   })
 
-  it('renumbers when the ids run out', () => {
+  it('never reuses or silently renumbers ids; renumbering is explicit', () => {
     const table = { ...shirt(), nextOptionId: VARIANT_LIMITS.maxOptionId }
-    const grown = addOption(addOption(table, 1, 'M', DEFAULTS), 1, 'XL', DEFAULTS)
-    expect(grown.axes.flatMap((axis) => axis.options.map((option) => option.id))).toEqual([1, 2, 3, 4, 5, 6])
-    expect(grown.nextOptionId).toBe(7)
+    expect(optionIdsLeft(table)).toBe(1)
+    const grown = addOption(table, 1, 'M', DEFAULTS)
+    expect(grown.axes[1].options.map((option) => option.id)).toEqual([2, 3, 254])
+    expect(optionIdsLeft(grown)).toBe(0)
     expect(variantProblems(grown, { imageCount: 0 })).toEqual([])
+    expect(() => addOption(grown, 1, 'XL', DEFAULTS)).toThrow(/renumber/)
+    expect(optionIdsLeft(renumberOptions(grown))).toBe(249)
     // Display order: Red, Blue, S, L become 1–4, and every combination follows.
     const renumbered = renumberOptions(shirt())
     expect(renumbered.axes.map((axis) => axis.options.map((option) => option.id))).toEqual([[1, 2], [3, 4]])
@@ -255,6 +258,12 @@ describe('validation', () => {
     expect(variantProblems(table, { imageCount: 0, legacy: true })).toEqual([])
     expect(variantProblems(renameOption(table, 1, 'Red|Pink'), { imageCount: 0, legacy: true })[0]).toMatch(/cannot contain/)
     expect(variantProblems(updateCombination(table, '1.2', { weight: 5 }), { imageCount: 0, legacy: true })[0]).toMatch(/weights/)
+  })
+
+  it('keeps a v1–v6 listing editable past the v7 caps (long SKUs and compound option names the old import wrote)', () => {
+    const compound = renameOption(updateCombination(shirt(), '1.2', { sku: 'S'.repeat(37) }), 1, 'Primary color: Red · Pack Size: Single Piece')
+    expect(variantProblems(compound, { imageCount: 0, legacy: true })).toEqual([])
+    expect(variantProblems(compound, { imageCount: 0 })).toHaveLength(2)
   })
 })
 

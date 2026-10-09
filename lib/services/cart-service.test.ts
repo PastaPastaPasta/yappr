@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CartItem, ItemVariants, StoreItem } from '@/lib/types'
 import { variantsFromRows, type VariantRow } from '@/lib/storefront/variant-codec'
+import { scopedKey } from '@/lib/storage-scope'
 import { storeItemService } from './store-item-service'
 import { cartService, getCartCurrency } from './cart-service'
 
@@ -67,6 +68,14 @@ describe('cart inventory', () => {
     expect(cartService.getItems()).toHaveLength(0)
   })
 
+  it('drops lines saved before variants had ids, and keeps the rest', async () => {
+    const lines = [cartItem(), { ...cartItem({ itemId: 'old' }), variantKey: 'Blue|L' }, cartItem({ itemId: 'v', variantId: '1', variantLabel: 'S' })]
+    localStorage.setItem(scopedKey('yappr_cart'), JSON.stringify({ items: lines, updatedAt: 0 }))
+    vi.resetModules()
+    const { cartService: reloaded } = await import('./cart-service')
+    expect(reloaded.getItems().map(line => line.itemId)).toEqual(['item', 'v'])
+  })
+
   it('weighs each shipped line by its variant, else by its item', async () => {
     const item = product({ weight: 500, basePrice: undefined, stockQuantity: undefined, variants: sizes([{ name: 'Single', price: 100 }, { name: '4-pack', price: 353, weight: 1800 }]) })
     vi.spyOn(storeItemService, 'get').mockResolvedValue(item)
@@ -106,8 +115,14 @@ describe('cart inventory', () => {
 
   it('checks a variant line against that variant\'s stock', async () => {
     respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'S', price: 100, stock: 1 }, { name: 'M', price: 100, stock: 0 }]) }))
-    expect(await cartService.validateItems([cartItem({ variantId: '1', quantity: 1 })])).toEqual([])
-    expect(await cartService.validateItems([cartItem({ variantId: '2', quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Out of stock' }])
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantLabel: 'S', quantity: 1 })])).toEqual([])
+    expect(await cartService.validateItems([cartItem({ variantId: '2', variantLabel: 'M', quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Out of stock' }])
+  })
+
+  it('on v1–v6, where ids follow option order, a line whose label no longer matches its id names nothing', async () => {
+    // The seller moved M first: id '1' is now M, but the line was added as S.
+    respond(product({ stockQuantity: undefined, basePrice: undefined, variants: sizes([{ name: 'M', price: 200 }, { name: 'S', price: 100 }]) }))
+    expect(await cartService.validateItems([cartItem({ variantId: '1', variantLabel: 'S', quantity: 1 })])).toMatchObject([{ maxQuantity: 0, reason: 'Selected option is no longer available' }])
   })
 
   it('preserves the cart through a failed lookup and permits a successful retry', async () => {

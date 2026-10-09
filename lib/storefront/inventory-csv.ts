@@ -1,8 +1,10 @@
 /**
  * The inventory CSV the seller downloads: one row per combination, with
- * Shopify-style option columns, so an exported file uploads again
- * (lib/upload/inventory-parser.ts) to the same products. Also the blank
- * template and the one-line summary of a product's option types. Pure.
+ * Shopify-style option columns, in the format the import reads
+ * (lib/upload/inventory-parser.ts), so a file parses back to the same option
+ * types, options and combinations. Uploading it creates NEW listings (the
+ * import never edits existing ones). Also the blank template and the one-line
+ * summary of a product's option types. Pure.
  */
 import type { ItemVariants, StoreItem } from '@/lib/types'
 import { fromSmallestUnit, getCurrencyDecimals } from '@/lib/utils/format'
@@ -56,7 +58,14 @@ export function inventoryToCsv(items: readonly StoreItem[], defaultCurrency: str
       ])
       continue
     }
-    for (const [index, combination] of variants.combinations.entries()) {
+    // Rows in the options' display order, so an upload (which numbers options in
+    // the order rows first name them) keeps the seller's order.
+    const position = new Map(variants.axes.flatMap((axis) => axis.options.map((option, index) => [option.id, index] as const)))
+    const ordered = [...variants.combinations].sort((a, b) => {
+      const axis = a.optionIds.findIndex((optionId, axisIndex) => optionId !== b.optionIds[axisIndex])
+      return axis < 0 ? 0 : (position.get(a.optionIds[axis]) ?? 0) - (position.get(b.optionIds[axis]) ?? 0)
+    })
+    for (const [index, combination] of ordered.entries()) {
       const options = Array.from({ length: axisCount }, (_, axisIndex) => {
         const axis = variants.axes[axisIndex]
         const optionId = combination.optionIds[axisIndex]

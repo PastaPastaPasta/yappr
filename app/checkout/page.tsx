@@ -793,7 +793,9 @@ function CheckoutPage() {
         currency,
         notes || undefined,
         refundAddress || undefined,
-        await readListings(cartItems.map((item) => item.itemId))
+        // The snapshot the size check before payment judged: a fresh read here
+        // could add SKUs the paid-for order no longer has room for.
+        listings
       )
 
       // Add txid if provided

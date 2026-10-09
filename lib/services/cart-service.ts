@@ -68,7 +68,10 @@ class CartService {
       if (stored) {
         const parsed = JSON.parse(stored);
         this.cart = {
-          items: parsed.items || [],
+          // A line saved before variants had ids names its variant by a key no
+          // listing answers to any more; it could never check out, so it goes.
+          items: (parsed.items || []).filter((line: Partial<CartItem> & { variantKey?: unknown }) =>
+            line.variantKey === undefined || typeof line.variantId === 'string'),
           updatedAt: new Date(parsed.updatedAt)
         };
       } else {
@@ -332,7 +335,7 @@ class CartService {
         if (!item || item.status !== 'active') {
           return { item: cartItem, maxQuantity: 0, reason: 'Item is no longer available' };
         }
-        if (item.variants && !storeItemService.getCombination(item, cartItem.variantId)) {
+        if (item.variants && !storeItemService.getLineCombination(item, cartItem)) {
           return { item: cartItem, maxQuantity: 0, reason: 'Selected option is no longer available' };
         }
         const synced = withFulfillment(cartItem, item.fulfillment === 'digital' ? 'digital' : undefined);

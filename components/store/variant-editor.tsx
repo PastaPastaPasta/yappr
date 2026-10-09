@@ -7,8 +7,8 @@ import { IpfsImage } from '@/components/ui/ipfs-image'
 import type { ItemVariants, VariantAxis, VariantCombination } from '@/lib/types'
 import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import {
-  addAxis, addOption, moveAxis, moveOption, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
-  restoreCombinations, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
+  addAxis, addOption, moveAxis, moveOption, optionIdsLeft, removeAxis, removeCombination, removeOption, renameAxis, renameOption,
+  renumberOptions, restoreCombinations, setStockTracking, tracksStock, updateCombination, updateCombinations, variantLabel,
   type CombinationDefaults,
 } from '@/lib/storefront/variant-codec'
 import {
@@ -76,6 +76,10 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   const trackStock = variants.combinations.length > 0 ? tracksStock(variants) : trackWhenEmpty
   const defaults: CombinationDefaults = trackStock ? { price: defaultPrice, stock: 0 } : { price: defaultPrice }
   const [notice, setNotice] = useState<string | null>(null)
+  /** What an edit changed beyond what the seller typed (shown, not an error). */
+  const [info, setInfo] = useState<string | null>(null)
+  // Option ids are never reused; once they run out the seller chooses to renumber.
+  const [offerRenumber, setOfferRenumber] = useState(false)
 
   const [newAxisName, setNewAxisName] = useState('')
   const [newAxisOptions, setNewAxisOptions] = useState('')
@@ -83,14 +87,42 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
   const [bulkPrice, setBulkPrice] = useState('')
   const [bulkStock, setBulkStock] = useState('')
 
-  /** Apply an edit unless it makes the table larger than a product may be. */
-  const apply = (next: ItemVariants) => {
+  /** Apply an edit unless it makes the table larger than a product may be; whether it was applied. */
+  const apply = (next: ItemVariants): boolean => {
     const problem = variantGrowthProblem(next)
     if (problem) {
       setNotice(problem)
-      return
+      return false
     }
     setNotice(null)
+    setInfo(null)
+    onChange(next)
+    return true
+  }
+
+  /** Add `count` options through `add`, unless the product has no option numbers left for them. */
+  const addOptions = (count: number, add: () => ItemVariants): boolean => {
+    if (count > optionIdsLeft(variants)) {
+      setNotice('This product has used all its option numbers. Renumber the options to add more.')
+      setOfferRenumber(true)
+      return false
+    }
+    return apply(add())
+  }
+
+  const handleRenumber = () => {
+    onChange(renumberOptions(variants))
+    setOfferRenumber(false)
+    setNotice(null)
+    setInfo('Options renumbered. Shoppers who already have one of these options in their cart will need to choose it again.')
+  }
+
+  const handleRemoveAxis = (axisIndex: number) => {
+    const next = removeAxis(variants, axisIndex)
+    setNotice(null)
+    setInfo(next.axes.length > 0 && next.combinations.length < variants.combinations.length
+      ? `Combinations that differed only by ${variants.axes[axisIndex].name} were merged, each keeping the first one's price, stock and SKU. Check them below.`
+      : null)
     onChange(next)
   }
 
@@ -103,7 +135,10 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
       setNotice(`There is already an option type called "${name}".`)
       return
     }
-    apply(addAxis(variants, name, names, defaults))
+    if (!addOptions(names.length, () => addAxis(variants, name, names, defaults))) return
+    if (names.length > 1 && variants.combinations.length > 0) {
+      setInfo(`Each combination now comes in every ${name}. Their prices were kept; set their stock and SKUs below.`)
+    }
     setNewAxisName('')
     setNewAxisOptions('')
   }
@@ -151,8 +186,8 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
           disabled={disabled}
           onRename={(name) => onChange(renameAxis(variants, axisIndex, name))}
           onMove={(to) => onChange(moveAxis(variants, axisIndex, to))}
-          onRemove={() => onChange(removeAxis(variants, axisIndex))}
-          onAddOptions={(names) => apply(names.reduce((next, name) => addOption(next, axisIndex, name, defaults), variants))}
+          onRemove={() => handleRemoveAxis(axisIndex)}
+          onAddOptions={(names) => addOptions(names.length, () => names.reduce((next, name) => addOption(next, axisIndex, name, defaults), variants))}
           onRenameOption={(optionId, name) => onChange(renameOption(variants, optionId, name))}
           onMoveOption={(optionId, offset) => onChange(moveOption(variants, optionId, offset))}
           onRemoveOption={(optionId) => onChange(removeOption(variants, optionId))}
@@ -202,7 +237,17 @@ export function VariantEditor({ variants, onChange, currency, defaultPrice, imag
         <p className="text-sm text-gray-500">A product can have up to {VARIANT_LIMITS.axes} option types.</p>
       )}
 
-      {notice && <p role="alert" className="text-sm text-red-600 dark:text-red-400">{notice}</p>}
+      {notice && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-600 dark:text-red-400">
+          <p>{notice}</p>
+          {offerRenumber && (
+            <Button type="button" variant="outline" size="sm" onClick={handleRenumber} disabled={disabled}>
+              Renumber options
+            </Button>
+          )}
+        </div>
+      )}
+      {info && <p role="status" className="text-sm text-gray-600 dark:text-gray-400">{info}</p>}
 
       {variants.axes.length > 0 && (
         <label className="flex items-center gap-3 cursor-pointer">

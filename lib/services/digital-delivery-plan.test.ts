@@ -497,7 +497,7 @@ describe('wire format', () => {
     expect(decodeDelivery(encodeDelivery(delivery))).toEqual(delivery)
   })
 
-  it('keeps only whole option ids from 1 to 254 in a target, each once', () => {
+  it('keeps only whole option ids from 1 to 254 in a target, each once; an unreadable target matches no variant', () => {
     const decoded = decodeKit(new TextEncoder().encode(JSON.stringify({
       v: 1,
       deliverWhen: 'on_order',
@@ -505,13 +505,19 @@ describe('wire format', () => {
         { kind: 'code', label: 'A', code: 'A', optionIds: [3, 0, 255, 1.5, '4', 3, 254] },
         { kind: 'code', label: 'B', code: 'B', optionIds: [0, 'x'] },
         { kind: 'code', label: 'C', code: 'C', optionIds: 'nope', variantKey: 'Gold' },
+        { kind: 'code', label: 'D', code: 'D', variantKey: 'Gold' },
+        { kind: 'code', label: 'E', code: 'E', optionIds: [] },
       ],
     })))
     expect(decoded.assets).toEqual([
       { kind: 'code', label: 'A', code: 'A', optionIds: [3, 254] },
-      { kind: 'code', label: 'B', code: 'B' },
-      { kind: 'code', label: 'C', code: 'C' },
+      // Written for some variants, but not in a way this client reads: never sent to every buyer.
+      { kind: 'code', label: 'B', code: 'B', optionIds: [0] },
+      { kind: 'code', label: 'C', code: 'C', optionIds: [0] },
+      { kind: 'code', label: 'D', code: 'D', optionIds: [0] },
+      { kind: 'code', label: 'E', code: 'E' },
     ])
+    expect(assetsForVariant(decoded.assets, [3, 254]).map((asset) => (asset.kind === 'code' ? asset.label : ''))).toEqual(['A', 'E'])
   })
 
   it('reads a receipt\'s variant id only when it is a short canonical one', () => {

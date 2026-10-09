@@ -120,7 +120,7 @@ function InventoryPage() {
       return
     }
 
-    // One row per combination; the file uploads again to the same products.
+    // One row per combination, in the format the import reads (an upload creates new listings).
     const csv = inventoryToCsv(items, store?.defaultCurrency || 'USD')
 
     // Download

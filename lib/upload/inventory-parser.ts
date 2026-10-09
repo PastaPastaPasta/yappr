@@ -241,7 +241,8 @@ function parsePrice(value: string, currency: string): number | null {
   if (isNaN(num)) return null
 
   const amount = toSmallestUnit(num, currency)
-  return Number.isSafeInteger(amount) ? amount : null
+  // The contract stores prices as non-negative integers up to 2^53-1.
+  return Number.isSafeInteger(amount) && amount >= 0 ? amount : null
 }
 
 /**
@@ -667,7 +668,8 @@ function buildItem(groupId: string | undefined, rows: ParsedInventoryRow[], colu
   const variantRows: VariantRow[] = rows.map((row, index) => {
     const imageIndex = imageUrls.indexOf(ownImage(row) ?? '') + 1
     return {
-      optionNames: plan.rowOptions[index],
+      // The v1–v6 JSON keys a combination by its option names joined with "|".
+      optionNames: storefrontVariantsAreTyped() ? plan.rowOptions[index] : plan.rowOptions[index].map((name) => name.replace(/\|/g, '/')),
       price: row.price,
       stock: rowStock(row, tracked),
       sku: row.sku ? fitSku(row.sku) : undefined,
@@ -770,7 +772,9 @@ export function parseInventoryCSV(content: string, currency = 'USD'): InventoryP
     const imageUrls = columns.images.map((index) => imageUrlOf(cell(index))).filter((url): url is string => url !== undefined)
 
     const weightStr = getValue('weight')
-    const weight = weightStr ? parseFloat(weightStr.replace(/[^\d.]/g, '')) : undefined
+    // Whole grams: the contract stores weights as integers.
+    const grams = weightStr ? Math.round(parseFloat(weightStr.replace(/[^\d.]/g, ''))) : undefined
+    const weight = grams !== undefined && Number.isSafeInteger(grams) ? grams : undefined
 
     const shippingCostStr = getValue('shippingCost')
     const shippingCost = shippingCostStr ? parsePrice(shippingCostStr, currency) : undefined

@@ -58,18 +58,23 @@ const inputClass = 'px-3 py-2 bg-gray-100 dark:bg-gray-800 rounded-lg focus:outl
 
 interface AssetTargetProps {
   asset: DigitalAsset
-  variants: ItemVariants
+  /** The item's variants table; undefined for a product without variants. */
+  variants: ItemVariants | undefined
   onChange: (optionIds: number[]) => void
   disabled: boolean
 }
+
+/** No option types: a product without variants still shows (and clears) an asset's old target. */
+const NO_VARIANTS: ItemVariants = { axes: [], combinations: [], nextOptionId: 1 }
 
 /**
  * Which variants get one asset: all of them, or those with the options
  * chosen here (one per axis at most; "Any" leaves an axis open).
  */
-function AssetTarget({ asset, variants, onChange, disabled }: AssetTargetProps) {
+function AssetTarget({ asset, variants = NO_VARIANTS, onChange, disabled }: AssetTargetProps) {
   const { label, matchesNone } = describeAssetTarget(variants, asset.optionIds)
   const chosenOn = (axisIndex: number) => asset.optionIds?.find((id) => findOption(variants, id)?.axisIndex === axisIndex)
+  const hasVariants = variants.axes.length > 0
   return (
     <div className="flex flex-wrap items-center gap-2 pl-8">
       <span className="text-xs text-gray-500">
@@ -97,7 +102,7 @@ function AssetTarget({ asset, variants, onChange, disabled }: AssetTargetProps) 
           disabled={disabled}
           className="text-xs text-yappr-600 dark:text-yappr-400 hover:underline disabled:opacity-50"
         >
-          All variants
+          {hasVariants ? 'All variants' : 'Send to every buyer'}
         </button>
       )}
       {matchesNone && (
@@ -233,7 +238,8 @@ export function DigitalAssetListEditor({ assets, onChange, identityId, variants,
                     <TrashIcon className="h-4 w-4" />
                   </button>
                 </div>
-                {variants && (
+                {/* Shown without variants too when the asset still has a target, so it can be cleared. */}
+                {(variants || (asset.optionIds?.length ?? 0) > 0) && (
                   <AssetTarget asset={asset} variants={variants} onChange={(optionIds) => setTarget(index, optionIds)} disabled={disabled} />
                 )}
               </li>

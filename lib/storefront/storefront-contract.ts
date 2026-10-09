@@ -41,12 +41,15 @@ const variantItem = (name: string): PropertySchema => variantList(name).items ??
 export const VARIANT_LIMITS = {
   axes: variantList('axes').maxItems ?? 5,
   axisNameLength: variantItem('axes').maxLength ?? 32,
+  axisNameBytes: variantItem('axes').maxBytes ?? 64,
   options: variantList('options').maxItems ?? 64,
   optionNameLength: variantItem('options').maxLength ?? 40,
+  optionNameBytes: variantItem('options').maxBytes ?? 80,
   /** Option ids run 1 to this; the next id to hand out may be one more. */
   maxOptionId: variantItem('optionIds').maximum ?? 254,
   combinations: variantList('prices').maxItems ?? 256,
   skuLength: variantItem('skus').maxLength ?? 32,
+  skuBytes: variantItem('skus').maxBytes ?? 64,
   maxPrice: variantItem('prices').maximum ?? Number.MAX_SAFE_INTEGER,
   maxStock: variantItem('stocks').maximum ?? 4294967295,
   maxWeight: variantItem('weights').maximum ?? 4294967295,

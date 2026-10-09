@@ -59,18 +59,20 @@ const readVariants = (stored: unknown, imageUrls: readonly string[] | undefined)
 
 /**
  * Refuse, with a message for the seller, a listing the contract would refuse
- * after signing: a variants table it cannot store, or a whole document past
- * the transition budget. `fields` is the document exactly as it will be sent.
+ * after signing: a variants table it cannot store (`table`: the table being
+ * written, or undefined when the write leaves the stored one as it is), an
+ * item-level price or stock beside a v7 table, or a whole document past the
+ * transition budget. `fields` is the document exactly as it will be sent.
  */
-function assertStorable(fields: Record<string, unknown>, variants: ItemVariants | undefined, imageCount: number): void {
-  if (variants) {
-    const typed = storefrontVariantsAreTyped();
-    const [problem] = variantProblems(variants, { imageCount, legacy: !typed });
+function assertStorable(fields: Record<string, unknown>, table: ItemVariants | undefined, imageCount: number): void {
+  const typed = storefrontVariantsAreTyped();
+  if (table) {
+    const [problem] = variantProblems(table, { imageCount, legacy: !typed });
     if (problem) throw new ListLimitError(problem);
-    // v7 refuses an item-level price or stock beside the table (onePrice, oneStock).
-    if (typed && (fields.basePrice !== undefined || fields.stockQuantity !== undefined)) {
-      throw new ListLimitError('A product with options is priced and stocked per combination. Clear its single price and stock first.');
-    }
+  }
+  // v7 refuses an item-level price or stock beside the table (onePrice, oneStock).
+  if (typed && fields.variants !== undefined && (fields.basePrice !== undefined || fields.stockQuantity !== undefined)) {
+    throw new ListLimitError('A product with options is priced and stocked per combination. Clear its single price and stock first.');
   }
   const sizeError = itemSizeError(fields);
   if (sizeError) throw new ListLimitError(sizeError);
@@ -298,9 +300,12 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     if ('fulfillment' in data) documentData.fulfillment = data.fulfillment === 'digital' ? 'digital' : undefined;
 
     // What update() will send: the stored fields, with these changes over them.
+    // The table is judged only when this edit writes it (or moves its images):
+    // a status or stock edit must never be blocked by a stored v1-v6 table.
     const merged: Record<string, unknown> = { ...this.extractContentFields(existing), ...documentData };
     for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
-    assertStorable(merged, variants, imageUrls?.length ?? 0);
+    const writesTable = 'variants' in data || 'imageUrls' in data;
+    assertStorable(merged, writesTable ? variants : undefined, imageUrls?.length ?? 0);
     return this.update(itemId, ownerId, documentData);
   }
 
@@ -333,9 +338,21 @@ class StoreItemService extends BaseDocumentService<StoreItem> {
     return this.getCombination(item, variantId)?.price ?? item.basePrice ?? 0;
   }
 
-  /** The variant's SKU, else the item's. */
-  getSku(item: StoreItem, variantId?: string): string | undefined {
-    return this.getCombination(item, variantId)?.sku ?? item.sku;
+  /**
+   * The combination a cart or order line names. On v7 its id is enough. v1–v6
+   * number options by position on every read, so once the seller reorders or
+   * removes an option an old id can name a different combination: there the
+   * line's label must agree too, or the line names nothing.
+   */
+  getLineCombination(item: StoreItem, line: { variantId?: string; variantLabel?: string }): VariantCombination | undefined {
+    const combination = this.getCombination(item, line.variantId);
+    if (!combination || !item.variants || storefrontVariantsAreTyped()) return combination;
+    return line.variantLabel === variantLabelSnapshot(item.variants, combination) ? combination : undefined;
+  }
+
+  /** The SKU of the variant a line names, else the item's own. */
+  getSku(item: StoreItem, line: { variantId?: string; variantLabel?: string }): string | undefined {
+    return this.getLineCombination(item, line)?.sku ?? item.sku;
   }
 
   /** The variant's weight in grams, else the item's (for shipping). */

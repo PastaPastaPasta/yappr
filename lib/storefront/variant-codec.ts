@@ -76,6 +76,23 @@ export function variantLabelSnapshot(variants: ItemVariants, combination: Pick<V
   return variantLabel(variants, combination).slice(0, VARIANT_LABEL_MAX_LENGTH)
 }
 
+/**
+ * The variant name an order line shows, read defensively: an order payload is
+ * buyer-written JSON, so anything but a string shows nothing. Orders placed
+ * before variants had ids (testnet production's) name theirs by its key,
+ * "Blue|Large".
+ */
+export function orderLineVariantLabel(line: { variantLabel?: unknown; variantKey?: unknown }): string | undefined {
+  const label = typeof line.variantLabel === 'string' ? line.variantLabel
+    : typeof line.variantKey === 'string' ? line.variantKey.split('|').join(' / ') : undefined
+  return label ? label.slice(0, VARIANT_LABEL_MAX_LENGTH) : undefined
+}
+
+/** An order line's SKU snapshot for the seller, when it is a string (cut to the contract's SKU length). */
+export function orderLineSku(line: { sku?: unknown }): string | undefined {
+  return typeof line.sku === 'string' && line.sku ? line.sku.slice(0, VARIANT_LIMITS.skuLength) : undefined
+}
+
 /** The combination made of `selection` (one option id per axis, in axis order), if offered. */
 export function combinationForSelection(variants: ItemVariants, selection: ReadonlyArray<number | undefined>): VariantCombination | undefined {
   if (selection.length !== variants.axes.length || selection.some((optionId) => optionId === undefined)) return undefined
@@ -244,12 +261,17 @@ export interface VariantCheckOptions {
   /** How many images the listing has (a combination names one by 1-based index). */
   imageCount: number
   /**
-   * The table is stored as the v1–v6 JSON string: option names cannot hold
-   * "|" (its key separator), there are no weights, and stock may be tracked
-   * for some combinations only.
+   * The table is stored as the v1–v6 JSON string, which has none of v7's caps
+   * (only its 10,000-character or 5,120-byte length, checked on the whole
+   * string): option names cannot hold "|" (its key separator), there are no
+   * weights, and stock may be tracked for some combinations only. Listings
+   * already stored there must stay editable, so only the structure is judged.
    */
   legacy?: boolean
 }
+
+/** Whether `text` is past a contract string cap (characters or UTF-8 bytes). */
+const tooLong = (text: string, length: number, bytes: number) => [...text].length > length || utf8Length(text) > bytes
 
 /**
  * What stops `variants` from being stored, as sentences for the seller (empty
@@ -261,38 +283,39 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
   const problems: string[] = []
   const add = (problem: string) => { if (!problems.includes(problem)) problems.push(problem) }
   const limits = VARIANT_LIMITS
+  /** v7's caps: the typed table's lists, lengths and id range. */
+  const capped = !legacy
   const { axes, combinations } = variants
 
   if (axes.length === 0) add('Add at least one option type, such as Size or Color.')
-  if (axes.length > limits.axes) add(`A product can have at most ${limits.axes} option types.`)
+  if (capped && axes.length > limits.axes) add(`A product can have at most ${limits.axes} option types.`)
   const optionCount = axes.reduce((total, axis) => total + axis.options.length, 0)
-  if (optionCount > limits.options) add(`A product can have at most ${limits.options} options in all (this one has ${optionCount}).`)
+  if (capped && optionCount > limits.options) add(`A product can have at most ${limits.options} options in all (this one has ${optionCount}).`)
   const ids = new Set<number>()
   for (const [axisIndex, axis] of axes.entries()) {
     const axisName = axis.name.trim()
     if (!axisName) add('Give every option type a name.')
-    else if (axisName.length > limits.axisNameLength || utf8Length(axisName) > limits.axisNameLength * 2) add(`Option type names can be at most ${limits.axisNameLength} characters ("${axisName.slice(0, 20)}…" is longer).`)
+    else if (capped && tooLong(axisName, limits.axisNameLength, limits.axisNameBytes)) add(`Option type names can be at most ${limits.axisNameLength} characters ("${axisName.slice(0, 20)}…" is longer).`)
     if (axes.some((other, otherIndex) => otherIndex < axisIndex && sameName(other.name, axis.name))) add(`Two option types are both called "${axisName}". Give each a different name.`)
     if (axis.options.length === 0) add(`Add at least one option to "${axisName || 'each option type'}".`)
     for (const [optionIndex, option] of axis.options.entries()) {
       const name = option.name.trim()
       if (!name) add(`Every option in "${axisName}" needs a name.`)
-      else if (name.length > limits.optionNameLength || utf8Length(name) > limits.optionNameLength * 2) add(`Option names can be at most ${limits.optionNameLength} characters ("${name.slice(0, 20)}…" is longer).`)
+      else if (capped && tooLong(name, limits.optionNameLength, limits.optionNameBytes)) add(`Option names can be at most ${limits.optionNameLength} characters ("${name.slice(0, 20)}…" is longer).`)
       if (legacy && name.includes('|')) add(`Option names cannot contain "|" ("${name.slice(0, 20)}").`)
       if (axis.options.some((other, otherIndex) => otherIndex < optionIndex && sameName(other.name, option.name))) add(`"${axisName}" lists "${name}" twice.`)
-      if (!Number.isInteger(option.id) || option.id < 1 || option.id > limits.maxOptionId || ids.has(option.id) || option.id >= variants.nextOptionId) {
-        add('The options need renumbering. Remove and add the last option again, or start the variants over.')
-      }
+      const badId = !Number.isInteger(option.id) || option.id < 1 || ids.has(option.id) || option.id >= variants.nextOptionId || (capped && option.id > limits.maxOptionId)
+      if (badId) add('The options need renumbering. Use "Renumber options" in the editor.')
       ids.add(option.id)
     }
   }
-  if (variants.nextOptionId > limits.maxOptionId + 1) add('This product has used up its option numbers. Start the variants over to renumber them.')
+  if (capped && variants.nextOptionId > limits.maxOptionId + 1) add('This product has used up its option numbers. Use "Renumber options" in the editor.')
 
   if (combinations.length === 0 && axes.length > 0) add('Offer at least one combination of options.')
-  if (combinations.length > limits.combinations) add(`A product can offer at most ${limits.combinations} combinations (this one has ${combinations.length}). Remove some options, or split it into several listings.`)
+  if (capped && combinations.length > limits.combinations) add(`A product can offer at most ${limits.combinations} combinations (this one has ${combinations.length}). Remove some options, or split it into several listings.`)
   const seen = new Set<string>()
   const tracked = combinations.filter((combination) => combination.stock !== undefined).length
-  if (!legacy && tracked > 0 && tracked < combinations.length) add('Track stock for every combination or for none.')
+  if (capped && tracked > 0 && tracked < combinations.length) add('Track stock for every combination or for none.')
   for (const combination of combinations) {
     const wellFormed = combination.optionIds.length === axes.length
       && combination.optionIds.every((optionId, axisIndex) => axes[axisIndex].options.some((option) => option.id === optionId))
@@ -302,12 +325,13 @@ export function variantProblems(variants: ItemVariants, { imageCount, legacy = f
     seen.add(combination.id)
     if (!Number.isSafeInteger(combination.price) || combination.price < 0 || combination.price > limits.maxPrice) add('Every combination needs a valid price.')
     if (combination.stock !== undefined && (!Number.isSafeInteger(combination.stock) || combination.stock < 0 || combination.stock > limits.maxStock)) add('Stock must be a whole number of 0 or more.')
-    if (combination.sku !== undefined && (combination.sku.length > limits.skuLength || utf8Length(combination.sku) > limits.skuLength * 2)) add(`SKUs can be at most ${limits.skuLength} characters.`)
+    if (capped && combination.sku !== undefined && tooLong(combination.sku, limits.skuLength, limits.skuBytes)) add(`SKUs can be at most ${limits.skuLength} characters.`)
     if (combination.weight !== undefined) {
       if (legacy) add('Per-combination weights are not available for this store.')
       else if (!Number.isSafeInteger(combination.weight) || combination.weight < 0 || combination.weight > limits.maxWeight) add('Weights must be a whole number of grams.')
     }
-    if (combination.image !== undefined && (!Number.isInteger(combination.image) || combination.image < 1 || combination.image > Math.min(imageCount, limits.maxImageIndex))) {
+    const imageLimit = capped ? Math.min(imageCount, limits.maxImageIndex) : imageCount
+    if (combination.image !== undefined && (!Number.isInteger(combination.image) || combination.image < 1 || combination.image > imageLimit)) {
       add('A combination shows an image the listing no longer has. Pick its image again.')
     }
   }
@@ -339,18 +363,26 @@ function product(lists: number[][]): number[][] {
   return lists.reduce<number[][]>((rows, list) => rows.flatMap((row) => list.map((value) => [...row, value])), [[]])
 }
 
-/** Options with fresh ids from `nextOptionId`, renumbering the table first when the ids would run out. */
+/** How many more options the table can take before its ids run out (they are never reused). */
+export function optionIdsLeft(variants: ItemVariants): number {
+  return Math.max(0, VARIANT_LIMITS.maxOptionId + 1 - variants.nextOptionId)
+}
+
+/**
+ * Options with fresh ids from `nextOptionId`. Ids are never reused, so this
+ * refuses (throws) rather than renumber behind the seller's back: callers
+ * check {@link optionIdsLeft} first and offer {@link renumberOptions}.
+ */
 function allocate(variants: ItemVariants, names: readonly string[]): { variants: ItemVariants; options: VariantOption[] } {
-  let base = variants
-  if (base.nextOptionId + names.length - 1 > VARIANT_LIMITS.maxOptionId) base = renumberOptions(base)
-  const options = names.map((name, index) => ({ id: base.nextOptionId + index, name }))
-  return { variants: { ...base, nextOptionId: base.nextOptionId + names.length }, options }
+  if (names.length > optionIdsLeft(variants)) throw new Error('option ids exhausted: renumber the options first')
+  const options = names.map((name, index) => ({ id: variants.nextOptionId + index, name }))
+  return { variants: { ...variants, nextOptionId: variants.nextOptionId + names.length }, options }
 }
 
 /**
  * Give the options ids 1, 2, 3… in display order. Every combination gets a
  * new id, so carts and kits that named the old ones no longer match: only
- * for when the 254 ids have run out.
+ * when the 254 ids have run out, and only on the seller's say-so.
  */
 export function renumberOptions(variants: ItemVariants): ItemVariants {
   const renumber = new Map<number, number>()

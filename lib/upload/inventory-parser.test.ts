@@ -253,9 +253,11 @@ describe('rows become combinations', () => {
     expect(warnings).toEqual(['"Shirt": 1 SKU is longer than 32 characters, so it was shortened.'])
   })
 
-  it('reports what the table cannot store as errors for that product', () => {
-    const [item] = parseInventoryCSV(`Group,Item Name,Size,Price\ng,Shirt,${'L'.repeat(41)},10.00`).items
-    expect(item.errors).toEqual(['"Shirt": Option names can be at most 40 characters ("LLLLLLLLLLLLLLLLLLLL…" is longer).'])
+  it('reports what the v7 table cannot store as errors for that product (the v1–v6 JSON has no such cap)', async () => {
+    const csv = `Group,Item Name,Size,Price\ng,Shirt,${'L'.repeat(41)},10.00`
+    const [typed] = (await parseUnder('v7', csv)).items
+    expect(typed.errors).toEqual(['"Shirt": Option names can be at most 40 characters ("LLLLLLLLLLLLLLLLLLLL…" is longer).'])
+    expect(parseInventoryCSV(csv).items[0].errors).toEqual([])
   })
 
   it('puts one weight on the product when the rows agree', () => {

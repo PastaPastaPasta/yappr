@@ -18,6 +18,7 @@ import { formatPrice } from '@/lib/utils/format'
 import { storeItemService } from '@/lib/services/store-item-service'
 import { combinationImageUrl, tracksStock, updateCombination, variantLabel } from '@/lib/storefront/variant-codec'
 import { ListLimitError } from '@/lib/typed-array-codecs'
+import { VARIANT_LIMITS } from '@/lib/storefront/storefront-contract'
 import type { StoreItem, VariantCombination } from '@/lib/types'
 
 /** What a stock edit changed on an item, for the page to merge into its copy. */
@@ -46,11 +47,11 @@ function totalStock(item: StoreItem, drafts: StockDrafts = {}): number {
   return item.variants.combinations.reduce((sum, combination) => sum + (drafts[combination.id] ?? combination.stock ?? 0), 0)
 }
 
-/** A typed stock count, or null when it is not a whole number of 0 or more. */
+/** A typed stock count, or null when it is not a whole number the contract stores (0 to 4,294,967,295). */
 function parseStock(value: string): number | null {
   if (!/^\d+$/.test(value.trim())) return null
   const stock = Number(value.trim())
-  return Number.isSafeInteger(stock) ? stock : null
+  return Number.isSafeInteger(stock) && stock <= VARIANT_LIMITS.maxStock ? stock : null
 }
 
 export function InventoryTable({

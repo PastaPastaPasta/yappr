@@ -171,7 +171,7 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
     const orderItems: OrderItem[] = cartItems.map(item => {
       const storeItem = storeItems.get(item.itemId);
       const variantLabel = item.variantLabel ?? (storeItem && storeItemService.getVariantLabel(storeItem, item.variantId));
-      const sku = storeItem && storeItemService.getSku(storeItem, item.variantId);
+      const sku = storeItem && storeItemService.getSku(storeItem, item);
       return {
         itemId: item.itemId,
         itemTitle: item.title,
