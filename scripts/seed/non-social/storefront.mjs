@@ -168,8 +168,13 @@ const SQUISHY_COLORS = ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'P
 const SQUISHY_PACKS = [['Single Piece', 100, 45], ['4 Pack', 353, 180]];
 const CUBE_AXES = [['Colour', ['Black', 'White', 'Teal', 'Coral']], ['Size', ['XS', 'S', 'M', 'L', 'XL']],
   ['Material', ['ABS', 'Silicone', 'Walnut', 'Aluminium', 'Resin']], ['Finish', ['Matte', 'Gloss']], ['Pack', ['Single', 'Duo']]];
-/** The first 100 of the cube's 400 combinations, axis 0 varying fastest. */
-const cubeRows = () => Array.from({ length: 100 }, (_, n) => {
+/**
+ * The cube's combinations, axis 0 varying fastest: the first 100 of its 400 on
+ * v7, and the first 50 before it, whose variants JSON is capped at 5,120 bytes
+ * (100 would take about 8 KB).
+ */
+const CUBE_COMBINATIONS = { typed: 100, legacy: 50 };
+const cubeRows = () => Array.from({ length: variantsTyped() ? CUBE_COMBINATIONS.typed : CUBE_COMBINATIONS.legacy }, (_, n) => {
   let rest = n;
   const names = CUBE_AXES.map(([, options]) => { const name = options[rest % options.length]; rest = Math.floor(rest / options.length); return name; });
   return [...names, 1500 + 50 * (n % 9), 3 + (n % 5), `CUBE-${String(n).padStart(3, '0')}`];
@@ -189,8 +194,9 @@ STORES.push({ key: 'toys', category: 'toys', persona: 203, name: 'Squish & Pop T
       description: 'Food-grade silicone bubbles that pop both ways. Three shapes, four colours, made to order, so they never run out.',
       variants: [['Shape', 'Color'], ['Circle', 'Square', 'Heart'].flatMap((shape, s) => ['Rainbow', 'Mint', 'Lilac', 'Black'].map((color) => [shape, color, 600 + 100 * s]))] },
     { key: 'cube', title: 'Custom Fidget Cube', weight: 120, section: 'Toys', category: 'Fidgets', images: 4, tags: ['fidget-cube', 'custom', 'desk'],
-      description: 'Build your own: colour, size, material, finish and a single or a duo. One hundred combinations in stock right now.',
-      variants: [CUBE_AXES.map(([name]) => name), cubeRows()] },
+      description: 'Build your own: colour, size, material, finish and a single or a duo, in dozens of combinations.',
+      // Read when used, so the table follows the topology being seeded.
+      get variants() { return [CUBE_AXES.map(([name]) => name), cubeRows()]; } },
   ] });
 const STORE_BY_KEY = new Map(STORES.map((store) => [store.key, store]));
 
@@ -295,7 +301,7 @@ const ORDERS = [
   ['o25', 'otto', 'leather', [['bifold', 1], ['keyfob', 2]], 'inflight', null, null, [['bifold', 5]]],
   // Variant lines name a combination by its option names; the order carries its id, label and SKU.
   ['o26', 'ivy', 'toys', [['squishy', 2, 'Red / 4 Pack'], ['squishy', 1, 'Blue / Single Piece']], 'delivered3', 'ups', 5, [['squishy', 5]]],
-  ['o27', 'otto', 'toys', [['popit', 1, 'Heart / Mint'], ['cube', 1, 'Teal / M / Walnut / Matte / Single']], 'delivered5', 'dhl', 4, [['cube', 4]]],
+  ['o27', 'otto', 'toys', [['popit', 1, 'Heart / Mint'], ['cube', 1, 'Teal / M / ABS / Matte / Single']], 'delivered5', 'dhl', 4, [['cube', 4]]],
   ['o28', 'bo', 'toys', [['squishy', 3, 'Pink / Single Piece']], 'inflight', null, null, []],
 ].map(([key, buyer, store, lines, chain, carrier, rating, items]) => ({ key, buyer, store, lines, chain, carrier, rating, items }));
 
@@ -832,7 +838,17 @@ function selfTest() {
   };
   const [v6Squishy, v7Squishy] = [variantShape('v6'), variantShape('v7')];
   const squishy = variantTable(STORE_BY_KEY.get('toys').items[0].variants);
-  const cube = variantTable(STORE_BY_KEY.get('toys').items[2].variants);
+  const cubeUnder = (topology) => {
+    const saved = process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY;
+    process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = topology;
+    try {
+      const toys = STORE_BY_KEY.get('toys');
+      return { table: variantTable(toys.items[2].variants), stored: itemData(toys, toys.items[2], new Uint8Array(32)).variants };
+    } finally {
+      if (saved === undefined) delete process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY; else process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY = saved;
+    }
+  };
+  const [v6Cube, v7Cube] = [cubeUnder('v6'), cubeUnder('v7')];
   const typed = v7Squishy.variants;
   const aligned = (list) => list === undefined || list.length === typed.selectors.length;
   const analog = plan.perStore.get('analog').ratings;
@@ -847,7 +863,9 @@ function selfTest() {
     ['before v6 the run costs 92 YAPP', plan.storeReviews * 3 + plan.itemReviews === 92],
     ['every store has a v6 category slug', STORES.every((store) => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(store.category) && store.category.length <= 20)],
     [`the squishy toy is 7 colours × 2 packs = 14 combinations (${squishy.axes.map((a) => a.options.length).join('×')})`, squishy.combinations.length === 14 && squishy.axes[0].options.length === 7],
-    [`the cube is 5 option types and 100 combinations (${cube.combinations.length})`, cube.axes.length === 5 && cube.combinations.length === 100],
+    [`the cube is 5 option types and 100 combinations on v7 (${v7Cube.table.combinations.length})`, v7Cube.table.axes.length === 5 && v7Cube.table.combinations.length === 100],
+    [`on v6 the cube is 50 combinations whose JSON fits the 5,120-byte variants cap (${utf8(v6Cube.stored).length} B)`,
+      v6Cube.table.combinations.length === 50 && typeof v6Cube.stored === 'string' && utf8(v6Cube.stored).length <= 5120],
     ['v7 writes the typed table: aligned lists, one 2-byte selector per combination, no basePrice or stockQuantity',
       Array.isArray(typed.selectors) && typed.selectors.every((selector) => selector.length === 2) && [typed.prices, typed.stocks, typed.skus, typed.weights, typed.images].every(aligned)
         && typed.optionIds.length === typed.options.length && v7Squishy.basePrice === undefined && v7Squishy.stockQuantity === undefined],
