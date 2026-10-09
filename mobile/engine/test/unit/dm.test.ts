@@ -1416,6 +1416,60 @@ describe('dm on DM v5: Messages follow the account\'s blocks (PRD SAFE-01, SAFE-
     expect(await blockedNow(user)).toEqual([])
   })
 
+  it('lifts a followed block the account removed as of now, so an older Messages block from another device arriving later loses, whatever the DM clock', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const start = Date.now()
+    const minutes = (n: number) => start + n * 60_000
+    const ledger = ledgerNow()
+    const account = accountOn([bob])
+    account.madeAt.set(bob, start)
+    const here = await ready(userOn(ledger, alice, {}, undefined, { account }))
+    const other = await ready(userOn(ledger, alice))
+    await vi.waitFor(async () => expect(await blockedNow(here)).toEqual([bob]))
+
+    // Another device saves a Messages block of bob at T+12m (not read here yet), then removes the account's block.
+    ledger.time = minutes(12)
+    other.engine().setBlocked(bob, true, minutes(12))
+    await other.engine().flush()
+    account.blocked = []
+
+    // Here, at T+14m, the latest DM read is from T+11m: the read without bob lifts the block it followed.
+    ledger.time = minutes(11)
+    vi.setSystemTime(minutes(14))
+    await account.refresh(alice)
+    expect(await blockedNow(here)).toEqual([])
+    expect(JSON.parse(here.local.getItem(followedKey) as string)).toEqual({})
+
+    // The other device's older block arrives: the lift, made later, stands.
+    await here.engine().tick()
+    expect(await blockedNow(here)).toEqual([])
+    await here.engine().flush()
+    await other.engine().tick()
+    expect(await blockedNow(other)).toEqual([])
+  })
+
+  it('never lifts a Messages block another device changed lately by the DM clock, though this device\'s clock runs ahead', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const start = Date.now()
+    const ledger = ledgerNow()
+    const account = accountOn([bob])
+    account.madeAt.set(bob, start - 30 * 60_000)
+    const here = await ready(userOn(ledger, alice, {}, undefined, { account }))
+    const other = await ready(userOn(ledger, alice))
+    await vi.waitFor(async () => expect(await blockedNow(here)).toEqual([bob]))
+    // Another device blocks bob in Messages again just now; this device reads it.
+    other.engine().setBlocked(bob, true, start)
+    await other.engine().flush()
+    await here.engine().tick()
+
+    // A minute on by the DM clock, a read without bob: this device's clock says 15 minutes.
+    account.blocked = []
+    ledger.time = start + 60_000
+    vi.setSystemTime(start + 15 * 60_000)
+    await account.refresh(alice)
+    expect(await blockedNow(here)).toEqual([bob])
+  })
+
   it('keeps a Messages unblock made while the DM clock is behind the account block it followed', async () => {
     const ledger = ledgerNow()
     const account = accountOn([bob])

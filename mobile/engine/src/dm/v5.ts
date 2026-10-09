@@ -518,11 +518,16 @@ export function createV5Backend(options: V5BackendOptions) {
       followed.set(peerId, madeAt ?? localMark(id))
       changed = true
     }
+    // "Lately" by the DM clock (the latest DM read), which every Messages change is stamped no earlier
+    // than (`DmEngine.setBlocked`): a stale DM clock only waits longer, and a device clock running ahead
+    // never counts another device's recent change as settled.
     const lately = running.ctx.chain.now() - BLOCK_SETTLING_MS
     for (const peerId of [...followed.keys()]) {
       if (blocked.has(peerId) || settling.has(peerId) || savedBlockChange(running, peerId) > lately) continue
-      // When the block went is not known: stamped now (after the Messages block that followed it).
-      applyBlock(running, peerId, false, 0)
+      // When the block went is not known: stamped now, by this device's clock as well as the DM clock
+      // (which may be minutes old), so a Messages change made before this read, synchronized later
+      // from another device, never brings back a block the account has removed.
+      applyBlock(running, peerId, false, Date.now())
       followed.delete(peerId)
       changed = true
     }
