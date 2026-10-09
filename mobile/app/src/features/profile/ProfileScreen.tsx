@@ -14,6 +14,7 @@ import {
 } from 'react-native-heroicons/outline';
 
 import { queryKeys } from '~/data/keys';
+import { readErrorMessage } from '~/data/read-error';
 import { useEngineInfiniteQuery, useEngineQuery, usePullToRefresh } from '~/data/queries';
 import { useRequireAuth } from '~/data/require-auth';
 import { lastIdentity, useCapabilities, useSession } from '~/data/session';
@@ -30,6 +31,7 @@ import { ContextMenu, type MenuItem } from '~/ui/ContextMenu';
 import { EmptyState, ErrorState } from '~/ui/EmptyState';
 import { handleOf } from '~/ui/handle';
 import { Spinner } from '~/ui/Spinner';
+import { toast } from '~/ui/toast';
 import { TopTabs } from '~/ui/Tabs';
 import { PostSkeleton } from '~/ui/Skeleton';
 import { tw, useColors } from '~/ui/tokens';
@@ -130,6 +132,10 @@ function ProfileTabList({
     // Top reads the author's ranking afresh rather than the engine's minute-old copy.
     const refetch = () => posts.refetch();
     Promise.all([onRefreshProfile(), tab === 'top' ? fresh.during(refetch) : refetch()])
+      .then(([, result]) => {
+        // The posts shown stay up; the reader learns the refresh did not land.
+        if (result.isError && posts.items.length > 0) toast.error(readErrorMessage(result.error));
+      })
       .catch(() => undefined)
       .finally(() => setRefreshing(false));
   };

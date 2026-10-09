@@ -206,8 +206,9 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
    * Get post IDs that have a specific hashtag.
    * Paginates through all results to return complete list.
    * Returns postHashtag documents - caller should fetch actual posts and filter by ownership.
+   * A failed read returns `[]` unless `throwOnError` is set.
    */
-  async getPostIdsByHashtag(hashtag: string): Promise<PostHashtagDocument[]> {
+  async getPostIdsByHashtag(hashtag: string, options: { throwOnError?: boolean } = {}): Promise<PostHashtagDocument[]> {
     try {
       // v9: no postHashtag documents to list — tag pages query post.tagAndTime
       // directly (see postService.getPostsByHashtag / app/hashtag).
@@ -235,6 +236,7 @@ class HashtagService extends BaseDocumentService<PostHashtagDocument> {
       return documents;
     } catch (error) {
       logger.error('Error getting posts by hashtag:', error);
+      if (options.throwOnError) throw error;
       return [];
     }
   }

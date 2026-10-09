@@ -19,7 +19,7 @@ const m = vi.hoisted(() => ({
   replyService: { getReplies: vi.fn(), getReplyById: vi.fn(), getNestedReplies: vi.fn(), getUserReplies: vi.fn(), clearCache: vi.fn() },
   followService: {
     getFollowers: vi.fn(), getFollowing: vi.fn(), countFollowersBatch: vi.fn(), countFollowingBatch: vi.fn(),
-    getFollowStatusBatch: vi.fn(), getFollowingIds: vi.fn(), getFollowingIdsCached: vi.fn(),
+    getFollowStatusBatch: vi.fn(), getFollowingIdsCached: vi.fn(),
   },
   getPostIdsByHashtag: vi.fn(),
   topLikedPostsHydrated: vi.fn(),
@@ -263,7 +263,7 @@ describe('feed.hashtag', () => {
     ])
     m.postService.getPostsByIds.mockResolvedValue([post('Tagged', 2), post('Forged', 1)])
     expect(ids((await feed.hashtag({ tag: '#Yappr' })).items)).toEqual([id('Tagged')])
-    expect(m.getPostIdsByHashtag).toHaveBeenCalledWith('yappr')
+    expect(m.getPostIdsByHashtag).toHaveBeenCalledWith('yappr', { throwOnError: true })
   })
 })
 
@@ -286,9 +286,9 @@ describe('Top sorts', () => {
     m.topology = { likesAreIndexOnly: true }
     m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
     await explore.topPosts({ window: 'today' })
-    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: false })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: false, throwOnError: true })
     await explore.topPosts({ window: 'today', refresh: true })
-    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ limit: 20, window: 'today', force: true, throwOnError: true })
   })
 
   it('reads Home\'s first Top page afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
@@ -304,18 +304,18 @@ describe('Top sorts', () => {
     m.topology = { likesAreIndexOnly: true }
     m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
     await feed.hashtag({ tag: '#Dash', sort: 'top', window: 'today' })
-    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: false })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: false, throwOnError: true })
     await feed.hashtag({ tag: '#Dash', sort: 'top', window: 'today', refresh: true })
-    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ hashtag: 'dash', limit: 20, window: 'today', force: true, throwOnError: true })
   })
 
   it('reads a profile\'s Top tab afresh on a refresh, past the minute-long ranked cache (RC16-I-04)', async () => {
     m.topology = { likesAreIndexOnly: true }
     m.topLikedPostsHydrated.mockResolvedValueOnce([post('Top1', 1)]).mockResolvedValueOnce([post('Top1', 1)])
     await profiles.posts({ id: AUTHOR, tab: 'top' })
-    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: false })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: false, throwOnError: true })
     await profiles.posts({ id: AUTHOR, tab: 'top', refresh: true })
-    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: true })
+    expect(m.topLikedPostsHydrated).toHaveBeenLastCalledWith({ postAuthor: AUTHOR, limit: 10, window: 'all', force: true, throwOnError: true })
   })
 })
 

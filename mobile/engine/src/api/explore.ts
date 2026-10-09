@@ -38,7 +38,9 @@ export const explore = {
    * The 20 most-liked posts (one proved ranking), blocked authors and hidden
    * NSFW left out; `rankings` capability. `refresh` (a pull to refresh) reads
    * the page afresh instead of from lib's minute-long ranked cache, as web's Top
-   * feed refresh does (`use-top-feed.ts`); other reads keep the cache.
+   * feed refresh does (`use-top-feed.ts`); other reads keep the cache. A
+   * failed read rejects, as Home's Top does, rather than answering an empty
+   * list: the host keeps the page it shows and offers a retry.
    */
   async topPosts(query: { window?: RankingWindow; refresh?: boolean } = {}): Promise<PostDTO[]> {
     if (!likesAreIndexOnly()) throw notSupported('Top posts')
@@ -47,7 +49,7 @@ export const explore = {
     // nothing. ranked-likes' cache drops a page whose quote target this engine
     // forgot (its own delete); a delete on another device bumps nothing here,
     // so only a refresh's fresh read shows it before the cache expires (RC16-I-04).
-    return visibleDTOs(await topLikedPostsHydrated({ limit: 20, window: query.window ?? 'all', force: query.refresh === true }))
+    return visibleDTOs(await topLikedPostsHydrated({ limit: 20, window: query.window ?? 'all', force: query.refresh === true, throwOnError: true }))
   },
 
   /**

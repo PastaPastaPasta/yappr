@@ -128,7 +128,8 @@ function mentionsTab(id: string, cursor: string | null | undefined): Promise<Pag
     cursor,
     size: MENTIONS_PAGE,
     cache: mentionLists,
-    load: async () => (await mentionService.getPostsMentioningUser(id)).sort((a, b) => b.$createdAt - a.$createdAt),
+    // Strict: a failed read must not be cached as nobody mentioning them.
+    load: async () => (await mentionService.getPostsMentioningUser(id, { throwOnError: true })).sort((a, b) => b.$createdAt - a.$createdAt),
     hydrate: async (slice) => {
       const { posts, preloaded } = await mentionService.loadMentioningPosts(slice)
       rereadQuotedPosts(quoteTargetIds(posts))
@@ -200,8 +201,11 @@ export const profiles = {
       case 'mentions': return mentionsTab(query.id, query.cursor)
       case 'top': {
         if (!likesAreIndexOnly()) throw notSupported('The Top tab')
-        // A pull to refresh reads past the ranked cache, as the home Top view's does.
-        const ranked = await topLikedPostsHydrated({ postAuthor: query.id, limit: TOP_LIMIT, window: query.window ?? 'all', force: query.refresh === true })
+        // A pull to refresh reads past the ranked cache, and a failed read
+        // rejects rather than showing no posts, as the home Top view's do.
+        const ranked = await topLikedPostsHydrated({
+          postAuthor: query.id, limit: TOP_LIMIT, window: query.window ?? 'all', force: query.refresh === true, throwOnError: true,
+        })
         return onePage(await visibleDTOs(ranked, { dropBlocked: false }))
       }
       default: throw new RpcError(`Unknown profile tab: ${String(query.tab)}`, 'BAD_REQUEST')

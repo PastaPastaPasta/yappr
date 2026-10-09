@@ -131,6 +131,11 @@ async function following(cursor: string | null | undefined): Promise<Page<PostDT
     next && { start: next.start.getTime(), end: next.end.getTime(), hours: next.windowHours })
 }
 
+/** Whom the viewer follows; a failed read rejects rather than reading as nobody. */
+async function followingIds(viewer: string): Promise<string[]> {
+  return (await followService.getFollowing(viewer, { throwOnError: true })).map(follow => follow.followingId).filter(Boolean)
+}
+
 /**
  * The Top view: a proved top-K ranking re-read with a larger K for each
  * page. Only ids not returned before come back, so a like-count shuffle
@@ -150,7 +155,7 @@ async function top(query: HomeQuery): Promise<Page<PostDTO>> {
   // quote generation here, so only a fresh read drops it (RC16-I-04).
   const options = { limit, window, force: fields !== null || query.refresh === true, throwOnError: true }
   const ranked = query.tab === 'following'
-    ? await topLikedPostsByAuthorsHydrated({ ...options, authorIds: await followService.getFollowingIds(requireViewer('The Following feed')) })
+    ? await topLikedPostsByAuthorsHydrated({ ...options, authorIds: await followingIds(requireViewer('The Following feed')) })
     : await topLikedPostsHydrated(options)
   // Judged on the ranked page, not the filtered one, as on web.
   const hasMore = ranked.length >= limit && limit < MAX_RANKED
@@ -188,7 +193,8 @@ function hashtagRecentIndexed(tag: string, cursor: string | null | undefined): P
     load: async () => {
       // Anyone can tag any post; a post counts when one of its taggers wrote it (web's authenticTags).
       const byPost = new Map<string, { postId: string; taggers: Set<string> }>()
-      for (const doc of await hashtagService.getPostIdsByHashtag(tag)) {
+      // Strict: a failed read must not be cached as a tag nobody used.
+      for (const doc of await hashtagService.getPostIdsByHashtag(tag, { throwOnError: true })) {
         const entry = byPost.get(doc.postId) ?? { postId: doc.postId, taggers: new Set<string>() }
         entry.taggers.add(doc.$ownerId)
         byPost.set(doc.postId, entry)
@@ -270,8 +276,11 @@ export const feed = {
     if (!tag || tag === CASHTAG_SUFFIX) throw new RpcError('No tag given', 'BAD_REQUEST')
     if (query.sort === 'top') {
       if (!likesAreIndexOnly()) throw notSupported('The Top sort')
-      // A pull to refresh reads past the ranked cache, as the home Top view's does.
-      const ranked = await topLikedPostsHydrated({ hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all', force: query.refresh === true })
+      // A pull to refresh reads past the ranked cache, and a failed read
+      // rejects rather than showing an empty tag, as the home Top view's do.
+      const ranked = await topLikedPostsHydrated({
+        hashtag: tag, limit: TOP_PAGE, window: query.window ?? 'all', force: query.refresh === true, throwOnError: true,
+      })
       return onePage(await visibleDTOs(ranked))
     }
     return hashtagsAreInline() ? hashtagRecentInline(tag, query.cursor) : hashtagRecentIndexed(tag, query.cursor)

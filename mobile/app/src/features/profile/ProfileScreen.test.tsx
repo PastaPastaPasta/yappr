@@ -1,4 +1,4 @@
-import type { CapabilitiesDTO, ProfileDTO, SessionDTO } from '@engine/api';
+import type { CapabilitiesDTO, PostDTO, ProfileDTO, SessionDTO } from '@engine/api';
 import { notifyManager, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react-native';
 import { router } from 'expo-router';
@@ -13,6 +13,7 @@ import { waitOutRetry, withoutRetry, withProductionRetry } from '~/data/testing/
 import { resetWriteTracking } from '~/data/writes';
 import { queryClient } from '~/state/query-client';
 import { resetBlockDecisions, useAuthorBlocked } from '~/features/safety/block-state';
+import { fixturePost } from '~/ui/post/fixtures';
 import { useToastStore } from '~/ui/toast';
 
 import { ProfileScreen } from './ProfileScreen';
@@ -366,6 +367,30 @@ describe('ProfileScreen', () => {
       await queryClient.refetchQueries({ queryKey: queryKeys.profile.posts(OTHER, 'top') });
     });
     expect(fakeEngine.method('profiles.posts')).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null });
+  });
+
+  it('keeps the Top tab’s posts when a pull to refresh fails, and says so (FEED-06)', async () => {
+    // Posts render here, so the cards need what each kind of post allows.
+    const capabilities = { rankings: true, repostable: { post: true, reply: true }, bookmarkable: { post: true, reply: false } };
+    fakeEngine.setStatus({ info: { capabilities: capabilities as CapabilitiesDTO } });
+    fakeEngine.method('profiles.get').mockResolvedValue(profile());
+    const posts = fakeEngine.method('profiles.posts');
+    posts.mockResolvedValue({ items: [fixturePost({ id: 't1', content: 'most liked of theirs' }) as PostDTO], cursor: null, hasMore: false });
+    renderProfile();
+    await flush();
+    fireEvent.press(screen.getByTestId('profile-tabs-top'));
+    await flush();
+    expect(screen.getByText('most liked of theirs')).toBeTruthy();
+
+    posts.mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => {
+      screen.UNSAFE_getByType(RefreshControl).props.onRefresh();
+    });
+    await flush();
+
+    expect(posts).toHaveBeenLastCalledWith({ id: OTHER, tab: 'top', cursor: null, refresh: true });
+    expect(screen.getByText('most liked of theirs')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
   });
 
   it('loads the tab picked, with each tab’s own empty state', async () => {

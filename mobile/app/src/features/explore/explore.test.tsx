@@ -296,6 +296,20 @@ describe('Explore', () => {
     expect(fakeEngine.method('explore.topPosts')).toHaveBeenLastCalledWith({ window: 'all' });
   });
 
+  it('keeps the Top posts shown when a pull to refresh fails, and says so (FEED-06)', async () => {
+    useExplorePrefs.setState({ segment: 'top' });
+    const topPosts = fakeEngine.method('explore.topPosts');
+    topPosts.mockResolvedValue([post('t1', 'most liked post')]);
+    await renderAt('/explore');
+
+    topPosts.mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    expect(topPosts).toHaveBeenLastCalledWith({ window: 'all', refresh: true });
+    expect(screen.getByText('most liked post')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
+  });
+
   it('ranks creators with follow buttons; signed out, Follow asks to sign in (EXPL-04, G-8)', async () => {
     useExplorePrefs.setState({ segment: 'creators' });
     const ranked: RankedUserDTO[] = [
@@ -605,6 +619,21 @@ describe('Hashtag page', () => {
       await queryClient.refetchQueries({ queryKey: queryKeys.feed.hashtag({ tag: 'mobile', sort: 'top', window: 'all' }) });
     });
     expect(fakeEngine.method('feed.hashtag')).toHaveBeenLastCalledWith(top);
+  });
+
+  it('keeps the tag’s Top posts shown when a pull to refresh fails, and says so (FEED-06)', async () => {
+    const hashtag = fakeEngine.method('feed.hashtag');
+    hashtag.mockResolvedValue(page([post('h1', 'most liked tagged post')]));
+    await renderAt('/hashtag/mobile');
+    fireEvent(screen.getByTestId('hashtag-sort'), 'change', { nativeEvent: { selectedSegmentIndex: 1 } });
+    await act(async () => {});
+
+    hashtag.mockRejectedValue(Object.assign(new Error('down'), { code: 'TIMEOUT' }));
+    await act(async () => screen.UNSAFE_getByType(RefreshControl).props.onRefresh());
+
+    expect(hashtag).toHaveBeenLastCalledWith({ tag: 'mobile', sort: 'top', window: 'all', cursor: null, refresh: true });
+    expect(screen.getByText('most liked tagged post')).toBeTruthy();
+    expect(useToastStore.getState().current?.message).toMatch(/temporarily unavailable/);
   });
 
   it('does not read the tag’s Latest afresh on a pull to refresh', async () => {
