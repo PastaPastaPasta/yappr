@@ -170,13 +170,22 @@ scrub_maestro_home() {
     < <(find "$HOME/.maestro/tests" -mindepth 1 -maxdepth 1 -type d -newer "$marker" -print0)
 }
 # On iOS every maestro call leaves a ~225 MB copy of its XCTest runner in $TMPDIR and never removes
-# it; a few runs fill the disk. Remove the copies made since the last snapshot (not another run's).
+# it; a few runs fill the disk. It also leaves the runner's xcodebuild driver running, which later
+# starts a 600 s `simctl diagnose` log collection. Kill this device's drivers and remove the copies
+# made since the last snapshot (not another run's).
 maestro_tmp_dirs() {
   find "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'maestro_xctestrunner_xcodebuild_output*' 2>/dev/null | sort
 }
-maestro_tmp_before=""
+maestro_drivers() {
+  pgrep -f "xcodebuild test-without-building -xctestrun .*/${device}[^/]*/maestro-driver-ios" 2>/dev/null | sort
+}
+maestro_tmp_before="" maestro_drivers_before=""
 prune_maestro_tmp() {
-  local d
+  local d p killed=""
+  for p in $(comm -13 <(printf '%s\n' "$maestro_drivers_before") <(maestro_drivers)); do
+    pkill -9 -P "$p" 2>/dev/null; kill -9 "$p" 2>/dev/null; killed=1
+  done
+  [ -n "$killed" ] && sleep 1   # a dying driver recreates its empty Logs dir
   comm -13 <(printf '%s\n' "$maestro_tmp_before") <(maestro_tmp_dirs) | while IFS= read -r d; do
     [ -n "$d" ] && rm -rf "$d"
   done
@@ -332,7 +341,7 @@ for flow in "${flows[@]}"; do
   art="$out/artifacts/$name"
   reinstall=(--no-reinstall-driver); [ $first = 1 ] && reinstall=(); first=0
   start=$(date +%s)
-  maestro_tmp_before="$(maestro_tmp_dirs)"
+  maestro_tmp_before="$(maestro_tmp_dirs)" maestro_drivers_before="$(maestro_drivers)"
   redact <"$fifo" >"$out/logs/$name.log" &
   redact_pid=$!
   "$maestro" --device "$device" test "${reinstall[@]+"${reinstall[@]}"}" --format junit --output "$out/junit/$name.xml" \
