@@ -23,8 +23,8 @@ import { ListLimitError } from '@/lib/typed-array-codecs'
 import type { Post } from '@/lib/types'
 import { RpcError } from '../protocol/envelope'
 import {
-  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, quoteTargetIds, requireViewer, rereadQuotedPosts,
-  toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
+  assertAtMost, avatarOf, badRequest, isIdentityId, listToDTOs, loadUserSummaries, notSupported, quoteTargetIds, readFailure, requireViewer,
+  rereadQuotedPosts, toPostDTOs, viewerId, visibleDTOs, withLoadingAuthor,
 } from '../dto/hydrate'
 import { onePage, pageAfter, pageOfList } from '../dto/paging'
 import { assertMediaUrl, characters, relationProbe, signer } from '../writes/handler-kit'
@@ -153,25 +153,29 @@ export const profiles = {
    * as web's /user page loads it: stats, the profile document, every name
    * and, signed in, the viewer's follow and block status. An identity
    * without a profile document is named by its DPNS label (#605). Rejects
-   * when the profile read failed rather than reporting "no profile". `null`
-   * when the identity does not exist, or for a name DPNS did not resolve:
-   * lib's `resolveIdentity` reports an unreachable DPNS as "not found" too,
-   * so a `null` for a name may be transient.
+   * when the profile or a name read failed rather than reporting "no
+   * profile" or "no name" (QA rc17 D-010). `null` when the identity does not
+   * exist, or when DPNS answered that no identity owns the name.
    */
   async get(identityIdOrName: string): Promise<ProfileDTO | null> {
     const input = identityIdOrName.trim().replace(/^@/, '')
-    const id = isIdentityId(input) ? input : await dpnsService.resolveIdentity(input)
+    const id = isIdentityId(input) ? input : await dpnsService.findIdentityByName(input).catch((error: unknown) => {
+      throw readFailure(error)
+    })
     if (!id) return null
     const viewer = viewerId()
     const other = viewer && viewer !== id ? viewer : null
-    const [stats, profile, usernames, follows, provenance] = await Promise.all([
+    const [stats, profile, names, follows, provenance] = await Promise.all([
       loadUserStats(id),
       unifiedProfileService.getProfile(id),
-      dpnsService.getAllUsernamesSorted(id),
+      // The batch leaves out an identity whose names it could not read; getAllUsernamesSorted would say "none".
+      dpnsService.getAllUsernamesSortedBatch([id]),
       other ? followService.isFollowing(id, other) : false,
       // The block status decorates the header; an unreadable block list is `null`, not a failed profile.
       other ? blockService.getBlockProvenance(id, other).catch(() => null) : NOT_BLOCKED,
     ])
+    const usernames = names.get(id)
+    if (!usernames) throw new RpcError('The names could not be read', 'NETWORK')
     if (!profile) {
       // getProfile reports a failed read as null too: ask strictly (profileExists rejects on failure).
       if (await unifiedProfileService.profileExists(id)) throw new RpcError('The profile could not be read', 'NETWORK')
