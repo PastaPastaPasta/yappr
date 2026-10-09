@@ -171,11 +171,60 @@ export class StaleRevisionError extends Error {
   }
 }
 
+/**
+ * Documents by id, held for two minutes, with fills fenced against
+ * invalidation. A read that was already waiting on Platform when its document
+ * was deleted from the cache (or the cache cleared) answers its own caller
+ * but does not cache its response: that response may predate the
+ * invalidation, and caching it would hand the old document to the very read
+ * that refreshed it, as a quote of a since-deleted reply did (RC16-I-04).
+ */
+class DocumentCache<T> extends TtlMap<string, T> {
+  /** Every delete and clear so far, which numbers each one. */
+  private invalidations = 0;
+  /** The number of the last clear. */
+  private clearedAt = 0;
+  /** The number of each id's last delete, kept while reads are in flight. */
+  private readonly deletedAt = new Map<string, number>();
+  private readsInFlight = 0;
+
+  override delete(id: string): boolean {
+    this.invalidations += 1;
+    if (this.readsInFlight > 0) this.deletedAt.set(id, this.invalidations);
+    return super.delete(id);
+  }
+
+  override clear(): void {
+    this.invalidations += 1;
+    this.clearedAt = this.invalidations;
+    this.deletedAt.clear();
+    super.clear();
+  }
+
+  /**
+   * Runs `read`, whose `fill` caches a document only if nothing invalidated
+   * its id since `read` began.
+   */
+  async fencedRead<R>(read: (fill: (id: string, value: T) => void) => Promise<R>): Promise<R> {
+    const startedAt = this.invalidations;
+    this.readsInFlight += 1;
+    try {
+      return await read((id, value) => {
+        if (this.clearedAt <= startedAt && (this.deletedAt.get(id) ?? 0) <= startedAt) this.set(id, value);
+      });
+    } finally {
+      this.readsInFlight -= 1;
+      // No read left to fence, and later ones start past every number here.
+      if (this.readsInFlight === 0) this.deletedAt.clear();
+    }
+  }
+}
+
 export abstract class BaseDocumentService<T> {
   protected readonly contractId: string;
   protected readonly documentType: string;
-  /** Documents by id, held for two minutes. */
-  protected cache = new TtlMap<string, T>(2 * 60 * 1000);
+  /** Documents by id, held for two minutes ({@link DocumentCache}). */
+  protected cache = new DocumentCache<T>(2 * 60 * 1000);
 
   constructor(documentType: string, contractId?: string) {
     this.contractId = contractId ?? YAPPR_CONTRACT_ID;
@@ -279,14 +328,16 @@ export abstract class BaseDocumentService<T> {
     const cached = this.cache.get(documentId);
     if (cached !== undefined) return cached;
 
-    const sdk = await getEvoSdk();
-    const response = await sdk.documents.get(this.contractId, this.documentType, documentId);
-    if (!response) return null;
+    return this.cache.fencedRead(async (fill) => {
+      const sdk = await getEvoSdk();
+      const response = await sdk.documents.get(this.contractId, this.documentType, documentId);
+      if (!response) return null;
 
-    // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
-    const transformed = this.transformDocument(documentToPlainObject(response));
-    this.cache.set(documentId, transformed);
-    return transformed;
+      // Normalize zero-arg toObject() output back to the JSON-like shape Yappr expects.
+      const transformed = this.transformDocument(documentToPlainObject(response));
+      fill(documentId, transformed);
+      return transformed;
+    });
   }
 
   /**
@@ -311,6 +362,11 @@ export abstract class BaseDocumentService<T> {
     }
     if (uncachedIds.length === 0) return results;
 
+    return this.cache.fencedRead((fill) => this.fetchMany(uncachedIds, results, fill));
+  }
+
+  /** {@link getMany}'s reads of the ids it had no fresh cache entry for, added to `results`. */
+  private async fetchMany(uncachedIds: string[], results: T[], fill: (id: string, value: T) => void): Promise<T[]> {
     try {
       const sdk = await getEvoSdk();
 
@@ -330,7 +386,7 @@ export abstract class BaseDocumentService<T> {
             const transformed = this.transformDocument(doc);
             const id = doc.$id as string | undefined;
             if (id) {
-              this.cache.set(id, transformed);
+              fill(id, transformed);
             }
             results.push(transformed);
           }
