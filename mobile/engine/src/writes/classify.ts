@@ -170,8 +170,26 @@ function isEngineCode(code: unknown): code is EngineErrorCode {
   return typeof code === 'string' && ENGINE_CODES.has(code)
 }
 
-/** What `categorizeError`'s generic fallback says failed, for the writes that are not posts. */
-const FAILED_ACTION: Partial<Record<WriteOp, string>> = { 'dm.send': 'send message', 'dm.group': 'send message' }
+/** What `categorizeError`'s generic fallback ("Failed to <action>: …") says each write was. */
+const FAILED_ACTION: Record<WriteOp, string> = {
+  'post.publish': 'create post',
+  'post.delete': 'delete post',
+  like: 'like post',
+  unlike: 'remove like',
+  repost: 'repost',
+  unrepost: 'undo repost',
+  bookmark: 'bookmark post',
+  unbookmark: 'remove bookmark',
+  follow: 'follow',
+  unfollow: 'unfollow',
+  block: 'block',
+  unblock: 'unblock',
+  report: 'send report',
+  'report.withdraw': 'withdraw report',
+  'profile.update': 'update profile',
+  'dm.send': 'send message',
+  'dm.group': 'update group',
+}
 
 /** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */
 export function classify(error: unknown, op?: WriteOp): EngineErrorData {
