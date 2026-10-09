@@ -10,7 +10,7 @@ import { useSessionStore, useViewerId } from '~/data/session';
 import { sendWrite, useLandingIntent, useLandingTicket, type WriteSpec } from '~/data/writes';
 import { engine } from '~/engine';
 import { appendLog, errorMessage } from '~/engine/logs';
-import { setBlockedInMessages } from '~/features/messages/dm-actions';
+import { onMessagesBlockChosen, setBlockedInMessages } from '~/features/messages/dm-actions';
 import { refreshDm } from '~/features/messages/dm-data';
 import { queryClient } from '~/state/query-client';
 import { errorFeedback } from '~/ui/haptics';
@@ -35,6 +35,12 @@ interface Decision {
   user?: BlockedUserDTO;
   /** Blocked only by a followed block list (`STILL_BLOCKED`): no own block to list. */
   listOnly?: boolean;
+  /**
+   * Blocked or unblocked in Messages alone since (Message settings, a
+   * conversation's Block or Unblock): once this decision has settled,
+   * Messages decide the conversation. The account's block is unchanged.
+   */
+  messagesChose?: boolean;
 }
 
 const useBlockDecisions = create<{ byKey: Readonly<Record<string, Decision>> }>()(() => ({ byKey: {} }));
@@ -52,6 +58,12 @@ useSessionStore.subscribe((state, previous) => {
   if (previous.status !== 'unknown' && state.session?.identityId !== previous.session?.identityId) {
     resetBlockDecisions();
   }
+});
+
+// A choice made in Messages alone is newer than the decision: the conversation follows Messages from then on.
+onMessagesBlockChosen((viewerId, peerId) => {
+  const decided = useBlockDecisions.getState().byKey[decisionKey(viewerId, peerId)];
+  if (decided && !decided.messagesChose) decide(viewerId, peerId, { ...decided, messagesChose: true });
 });
 
 /**
@@ -297,8 +309,9 @@ export function useBlockTicket(userId: string | undefined): WriteTicket | null {
  * composer's banner, the menu's Unblock): this device's block decision when
  * it made one, as the profile and the Blocked list show it, else what
  * Messages say (`flagged`, which on DM v5 also counts a block made only in
- * Messages). A block that fails or never lands takes the banner with it,
- * and Messages only follow a block once it is confirmed (`refreshMessages`),
+ * Messages), and what they say again once a choice made in Messages alone
+ * follows a settled decision. A block that fails or never lands takes the
+ * banner with it, and Messages only follow a block once it is confirmed (`refreshMessages`),
  * so none outlives it (RC16-A-02). An unblock still on its way keeps it:
  * Messages block them until it is confirmed.
  */
@@ -308,7 +321,7 @@ export function useConversationBlocked(peerId: string | undefined, flagged: bool
   const busy = useBlockBusy(peerId);
   if (busy === 'unblocking') return true;
   // Blocked only by a followed list: Messages were lifted with the own block (`onFailed`), so they decide.
-  if (!decided || decided.listOnly) return flagged;
+  if (!decided || decided.listOnly || (decided.messagesChose && busy === null)) return flagged;
   return decided.blocked;
 }
 

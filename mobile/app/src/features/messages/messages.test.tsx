@@ -20,7 +20,7 @@ import type { ReactNode } from 'react';
 import { queryKeys } from '~/data/keys';
 import { useSessionStore } from '~/data/session';
 import { resetWriteTracking, runWrite } from '~/data/writes';
-import { blockWrite, resetBlockDecisions } from '~/features/safety/block-state';
+import { blockWrite, resetBlockDecisions, useAuthorBlocked } from '~/features/safety/block-state';
 import { advance, fakeEngine, ticket } from '~/data/testing/fake-engine';
 import { queryClient } from '~/state/query-client';
 import { largeTitleScrollView } from '~/ui/testing/large-title';
@@ -35,7 +35,7 @@ import { MessageSettingsScreen } from './MessageSettingsScreen';
 import { NewGroupScreen } from './NewGroupScreen';
 import { NewMessageScreen } from './NewMessageScreen';
 import { UNAVAILABLE_MESSAGE, useMessagesBadge } from './dm-data';
-import { ARCHIVE_UNDO_MS, archiveConversation } from './dm-actions';
+import { ARCHIVE_UNDO_MS, archiveConversation, setBlockedInMessages } from './dm-actions';
 import { resetKeyResends } from './group-keys';
 import { forgetDmDrafts, useDraft, useDrafts } from './drafts';
 import { InboxScreen } from './InboxScreen';
@@ -1045,6 +1045,36 @@ describe('Conversation (DM-03, DM-04)', () => {
       // The engine lifts it in Messages, and until they are read again the conversation follows the confirmed unblock.
       expect(fakeEngine.method('dm.setBlocked')).not.toHaveBeenCalled();
       expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+    });
+
+    it('shows a conversation unblocked once Message settings lift a block the account still has', async () => {
+      await openConversation([theirs]);
+      const pending = ticket({ op: 'block', target: { identityId: BOB_ID } });
+      fakeEngine.method('safety.block').mockResolvedValue(pending);
+      await act(async () => {
+        await runWrite(blockWrite, { viewerId: VIEWER, userId: BOB_ID, block: true, handle: '@bob' });
+      });
+      await act(async () => fakeEngine.emit('write.status', advance(pending, { state: 'confirmed' })));
+      // The engine blocked them in Messages too, and the conversation reads so.
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: true } })]);
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.dm.conversations });
+      });
+      expect(screen.getByText('You blocked this person. Unblock them to send messages.')).toBeTruthy();
+
+      // Message settings' Unblock: Messages only, the account's block stays.
+      fakeEngine.method('dm.setBlocked').mockResolvedValue(true);
+      fakeEngine.method('dm.conversations').mockResolvedValue([conversation({ key: KEY, flags: { ...FLAGS, blocked: false } })]);
+      await act(async () => {
+        await setBlockedInMessages(BOB_ID, false);
+      });
+      expect(fakeEngine.method('dm.setBlocked')).toHaveBeenCalledWith(BOB_ID, false);
+      expect(fakeEngine.method('safety.unblock')).not.toHaveBeenCalled();
+      expect(screen.queryByText('You blocked this person. Unblock them to send messages.')).toBeNull();
+      expect(screen.getByTestId('dm-composer')).toBeTruthy();
+      // Elsewhere the account still blocks them.
+      const { result } = renderHook(() => useAuthorBlocked(BOB_ID));
+      expect(result.current).toBe(true);
     });
 
     it("changes nothing when the account's block can't be read, and says so", async () => {

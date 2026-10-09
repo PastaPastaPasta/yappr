@@ -158,6 +158,17 @@ export function archiveConversation(conversation: Pick<ConversationDTO, 'key'>):
   });
 }
 
+type MessagesBlockListener = (viewerId: string, peerId: string) => void;
+const messagesBlockListeners = new Set<MessagesBlockListener>();
+
+/** Hear each block or unblock made in Messages alone on this device, once it is saved. Returns the unsubscribe. */
+export function onMessagesBlockChosen(listener: MessagesBlockListener): () => void {
+  messagesBlockListeners.add(listener);
+  return () => {
+    messagesBlockListeners.delete(listener);
+  };
+}
+
 /**
  * Block or unblock someone in Messages (v5 DM-10, the encrypted self-state):
  * their messages and group invitations are ignored. Saved at once. `done`
@@ -166,6 +177,8 @@ export function archiveConversation(conversation: Pick<ConversationDTO, 'key'>):
 export async function setBlockedInMessages(peerId: string, blocked: boolean, done?: string): Promise<void> {
   try {
     await engine.api.dm.setBlocked(peerId, blocked);
+    const viewerId = useSessionStore.getState().session?.identityId;
+    if (viewerId) for (const listener of messagesBlockListeners) listener(viewerId, peerId);
     lightImpact();
     toast.success(done ?? (blocked ? 'User blocked' : 'User unblocked'));
     refreshDm();
