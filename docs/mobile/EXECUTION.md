@@ -340,4 +340,4 @@ No barrel files (`index.ts` re-exports) in `mobile/app`; import by path. That ke
    - DM plaintext excluded from persistence;
    - no secrets in the repo (a secret scan of `mobile/**`).
 6. Signed `devnet` and `testnet` builds install and run from TestFlight and from Play internal on at least one physical iPhone and one physical Android device.
-7. ENGINE §14's open items O1–O5 and O8 are closed. O6 and O7 are filed as web issues.
+7. ENGINE §14's open items O1–O5 and O8 are closed. O6 is filed as a web issue (#608); O7 is fixed.
