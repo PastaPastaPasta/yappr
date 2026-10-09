@@ -2,14 +2,13 @@ import { useSyncExternalStore } from 'react';
 import { Dimensions, Platform, type ScaledSize, type TextProps } from 'react-native';
 
 /**
- * Android's system font scale changing while the app is open, for making
- * text already on screen measure again at the new size (`Text`, D-rc5a-001).
- * One Dimensions listener for the app, and a re-render only when the scale
- * itself changes, not on every window resize (rotation, split screen). iOS
- * re-lays out its text for Dynamic Type itself: there nothing changes.
+ * The system font scale (Android) or Dynamic Type size (iOS) changing while
+ * the app is open, for making text already on screen measure again at the new
+ * size (`Text`). One Dimensions listener for the app, and a re-render only
+ * when the scale itself changes, not on every window resize (rotation, split
+ * screen).
  */
 
-const android = () => Platform.OS === 'android';
 const listeners = new Set<() => void>();
 let watching = false;
 let scale = Number.NaN;
@@ -24,7 +23,6 @@ function onDimensionsChange({ window }: { window: ScaledSize }) {
 }
 
 function subscribe(listener: () => void): () => void {
-  if (!android()) return () => undefined;
   if (!watching) {
     // For the app's lifetime: there is always text on screen.
     watching = true;
@@ -35,10 +33,10 @@ function subscribe(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-const getChanges = () => (android() ? changes : 0);
+const getChanges = () => changes;
 
-/** How many times Android's font scale has changed while the app was open (re-rendering on each); 0 on iOS. */
-export function useAndroidFontScaleChanges(): number {
+/** How many times the font scale has changed while the app was open (re-rendering on each). */
+export function useFontScaleChanges(): number {
   return useSyncExternalStore(subscribe, getChanges);
 }
 
@@ -73,6 +71,6 @@ const RAMPS = [
  * iOS, where the prop changes how text scales.
  */
 export function remeasureProps(changes: number): Pick<TextProps, 'dynamicTypeRamp'> {
-  if (!android() || changes === 0) return {};
+  if (Platform.OS !== 'android' || changes === 0) return {};
   return { dynamicTypeRamp: RAMPS[(changes - 1) % RAMPS.length] };
 }

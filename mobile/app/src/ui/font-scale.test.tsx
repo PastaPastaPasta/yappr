@@ -10,7 +10,7 @@ function setFontScale(fontScale: number) {
   act(() => Dimensions.set({ window, screen: { ...Dimensions.get('screen'), fontScale } }));
 }
 
-describe('Text and the system font scale (D-rc5a-001)', () => {
+describe('Text and the system font scale (D-rc5a-001, QA rc16 I-01)', () => {
   const os = Platform.OS;
   const initial = Dimensions.get('window').fontScale;
   const larger = initial + 1;
@@ -46,13 +46,21 @@ describe('Text and the system font scale (D-rc5a-001)', () => {
     expect(back.props.dynamicTypeRamp).not.toBe(keyAfter);
   });
 
-  it('leaves iOS text mounted, and its Dynamic Type ramp alone: iOS re-lays out text for Dynamic Type itself', () => {
+  it('mounts anew on iOS when Dynamic Type changes, leaving its Dynamic Type ramp alone (QA rc16 I-01)', () => {
     setOS('ios');
     render(<Text testID="label">Following</Text>);
     const before = screen.getByTestId('label');
-    setFontScale(larger);
-    expect(screen.getByTestId('label')).toBe(before);
+    // The ramp changes how iOS scales text, so it is never a cache key there.
     expect(before.props.dynamicTypeRamp).toBeUndefined();
+
+    act(() => Dimensions.set({ window: { ...Dimensions.get('window'), width: 800 }, screen: Dimensions.get('screen') }));
+    expect(screen.getByTestId('label')).toBe(before);
+
+    setFontScale(larger);
+    const after = screen.getByTestId('label');
+    expect(after).not.toBe(before);
+    expect(after).toHaveTextContent('Following');
+    expect(after.props.dynamicTypeRamp).toBeUndefined();
   });
 
   it('gives each of 11 changes in a row its own key, and none before the first or on iOS', () => {
