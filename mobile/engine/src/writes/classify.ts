@@ -40,7 +40,7 @@ import {
   isWriteGateError,
 } from '@/lib/error-utils'
 import { evoSdkService } from '@/lib/services/evo-sdk-service'
-import type { EngineErrorCode, EngineErrorData, WriteState } from './types'
+import type { EngineErrorCode, EngineErrorData, WriteOp, WriteState } from './types'
 
 /**
  * `categorizeError` messages for its three module-private predicates
@@ -170,13 +170,16 @@ function isEngineCode(code: unknown): code is EngineErrorCode {
   return typeof code === 'string' && ENGINE_CODES.has(code)
 }
 
+/** What `categorizeError`'s generic fallback says failed, for the writes that are not posts. */
+const FAILED_ACTION: Partial<Record<WriteOp, string>> = { 'dm.send': 'send message', 'dm.group': 'send message' }
+
 /** Map any write error to an engine code (ENGINE.md §7.3), walking `RULES` in order. */
-export function classify(error: unknown): EngineErrorData {
+export function classify(error: unknown, op?: WriteOp): EngineErrorData {
   const message = extractErrorMessage(error)
   const code = readCode(error)
   if (isEngineCode(code)) return { code, consensusCode: null, outcome: 'local', retryable: false, userMessage: message }
 
-  const userMessage = categorizeError(error)
+  const userMessage = categorizeError(error, op && FAILED_ACTION[op])
   const rule = RULES.find(([, , , matches]) => matches(error, message, userMessage))
   const consensusCode = consensusCodeOf(error)
   if (!rule) return { code: 'UNKNOWN', consensusCode, outcome: isConsensusRefusal(error) ? 'refused' : 'unknown', retryable: false, userMessage }

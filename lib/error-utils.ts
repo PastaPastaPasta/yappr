@@ -1167,8 +1167,10 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
 
 /**
  * Categorizes common Dash Platform errors and returns a user-friendly message.
+ * `action` names what failed in the generic fallback ("Failed to <action>: …"),
+ * so a message that could not be sent is not reported as a post.
  */
-export function categorizeError(error: unknown): string {
+export function categorizeError(error: unknown, action = 'create post'): string {
   // Protocol-14 rejections, all permanent for the transition as built. Ordered
   // most-specific first; none may fall through to the "buy YAPP" or "network"
   // messages below, which would send the user chasing the wrong fix.
@@ -1339,5 +1341,5 @@ export function categorizeError(error: unknown): string {
     return 'Your session has expired. Please log in again.'
   }
 
-  return `Failed to create post: ${errorMessage}`
+  return `Failed to ${action}: ${errorMessage}`
 }

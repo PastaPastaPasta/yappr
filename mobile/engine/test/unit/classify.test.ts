@@ -89,3 +89,21 @@ describe('classify() for engine errors', () => {
     expect(classify(freed).code).toBe('TIMEOUT')
   })
 })
+
+describe('classify() names what failed', () => {
+  const stalled = new Error('wait_for_state_transition_result timed out')
+
+  it('reports a message that could not be sent as a message, not a post', () => {
+    for (const op of ['dm.send', 'dm.group'] as const) {
+      expect(classify(stalled, op)).toMatchObject({ code: 'TIMEOUT', userMessage: `Failed to send message: ${stalled.message}` })
+    }
+  })
+
+  it('keeps every other write on the web\'s post wording, and the code the same either way', () => {
+    expect(classify(stalled, 'post.publish').userMessage).toBe(`Failed to create post: ${stalled.message}`)
+    expect(classify(stalled).userMessage).toBe(`Failed to create post: ${stalled.message}`)
+    // Only the generic fallback names the action: a specific branch reads the same for a message.
+    const offline = new Error('Network request failed')
+    expect(classify(offline, 'dm.send').userMessage).toBe(classify(offline, 'post.publish').userMessage)
+  })
+})

@@ -189,6 +189,18 @@ describe('safety', () => {
     expect(store.get('t1')).toMatchObject({ state: 'unconfirmed', retryable: false, error: { code: 'NETWORK', outcome: 'unknown' } })
   })
 
+  it('names a message that could not be sent as a message in its diagnostics, and a post as a post', async () => {
+    const { store } = setup()
+    const stalled = () => new Error('wait_for_state_transition_result timed out')
+    store.register('dm.send', { async run() { throw stalled() } })
+    store.register('post.publish', { async run() { throw stalled() } })
+    store.submit({ op: 'dm.send', args: null })
+    store.submit({ op: 'post.publish', args: null })
+    await settle()
+    expect(store.get('t1')?.error).toMatchObject({ code: 'TIMEOUT', userMessage: 'Failed to send message: wait_for_state_transition_result timed out' })
+    expect(store.get('t2')?.error).toMatchObject({ code: 'TIMEOUT', userMessage: 'Failed to create post: wait_for_state_transition_result timed out' })
+  })
+
   it('counts a transport failure during run() as maybe sent, unless the handler proves it was not', async () => {
     const { store } = setup()
     const network = () => new Error('no available addresses for retry')

@@ -716,6 +716,15 @@ describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platf
     }
   })
 
+  it('names the action that failed in the generic fallback: a post by default, a message when asked', () => {
+    const error = sdkError(1, OPAQUE)
+    expect(categorizeError(error)).toBe(`Failed to create post: ${OPAQUE}`)
+    expect(categorizeError(error, 'send message')).toBe(`Failed to send message: ${OPAQUE}`)
+    // A recognised error reads the same whatever failed.
+    const offline = new Error('Network request failed')
+    expect(categorizeError(offline, 'send message')).toBe(categorizeError(offline))
+  })
+
   it('does not let one numeric code claim a neighbour', () => {
     const banned = sdkError(41107, OPAQUE)
     expect(isGasPayerError(banned)).toBe(false)
