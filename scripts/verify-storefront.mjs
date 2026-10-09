@@ -30,6 +30,13 @@
  * with proved "newest" and "top categories" reads (s23). The cases for the
  * dropped indexes (per-seller averages and order counts, global item
  * rankings, most-reviewed stores) are gone with them.
+ * Storefront v7 (docs/STOREFRONT_V7.md) stores `storeItem.variants` as a typed
+ * table: s25 lands the seller's 7 × 2 listing and a 5-axis, 100-combination
+ * one with one signature each, replaces every stock cell in one write, reads
+ * both back value for value and measures the fees; the JSON schema refuses a
+ * table missing a required list, a repeated option id or selector, a selector
+ * longer than five bytes and the v6 JSON string (10101); s20 broadcasts every
+ * refused rule case, the nine v7 rules included (10422); s18d allows 12 images.
  *   node scripts/verify-storefront.mjs --self-test   # offline: contract declares what the cases assert
  */
 import { readFileSync } from 'node:fs';
@@ -407,7 +414,7 @@ async function caseS18TypedArrays(ctx) {
   }
   const create = (label, data) => battery.probeCreate(label, ARRAY_OUT_OF_BOUNDS, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Bad ${run} ${label.slice(0, 4)}`, ...data }));
   await create('s18c an image URL that is not http(s):// or ipfs:// is refused (pattern)', { imageUrls: ['ftp://example.com/a.png'] });
-  await create('s18d a ninth image is refused (maxItems 8)', { imageUrls: Array.from({ length: 9 }, (_, i) => `https://example.com/${i}.png`) });
+  await create('s18d a thirteenth image is refused (maxItems 12)', { imageUrls: Array.from({ length: 13 }, (_, i) => `https://example.com/${i}.png`) });
   await create('s18e a duplicate tag is refused (uniqueItems)', { tags: ['wood', 'wood'] });
   await battery.probeCreate('s18f the v3 JSON-string encoding is refused on v4', NOT_A_LIST, seller, 'storeItem', itemData({ storeId: id32(ctx.storeId), title: `Legacy ${run}`, tags: JSON.stringify(tags) }));
 }
@@ -577,6 +584,102 @@ async function caseS24ModeratorDeletesItem(ctx) {
   await caseModeratorDelete(ctx, { prefix: 's24', docType: 'storeItem', documentId: item.ok ? item.id : null, ownerId: seller.ownerId });
 }
 
+// ---- s25: the v7 variants table -------------------------------------------------
+
+const SQUISHY_COLORS = ['Red', 'Orange', 'Yellow', 'Green', 'Blue', 'Purple', 'Pink'];
+/**
+ * The seller's listing that outgrew v6's 5,120-byte JSON: 7 primary colours × 2
+ * pack sizes, prices 100 and 353, stock, SKU, weight and an image per
+ * combination. Options are numbered in first-seen order (Red=1, Single=2,
+ * 4 Pack=3, Orange=4, …), as the app's import numbers them.
+ */
+function sellerVariants() {
+  const optionIds = [1, ...SQUISHY_COLORS.slice(1).map((_, i) => i + 4), 2, 3];
+  const selectors = [];
+  const prices = []; const stocks = []; const skus = []; const weights = []; const images = [];
+  SQUISHY_COLORS.forEach((color, c) => [[2, 100, 45, 'S'], [3, 353, 180, '4']].forEach(([pack, price, grams, tag]) => {
+    selectors.push(Uint8Array.of(c === 0 ? 1 : c + 3, pack));
+    prices.push(price); stocks.push(10 + c); skus.push(`SQ-${color.slice(0, 3).toUpperCase()}-${tag}`); weights.push(grams); images.push(c + 2);
+  }));
+  return {
+    axes: ['Primary color', 'Pack Size'], options: [...SQUISHY_COLORS, 'Single Piece', '4 Pack'], optionIds,
+    optionAxes: [...SQUISHY_COLORS.map(() => 0), 1, 1], nextOptionId: 10, selectors, prices, stocks, skus, weights, images,
+  };
+}
+/** 5 axes (4, 5, 5, 2, 2 options) and the first 100 of their 400 combinations, with stock and SKU. */
+function hundredVariants() {
+  const sizes = [4, 5, 5, 2, 2];
+  const firstId = sizes.map((_, axis) => sizes.slice(0, axis).reduce((total, n) => total + n, 0) + 1);
+  const optionAxes = sizes.flatMap((n, axis) => Array(n).fill(axis));
+  const selectors = Array.from({ length: 100 }, (_, n) => {
+    let rest = n;
+    return Uint8Array.from(sizes.map((size, axis) => { const option = rest % size; rest = Math.floor(rest / size); return firstId[axis] + option; }));
+  });
+  return {
+    axes: ['Colour', 'Size', 'Material', 'Finish', 'Pack'], options: optionAxes.map((axis, i) => `o${axis}-${i}`), optionIds: optionAxes.map((_, i) => i + 1),
+    optionAxes, nextOptionId: optionAxes.length + 1, selectors, prices: selectors.map((_, i) => 1500 + 50 * (i % 9)),
+    stocks: selectors.map((_, i) => 3 + (i % 5)), skus: selectors.map((_, i) => `CUBE-${String(i).padStart(3, '0')}`),
+  };
+}
+const SQUISHY_IMAGES = Array.from({ length: 8 }, (_, i) => `https://picsum.photos/seed/sfv7-squishy-${i}/800/800`);
+const variantItemData = ({ storeId, title, variants, imageUrls }) => ({ storeId, title, status: 'active', currency: 'USD', variants, ...(imageUrls ? { imageUrls } : {}) });
+/** A stored table as plain values (integers as Numbers, selectors as byte lists), for a value-for-value comparison. */
+const plainTable = (table) => Object.fromEntries(Object.entries(table ?? {}).map(([key, value]) => [key,
+  Array.isArray(value) ? value.map((element) => (typeof element === 'bigint' ? Number(element) : element instanceof Uint8Array || Array.isArray(element) ? Array.from(element) : element))
+    : typeof value === 'bigint' ? Number(value) : value]));
+const sameTable = (a, b) => JSON.stringify(plainTable(a)) === JSON.stringify(plainTable(b));
+const CENTS_PER_CREDIT = 0.06 / 1e6;
+const credits = (n) => `${(Number(n) / 1e6).toFixed(2)}M credits (${(Number(n) * CENTS_PER_CREDIT).toFixed(2)}¢)`;
+const omitKey = (table, key) => Object.fromEntries(Object.entries(table).filter(([name]) => name !== key));
+
+async function caseS25TypedVariants(ctx) {
+  const { battery, seller, run } = ctx;
+  console.log('\n--- s25. v7 variants: a typed table, one signature per listing, aligned by consensus ---');
+  if (!(await ensureSellerStore(ctx))) { battery.check('s25 fixture', false, 'no seller store'); return; }
+  const storeId = id32(ctx.storeId);
+  const fees = ctx.variantFees = {};
+  /** What the seller's balance dropped by across `write` (the 50M action fee included on a create). */
+  const measured = async (write) => {
+    const before = await battery.balanceOf(seller.ownerId);
+    const outcome = await write();
+    await settle();
+    return { outcome, spent: before - await battery.balanceOf(seller.ownerId) };
+  };
+  const readTable = async (id) => (await battery.fetchDocument('storeItem', id))?.toObject?.().variants;
+
+  const example = await measured(() => battery.probeCreate('s25a the seller\'s 7 colours × 2 pack sizes (14 combinations, stock, SKU, weight, image) lands with one signature', null, seller, 'storeItem',
+    variantItemData({ storeId, title: `Squishy ${run}`, variants: sellerVariants(), imageUrls: SQUISHY_IMAGES })));
+  if (example.outcome.ok) {
+    fees.create14 = example.spent;
+    battery.check('s25b the 14-combination table reads back value for value', sameTable(await readTable(example.outcome.id), sellerVariants()), credits(example.spent));
+  }
+  const hundred = await measured(() => battery.probeCreate('s25c a 5-axis, 100-combination item lands with one signature', null, seller, 'storeItem',
+    variantItemData({ storeId, title: `Cube ${run}`, variants: hundredVariants() })));
+  if (hundred.outcome.ok) {
+    fees.create100 = hundred.spent;
+    battery.check('s25d the 100-combination table reads back value for value', sameTable(await readTable(hundred.outcome.id), hundredVariants()), credits(hundred.spent));
+  }
+  if (example.outcome.ok) {
+    const restocked = { ...sellerVariants(), stocks: sellerVariants().stocks.map((n) => n + 5) };
+    const revision = await battery.revisionOf('storeItem', example.outcome.id);
+    const replaced = await measured(() => battery.probeReplace('s25e one replace sets every stock cell of the 14-combination item', null, seller, 'storeItem', example.outcome.id,
+      variantItemData({ storeId, title: `Squishy ${run}`, variants: restocked, imageUrls: SQUISHY_IMAGES }), revision));
+    if (replaced.outcome.ok) {
+      fees.stockReplace = replaced.spent;
+      battery.check('s25f the new stock reads back', sameTable(await readTable(example.outcome.id), restocked), credits(replaced.spent));
+    }
+  }
+  const refused = (label, variants) => battery.probeCreate(label, SCHEMA_REFUSED, seller, 'storeItem', variantItemData({ storeId, title: `Bad ${run} ${label.slice(0, 4)}`, variants }));
+  await refused('s25g a table missing nextOptionId is refused (10101: the nested required list)', omitKey(sellerVariants(), 'nextOptionId'));
+  await refused('s25h a table missing its selectors is refused (10101)', omitKey(sellerVariants(), 'selectors'));
+  await refused('s25i a repeated option id is refused (10101 uniqueItems)', { ...sellerVariants(), optionIds: [1, 1, ...sellerVariants().optionIds.slice(2)] });
+  await refused('s25j the same combination twice is refused (10101 uniqueItems on the byte-array selectors)', { ...sellerVariants(), selectors: [sellerVariants().selectors[0], ...sellerVariants().selectors.slice(0, 13)] });
+  await refused('s25k a six-byte selector is refused (10101 maxItems 5)', { ...sellerVariants(), selectors: [Uint8Array.of(1, 2, 3, 4, 5, 6), ...sellerVariants().selectors.slice(1)] });
+  await refused('s25l an option id past 254 is refused (10101)', { ...sellerVariants(), optionIds: [...sellerVariants().optionIds.slice(0, 8), 255] });
+  await refused('s25m the v6 JSON-string variants are refused (10101)', JSON.stringify({ axes: [{ name: 'Size', options: ['S'] }], combinations: [{ key: 'S', price: 1 }] }));
+  for (const [key, value] of Object.entries(fees)) console.log(`     fee ${key}: ${credits(value)}`);
+}
+
 const CASES = new Map([
   ['s1', caseS1Fixtures], ['s2', caseS2ItemRefs], ['s3', caseS3Orders], ['s4', caseS4Status],
   ['s5', caseS5StoreReviews], ['s6', caseS6ItemReviews], ['s7', caseS7Averages], ['s8', caseS8Rankings],
@@ -584,9 +687,10 @@ const CASES = new Map([
   ['s13', caseS13Immutable], ['s14', caseS14Ban], ['s15', caseS15ModeratorDelete],
   ['s17', caseS17Warn], ['s18', caseS18TypedArrays], ['s19', caseS19SelfOrder], ['s20', caseS20PropertyConstraints],
   ['s21', caseS21StoreMustBeOpen], ['s22', caseS22Digital], ['s23', caseS23Categories], ['s24', caseS24ModeratorDeletesItem],
+  ['s25', caseS25TypedVariants],
 ]);
 
-/** v6 shape the cases rely on beyond the per-type rules selfTestModerated checks. */
+/** v6/v7 shape the cases rely on beyond the per-type rules selfTestModerated checks. */
 function selfTestV6() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
@@ -595,7 +699,9 @@ function selfTestV6() {
   const indexProps = (docType, name) => JSON.stringify(index(docType, name)?.properties);
   const byCategory = index('store', 'byCategory');
   const derivedFeed = (docType, name) => indexProps(docType, name) === '[{"orderId.$ownerId":"asc"},{"$createdAt":"asc"}]';
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v6)`, [
+  const variants = SCHEMAS.storeItem.properties.variants;
+  const list = (name) => variants.properties?.[name];
+  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v7)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['store, storeItem, storeReview and itemReview creates declare 1000M / 50M / 16M / 8M moderators fees (s5e, s12)', fee('store') === 1_000_000_000n && fee('storeItem') === 50_000_000n && fee('storeReview') === 16_000_000n && fee('itemReview') === 8_000_000n],
@@ -607,8 +713,14 @@ function selfTestV6() {
     ['order counts ride buyerOrders and storeOrders (rangeCountable; storeOrders ranked at storeId; s9)', index('storeOrder', 'buyerOrders')?.rangeCountable === true && index('storeOrder', 'storeOrders')?.rangeCountable === true && index('storeOrder', 'storeOrders')?.rankedCountable?.at === 'storeId'],
     ['status updates and deliveries store no buyerId; buyerFeed and buyerDeliveries derive it (s4g, s22q)', !SCHEMAS.orderStatusUpdate.properties.buyerId && !SCHEMAS.orderDelivery.properties.buyerId && derivedFeed('orderStatusUpdate', 'buyerFeed') && derivedFeed('orderDelivery', 'buyerDeliveries')],
     ['a status update is neither deletable nor mutable (s4h)', SCHEMAS.orderStatusUpdate.canBeDeleted === false && SCHEMAS.orderStatusUpdate.documentsMutable === false],
-    ['encrypted payloads cap at 5,120 B and variants at 5,120 chars/bytes', ['storeOrder', 'orderDelivery', 'itemDeliverable'].every((docType) => SCHEMAS[docType].properties.encryptedPayload.maxItems === 5120)
-      && SCHEMAS.storeItem.properties.variants.maxLength === 5120 && SCHEMAS.storeItem.properties.variants.maxBytes === 5120],
+    ['encrypted payloads cap at 5,120 B', ['storeOrder', 'orderDelivery', 'itemDeliverable'].every((docType) => SCHEMAS[docType].properties.encryptedPayload.maxItems === 5120)],
+    ['v7 variants are a closed object requiring axes, options, optionIds, optionAxes, nextOptionId, selectors and prices (s25g, s25h)', variants.type === 'object' && variants.additionalProperties === false
+      && JSON.stringify([...variants.required].sort()) === JSON.stringify(['axes', 'nextOptionId', 'optionAxes', 'optionIds', 'options', 'prices', 'selectors'])],
+    ['v7 caps: 5 unique axes, 64 options with unique ids 1–254, 256 unique byte-array selectors of 1–5 bytes (s25i–s25l)', list('axes').maxItems === 5 && list('axes').uniqueItems === true
+      && list('options').maxItems === 64 && list('optionIds').uniqueItems === true && list('optionIds').items.maximum === 254 && list('nextOptionId').maximum === 255
+      && list('selectors').maxItems === 256 && list('selectors').uniqueItems === true && list('selectors').items.byteArray === true && list('selectors').items.maxItems === 5],
+    ['v7 per-combination lists: prices, stocks, skus (≤32), weights, images (≤12 into imageUrls, 12 at most)', ['prices', 'stocks', 'skus', 'weights', 'images'].every((name) => list(name)?.maxItems === 256)
+      && list('skus').items.maxLength === 32 && list('images').items.maximum === 12 && SCHEMAS.storeItem.properties.imageUrls.maxItems === 12],
     ['the dropped indexes are gone (per-seller and per-buyer review/order indexes, the count twins, itemRating, the item status/owner/category scans)',
       ['sellerOrders', 'buyerOrderCount', 'sellerOrderCount', 'storeOrderCount'].every((name) => !indexNames('storeOrder').includes(name))
       && ['sellerReviews', 'buyerReviews', 'sellerRating'].every((name) => !indexNames('storeReview').includes(name))
@@ -626,7 +738,7 @@ function selfTestRules() {
   const constraints = DECLARED_RULES[CONTRACT_FILE];
   return selfTestModerated(CONTRACT_FILE, {
     // s18: tags and imageUrls are typed string arrays (beta.4 v4). s20: propertyConstraints (beta.5). s24: moderator-deletable (v6).
-    storeItem: { ...ownedByStoreOwner, moderatorDeletable: true, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 8, maxLength: 512 } }, constraints: constraints.storeItem },
+    storeItem: { ...ownedByStoreOwner, moderatorDeletable: true, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 12, maxLength: 512 } }, constraints: constraints.storeItem },
     shippingZone: { ...ownedByStoreOwner, constraints: constraints.shippingZone },
     // s3d: sellerId is the store's real owner, not a buyer's claim. s21 (QA D-25):
     // storeStatus is the store's real status, and only an active store takes orders.
@@ -662,5 +774,6 @@ await runBattery({
     console.log(`moderator=${moderator.label}`);
     return { reviews: [], itemRatings: {}, zoneId: null, moderator };
   },
-  summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`,
+  summary: (ctx) => `store=${ctx.storeId} items=${ctx.item1},${ctx.item2} orders=${ctx.orderId},${ctx.orderId2}`
+    + Object.entries(ctx.variantFees ?? {}).map(([key, value]) => ` ${key}=${credits(value)}`).join(''),
 });
