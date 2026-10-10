@@ -140,9 +140,11 @@ class TokenService {
    * document and signed along with the amount and the recipient.
    *
    * Refused without a broadcast where YAPP is locked (v10 onwards): Yappr
-   * never sends YAPP. On v10–v13 the token is paused for good, so Drive would
-   * refuse the transfer anyway; v14's would land (its token config is
-   * format 0, which is always transferable), and Yappr deliberately offers none.
+   * never sends YAPP. On v10–v13 the token is paused for good and on v15 it is
+   * not transferable (`yappIsTransferable()` is false, which makes it locked),
+   * so Drive would refuse the transfer anyway (40726 on v15); v14's would land
+   * (its token config is format 0, which is always transferable), and Yappr
+   * deliberately offers none.
    */
   async transfer(
     senderId: string,

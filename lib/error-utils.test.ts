@@ -45,6 +45,7 @@ import {
   isFrozenBalanceError,
   isInsufficientTokenError,
   isTokenPausedError,
+  isTokenNotTransferableError,
   isContestedDocumentsNotYetAllowedError,
   isDocumentExpiredError,
   isTimeoutError,
@@ -308,6 +309,32 @@ describe('protocol-14 rejections', () => {
       'state transition rejected, code=40712',
     ])('does not claim %s', (message) => {
       expect(isTokenPausedError(new Error(message))).toBe(false)
+    })
+  })
+
+  describe('40726 TokenNotTransferableError (a non-transferable YAPP moved, beta.4)', () => {
+    // rs-dpp token_not_transferable_error.rs: #[error("Token {token_id} is not transferable, so {action} is refused")]
+    const refused = [
+      'Token AwyQ4ZyWbx3Lr7Zx8K9vvBsF9dtePxP4Xj2u6pJ7sZ8E is not transferable, so a transfer is refused',
+      'TokenNotTransferableError: Token AwyQ is not transferable, so a document payment is refused',
+      'state transition rejected, code=40726',
+    ]
+
+    it.each(refused)('recognises %s', (message) => {
+      expect(isTokenNotTransferableError(new Error(message))).toBe(true)
+      expect(isPermanentProtocol14Error(new Error(message))).toBe(true)
+      const copy = categorizeError(new Error(message))
+      expect(copy).toBe('YAPP can\'t be sent to other accounts or spent outside Yappr.')
+      expect(copy).not.toMatch(/40726|buy|frozen|paused/i)
+    })
+
+    it.each([
+      // 10280 is the registration refusal of a cost paying the owner, not a transfer.
+      'Token at position 0 is not transferable, so the create token cost must burn it instead of paying the contract owner',
+      'Token AwyQ is paused.',
+      'Identity 9t2e does not have enough token balance, code=40700',
+    ])('does not claim %s', (message) => {
+      expect(isTokenNotTransferableError(new Error(message))).toBe(false)
     })
   })
 
@@ -668,6 +695,7 @@ describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platf
     [40128, isImmutablePropertyChangedError],
     [40700, isInsufficientTokenError],
     [40702, isFrozenBalanceError],
+    [40726, isTokenNotTransferableError],
   ]
 
   it.each(byCode)('%i is recognised by its numeric code', (code, matcher) => {
@@ -746,6 +774,7 @@ describe('every consensus code against every matcher', () => {
     isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError, isDeleteConstraintError,
     isReferenceRequirementError, isModerationNotYetSeatedError, isDocumentExpiredError, isContestFundError,
     isContestNotJoinableError, isContestFullError, isTrailingBytesError, isContestedDocumentsNotYetAllowedError,
+    isTokenNotTransferableError,
   }
 
   // The matchers each code may claim. The only overlaps are supersets by design:
@@ -789,6 +818,7 @@ describe('every consensus code against every matcher', () => {
     40128: ['isImmutablePropertyChangedError'],
     40700: ['isInsufficientTokenError'],
     40702: ['isFrozenBalanceError'],
+    40726: ['isTokenNotTransferableError'],
     // Matched only by private helpers or by classifyModerationError, or by nothing:
     // key expiry, vote choice, moderation-only codes, already-present, nonce,
     // generatedFrom, and the generic broadcast codes.

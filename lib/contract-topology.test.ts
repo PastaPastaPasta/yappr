@@ -19,6 +19,7 @@ import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
+import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 import { CONTRACT_TOPOLOGIES } from './constants'
 
@@ -53,6 +54,7 @@ const V11 = socialContractV11.documentSchemas as unknown as Schemas
 const V12 = socialContractV12.documentSchemas as unknown as Schemas
 const V13 = socialContractV13.documentSchemas as unknown as Schemas
 const V14 = socialContractV14.documentSchemas as unknown as Schemas
+const V15 = socialContractV15.documentSchemas as unknown as Schemas
 const BLOCKS = blocksContract as unknown as Schemas
 const V2 = socialContractV2.documentSchemas as unknown as Schemas
 
@@ -68,13 +70,14 @@ async function topologyModule(topology: string) {
 
 describe('contract topology', () => {
   it('declares exactly the social contract shapes the repo carries', () => {
-    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14'])
+    expect([...CONTRACT_TOPOLOGIES]).toEqual(['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15'])
     // e2e/write/topology.spec.ts runs on whichever devnet cut .env.devnet names
     // (every topology but v2); a devnet env naming v2 would silently skip it.
     const devnetEnv = readFileSync(join(process.cwd(), '.env.devnet'), 'utf8')
     const devnetTopology = devnetEnv.match(/^NEXT_PUBLIC_CONTRACT_TOPOLOGY=(\S+)/m)?.[1]
     expect(CONTRACT_TOPOLOGIES.filter((topology) => topology !== 'v2')).toContain(devnetTopology)
-    // /devnet runs sakura, the v14 cut (5.0.0-beta.3, registered after the 2026-10-08 wipe).
+    // /devnet runs sakura, the v14 cut (5.0.0-beta.3, registered after the 2026-10-08 wipe),
+    // until sakura runs beta.4 and v15 is registered there.
     expect(devnetTopology).toBe('v14')
   })
 
@@ -130,7 +133,7 @@ describe('contract topology', () => {
   })
 
   it('names like fields and indexes that exist on each contract', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const like = m.likeIndexFor(kind)
@@ -228,7 +231,7 @@ describe('contract topology', () => {
   })
 
   it('reads the author index as a counter exactly where the contract keeps one (summableOffCountIndex)', async () => {
-    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14]] as const) {
+    for (const [topology, schemas] of [['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15]] as const) {
       const m = await topologyModule(topology)
       for (const kind of ['post', 'reply'] as const) {
         const shape = m.indexOnlyLikeShapeFor(kind)
@@ -253,7 +256,7 @@ describe('contract topology', () => {
   })
 
   it('lets a barred author tombstone exactly where post and reply declare retractedWhen on deleted', async () => {
-    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14]] as const) {
+    for (const [topology, schemas] of [['v2', V2], ['v9', V9], ['v10', V10], ['v11', V11], ['v12', V12], ['v13', V13], ['v14', V14], ['v15', V15]] as const) {
       const m = await topologyModule(topology)
       const declared = (['post', 'reply'] as const).map((kind) => schemas[kind].retractedWhen)
       const retracts = declared.every((rule) => JSON.stringify(rule) === JSON.stringify({ present: 'deleted' }))
@@ -660,9 +663,11 @@ describe('contract topology', () => {
         const m = await topologyModule(topology)
         expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([false, false])
       }
-      // v14 pays token costs in YAPP again, but YAPP is still never bought or sent.
-      const v14 = await topologyModule('v14')
-      expect([v14.yappIsPausedForGood(), v14.yappIsLocked()]).toEqual([false, true])
+      // v14 and v15 pay token costs in YAPP again, but YAPP is still never bought or sent.
+      for (const topology of ['v14', 'v15']) {
+        const m = await topologyModule(topology)
+        expect([m.yappIsPausedForGood(), m.yappIsLocked()], topology).toEqual([false, true])
+      }
     })
 
     it('makes reposts quotes: no repost doctype, one quote or repost per author and target', async () => {
@@ -1200,6 +1205,62 @@ describe('contract topology', () => {
         }
       }
       expect(await read('v14')).toEqual(await read('v13'))
+    })
+  })
+
+  describe('v15 (5.0.0-beta.4)', () => {
+    /** A schema with the property type shorthands written out (scripts/schema-shorthands.mjs does the same for the scripts). */
+    const longForm = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(longForm)
+      if (!value || typeof value !== 'object') return value
+      const entries = Object.entries(value as Record<string, unknown>).map(([key, nested]) => [key, longForm(nested)] as const)
+      const object = Object.fromEntries(entries) as Record<string, unknown>
+      if (object.type !== 'identifier' && object.type !== 'bytes') return object
+      const { type, size, ...rest } = object
+      const bytes = type === 'identifier' ? 32 : size
+      return { ...rest, type: 'array', byteArray: true, minItems: bytes, maxItems: bytes, ...(type === 'identifier' ? { contentMediaType: 'application/x.dash.dpp.identifier' } : {}) }
+    }
+    const withoutEffect = (schemas: Schemas) => Object.fromEntries(Object.entries(schemas).map(([docType, schema]) => {
+      const create = schema.tokenCost?.create
+      if (!create) return [docType, schema]
+      const { effect, ...rest } = create as typeof create & { effect?: number }
+      expect(effect, docType).toBe(1)
+      return [docType, { ...schema, tokenCost: { create: rest } }]
+    }))
+
+    it('is v14 written with shorthands, every YAPP cost burning (effect 1)', () => {
+      expect(JSON.stringify(V15)).toMatch(/"type":"identifier"/)
+      expect(longForm(withoutEffect(V15))).toEqual(longForm(V14))
+      expect(withoutEffect(V15).post.tokenCost).toEqual(V14.post.tokenCost)
+    })
+
+    it('makes YAPP non-transferable and starts it with no supply; every other token rule is v14\'s', async () => {
+      const [v14Token, v15Token] = [socialContractV14.tokens['0'], socialContractV15.tokens['0']]
+      expect([v15Token.$formatVersion, v15Token.transferable, v15Token.baseSupply]).toEqual(['1', false, 0])
+      const { transferable, ...rest } = v15Token
+      expect(transferable).toBe(false)
+      expect({ ...rest, $formatVersion: v14Token.$formatVersion, baseSupply: v14Token.baseSupply }).toEqual(v14Token)
+
+      const v15 = await topologyModule('v15')
+      expect([v15.yappIsTransferable(), v15.yappIsLocked(), v15.yappIsPausedForGood()]).toEqual([false, true, false])
+      for (const before of ['v2', 'v9', 'v10', 'v13', 'v14']) expect((await topologyModule(before)).yappIsTransferable(), before).toBe(true)
+      const sponsored = { optional: true, gasFeesPaidBy: 2 }
+      for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1]] as const) {
+        expect(v15.tokenCostFor(docType), docType).toEqual({ amount, ...sponsored })
+      }
+      expect(v15.starterGrantAmount()).toBe(100n)
+    })
+
+    it('keeps every v14 surface', async () => {
+      const read = async (topology: string) => {
+        const m = await topologyModule(topology)
+        return {
+          descriptor: { ...m.topologyDescriptor(), topology: null },
+          windows: (['reply', 'quote', 'threadReply'] as const).map((source) => m.notificationWindowFor(source)),
+          flags: [m.replyOwnersAreDerived(), m.repliesNameRootOwner(), m.reportsWithdrawOnlyWhilePending(), m.reportShape(), m.electedModeration(), m.blocksContractId()],
+        }
+      }
+      expect(await read('v15')).toEqual(await read('v14'))
     })
   })
 })
