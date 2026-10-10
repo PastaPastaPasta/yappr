@@ -2,7 +2,7 @@
 
 Social v14 is social v13 ([SOCIAL_V13.md](SOCIAL_V13.md)) re-cut for Platform 5.0.0-beta.3 ([PLATFORM_V5_BETA3_UPGRADE.md](PLATFORM_V5_BETA3_UPGRADE.md)). It adopts beta.3's new grammar (`countPresent`, `deleteConstraints`, a derived `skipIfAbsent` property) and unpauses YAPP, which beta.3 would otherwise make unspendable. The analysis behind it, with every rule checked in the beta.3 source, is the 2026-10-08 contracts analysis (items S2–S7).
 
-This document was written with the PR that adds the contract, the client topology `v14`, the tooling and the batteries. **Since 2026-10-08 v14 is live on sakura and `/devnet` runs it** (`6GrRBNDe7r5JXZFr9XgUETKACzvrUZjHdfgKCYCMcc9y`, registered after the beta.3 wipe): ids, batteries and live results are in [SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md). It needs the 5.0.0-beta.3 SDK (#700): the 5.0.0-beta.2 SDK cannot parse v14.
+This document was written with the PR that adds the contract, the client topology `v14`, the tooling and the batteries. **Since 2026-10-08 v14 is live on sakura and `/devnet` runs it** (`6GrRBNDe7r5JXZFr9XgUETKACzvrUZjHdfgKCYCMcc9y`, registered after the beta.3 wipe): ids, batteries and live results are in [SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md). It needs the 5.0.0-beta.3 SDK (#700): the 5.0.0-beta.2 SDK cannot parse v14. Its 5.0.0-beta.4 successor, with a non-transferable YAPP whose costs burn, is [SOCIAL_V15.md](SOCIAL_V15.md).
 
 | # | Decision (user-approved) | What changes |
 | --- | --- | --- |
