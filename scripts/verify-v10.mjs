@@ -88,8 +88,8 @@
  *     is refused 40147 naming "pending" (r1wa) and the report stays (r1wb);
  *     r2 leaves the team-resolved owner report in place (its ttl expires it);
  *   - YAPP starts unpaused (beta.3 refuses a token cost paid in a paused
- *     token, 40711): y1a's 1-YAPP transfer LANDS (beta.3 has no
- *     non-transferable flag), y1d is "the YAPP-paid post lands (unpaused)",
+ *     token, 40711): y1a's 1-YAPP transfer LANDS (v14's token config is
+ *     format 0, always transferable), y1d is "the YAPP-paid post lands (unpaused)",
  *     y1h/y1i a YAPP-paid reply, and k1c's YAPP-paid like lands on the
  *     unpaused token;
  *   - the self-test pins the derived windows, the report delete rule and the
@@ -344,7 +344,8 @@ const PENDING_WITHDRAWAL = (DECLARED_DELETE_RULES[CONTRACT_NAME]?.report ?? []).
 /**
  * v10–v13's YAPP starts paused for good (a tokenCost still lands on it up to beta.2); v14's
  * starts unpaused, since beta.3 refuses a tokenCost paid in a paused token (40711), and then a
- * transfer lands too (beta.3 has no non-transferable flag).
+ * transfer lands too (v14's token config is format 0, always transferable; beta.4's
+ * `transferable: false` is format 1, which a later social re-cut adopts).
  */
 const YAPP_PAUSED = V10.tokens['0'].startAsPaused === true;
 const YAPP_STATE = YAPP_PAUSED ? 'paused' : 'unpaused';
@@ -1931,7 +1932,7 @@ async function caseY1YappLocked(ctx) {
   const bAfterTransfer = await balance(botB.ownerId);
   const moved = bAfterTransfer !== before.b;
   if (YAPP_PAUSED) expectRejected('y1a a YAPP transfer is refused (40711: the token is paused)', { ok: transfer === null || moved, error: transfer }, TOKEN_PAUSED);
-  else check('y1a (v14) a 1-YAPP transfer LANDS (beta.3 has no non-transferable flag; the token is unpaused)', transfer === null && bAfterTransfer === before.b + 1n, `${(transfer ?? '').slice(0, 160)} B ${before.b}→${bAfterTransfer}`);
+  else check('y1a (v14) a 1-YAPP transfer LANDS (v14's token is config format 0, always transferable; it is unpaused)', transfer === null && bAfterTransfer === before.b + 1n, `${(transfer ?? '').slice(0, 160)} B ${before.b}→${bAfterTransfer}`);
 
   const prices = await readback(() => sdk.tokens.directPurchasePrices([tokenId]));
   const price = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
