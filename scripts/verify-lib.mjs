@@ -45,18 +45,25 @@ function batterySdk() {
 
 // ---- Resilient connection ---------------------------------------------------
 //
-// Long runs (~20 min) outlive devnet quorum rotations: the trusted context
-// prefetches quorum keys at connect, a mid-run DKG makes newer proofs verify
-// against a quorum it never learned ("invalid quorum: Quorum not found"), the
-// failing proofs ban every DAPI address ("no available addresses …"), and the
-// SDK instance is dead. There is no refresh API, so the cure is a FULL
-// reconnect: build a fresh EvoSDK (fresh quorum prefetch + address pool),
-// re-ratchet the protocol version, re-cache the contract, and swap it in. All
-// battery code holds `sdkHandle` — a proxy that always forwards to the current
-// instance — so a swap is transparent to in-flight helpers.
+// Long runs (~20 min) outlive devnet quorum rotations. Since Platform
+// 5.0.0-beta.4 the SDK fetches a missing quorum key on its own, so a rotation
+// alone no longer kills an instance. It can still die when the quorum service
+// does not list a quorum (quorum-list-server#16): newer proofs verify against
+// a quorum it cannot learn ("invalid quorum: Quorum not found"), the failing
+// proofs ban every DAPI address ("no available addresses …"), and the SDK
+// instance is dead. The cure is a FULL reconnect: build a fresh EvoSDK (fresh
+// quorum prefetch + address pool), re-ratchet the protocol version, re-cache
+// the contract, and swap it in. All battery code holds `sdkHandle` — a proxy
+// that always forwards to the current instance — so a swap is transparent to
+// in-flight helpers.
 
-/** Errors that mean "this SDK instance is dead", not "this request was refused". */
-const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
+/**
+ * Errors that mean "this SDK instance is dead", not "this request was refused".
+ * "quorum source unavailable" (the quorum service itself is unreachable, bare
+ * or as the last error of an exhausted retry) is not one: a rebuild prefetches
+ * from the same service and fails the same way, so the read just backs off.
+ */
+const TRANSPORT_COLLAPSE = /^(?![\s\S]*quorum source unavailable)[\s\S]*(?:no available addresses|invalid quorum|quorum not found)/i;
 
 let activeSdk = null;
 let reconnectContractId = null;

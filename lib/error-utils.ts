@@ -117,7 +117,7 @@ export function isUnverifiedOutcomeError(error: unknown): boolean {
     name = undefined
   }
   if (name === 'Proof') return true
-  return /quorum not found|invalid quorum|context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
+  return /quorum not found|invalid quorum|quorum source unavailable|context provider error|proof verification|invalid proved response|no available addresses/i.test(extractErrorMessage(error))
 }
 
 /**
@@ -1321,6 +1321,7 @@ export function categorizeError(error: unknown, action = 'create post'): string 
 
   if (
     errorMessage.includes('no available addresses') ||
+    errorMessage.includes('quorum source unavailable') ||
     errorMessage.includes('Missing response message')
   ) {
     return 'Dash Platform is temporarily unavailable. Please try again in a few moments.'
