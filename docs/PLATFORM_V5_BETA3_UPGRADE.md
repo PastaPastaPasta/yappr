@@ -57,7 +57,7 @@ None of these is fixed in beta.3. Each was checked against the tag.
 | **SDK-1**: the `MAX_SAFE_INTEGER` guards (`identity-service.ts`, `set-yapp-price.mjs`) | wasm-dpp2 `toJSON` beyond 2^53 is unchanged |
 | **No `actionFeeAgreement` on `DocumentCreateOptions`** (L17/L24): `lib/manual-batch.ts`, the hand-built create path in `state-transition-service.ts`, `assertUnpricedAction`, the batteries' hand-built batches | Still absent from wasm-sdk and js-evo-sdk |
 | **Empty-id guards**: `if (toFetch.length === 0)`, `_revalidateBundledContracts`' `ids.length === 0` | #5334 turns an empty list into a thrown `INVALID_ARGUMENT`, not an empty result |
-| **Connection rebuild** on `no available addresses` and stale quorums (`CONNECTION_ERROR_MARKERS`, `reconnect()`) | Quorum rotation (platform#5236) is not in beta.3 |
+| **Connection rebuild** on `no available addresses` and stale quorums (`CONNECTION_ERROR_MARKERS`, `reconnect()`) | Quorum rotation (platform#5236) is not in beta.3. **Beta.4 fixes it** (platform#5313: the SDK fetches a missing quorum key itself); the rebuild stays as a backstop, except on `quorum source unavailable` ([PLATFORM_V5_BETA4_UPGRADE.md](PLATFORM_V5_BETA4_UPGRADE.md)). |
 | **#696's DPNS owner check** (ID-1) | DPNS `records.identity` is still never checked against the domain owner |
 
 ## Upgrade run book

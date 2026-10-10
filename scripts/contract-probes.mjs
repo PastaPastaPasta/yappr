@@ -4,7 +4,7 @@
  * a node makes. Used by `validate-contract-offline.mjs`.
  *
  * Three layers, measured on 4.2.0-beta.7 and re-run on 5.0.0-beta.1,
- * 5.0.0-beta.2 and 5.0.0-beta.3 with `DataContract.fromJSON(json, true, latest)`
+ * 5.0.0-beta.2, 5.0.0-beta.3 and 5.0.0-beta.4 with `DataContract.fromJSON(json, true, latest)`
  * (and a fourth for contract updates, below):
  *
  *   - **wasm-sdk** (`@dashevo/evo-sdk`): the structural parser (findBy/where,
@@ -87,9 +87,11 @@ const SIGNATURE_ALLOWANCE = 100;
 // ---- JSON meta-schema --------------------------------------------------------
 
 /**
- * rs-dpp's document meta-schema v3 at v5.0.0-beta.3 (beta.3 added the
- * `countPresent` operand, `deleteConstraints` and `$id` as a countOf/sumOf
- * filter value; beta.2 added
+ * rs-dpp's document meta-schema v3 at v5.0.0-beta.4 (beta.4 added the
+ * `byteAt` operand, hex byte-array operands for `startsWith`/`endsWith`, and
+ * the note that the `identifier`/`bytes` property shorthands are expanded
+ * before it runs; beta.3 added the `countPresent` operand, `deleteConstraints`
+ * and `$id` as a countOf/sumOf filter value; beta.2 added
  * `summableOffCountIndex` with the `{ "at": ... }` form of `rankedSummable` /
  * `rankedAverageable`, `retractedWhen` and `deleteSettled.approversPredateDocument`;
  * 5.0.0-beta.1 added conditional
@@ -105,7 +107,7 @@ const SIGNATURE_ALLOWANCE = 100;
  * ajv pass names the failing path more precisely.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
-const META_SCHEMA_SHA256 = '7d4ddb30d2370a7df1bbff5905e93b153d1f50f757904526c113f18104f2db28';
+const META_SCHEMA_SHA256 = '5f5360a6f148385c53e660bf0bcf321a68e0727a11116e954778f9512db0b9bb';
 
 let metaValidator;
 /**
@@ -118,7 +120,7 @@ function metaSchemaValidator() {
   if (metaValidator !== undefined) return metaValidator;
   const text = readFileSync(META_SCHEMA_PATH);
   const digest = createHash('sha256').update(text).digest('hex');
-  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.3 meta-schema (sha256 ${digest})`);
+  if (digest !== META_SCHEMA_SHA256) throw new Error(`${META_SCHEMA_PATH} is not the pinned v5.0.0-beta.4 meta-schema (sha256 ${digest})`);
   try {
     const require = createRequire(import.meta.url);
     const Ajv2020 = require('ajv/dist/2020').default;

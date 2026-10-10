@@ -1036,8 +1036,8 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 
 // ---- Resilient SDK handle ------------------------------------------------------
 //
-// Quorum rotations invalidate the trusted context's
-// prefetched keys mid-run and there is no refresh API — the cure is a FULL
+// A quorum the quorum service does not list leaves the trusted context without
+// its key (beta.4 fetches a missing key itself, so only then) — the cure is a FULL
 // reconnect (fresh EvoSDK + protocol-version ratchet + contract re-cache). The
 // returned `sdk` is a proxy that always forwards to the live instance, so a
 // swap is transparent to in-flight helpers.

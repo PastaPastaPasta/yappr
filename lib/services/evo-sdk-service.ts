@@ -46,6 +46,16 @@ const CONNECTION_ERROR_MARKERS = [
   'invalid quorum',
 ];
 
+/**
+ * The SDK could not reach the quorum service to fetch a quorum key. It shows
+ * up bare ("Context provider error: quorum source unavailable: …") or as the
+ * last error of an exhausted retry ("no available addresses to retry, last
+ * error: …quorum source unavailable…"). Never a reason to rebuild: connect()
+ * prefetches quorums from the same service, so a rebuild would fail the same
+ * way. The service is back when the next read succeeds.
+ */
+const QUORUM_SOURCE_UNAVAILABLE = 'quorum source unavailable';
+
 /** The message of a rejection, whether or not it is an Error. */
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -388,8 +398,10 @@ class EvoSdkService {
 
   /**
    * Replace the SDK instance. Failed requests ban endpoints inside the
-   * instance, and connect() is idempotent, so an exhausted address pool or a
-   * stale quorum cache can only be cleared by building a new one. One rebuild
+   * instance, and connect() is idempotent, so an exhausted address pool (or a
+   * proof that failed on a quorum the service did not list) can only be
+   * cleared by building a new one. The SDK fetches a missing quorum key by
+   * itself, so this is a backstop, not the cure for a quorum rotation. One rebuild
    * is shared by everyone who asks while it runs, and getSdk() waits for it.
    * Nothing is replayed: a call that failed stays failed.
    */
@@ -411,7 +423,7 @@ class EvoSdkService {
 
     // Retain the configuration throughout recovery; callers must never see
     // the temporary unconfigured state produced by a full cleanup().
-    logger.debug('EvoSdkService: replacing the SDK instance (address pool exhausted, stale quorum cache, or connectivity restored)');
+    logger.debug('EvoSdkService: replacing the SDK instance (address pool exhausted, quorum missing from the trusted context, or connectivity restored)');
     // A config change during the wait wins; do not resurrect the old one.
     if (this.config !== config) return;
     this.sdk = null;
@@ -488,13 +500,20 @@ class EvoSdkService {
    * request being wrong. Two cases, both fixed only by a rebuild:
    *
    * - every endpoint in the address pool is banned after failed requests;
-   * - the trusted context is stale: devnet DKG rotations outlive the static
-   *   quorum prefetch, after which every proof fails with "invalid quorum:
-   *   Quorum not found in cache for hash: …" and addresses get banned. There
-   *   is no refresh API; a rebuild re-prefetches the current quorums.
+   * - the trusted context lacks a quorum: since Platform 5.0.0-beta.4 the SDK
+   *   fetches a missing quorum key on its own, so a DKG rotation no longer
+   *   kills a long-lived instance. A proof can still fail with "invalid
+   *   quorum: Quorum not found in cache for hash: …" while the quorum service
+   *   does not list that quorum (quorum-list-server#16), and the failing
+   *   proofs ban addresses. A rebuild re-prefetches the quorums the service
+   *   lists now.
+   *
+   * "quorum source unavailable" is neither: the quorum service itself cannot
+   * be reached, which a rebuild cannot cure (see QUORUM_SOURCE_UNAVAILABLE).
    */
   isConnectionError(error: unknown): boolean {
     const message = errorMessage(error).toLowerCase();
+    if (message.includes(QUORUM_SOURCE_UNAVAILABLE)) return false;
     return CONNECTION_ERROR_MARKERS.some(marker => message.includes(marker));
   }
 

@@ -162,7 +162,7 @@ describe('connection recovery', () => {
 
   it('classifies the connection failures the wasm SDK reports', async () => {
     const sdkService = await service();
-    // Message prefixes as they appear in @dashevo/wasm-sdk 4.2.0-beta.4.
+    // Message prefixes as they appear in @dashevo/wasm-sdk 5.0.0-beta.4.
     for (const message of [
       'no available addresses to use',
       'no available addresses to retry, last error: timeout',
@@ -172,6 +172,30 @@ describe('connection recovery', () => {
       expect(sdkService.isConnectionError(new Error(message)), message).toBe(true);
     }
     expect(sdkService.isConnectionError(new Error('Invalid document schema'))).toBe(false);
+  });
+
+  it('does not call an unreachable quorum service a dead instance', async () => {
+    const sdkService = await service();
+    // A rebuild's connect() prefetches from the same service, so it cannot help.
+    for (const message of [
+      'Context provider error: quorum source unavailable: error sending request',
+      'no available addresses to retry, last error: Context provider error: quorum source unavailable: timeout',
+      'invalid quorum: Quorum source unavailable',
+    ]) {
+      expect(sdkService.isConnectionError(new Error(message)), message).toBe(false);
+    }
+  });
+
+  it('keeps the SDK instance when a read fails on an unreachable quorum service', async () => {
+    const sdkService = await service();
+    await sdkService.initialize(config);
+    const sdk = await sdkService.getSdk();
+    const failure = new Error('no available addresses to retry, last error: Context provider error: quorum source unavailable: timeout');
+    mocks.fetch.mockRejectedValueOnce(failure);
+    await expect(sdk.identities.fetch('identity')).rejects.toBe(failure);
+    await settle();
+    expect(mocks.instances).toHaveLength(1);
+    expect(await sdkService.getSdk()).toBe(sdk);
   });
 });
 

@@ -1772,8 +1772,10 @@ export function yappIsPausedForGood(): boolean {
  *
  * On v10–v13 the token is also {@link yappIsPausedForGood}, so YAPP cannot
  * move at all. v14's starts unpaused so that it can pay token costs under
- * beta.3; since beta.3 has no non-transferable flag a transfer would land on
- * chain, and Yappr deliberately offers none. Whether YAPP can pay for a post
+ * beta.3. Its token config is format 0, which is always transferable, so a
+ * transfer would land on chain, and Yappr deliberately offers none. (Platform
+ * 5.0.0-beta.4 adds `transferable: false`, token config format 1, which a
+ * later social re-cut will adopt.) Whether YAPP can pay for a post
  * is {@link yappIsPausedForGood}'s question, not this one's.
  */
 export function yappIsLocked(): boolean {
