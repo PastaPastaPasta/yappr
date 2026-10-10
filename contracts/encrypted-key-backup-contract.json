@@ -12,7 +12,6 @@
         ]
       }
     ],
-    "mutable": false,
     "required": [
       "$createdAt",
       "encryptedKey",
@@ -51,6 +50,7 @@
       }
     },
     "description": "Encrypted private key backup for password-based login. Salt derived from $ownerId.",
-    "additionalProperties": false
+    "additionalProperties": false,
+    "documentsMutable": false
   }
 }

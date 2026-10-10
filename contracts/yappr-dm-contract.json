@@ -35,32 +35,24 @@
     "additionalProperties": false,
     "properties": {
       "recipientId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 32,
-        "maxItems": 32,
+        "type": "identifier",
         "position": 0,
         "description": "Identity ID of the recipient",
-        "contentMediaType": "application/x.dash.dpp.identifier",
         "refersTo": {
           "type": "identity"
         }
       },
       "conversationId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 10,
-        "maxItems": 10,
+        "type": "bytes",
         "position": 1,
-        "description": "Compact conversation ID (first 10 bytes of hash of sorted participant IDs)"
+        "description": "Compact conversation ID (first 10 bytes of hash of sorted participant IDs)",
+        "size": 10
       },
       "senderPubKey": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 33,
-        "maxItems": 33,
+        "type": "bytes",
         "position": 2,
-        "description": "Optional: sender's compressed public key for ECDH. Only needed if sender's on-chain identity uses hash160 keys."
+        "description": "Optional: sender's compressed public key for ECDH. Only needed if sender's on-chain identity uses hash160 keys.",
+        "size": 33
       }
     },
     "immutable": [
@@ -94,12 +86,10 @@
     "additionalProperties": false,
     "properties": {
       "conversationId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 10,
-        "maxItems": 10,
+        "type": "bytes",
         "position": 0,
-        "description": "Compact conversation ID (first 10 bytes of hash of sorted participant IDs)"
+        "description": "Compact conversation ID (first 10 bytes of hash of sorted participant IDs)",
+        "size": 10
       },
       "encryptedContent": {
         "type": "array",
@@ -140,12 +130,10 @@
     "additionalProperties": false,
     "properties": {
       "conversationId": {
-        "type": "array",
-        "byteArray": true,
-        "minItems": 10,
-        "maxItems": 10,
+        "type": "bytes",
         "position": 0,
-        "description": "Compact conversation ID (first 10 bytes)"
+        "description": "Compact conversation ID (first 10 bytes)",
+        "size": 10
       }
     },
     "immutable": [

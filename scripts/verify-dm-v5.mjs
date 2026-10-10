@@ -37,6 +37,7 @@ import {
   DELETE_FORBIDDEN, DUPLICATE_UNIQUE, b64, createBattery, parseOnly, reportSelfTest, runCases,
 } from './battery-lib.mjs';
 import { resolveOwner, signerFor } from './owner-keys.mjs';
+import { expandSchemas } from './schema-shorthands.mjs';
 import { devnetName } from './sdk-env.mjs';
 import {
   REPO_ROOT, buildDocument, createSdkHandle, createdId, describeErr, randomEntropy, readEnvFile,
@@ -97,7 +98,8 @@ function loadContractJson() {
 // ---- Offline pre-flight --------------------------------------------------------
 
 function selfTest() {
-  const { documentSchemas: s } = loadContractJson();
+  // In long form: the file writes its fixed-size byte arrays as `bytes` shorthands.
+  const s = expandSchemas(loadContractJson().documentSchemas);
   const indexOf = (type) => (s[type]?.indices ?? []).map((index) => ({
     unique: Boolean(index.unique), props: index.properties.map((entry) => Object.keys(entry)[0]).join(','),
   }));

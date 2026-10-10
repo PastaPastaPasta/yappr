@@ -55,8 +55,8 @@ export const NOT_DEVNET_REASON = 'E2E_ENV_FILE does not select the devnet deploy
 export const DM_V5_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID')
 export const LEGACY_DM_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_DM_CONTRACT_ID')
 const PROFILE_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_PROFILE_CONTRACT_ID')
-/** v10 to v14 profiles: the DashPay `profile` (a system contract) plus the social `yapprProfile` extension. */
-const PROFILE_IS_V10 = ['v10', 'v11', 'v12', 'v13', 'v14'].includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') ?? '')
+/** v10 onwards: the DashPay `profile` (a system contract) plus the social `yapprProfile` extension. */
+const PROFILE_IS_V10 = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15'].includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY') ?? '')
 const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7'
 const SOCIAL_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_CONTRACT_ID')
 export const DM_V5_BUILD = envValue('NEXT_PUBLIC_DM_TOPOLOGY') === 'v5' && DM_V5_CONTRACT_ID !== ''

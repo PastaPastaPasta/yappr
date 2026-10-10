@@ -8,7 +8,8 @@
  *
  * Social v10 (4.2.0-beta.7) starts YAPP paused with no way to unpause it, so no transfer can land and there is nothing
  * to seed: the run refuses on a v10/v11/v12 contract before signing anything (tips become credit tips, a client follow-up).
- * The plan, --dry-run and --self-test still work, for the v9 devnet and review.
+ * Social v15 (5.0.0-beta.4) makes YAPP non-transferable, so a transfer is refused 40726: the run reads the deployed
+ * token and skips, signing nothing. The plan, --dry-run and --self-test still work, for the v9 devnet and review.
  */
 import bs58 from 'bs58';
 import { normalizeId, reportSelfTest } from '../../battery-lib.mjs';
@@ -189,6 +190,11 @@ const planToJson = (tips) => tips.map((tip) => ({ ...tip, amount: tip.amount.toS
 const planFromJson = (tips) => tips.map((tip) => ({ ...tip, amount: BigInt(tip.amount) }));
 
 async function run({ args, handle, battery, socialId }) {
+  const social = await readback(handle, () => handle.sdk.contracts.fetch(socialId));
+  if (social?.tokens?.[0]?.transferable === false) {
+    console.log('SKIP  tips: YAPP is not transferable on this social contract (v15), so a YAPP tip (a token transfer) would be refused 40726. Tips there are credit tips.');
+    return;
+  }
   if (SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY'))) {
     throw new Error('tips: social v10/v11/v12 pause YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips there are credit tips (client follow-up).');
   }

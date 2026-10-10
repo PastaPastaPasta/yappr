@@ -208,11 +208,7 @@
       ],
       "properties": {
         "storeId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the store this item belongs to; only that store's owner may write it",
           "refersTo": {
@@ -669,11 +665,7 @@
       ],
       "properties": {
         "storeId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the store this zone belongs to; only that store's owner may write it",
           "refersTo": {
@@ -780,11 +772,7 @@
       "description": "The seller's private kit for a digital item (files, links, codes), encrypted to the seller. One per item.",
       "properties": {
         "itemId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the digital item this kit fulfils; only that item's owner may write it",
           "refersTo": {
@@ -866,11 +854,7 @@
       ],
       "properties": {
         "storeId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the store; its owner is copied into sellerId and its status into storeStatus",
           "refersTo": {
@@ -883,11 +867,7 @@
           }
         },
         "sellerId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 1,
           "description": "Store owner's identity, consensus-bound to the store's $ownerId",
           "distinctFrom": "$ownerId"
@@ -901,12 +881,10 @@
           "description": "XChaCha20-Poly1305 encrypted order data (items, address, payment info)"
         },
         "nonce": {
-          "type": "array",
-          "maxItems": 24,
-          "minItems": 24,
+          "type": "bytes",
           "position": 3,
-          "byteArray": true,
-          "description": "24-byte nonce for XChaCha20-Poly1305 encryption"
+          "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
+          "size": 24
         },
         "storeStatus": {
           "type": "string",
@@ -968,11 +946,7 @@
       ],
       "properties": {
         "orderId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the order being updated; only its seller may write this",
           "refersTo": {
@@ -1028,11 +1002,7 @@
       "description": "Digital goods a seller delivered for an order, encrypted to the order's ECDH key. Permanent; written only by the seller.",
       "properties": {
         "orderId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the order being fulfilled; only its seller may write this",
           "refersTo": {
@@ -1052,12 +1022,10 @@
           "description": "XChaCha20-Poly1305 ciphertext of the delivery, keyed from the order's buyer/seller ECDH secret"
         },
         "nonce": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 24,
-          "maxItems": 24,
+          "type": "bytes",
           "position": 2,
-          "description": "24-byte nonce for XChaCha20-Poly1305 encryption"
+          "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
+          "size": 24
         }
       },
       "required": [
@@ -1153,11 +1121,7 @@
       ],
       "properties": {
         "storeId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the store being reviewed",
           "refersTo": {
@@ -1166,11 +1130,7 @@
           }
         },
         "orderId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 1,
           "description": "ID of the completed order (proves purchase); only its buyer may review it",
           "refersTo": {
@@ -1184,11 +1144,7 @@
           }
         },
         "sellerId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 2,
           "description": "Store owner's identity, consensus-bound to the order's sellerId (for seller queries)",
           "distinctFrom": "$ownerId"
@@ -1274,11 +1230,7 @@
       ],
       "properties": {
         "storeId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "ID of the store the item belongs to",
           "refersTo": {
@@ -1287,11 +1239,7 @@
           }
         },
         "itemId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 1,
           "description": "ID of the item being reviewed; must belong to storeId",
           "refersTo": {
@@ -1303,11 +1251,7 @@
           }
         },
         "orderId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 2,
           "description": "ID of the order the item was bought in; only its buyer may review it",
           "refersTo": {

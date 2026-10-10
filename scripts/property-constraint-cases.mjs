@@ -451,6 +451,11 @@ CONSTRAINT_CASES['yappr-social-contract-v14.json'] = [
   ['report: oneTarget with all three targets (countPresent 3)', 'report', { ...baseReport(), replyId: id(), about: 1 }, 'oneTarget'],
 ];
 
+// Social v15 (5.0.0-beta.4, docs/SOCIAL_V15.md) changes only YAPP (non-transferable, costs burn)
+// and the spelling of its byte arrays (shorthands): every rule and every case is v14's.
+DECLARED_RULES['yappr-social-contract-v15.json'] = DECLARED_RULES['yappr-social-contract-v14.json'];
+CONSTRAINT_CASES['yappr-social-contract-v15.json'] = CONSTRAINT_CASES['yappr-social-contract-v14.json'];
+
 /**
  * The `deleteConstraints` rules a contract declares (5.0.0-beta.3), keyed like
  * {@link DECLARED_RULES}: rules the STORED document must meet for its owner to
@@ -460,6 +465,7 @@ CONSTRAINT_CASES['yappr-social-contract-v14.json'] = [
 export const DECLARED_DELETE_RULES = {
   // S6: a report can be withdrawn only while no moderator has resolved it (`status` absent).
   'yappr-social-contract-v14.json': { report: ['pending'] },
+  'yappr-social-contract-v15.json': { report: ['pending'] },
 };
 
 /**
@@ -475,6 +481,7 @@ export const DELETE_CASES = {
     ['report: withdrawing a resolved report that carries a resolution', 'report', { ...baseReport(), status: 2, resolution: 'post removed' }, 'pending'],
   ],
 };
+DELETE_CASES['yappr-social-contract-v15.json'] = DELETE_CASES['yappr-social-contract-v14.json'];
 
 /**
  * The 40147 refusal of an owner's delete breaking the `deleteConstraints` rule

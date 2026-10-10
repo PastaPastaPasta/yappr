@@ -168,11 +168,7 @@
       ],
       "properties": {
         "pollId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "The poll voted on",
           "refersTo": {

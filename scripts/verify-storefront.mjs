@@ -51,10 +51,12 @@ import { REPO_ROOT, actionFeeAgreementOptions, actionFeeFor, buildDocument, desc
 import { ARRAY_OUT_OF_BOUNDS, NOT_A_LIST, NOT_DISTINCT, caseBan, caseModeratorDelete, caseWarn, selfTestModerated } from './battery-moderation.mjs';
 import { AGREEMENT_MISMATCH, AGREEMENT_NOT_SET } from './social-battery-lib.mjs';
 import { DECLARED_RULES, constraintViolation, refusedCreates } from './property-constraint-cases.mjs';
+import { expandSchemas } from './schema-shorthands.mjs';
 
 const CONTRACT_FILE = 'yappr-storefront-contract.json';
 const CONTRACT = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', CONTRACT_FILE), 'utf8'));
-const SCHEMAS = CONTRACT.documentSchemas;
+/** The schemas in long form (the file writes identifiers and fixed-size byte arrays as shorthands). */
+const SCHEMAS = expandSchemas(CONTRACT.documentSchemas);
 const RATINGS = [1, 2, 3, 4, 5];
 /** The category every battery store files under (a v6 slug), so s23 knows what to look for. */
 const CATEGORY = 'battery-goods';

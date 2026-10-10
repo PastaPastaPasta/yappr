@@ -22,12 +22,8 @@
     ],
     "properties": {
       "blockedId": {
-        "type": "array",
-        "maxItems": 32,
-        "minItems": 32,
+        "type": "identifier",
         "position": 0,
-        "byteArray": true,
-        "contentMediaType": "application/x.dash.dpp.identifier",
         "distinctFrom": "$ownerId"
       },
       "message": {
@@ -105,11 +101,7 @@
         "uniqueItems": true,
         "position": 0,
         "items": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "distinctFrom": "$ownerId",
           "refersTo": {
             "type": "identity"
