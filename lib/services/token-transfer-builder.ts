@@ -19,10 +19,8 @@ import { buildUnsignedTokenBatch, type WalletTransitionRequest } from './token-t
  * @param amount - Whole YAPP tokens to transfer
  * @param publicNote - The tip note (see lib/tip-note.ts); signed with the transfer
  * @returns Serialized unsigned StateTransition bytes for the dash-st: URI, and
- *   `discard` for a request abandoned before it was shown. Rejects without
- *   building anything where YAPP cannot be transferred (v15): the chain would
- *   refuse the transfer (40726) after the wallet signed it, and the nonce would
- *   be spent for nothing.
+ *   `discard` for a request abandoned before it was shown. Rejects where YAPP
+ *   is not transferable (v15), which the chain would refuse (40726).
  */
 export function buildUnsignedYappTipTransition(
   senderId: string,

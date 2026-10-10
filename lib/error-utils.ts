@@ -269,12 +269,10 @@ export function isTokenPausedError(error: unknown): boolean {
 }
 
 /**
- * Checks if an error is Platform refusing to move a token that cannot be
- * transferred: `TokenNotTransferableError`, state code **40726** (5.0.0-beta.4).
- * On v15 YAPP is `transferable: false` (`yappIsTransferable()` in lib/contract-topology.ts), so a
- * transfer of it, or a document of another contract charging it, is refused,
- * as a PAID error. Yappr never offers either, so this only surfaces from a
- * request built before the client knew.
+ * Checks if an error is `TokenNotTransferableError`, state code **40726**
+ * (5.0.0-beta.4): a transfer of a `transferable: false` token (v15's YAPP) was
+ * refused (by the mempool, so unpaid), or a contract charging it was refused
+ * registration.
  *
  * Drive phrasing (rs-dpp token_not_transferable_error.rs): "Token X is not
  * transferable, so <action> is refused".

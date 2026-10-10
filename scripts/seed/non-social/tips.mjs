@@ -192,11 +192,11 @@ const planFromJson = (tips) => tips.map((tip) => ({ ...tip, amount: BigInt(tip.a
 async function run({ args, handle, battery, socialId }) {
   const social = await readback(handle, () => handle.sdk.contracts.fetch(socialId));
   if (social?.tokens?.[0]?.transferable === false) {
-    console.log('SKIP  tips: YAPP is not transferable on this social contract (v15), so a YAPP tip (a token transfer) would be refused 40726. Tips there are credit tips.');
+    console.log('SKIP  tips: YAPP is not transferable here (v15, a transfer is 40726); tips are credit tips.');
     return;
   }
   if (SEEDED_TOPOLOGIES.includes(envValue('NEXT_PUBLIC_CONTRACT_TOPOLOGY'))) {
-    throw new Error('tips: social v10/v11/v12 pause YAPP for good, so a YAPP tip (a token transfer) is refused 40711. Nothing to seed; tips there are credit tips (client follow-up).');
+    throw new Error('tips: from social v10 YAPP is locked (paused for good on v10-v13, never sent on v14), so tips are credit tips and there are no YAPP tips to seed.');
   }
   /** One page of `transfer` rows off a token-history index, newest first — the shape tip-history-service.ts reads with. */
   const transfers = async (tokenId, where, orderBy) => (await battery.queryDocs('transfer', {

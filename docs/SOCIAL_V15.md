@@ -6,7 +6,7 @@ This document was written with the PR that adds the contract, the client topolog
 
 | # | Decision | What changes |
 | --- | --- | --- |
-| 1 | **YAPP is not transferable** | `tokens["0"]`: `$formatVersion: "1"` and `transferable: false`. Every transfer of YAPP is refused (40726). |
+| 1 | **YAPP is not transferable** | `tokens["0"]`: `$formatVersion: "1"` and `transferable: false`. Every transfer of YAPP is refused (40726), and no other contract can be registered with a YAPP cost. |
 | 2 | **YAPP costs burn** | `"effect": 1` on the four token costs (post 10, reply 3, like 1, likeReply 1). Each stays `optional: true` with sponsored gas (`gasFeesPaidBy: 2`). |
 | 3 | **No base supply** | `baseSupply: 0` (v14: 1,000,000). The contract owner would hold a balance it could never send, so nobody gets one; the owner can still mint. |
 | 4 | **YAPP stays unpaused** | `startAsPaused: false`, with `emergencyActionRules` still `noOne`. Nobody can ever pause it. |
@@ -43,10 +43,10 @@ Variable-size byte arrays (ciphertext, `mediaDigests`, the report `box`) keep th
 
 ### A token that cannot move
 
-Beta.3 had no way to make a token non-transferable, so v14's YAPP was unpaused to keep its token costs payable, and was therefore transferable on chain. Yappr just never offered a transfer ([SOCIAL_V14.md §1](SOCIAL_V14.md#1-yapp-unpaused)). Beta.4's token configuration v1 adds `transferable`. With it set to `false`, these are all refused with `TokenNotTransferableError` (40726):
+Beta.3 had no way to make a token non-transferable, so v14's YAPP was unpaused to keep its token costs payable, and was therefore transferable on chain. Yappr just never offered a transfer ([SOCIAL_V14.md §1](SOCIAL_V14.md#1-yapp-unpaused)). Beta.4's token configuration v1 adds `transferable`. With it set to `false`, Platform refuses everything that would move a balance between identities:
 
-- a token transfer, from anyone, including the contract owner;
-- a document of **another** contract that charges YAPP as its token cost;
+- a token transfer, from anyone, including the contract owner (`TokenNotTransferableError`, 40726). The mempool turns it away, so it costs nothing and spends no nonce;
+- the registration (or update) of **another** contract that charges YAPP as a token cost (40726), since an external token cost always pays its contract's owner;
 - a token cost of this contract that pays the contract owner.
 
 That last case is why the costs burn. Platform refuses to register a non-transferable token whose document cost pays the owner (`NonTransferableTokenPaymentMustBurnError`, 10280), because the payment would itself be a transfer. A non-transferable token also cannot have its own shielded pool (`NonTransferableTokenShieldedPoolError`, 10279), and v15 declares none.
@@ -61,7 +61,7 @@ With burning costs, nothing flows back to the contract owner, so a base supply w
 
 - **YAPP spends burn.** Posting (10), replying (3) and liking (1) in YAPP destroys the YAPP. The contract owner receives none of it, and the total supply shrinks with use. Network fees (gas) are still sponsored by the owner when its credits allow (`gasFeesPaidBy: 2`), as on v14.
 - **YAPP can't move between identities.** No tips in YAPP, no gifting, no moving a balance to a new identity. A user's YAPP stays with the identity that claimed or was minted it. Tips stay credit tips, as on v10–v14.
-- **YAPP is social-only.** Another contract (storefront, blog, a third-party app) cannot charge YAPP: Platform refuses that payment with 40726. None of Yappr's other contracts charge YAPP today.
+- **YAPP is social-only.** Another contract (storefront, blog, a third-party app) cannot charge YAPP: Platform refuses to register one that does (40726). None of Yappr's other contracts charge YAPP today.
 - **No pause switch.** As on v14, nobody can pause YAPP (`emergencyActionRules: noOne`). An incident can't be stopped by pausing the token; the owner can still freeze an identity's balance.
 - **It's permanent.** The flag, the cost effects and the emergency rules can't be changed for this token. Changing them means a new contract.
 
@@ -71,9 +71,9 @@ With burning costs, nothing flows back to the contract owner, so a base supply w
 
 - `yappIsTransferable()` (new) is `tokens["0"].transferable !== false`: false on v15, true on every earlier cut (none has the flag).
 - `yappIsLocked()` is true whenever YAPP is not transferable, as well as on the v10–v14 rule (nobody may price it or change its pause state). On v15 that means no Buy YAPP, no YAPP tab in the tip dialog, credit tips only, and `tokenService.transfer` refusing before it signs. The mobile engine's `yappLocked` capability reads the same predicate.
-- `buildUnsignedYappTipTransition` (the wallet-signed YAPP tip) refuses to build a transfer where YAPP isn't transferable, so a wallet is never handed a transition the chain would refuse after the nonce is spent.
+- `buildUnsignedYappTipTransition` (the wallet-signed YAPP tip) refuses to build a transfer where YAPP isn't transferable, so a wallet is never asked to sign a transition the chain would refuse.
 - `yappIsPausedForGood()` is false, as on v14: posts, replies and likes may pay YAPP when the user chooses it and the balance covers it, and the starter grant is offered as on v14.
-- `isTokenNotTransferableError` (40726) is a permanent refusal. `categorizeError` words it "YAPP can't be sent to other accounts or spent outside Yappr." Yappr never builds such a write, so this only shows if something slips past the checks above.
+- `isTokenNotTransferableError` (40726) is a permanent refusal (the mempool refuses a transfer, so it is not charged). `categorizeError` words it "YAPP can't be sent to other accounts or spent outside Yappr." Yappr never builds such a write, so this only shows if something slips past the checks above.
 
 Both v14 and v15 work in one build. `.env.devnet` stays on v14 until the cut-over.
 
@@ -102,7 +102,7 @@ The vault, auth-vault and key-backup files also rename their legacy `mutable` ke
 - **Meta-schema**: `scripts/meta-schema/document-meta-v3.json` is beta.4's (it adds `byteAt` and byte-array `startsWith`/`endsWith`, and documents that shorthands are expanded before it runs), pinned by sha256.
 - **`scripts/contract-probes.mjs`** (`--probes`), v15: controls (devnet and mainnet renderings). The parsed token reads back `transferable: false` with no shielded pool, unpaused, unpriced and with no base supply, and every cost burns. These are refused: a cost paying the owner (`effect: 0`) or one with no effect (both 10280, refused by wasm-dpp2 and flagged by the audit), and a shielded pool on the non-transferable YAPP (10279, which only the node checks). `auditNodeRules` now carries both rules (`auditNonTransferableTokens`). A control shows that a transferable YAPP may pay the owner again.
 - **`scripts/property-constraint-cases.mjs`**: v15 declares v14's rules, write cases and delete cases.
-- **Batteries**: `verify-v10.mjs --contract-file contracts/yappr-social-contract-v15.json` refuses y1a's YAPP transfer (40726). After y1d's YAPP-paid post, the contract owner's YAPP balance is unchanged (y1j) and the total supply fell by exactly the cost (y1k). The self-test pins `transferable: false`, `baseSupply: 0` and `effect: 1`. `verify-tips.mjs` treats a non-transferable YAPP as locked (credit tips), and the tips seeder (`scripts/seed/non-social/tips.mjs`) reads the deployed token and skips YAPP tips when it isn't transferable. The seeder writes v15 (`SEEDED_TOPOLOGIES`).
+- **Batteries**: `verify-v10.mjs --contract-file contracts/yappr-social-contract-v15.json` refuses y1a's YAPP transfer (40726). After y1d's YAPP-paid post, the contract owner's YAPP balance is unchanged (y1j) and the total supply fell by at least the cost (y1k; other writers may burn meanwhile). The self-test pins `transferable: false`, `baseSupply: 0` and `effect: 1`. `verify-tips.mjs` treats a non-transferable YAPP as locked (credit tips), and the tips seeder (`scripts/seed/non-social/tips.mjs`) reads the deployed token and skips YAPP tips when it isn't transferable. The seeder writes v15 (`SEEDED_TOPOLOGIES`).
 
 ### Validation done for this PR
 

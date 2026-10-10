@@ -104,8 +104,9 @@
  *
  *   - y1a's 1-YAPP transfer is refused 40726 (the token is not transferable);
  *   - y1d's YAPP-paid post burns its cost: the contract owner's YAPP balance
- *     does not move (y1j) and the total supply falls by exactly the cost
- *     (y1k); y1h/y1i and k1c pay YAPP as on v14;
+ *     does not move (y1j) and the total supply falls by at least the cost
+ *     (y1k: other writers may burn meanwhile); y1h/y1i and k1c pay YAPP as
+ *     on v14;
  *   - the self-test pins `transferable: false`, `baseSupply: 0` and
  *     `effect: 1` on every cost. It needs the 5.0.0-beta.4 SDK (shorthands,
  *     token configuration v1).
@@ -368,8 +369,6 @@ const YAPP_STATE = YAPP_PAUSED ? 'paused' : 'unpaused';
  * the total supply shrinks by the cost.
  */
 const YAPP_TRANSFERABLE = V10.tokens['0'].transferable !== false;
-const YAPP_CUT = YAPP_TRANSFERABLE ? 'v14' : 'v15';
-const TOKEN_NOT_TRANSFERABLE = /\bcode"?\s*[=:]\s*40726\b|token .{0,60} is not transferable/i;
 const MODERATOR_SPEC = takeFlag('--moderator', 'maker');
 // r2 (post-seat): a member of the SEATED team, and a `reason` document its proposal lists (41203).
 const TEAM_MEMBER_SPEC = takeFlag('--team-member', null);
@@ -436,6 +435,8 @@ const NON_INDEXED = /where clause on non indexed property/i;
 const TARGET_NOT_ALLOWED = /\bcode"?\s*[=:]\s*41102\b|contractmoderationtargetnotallowed/i;
 const REASON_NOT_LISTED = /\bcode"?\s*[=:]\s*41203\b|reason.{0,80}not listed|moderationreasonnotlisted/i;
 const TOKEN_PAUSED = /\bcode"?\s*[=:]\s*40711\b|token .{0,60} is paused/i;
+/** TokenNotTransferableError: a transfer of a `transferable: false` token (v15). */
+const TOKEN_NOT_TRANSFERABLE = /\bcode"?\s*[=:]\s*40726\b|token .{0,60} is not transferable/i;
 
 /**
  * Whether drive `version` refuses a document `tokenCost` paid with a paused
@@ -1968,24 +1969,22 @@ async function caseY1YappLocked(ctx) {
   // v14's token is unpaused, and y1a's transfer moved one YAPP, so A's balance is read again first.
   const paidFrom = YAPP_PAUSED ? before.a : await balance(botA.ownerId);
   // v15: the cost burns, so the contract owner's YAPP stays put and the total supply drops by it.
-  const supply = async () => (await readback(() => sdk.tokens.totalSupply(tokenId)))?.totalSupply ?? null;
-  // y1 runs without ensurePrepared, so the owner is read off the contract here.
-  const contractOwner = YAPP_TRANSFERABLE ? null : ctx.ownerId ?? (await readback(() => sdk.contracts.fetch(contractId))).ownerId.toBase58();
-  const burnedFrom = YAPP_TRANSFERABLE ? null : { owner: await balance(contractOwner), supply: await supply() };
+  const burn = YAPP_TRANSFERABLE ? null : await burnBaseline(ctx, tokenId, balance);
   const { agreement } = await feeAgreement(ctx, POST_ACTION_FEE);
   const payment = paymentInfo(tokenCostFor('post').amount, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo;
   const paid = await manualCreate(ctx, botA, { docType: 'post', data: postData({ content: 'y1 paid in YAPP' }), agreement, payment });
   let landed = paid.ok;
   if (YAPP_PAUSED) landed = await expectPausedYappPayment(ctx, 'y1d a post paying 10 YAPP', paid);
-  else expectAccepted(`y1d (${YAPP_CUT}) the YAPP-paid post lands (unpaused): 10 YAPP, gas offered to the contract owner`, paid);
+  else expectAccepted(`y1d (${burn ? 'v15' : 'v14'}) the YAPP-paid post lands (unpaused): 10 YAPP, gas offered to the contract owner`, paid);
   await settle();
   const after = await balance(botA.ownerId);
   const spent = landed ? BigInt(tokenCostFor('post').amount) : 0n;
   check(landed ? 'y1e …and A\'s balance fell by exactly the post\'s token cost' : 'y1e …and A kept its YAPP (a refused payment moves none)', after === paidFrom - spent, `before=${paidFrom} after=${after}`);
-  if (burnedFrom && landed) {
-    const [ownerAfter, supplyAfter] = [await balance(contractOwner), await supply()];
-    check('y1j (v15) …the contract owner received none of it (the cost burns)', ownerAfter === burnedFrom.owner, `owner ${burnedFrom.owner}→${ownerAfter}`);
-    check('y1k (v15) …and the total supply fell by exactly the post\'s token cost', burnedFrom.supply !== null && supplyAfter === burnedFrom.supply - spent, `supply ${burnedFrom.supply}→${supplyAfter}`);
+  if (burn && landed) {
+    const after = await burn.read();
+    check('y1j (v15) …the contract owner received none of it (the cost burns)', after.owner === burn.owner, `owner ${burn.owner}→${after.owner}`);
+    // Other writers may burn (or claim and mint) YAPP meanwhile on a shared chain; the burn itself is y1e + y1j.
+    check('y1k (v15) …and the total supply fell by at least the post\'s token cost', burn.supply !== null && after.supply !== null && after.supply <= burn.supply - spent, `supply ${burn.supply}→${after.supply} (Δ ${after.supply !== null && burn.supply !== null ? after.supply - burn.supply : '?'}, cost ${spent})`);
   }
   if (!YAPP_PAUSED && landed) {
     // v14: a reply pays its own (smaller) cost the same way, under the YAPP-paid post (the cost off
@@ -1994,7 +1993,7 @@ async function caseY1YappLocked(ctx) {
     const replyCost = V10.documentSchemas.reply.tokenCost.create.amount;
     const paidReply = await manualCreate(ctx, botA, { docType: 'reply', data: replyData({ content: 'y1 reply paid in YAPP', rootPostId: bs58.decode(paid.id) }), agreement: replyAgreement,
       payment: paymentInfo(replyCost, { gasFeesPaidBy: PREFER_CONTRACT_OWNER }).tokenPaymentInfo });
-    expectAccepted(`y1h (${YAPP_CUT}) the YAPP-paid reply lands (unpaused): ${replyCost} YAPP, gas offered to the contract owner`, paidReply);
+    expectAccepted(`y1h (${burn ? 'v15' : 'v14'}) the YAPP-paid reply lands (unpaused): ${replyCost} YAPP, gas offered to the contract owner`, paidReply);
     await settle();
     const afterReply = await balance(botA.ownerId);
     check('y1i …and A\'s balance fell by exactly the reply\'s token cost', afterReply === after - BigInt(replyCost), `before=${after} after=${afterReply}`);
@@ -2013,6 +2012,20 @@ async function caseY1YappLocked(ctx) {
   check(`y1f a fresh identity claims its ${STARTER_GRANT} starter YAPP (a claim is not a transfer)`, (await balance(fresh.ownerId)) === start + STARTER_GRANT, (first ?? '').slice(0, 160));
   const second = await claim();
   expectRejected('y1g a second claim is refused (40722)', asOutcome(second), ALREADY_CLAIMED);
+}
+
+/**
+ * The contract owner's YAPP balance and the total supply now, with `read()` to take them again
+ * (v15's y1j, y1k). y1 runs without ensurePrepared, so the owner is read off the contract here.
+ */
+async function burnBaseline(ctx, tokenId, balance) {
+  const { sdk, contractId } = ctx;
+  const owner = ctx.ownerId ?? (await readback(() => sdk.contracts.fetch(contractId))).ownerId.toBase58();
+  const read = async () => ({
+    owner: await balance(owner),
+    supply: (await readback(() => sdk.tokens.totalSupply(tokenId)))?.totalSupply ?? null,
+  });
+  return { ...(await read()), read };
 }
 
 // ---- Carried from verify-v8: fees, suspension, token costs (v8 needs a v9 chain) ----
@@ -2658,12 +2671,13 @@ function selfTest() {
   token.startAsPaused === YAPP_PAUSED && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne' && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && token.manualMintingRules.authorizedToMakeChange.$type === 'contractOwner' && token.distributionRules.mintingAllowChoosingDestination === true);
   expect('the starter grant is 100 once per identity (y1f)', token.distributionRules.oncePerIdentityDistribution?.amount === 100);
   const costs = ['post', 'reply', 'like', 'likeReply'].map((type) => schemas[type].tokenCost?.create);
-  expect(YAPP_TRANSFERABLE
-    ? 'YAPP is transferable (no flag before beta.4) and every YAPP cost pays the contract owner (effect 0)'
-    : 'v15: YAPP is not transferable, starts with no supply, and every YAPP cost burns (effect 1) (y1a, y1j, y1k)',
-  YAPP_TRANSFERABLE
-    ? token.transferable === undefined && costs.every((cost) => (cost?.effect ?? 0) === 0)
-    : token.transferable === false && token.baseSupply === 0 && costs.every((cost) => cost?.effect === 1));
+  if (YAPP_TRANSFERABLE) {
+    expect('YAPP is transferable (no flag before beta.4) and every YAPP cost pays the contract owner (effect 0)',
+      token.transferable === undefined && costs.every((cost) => (cost?.effect ?? 0) === 0));
+  } else {
+    expect('v15: YAPP is not transferable, starts with no supply, and every YAPP cost burns (effect 1) (y1a, y1j, y1k)',
+      token.transferable === false && token.baseSupply === 0 && costs.every((cost) => cost?.effect === 1));
+  }
   expect('a paused token pays a document cost before 5.0.0-beta.3 and is refused 40711 from it (y1d, k1c, q1b)',
     [['5.0.0-beta.2', false], ['5.0.0-beta.3', true], ['5.0.0-beta.10', true], ['5.0.0-rc.1', true], ['5.0.0', true], ['5.1.0-dev.1', true], ['4.2.0', false], ['5.0.0-dev.4', null], [undefined, null]]
       .every(([version, expected]) => driveRefusesPausedPayments(version) === expected));
