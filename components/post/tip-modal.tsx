@@ -56,7 +56,9 @@ type KeySource = 'prefilled' | 'manual' | null
 
 /**
  * The tab the modal opens on: YAPP, the provable path, wherever YAPP can move.
- * Where it is locked (v10) there is no YAPP tab at all; tips are credit tips.
+ * Where it is locked (v10 onwards, and always where it is not transferable,
+ * v15: `yappIsLocked()` reads `yappIsTransferable()`) there is no YAPP tab at
+ * all; tips are credit tips.
  */
 function defaultTab(): PaymentTab {
   return yappIsLocked() ? 'credits' : 'yapp'

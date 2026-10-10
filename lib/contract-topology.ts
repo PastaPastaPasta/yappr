@@ -32,6 +32,7 @@ import socialContractV11 from '@/contracts/yappr-social-contract-v11.json'
 import socialContractV12 from '@/contracts/yappr-social-contract-v12.json'
 import socialContractV13 from '@/contracts/yappr-social-contract-v13.json'
 import socialContractV14 from '@/contracts/yappr-social-contract-v14.json'
+import socialContractV15 from '@/contracts/yappr-social-contract-v15.json'
 import blocksContract from '@/contracts/yappr-blocks-contract.json'
 
 /**
@@ -516,6 +517,18 @@ const V14_DESCRIPTOR: ContractTopologyDescriptor = {
   tombstonePreserves: { ...V13_DESCRIPTOR.tombstonePreserves, reply: V14_REPLY_LINKAGE_PRESERVED },
 }
 
+/**
+ * v15 — `contracts/yappr-social-contract-v15.json`, the 5.0.0-beta.4 re-cut
+ * (docs/SOCIAL_V15.md). Every v14 surface; only YAPP changes, outside this
+ * descriptor: it cannot be transferred ({@link yappIsTransferable} is false),
+ * so it is locked ({@link yappIsLocked}), and a post, reply or like paid in
+ * YAPP burns it instead of paying the contract owner.
+ */
+const V15_DESCRIPTOR: ContractTopologyDescriptor = {
+  ...V14_DESCRIPTOR,
+  topology: 'v15',
+}
+
 /** Recursively freezes a plain-object descriptor. */
 function deepFreeze<T>(value: T): T {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -533,6 +546,7 @@ const DESCRIPTORS: Readonly<Record<ContractTopology, ContractTopologyDescriptor>
   v12: V12_DESCRIPTOR,
   v13: V13_DESCRIPTOR,
   v14: V14_DESCRIPTOR,
+  v15: V15_DESCRIPTOR,
 }
 
 let resolved: ContractTopologyDescriptor | null = null
@@ -545,7 +559,7 @@ export function topologyDescriptor(): ContractTopologyDescriptor {
 
 /**
  * True on `cut` and on every cut after it, in {@link CONTRACT_TOPOLOGIES}
- * order (v2 < v9 < v10 < v11 < v12 < v13 < v14). Each later cut keeps what the
+ * order (v2 < v9 < v10 < v11 < v12 < v13 < v14 < v15). Each later cut keeps what the
  * earlier ones introduced unless a predicate says otherwise.
  */
 function isAtLeast(cut: ContractTopology): boolean {
@@ -1506,11 +1520,12 @@ interface SocialDocumentSchema {
   deleteConstraints?: Record<string, unknown>
 }
 
-type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14
+type SocialContractJson = typeof socialContractV9 | typeof socialContractV10 | typeof socialContractV11 | typeof socialContractV12 | typeof socialContractV13 | typeof socialContractV14 | typeof socialContractV15
 
 /** The committed JSON of the configured devnet cut; v2 reads v9's (see above). */
 function devnetContract(): SocialContractJson {
   switch (topologyDescriptor().topology) {
+    case 'v15': return socialContractV15
     case 'v14': return socialContractV14
     case 'v13': return socialContractV13
     case 'v12': return socialContractV12
@@ -1740,6 +1755,8 @@ export function starterGrantAmount(): bigint | null {
 
 interface YappTokenRules {
   startAsPaused?: boolean
+  /** 5.0.0-beta.4 (token configuration v1, v15): false when no balance can ever leave its holder. */
+  transferable?: boolean
   emergencyActionRules: { authorizedToMakeChange: { $type: string } }
   distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
 }
@@ -1764,22 +1781,35 @@ export function yappIsPausedForGood(): boolean {
 }
 
 /**
+ * True when the configured contract's YAPP can move between identities. False
+ * on v15 (`transferable: false`, Platform 5.0.0-beta.4): a transfer of it is
+ * refused with 40726, and so is a document of another contract charging it, so
+ * YAPP can only be granted, minted by the contract owner, and burned by
+ * Yappr's own token costs. Every earlier cut predates the flag and answers true.
+ */
+export function yappIsTransferable(): boolean {
+  return (devnetContract().tokens['0'] as YappTokenRules).transferable !== false
+}
+
+/**
  * True when YAPP is an in-app token that Yappr never sells and never sends
  * (v10 onwards): no one can ever set a direct-purchase price, and its pause
- * state is fixed for good (`emergencyActionRules` is `noOne`). Buying, YAPP
- * tips and other transfers are not offered; tips are credit tips; the
- * starter grant still pays out and the contract owner still mints.
+ * state is fixed for good (`emergencyActionRules` is `noOne`), or it cannot be
+ * transferred at all ({@link yappIsTransferable}, v15). Buying, YAPP tips and
+ * other transfers are not offered; tips are credit tips; the starter grant
+ * still pays out and the contract owner still mints.
  *
  * On v10–v13 the token is also {@link yappIsPausedForGood}, so YAPP cannot
  * move at all. v14's starts unpaused so that it can pay token costs under
  * beta.3. Its token config is format 0, which is always transferable, so a
- * transfer would land on chain, and Yappr deliberately offers none. (Platform
- * 5.0.0-beta.4 adds `transferable: false`, token config format 1, which a
- * later social re-cut will adopt.) Whether YAPP can pay for a post
- * is {@link yappIsPausedForGood}'s question, not this one's.
+ * transfer would land on chain, and Yappr deliberately offers none. v15's is
+ * format 1 and `transferable: false`, so the chain refuses a transfer too.
+ * Whether YAPP can pay for a post is {@link yappIsPausedForGood}'s question,
+ * not this one's.
  */
 export function yappIsLocked(): boolean {
   if (!isDevnetCut()) return false
+  if (!yappIsTransferable()) return true
   const token = devnetContract().tokens['0'] as YappTokenRules
   return token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
     && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
