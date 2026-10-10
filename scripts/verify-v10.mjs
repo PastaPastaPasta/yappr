@@ -1932,7 +1932,7 @@ async function caseY1YappLocked(ctx) {
   const bAfterTransfer = await balance(botB.ownerId);
   const moved = bAfterTransfer !== before.b;
   if (YAPP_PAUSED) expectRejected('y1a a YAPP transfer is refused (40711: the token is paused)', { ok: transfer === null || moved, error: transfer }, TOKEN_PAUSED);
-  else check('y1a (v14) a 1-YAPP transfer LANDS (v14's token is config format 0, always transferable; it is unpaused)', transfer === null && bAfterTransfer === before.b + 1n, `${(transfer ?? '').slice(0, 160)} B ${before.b}→${bAfterTransfer}`);
+  else check('y1a (v14) a 1-YAPP transfer LANDS (the v14 token is config format 0, always transferable; it is unpaused)', transfer === null && bAfterTransfer === before.b + 1n, `${(transfer ?? '').slice(0, 160)} B ${before.b}→${bAfterTransfer}`);
 
   const prices = await readback(() => sdk.tokens.directPurchasePrices([tokenId]));
   const price = prices instanceof Map ? prices.get(tokenId) : prices?.[tokenId];
