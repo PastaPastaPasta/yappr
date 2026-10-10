@@ -9,10 +9,10 @@
  *   the `transfer` document Platform writes into the SYSTEM token-history
  *   contract because YAPP sets `keepsTransferHistory` (cases t1–t5). The tipper
  *   signs with its CRITICAL auth key, which every token batch needs.
- * - YAPP locked (v10: paused for good, no price): a tip is a CREDIT transfer
- *   signed with the tipper's TRANSFER key (cases c1–c2). It leaves no document,
- *   so balances are the proof. That the YAPP transfer itself is refused 40711
- *   is verify-v10's y1.
+ * - YAPP locked (v10: paused for good, no price; v15: not transferable): a tip
+ *   is a CREDIT transfer signed with the tipper's TRANSFER key (cases c1–c2).
+ *   It leaves no document, so balances are the proof. That the YAPP transfer
+ *   itself is refused (40711 paused, 40726 not transferable) is verify-v10's y1.
  *
  * Actors are seed-ledger personas: a TIPPER and a CREATOR.
  *
@@ -66,14 +66,16 @@ function parseTipNote(note) {
 }
 
 /**
- * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: nobody may
- * ever set YAPP's direct-purchase price or change its pause state, so Yappr
- * neither sells nor sends it and tips must be credit tips (v10-v13: paused for
- * good; v14: unpaused so that it pays token costs, but still never offered for
- * transfer).
+ * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: YAPP cannot
+ * be transferred at all (v15: `transferable: false`, a transfer is 40726), or
+ * nobody may ever set its direct-purchase price or change its pause state, so
+ * Yappr neither sells nor sends it and tips must be credit tips (v10-v13:
+ * paused for good; v14: unpaused so that it pays token costs, but still never
+ * offered for transfer).
  */
 function yappIsLocked(contractJson) {
   const token = contractJson?.tokens?.['0'];
+  if (token?.transferable === false) return true;
   return token?.emergencyActionRules?.authorizedToMakeChange?.$type === 'noOne'
     && token?.distributionRules?.changeDirectPurchasePricingRules?.authorizedToMakeChange?.$type === 'noOne';
 }
@@ -330,6 +332,8 @@ function selfTestTipNotes() {
     ['v9 YAPP is transferable: YAPP tips', yappIsLocked(social('v9')) === false],
     ['v10 YAPP is locked: credit tips', yappIsLocked(social('v10')) === true],
     ['v14 YAPP pays token costs but is still never sent: credit tips', yappIsLocked(social('v14')) === true],
+    ['v15 YAPP is not transferable: credit tips', yappIsLocked(social('v15')) === true],
+    ['a non-transferable YAPP is locked whatever its other rules: credit tips', yappIsLocked({ tokens: { 0: { transferable: false } } }) === true],
   ]);
 }
 

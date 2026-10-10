@@ -46,20 +46,16 @@
           "description": "Scan bucket: (1 << k) | top k bits of HKDF(recipient, \"bucket\"). k = 0 gives 1."
         },
         "epk": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 33,
-          "maxItems": 33,
+          "type": "bytes",
           "position": 1,
-          "description": "Compressed secp256k1 ephemeral public key e·G"
+          "description": "Compressed secp256k1 ephemeral public key e·G",
+          "size": 33
         },
         "check": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 16,
-          "maxItems": 16,
+          "type": "bytes",
           "position": 2,
-          "description": "HKDF(ECDH_x(e, encPub_R), \"invite\" || $ownerId || epk)[0:16]"
+          "description": "HKDF(ECDH_x(e, encPub_R), \"invite\" || $ownerId || epk)[0:16]",
+          "size": 16
         }
       }
     },
@@ -87,12 +83,10 @@
       "additionalProperties": false,
       "properties": {
         "tag": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 16,
-          "maxItems": 16,
+          "type": "bytes",
           "position": 0,
-          "description": "HKDF(SK, \"tag\" || week || j)[0:16]"
+          "description": "HKDF(SK, \"tag\" || week || j)[0:16]",
+          "size": 16
         },
         "body": {
           "type": "array",
@@ -147,12 +141,10 @@
       "additionalProperties": false,
       "properties": {
         "handle": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 10,
-          "maxItems": 10,
+          "type": "bytes",
           "position": 0,
-          "description": "roster(gid) or keyring(gid, b): HKDF(gid, label)[0:10]"
+          "description": "roster(gid) or keyring(gid, b): HKDF(gid, label)[0:10]",
+          "size": 10
         },
         "blob": {
           "type": "array",

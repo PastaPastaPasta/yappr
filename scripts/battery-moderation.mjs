@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { selfTest } from './battery-lib.mjs';
 import { moderatorsMayDelete, referenceKindMismatch } from './contract-probes.mjs';
+import { expandSchemas } from './schema-shorthands.mjs';
 import { REPO_ROOT, describeErr, sleep } from './seed/seed-lib.mjs';
 
 /**
@@ -42,7 +43,8 @@ const describeValue = (value) => JSON.stringify(value, (_k, v) => (typeof v === 
  */
 export function selfTestModerated(file, expect, contract = {}) {
   const parsed = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
-  const schemas = parsed.documentSchemas ?? parsed;
+  // In long form: the property type shorthands are byte arrays to every rule judged here.
+  const schemas = expandSchemas(parsed.documentSchemas ?? parsed);
   const problems = [];
   const base = {};
   for (const [docType, rules] of Object.entries(expect)) {

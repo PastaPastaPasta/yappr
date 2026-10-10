@@ -9,7 +9,7 @@
  *
  * Ids come from every `NEXT_PUBLIC_*CONTRACT_ID` in the network's env file
  * (`.env.devnet` for devnet, `.env.testing` for testnet) plus `CONTRACT_IDS`,
- * plus the DashPay system contract when the env file sets a topology that reads it (v10 to v13)
+ * plus the DashPay system contract when the env file sets a topology that reads it (v10 onwards)
  * (their base profile, which the app preloads).
  * Entries already in the bundle are kept and refreshed, so one file per network
  * serves every deployment on it; `--prune` drops every entry this run did not

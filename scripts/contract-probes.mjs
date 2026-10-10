@@ -26,10 +26,13 @@
  *     and from 5.0.0-beta.1 40143/40144: both parses accept a
  *     `deletableDocument` reference at a moderated type, only the node refuses it),
  *     the immutable-deletable-reference rules, and the 20,480-byte transition
- *     cap, and that both sides of every same-contract `where` entry exist
- *     (40126). It also re-checks the index shapes wasm-dpp2 checks
- *     (`auditIndexShapes`, ported from the v10 study's index-audit.py), so the
- *     rules Yappr relies on do not depend on one package alone.
+ *     cap, that both sides of every same-contract `where` entry exist
+ *     (40126), and the non-transferable token rules of 5.0.0-beta.4 (10279,
+ *     10280; `auditNonTransferableTokens`). It also re-checks the index
+ *     shapes wasm-dpp2 checks (`auditIndexShapes`, ported from the v10 study's
+ *     index-audit.py), so the rules Yappr relies on do not depend on one
+ *     package alone. Property type shorthands are judged in long form
+ *     (`scripts/schema-shorthands.mjs`), as the node expands them first.
  *   - **update** (an `update` probe): version 2 of a committed cut parses
  *     under both, and wasm-dpp2's `DataContract.validateUpdate` (the code a
  *     data contract update transition runs, no state read) refuses it.
@@ -58,6 +61,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expandSchemas, expandShorthands } from './schema-shorthands.mjs';
 
 // SystemLimits (rs-platform-version system_limits/v4.rs, protocol 14).
 const LIMITS = {
@@ -141,7 +145,8 @@ export function metaSchemaProblems(source) {
   if (!meta) return [];
   const problems = [];
   for (const [name, schema] of Object.entries(source.documentSchemas)) {
-    const enriched = { $schema: meta.id, ...schema, ...(source.$defs ? { $defs: source.$defs } : {}) };
+    // The node expands the property type shorthands before its meta-schema runs.
+    const enriched = expandShorthands({ $schema: meta.id, ...schema, ...(source.$defs ? { $defs: source.$defs } : {}) });
     if (!meta.validate(enriched)) {
       const first = meta.validate.errors?.[0];
       problems.push(`${name}: meta-schema ${first?.instancePath || '/'} ${first?.message ?? 'invalid'} (${first?.schemaPath ?? ''})`);
@@ -365,7 +370,8 @@ function auditIndexShapes(schemas) {
  */
 export function auditNodeRules(source, { network = 'devnet' } = {}) {
   const problems = [];
-  const schemas = source.documentSchemas;
+  // Judged in long form, as the node judges them once it expanded the shorthands.
+  const schemas = expandSchemas(source.documentSchemas);
   const config = source.config ?? {};
   const moderation = config.moderation;
 
@@ -449,6 +455,33 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
       if (mismatch) problems.push(`${name}.${path}: "${ref.documentType}" ${mismatch}`);
     }
   }
+  problems.push(...auditNonTransferableTokens(source));
+  return problems;
+}
+
+/**
+ * The 5.0.0-beta.4 rules for a token declared `transferable: false` (token
+ * configuration v1). Its balance can never leave its holder, so a document
+ * `tokenCost` in it must burn (`effect: 1`; the default, 0, pays the contract
+ * owner): 10280 at registration, which wasm-dpp2 also refuses but the wasm-sdk
+ * parse accepts. It may not have its own shielded pool either: 10279, which
+ * only the node checks (`validate_shielded_pool_rules`, in the create
+ * transition's basic structure). What remains is a state refusal no offline
+ * check can make: a transfer of it, or a document of another contract paying
+ * with it, is 40726 (`TokenNotTransferableError`) when it is broadcast.
+ */
+function auditNonTransferableTokens(source) {
+  const problems = [];
+  const tokens = source.tokens ?? {};
+  for (const [position, token] of Object.entries(tokens)) {
+    if (token.transferable === false && token.hasShieldedPool === true) problems.push(`token ${position} is not transferable and has a shielded pool (10279)`);
+  }
+  for (const [name, schema] of Object.entries(source.documentSchemas)) {
+    for (const [action, cost] of Object.entries(schema.tokenCost ?? {})) {
+      if (cost.contractId !== undefined || tokens[cost.tokenPosition]?.transferable !== false) continue;
+      if ((cost.effect ?? 0) !== 1) problems.push(`${name}: the ${action} token cost pays the contract owner in the non-transferable token ${cost.tokenPosition}, it must burn it (effect 1, 10280)`);
+    }
+  }
   return problems;
 }
 
@@ -459,6 +492,7 @@ const SOCIAL_V11 = 'contracts/yappr-social-contract-v11.json';
 const SOCIAL_V12 = 'contracts/yappr-social-contract-v12.json';
 const SOCIAL_V13 = 'contracts/yappr-social-contract-v13.json';
 const SOCIAL_V14 = 'contracts/yappr-social-contract-v14.json';
+const SOCIAL_V15 = 'contracts/yappr-social-contract-v15.json';
 const BLOCKS = 'contracts/yappr-blocks-contract.json';
 const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
@@ -484,7 +518,7 @@ function settledWithoutCreatedAt(source) {
   profile.moderatorAbilities = { delete: true, deleteWithin: 604_800, deleteSettled: { leader: true, approvals: 3 } };
   return profile.moderatorAbilities.deleteSettled;
 }
-const identifier = (position, refersTo) => ({ type: 'array', byteArray: true, minItems: 32, maxItems: 32, contentMediaType: 'application/x.dash.dpp.identifier', position, ...(refersTo ? { refersTo } : {}) });
+const identifier = (position, refersTo) => ({ type: 'identifier', position, ...(refersTo ? { refersTo } : {}) });
 /** Every same-contract document type a source's references name. */
 const referencedTypes = (source) => Object.values(types(source)).flatMap((schema) => referenceDeclarations(schema).map(([, ref]) => ref.documentType)).filter(Boolean);
 
@@ -735,6 +769,29 @@ const PROBES = [
   // deleteConstraints are frozen like propertyConstraints (validate_schema_compatibility v1).
   { label: 'v14 update: the report delete rule relaxed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { types(s).report.deleteConstraints.pending = { notEqual: ['status', 2] }; } },
   { label: 'v14 update: the report delete rule removed', file: SOCIAL_V14, expect: 'update', node: '10246', why: /deleteConstraints/i, update: (s) => { delete types(s).report.deleteConstraints; } },
+
+  // Social v15 (5.0.0-beta.4, docs/SOCIAL_V15.md): v14 with a non-transferable YAPP whose costs
+  // burn, written with the property type shorthands.
+  { label: 'control: social v15 as committed (devnet: interim contractOwner)', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'contractOwner' },
+  { label: 'control: social v15 as mainnet registers it (interim notYetUsable)', file: SOCIAL_V15, network: 'mainnet', mutate: () => {}, expect: 'accepted', holds: (s) => elected(s).interim.$type === 'notYetUsable' },
+  { label: 'v15: YAPP is not transferable (read back off the parse), unpaused for good, unpriced, with no base supply and no shielded pool', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const yapp = s.tokens['0'];
+    const token = parsed.tokens[0];
+    return yapp.$formatVersion === '1' && yapp.transferable === false && token.transferable === false && token.hasShieldedPool === false
+      && yapp.startAsPaused === false && yapp.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+      && yapp.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne' && yapp.baseSupply === 0;
+  } },
+  { label: 'v15: every YAPP cost burns (effect 1), still optional with sponsored gas', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const costs = Object.values(types(s)).flatMap((schema) => Object.values(schema.tokenCost ?? {}));
+    return costs.length === 4 && costs.every((cost) => cost.effect === 1 && cost.optional === true && cost.gasFeesPaidBy === 2 && cost.tokenPosition === 0);
+  } },
+  { label: 'v15: a post cost paying the owner (effect 0) in the non-transferable YAPP', file: SOCIAL_V15, expect: 'dpp2', auditToo: true, node: '10280', why: /must burn it/i, mutate: (s) => { types(s).post.tokenCost.create.effect = 0; } },
+  { label: 'v15: a like cost without an effect (the default pays the owner)', file: SOCIAL_V15, expect: 'dpp2', auditToo: true, node: '10280', why: /must burn it/i, mutate: (s) => { delete types(s).like.tokenCost.create.effect; } },
+  { label: 'v15: the non-transferable YAPP with its own shielded pool', file: SOCIAL_V15, expect: 'audit', node: '10279', why: /shielded pool \(10279\)/, mutate: (s) => { s.tokens['0'].hasShieldedPool = true; } },
+  { label: 'v15 with a transferable YAPP may pay the owner again (control: 10280 is about the flag)', file: SOCIAL_V15, expect: 'accepted', mutate: (s) => {
+    s.tokens['0'].transferable = true;
+    for (const schema of Object.values(types(s))) if (schema.tokenCost) schema.tokenCost.create.effect = 0;
+  } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only
