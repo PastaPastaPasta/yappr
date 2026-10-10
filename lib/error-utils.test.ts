@@ -885,8 +885,19 @@ describe('isUnverifiedOutcomeError', () => {
     [{ code: -1, name: 'Proof', message: 'context provider error: invalid quorum: Quorum not found in cache for hash: 1855' }],
     [{ code: -1, name: 'DapiClientError', message: 'no available addresses to retry' }],
     [new Error('proof verification failed')],
+    [new Error('quorum source unavailable: error sending request')],
+    [{ code: -1, name: 'DapiClientError', message: 'no available addresses to retry, last error: Context provider error: quorum source unavailable: timeout' }],
   ])('reads %o as an answer that could not be verified', (error) => {
     expect(isUnverifiedOutcomeError(error)).toBe(true)
+  })
+
+  it('says the network is temporarily unavailable when the quorum service cannot be reached', () => {
+    for (const message of [
+      'Context provider error: quorum source unavailable: error sending request',
+      'no available addresses to retry, last error: Context provider error: quorum source unavailable: timeout',
+    ]) {
+      expect(categorizeError(new Error(message))).toBe('Dash Platform is temporarily unavailable. Please try again in a few moments.')
+    }
   })
 
   it.each([
