@@ -269,6 +269,24 @@ export function isTokenPausedError(error: unknown): boolean {
 }
 
 /**
+ * Checks if an error is `TokenNotTransferableError`, state code **40726**
+ * (5.0.0-beta.4): a transfer of a `transferable: false` token (v15's YAPP) was
+ * refused (by the mempool, so unpaid), or a contract charging it was refused
+ * registration.
+ *
+ * Drive phrasing (rs-dpp token_not_transferable_error.rs): "Token X is not
+ * transferable, so <action> is refused".
+ */
+export function isTokenNotTransferableError(error: unknown): boolean {
+  const msg = extractErrorMessage(error).toLowerCase()
+  return (
+    msg.includes('tokennottransferable') ||
+    /\btoken \S+ is not transferable, so\b/.test(msg) ||
+    hasConsensusCode(error, [40726])
+  )
+}
+
+/**
  * Checks if an error indicates the signer's token account is frozen (suspended
  * by a token authority via a freeze action). Frozen accounts cannot spend YAPP,
  * so token payments fail — but buying more YAPP will NOT help. The UI should
@@ -1148,6 +1166,7 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
     isInvalidDocumentIdError(error) ||
     isModerationBarredError(error) ||
     isTokenPausedError(error) ||
+    isTokenNotTransferableError(error) ||
     isGasPayerError(error) ||
     isActionFeeAgreementError(error) ||
     isReferencedTypeNotDeletableError(error) ||
@@ -1294,6 +1313,11 @@ export function categorizeError(error: unknown, action = 'create post'): string 
     return paymentIsChoosable('post')
       ? 'YAPP payments are paused right now. Switch to paying in credits in Settings.'
       : 'YAPP payments are paused right now, so this can\'t go through. Try again later.'
+  }
+
+  // Before the balance checks: no balance lets a non-transferable YAPP move.
+  if (isTokenNotTransferableError(error)) {
+    return 'YAPP can\'t be sent to other accounts or spent outside Yappr.'
   }
 
   // Check frozen before insufficient-balance: a frozen account can't spend even

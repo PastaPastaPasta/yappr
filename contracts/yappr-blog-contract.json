@@ -124,7 +124,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag \u2014 an abandoned blog is simply empty.",
+      "description": "A blog (many per user). Permanent so posts and follows can reference it; there is no tombstone flag — an abandoned blog is simply empty.",
       "moderatorAbilities": {
         "delete": true
       },
@@ -179,11 +179,7 @@
       ],
       "properties": {
         "blogId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "Reference to parent blog document",
           "refersTo": {
@@ -474,11 +470,7 @@
       ],
       "properties": {
         "blogPostId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "Reference to parent blog post document",
           "refersTo": {
@@ -583,11 +575,7 @@
       ],
       "properties": {
         "blogId": {
-          "type": "array",
-          "byteArray": true,
-          "minItems": 32,
-          "maxItems": 32,
-          "contentMediaType": "application/x.dash.dpp.identifier",
+          "type": "identifier",
           "position": 0,
           "description": "Reference to the blog being followed",
           "refersTo": {

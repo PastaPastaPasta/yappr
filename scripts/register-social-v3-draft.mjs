@@ -67,13 +67,14 @@
  *
  * ## Funding the bot pool
  *
- * A fresh contract mints its whole YAPP `baseSupply` to the contract owner, so
- * every other identity starts at zero and its first token-priced write (a post
- * costs 10 YAPP) is refused. `--fund <id>[,<id>…]` gives `--fund-amount` YAPP to
+ * A fresh contract mints its whole YAPP `baseSupply` to the contract owner (v15
+ * declares none), so every other identity starts at zero and its first
+ * token-priced write (a post costs 10 YAPP) is refused. `--fund <id>[,<id>…]` gives `--fund-amount` YAPP to
  * each id, which is what makes the verification battery able to write
  * posts/replies/likes at all. The owner MINTS it to each id
  * (`mintingAllowChoosingDestination`): v10's YAPP starts paused and can never
- * be unpaused, so a transfer is refused; on v9 a mint works the same.
+ * be unpaused, and v15's cannot be transferred, so a transfer is refused; on v9
+ * a mint works the same.
  * `--fund-only <contractId>` performs just that step against a contract that
  * already exists, for topping a bot up without republishing anything.
  *
@@ -184,7 +185,7 @@ function printSchemaAudit(documentSchemas) {
       ...(schema.moderatorAbilities ? [`moderators=${JSON.stringify(schema.moderatorAbilities)}`] : []),
     ];
     const cost = schema.tokenCost?.create;
-    if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}${cost.optional ? ' (optional)' : ''}${cost.gasFeesPaidBy ? ` gas=${cost.gasFeesPaidBy}` : ''}`);
+    if (cost) flags.push(`create=${cost.amount} token@${cost.tokenPosition}${cost.optional ? ' (optional)' : ''}${cost.effect === 1 ? ' burns' : ''}${cost.gasFeesPaidBy ? ` gas=${cost.gasFeesPaidBy}` : ''}`);
     const fees = schema.actionFees;
     if (fees) flags.push(`fees=${JSON.stringify(fees)}`);
     const indices = (schema.indices ?? []).map(describeIndex);
@@ -220,8 +221,9 @@ function printSchemaAudit(documentSchemas) {
 /**
  * Mints YAPP from the contract owner straight to each recipient, so their first
  * token-priced document write is not refused for an empty balance. A mint, not
- * a transfer: v10's YAPP is paused for good, and a paused token refuses every
- * transfer while token costs, the starter grant and owner mints still work.
+ * a transfer: v10's YAPP is paused for good and v15's is not transferable, and
+ * either refuses every transfer while token costs, the starter grant and owner
+ * mints still work.
  */
 async function fundRecipients(sdk, { contractId, owner, identityKey, signer, recipients, amount }) {
   // The trusted SDK needs the contract cached before it can verify a token

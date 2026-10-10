@@ -435,6 +435,12 @@ export function keyNetwork(): KeyNetwork {
 // off the referenced documents), and a YAPP that starts unpaused, so the
 // optional YAPP token costs can be paid again under beta.3.
 //
+// `v15` — the 5.0.0-beta.4 re-cut, `contracts/yappr-social-contract-v15.json`
+// (docs/SOCIAL_V15.md). v14 with a YAPP that cannot be transferred
+// (`transferable: false`), whose costs burn (`effect: 1`) instead of paying the
+// contract owner, and that starts with no supply; the byte arrays are written
+// as property type shorthands.
+//
 // The intermediate cuts (v3–v8) are gone: none exists on any chain any more,
 // and the repo does not keep contracts, generators or batteries that cannot be
 // registered. Recover them from git history.
@@ -442,7 +448,7 @@ export function keyNetwork(): KeyNetwork {
 // The topologies are wired into the app through `lib/contract-topology.ts`. A
 // deployment must set this to match the contract in
 // `NEXT_PUBLIC_YAPPR_CONTRACT_ID`; the default keeps testnet/staging/prod on v2.
-export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14'] as const
+export const CONTRACT_TOPOLOGIES = ['v2', 'v9', 'v10', 'v11', 'v12', 'v13', 'v14', 'v15'] as const
 
 export type ContractTopology = (typeof CONTRACT_TOPOLOGIES)[number]
 

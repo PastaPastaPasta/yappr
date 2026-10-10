@@ -1,7 +1,7 @@
 /**
  * The social documents the Node scripts write, built for the cut a contract
- * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V14.md). Every switch reads
- * the schemas, never the file's name, so one builder serves v10 to v14 and a
+ * file declares (docs/SOCIAL_V10.md to docs/SOCIAL_V15.md). Every switch reads
+ * the schemas, never the file's name, so one builder serves v10 to v15 and a
  * v10–v12 document comes out exactly as the scripts wrote it before v13:
  *
  *   - `live` (v13): every post that is not a tombstone carries `live: true`, a
@@ -32,6 +32,7 @@ import bs58 from 'bs58';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { expandSchemas } from './schema-shorthands.mjs';
 
 /** `mediaKinds` bytes (v13); a reader ignores any other value, which consensus cannot refuse. */
 export const MEDIA_KIND = { image: 0, video: 1, gif: 2 };
@@ -82,7 +83,8 @@ export function reportRecoveryWhere(data, ownerId) {
  * contract JSON (`{ documentSchemas }`) or its `documentSchemas`.
  */
 export function socialShapes(contract) {
-  const schemas = contract.documentSchemas ?? contract;
+  // In long form (v15 writes its byte arrays as shorthands), so the checker reads one shape.
+  const schemas = expandSchemas(contract.documentSchemas ?? contract);
   const declares = (type, property) => schemas[type]?.properties?.[property] !== undefined;
   const cut = Object.freeze({
     liveMarker: declares('post', 'live'),
@@ -251,7 +253,7 @@ export const BLOCK_TYPES = ['block', 'blockFilter', 'blockFollow'];
 // ---- Self-test ------------------------------------------------------------------
 
 const REPO_ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
-const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14'];
+const SOCIAL_CUTS = ['v10', 'v11', 'v12', 'v13', 'v14', 'v15'];
 
 /** The cut flags each social cut declares. */
 function expectedCut(version) {
@@ -338,14 +340,14 @@ function builderExpectations(shapes, version) {
   const { cut } = shapes;
   const id = new Uint8Array(32).fill(6);
   const throws = (fn) => { try { fn(); return false; } catch { return true; } };
-  // v14 keeps every v13 shape but its replies.
-  const v14 = version === 'v14';
+  // v14 keeps every v13 shape but its replies; v15 keeps every v14 shape.
+  const v14 = version === 'v14' || version === 'v15';
   const fromV13 = version === 'v13' || v14;
   const item = { url: 'ipfs://bafy', sha256: new Uint8Array(32), fingerprint: new Uint8Array(8) };
   return [
     ['the cut flags are the ones this cut declares', JSON.stringify(cut) === JSON.stringify(expectedCut(version))],
     ['a nested reply without its root owner throws on v13 only', throws(() => shapes.reply({ rootPostId: id, replyToReplyId: id, parentOwnerId: id })) === (version === 'v13')],
-    ['a reply stores no owner on v14 only', (shapes.reply({ rootPostId: id, parentOwnerId: id }).parentOwnerId === undefined) === v14],
+    ['a reply stores no owner from v14', (shapes.reply({ rootPostId: id, parentOwnerId: id }).parentOwnerId === undefined) === v14],
     ['a reply like without its author throws up to v12 only', throws(() => shapes.likeReply({ replyId: id })) === !fromV13],
     ['two media items throw up to v12 only', throws(() => shapes.media([item, item])) === !fromV13],
     ['five media items always throw', throws(() => shapes.media([item, item, item, item, item]))],
@@ -396,7 +398,8 @@ async function selfTest() {
     try {
       contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: source.documentSchemas, config: source.config, tokens: source.tokens }, true, platformVersion);
     } catch (e) {
-      // v14 needs the 5.0.0-beta.3 SDK (countPresent, deleteConstraints, a derived skip property).
+      // v14 needs the 5.0.0-beta.3 SDK (countPresent, deleteConstraints, a derived skip property),
+      // v15 the 5.0.0-beta.4 one (shorthands, a non-transferable token).
       report(false, `${version} parses with the installed SDK`, String(e?.message ?? e).slice(0, 160));
       continue;
     }
