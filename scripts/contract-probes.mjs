@@ -108,7 +108,8 @@ const SIGNATURE_ALLOWANCE = 100;
  * `generatedFrom` and the propertyConstraints grammar), vendored byte for byte
  * (`packages/rs-dpp/schema/meta_schemas/document/v3/document-meta.json`) and
  * pinned by hash. The wasm-sdk parse does not run it; wasm-dpp2 does, and this
- * ajv pass names the failing path more precisely.
+ * ajv pass names the failing path more precisely. The property type shorthands
+ * never reach it: the node expands them first, and so does `metaSchemaProblems`.
  */
 const META_SCHEMA_PATH = join(dirname(fileURLToPath(import.meta.url)), 'meta-schema', 'document-meta-v3.json');
 const META_SCHEMA_SHA256 = '5f5360a6f148385c53e660bf0bcf321a68e0727a11116e954778f9512db0b9bb';
@@ -460,15 +461,12 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
 }
 
 /**
- * The 5.0.0-beta.4 rules for a token declared `transferable: false` (token
- * configuration v1). Its balance can never leave its holder, so a document
- * `tokenCost` in it must burn (`effect: 1`; the default, 0, pays the contract
- * owner): 10280 at registration, which wasm-dpp2 also refuses but the wasm-sdk
- * parse accepts. It may not have its own shielded pool either: 10279, which
- * only the node checks (`validate_shielded_pool_rules`, in the create
- * transition's basic structure). What remains is a state refusal no offline
- * check can make: a transfer of it, or a document of another contract paying
- * with it, is 40726 (`TokenNotTransferableError`) when it is broadcast.
+ * The 5.0.0-beta.4 registration rules for a token declared `transferable:
+ * false`: a document `tokenCost` in it must burn (`effect: 1`; the default, 0,
+ * pays the contract owner), 10280; and it may not have its own shielded pool,
+ * 10279. A transfer of it (refused by the mempool), and the registration of
+ * another contract charging it, are 40726: state checks no offline audit of
+ * one contract can make.
  */
 function auditNonTransferableTokens(source) {
   const problems = [];

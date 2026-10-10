@@ -1761,6 +1761,11 @@ interface YappTokenRules {
   distributionRules: { changeDirectPurchasePricingRules: { authorizedToMakeChange: { $type: string } } }
 }
 
+/** The configured contract's YAPP (token position 0), as its committed JSON declares it. */
+function yappToken(): YappTokenRules {
+  return devnetContract().tokens['0'] as YappTokenRules
+}
+
 /**
  * True when the configured contract's YAPP is paused for good (v10–v13): it
  * starts paused and no one may ever unpause it (`emergencyActionRules` is
@@ -1776,19 +1781,19 @@ interface YappTokenRules {
  */
 export function yappIsPausedForGood(): boolean {
   if (!isDevnetCut()) return false
-  const token = devnetContract().tokens['0'] as YappTokenRules
+  const token = yappToken()
   return token.startAsPaused === true && token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
 }
 
 /**
  * True when the configured contract's YAPP can move between identities. False
  * on v15 (`transferable: false`, Platform 5.0.0-beta.4): a transfer of it is
- * refused with 40726, and so is a document of another contract charging it, so
- * YAPP can only be granted, minted by the contract owner, and burned by
+ * refused with 40726, and so is registering another contract that charges it,
+ * so YAPP can only be granted, minted by the contract owner, and burned by
  * Yappr's own token costs. Every earlier cut predates the flag and answers true.
  */
 export function yappIsTransferable(): boolean {
-  return (devnetContract().tokens['0'] as YappTokenRules).transferable !== false
+  return yappToken().transferable !== false
 }
 
 /**
@@ -1809,10 +1814,9 @@ export function yappIsTransferable(): boolean {
  */
 export function yappIsLocked(): boolean {
   if (!isDevnetCut()) return false
-  if (!yappIsTransferable()) return true
-  const token = devnetContract().tokens['0'] as YappTokenRules
-  return token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
-    && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne'
+  const token = yappToken()
+  return token.transferable === false || (token.emergencyActionRules.authorizedToMakeChange.$type === 'noOne'
+    && token.distributionRules.changeDirectPurchasePricingRules.authorizedToMakeChange.$type === 'noOne')
 }
 
 // ---------------------------------------------------------------------------

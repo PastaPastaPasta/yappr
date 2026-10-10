@@ -1209,7 +1209,7 @@ describe('contract topology', () => {
   })
 
   describe('v15 (5.0.0-beta.4)', () => {
-    /** A schema with the property type shorthands written out (scripts/schema-shorthands.mjs does the same for the scripts). */
+    /** A contract's JSON with every property type shorthand written out. */
     const longForm = (value: unknown): unknown => {
       if (Array.isArray(value)) return value.map(longForm)
       if (!value || typeof value !== 'object') return value
@@ -1220,30 +1220,31 @@ describe('contract topology', () => {
       const bytes = type === 'identifier' ? 32 : size
       return { ...rest, type: 'array', byteArray: true, minItems: bytes, maxItems: bytes, ...(type === 'identifier' ? { contentMediaType: 'application/x.dash.dpp.identifier' } : {}) }
     }
+    type Cost = { amount: number; effect?: number }
+    const costOf = (schema: Schemas[string]) => schema.tokenCost?.create as Cost | undefined
     const withoutEffect = (schemas: Schemas) => Object.fromEntries(Object.entries(schemas).map(([docType, schema]) => {
-      const create = schema.tokenCost?.create
-      if (!create) return [docType, schema]
-      const { effect, ...rest } = create as typeof create & { effect?: number }
-      expect(effect, docType).toBe(1)
-      return [docType, { ...schema, tokenCost: { create: rest } }]
+      const cost = costOf(schema)
+      if (!cost) return [docType, schema]
+      const create: Cost = { ...cost }
+      delete create.effect
+      return [docType, { ...schema, tokenCost: { create } }]
     }))
 
     it('is v14 written with shorthands, every YAPP cost burning (effect 1)', () => {
+      const costs = Object.values(V15).map(costOf).filter((cost): cost is Cost => cost !== undefined)
+      expect(costs.map((cost) => cost.effect)).toEqual([1, 1, 1, 1])
       expect(JSON.stringify(V15)).toMatch(/"type":"identifier"/)
       expect(longForm(withoutEffect(V15))).toEqual(longForm(V14))
-      expect(withoutEffect(V15).post.tokenCost).toEqual(V14.post.tokenCost)
     })
 
     it('makes YAPP non-transferable and starts it with no supply; every other token rule is v14\'s', async () => {
       const [v14Token, v15Token] = [socialContractV14.tokens['0'], socialContractV15.tokens['0']]
       expect([v15Token.$formatVersion, v15Token.transferable, v15Token.baseSupply]).toEqual(['1', false, 0])
-      const { transferable, ...rest } = v15Token
-      expect(transferable).toBe(false)
-      expect({ ...rest, $formatVersion: v14Token.$formatVersion, baseSupply: v14Token.baseSupply }).toEqual(v14Token)
+      expect({ ...v15Token, transferable: undefined, $formatVersion: v14Token.$formatVersion, baseSupply: v14Token.baseSupply }).toEqual(v14Token)
 
       const v15 = await topologyModule('v15')
       expect([v15.yappIsTransferable(), v15.yappIsLocked(), v15.yappIsPausedForGood()]).toEqual([false, true, false])
-      for (const before of ['v2', 'v9', 'v10', 'v13', 'v14']) expect((await topologyModule(before)).yappIsTransferable(), before).toBe(true)
+      for (const topology of ['v2', 'v9', 'v10', 'v13', 'v14']) expect((await topologyModule(topology)).yappIsTransferable(), topology).toBe(true)
       const sponsored = { optional: true, gasFeesPaidBy: 2 }
       for (const [docType, amount] of [['post', 10], ['reply', 3], ['like', 1], ['likeReply', 1]] as const) {
         expect(v15.tokenCostFor(docType), docType).toEqual({ amount, ...sponsored })

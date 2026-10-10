@@ -66,12 +66,9 @@ function parseTipNote(note) {
 }
 
 /**
- * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: YAPP cannot
- * be transferred at all (v15: `transferable: false`, a transfer is 40726), or
- * nobody may ever set its direct-purchase price or change its pause state, so
- * Yappr neither sells nor sends it and tips must be credit tips (v10-v13:
- * paused for good; v14: unpaused so that it pays token costs, but still never
- * offered for transfer).
+ * lib/contract-topology.ts `yappIsLocked()`, over a contract's JSON: YAPP is not
+ * transferable (v15), or nobody may ever price it or change its pause state
+ * (v10-v14), so Yappr neither sells nor sends it and tips are credit tips.
  */
 function yappIsLocked(contractJson) {
   const token = contractJson?.tokens?.['0'];
