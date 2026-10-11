@@ -315,6 +315,37 @@ export async function buildUnsignedKeyRegistrationTransition(
   }
 }
 
+// Extract key data as Uint8Array from a WASM IdentityPublicKey. The WASM
+// `.data` getter returns a hex string; `.toJSON().data` may differ. Try the
+// direct `.data` hex property first, then toJSON as fallback.
+const getRegisteredKeyData = (key: RegisteredIdentityKey): Uint8Array =>
+  requireBytes(key.data ?? key.toJSON().data, 'identity key data')
+
+const bytesMatch = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, i) => byte === b[i])
+
+/** The identity's public keys, or null when the identity does not exist. */
+async function fetchRegisteredKeys(identityId: string): Promise<RegisteredIdentityKey[] | null> {
+  const sdk = await getEvoSdk()
+  const identity = await sdk.identities.fetch(identityId)
+  return identity ? identity.publicKeys : null
+}
+
+/** Whether `keys` holds an AUTHENTICATION / ECDSA_HASH160 key over `authPublicKey`. */
+function hasAuthKey(keys: RegisteredIdentityKey[], authPublicKey: Uint8Array): boolean {
+  const authHash = hash160(authPublicKey)
+  return keys.some((key) =>
+    keyMatchesPurposeAndType(key, KeyPurpose.AUTHENTICATION, 'authentication', KeyType.ECDSA_HASH160, 'ecdsa_hash160')
+      && bytesMatch(getRegisteredKeyData(key), authHash))
+}
+
+/** Whether `keys` holds an ENCRYPTION / ECDSA_SECP256K1 key equal to `encryptionPublicKey`. */
+function hasEncryptionKey(keys: RegisteredIdentityKey[], encryptionPublicKey: Uint8Array): boolean {
+  return keys.some((key) =>
+    keyMatchesPurposeAndType(key, KeyPurpose.ENCRYPTION, 'encryption', KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1')
+      && bytesMatch(getRegisteredKeyData(key), encryptionPublicKey))
+}
+
 /**
  * Check if an identity has the expected keys registered.
  *
@@ -328,47 +359,21 @@ export async function checkKeysRegistered(
   authPublicKey: Uint8Array,
   encryptionPublicKey: Uint8Array
 ): Promise<boolean> {
-  const sdk = await getEvoSdk()
+  const keys = await fetchRegisteredKeys(identityId)
+  if (!keys) return false
+  return hasAuthKey(keys, authPublicKey) && hasEncryptionKey(keys, encryptionPublicKey)
+}
 
-  // Fetch fresh identity data
-  const identity = await sdk.identities.fetch(identityId)
-  if (!identity) {
-    return false
-  }
-
-  const publicKeys = identity.publicKeys
-
-  // Helper to extract key data as Uint8Array from a WASM IdentityPublicKey.
-  // The WASM `.data` getter returns a hex string; `.toJSON().data` may differ.
-  // Try the direct `.data` hex property first, then toJSON as fallback.
-  const getKeyData = (key: RegisteredIdentityKey): Uint8Array =>
-    requireBytes(key.data ?? key.toJSON().data, 'identity key data')
-
-  const authHash = hash160(authPublicKey)
-
-  // Check for auth key (purpose=AUTHENTICATION, keyType=ECDSA_HASH160)
-  const authKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
-    if (!keyMatchesPurposeAndType(key, KeyPurpose.AUTHENTICATION, 'authentication', KeyType.ECDSA_HASH160, 'ecdsa_hash160')) {
-      return false
-    }
-    const keyData = getKeyData(key)
-    if (keyData.length !== authHash.length) {
-      return false
-    }
-    return keyData.every((b: number, i: number) => b === authHash[i])
-  })
-
-  // Check for encryption key (purpose=ENCRYPTION, keyType=ECDSA_SECP256K1)
-  const encKeyExists = publicKeys.some((key: RegisteredIdentityKey) => {
-    if (!keyMatchesPurposeAndType(key, KeyPurpose.ENCRYPTION, 'encryption', KeyType.ECDSA_SECP256K1, 'ecdsa_secp256k1')) {
-      return false
-    }
-    const keyData = getKeyData(key)
-    if (keyData.length !== encryptionPublicKey.length) {
-      return false
-    }
-    return keyData.every((b: number, i: number) => b === encryptionPublicKey[i])
-  })
-
-  return authKeyExists && encKeyExists
+/**
+ * Check only the authentication half: whether `authPublicKey` is registered
+ * as an AUTHENTICATION / ECDSA_HASH160 key. The Bluetooth login flow uses
+ * this because the phone registers the auth key itself and the encryption
+ * key is optional there.
+ */
+export async function checkAuthKeyRegistered(
+  identityId: string,
+  authPublicKey: Uint8Array
+): Promise<boolean> {
+  const keys = await fetchRegisteredKeys(identityId)
+  return !!keys && hasAuthKey(keys, authPublicKey)
 }
