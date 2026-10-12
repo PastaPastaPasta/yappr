@@ -8,6 +8,7 @@ import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { scopedKey } from '@/lib/storage-scope'
 import { keyNetwork } from '@/lib/constants'
 import { appConnectEncryptionKey } from '@/lib/app-connect/memory-keys'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 const browserSecretStore = createBrowserSecretStore({
   prefix: scopedKey('yappr_secure_'),
@@ -88,25 +89,39 @@ export function clearPrivateKey(identityId: string): boolean {
 }
 
 /**
+ * Whether a key stored in this browser may stand in for `identityId`'s
+ * encryption key. On App Connect builds a wallet sign-in holds no raw login
+ * key, and its only valid encryption key is the current anchor key from the
+ * wallet (in memory, or nothing); a key left over from an earlier sign-in
+ * must not be used in its place.
+ */
+function storedEncryptionKeyAllowed(identityId: string): boolean {
+  return !isAppConnectBuild() || getPrivateKey(identityId) !== null
+}
+
+/**
  * The encryption key. An App Connect session's key (unwrapped into memory
- * from the key ring) comes first; otherwise the stored one.
+ * from the key ring) comes first; otherwise the stored one, where allowed.
  */
 export function getEncryptionKey(identityId: string): string | null {
-  return appConnectEncryptionKey(identityId) ?? browserSecretStore.getEncryptionKey(identityId)
+  const sessionKey = appConnectEncryptionKey(identityId)
+  if (sessionKey) return sessionKey
+  return storedEncryptionKeyAllowed(identityId) ? browserSecretStore.getEncryptionKey(identityId) : null
 }
 
 export function getEncryptionKeyBytes(identityId: string): Uint8Array | null {
   const sessionKey = appConnectEncryptionKey(identityId)
   if (sessionKey) return parsePrivateKey(sessionKey).privateKey
-  return browserSecretStore.getEncryptionKeyBytes(identityId)
+  return storedEncryptionKeyAllowed(identityId) ? browserSecretStore.getEncryptionKeyBytes(identityId) : null
 }
 
 export function hasEncryptionKey(identityId: string): boolean {
-  return appConnectEncryptionKey(identityId) !== null || browserSecretStore.hasEncryptionKey(identityId)
+  if (appConnectEncryptionKey(identityId) !== null) return true
+  return storedEncryptionKeyAllowed(identityId) && browserSecretStore.hasEncryptionKey(identityId)
 }
 
 /** The wallet granted an App Connect session's key, so it counts as derived (not typed in). */
 export function getEncryptionKeyType(identityId: string): KeyType | null {
   if (appConnectEncryptionKey(identityId)) return 'derived'
-  return browserSecretStore.getEncryptionKeyType(identityId)
+  return storedEncryptionKeyAllowed(identityId) ? browserSecretStore.getEncryptionKeyType(identityId) : null
 }

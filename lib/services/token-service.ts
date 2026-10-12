@@ -9,7 +9,7 @@ import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants
 import { starterGrantAmount, yappIsLocked } from '../contract-topology';
 import { extractErrorMessage, isOncePerIdentityAlreadyClaimedError } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
-import { SigningUnavailableError, hasAppConnectSession, reportSigningFailure, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
+import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
 import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
 
 export interface TokenResult {
@@ -234,6 +234,7 @@ class TokenService {
         identityKey,
         signer,
       } as Parameters<typeof sdk.tokens.claim>[0]));
+      reportSigningSuccess(identityId);
       return { success: true };
     } catch (error) {
       if (signingKey) await reportSigningFailure(identityId, signingKey, error);
@@ -344,6 +345,8 @@ class TokenService {
           : 'No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key'
       );
     }
+    // Every transition here is on the YAPP token: a bound or limited key must cover it.
+    await assertRawKeyCovers(identityId, authKey, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
 
     return signerService.createSignerFromWasmKey(wif, authKey);
   }

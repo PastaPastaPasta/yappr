@@ -170,11 +170,24 @@ async function resolveFromRawKey(
     throw new Error('No suitable signing key found that matches your stored private key. Document operations require a CRITICAL or HIGH security level AUTHENTICATION key.')
   }
 
-  // A bound or limited raw key gets the same pre-broadcast check as a key ring;
-  // an unbound V0 key (every legacy login) signs as it always has.
-  const wasmKey = result.key as unknown as WasmIdentityKeyLike
+  await assertRawKeyCovers(ownerId, result.key, request)
+  return { wif, identityKey: result.key, appConnect: false }
+}
+
+/**
+ * A raw key (stored, or typed in for one write) that is bound or limited gets
+ * the same pre-broadcast check as a key ring: it must cover the write and
+ * have the time and budget left. An unbound key without limits (every legacy
+ * login) signs as it always has. Throws {@link SigningUnavailableError}.
+ */
+export async function assertRawKeyCovers(
+  ownerId: string,
+  identityKey: WasmIdentityPublicKey,
+  request: SigningRequest,
+): Promise<void> {
+  const wasmKey = identityKey as unknown as WasmIdentityKeyLike
   const limited = Boolean(wasmKey.contractBounds) || wasmKey.totalBudget != null || wasmKey.expiresAt != null
-  if (!limited) return { wif, identityKey: result.key, appConnect: false }
+  if (!limited) return
   const mapped = toAppConnectIdentityKey(wasmKey)
   if (!mapped) throw new Error('Your key could not be read. Sign in again.')
   let remaining: bigint | undefined
@@ -193,7 +206,6 @@ async function resolveFromRawKey(
       )
     }
   }
-  return { wif, identityKey: result.key, appConnect: false }
 }
 
 /** Call after a write signed with `key` was refused; updates the session for key-ring errors. */
