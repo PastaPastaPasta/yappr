@@ -138,7 +138,9 @@ codec and the response crypto, so it cannot drift from the app side:
    create the new one. The delete is index-only and carries all three values,
    which the state file keeps. A delete Platform refuses with
    `DocumentNotFoundError` (the entry is gone) is forgotten; any other failure
-   is retried on the next answer. The response
+   is retried on the next answer. The new response's values are recorded
+   before the create, and forgotten only if Platform refuses it, so a create
+   whose outcome is unknown can still be deleted later. The response
    is sealed with `sealAppConnectPayload` and its AAD, and signed with the
    persona's unbound HIGH key (keyId 2).
 
@@ -164,8 +166,9 @@ status: `stale`, `unsupported`, `invalid`, `declined` or `failed`.
   per request and saved, so retrying the request does not add the allowance
   twice. It answers as a new login instead, which supersedes the old keys
   (the profile's phase-1 renewal), when there is no such grant, when an old
-  key lacks the level or a limit the request needs, or when a key would have
-  no budget left within the cap.
+  key lacks the level or a limit the request needs, when a key would have
+  no budget left within the cap, or when a key-registration fault flag
+  (`unregistered-key`, `unbound-key`, `critical`, `foreign-group`) is set.
 - **Revoke** (disable-only): `--revoke --persona <idx> --app-id <id>
   [--connection-id <hex>]`, or `POST /revoke`. MASTER-signed IdentityUpdates,
   ten keys each (Platform's limit), disable the auth keys of that

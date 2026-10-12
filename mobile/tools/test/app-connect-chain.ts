@@ -157,7 +157,7 @@ export class MemoryChain {
         const entry = this.entries.get(entryId)
         if (!entry || bytesToHex(entry.walletEphemeralPubKey) !== stored.walletEphemeralPubKey
           || bytesToHex(entry.encryptedPayload) !== stored.encryptedPayload) {
-          throw new ConsensusError(40100, 'DocumentNotFoundError')
+          throw new ConsensusError(40101, 'DocumentNotFoundError')
         }
         this.entries.delete(entryId)
       },

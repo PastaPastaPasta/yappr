@@ -476,7 +476,9 @@ async function answerAs(
   const record = ports.grants.get(persona.identityId, plan.appId)
   const previous = plan.connectionId === undefined ? undefined : record.connections[plan.connectionId]
 
-  const renewal = plan.request.mode === 'renew' && previous
+  // Faults that shape key registration need fresh keys, so they always answer as a login.
+  const registrationFault = faults.unregisteredKey || faults.unboundKey || faults.critical || faults.foreignGroup !== undefined
+  const renewal = plan.request.mode === 'renew' && previous && !registrationFault
     ? await planRenewal(persona, plan, faults, previous, chainKeys, ports)
     : undefined
   const raisedKeyIds: number[] = []
@@ -640,6 +642,10 @@ async function planRenewal(
   chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
 ): Promise<RenewalPlan | undefined> {
+  // This request already answered as a new login (a retry): stay on that path,
+  // which re-sends its keys, rather than raising the keys it just created.
+  const derivationTag = bytesToHex(plan.derivationTag)
+  if (previous.keys.some((key) => key.derivationTag === derivationTag)) return undefined
   const requestHash = bytesToHex(plan.requestHash)
   const saved = previous.renewal?.requestHash === requestHash ? previous.renewal.targets : undefined
   const keys: RenewalPlan['keys'] = []
@@ -816,15 +822,29 @@ async function publish(
   record.responses = kept
   ports.grants.put(persona.identityId, appId, record)
 
-  const { documentId, confirmed } = await ports.createResponse(persona, values)
-  record.responses.push({
+  // Recorded before the create: if its outcome is unknown (a dropped
+  // connection, a crash), the next answer still holds the values the
+  // index-only delete needs. Only a consensus refusal proves it never landed.
+  const attempted: StoredResponse = {
     appEphemeralPubKeyHash: requestHash,
     walletEphemeralPubKey: bytesToHex(values.walletEphemeralPubKey),
     encryptedPayload: bytesToHex(values.encryptedPayload),
-    documentId,
-  })
+  }
+  record.responses.push(attempted)
   ports.grants.put(persona.identityId, appId, record)
-  return { deletedResponses, documentId, confirmed }
+  let created: { documentId?: string; confirmed: boolean }
+  try {
+    created = await ports.createResponse(persona, values)
+  } catch (error) {
+    if (consensusCode(error) !== undefined) {
+      record.responses = record.responses.filter((response) => response !== attempted)
+      ports.grants.put(persona.identityId, appId, record)
+    }
+    throw error
+  }
+  attempted.documentId = created.documentId
+  ports.grants.put(persona.identityId, appId, record)
+  return { deletedResponses, ...created }
 }
 
 function minBigint(a: bigint, b: bigint): bigint {

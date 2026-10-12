@@ -167,10 +167,39 @@ describe('App Connect login', () => {
     chain.calls.length = 0
 
     const result = await respondToAppConnect({ uri, persona: alice }, ports)
-    expect(chain.calls).toEqual(['create 90'])
+    // The attempted response is still recorded; its delete finds nothing and it is forgotten.
+    expect(chain.calls).toEqual(['delete 90', 'create 90'])
+    expect(chain.grants.get(alice.identityId, APP).responses).toHaveLength(1)
     expect(result.answer).toMatchObject({ addedKeyIds: [], disabledKeyIds: [] })
     expect(result.answer.slots.map((slot) => slot.keyId)).toEqual([5, 6, 7])
     expect((await verdictFor(chain, request, appPrivateKey)).ok).toBe(true)
+  })
+
+  it('keeps the values of a create whose outcome is unknown, so a retry can delete it', async () => {
+    const chain = newChain()
+    const { request, appPrivateKey, uri } = newRequest()
+    const ports = chain.ports()
+    const create = ports.createResponse
+    // The entry lands, then the connection drops before the answer arrives.
+    ports.createResponse = async (persona, values) => {
+      await create(persona, values)
+      throw new Error('socket hang up')
+    }
+    await refusalOf(respondToAppConnect({ uri, persona: alice }, ports))
+    ports.createResponse = create
+
+    const result = await respondToAppConnect({ uri, persona: alice }, ports)
+    expect(result.answer.deletedResponses).toBe(1)
+    expect(chain.candidates(appConnectRequestHash(request))).toHaveLength(1)
+    expect(reason(await verdictFor(chain, request, appPrivateKey))).toBe('ok')
+  })
+
+  it('forgets an attempted create that Platform refused', async () => {
+    const chain = newChain()
+    const ports = chain.ports()
+    ports.createResponse = () => Promise.reject(Object.assign(new Error('refused'), { code: 40105 }))
+    await refusalOf(respondToAppConnect({ uri: newRequest().uri, persona: alice }, ports))
+    expect(chain.grants.get(alice.identityId, APP).responses).toEqual([])
   })
 
   it('forgets a previous response only when Platform says it is gone', async () => {
@@ -348,6 +377,43 @@ describe('App Connect renew', () => {
     expect(result.answer.raisedKeyIds).toEqual([])
     expect(chain.keysOf(alice)[5].totalBudget).toBe(70_000_000_000n)
     expect(reason(await verdictFor(chain, renew.request, renew.appPrivateKey))).toBe('ok')
+  })
+
+  it('does not raise the keys a renewal created when it fell back to a login and is retried', async () => {
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    const renew = newRequest({
+      identityHint: alice.identityIdBytes,
+      mode: 'renew',
+      authBindings: [{ kind: 'contractGroup', id: GROUP_ID, securityLevel: KeySecurityLevel.HIGH, totalBudget: 1_000n, expiresAt: EXPIRES_AT }],
+      encBindings: [],
+    })
+    const ports = chain.ports()
+    const create = ports.createResponse
+    ports.createResponse = () => Promise.reject(new Error('gateway hiccup'))
+    await refusalOf(respondToAppConnect({ uri: renew.uri, persona: alice }, ports))
+    ports.createResponse = create
+    chain.calls.length = 0
+
+    const result = await respondToAppConnect({ uri: renew.uri, persona: alice }, ports)
+    expect(result.answer).toMatchObject({ mode: 'login', addedKeyIds: [], raisedKeyIds: [] })
+    expect(chain.calls.some((call) => call.startsWith('limits'))).toBe(false)
+    expect(chain.keysOf(alice).at(-1)?.totalBudget).toBe(1_000n)
+    expect(reason(await verdictFor(chain, renew.request, renew.appPrivateKey))).toBe('ok')
+  })
+
+  it.each([
+    ['unregistered-key', 'key-not-found'],
+    ['unbound-key', 'key-unbound'],
+    [`foreign-group=${FOREIGN_GROUP}`, 'key-unmatched'],
+  ])('honours %s on a renewal by answering with fresh keys', async (fault, expected) => {
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    chain.now += DAY_MS
+    const renew = renewRequest(chain, 1_000n)
+    const result = await answer(chain, renew.uri, { faults: [fault] })
+    expect(result.answer.mode).toBe('login')
+    expect(reason(await verdictFor(chain, renew.request, renew.appPrivateKey))).toBe(expected)
   })
 
   it('answers as a new login when the old key cannot serve the renewal', async () => {
