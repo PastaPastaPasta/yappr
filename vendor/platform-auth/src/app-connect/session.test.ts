@@ -175,6 +175,19 @@ describe('selectSigningKey', () => {
     ))).toBe('no-covering-key')
   })
 
+  it('spills split members onto another covering key once the preferred one is fully allocated', () => {
+    // Overlapping scopes: a narrower contract key and the group key both cover SOCIAL, 100 each.
+    const socialKey = key(8, { bounds: { kind: 'singleContract', contractId: SOCIAL }, totalBudget: 100n, remainingBudget: 100n })
+    const keys = [socialKey, { ...groupKey, remainingBudget: 100n }]
+    const result = selectSigningKey(keys, batch(
+      doc(SOCIAL, 'post', { estimatedCost: 60n }),
+      doc(SOCIAL, 'like', { estimatedCost: 60n }),
+    ), { now: NOW, groups })
+    expect(result.ok === false && result.reason === 'needs-split'
+      && result.plan.map((s) => [s.key.keyId, s.members.map((m) => ('documentType' in m ? m.documentType : ''))]))
+      .toEqual([[8, ['post']], [5, ['like']]])
+  })
+
   it('refuses an empty batch', () => {
     expect(chosen(ring, batch())).toBe('empty')
   })

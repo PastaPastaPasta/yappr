@@ -263,14 +263,17 @@ function compareBudget(a: bigint | undefined, b: bigint | undefined): number {
   return a > b ? 1 : -1
 }
 
+/** `allocated`: cost already assigned to each key by earlier steps of a split plan. */
 function bestKey(
   keys: AppConnectSessionKey[],
   members: SigningMember[],
   requirement: Requirement,
   ctx: SelectSigningKeyContext,
+  allocated: ReadonlyMap<number, bigint> = new Map(),
 ): AppConnectSessionKey | undefined {
   return keys
-    .filter((key) => usable(key, requirement, ctx) && members.every((member) => covers(key.bounds, member, ctx.groups)))
+    .filter((key) => usable(key, { ...requirement, cost: requirement.cost + (allocated.get(key.keyId) ?? 0n) }, ctx)
+      && members.every((member) => covers(key.bounds, member, ctx.groups)))
     .sort(compareKeys)[0]
 }
 
@@ -297,19 +300,22 @@ export function selectSigningKey(
   const key = bestKey(keys, members, requirementOf(members), ctx)
   if (key) return { ok: true, key }
 
-  // Mixed batch (for example a DashPay profile plus a Yappr profile): sign
-  // each member with its own best key, grouped by key in first-use order,
-  // then check each step's own level and summed cost against its key.
+  // Mixed batch (for example a DashPay profile plus a Yappr profile): give
+  // each member, in order, the most preferred key that covers it at its own
+  // level and can still afford it on top of what earlier members took from
+  // that key; group the members by key in first-use order. This is greedy, so
+  // an exotic allocation can be missed; that ends in `no-covering-key` (a
+  // wallet handoff), never in an unaffordable plan.
   const plan: SigningPlanStep[] = []
+  const allocated = new Map<number, bigint>()
   for (const member of members) {
-    const memberKey = bestKey(keys, [member], requirementOf([member]), ctx)
+    const requirement = requirementOf([member])
+    const memberKey = bestKey(keys, [member], requirement, ctx, allocated)
     if (!memberKey) return { ok: false, reason: 'no-covering-key' }
+    allocated.set(memberKey.keyId, (allocated.get(memberKey.keyId) ?? 0n) + requirement.cost)
     const step = plan.find((s) => s.key.keyId === memberKey.keyId)
     if (step) step.members.push(member)
     else plan.push({ key: memberKey, members: [member] })
-  }
-  if (plan.some((step) => !usable(step.key, requirementOf(step.members), ctx))) {
-    return { ok: false, reason: 'no-covering-key' }
   }
   return { ok: false, reason: 'needs-split', plan }
 }
