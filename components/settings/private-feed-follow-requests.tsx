@@ -14,6 +14,7 @@ import { formatTime } from '@/lib/utils'
 import { usePrivateFeedRefreshStore } from '@/lib/stores/private-feed-refresh-store'
 import { resolveUserDetailsBatch, type UserDetails } from '@/lib/utils/resolve-user-details'
 import { normalizeBytes } from '@/lib/bytes'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 interface FollowRequestUser extends UserDetails {
   requestId: string
@@ -90,9 +91,12 @@ export function PrivateFeedFollowRequests() {
     try {
       const { privateFeedService, identityService } = await import('@/lib/services')
 
-      // First normalize the request.publicKey if it exists but isn't a Uint8Array
+      // Legacy builds take the key the request carries (normalized to bytes). On
+      // App Connect builds the requester's current anchor key is read below
+      // instead: they may have renewed since asking, and a grant sealed to the
+      // old key could not be opened.
       let publicKey: Uint8Array | undefined = undefined
-      if (request.publicKey) {
+      if (request.publicKey && !isAppConnectBuild()) {
         const normalized = normalizeBytes(request.publicKey)
         if (normalized) {
           publicKey = normalized
