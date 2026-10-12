@@ -13,6 +13,7 @@ import type {
 } from '../core/types'
 
 const encoder = new TextEncoder()
+const NO_HKDF_INFO = new Uint8Array(0)
 
 export const YAPPR_KEY_EXCHANGE_VERSION = 1
 export const YAPPR_STATE_TRANSITION_VERSION = 1
@@ -67,7 +68,7 @@ export function generateYapprEphemeralKeyPair(): YapprEphemeralKeyPair {
 export function deriveYapprSharedSecret(
   appEphemeralPrivateKey: Uint8Array,
   walletEphemeralPublicKey: Uint8Array,
-  info: Uint8Array = new Uint8Array(0),
+  info: Uint8Array = NO_HKDF_INFO,
 ): Uint8Array {
   const sharedPoint = secp256k1.getSharedSecret(appEphemeralPrivateKey, walletEphemeralPublicKey)
   const sharedX = sharedPoint.slice(1, 33)

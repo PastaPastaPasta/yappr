@@ -51,6 +51,12 @@ export type AppConnectGroupMember =
   | { kind: 'documentType'; contractId: string; documentTypeName: string }
   | { kind: 'token'; contractId: string; position: number }
 
+/** A group whose members are pinned in the app's config (and checked against chain before use). */
+export interface PinnedGroup {
+  groupId: string
+  members: AppConnectGroupMember[]
+}
+
 export interface AppConnectGroupInfo {
   ownerId: string
   adminIds: string[]

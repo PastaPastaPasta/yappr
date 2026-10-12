@@ -1,6 +1,6 @@
 import type { YapprKeyExchangeNetworkName } from '../core/types'
 import type { AppConnectGrant } from './verify'
-import { KeySecurityLevel, type AppConnectGroupMember, type AppConnectKeyBounds } from './types'
+import { KeySecurityLevel, type AppConnectGroupMember, type AppConnectKeyBounds, type PinnedGroup } from './types'
 
 /**
  * An App Connect session is a key ring, not one key: a group key, a DashPay
@@ -95,12 +95,6 @@ export interface SigningRequest {
   requiredSecurityLevel?: number
   /** Expected credit cost; keys whose remaining budget is below it are skipped. */
   estimatedCost?: bigint
-}
-
-/** A group whose members were pinned in config and checked against chain at startup. */
-export interface PinnedGroup {
-  groupId: string
-  members: AppConnectGroupMember[]
 }
 
 export interface SelectSigningKeyContext {

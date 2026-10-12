@@ -121,6 +121,7 @@ describe('App Connect request v2 codec', () => {
       ['an encryption binding with the AUTHENTICATION purpose', { ...request, encBindings: [{ contractId: request.appId, purpose: 0 }] }],
       ['a short identity hint', { ...request, identityHint: new Uint8Array(31) }],
       ['a long label', { ...request, label: 'x'.repeat(65) }],
+      ['an inherited property as the binding kind', { ...request, authBindings: [{ ...group, kind: 'toString' as 'contractGroup' }] }],
       ['an invalid ephemeral key', { ...request, appEphemeralPubKey: Uint8Array.of(2, ...Array(32).fill(0xff)) }],
     ]
     for (const [name, bad] of cases) {

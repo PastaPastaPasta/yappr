@@ -1,9 +1,8 @@
 import bs58 from 'bs58'
-import * as secp256k1 from '@noble/secp256k1'
-import { clearSensitiveBytes, hash160 } from '../key-exchange/yappr-protocol'
+import { clearSensitiveBytes, decodeYapprIdentityId, getYapprPublicKey, hash160 } from '../key-exchange/yappr-protocol'
 import { AppConnectPayloadError, openAppConnectPayload } from './crypto'
 import type { AppConnectCandidate } from './poller'
-import { authBindingBounds, type AppConnectAuthBinding, type AppConnectEncBinding, type AppConnectRequest } from './request'
+import { authBindingBounds, encBindingBounds, type AppConnectAuthBinding, type AppConnectRequest } from './request'
 import {
   KeyPurpose,
   KeySecurityLevel,
@@ -109,11 +108,10 @@ export async function verifyAppConnectCandidate(input: VerifyAppConnectCandidate
 
   let ownerIdBytes: Uint8Array
   try {
-    ownerIdBytes = bs58.decode(candidate.ownerId)
+    ownerIdBytes = decodeYapprIdentityId(candidate.ownerId)
   } catch {
     return reject(new Rejection('identity-not-found'))
   }
-  if (ownerIdBytes.length !== 32) return reject(new Rejection('identity-not-found'))
 
   let slots: Uint8Array[]
   try {
@@ -205,7 +203,7 @@ function isAuthRole(role: AppConnectKeyRole): boolean {
 function findKeyForSlot(keys: AppConnectIdentityKey[], privateKey: Uint8Array, slot: number): AppConnectIdentityKey {
   let publicKey: Uint8Array
   try {
-    publicKey = secp256k1.getPublicKey(privateKey, true)
+    publicKey = getYapprPublicKey(privateKey)
   } catch {
     throw new Rejection('invalid-key', slot)
   }
@@ -226,9 +224,14 @@ function matchBinding(
   if (key.disabledAt !== undefined) throw new Rejection('key-disabled', slot)
   if (key.securityLevel === KeySecurityLevel.MASTER) throw new Rejection('key-master', slot)
 
-  if (key.purpose === KeyPurpose.AUTHENTICATION) {
-    if (!key.bounds) throw new Rejection('key-unbound', slot)
-    const bounds = key.bounds
+  const isAuth = key.purpose === KeyPurpose.AUTHENTICATION
+  if (!isAuth && key.purpose !== KeyPurpose.ENCRYPTION && key.purpose !== KeyPurpose.DECRYPTION) {
+    throw new Rejection('key-purpose', slot)
+  }
+  if (!key.bounds) throw new Rejection('key-unbound', slot)
+  const bounds = key.bounds
+
+  if (isAuth) {
     const bindingIndex = request.authBindings.findIndex((binding) => boundsEqual(authBindingBounds(binding), bounds))
     if (bindingIndex === -1) throw new Rejection('key-unmatched', slot)
     const binding = request.authBindings[bindingIndex]
@@ -239,19 +242,13 @@ function matchBinding(
     return { role: binding.kind, bindingIndex }
   }
 
-  if (key.purpose === KeyPurpose.ENCRYPTION || key.purpose === KeyPurpose.DECRYPTION) {
-    if (!key.bounds) throw new Rejection('key-unbound', slot)
-    const bounds = key.bounds
-    const bindingIndex = request.encBindings.findIndex((binding) =>
-      binding.purpose === key.purpose && boundsEqual(encBindingBounds(binding), bounds))
-    if (bindingIndex === -1) throw new Rejection('key-unmatched', slot)
-    if (key.securityLevel !== KeySecurityLevel.MEDIUM) throw new Rejection('key-level', slot)
-    // Peers need the full point for ECDH, so a hash-only key is useless here.
-    if (key.type !== KeyType.ECDSA_SECP256K1) throw new Rejection('key-type', slot)
-    return { role: key.purpose === KeyPurpose.ENCRYPTION ? 'encryption' : 'decryption', bindingIndex }
-  }
-
-  throw new Rejection('key-purpose', slot)
+  const bindingIndex = request.encBindings.findIndex((binding) =>
+    binding.purpose === key.purpose && boundsEqual(encBindingBounds(binding), bounds))
+  if (bindingIndex === -1) throw new Rejection('key-unmatched', slot)
+  if (key.securityLevel !== KeySecurityLevel.MEDIUM) throw new Rejection('key-level', slot)
+  // Peers need the full point for ECDH, so a hash-only key is useless here.
+  if (key.type !== KeyType.ECDSA_SECP256K1) throw new Rejection('key-type', slot)
+  return { role: key.purpose === KeyPurpose.ENCRYPTION ? 'encryption' : 'decryption', bindingIndex }
 }
 
 /**
@@ -263,10 +260,6 @@ function authLevelAllowed(binding: AppConnectAuthBinding, level: number): boolea
     return (level === KeySecurityLevel.CRITICAL || level === KeySecurityLevel.HIGH) && level >= binding.securityLevel
   }
   return level === KeySecurityLevel.HIGH
-}
-
-function encBindingBounds(binding: AppConnectEncBinding) {
-  return { kind: 'singleContract' as const, contractId: bs58.encode(binding.contractId) }
 }
 
 function checkKeyLimits(

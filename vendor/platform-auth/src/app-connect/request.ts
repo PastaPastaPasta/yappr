@@ -135,6 +135,11 @@ export function authBindingBounds(binding: AppConnectAuthBinding): AppConnectKey
   }
 }
 
+/** The key bounds an encryption binding asks for: `singleContract` on its contract. */
+export function encBindingBounds(binding: AppConnectEncBinding): AppConnectKeyBounds {
+  return { kind: 'singleContract', contractId: bs58.encode(binding.contractId) }
+}
+
 /**
  * Checks the protocol rules every request obeys, whoever built it. The encoder
  * runs it before writing and the decoder after reading, so neither side can
@@ -151,26 +156,26 @@ export function validateAppConnectRequest(request: AppConnectRequest): void {
   if (authBindings.length < 1 || authBindings.length > APP_CONNECT_MAX_AUTH_BINDINGS) {
     invalid(`expected 1 to ${APP_CONNECT_MAX_AUTH_BINDINGS} auth bindings, got ${authBindings.length}`)
   }
-  const seenBounds: string[] = []
+  const seenBounds = new Set<string>()
   for (const binding of authBindings) {
     checkAuthBinding(binding)
     const key = `${binding.kind}:${bs58.encode(binding.id)}:${binding.documentTypeName ?? ''}`
-    if (seenBounds.includes(key)) invalid('duplicate auth binding')
-    seenBounds.push(key)
+    if (seenBounds.has(key)) invalid('duplicate auth binding')
+    seenBounds.add(key)
   }
 
   if (encBindings.length > APP_CONNECT_MAX_ENC_BINDINGS) {
     invalid(`expected at most ${APP_CONNECT_MAX_ENC_BINDINGS} encryption bindings, got ${encBindings.length}`)
   }
-  const seenEnc: string[] = []
+  const seenEnc = new Set<string>()
   for (const binding of encBindings) {
     checkLength(binding.contractId, 32, 'encryption binding contract id')
     if (binding.purpose !== KeyPurpose.ENCRYPTION && binding.purpose !== KeyPurpose.DECRYPTION) {
       invalid(`encryption binding purpose ${binding.purpose} is not ENCRYPTION or DECRYPTION`)
     }
     const key = `${bs58.encode(binding.contractId)}:${binding.purpose}`
-    if (seenEnc.includes(key)) invalid('duplicate encryption binding')
-    seenEnc.push(key)
+    if (seenEnc.has(key)) invalid('duplicate encryption binding')
+    seenEnc.add(key)
   }
 
   if (!Number.isSafeInteger(request.createdAt) || request.createdAt <= 0) {
@@ -184,7 +189,8 @@ export function validateAppConnectRequest(request: AppConnectRequest): void {
 }
 
 function checkAuthBinding(binding: AppConnectAuthBinding): void {
-  if (!(binding.kind in BINDING_KIND_TAGS)) invalid(`unknown binding kind ${String(binding.kind)}`)
+  // hasOwn, not `in`: 'toString' is `in` every object.
+  if (!Object.hasOwn(BINDING_KIND_TAGS, binding.kind)) invalid(`unknown binding kind ${String(binding.kind)}`)
   checkLength(binding.id, 32, 'binding id')
 
   if (binding.kind === 'documentType') {
@@ -195,10 +201,11 @@ function checkAuthBinding(binding: AppConnectAuthBinding): void {
     invalid(`a ${binding.kind} binding carries no document type name`)
   }
 
-  const allowedLevels: number[] = binding.kind === 'contractGroup'
-    ? [KeySecurityLevel.CRITICAL, KeySecurityLevel.HIGH]
-    : [KeySecurityLevel.HIGH]
-  if (!allowedLevels.includes(binding.securityLevel)) {
+  const level = binding.securityLevel
+  const levelAllowed = binding.kind === 'contractGroup'
+    ? level === KeySecurityLevel.CRITICAL || level === KeySecurityLevel.HIGH
+    : level === KeySecurityLevel.HIGH
+  if (!levelAllowed) {
     invalid(`security level ${binding.securityLevel} is not allowed on a ${binding.kind} binding`)
   }
 

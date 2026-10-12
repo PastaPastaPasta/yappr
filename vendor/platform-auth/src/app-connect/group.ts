@@ -1,4 +1,4 @@
-import type { AppConnectGroupMember, AppConnectIdentityPort } from './types'
+import type { AppConnectGroupMember, AppConnectIdentityPort, PinnedGroup } from './types'
 
 /**
  * A group-bound key may sign for every member the group ever gains, and the
@@ -8,12 +8,10 @@ import type { AppConnectGroupMember, AppConnectIdentityPort } from './types'
  * pinned member present and no member it did not expect.
  */
 
-export interface PinnedGroupTrust {
-  groupId: string
+export interface PinnedGroupTrust extends PinnedGroup {
   ownerId: string
   /** Defaults to none. */
   adminIds?: string[]
-  members: AppConnectGroupMember[]
 }
 
 export type AppConnectGroupTrust =

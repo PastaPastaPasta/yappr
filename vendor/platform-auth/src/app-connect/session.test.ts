@@ -3,11 +3,10 @@ import {
   buildAppConnectSession,
   selectSigningKey,
   type AppConnectSessionKey,
-  type PinnedGroup,
   type SigningMember,
   type SigningRequest,
 } from './session'
-import { KeyPurpose, KeySecurityLevel, KeyType } from './types'
+import { KeyPurpose, KeySecurityLevel, KeyType, type PinnedGroup } from './types'
 import type { AppConnectGrant } from './verify'
 
 const GROUP = 'GroupId1111111111111111111111111111111111111'

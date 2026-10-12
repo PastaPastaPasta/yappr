@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { sha256 } from '@noble/hashes/sha2.js'
-import { bytesToHex } from '@noble/hashes/utils.js'
+import { bytesToHex, concatBytes } from '@noble/hashes/utils.js'
 import { APP_CONNECT_MAX_REQUEST_AGE_MS } from './request'
 
 /**
@@ -103,8 +103,6 @@ export function appConnectPollDelayMs(elapsedMs: number): number | null {
  * response once and notices when an identity republishes a different one.
  */
 export function appConnectCandidateKey(candidate: AppConnectCandidate): string {
-  const contents = new Uint8Array(candidate.walletEphemeralPubKey.length + candidate.encryptedPayload.length)
-  contents.set(candidate.walletEphemeralPubKey, 0)
-  contents.set(candidate.encryptedPayload, candidate.walletEphemeralPubKey.length)
+  const contents = concatBytes(candidate.walletEphemeralPubKey, candidate.encryptedPayload)
   return `${candidate.ownerId}:${bytesToHex(sha256(contents))}`
 }

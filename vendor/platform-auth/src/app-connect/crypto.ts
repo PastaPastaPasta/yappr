@@ -1,5 +1,6 @@
 import * as secp256k1 from '@noble/secp256k1'
-import { clearSensitiveBytes, deriveYapprSharedSecret, hash160 } from '../key-exchange/yappr-protocol'
+import { concatBytes } from '@noble/hashes/utils.js'
+import { clearSensitiveBytes, deriveYapprSharedSecret, getYapprPublicKey, hash160 } from '../key-exchange/yappr-protocol'
 
 /**
  * App Connect v2 response encryption:
@@ -36,12 +37,7 @@ export class AppConnectPayloadError extends Error {
 export function appConnectAad(appEphemeralPubKey: Uint8Array, ownerId: Uint8Array): Uint8Array {
   if (appEphemeralPubKey.length !== 33) throw new Error('app ephemeral public key must be 33 bytes')
   if (ownerId.length !== 32) throw new Error('owner id must be 32 bytes')
-  const prefix = encoder.encode(APP_CONNECT_AAD_PREFIX)
-  const aad = new Uint8Array(prefix.length + 20 + 32)
-  aad.set(prefix, 0)
-  aad.set(hash160(appEphemeralPubKey), prefix.length)
-  aad.set(ownerId, prefix.length + 20)
-  return aad
+  return concatBytes(encoder.encode(APP_CONNECT_AAD_PREFIX), hash160(appEphemeralPubKey), ownerId)
 }
 
 /** Number of key slots a payload of this length holds, or null when the framing is wrong. */
@@ -89,7 +85,7 @@ export async function sealAppConnectPayload(
   if (nonce.length !== APP_CONNECT_NONCE_BYTES) throw new Error(`nonce must be ${APP_CONNECT_NONCE_BYTES} bytes`)
 
   const walletEphemeralPrivateKey = input.walletEphemeralPrivateKey ?? secp256k1.utils.randomSecretKey()
-  const walletEphemeralPubKey = secp256k1.getPublicKey(walletEphemeralPrivateKey, true)
+  const walletEphemeralPubKey = getYapprPublicKey(walletEphemeralPrivateKey)
   const sessionKey = appConnectSessionKey(walletEphemeralPrivateKey, appEphemeralPubKey)
   const plaintext = new Uint8Array(slots.length * APP_CONNECT_SLOT_BYTES)
   slots.forEach((slot, index) => plaintext.set(slot, index * APP_CONNECT_SLOT_BYTES))
@@ -101,10 +97,7 @@ export async function sealAppConnectPayload(
       key,
       toArrayBuffer(plaintext),
     ))
-    const encryptedPayload = new Uint8Array(APP_CONNECT_NONCE_BYTES + sealed.length)
-    encryptedPayload.set(nonce, 0)
-    encryptedPayload.set(sealed, APP_CONNECT_NONCE_BYTES)
-    return { walletEphemeralPubKey, encryptedPayload }
+    return { walletEphemeralPubKey, encryptedPayload: concatBytes(nonce, sealed) }
   } finally {
     clearSensitiveBytes(sessionKey)
     clearSensitiveBytes(plaintext)
@@ -137,7 +130,7 @@ export async function openAppConnectPayload(input: OpenAppConnectPayloadInput): 
   } catch {
     throw new AppConnectPayloadError('decrypt', 'wallet ephemeral public key is not a valid point')
   }
-  const appEphemeralPubKey = secp256k1.getPublicKey(input.appEphemeralPrivateKey, true)
+  const appEphemeralPubKey = getYapprPublicKey(input.appEphemeralPrivateKey)
 
   let plaintext: Uint8Array
   try {
