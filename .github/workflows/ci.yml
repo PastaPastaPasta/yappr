@@ -69,6 +69,11 @@ jobs:
       - name: Run Vitest
         run: npm run test
 
+      # Offline: the App Connect set's file pins, the anchor's shape, the group id
+      # derivation and the publisher's refusal decisions (docs/APP_CONNECT_CONTRACTS.md).
+      - name: App Connect self-test
+        run: node scripts/verify-appconnect.mjs --self-test
+
   browser-components:
     name: Browser Component Tests
     runs-on: ubuntu-latest
