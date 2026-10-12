@@ -10,6 +10,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { useAuth } from '@/contexts/auth-context'
 import toast from 'react-hot-toast'
 import { YAPPR_CONTRACT_ID, keyNetwork } from '@/lib/constants'
+import { WalletEncryptionKeyPrompt, useWalletSession } from './wallet-encryption-key-prompt'
 
 type EncryptionKeyContext = 'private-feed' | 'store' | 'generic'
 
@@ -34,7 +35,14 @@ type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'generate
  * security level key for signing. The typical HIGH security level login key
  * is insufficient for identity modifications on Dash Platform (SDK dev.11+).
  */
-export function AddEncryptionKeyModal({
+export function AddEncryptionKeyModal(props: AddEncryptionKeyModalProps) {
+  // A wallet sign-in gets its encryption key from the wallet, never from here.
+  const walletSession = useWalletSession()
+  if (walletSession) return <WalletEncryptionKeyPrompt isOpen={props.isOpen} onClose={props.onClose} onSuccess={props.onSuccess} />
+  return <KeyEntryAddEncryptionKeyModal {...props} />
+}
+
+function KeyEntryAddEncryptionKeyModal({
   isOpen,
   onClose,
   onSuccess,

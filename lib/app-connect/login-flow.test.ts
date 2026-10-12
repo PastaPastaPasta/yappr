@@ -52,7 +52,7 @@ function harness(options: {
     records: {
       load: async () => records.value,
       save: async (r) => { records.value = r },
-      clear: async () => { records.value = null },
+      clear: async (record) => { if (records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey) records.value = null },
     },
     origin: 'https://yap.pr',
     basePath: '/devnet',
@@ -114,6 +114,21 @@ describe('AppConnectLogin', () => {
     expect(chosen?.authKeys[0].privateKey.every((b) => b === 9)).toBe(true)
     expect(candidates[0].grant.authKeys[0].privateKey.every((b) => b === 0)).toBe(true)
     expect(h.records.value).toBeNull()
+  })
+
+  it('keeps polling while confirming, so a later second answer turns into the chooser', async () => {
+    const h = harness()
+    h.setCandidates([candidate(ALICE)])
+    await h.login.start()
+    await h.flush()
+    expect(last(h)).toMatchObject({ phase: 'confirm', candidates: [{ identityId: ALICE }] })
+
+    h.setCandidates([candidate(ALICE), candidate(BOB, 2)])
+    h.login.pollNow()
+    await h.flush()
+    const state = last(h) as { phase: string; candidates: { identityId: string }[] }
+    expect(state.phase).toBe('confirm')
+    expect(state.candidates.map((c) => c.identityId)).toEqual([ALICE, BOB])
   })
 
   it('"That\'s not me" starts a new request', async () => {
@@ -324,6 +339,29 @@ describe('AppConnectLogin teardown', () => {
     expect(grants).toHaveLength(2)
     expect(grants[0].authKeys[0].privateKey.every((byte) => byte === 0)).toBe(true)
     expect(grants[1].authKeys[0].privateKey.every((byte) => byte === 9)).toBe(true)
+  })
+})
+
+describe('AppConnectLogin without storage', () => {
+  it('says so instead of spinning when the connection id cannot be kept', async () => {
+    const h = harness()
+    ;(h.login as unknown as { deps: { connectionId: () => Promise<string> } }).deps.connectionId = async () => {
+      throw new Error('IndexedDB is unavailable')
+    }
+    await h.login.start()
+    expect(last(h)).toEqual({ phase: 'unavailable', reason: 'storage' })
+  })
+})
+
+describe('AppConnectLogin and other tabs', () => {
+  it('finishing never clears a newer request another tab stored in the same slot', async () => {
+    const h = harness()
+    await h.login.start()
+    const newer: StoredAppConnectRequest = { ephemeralPrivateKey: '22'.repeat(32), createdAt: T0 + 1, connectionId: 'ab'.repeat(16) }
+    h.records.value = newer
+    h.login.finish()
+    await h.flush()
+    expect(h.records.value).toBe(newer)
   })
 })
 

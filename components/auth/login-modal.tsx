@@ -5,6 +5,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { usePathname, useRouter } from 'next/navigation'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { X, KeyRound, ChevronDown } from 'lucide-react'
+import type { AppConnectGrant } from 'platform-auth'
 import { useAuth } from '@/contexts/auth-context'
 import { useSettingsStore } from '@/lib/store'
 import { useLoginModal } from '@/hooks/use-login-modal'
@@ -13,6 +14,8 @@ import { Spinner } from '@/components/ui/spinner'
 import { identityBridgeUrl } from '@/lib/identity-bridge'
 import { getConfiguredNetwork } from '@/lib/constants'
 import { WalletLoginPanel } from './wallet-login-panel'
+import { AppConnectLoginPanel } from './app-connect-login-panel'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { KeyLoginForm } from './key-login-form'
 
 /** Where "New to Dash?" sends people: the wallet on mainnet, the identity bridge elsewhere. */
@@ -36,7 +39,7 @@ export function LoginModal() {
   const router = useRouter()
   const pathname = usePathname()
   const { isOpen, close } = useLoginModal()
-  const { loginWithPasskey } = useAuth()
+  const { loginWithPasskey, loginWithAppConnect } = useAuth()
   const potatoMode = useSettingsStore((s) => s.potatoMode)
   const reduceMotion = useReducedMotion()
   const advancedId = useId()
@@ -82,6 +85,10 @@ export function LoginModal() {
   // Backing out of first-time key registration restarts the wallet request
   // with a fresh code rather than leaving a dead panel behind.
   const restartWallet = useCallback(() => setWalletKey((k) => k + 1), [])
+
+  const signInWithGrant = useCallback(async (grant: AppConnectGrant) => {
+    await loginWithAppConnect(grant)
+  }, [loginWithAppConnect])
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={(open) => { if (!open) handleClose() }}>
@@ -138,7 +145,11 @@ export function LoginModal() {
               </div>
 
               {/* Primary: wallet */}
-              <WalletLoginPanel key={walletKey} onComplete={close} onCancel={restartWallet} />
+              {isAppConnectBuild() ? (
+                <AppConnectLoginPanel onGrant={signInWithGrant} onComplete={close} />
+              ) : (
+                <WalletLoginPanel key={walletKey} onComplete={close} onCancel={restartWallet} />
+              )}
 
               {/* Secondary: passkey */}
               <div className="mt-6">

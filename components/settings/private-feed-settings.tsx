@@ -15,6 +15,7 @@ import { TREE_CAPACITY, MAX_KEY_GENERATION } from '@/lib/services'
 import { useEncryptionKeyModal } from '@/hooks/use-encryption-key-modal'
 import { ResetPrivateFeedDialog } from './reset-private-feed-dialog'
 import { AddEncryptionKeyModal } from '@/components/auth/add-encryption-key-modal'
+import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
 
 interface PrivateFeedSettingsProps {
   /** If true, automatically open the reset dialog when component mounts */
@@ -32,6 +33,8 @@ interface PrivateFeedSettingsProps {
 export function PrivateFeedSettings({ openReset = false, onResetOpened }: PrivateFeedSettingsProps) {
   const encryptionKeyId = useId()
   const { user, mergeSecretsIntoAuthVault } = useAuth()
+  // A wallet sign-in's messaging key lives in its key ring; nothing here stores or backs it up.
+  const walletSession = useWalletSession()
   const { open: openEncryptionKeyModal } = useEncryptionKeyModal()
   const refreshKey = usePrivateFeedRefreshStore((state) => state.refreshKey)
   const triggerRefresh = usePrivateFeedRefreshStore((state) => state.triggerRefresh)
@@ -132,6 +135,11 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
     if (user) {
       const { getEncryptionKey } = await import('@/lib/secure-storage')
       const storedKey = getEncryptionKey(user.identityId)
+      // A wallet sign-in uses the messaging key its wallet granted, never a typed one.
+      if (walletSession && !storedKey) {
+        openEncryptionKeyModal('manage_private_feed', checkPrivateFeedStatus)
+        return
+      }
       if (storedKey) {
         // Pre-populate the key field with the stored key
         setEncryptionKeyInput(storedKey)
@@ -182,47 +190,49 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
         setEncryptionKeyInput('')
         // Keep the accepted key available just as the manual key-entry flow does.
         // Storage/backup failures cannot undo the feed that was already enabled.
-        try {
-          const {
-            storeEncryptionKey,
-            getEncryptionKey,
-            getEncryptionKeyBytes,
-            clearEncryptionKey,
-            storeEncryptionKeyType,
-            clearEncryptionKeyType,
-          } = await import('@/lib/secure-storage')
-          const { bytesEqual } = await import('@/lib/bytes')
-          // The input is prefilled with the stored key, which may be a derived key.
-          // Remember it so resubmitting that same key does not relabel it.
-          const priorKeyBytes = getEncryptionKeyBytes(user.identityId)
-          storeEncryptionKey(user.identityId, trimmedKey)
-          const normalizedEncryptionKey = getEncryptionKey(user.identityId)
-          // The store swallows write failures, so a non-null readback can still be a stale
-          // key left over from an earlier session. Compare the decoded secret with the key
-          // that was actually accepted before backing anything up.
-          const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
-          if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
-            // Drop any stale key so later private-feed operations cannot pick up a secret
-            // that no longer matches the one the chain just accepted.
-            clearEncryptionKey(user.identityId)
-            clearEncryptionKeyType(user.identityId)
-            throw new Error('Encryption key was not saved')
-          }
-          // A newly pasted key is recorded as external, matching the add-encryption-key flow.
-          // Resubmitting the key that was already stored keeps its existing type label.
-          if (!priorKeyBytes || !bytesEqual(priorKeyBytes, validation.privateKey)) {
-            storeEncryptionKeyType(user.identityId, 'external')
-          }
-
+        if (!walletSession) {
           try {
-            await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+            const {
+              storeEncryptionKey,
+              getEncryptionKey,
+              getEncryptionKeyBytes,
+              clearEncryptionKey,
+              storeEncryptionKeyType,
+              clearEncryptionKeyType,
+            } = await import('@/lib/secure-storage')
+            const { bytesEqual } = await import('@/lib/bytes')
+            // The input is prefilled with the stored key, which may be a derived key.
+            // Remember it so resubmitting that same key does not relabel it.
+            const priorKeyBytes = getEncryptionKeyBytes(user.identityId)
+            storeEncryptionKey(user.identityId, trimmedKey)
+            const normalizedEncryptionKey = getEncryptionKey(user.identityId)
+            // The store swallows write failures, so a non-null readback can still be a stale
+            // key left over from an earlier session. Compare the decoded secret with the key
+            // that was actually accepted before backing anything up.
+            const storedKeyBytes = getEncryptionKeyBytes(user.identityId)
+            if (!normalizedEncryptionKey || !storedKeyBytes || !bytesEqual(storedKeyBytes, validation.privateKey)) {
+              // Drop any stale key so later private-feed operations cannot pick up a secret
+              // that no longer matches the one the chain just accepted.
+              clearEncryptionKey(user.identityId)
+              clearEncryptionKeyType(user.identityId)
+              throw new Error('Encryption key was not saved')
+            }
+            // A newly pasted key is recorded as external, matching the add-encryption-key flow.
+            // Resubmitting the key that was already stored keeps its existing type label.
+            if (!priorKeyBytes || !bytesEqual(priorKeyBytes, validation.privateKey)) {
+              storeEncryptionKeyType(user.identityId, 'external')
+            }
+
+            try {
+              await mergeSecretsIntoAuthVault(user.identityId, { encryptionKeyWif: normalizedEncryptionKey })
+            } catch (error) {
+              logger.error('Failed to back up encryption key after enabling private feed:', error)
+              toast.error('Private feed enabled, but key backup failed. Your key is available for this session.')
+            }
           } catch (error) {
-            logger.error('Failed to back up encryption key after enabling private feed:', error)
-            toast.error('Private feed enabled, but key backup failed. Your key is available for this session.')
+            logger.error('Failed to store encryption key after enabling private feed:', error)
+            toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
           }
-        } catch (error) {
-          logger.error('Failed to store encryption key after enabling private feed:', error)
-          toast.error('Private feed enabled, but your key could not be saved. Enter it again to manage your feed.')
         }
         // Refresh this card's status and the sibling requests, followers and
         // dashboard cards, which still read "disabled". This card re-reads its
@@ -495,6 +505,12 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </div>
 
                 <div className="space-y-2">
+                  {walletSession ? (
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Your private feed will use the messaging key from your Dash wallet.
+                    </p>
+                  ) : (
+                  <>
                   <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                     Encryption Private Key
                   </label>
@@ -509,6 +525,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                     }}
                     className="font-mono text-sm"
                   />
+                  </>
+                  )}
                   {keyError && (
                     <p className="text-sm text-red-600 dark:text-red-400">
                       {keyError}

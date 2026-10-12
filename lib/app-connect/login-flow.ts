@@ -35,7 +35,8 @@ import { appConnectCallbackUrl, buildYapprAppConnectRequest } from './yappr-requ
  * UI, which asks "Continue as @name?" and then calls `loginWithAppConnect`.
  */
 
-export type AppConnectUnavailableReason = 'not-configured' | 'network-not-ready' | 'untrusted' | 'offline'
+/** `storage`: the browser would not keep this device's connection id (IndexedDB blocked). */
+export type AppConnectUnavailableReason = 'not-configured' | 'network-not-ready' | 'untrusted' | 'offline' | 'storage'
 
 export interface VerifiedCandidate {
   identityId: string
@@ -68,7 +69,8 @@ export interface StoredAppConnectRequest {
 export interface RequestRecordStore {
   load(): Promise<StoredAppConnectRequest | null>
   save(record: StoredAppConnectRequest): Promise<void>
-  clear(): Promise<void>
+  /** Forgets the stored request, but only if it is still `record` (another tab may have replaced it). */
+  clear(record: StoredAppConnectRequest): Promise<void>
 }
 
 export interface AppConnectLoginDeps {
@@ -194,10 +196,18 @@ export class AppConnectLogin {
       return
     }
 
-    const stored = options.fresh ? null : await this.deps.records.load()
-    if (!current()) return
-    const resumable = stored && stored.identityHint === options.identityHint ? stored : null
-    const record = resumable ?? await this.newRecord(options.identityHint, current)
+    let record: StoredAppConnectRequest | null
+    try {
+      const stored = options.fresh ? null : await this.deps.records.load()
+      if (!current()) return
+      const resumable = stored && stored.identityHint === options.identityHint ? stored : null
+      record = resumable ?? await this.newRecord(options.identityHint, current)
+    } catch (error) {
+      if (!current()) return
+      this.deps.onError?.('App Connect: could not prepare the request', error)
+      this.set({ phase: 'unavailable', reason: 'storage' })
+      return
+    }
     if (!record || !current()) return
     this.activate(record)
     this.poll()
@@ -220,6 +230,12 @@ export class AppConnectLogin {
     clearSensitiveBytes(privateKey)
     if (!current()) return null
     await this.deps.records.save(record)
+    // Overtaken while saving (a finish, a newer start or an unmount): forget
+    // this request again; the clear only removes it if it is still the stored one.
+    if (!current()) {
+      this.clearRecord(record)
+      return null
+    }
     return record
   }
 
@@ -289,8 +305,9 @@ export class AppConnectLogin {
    */
   finish(): void {
     this.generation += 1
+    const record = this.active?.record
     this.teardown()
-    this.clearRecord()
+    if (record) this.clearRecord(record)
   }
 
   /**
@@ -307,7 +324,7 @@ export class AppConnectLogin {
     this.listeners.clear()
     // Before a request is active there is nothing of ours to forget; a stale
     // stored one is dropped the next time it is loaded.
-    if (active && this.now() - active.record.createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS) this.clearRecord()
+    if (active && this.now() - active.record.createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS) this.clearRecord(active.record)
   }
 
   private teardown(): void {
@@ -317,8 +334,8 @@ export class AppConnectLogin {
     this.active = null
   }
 
-  private clearRecord(): void {
-    this.deps.records.clear().catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
+  private clearRecord(record: StoredAppConnectRequest): void {
+    this.deps.records.clear(record).catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
   }
 
   private stop(): void {
@@ -355,7 +372,8 @@ export class AppConnectLogin {
       }
       const delay = appConnectPollDelayMs(this.now() - active.record.createdAt)
       if (delay === null) {
-        if (!signal.aborted) this.set({ phase: 'timeout', uri: active.uri })
+        // Answers already verified stay on offer; only an unanswered request times out.
+        if (!signal.aborted && this.verified.length === 0) this.set({ phase: 'timeout', uri: active.uri })
         return
       }
       await new Promise<void>((resolve) => {
@@ -386,6 +404,7 @@ export class AppConnectLogin {
     } catch {
       // The wall clock stands in for the block time.
     }
+    let verifiedNow = false
     for (const candidate of pending) {
       if (signal.aborted) return true
       const key = appConnectCandidateKey(candidate)
@@ -404,6 +423,7 @@ export class AppConnectLogin {
       }
       if (result.ok) {
         progress.done = true
+        verifiedNow = true
         // An identity that republished replaces its earlier answer; wipe that one's keys.
         for (const replaced of this.verified.filter((v) => v.identityId === result.grant.identityId)) this.wipeGrant(replaced.grant)
         this.verified = [...this.verified.filter((v) => v.identityId !== result.grant.identityId), { identityId: result.grant.identityId, grant: result.grant }]
@@ -411,10 +431,10 @@ export class AppConnectLogin {
         progress.done = true
       }
     }
-    if (this.verified.length > 0) {
-      this.stop()
+    if (verifiedNow) {
+      // Polling continues while the user decides: anyone else who answers
+      // this code is added, and the confirm card becomes a chooser.
       this.set({ phase: 'confirm', uri: active.uri, candidates: [...this.verified] })
-      return true
     }
     return false
   }
