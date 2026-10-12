@@ -33,8 +33,8 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  */
 export function EncryptionKeyModal() {
   const walletSession = useWalletSession()
-  const { isOpen, close } = useEncryptionKeyModal()
-  if (walletSession) return <WalletEncryptionKeyPrompt isOpen={isOpen} onClose={close} />
+  const { isOpen, close, onSuccess } = useEncryptionKeyModal()
+  if (walletSession) return <WalletEncryptionKeyPrompt isOpen={isOpen} onClose={close} onSuccess={onSuccess} />
   return <KeyEntryEncryptionKeyModal />
 }
 

@@ -38,7 +38,7 @@ type Step = 'checking' | 'existing-key' | 'enter-existing' | 'intro' | 'generate
 export function AddEncryptionKeyModal(props: AddEncryptionKeyModalProps) {
   // A wallet sign-in gets its encryption key from the wallet, never from here.
   const walletSession = useWalletSession()
-  if (walletSession) return <WalletEncryptionKeyPrompt isOpen={props.isOpen} onClose={props.onClose} />
+  if (walletSession) return <WalletEncryptionKeyPrompt isOpen={props.isOpen} onClose={props.onClose} onSuccess={props.onSuccess} />
   return <KeyEntryAddEncryptionKeyModal {...props} />
 }
 

@@ -33,7 +33,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
 import { WalletConnectionsSettings } from '@/components/settings/wallet-connections-settings'
-import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { useWalletSession } from '@/components/auth/wallet-encryption-key-prompt'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
 import { PrivateFeedFollowRequests } from '@/components/settings/private-feed-follow-requests'
@@ -105,6 +105,7 @@ function SettingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { user, logout } = useAuth()
+  const walletSession = useWalletSession()
   const isAuthority = user?.identityId === YAPP_TOKEN_AUTHORITY_ID
   // The contract's moderation team (owner + appointed moderators, read off the
   // contract) gets contract moderation; the token authority gets YAPP
@@ -393,8 +394,8 @@ function SettingsPage() {
 
   const renderPrivacySettings = () => (
     <div className="p-6 space-y-6">
-      {/* Key Backup Section */}
-      {isAppConnectBuild()
+      {/* Key Backup Section: a wallet sign-in manages its keys in the wallet instead */}
+      {walletSession
         ? <WalletConnectionsSettings />
         : <KeyBackupSettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />}
 

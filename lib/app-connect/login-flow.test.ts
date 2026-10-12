@@ -327,6 +327,17 @@ describe('AppConnectLogin teardown', () => {
   })
 })
 
+describe('AppConnectLogin without storage', () => {
+  it('says so instead of spinning when the connection id cannot be kept', async () => {
+    const h = harness()
+    ;(h.login as unknown as { deps: { connectionId: () => Promise<string> } }).deps.connectionId = async () => {
+      throw new Error('IndexedDB is unavailable')
+    }
+    await h.login.start()
+    expect(last(h)).toEqual({ phase: 'unavailable', reason: 'storage' })
+  })
+})
+
 describe('parseStoredRequest', () => {
   const record = { ephemeralPrivateKey: '11'.repeat(32), createdAt: T0, connectionId: 'ab'.repeat(16) }
 

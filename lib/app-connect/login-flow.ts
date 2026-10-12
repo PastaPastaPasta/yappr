@@ -35,7 +35,8 @@ import { appConnectCallbackUrl, buildYapprAppConnectRequest } from './yappr-requ
  * UI, which asks "Continue as @name?" and then calls `loginWithAppConnect`.
  */
 
-export type AppConnectUnavailableReason = 'not-configured' | 'network-not-ready' | 'untrusted' | 'offline'
+/** `storage`: the browser would not keep this device's connection id (IndexedDB blocked). */
+export type AppConnectUnavailableReason = 'not-configured' | 'network-not-ready' | 'untrusted' | 'offline' | 'storage'
 
 export interface VerifiedCandidate {
   identityId: string
@@ -194,10 +195,18 @@ export class AppConnectLogin {
       return
     }
 
-    const stored = options.fresh ? null : await this.deps.records.load()
-    if (!current()) return
-    const resumable = stored && stored.identityHint === options.identityHint ? stored : null
-    const record = resumable ?? await this.newRecord(options.identityHint, current)
+    let record: StoredAppConnectRequest | null
+    try {
+      const stored = options.fresh ? null : await this.deps.records.load()
+      if (!current()) return
+      const resumable = stored && stored.identityHint === options.identityHint ? stored : null
+      record = resumable ?? await this.newRecord(options.identityHint, current)
+    } catch (error) {
+      if (!current()) return
+      this.deps.onError?.('App Connect: could not prepare the request', error)
+      this.set({ phase: 'unavailable', reason: 'storage' })
+      return
+    }
     if (!record || !current()) return
     this.activate(record)
     this.poll()

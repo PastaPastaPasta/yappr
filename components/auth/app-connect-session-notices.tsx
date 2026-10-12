@@ -40,6 +40,13 @@ export function AppConnectSessionNotices() {
     dismissRenewRequired()
   }, [dismissRenewRequired, renew])
 
+  /** The renewal landed: tell whoever opened the dialog (a settings card, the messaging-key prompt). */
+  const finishRenew = useCallback(() => {
+    const onRenewed = useRenewModal.getState().onRenewed
+    closeRenew()
+    onRenewed?.()
+  }, [closeRenew])
+
   const onGrant = useCallback(async (grant: AppConnectGrant) => {
     await renewWithAppConnect(grant)
   }, [renewWithAppConnect])
@@ -67,7 +74,7 @@ export function AppConnectSessionNotices() {
           {renewRequired ? RENEW_REASON_COPY[renewRequired] : 'Scan the code with your Dash wallet to give Yappr a fresh allowance.'}
         </Dialog.Description>
         {sessionUser && dialogOpen && (
-          <AppConnectLoginPanel identityHint={sessionUser.identityId} onGrant={onGrant} onComplete={closeRenew} />
+          <AppConnectLoginPanel identityHint={sessionUser.identityId} onGrant={onGrant} onComplete={finishRenew} />
         )}
       </Modal>
 

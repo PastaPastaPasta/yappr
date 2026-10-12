@@ -19,7 +19,16 @@ export function useWalletSession(): boolean {
  * the messaging key comes from the wallet. When the wallet did not include
  * it, signing in again from the wallet with messaging allowed brings it.
  */
-export function WalletEncryptionKeyPrompt({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+export function WalletEncryptionKeyPrompt({
+  isOpen,
+  onClose,
+  onSuccess,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  /** Called once the renewal (which brings the messaging key) has landed, so the caller can re-check. */
+  onSuccess?: () => void
+}) {
   const openRenew = useRenewModal((state) => state.open)
   return (
     <Modal open={isOpen} onOpenChange={(next) => { if (!next) onClose() }} className="w-[420px] max-w-[90vw]">
@@ -33,7 +42,7 @@ export function WalletEncryptionKeyPrompt({ isOpen, onClose }: { isOpen: boolean
       </Dialog.Description>
       <div className="flex gap-2 justify-end">
         <Button variant="ghost" onClick={onClose}>Not now</Button>
-        <Button onClick={() => { onClose(); openRenew() }}>Renew in your wallet</Button>
+        <Button onClick={() => { onClose(); openRenew(onSuccess) }}>Renew in your wallet</Button>
       </div>
     </Modal>
   )

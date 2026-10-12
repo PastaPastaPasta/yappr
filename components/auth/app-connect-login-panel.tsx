@@ -41,6 +41,11 @@ const UNAVAILABLE_COPY: Record<AppConnectUnavailableReason, { title: string; des
     description: 'Check your connection, then try again.',
     retry: true,
   },
+  storage: {
+    title: 'Wallet sign-in needs browser storage',
+    description: 'This browser is blocking site storage, which wallet sign-in uses to keep you signed in. Allow it for this site (or leave private browsing), then try again.',
+    retry: true,
+  },
 }
 
 /**

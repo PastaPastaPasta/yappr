@@ -41,7 +41,12 @@ export function WalletConnectionsSettings() {
 
   const load = useCallback(async () => {
     const pins = appConnectPins()
-    if (!user || !pins) return
+    if (!user) return
+    if (!pins) {
+      // An App Connect build without its pinned app and group: nothing to list.
+      setRows([])
+      return
+    }
     setFailed(false)
     try {
       const identity = await appConnectPlatformPort.getIdentityFresh(user.identityId)
@@ -105,7 +110,12 @@ export function WalletConnectionsSettings() {
           </div>
         ))}
         {signedInWithWallet && (
-          <Button variant="outline" onClick={() => openRenew()}>Renew in your wallet</Button>
+          <Button
+            variant="outline"
+            onClick={() => openRenew(() => { load().catch((error: unknown) => logger.warn('Could not reload wallet connections:', error)) })}
+          >
+            Renew in your wallet
+          </Button>
         )}
       </CardContent>
     </Card>
