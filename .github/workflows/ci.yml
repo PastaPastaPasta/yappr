@@ -143,6 +143,11 @@ jobs:
       - name: Build application
         run: npm run build
 
+      # Cloudflare Pages rejects any file over 25 MiB, which only surfaced on its
+      # own preview check. Fail here, with the largest files listed, instead.
+      - name: Check export file sizes
+        run: node scripts/check-export-sizes.mjs
+
   e2e:
     name: End-to-End
     runs-on: ubuntu-latest
