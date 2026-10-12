@@ -679,10 +679,14 @@ async function run({ args, handle, battery, socialId, contractId }) {
           // Only the order's seller may write one: the signer IS the store persona,
           // which the writer gate checks against the order's sellerId.
           // v6 derives the buyer through the order (`orderId.$ownerId`) and refuses a stored buyerId.
+          // Status updates are listed by order (`orderAndTime`), never by $ownerId, so that is
+          // where the readback looks for one this run already wrote.
           await createDoc(actors.get(store.persona), 'orderStatusUpdate', `status/${order.key}/${status}`, {
             orderId: id32(orderIds.get(order.key)), ...(isV6() ? {} : { buyerId: id32(actors.get(BUYERS[order.buyer].persona).ownerId) }), status,
             message: pick(rngFrom(`status/${order.key}/${status}`), STATUS_MESSAGE[status]),
             ...(status === 'shipped' && order.carrier ? { trackingCarrier: order.carrier, trackingNumber: trackingFor(order.key, order.carrier) } : {}),
+          }, {
+            scope: { where: [['orderId', '==', orderIds.get(order.key)]], orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']] },
           });
         }
       }

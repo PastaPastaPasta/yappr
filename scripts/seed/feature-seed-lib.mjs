@@ -16,7 +16,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
 import {
-  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
+  DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, NOT_QUERYABLE_BY_OWNER, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
   buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
 } from './seed-lib.mjs';
 
@@ -170,7 +170,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
   };
 
   async function createDoc(actor, docType, key, data, opts = {}) {
-    const { tokenCost, accepted, duplicateIsSuccess, contract = contractId, payment = paymentInfo } = opts;
+    const { tokenCost, accepted, duplicateIsSuccess, scope, contract = contractId, payment = paymentInfo } = opts;
     const entropy = entropyFor(key);
     const { document } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy });
     // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
@@ -187,7 +187,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     const landed = async () => {
       if (accepted) return accepted(id);
       if (id) return (await stored(docType, id, contract)) != null;
-      id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data }));
+      id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data, scope }));
       return id != null;
     };
     if (await landed()) return { id, skipped: true };
@@ -196,6 +196,9 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
       try {
         const created = await actor.lock(() => createDocument(handle.sdk, {
           contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
+          // A priced create derives its id before broadcasting: keep it, so a create whose
+          // wait throws after landing is recognised by id even on a doctype with no owner index.
+          onDerivedId: (derived) => { id = derived; },
         }));
         id = createdId(created) ?? id;
         if (await landed()) return { id };
@@ -446,7 +449,28 @@ export async function plumbingAssertions() {
     const repeat = await createDoc({ ownerId: 'owner' }, 'thing', 'k1', {});
     const boom = createRecorder({ writer: { createDoc: async () => { throw new Error('refused'); } }, state: { docs: {} }, file });
     const failed = await boom.createDoc({ ownerId: 'owner' }, 'thing', 'k3', {});
+    // Drive's refusal of an owner scan on a doctype with no $ownerId index, as sakura returned it for
+    // storefront v8's `orderStatusUpdate`: the "(429 bytes truncated)" tail once read as a rate limit.
+    const indexRefusal = `message=transport error: grpc error: code: 'Client specified an invalid argument', message: "where clause on non indexed property error: query must be for valid indexes, valid indexes are: {…} (429 bytes truncated)" | json={"__wbg_ptr":1429504}`;
+    const queries = [];
+    const refusing = { documents: { query: async (q) => { queries.push(q); throw new Error(indexRefusal); } } };
+    const refusedProbe = await findRecentByValues(refusing, { contractId: 'c', docType: 'orderStatusUpdate', ownerId: 'owner', data: { status: 'shipped' } });
+    const refusedQueries = queries.length;
+    const ownerBytes = bs58.decode(fakeId('owner'));
+    const scoped = { documents: { query: async (q) => { queries.push(q); return new Map([
+      ['a', { $id: 'other-owners', $ownerId: bs58.decode(fakeId('someone-else')), status: 'shipped' }],
+      ['b', { $id: 'mine', $ownerId: ownerBytes, status: 'shipped' }],
+    ]); } } };
+    const scope = { where: [['orderId', '==', 'o1']], orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']] };
+    const scopedProbe = await findRecentByValues(scoped, { contractId: 'c', docType: 'orderStatusUpdate', ownerId: fakeId('owner'), data: { status: 'shipped' }, scope });
     return [
+      ['an index refusal is not transient, whatever byte count its truncated text carries',
+        NOT_QUERYABLE_BY_OWNER.test(indexRefusal) && !RETRYABLE.test(indexRefusal) && !WAIT_MAYBE_LANDED.test(indexRefusal)],
+      ['real 429/503/504 statuses still read as transient', RETRYABLE.test('HTTP 429 Too Many Requests') && RETRYABLE.test('status: 503') && WAIT_MAYBE_LANDED.test('504 Gateway Time-out')],
+      ['a value probe on a doctype with no owner index answers null after two queries, without throwing', refusedProbe === null && refusedQueries === 2],
+      ['a scoped value probe queries the scope and only adopts the owner\'s document',
+        scopedProbe === 'mine' && queries[2]?.where === scope.where && queries[2]?.orderBy === scope.orderBy],
+
       ['a destructured recorder.createDoc records the id it wrote', wrote === 'id/k1' && id('k1') === 'id/k1'],
       ['a destructured recorder.createDoc counts the write', afterWrite.created === 1 && afterWrite.failed === 0],
       ['an adopted document is recorded as already present', adopted === 'adopted-id' && id('k2') === 'adopted-id' && afterAdopt.skipped === 1],
