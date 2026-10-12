@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Read-only equivalence probes against the deployed devnet. No signing keys.
- * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v14)> node scripts/verify-social-query-bundles.mjs [report.json]
+ * NETWORK=devnet V10_CONTRACT_ID=<social contract id (v10 to v15)> node scripts/verify-social-query-bundles.mjs [report.json]
  * Counts document facade requests after connection/contract warm-up, not HTTP
  * retries, subqueries, quorum reads, or complete rendered-screen traffic.
  *
@@ -32,7 +32,8 @@
  * ==`, replies to the owner's replies), each read alone like v13's one window.
  * What the contract under test declares (fetched by id, not the
  * environment's topology) picks the like reads and the notification grids.
- * There is no postMention: a post or reply names at most one mentionedUserId. */
+ * There is no postMention: a post or reply names at most one mentionedUserId
+ * (v15: up to eight in mentionedUserIds, read with `contains`, 5.0.0-beta.5). */
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import bs58 from 'bs58';
@@ -119,17 +120,22 @@ await verify('profiles and DPNS including profile-less identity', [
   { dataContractId: profile, documentTypeName: 'profile', where: [['$ownerId', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['$ownerId', 'asc']], limit: owners.length + 1 },
   { dataContractId: dpns, documentTypeName: 'domain', where: [['records.identity', 'in', [...owners, '1'.repeat(32)]]], orderBy: [['records.identity', 'asc']], limit: 100 },
 ]);
+/** The social contract under test as published (v10 to v15): its declarations pick the reads below. */
+const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
+/**
+ * v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts).
+ * v15: mentions are read one element of `mentionedUserIds` at a time (SOCIAL.mentionsOf, `contains`).
+ */
+const SOCIAL = socialShapes(V10);
+
 // Mentions stay permanent (the mentioning post's and reply's own mentionedUserAndTime).
-await verify('permanent notification sources', [['follow', 'followingId'], ['post', 'mentionedUserId'], ['reply', 'mentionedUserId'], ['followRequest', 'targetId']].map(([documentTypeName, field]) => ({
+const permanent = (documentTypeName, field) => ({
   dataContractId: social, documentTypeName,
   where: [[field, '==', owner], ['$createdAt', '>', 0]],
   orderBy: [[field, 'asc'], ['$createdAt', 'desc']], limit: 100,
-})));
-
-/** The social contract under test as published (v10 to v14): its declarations pick the reads below. */
-const V10 = (await sdk.contracts.fetch(social)).toJSON(PlatformVersion.latest());
-/** v13: author post pages read `post.ownerAndTime` with `live == true` first (SOCIAL.ownerPosts). */
-const SOCIAL = socialShapes(V10);
+});
+const mentionsOf = (documentTypeName) => ({ dataContractId: social, documentTypeName, ...SOCIAL.mentionsOf(owner, 0, 'desc'), limit: 100 });
+await verify('permanent notification sources', [permanent('follow', 'followingId'), mentionsOf('post'), mentionsOf('reply'), permanent('followRequest', 'targetId')]);
 /** v10: the author index carries `$createdAt` after the target (byAuthorPostTime). */
 const LIKES_KEEP_TIME = V10.documentSchemas.like.indices.some(index => index.name === 'byAuthorPostTime');
 /** v12: the author indexes are counters of byPost / byReply (no like documents through them). */

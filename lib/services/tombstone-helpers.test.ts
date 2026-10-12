@@ -249,6 +249,19 @@ describe('the v11 tombstone (design M)', () => {
     expect(updateDocument).not.toHaveBeenCalled()
   })
 
+  it('clears v15\'s mentions array with every other content field', async () => {
+    get.mockResolvedValue(storedFullV11Post({ mentionedUserId: undefined, mentionedUserIds: [quotedOwnerId, ownerId], live: true }))
+    await expect(tombstone('v15')).resolves.toBe(true)
+    // blankTombstone counts mentionedUserIds as content: keeping it is 10422.
+    expect(attempt(0)).toEqual({ deleted: true, hashtag: 'dash' })
+
+    get.mockResolvedValue({
+      toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 1, content: 'hi @a @b', mentionedUserIds: [quotedOwnerId, ownerId], rootPostId: quotedPostId }),
+    })
+    await tombstone('v15', 'reply')
+    expect(Object.keys(attempt(1)).sort()).toEqual(['deleted', 'rootPostId'])
+  })
+
   it('still writes v9\'s empty content beside deleted', async () => {
     get.mockResolvedValue({ toObject: () => ({ $id: postId, $ownerId: ownerId, $revision: 1, content: 'plain', language: 'en' }) })
     await tombstone('v9')

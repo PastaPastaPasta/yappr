@@ -57,7 +57,7 @@ export function getEmbeddedPollId(post: Post): string | null {
 
 /**
  * Whether a poll Platform says does not exist was deleted, rather than one this
- * client cannot see. Only v6 lets an owner delete a poll (before its first
+ * client cannot see. Only v7 lets an owner delete a poll (before its first
  * ballot). A native embed names a poll in the configured contract, so there it
  * is gone; a legacy Pollr link names one in the standalone app's contract,
  * which is only this one's when the two are the same.

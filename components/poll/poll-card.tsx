@@ -12,8 +12,7 @@ import { cn, formatNumber } from '@/lib/utils'
 import { categorizeError } from '@/lib/error-utils'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { pollMissingMeansDeleted, pollrPollUrl } from '@/lib/poll-embed'
-import { pollrIsV4, pollrHasV5Ballots, pollrPollsDeletable } from '@/lib/constants'
-import { isReferenceNotFoundError } from '@/lib/error-utils'
+import { pollrIsV4, pollrHasEditableBallots, pollrPollsDeletable } from '@/lib/constants'
 import { choiceDelta, editorStart, normalizeChoices, sameChoices } from '@/lib/pollr-rules'
 import type { Poll, PollTally } from '@/lib/services'
 import type { BallotState } from '@/lib/services/pollr-vote-service'
@@ -37,7 +36,7 @@ interface PollCardProps {
   className?: string
 }
 
-/** How long to wait before re-reading a poll Platform says is absent (v6, see the load). */
+/** How long to wait before re-reading a poll Platform says is absent (v7, see the load). */
 const ABSENT_RECHECK_MS = 2500
 
 function percent(count: number, total: number): number {
@@ -75,24 +74,24 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
   // Bumped to re-run the load effect without a page refresh.
   const [reloadToken, setReloadToken] = useState(0)
   const [submitting, setSubmitting] = useState(false)
-  // Reopens the ballot after voting: on v5 to change or withdraw the vote, on
+  // Reopens the ballot after voting: on v7 to change or withdraw the vote, on
   // v3 (immutable ballots) for a multi-choice voter to add more selections.
   const [editing, setEditing] = useState(false)
   // Platform refused a write because the poll has closed, though this device's
   // clock says it is still open: trust the chain, or every retry is refused.
   const [closedOnChain, setClosedOnChain] = useState(false)
-  // v5: an earlier write to the voter's ballots on this poll could still land
-  // (pollrVoteService.getBallotState). The ballots are then shown read-only
+  // v7: an earlier write to the voter's ballot on this poll could still land
+  // (pollrVoteService.getBallotState). The ballot is then shown read-only
   // until a check finds nothing pending; every later submission is a fresh
   // plan against the chain.
   const [ballotPending, setBallotPending] = useState(false)
-  // v5: what the voter last asked for when a submission was not fully
-  // confirmed. Only pre-fills the editor once the ballots settle (part of it
-  // may never have been sent); it is never resent on its own.
+  // v7: what the voter last asked for when a submission was not confirmed.
+  // Only pre-fills the editor once the ballot settles (it may never have
+  // landed); it is never resent on its own.
   const [requested, setRequested] = useState<number[] | null>(null)
-  // v6: the poll no longer exists because its owner deleted it.
+  // v7: the poll no longer exists because its owner deleted it.
   const [deleted, setDeleted] = useState(false)
-  // v6: the signed-in owner may still delete the poll (no ballot names it yet).
+  // v7: the signed-in owner may still delete the poll (no ballot names it yet).
   const [deletable, setDeletable] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -101,13 +100,13 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
   const deleteCheckRef = useRef(0)
 
   const userId = user?.identityId ?? null
-  // v5 ballots stay editable until the poll closes; v3 ballots are permanent.
-  const editable = pollrHasV5Ballots()
+  // v7 ballots stay editable until the poll closes; v3 ballots are permanent.
+  const editable = pollrHasEditableBallots()
   // v4 (indexOnly ballots) is shown but not voted on.
   const votingSupported = !pollrIsV4()
 
   /**
-   * v6: whether the signed-in owner may delete `target` now, recomputed from
+   * v7: whether the signed-in owner may delete `target` now, recomputed from
    * scratch (pollrVoteService.deleteEligible). Only the latest check applies,
    * so a count read before a vote cannot bring the delete back.
    */
@@ -180,7 +179,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
           setVotesUnavailable(true)
         }
 
-        // v6: the owner may delete the poll until its first ballot. Not
+        // v7: the owner may delete the poll until its first ballot. Not
         // awaited: the poll shows while the ballots are counted.
         checkDeletable(loadedPoll, votesResult)
           .catch((error: unknown) => logger.warn('PollCard: failed to count ballots', error))
@@ -225,7 +224,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
   const hasVoted = myVotes.length > 0
   // v3 stays in vote mode while choices are still selected: a multi-choice
   // ballot that failed partway leaves its unrecorded choices selected for a
-  // retry. A v5 retry is a re-pick from the voter's current ballot instead.
+  // retry. A v7 retry is a re-pick from the voter's current ballot instead.
   const showResults =
     !user ||
     !votingSupported ||
@@ -233,7 +232,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     votesUnavailable ||
     ballotPending ||
     (hasVoted && !editing && (editable || selected.length === 0))
-  // v5: any voter may change their vote while the poll is open. v3: a
+  // v7: any voter may change their vote while the poll is open. v3: a
   // multi-choice voter who hasn't picked everything can still add selections.
   const canEdit = Boolean(
     user &&
@@ -245,7 +244,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       (editable || (poll?.multiChoice && myVotes.length < (poll?.options.length ?? 0)))
   )
   const startEditing = useCallback(() => {
-    // v5 edits the whole selection, so it starts from what is recorded (or
+    // v7 edits the whole selection, so it starts from what is recorded (or
     // from an interrupted request, see editorStart); v3 only adds to it, so
     // the recorded choices stay locked and nothing is selected.
     setSelected(editable ? editorStart(myVotes, requested).selected : [])
@@ -261,17 +260,17 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     })
   }, [])
 
-  /** v5: make the voter's ballots select exactly `wanted` (empty = withdraw). */
+  /** v7: make the voter's ballot select exactly `wanted` (empty = withdraw). */
   const submitSelection = useCallback(async (currentPoll: Poll, wanted: number[], voterId: string) => {
-    const { pollrVoteService } = await import('@/lib/services')
+    const { pollrPollService, pollrVoteService } = await import('@/lib/services')
     const result = await pollrVoteService.setVote(currentPoll, wanted, voterId)
 
     if (result.unconfirmed || result.heldBack) {
       // A write is out with no outcome yet (this one, or an earlier one this
-      // was held back behind), so the ballots may still change. Show them
+      // was held back behind), so the ballot may still change. Show it
       // read-only until "Check again" finds nothing pending; the vote and
       // tally stay as they were rather than take a read that likely predates
-      // the write. The voter picks again from the settled ballots.
+      // the write. The voter picks again from the settled ballot.
       toast(result.unconfirmed ? 'Your vote was sent and is being confirmed.' : 'Your earlier vote is still being confirmed.', {
         icon: '⏳',
         duration: 6000,
@@ -300,10 +299,9 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       toast.error('This poll has closed')
     } else if (result.stale) {
       toast('Your vote changed elsewhere — showing the latest.', { icon: 'ℹ️' })
-    } else if (!result.success && pollrPollsDeletable() && isReferenceNotFoundError(result.error)) {
-      // v6: the owner deleted the poll after this card loaded. Re-read it
-      // rather than keep a ballot open that every retry would pay to fail.
-      const { pollrPollService } = await import('@/lib/services')
+    } else if (result.gone) {
+      // The owner deleted the poll after this card loaded. Re-read it rather
+      // than keep a ballot open that every retry would pay to fail.
       pollrPollService.clearCache(currentPoll.id)
       toast('This poll was deleted.', { icon: 'ℹ️' })
       stopEditing()
@@ -312,8 +310,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
       return
     } else if (!result.success) {
       toast.error(categorizeError(result.error))
-      // Keep the ballot open on the wanted picks for a retry — including after a
-      // partial first multi-choice vote, which now has recorded choices.
+      // Keep the ballot open on the wanted picks for a retry.
       setSelected(wanted)
       setEditing(true)
       return
@@ -413,7 +410,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     }
   }, [poll, selected, tally, user, editable, submitSelection, openLoginPrompt, checkDeletable])
 
-  /** v6: the owner deletes the poll, which Platform allows only until its first ballot. */
+  /** v7: the owner deletes the poll, which Platform allows only until its first ballot. */
   const handleDelete = useCallback(async () => {
     if (!poll || !userId) return
     setDeleting(true)
@@ -481,11 +478,11 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
     )
   }
 
-  // v5 submits the whole selection, so it needs a change (an emptied
+  // v7 submits the whole selection, so it needs a change (an emptied
   // multi-choice ballot is a withdrawal); v3 submits additions, so it needs one.
   const submitDisabled = submitting || (editable ? sameChoices(selected, myVotes) : selected.length === 0)
   const submitLabel = editable && hasVoted ? 'Update vote' : 'Vote'
-  // An interrupted request that the settled ballots do not fully show.
+  // An interrupted request that the settled ballot does not show.
   const interruptedUnsent = editable && requested ? editorStart(myVotes, requested).unsent : []
   // While editing, the options the current selection would change.
   const unsentInEditor = editable && requested ? choiceDelta(myVotes, selected) : null
@@ -551,7 +548,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
 
           {canEdit && interruptedUnsent.length > 0 && (
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              Part of your last vote was not sent.
+              Your last vote didn&apos;t go through.
             </p>
           )}
 
@@ -560,7 +557,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
               onClick={startEditing}
               className="text-xs font-medium text-yappr-500 hover:underline"
             >
-              {editable ? (interruptedUnsent.length > 0 ? 'Finish your vote' : 'Change vote') : 'Add choices'}
+              {editable ? (interruptedUnsent.length > 0 ? 'Vote again' : 'Change vote') : 'Add choices'}
             </button>
           )}
 
@@ -596,7 +593,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
         <div className="mt-3 space-y-2">
           {poll.options.map((option, index) => {
             // v3 votes are immutable: a choice already on Platform can't be
-            // undone. v5 ones can, so every option stays live.
+            // undone. v7 ones can, so every option stays live.
             const isRecorded = myVotes.includes(index)
             const isLocked = !editable && isRecorded
             const isChecked = isLocked || selected.includes(index)
@@ -638,7 +635,7 @@ export function PollCard({ pollId, postContent, postAuthorId, nativeEmbed = fals
             >
               {submitting ? <Spinner size="sm" className="h-4 w-4 border-white" /> : submitLabel}
             </Button>
-            {/* A single-choice v5 voter withdraws by dropping the one choice;
+            {/* A single-choice v7 voter withdraws by dropping the one choice;
                 a multi-choice one just unticks everything. */}
             {editable && editing && hasVoted && !poll.multiChoice && (
               <Button

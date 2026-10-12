@@ -19,8 +19,9 @@ function envValue(name: string): string {
 }
 
 export const STOREFRONT_CONTRACT_ID = envValue('NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID')
-export const STOREFRONT_V7_BUILD = envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY') === 'v7' && STOREFRONT_CONTRACT_ID !== ''
-export const NOT_V7_REASON = 'E2E_ENV_FILE does not select a storefront v7 deployment — the typed variants table only exists there'
+/** Storefront v7 and v8 (which keeps v7's variant table) carry the typed variants table. */
+export const STOREFRONT_VARIANTS_BUILD = ['v7', 'v8'].includes(envValue('NEXT_PUBLIC_STOREFRONT_TOPOLOGY')) && STOREFRONT_CONTRACT_ID !== ''
+export const NOT_VARIANTS_REASON = 'E2E_ENV_FILE does not select a storefront v7 or v8 deployment — the typed variants table only exists there'
 
 type SeedLib = {
   buildDocument: (options: Record<string, unknown>) => { document: unknown }

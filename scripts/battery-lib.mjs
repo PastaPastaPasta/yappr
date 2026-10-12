@@ -85,15 +85,20 @@ export const ghostIdentity = () => bs58.encode(randomEntropy());
 /**
  * Integer group keys come back in two forms, and both are live:
  * `documents.count({groupBy})` keys by the HEX of the platform-encoded byte
- * (0x80 + value) while `documents.ranked` hands back the decoded number.
- * Anything else stays `null`, so a mismatch fails a check instead of quietly
- * reading as group 0.
+ * while `documents.ranked` hands back the decoded number. The byte depends on
+ * the chain: older chains key an UNSIGNED integer index value as 0x80 + value
+ * ('80'..'89'), while PV14 on beta.5 (platform #5350) keys it as the plain
+ * big-endian byte ('00'..'09'). The two are unambiguous below 128 (a plain
+ * byte stays under 0x80, an offset one is at or above it), so this decodes
+ * both: byte >= 0x80 ? byte - 0x80 : byte. Anything else stays `null`, so a
+ * mismatch fails a check instead of quietly reading as group 0.
  */
 export function decodeIntGroupKey(key) {
   if (typeof key === 'number') return key;
   if (typeof key === 'bigint') return Number(key);
   if (typeof key !== 'string' || !/^[0-9a-f]+$/i.test(key)) return null;
-  return parseInt(key, 16) - 0x80;
+  const byte = parseInt(key, 16);
+  return byte >= 0x80 ? byte - 0x80 : byte;
 }
 
 /** Any identifier shape (bytes, base58 string, Identifier) → base58. */

@@ -14,16 +14,20 @@
  * warning list (b17 warns and clears) and stores `labels` as a typed string
  * array (b18: a list reads back as a list; an over-long label is refused). The
  * beta.5 re-cut adds `propertyConstraints` (b19: content chunks are contiguous;
- * a gap is refused 10422). The beta.6 re-cut (v5) makes a comment copy its
- * post's `commentsEnabled` (b20: a comment on a comments-off post is refused)
- * and lets only a blog's owner post to it (b21). The 5.0.0-beta.1 re-cut (v6)
+ * a gap is refused 10422). The beta.6 re-cut (v5) made a comment copy its
+ * post's `commentsEnabled` and lets only a blog's owner post to it (b21). The
+ * committed v8 (5.0.0-beta.5) drops the copy: `blogComment.postCommentsEnabled`
+ * and its `commentsOpen` rule are gone, and the blogPostId reference carries
+ * the condition `commentsEnabled: {notEqual: {const: false}}`, so a comment on
+ * a comments-off post, a tombstone included, is refused 40127, and a post that
+ * leaves the flag out takes comments (b20, b24). The 5.0.0-beta.1 re-cut (v6)
  * drops the copied `blogPostOwnerId`: `postOwnerAndTime` derives the post's
  * owner through `blogPostId` (b4d), so there is no owner left to forge: a
  * comment still carrying it is refused (b3d), nobody else's query sees the
  * comments (b4e), and the derived key is read from a removed post's record
  * when a comment outlives its post (b15e-g).
  *
- * Blog v7 (5.0.0-beta.2, this file) changes what the cases write and read:
+ * Blog v7 (5.0.0-beta.2; v8 keeps all of it) changes what the cases write and read:
  *   - no YAPP: `blog`, `blogPost` and `blogComment` creates carry an action fee
  *     agreement (the declared amounts, read off the contract JSON); b3c is a
  *     create without one (40132), b9 one agreeing to the wrong amount (40133);
@@ -92,12 +96,10 @@ const blogData = (run, labels) => ({ name: `Battery ${run}`, description: 'blog 
 // byte-identically, so it is a parameter, not a fresh `Date.now()`.
 // Passing `null` omits it, which is how a DRAFT is written.
 const postData = ({ blogId, title, slug, publishedAt = Date.now() }) => ({ blogId, title, slug, data0: crypto.getRandomValues(new Uint8Array(64)), ...(publishedAt === null ? {} : { publishedAt }) });
-// v5 (beta.6): `postCommentsEnabled` must equal the post's `commentsEnabled`,
-// absence included (40127). Every fixture post leaves the flag out, so the
-// fixture comments leave it out too; b20 writes the other shapes.
 // v6 (5.0.0-beta.1): no `blogPostOwnerId`; `postOwnerAndTime` derives the post's
-// owner through `blogPostId` (`blogPostId.$ownerId`).
-const commentData = ({ blogPostId, content, postCommentsEnabled }) => ({ blogPostId, content, ...(postCommentsEnabled === undefined ? {} : { postCommentsEnabled }) });
+// owner through `blogPostId` (`blogPostId.$ownerId`). v8 (5.0.0-beta.5): no
+// `postCommentsEnabled` either; the blogPostId reference checks the post's flag.
+const commentData = ({ blogPostId, content }) => ({ blogPostId, content });
 
 // ---- Cases ------------------------------------------------------------------
 
@@ -367,26 +369,20 @@ async function caseB19PropertyConstraints(ctx) {
 
 async function caseB20CommentsOff(ctx) {
   const { battery, author, reader, run } = ctx;
-  console.log('\n--- b20. a comment carries its post\'s commentsEnabled; comments off is refused (beta.6 v5) ---');
+  console.log('\n--- b20. comments off is a condition on the blogPostId reference (v8: 40127) ---');
   if (!(await ensureFixtureBlog(ctx, 'b20'))) return;
+  // `commentsEnabled` undefined leaves the flag out, which takes comments like true.
   const post = (title, commentsEnabled) => battery.probeCreate(`b20 fixture post with commentsEnabled ${commentsEnabled}`, null, author, 'blogPost',
-    { ...postData({ blogId: id32(ctx.blogId), title: `${title} ${run}`, slug: `${title.toLowerCase()}-${run}` }), commentsEnabled });
-  const [on, off] = [await post('Open', true), await post('Closed', false)];
-  const comment = (label, expect, postId, postCommentsEnabled) => battery.probeCreate(label, expect, reader, 'blogComment',
-    commentData({ blogPostId: id32(postId), content: `${label} ${run}`, postCommentsEnabled }));
+    { ...postData({ blogId: id32(ctx.blogId), title: `${title} ${run}`, slug: `${title.toLowerCase()}-${run}` }), ...(commentsEnabled === undefined ? {} : { commentsEnabled }) });
+  const [on, unset, off] = [await post('Open', true), await post('Unset', undefined), await post('Closed', false)];
+  const comment = (label, expect, postId, extra) => battery.probeCreate(label, expect, reader, 'blogComment',
+    { ...commentData({ blogPostId: id32(postId), content: `${label} ${run}` }), ...extra });
   if (on.ok) {
-    await comment('b20a a comment copying commentsEnabled true lands', null, on.id, true);
-    await comment('b20b a comment leaving the flag out of a post that stores true is refused (40127)', PROPERTY_MISMATCH, on.id, undefined);
+    await comment('b20a a comment on a post that stores commentsEnabled true lands', null, on.id);
+    await comment('b20b a comment still copying postCommentsEnabled is refused (10101: v8 checks the post through the reference)', UNKNOWN_PROPERTY, on.id, { postCommentsEnabled: true });
   }
-  if (off.ok) {
-    // The document's own rules (10422) run before the reference checks (40127).
-    // The honest copy of `false` breaks \`commentsOpen\`; lying about it (true, or
-    // leaving it out, which the rule reads as on) passes the rule and then
-    // breaks the agreement.
-    await comment('b20c a comment on a comments-off post is refused (10422 commentsOpen)', constraintViolation('commentsOpen'), off.id, false);
-    await comment('b20d claiming comments are on for a comments-off post is refused (40127)', PROPERTY_MISMATCH, off.id, true);
-    await comment('b20e leaving the flag out on a comments-off post is refused (40127)', PROPERTY_MISMATCH, off.id, undefined);
-  }
+  if (unset.ok) await comment('b20f a comment on a post that leaves commentsEnabled out lands', null, unset.id);
+  if (off.ok) await comment('b20c a comment on a comments-off post is refused (40127: commentsEnabled notEqual false fails)', PROPERTY_MISMATCH, off.id);
 }
 
 async function caseB21OwnerGate(ctx) {
@@ -477,12 +473,9 @@ async function caseB24CommentOnTombstone(ctx) {
   console.log('\n--- b24. a tombstone takes no comment (its commentsEnabled is false) ---');
   if (!ctx.tombstone) await caseB22Tombstone(ctx);
   if (!ctx.tombstone) { battery.check('b24 fixture', false, 'no tombstone'); return; }
-  const comment = (label, expect, postCommentsEnabled) => battery.probeCreate(label, expect, reader, 'blogComment',
-    commentData({ blogPostId: id32(ctx.tombstone.id), content: `${label} ${run}`, postCommentsEnabled }));
-  // As b20 on a comments-off post: the honest copy breaks commentsOpen, a lie breaks the agreement.
-  await comment('b24a a comment on the tombstone, copying its flag, is refused (10422 commentsOpen)', constraintViolation('commentsOpen'), false);
-  await comment('b24b claiming the tombstone takes comments is refused (40127)', PROPERTY_MISMATCH, true);
-  await comment('b24c leaving the flag out on the tombstone is refused (40127)', PROPERTY_MISMATCH, undefined);
+  // As b20 on a comments-off post: the tombstone stores commentsEnabled false.
+  await battery.probeCreate('b24a a comment on the tombstone is refused (40127)', PROPERTY_MISMATCH, reader, 'blogComment',
+    commentData({ blogPostId: id32(ctx.tombstone.id), content: `b24a ${run}` }));
 }
 
 const CASES = new Map([
@@ -499,7 +492,7 @@ function selfTestV7() {
   const indexNames = (docType) => (SCHEMAS[docType].indices ?? []).map((entry) => entry.name);
   const moderators = CONTRACT.config?.moderation?.moderators ?? {};
   const fee = (docType) => actionFeeFor(docType, SCHEMAS)?.moderators;
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v7)`, [
+  return reportSelfTest(`contracts/${CONTRACT_FILE} (blog v8)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (comments cost no YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['blog and blogPost creates declare an 80M moderators fee', fee('blog') === 80_000_000n && fee('blogPost') === 80_000_000n],
@@ -513,6 +506,7 @@ function selfTestV7() {
     ['follower counts and "most followed" ride followers (rangeCountable, ranked at blogId; b4c, b5b)', index('blogFollow', 'followers')?.rangeCountable === true && index('blogFollow', 'followers')?.rankedCountable?.at === 'blogId'],
     ['followersTrend and discussedRecent are ranked 72h windows stepping 24h (b5a, b6)', [index('blogFollow', 'followersTrend'), index('blogComment', 'discussedRecent')].every((entry) => entry?.rankedCountable === true && entry.timeRange?.range === 259200 && entry.timeRange?.step === 86400)],
     ['blogPost declares retractedWhen { present: deleted } (b23)', JSON.stringify(SCHEMAS.blogPost.retractedWhen) === '{"present":"deleted"}'],
+    ['blogComment has no postCommentsEnabled; the comments-off check is the blogPostId where condition (b20)', SCHEMAS.blogComment.properties.postCommentsEnabled === undefined && !SCHEMAS.blogComment.required.includes('postCommentsEnabled')],
     ['blogPost requires $updatedAt (publishedNotAhead reads it)', SCHEMAS.blogPost.required.includes('$updatedAt')],
   ]);
 }
@@ -524,10 +518,10 @@ await runBattery({
   actors: { author: 210, reader: 211, stranger: 212 },
   flags: { moderator: { ...MODERATOR_FLAG, default: '260' } },
   selfTest: () => Math.max(selfTestV7(), selfTestModerated(CONTRACT_FILE, {
-    // b20: the post's commentsEnabled is copied, and a copy of `false` is refused
-    // (beta.6 v5). b4d: the notification key is the post's own $ownerId, derived
-    // through blogPostId (v6), so there is no copied owner to forge.
-    blogComment: { where: { blogPostId: { commentsEnabled: 'postCommentsEnabled' } }, moderatorDeletable: true, constraints: DECLARED_RULES[CONTRACT_FILE].blogComment },
+    // b20/b24: a post whose commentsEnabled is false takes no comment, a where condition
+    // (v8) with no copy and no rule. b4d: the notification key is the post's own $ownerId,
+    // derived through blogPostId (v6), so there is no copied owner to forge.
+    blogComment: { where: { blogPostId: { commentsEnabled: { notEqual: { const: false } } } }, moderatorDeletable: true, constraints: [] },
     // b12: blogId frozen, publishedAt write-once. b15: moderators may remove a post.
     // b18: labels are typed string arrays (beta.4 v4).
     // b19: content chunks are contiguous (beta.5).

@@ -130,7 +130,8 @@ export function normalizeDpnsUsername(username: string): string {
 
 /**
  * Extract @mentions from post content
- * Returns usernames without the @ prefix, normalized (lowercase, .dash removed), and deduplicated
+ * Returns usernames without the @ prefix, normalized (lowercase, .dash removed), and deduplicated,
+ * in order of first appearance (the order inline mentions are indexed in)
  * Handles both @pasta and @pasta.dash formats
  * Max 100 chars to accommodate DPNS username constraints
  */
@@ -141,14 +142,4 @@ export function extractMentions(content: string): string[] {
   return Array.from(new Set(
     matches.map(mention => normalizeDpnsUsername(mention.slice(1))) // Remove @ prefix, normalize, dedupe
   ))
-}
-
-/**
- * The FIRST @mention in the content, normalized like {@link extractMentions}
- * (lowercase, `.dash` removed), or `''` when there is none. The v10 contract
- * indexes exactly one mention per post (`post.mentionedUserId`), and "first in
- * the public text" is the rule, as for the single hashtag.
- */
-export function firstMention(content: string): string {
-  return extractMentions(content)[0] ?? ''
 }

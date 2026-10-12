@@ -4,14 +4,14 @@
  * ballot writes. No SDK, no network — the services and the poll editor call in.
  */
 
-export type PollrTopology = 'v3' | 'v4' | 'v5' | 'v6'
+export type PollrTopology = 'v3' | 'v4' | 'v7'
 
 export const POLL_MIN_OPTIONS = 2
 export const POLL_MAX_OPTIONS = 10
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-/** v5's `endsWithin31Days`: a poll closes at most 31 days after `$createdAt`. */
+/** v7's `endsWithin31Days`: a poll closes at most 31 days after `$createdAt`. */
 export const POLL_MAX_DURATION_MS = 31 * DAY_MS
 
 /** How long a new poll stays open. */
@@ -51,9 +51,9 @@ interface PollLimits {
   endsAtRequired: boolean
 }
 
-/** What each topology's `poll` schema accepts (v6 keeps v5's poll). */
+/** What each topology's `poll` schema accepts. */
 export function pollLimits(topology: PollrTopology): PollLimits {
-  if (topology === 'v5' || topology === 'v6') {
+  if (topology === 'v7') {
     return { questionMaxChars: 280, questionMaxBytes: 560, optionMaxChars: 80, optionMaxBytes: 160, uniqueOptions: true, endsAtRequired: true }
   }
   // v3/v4: option0..option9 strings, 1-100 characters, and a 512-character question.
@@ -119,23 +119,22 @@ export function pollEndsAtError(endsAt: number | undefined, limits: PollLimits, 
   return null
 }
 
-// ---- Ballots (v5) -------------------------------------------------------------
+// ---- Ballots (v7) -------------------------------------------------------------
 
 /**
- * One of a voter's v5 ballots. A single-choice poll has at most one (slot 0); a
- * multi-choice poll one per option ever ticked (slot = option). `choice` is
- * null when the ballot was withdrawn or the option unticked.
+ * A voter's one v7 ballot on a poll. `choices` holds the picked options in
+ * order, and is empty when the ballot was withdrawn.
  */
 export interface Ballot {
   id: string
   revision: number
-  slot: number
-  choice: number | null
+  choices: number[]
 }
 
+/** A replace with no choices withdraws: the document is written without `choices`. */
 export type BallotWrite =
-  | { kind: 'create'; slot: number; choice: number }
-  | { kind: 'replace'; ballot: Ballot; choice: number | null }
+  | { kind: 'create'; choices: number[] }
+  | { kind: 'replace'; ballot: Ballot; choices: number[] }
 
 /** Whether `choice` names an option of a `size`-option poll (any schema-valid option by default). */
 export function isChoiceIndex(choice: number, size: number = POLL_MAX_OPTIONS): boolean {
@@ -149,11 +148,6 @@ export function normalizeChoices(choices: readonly number[], size: number = POLL
     .sort((a, b) => a - b)
 }
 
-/** The choices a voter's ballots currently select. */
-export function recordedChoices(ballots: readonly Ballot[]): number[] {
-  return normalizeChoices(ballots.flatMap((ballot) => (ballot.choice === null ? [] : [ballot.choice])))
-}
-
 export function sameChoices(a: readonly number[], b: readonly number[]): boolean {
   const left = normalizeChoices(a)
   const right = normalizeChoices(b)
@@ -162,10 +156,10 @@ export function sameChoices(a: readonly number[], b: readonly number[]): boolean
 
 /**
  * Where the ballot editor starts. Normally from the recorded choices; after a
- * submission that was not fully confirmed, from what the voter last asked for,
- * since part of it may never have been sent. `unsent` is where that request
- * differs from the recorded ballots — shown as "not sent yet", and sent only
- * when the voter submits again.
+ * submission that was not confirmed, from what the voter last asked for, since
+ * it may never have landed. `unsent` is where that request differs from the
+ * recorded ballot — shown as "not sent yet", and sent only when the voter
+ * submits again.
  */
 export function editorStart(recorded: readonly number[], requested: readonly number[] | null): { selected: number[]; unsent: number[] } {
   if (requested === null) return { selected: normalizeChoices(recorded), unsent: [] }
@@ -184,40 +178,34 @@ export function choiceDelta(previous: readonly number[], next: readonly number[]
 }
 
 /**
- * The writes that take a voter from `ballots` to selecting exactly `wanted`.
- *
- * Single choice: create the one ballot (slot 0) if there is none, otherwise
- * replace its `choice` — or drop it, to withdraw. Multi choice: each option is
- * its own ballot (slot = option), created the first time it is ticked and
- * replaced with `choice` set or dropped after that. Ballots are never deleted,
- * so an unticked option keeps its ballot and a later tick replaces it.
+ * The one write that takes a voter from `ballot` to selecting exactly
+ * `wanted`, or null when none is needed. The first pick creates the ballot;
+ * after that every change replaces it, and withdrawing replaces it without
+ * choices. Ballots are never deleted, so a withdrawn one is replaced again on
+ * a later pick rather than created twice.
  *
  * `wanted` must already be normalized; a single-choice `wanted` holds at most one.
  */
-export function planBallotWrites(multiChoice: boolean, ballots: readonly Ballot[], wanted: readonly number[]): BallotWrite[] {
-  if (!multiChoice) {
-    const choice = wanted[0] ?? null
-    const ballot = ballots.find((entry) => entry.slot === 0)
-    if (!ballot) return choice === null ? [] : [{ kind: 'create', slot: 0, choice }]
-    return ballot.choice === choice ? [] : [{ kind: 'replace', ballot, choice }]
-  }
-
-  const bySlot = new Map(ballots.map((ballot) => [ballot.slot, ballot]))
-  const writes: BallotWrite[] = []
-  const slots = normalizeChoices([...bySlot.keys(), ...wanted])
-  for (const slot of slots) {
-    const ballot = bySlot.get(slot)
-    const want = wanted.includes(slot)
-    if (!ballot) {
-      if (want) writes.push({ kind: 'create', slot, choice: slot })
-    } else if (want !== (ballot.choice !== null)) {
-      writes.push({ kind: 'replace', ballot, choice: want ? slot : null })
-    }
-  }
-  return writes
+export function planBallotWrite(ballot: Ballot | null, wanted: readonly number[]): BallotWrite | null {
+  const choices = normalizeChoices(wanted)
+  if (!ballot) return choices.length === 0 ? null : { kind: 'create', choices }
+  return sameChoices(ballot.choices, choices) ? null : { kind: 'replace', ballot, choices }
 }
 
 // ---- Tallies --------------------------------------------------------------------
+
+/**
+ * The choice a grouped-count key names, or null. Keys are the hex of the
+ * index-encoded integer: plain big-endian bytes on PV14 (5.0.0-beta.5,
+ * `00`..`09`), the top bit flipped before it (`80`..`89`, testnet). Both
+ * decode, since a choice is always below 0x80.
+ */
+export function decodeChoiceKey(key: string): number | null {
+  if (!/^[0-9a-f]{2}$/i.test(key)) return null
+  const byte = parseInt(key, 16)
+  const choice = byte >= 0x80 ? byte - 0x80 : byte
+  return isChoiceIndex(choice) ? choice : null
+}
 
 export function sumCounts(counts: readonly number[]): number {
   return counts.reduce((sum, count) => sum + count, 0)

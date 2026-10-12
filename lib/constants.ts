@@ -123,7 +123,8 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // `v5` (4.2.0-beta.7, docs/SOCIAL_V10.md) is v4 in the beta.7 grammar plus
 // QA D-25: an order carries `storeStatus`, consensus-bound to its store's
 // `status` and required to be `active`, so a paused or closed store cannot be
-// ordered from (10422 `storeIsOpen`; 40127 if the copy is stale).
+// ordered from (10422 `storeIsOpen`; 40127 if the copy is stale). v8 drops the
+// copy (below).
 // `v6` is v5 plus digital products: `storeItem.fulfillment` (`shipped` |
 // `digital`), the seller's encrypted `itemDeliverable` kit per digital item
 // (writer-gated to the item's owner) and the seller-written, buyer-bound
@@ -144,7 +145,12 @@ export const YAPPR_STOREFRONT_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_STOREF
 // selector per combination, and aligned price, stock, SKU, weight and image
 // lists, kept aligned by consensus (10422); up to 12 image URLs. v1–v6 keep
 // the JSON string (lib/storefront/legacy-variants.ts).
-export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
+// `v8` (5.0.0-beta.5) is v7 with the store-status check moved into the
+// reference: `storeOrder.storeStatus` and its `storeIsOpen` rule are gone, and
+// `storeId.refersTo.where` carries the condition `status: {const: 'active'}`.
+// An order at a paused or closed store is refused 40127, and the client writes
+// no copy.
+export const STOREFRONT_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
 export type StorefrontTopology = (typeof STOREFRONT_TOPOLOGIES)[number]
 export const STOREFRONT_TOPOLOGY: StorefrontTopology =
   STOREFRONT_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_STOREFRONT_TOPOLOGY) ?? 'v1'
@@ -154,8 +160,14 @@ const storefrontTopologyAtLeast = (topology: StorefrontTopology) =>
   STOREFRONT_TOPOLOGIES.indexOf(STOREFRONT_TOPOLOGY) >= STOREFRONT_TOPOLOGIES.indexOf(topology)
 /** True on v4 and later: `storeItem.tags`/`imageUrls` are written as lists, not JSON strings. */
 export const storefrontArraysAreTyped = () => storefrontTopologyAtLeast('v4')
-/** True on v5 and later: an order must copy its store's `status` into `storeStatus`, and only an active store takes orders. */
-export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5')
+/**
+ * True on v5-v7: an order must copy its store's `status` into `storeStatus`, and
+ * only an active store takes orders. v8 checks the store's status through the
+ * `storeId` reference instead and has no such property.
+ */
+export const storefrontOrdersCarryStoreStatus = () => storefrontTopologyAtLeast('v5') && !storefrontIsV8()
+/** True on v8 and later: only the `storeId` reference's `status: active` condition stops an order at a paused or closed store (40127). */
+export const storefrontIsV8 = () => storefrontTopologyAtLeast('v8')
 /** True on v6 and later: the mainnet re-cut's fees, indexes and write shapes (see above). */
 export const storefrontIsV6 = () => storefrontTopologyAtLeast('v6')
 /** True on v7 and later: `storeItem.variants` is the typed table, not a JSON string. */
@@ -200,7 +212,7 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 // the `blogPostId` agreement, and `false` refused by the `commentsOpen` rule),
 // and only a blog's owner may post to it. v4 has no `postCommentsEnabled`, so
 // a v5 comment would be refused there (and a v4 comment on a v5 contract is
-// refused whenever the post stores the flag).
+// refused whenever the post stores the flag). v8 drops the copy (below).
 //
 // `v6` (5.0.0-beta.1, docs/PLATFORM_V5_BETA1_UPGRADE.md) is v5 in the 5.0
 // grammar plus one write change: a comment no longer carries
@@ -231,7 +243,14 @@ export const YAPPR_BLOG_CONTRACT_ID = process.env.NEXT_PUBLIC_YAPPR_BLOG_CONTRAC
 //     which a banned or suspended author may still write (`retractedWhen`);
 //   - `publishedAt` may not run more than 10 minutes past `$updatedAt`, and
 //     image URLs must be https:// or ipfs://.
-export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7'] as const
+//
+// `v8` (5.0.0-beta.5) is v7 with the comments-off check moved into the
+// reference: `blogComment.postCommentsEnabled` and its `commentsOpen` rule are
+// gone, and `blogPostId.refersTo.where` carries the condition
+// `commentsEnabled: {notEqual: {const: false}}` (a post that leaves the flag out
+// takes comments). A comment on a comments-off post, a tombstone included, is
+// refused 40127, and the client writes no copy.
+export const BLOG_TOPOLOGIES = ['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7', 'v8'] as const
 export type BlogTopology = (typeof BLOG_TOPOLOGIES)[number]
 export const blogTopology = (): BlogTopology =>
   BLOG_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_BLOG_TOPOLOGY) ?? 'v1'
@@ -240,10 +259,16 @@ export const blogIsV2 = () => blogTopology() !== 'v1'
 const blogTopologyAtLeast = (topology: BlogTopology) => BLOG_TOPOLOGIES.indexOf(blogTopology()) >= BLOG_TOPOLOGIES.indexOf(topology)
 /** True on v4 and later: blog and post labels are written as lists, not comma-separated strings. */
 export const blogLabelsAreTyped = () => blogTopologyAtLeast('v4')
-/** True on v5 and later: a comment carries its post's `commentsEnabled` as `postCommentsEnabled`. */
-export const blogCommentsCopyPostFlag = () => blogTopologyAtLeast('v5')
+/**
+ * True on v5-v7: a comment carries its post's `commentsEnabled` as
+ * `postCommentsEnabled`. v8 checks the flag through the `blogPostId` reference
+ * and has no such property.
+ */
+export const blogCommentsCopyPostFlag = () => blogTopologyAtLeast('v5') && !blogIsV8()
 /** True on v6 and later: a comment's post owner is derived through `blogPostId`, not copied into `blogPostOwnerId`. */
 export const blogCommentsDerivePostOwner = () => blogTopologyAtLeast('v6')
+/** True on v8 and later: only the `blogPostId` reference's `commentsEnabled` condition stops a comment on a comments-off post (40127). */
+export const blogIsV8 = () => blogTopologyAtLeast('v8')
 /**
  * True on v7 and later: the action-fee cut. Creates carry an action fee
  * agreement and comments cost no YAPP; posts list on `timeline`, blogs on
@@ -284,26 +309,27 @@ export const BLOG_POST_SIZE_LIMIT = 16384   // Max total compressed content (lea
 export const POLLR_CONTRACT_ID = process.env.NEXT_PUBLIC_POLLR_CONTRACT_ID ?? 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr8E'
 // Pollr contract topology. `v3` is the testnet contract: stored, immutable
 // ballots whose single-choice rule is a `unique` index, and no reference
-// integrity — a vote may name a poll that does not exist. `v4` (the beta.7 cut
-// still registered on the sakura devnet) made both ballot doctypes indexOnly;
-// it is READ-ONLY here, since its write path needed indexOnly confirmation the
-// client no longer carries. `v5` (contracts/pollr-contract.json,
-// docs/NON_SOCIAL_CONTRACTS.md) stores `options[]`, requires a close time
-// within 31 days, and keeps one mutable `vote` doctype whose ballots stay
-// editable until the poll closes and are final after. `v6` (5.0.0-beta.3) is
-// v5 plus the owner's delete of a poll before its first ballot (the poll's
-// `noBallots` deleteConstraints rule; withdrawn ballots count, so after the
-// first vote a poll is permanent). The ballot shapes are incompatible, so the
-// switch must match the deployed contract.
-const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v5', 'v6']
+// integrity — a vote may name a poll that does not exist. `v4` (the beta.7 cut)
+// made both ballot doctypes indexOnly; it is READ-ONLY here, since its write
+// path needed indexOnly confirmation the client no longer carries. `v7`
+// (contracts/pollr-contract.json, the 5.0.0-beta.5 cut) stores `options[]` and
+// a close time within 31 days, and keeps one mutable `vote` per voter per poll
+// whose `choices` array names the picked options (absent = withdrawn). The
+// ballot's reference to its poll only accepts writes that land by the poll's
+// `endsAt`, so ballots are editable until the close and final after; the
+// option-count and single-choice rules read the poll itself. The owner may
+// delete a poll until its first ballot (`noBallots`; withdrawn ballots count).
+// v5/v6 (slot ballots) were retired with the beta.3/beta.4 sakura chain. The
+// ballot shapes are incompatible, so the switch must match the deployed contract.
+const POLLR_TOPOLOGIES: readonly PollrTopology[] = ['v3', 'v4', 'v7']
 export const POLLR_TOPOLOGY: PollrTopology =
   POLLR_TOPOLOGIES.find((topology) => topology === process.env.NEXT_PUBLIC_POLLR_TOPOLOGY) ?? 'v3'
 export const pollrIsV3 = () => POLLR_TOPOLOGY === 'v3'
 export const pollrIsV4 = () => POLLR_TOPOLOGY === 'v4'
-/** v5 and v6 share the poll shape and the editable `vote` ballots. */
-export const pollrHasV5Ballots = () => POLLR_TOPOLOGY === 'v5' || POLLR_TOPOLOGY === 'v6'
-/** v6: a poll's owner may delete it until its first ballot. */
-export const pollrPollsDeletable = () => POLLR_TOPOLOGY === 'v6'
+/** v7: one mutable ballot per voter, editable until the poll closes. */
+export const pollrHasEditableBallots = () => POLLR_TOPOLOGY === 'v7'
+/** v7: a poll's owner may delete it until its first ballot. */
+export const pollrPollsDeletable = () => POLLR_TOPOLOGY === 'v7'
 /** False when the deployment blanks NEXT_PUBLIC_POLLR_CONTRACT_ID: polls are off (no embeds read, no polls created). */
 export const pollrIsConfigured = () => POLLR_CONTRACT_ID !== ''
 // Two superseded pollr contracts were abandoned in place (v1 stored options as
@@ -321,7 +347,7 @@ export const POLLR_APP_CONTRACT_ID = 'GBCR8JqtXNMZa4B16ZAYm3RkNHrPcU3D36jcAoYWvr
  * Ballot doctypes. On v3/v4 a poll's immutable `multiChoice` flag picks which
  * of `vote` and `multiVote` holds its ballots, and each carries the uniqueness
  * rule that mode needs: `vote` is unique per (poll, voter), `multiVote` per
- * (poll, voter, choice). v5 has only `vote`, unique per (poll, voter, slot).
+ * (poll, voter, choice). v7 has only `vote`, unique per (poll, voter).
  */
 export const POLLR_DOCUMENT_TYPES = {
   POLL: 'poll',
@@ -329,9 +355,9 @@ export const POLLR_DOCUMENT_TYPES = {
   MULTI_VOTE: 'multiVote',
 } as const
 
-/** The doctype holding a poll's ballots: by its `multiChoice` flag before v5, always `vote` on v5. */
+/** The doctype holding a poll's ballots: by its `multiChoice` flag on v3/v4, always `vote` on v7. */
 export function pollrVoteDocType(multiChoice: boolean): string {
-  return multiChoice && !pollrHasV5Ballots() ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
+  return multiChoice && !pollrHasEditableBallots() ? POLLR_DOCUMENT_TYPES.MULTI_VOTE : POLLR_DOCUMENT_TYPES.VOTE
 }
 
 // App URL (custom domain on GitHub Pages)

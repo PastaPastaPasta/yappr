@@ -1,14 +1,16 @@
 /**
- * Pollr v5/v6 (v6 only adds the owner's delete before a poll's first ballot, which nothing here does): per bank entry a `poll` (credits only; options[], optionCount, multiChoice always written, and a required
- * endsAt within 31 days of creation), an embedding `post` on the SOCIAL contract (10 YAPP, the
- * `embedContractId`/`embedDocType`/`embedId` triple lib/poll-embed.ts builds), and the ballots. Every ballot is a
- * stored, mutable `vote` copying the poll's optionCount / multiChoice / endsAt (the pollId reference refuses a
- * mismatch, 40127): a single-choice voter writes one ballot in slot 0, a multi-choice voter one per ticked option with
- * slot = choice. A few single-choice voters change their mind or withdraw, which is a REPLACE of the one ballot.
+ * Pollr v7 (5.0.0-beta.5): per bank entry a `poll` (credits only; `{ question, options, multiChoice, endsAt }`,
+ * multiChoice always written, and a required endsAt within 31 days of creation), an embedding `post` on the SOCIAL
+ * contract (10 YAPP, the `embedContractId`/`embedDocType`/`embedId` triple lib/poll-embed.ts builds), and the
+ * ballots. A voter holds ONE stored, mutable `vote` per poll (unique byPollVoter): `{ pollId, choices }` where
+ * `choices` is the typed array of the option indices picked (one on a single-choice poll, several on a multi-choice
+ * one) and an ABSENT `choices` is a withdrawn ballot. A few voters change their mind or withdraw, which is a REPLACE
+ * of the one ballot. The contract judges `choices` against the poll's own options and mode (10422), so nothing is
+ * copied off the poll.
  *
- * A v5 poll cannot be created closed and nothing is written to it after its close (`writtenBeforeClose`), so the
- * "closed" bank entries are written LAST with a short window (`--close-in`, ms) and their ballots straight after: they
- * close a few minutes after the run, and later votes are refused.
+ * A v7 poll cannot be created closed and every ballot create AND replace must land by its endsAt (the pollId
+ * `where`, 40127), so the "closed" bank entries are written LAST with a short window (`--close-in`, ms) and their
+ * ballots straight after: they close a few minutes after the run, and later votes are refused.
  */
 import bs58 from 'bs58';
 import { decodeIntGroupKey, reportSelfTest } from '../../battery-lib.mjs';
@@ -19,7 +21,7 @@ import {
 } from '../feature-seed-lib.mjs';
 
 const DAY_MS = 86_400_000;
-/** v5's endsWithin31Days. */
+/** The poll's endsWithin31Days. */
 const MAX_POLL_MS = 31 * DAY_MS;
 /** How long a bank entry with no `endsAt` stays open, in days from the run's UTC midnight. */
 const DEFAULT_OPEN_DAYS = 30;
@@ -143,40 +145,47 @@ function buildPlan({ seed, nowMs }) {
     const weights = unvoted ? new Array(optionCount).fill(0) : weightsFor(rng, entry.pattern, optionCount);
     const shuffledPersonas = shuffled(rng, PERSONAS);
     const voters = shuffledPersonas.slice(0, unvoted ? 0 : randInt(rng, 6, PERSONAS.length));
-    // A ballot is { voter, slot, initial, choice }: `initial` is what the create writes, `choice` where a later
-    // replace leaves it (undefined = withdrawn). Only the closing polls skip the replaces: their window is short.
+    // A ballot is { voter, initial, choices }: `initial` is the `choices` array the create writes, `choices` where a
+    // later replace leaves it (undefined = withdrawn: no `choices` at all). Each voter has exactly ONE ballot per poll
+    // (byPollVoter is unique). Only the closing polls skip the replaces: their window is short.
     const ballots = [];
     if (entry.multiChoice) {
-      // One ballot per (poll, voter, option), slot = choice: 2-3 DISTINCT options
-      // each, sampled without replacement so no ballot is a 40105 duplicate of its sibling.
-      for (const voter of voters) {
+      // 2-3 DISTINCT options per voter (uniqueItems), sampled without replacement and sorted. Some voters first
+      // pick another set and change their mind by replace.
+      const pick = () => {
         const remaining = [...weights];
+        const picked = [];
         for (let i = 0; i < Math.min(randInt(rng, 2, 3), optionCount); i++) {
           const choice = weightedIndex(rng, remaining);
           if (choice < 0) break;
           remaining[choice] = 0;
-          ballots.push({ voter, slot: choice, initial: choice, choice });
+          picked.push(choice);
         }
+        return picked.sort((a, b) => a - b);
+      };
+      for (const voter of voters) {
+        const choices = pick();
+        const changes = !entry.closesSoon && rng() < 0.2;
+        ballots.push({ voter, initial: changes ? pick() : choices, choices });
       }
     } else {
-      // Exactly one ballot per voter (slot 0; byPollVoter is unique on it), so the
-      // final shape is decided first and voters dealt in. Some voters first pick
+      // The final shape is decided first and voters dealt in. Some voters first pick
       // another option and change their mind by replace.
       const deck = shuffled(rng, apportion(weights, voters.length).flatMap((count, choice) => new Array(count).fill(choice)));
       for (const [index, voter] of voters.entries()) {
         const choice = deck[index];
         const changes = !entry.closesSoon && rng() < 0.25;
-        ballots.push({ voter, slot: 0, initial: changes ? (choice + randInt(rng, 1, optionCount - 1)) % optionCount : choice, choice });
+        ballots.push({ voter, initial: [changes ? (choice + randInt(rng, 1, optionCount - 1)) % optionCount : choice], choices: [choice] });
       }
       // And one persona who is not counted votes and then withdraws, which the tally must not see.
       const bystander = shuffledPersonas[voters.length];
       if (!unvoted && !entry.closesSoon && bystander !== undefined && rng() < 0.5) {
-        ballots.push({ voter: bystander, slot: 0, initial: randInt(rng, 0, optionCount - 1), choice: undefined });
+        ballots.push({ voter: bystander, initial: [randInt(rng, 0, optionCount - 1)], choices: undefined });
       }
     }
-    ballots.sort((a, b) => a.voter - b.voter || a.slot - b.slot);
+    ballots.sort((a, b) => a.voter - b.voter);
     const expected = new Array(optionCount).fill(0);
-    for (const ballot of ballots) if (ballot.choice !== undefined) expected[ballot.choice] += 1;
+    for (const ballot of ballots) for (const choice of ballot.choices ?? []) expected[choice] += 1;
     return {
       ...entry,
       multiChoice: Boolean(entry.multiChoice),
@@ -210,31 +219,46 @@ async function run({ args, handle, battery, socialId, contractId }) {
   const recorder = createRecorder({ writer, state, file: args.state });
   const phase = phaseRunner(args.concurrency);
 
-  /** The voter's ballot in one slot of a poll (byPollVoter is unique on it): its id, or null. */
-  const ballotIdAt = (pollId, ownerId, slot) => readback(handle, async () => {
+  /** The voter's ballot on a poll (byPollVoter is unique on [pollId, $ownerId]): its id, or null. */
+  const ballotIdOf = (pollId, ownerId) => readback(handle, async () => {
     const found = await handle.sdk.documents.query({
       dataContractId: contractId, documentTypeName: 'vote',
-      where: [['pollId', '==', pollId], ['$ownerId', '==', ownerId], ['slot', '==', slot]], limit: 1,
+      where: [['pollId', '==', pollId], ['$ownerId', '==', ownerId]],
+      orderBy: [['pollId', 'asc'], ['$ownerId', 'asc']], limit: 1,
     });
     const doc = [...found.values()][0];
     return doc ? asBase58(doc.id ?? fieldsOf(doc).$id) : null;
   });
 
   /**
-   * What a ballot copies off its poll, read from the STORED poll once per poll: a resumed run's plan may compute a
-   * different endsAt than the one written, and any disagreement is a 40127.
+   * The STORED poll's close, read once per poll: a resumed run's plan may compute a different endsAt than the one
+   * written, and every ballot write has to land by the stored one (40127 after it).
    */
-  const pollRefs = new Map();
-  const refsOf = (pollId) => {
-    if (!pollRefs.has(pollId)) {
-      pollRefs.set(pollId, battery.fetchDocument('poll', pollId).then((doc) => {
+  const pollCloses = new Map();
+  const closeOf = (pollId) => {
+    if (!pollCloses.has(pollId)) {
+      pollCloses.set(pollId, battery.fetchDocument('poll', pollId).then((doc) => {
         const fields = fieldsOf(doc);
         if (!fields) throw new Error(`poll ${pollId} does not read back`);
-        return { pollOptionCount: Number(fields.optionCount), pollMultiChoice: fields.multiChoice === true, pollEndsAt: Number(fields.endsAt) };
+        return Number(fields.endsAt);
       }));
     }
-    return pollRefs.get(pollId);
+    return pollCloses.get(pollId);
   };
+
+  /**
+   * Moves a stored ballot to the planned `choices` (undefined = withdrawn) when it holds something else. Not the
+   * writer's `reconcileDoc`: that compares scalars only and would never see an array drift.
+   */
+  async function settleBallot(actor, id, data, choices) {
+    const current = await battery.fetchDocument('vote', id);
+    if (!current) return false;
+    const fields = fieldsOf(current);
+    const stored = fields.choices === undefined || fields.choices === null ? undefined : fields.choices.map(Number);
+    if (JSON.stringify(stored) === JSON.stringify(choices)) return false;
+    await writer.replaceDoc(actor, 'vote', id, data, fields.$revision ?? current.revision ?? 1);
+    return true;
+  }
 
   /** Each poll then its embedding post, one chain per creator (the post embeds an id that must already exist). */
   const writePolls = (label, polls, closesAt) => phase(label, polls, (poll) => poll.creator, async (poll) => {
@@ -255,7 +279,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
       return;
     }
     const pollId = await recorder.createDoc(actor, 'poll', `poll/${poll.key}`, {
-      question: poll.question, options: poll.options, optionCount: poll.options.length, multiChoice: poll.multiChoice, endsAt,
+      question: poll.question, options: poll.options, multiChoice: poll.multiChoice, endsAt,
     });
     if (!pollId) return;
     state.modes[poll.key] = mode;
@@ -266,49 +290,49 @@ async function run({ args, handle, battery, socialId, contractId }) {
   });
 
   /**
-   * Every ballot of `polls`, one chain per voter: the create writes `initial`; when the plan's final `choice`
-   * differs, a replace moves it there (or drops it: a withdrawal). A resumed run finds the ballot by its
-   * (poll, voter, slot) key and only corrects what has drifted.
+   * Every ballot of `polls`, one chain per voter: the create writes `initial`; when the plan's final `choices`
+   * differ, a replace moves it there (or drops them: a withdrawal). A resumed run finds the ballot by its
+   * (poll, voter) key and only corrects what has drifted.
    */
   const castBallots = (label, polls) => {
     const ballots = polls.flatMap((poll) => (recorder.id(`poll/${poll.key}`) ? poll.ballots.map((b) => ({ poll, ...b })) : []));
-    return phase(label, ballots, (b) => b.voter, async ({ poll, voter, slot, initial, choice }) => {
+    return phase(label, ballots, (b) => b.voter, async ({ poll, voter, initial, choices }) => {
       const actor = actors.get(voter);
       const pollId = recorder.id(`poll/${poll.key}`);
-      const key = `ballot/${poll.key}/${voter}/${slot}`;
-      let refs;
+      const key = `ballot/${poll.key}/${voter}`;
+      let endsAt;
       try {
-        refs = await refsOf(pollId);
+        endsAt = await closeOf(pollId);
       } catch (error) {
         recorder.fail(key, 'vote', describeErr(error));
         return;
       }
-      const ballot = (value) => ({ pollId: bs58.decode(pollId), slot, ...(value === undefined ? {} : { choice: value }), ...refs });
-      const closed = () => Date.now() > refs.pollEndsAt - CLOSE_MARGIN_MS;
-      const existing = () => ballotIdAt(pollId, actor.ownerId, slot);
+      const ballot = (value) => ({ pollId: bs58.decode(pollId), ...(value === undefined ? {} : { choices: value }) });
+      const closed = () => Date.now() > endsAt - CLOSE_MARGIN_MS;
+      const existing = () => ballotIdOf(pollId, actor.ownerId);
       if (!recorder.id(key) && closed()) {
-        recorder.fail(key, 'vote', `the poll closed at ${new Date(refs.pollEndsAt).toISOString()} before this ballot was cast`);
+        recorder.fail(key, 'vote', `the poll closed at ${new Date(endsAt).toISOString()} before this ballot was cast`);
         return;
       }
-      // A 40105 is the voter's slot already holding a ballot: whatever it holds, the replace below settles it.
+      // A 40105 is the voter already holding a ballot on this poll: whatever it holds, the replace below settles it.
       const created = await recorder.createDoc(actor, 'vote', key, ballot(initial), {
         duplicateIsSuccess: true, adopt: existing, accepted: async () => (await existing()) !== null,
       });
       // A create that landed behind a 504 comes back without its id (or reported as
-      // failed); the (poll, voter, slot) key finds it either way.
+      // failed); the (poll, voter) key finds it either way.
       const id = created ?? await existing();
       if (!id) return;
       // Writes stop at the close. Only a planned change is then a failure; any
       // other drift can no longer be corrected, and the tally check reports it.
       if (closed()) {
-        if (initial !== choice) recorder.fail(key, 'vote', `the poll closed at ${new Date(refs.pollEndsAt).toISOString()} before this ballot's change`);
+        if (JSON.stringify(initial) !== JSON.stringify(choices)) recorder.fail(key, 'vote', `the poll closed at ${new Date(endsAt).toISOString()} before this ballot's change`);
         return;
       }
       // Every ballot, not only those with a planned change: a checkpointed or
       // adopted ballot may have been edited since (ballots are editable until
-      // the close), and reconcileDoc writes only when it differs from the plan.
+      // the close), and settleBallot writes only when it differs from the plan.
       try {
-        if (await writer.reconcileDoc(actor, 'vote', id, ballot(choice))) console.log(`  ${choice === undefined ? 'withdrew' : 'changed'} ${key}`);
+        if (await settleBallot(actor, id, ballot(choices), choices)) console.log(`  ${choices === undefined ? 'withdrew' : 'changed'} ${key}`);
       } catch (error) {
         recorder.fail(key, 'vote', describeErr(error));
       }
@@ -345,15 +369,15 @@ async function run({ args, handle, battery, socialId, contractId }) {
     else {
       if (fields.multiChoice !== poll.multiChoice) problems.push(`multiChoice=${fields.multiChoice}, planned ${poll.multiChoice}`);
       if (JSON.stringify(fields.options) !== JSON.stringify(poll.options)) problems.push(`options ${JSON.stringify(fields.options)} differ from the plan`);
-      if (Number(fields.optionCount) !== poll.options.length) problems.push(`optionCount=${fields.optionCount}, planned ${poll.options.length}`);
     }
 
     // Groups that decode to nothing mean the key encoding changed; zero-filling
     // there would send someone hunting a seeding bug. An EMPTY response is a
     // genuine "no votes yet" — count trees do not materialise empty branches.
-    // byPollChoice skips a ballot with no choice, so a withdrawn or unticked one is not counted.
+    // byPollChoice is a typed-array ELEMENT index: a ballot counts once under each of its choices,
+    // and a withdrawn ballot (no `choices`) under none.
     const raw = await battery.groupedCount('vote',
-      [['pollId', '==', pollId], ['choice', 'in', poll.options.map((_, i) => i)]], ['choice'], decodeIntGroupKey);
+      [['pollId', '==', pollId], ['choices', 'containsAny', poll.options.map((_, i) => i)]], ['choices'], decodeIntGroupKey);
     const tally = new Array(poll.options.length).fill(0);
     let matched = 0;
     for (const [choice, value] of raw) {
@@ -376,6 +400,9 @@ async function run({ args, handle, battery, socialId, contractId }) {
         `${bar(tally[index], total)}${top > 0 && leaders === 1 && tally[index] === top ? ' <- leading' : ''}`]),
       `${poll.key} [${poll.multiChoice ? 'multi' : 'single'}, ${endsAt <= Date.now() ? 'closed' : 'closes'} ${Number.isFinite(endsAt) ? new Date(endsAt).toISOString() : '?'}] ${pollId} — ${poll.question} (${total} counted)`);
     if (tally.join(',') !== poll.expected.join(',')) problems.push(`tally ${tally.join(',')} does not match the plan ${poll.expected.join(',')}`);
+    // byPoll counts every ballot, withdrawn ones too (what the owner's noBallots delete rule reads).
+    const ballots = await battery.countBy('vote', [['pollId', '==', pollId]]);
+    if (ballots !== poll.ballots.length) problems.push(`${ballots} ballot(s) on chain (byPoll), planned ${poll.ballots.length}`);
 
     const postId = recorder.id(`post/${poll.key}`);
     const embedded = postId ? fieldsOf(await battery.fetchDocument('post', postId, socialId))?.embedId : null;
@@ -388,7 +415,8 @@ async function run({ args, handle, battery, socialId, contractId }) {
   return recorder.summary(`; checkpoint ${args.state}`) === 0 && bad.length === 0 ? 0 : 1;
 }
 
-const replaced = (ballot) => ballot.initial !== ballot.choice;
+/** A ballot whose create is not its final state: a later replace changes or drops its `choices`. */
+const replaced = (ballot) => JSON.stringify(ballot.initial) !== JSON.stringify(ballot.choices);
 
 function dryRun(plan, args) {
   const ballots = plan.flatMap((poll) => poll.ballots);
@@ -396,7 +424,7 @@ function dryRun(plan, args) {
   console.log(counts({
     polls: plan.length, 'single-choice': single, 'multi-choice': plan.length - single, 'closing soon': plan.filter((p) => p.closesSoon).length,
     'embedding posts': plan.length, ballots: ballots.length,
-    'vote changes': ballots.filter((b) => replaced(b) && b.choice !== undefined).length, withdrawals: ballots.filter((b) => b.choice === undefined).length,
+    'vote changes': ballots.filter((b) => replaced(b) && b.choices !== undefined).length, withdrawals: ballots.filter((b) => b.choices === undefined).length,
   }, ` — ${plan.length * TOKEN_COST.post} YAPP, seed ${args.seed}`));
   printTable([['poll', 14], ['creator', -7], ['type', 6], ['closes', 10], ['pattern', 9], ['voters', -6], ['planned tally', 20], ['question', 40]],
     plan.map((poll) => [poll.key, poll.creator, poll.multiChoice ? 'multi' : 'single',
@@ -414,20 +442,25 @@ function selfTest(args) {
     [`14 polls (${plan.length})`, plan.length === 14],
     ['three multi-choice polls', plan.filter((p) => p.multiChoice).length === 3],
     ['three closing polls, one of them multi-choice', plan.filter((p) => p.closesSoon).length === 3 && plan.some((p) => p.closesSoon && p.multiChoice)],
-    ['every planned tally sums to its counted (not withdrawn) ballots', plan.every((p) => p.ballots.filter((b) => b.choice !== undefined).length === sum(p.expected))],
+    ['every planned tally sums to the elements of its final ballots (a withdrawn ballot counts none)',
+      plan.every((p) => p.ballots.reduce((total, b) => total + (b.choices?.length ?? 0), 0) === sum(p.expected))],
     ['every open poll closes after --now and within 31 days of it (endsWithin31Days)',
       plan.every((p) => p.closesSoon || (p.endsAtMs > args.nowMs && p.endsAtMs - args.nowMs <= MAX_POLL_MS))],
-    ['single-choice ballots sit in slot 0, one per voter',
-      plan.every((p) => p.multiChoice || (p.ballots.every((b) => b.slot === 0) && new Set(p.ballots.map((b) => b.voter)).size === p.ballots.length))],
-    ['multi-choice ballots hold choice == slot and are never replaced (multiChoiceIsSlot)',
-      ballots.every((b) => !b.poll.multiChoice || (b.choice === b.slot && !replaced(b)))],
-    ['no (voter, slot) ballot is planned twice',
-      plan.every((p) => new Set(p.ballots.map((b) => `${b.voter}:${b.slot}`)).size === p.ballots.length)],
-    ["every written choice is one of the poll's options",
-      ballots.every((b) => [b.initial, b.choice].every((c) => c === undefined || (Number.isInteger(c) && c >= 0 && c < b.poll.options.length)))],
+    ['every poll has 2-10 options (the schema)', plan.every((p) => p.options.length >= 2 && p.options.length <= 10)],
+    ['one ballot per voter per poll (byPollVoter is unique)',
+      plan.every((p) => new Set(p.ballots.map((b) => b.voter)).size === p.ballots.length)],
+    ['a single-choice ballot holds at most one choice, written or final (singleChoice)',
+      ballots.every((b) => b.poll.multiChoice || [b.initial, b.choices].every((c) => c === undefined || c.length === 1))],
+    ['a multi-choice ballot holds 2-3 distinct, sorted options',
+      ballots.every((b) => !b.poll.multiChoice || [b.initial, b.choices].every((c) => c !== undefined && c.length >= 2 && c.length <= 3
+        && c.every((v, i) => i === 0 || v > c[i - 1])))],
+    ["every written choice is an integer 0-9 below the poll's option count (choicesAreOptions)",
+      ballots.every((b) => [b.initial, b.choices].every((c) => c === undefined || c.every((v) => Number.isInteger(v) && v >= 0 && v <= 9 && v < b.poll.options.length)))],
     ['the closing polls plan no replace (their window covers one write per ballot)', ballots.every((b) => !b.poll.closesSoon || !replaced(b))],
     ['some single-choice votes change and some are withdrawn (the replace path is seeded)',
-      ballots.some((b) => replaced(b) && b.choice !== undefined) && ballots.some((b) => b.choice === undefined)],
+      ballots.some((b) => !b.poll.multiChoice && replaced(b) && b.choices !== undefined) && ballots.some((b) => b.choices === undefined)],
+    ['some multi-choice voters change their selection by replace',
+      ballots.some((b) => b.poll.multiChoice && replaced(b))],
     ['the "zero" poll has no ballots', plan.find((p) => p.pattern === 'zero').ballots.length === 0],
     ['every "close" poll really is close (apportionment, not independent draws)',
       close.every((p) => { const s = [...p.expected].sort((a, b) => b - a); return s[0] - s[1] <= 2; })],
@@ -445,11 +478,10 @@ export default {
   defaults: { seed: '20260917', concurrency: 6, nowMs: Date.now(), closeInMs: 10 * 60_000 },
   flags: { '--now': ['nowMs', 'number'], '--close-in': ['closeInMs', 'number'] },
   check(args) {
-    // The poll and ballot shapes here are v5's (options[], one stored `vote`
-    // doctype with slot and the copied poll fields), which v6 keeps unchanged:
-    // refuse any other topology. Nothing here deletes a poll.
+    // The poll and ballot shapes here are v7's (no optionCount, one `vote` per voter and poll
+    // holding a `choices` array): refuse any other topology. Nothing here deletes a poll.
     const topology = envValue('NEXT_PUBLIC_POLLR_TOPOLOGY');
-    if (topology && topology !== 'v5' && topology !== 'v6') throw new Error(`this seeder writes v5/v6 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
+    if (topology && topology !== 'v7') throw new Error(`this seeder writes v7 poll and ballot shapes, but NEXT_PUBLIC_POLLR_TOPOLOGY is ${topology}`);
     if (!(args.closeInMs >= 60_000 && args.closeInMs <= MAX_POLL_MS)) throw new Error('--close-in takes milliseconds between 60000 and 31 days');
   },
   plan: (args) => buildPlan({ seed: args.seed, nowMs: args.nowMs }),

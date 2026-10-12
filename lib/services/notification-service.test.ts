@@ -211,6 +211,34 @@ describe('v10 windowed notification sources', () => {
     }
   })
 
+  it('v15: bundles the mention sources as contains reads of the user\'s element, and notifies each person a post names', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v15')
+    vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn() })
+    const { getEvoSdk } = await import('./evo-sdk-service')
+    vi.mocked(getEvoSdk).mockResolvedValue({ documents: { query: vi.fn().mockResolvedValue([]) } } as unknown as Awaited<ReturnType<typeof getEvoSdk>>)
+    const { notificationService } = await import('./notification-service')
+    vi.spyOn(notificationService, 'getBlogPostNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getBlogCommentNotifications').mockResolvedValue([])
+    vi.spyOn(notificationService, 'getLikeNotifications').mockResolvedValue([])
+
+    await notificationService.pollNewNotifications('viewer', 1000)
+    const queries: QueryDocumentsOptions[] = bundle.mock.calls[0][0]
+    expect(queries.map(query => query.documentTypeName)).toEqual(['follow', 'post', 'reply', 'followRequest'])
+    for (const mention of [queries[1], queries[2]]) {
+      expect(mention.where).toEqual([['mentionedUserIds', 'contains', 'viewer'], ['$createdAt', '>', 1000]])
+      expect(mention.orderBy).toEqual([['$createdAt', 'desc']])
+      expect(mention.limit).toBe(100)
+    }
+
+    // One post naming two people: each one's read returns it, so each gets one notification.
+    const post = { $id: 'p1', $ownerId: 'carol', $createdAt: 1_100, mentionedUserIds: ['viewer', 'dave'] }
+    for (const recipient of ['viewer', 'dave']) {
+      expect(await notificationService.getNewMentions(recipient, 1_000, [[post], []])).toEqual([
+        { id: 'mention-p1', type: 'mention', fromUserId: 'carol', postId: 'p1', createdAt: 1_100 },
+      ])
+    }
+  })
+
   it('notifies a mentioning reply as a mention of the reply, carrying its thread for the link', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v10')
     const { notificationService } = await import('./notification-service')

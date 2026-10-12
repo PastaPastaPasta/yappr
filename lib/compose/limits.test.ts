@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { characterCount, contentOverage, hasVisibleContent, isOverContentLimit, utf8ByteCount } from './limits'
 
 describe('characterCount', () => {
@@ -69,5 +69,37 @@ describe('isOverContentLimit (configured topology: v2)', () => {
     expect(isOverContentLimit('a'.repeat(501))).toBe(true)
     expect(isOverContentLimit('a'.repeat(498), 3)).toBe(true)
     expect(isOverContentLimit('😀'.repeat(500))).toBe(false)
+  })
+})
+
+describe('mentionLimitHint', () => {
+  const people = (n: number) => Array.from({ length: n }, (_, i) => `@person${i}`).join(' ')
+  async function hintOn(topology: string, text: string) {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+    return (await import('./limits')).mentionLimitHint(text)
+  }
+  afterEach(() => vi.unstubAllEnvs())
+
+  it('says so once a v15 post mentions more than 8 distinct people', async () => {
+    expect(await hintOn('v15', people(8))).toBeNull()
+    expect(await hintOn('v15', `${people(8)} @person0 @Person1.dash`)).toBeNull()
+    expect(await hintOn('v15', people(9))).toBe('Only the first 8 people you mention will be notified.')
+  })
+
+  it('hints an encrypted first post from its public teaser only, never from the body', async () => {
+    vi.resetModules()
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v15')
+    const { firstPostMentionHints } = await import('./limits')
+    const hint = 'Only the first 8 people you mention will be notified.'
+    expect(firstPostMentionHints({ body: people(9), encrypted: false })).toEqual({ body: hint, teaser: null })
+    // Private, or a reply inheriting encryption: the body is ciphertext and indexes nothing.
+    expect(firstPostMentionHints({ body: people(9), encrypted: true })).toEqual({ body: null, teaser: null })
+    expect(firstPostMentionHints({ body: people(9), encrypted: true, teaser: 'hi @a' })).toEqual({ body: null, teaser: null })
+    expect(firstPostMentionHints({ body: 'secret', encrypted: true, teaser: people(9) })).toEqual({ body: null, teaser: hint })
+  })
+
+  it('says nothing elsewhere, as before', async () => {
+    for (const topology of ['v2', 'v9', 'v10', 'v14']) expect(await hintOn(topology, people(9)), topology).toBeNull()
   })
 })

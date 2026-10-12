@@ -1,13 +1,16 @@
 import { queryDocumentBundle } from './document-query-bundle'
 import { documentCount, groupedDocumentCount, mapLimit, paginateCount } from './pagination-utils'
 import { BaseDocumentService, type QueryOptions } from './document-service'
-import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogCommentsDerivePostOwner, blogIsV2 } from '@/lib/constants'
+import { YAPPR_BLOG_CONTRACT_ID, blogCommentsCopyPostFlag, blogCommentsDerivePostOwner, blogIsV2, blogIsV8 } from '@/lib/constants'
 import type { BlogComment } from '@/lib/types'
 import { identifierToBase58, requireDocumentIdentifierBytes } from './sdk-helpers'
 import { isPropertyAgreementError } from '@/lib/error-utils'
 import { getEvoSdk } from './evo-sdk-service'
 import { blogStatsService } from './blog-stats-service'
 import { isBlogPostTombstone } from '@/lib/blog/content-utils'
+
+/** What a reader sees when the post takes no comments (turned off, or deleted on v8, where the tombstone has them off). */
+export const COMMENTS_OFF_MESSAGE = 'Comments are turned off for this post'
 
 export interface BlogCommentQueryOptions {
   limit?: number
@@ -40,10 +43,11 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
    * checked and the caller's value stands. On v5 the same read also supplies
    * the post's `commentsEnabled`, which the comment must copy. On v6 the owner
    * is derived through `blogPostId` and not written, but the read is still the
-   * one that supplies `commentsEnabled`.
+   * one that supplies `commentsEnabled`. On v8 neither is written (consensus
+   * checks the flag through the `blogPostId` reference), so nothing is read.
    */
   private async resolvePostLinkage(blogPostId: string, fallback: string, fresh = false): Promise<{ ownerId: string; postFields: Record<string, boolean> }> {
-    if (!blogIsV2()) return { ownerId: fallback, postFields: {} }
+    if (!blogIsV2() || blogIsV8()) return { ownerId: fallback, postFields: {} }
     const { blogPostService } = await import('./blog-post-service')
     if (fresh) blogPostService.clearCache(blogPostId)
     // `get()` swallows read failures and returns null, so an absent post is
@@ -61,7 +65,7 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     if (!post) throw new Error('Could not load this post to check that it takes comments. Try again.')
     // A tombstone stores comments off too (v7 `tombstoneIsBlank`); say why.
     if (isBlogPostTombstone(post)) throw new Error('This post was deleted, so it takes no comments')
-    if (post.commentsEnabled === false) throw new Error('Comments are turned off for this post')
+    if (post.commentsEnabled === false) throw new Error(COMMENTS_OFF_MESSAGE)
     // Only a stored boolean is copied: an absent (or null) flag agrees with an absent copy.
     return { ownerId, postFields: typeof post.commentsEnabled === 'boolean' ? { postCommentsEnabled: post.commentsEnabled } : {} }
   }
@@ -93,11 +97,15 @@ class BlogCommentService extends BaseDocumentService<BlogComment> {
     try {
       comment = await write(false)
     } catch (error) {
-      // 40127: the copied owner (up to v5) or commentsEnabled no longer agrees
+      if (!isPropertyAgreementError(error)) throw error
+      // v8: the only agreement a comment carries is the `blogPostId` condition,
+      // so a 40127 means the post takes no comments (turned off, or deleted).
+      if (blogIsV8()) throw new Error(COMMENTS_OFF_MESSAGE)
+      // v5-v7: the copied owner (up to v5) or commentsEnabled no longer agrees
       // with the post, most likely because a cached read went stale (the author just
       // turned comments off, say). A refused create charges nothing: re-read the
       // post past the cache and try once more; a post now closed stops there.
-      if (!blogCommentsCopyPostFlag() || !isPropertyAgreementError(error)) throw error
+      if (!blogCommentsCopyPostFlag()) throw error
       comment = await write(true)
     }
     // The comment changed this post's count tree and the "most discussed" page.

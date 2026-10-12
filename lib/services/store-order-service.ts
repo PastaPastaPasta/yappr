@@ -7,7 +7,8 @@ import { logger } from '@/lib/logger';
  */
 
 import { BaseDocumentService } from './document-service';
-import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6, storefrontOrdersCarryStoreStatus } from '../constants';
+import { YAPPR_STOREFRONT_CONTRACT_ID, STOREFRONT_DOCUMENT_TYPES, storefrontIsV6, storefrontIsV8, storefrontOrdersCarryStoreStatus } from '../constants';
+import { extractErrorMessage, isPropertyAgreementError } from '../error-utils';
 import { storeService } from './store-service';
 import { OWN_STORE_ORDER_MESSAGE, orderPayloadSizeError } from '../storefront/storefront-contract';
 import { identifierToBase58, identifierStringToDocumentBytes, normalizeBytes } from './sdk-helpers';
@@ -21,6 +22,15 @@ import type {
   BuyerContact,
   OrderItem
 } from '../../types';
+
+/** What a buyer sees when the store was paused or closed since they opened checkout. */
+const STORE_NOT_TAKING_ORDERS_MESSAGE = "This store isn't taking orders right now.";
+/**
+ * rs-dpp's 40127 for a failed `where` condition names the condition and the
+ * referenced property: `the document's {"const":"active"} does not agree with
+ * the referenced document's status (where on storeId)`.
+ */
+const STATUS_CONDITION = /referenced document's status\b/;
 
 class StoreOrderService extends BaseDocumentService<StoreOrder> {
   constructor() {
@@ -140,14 +150,26 @@ class StoreOrderService extends BaseDocumentService<StoreOrder> {
       sellerId: identifierStringToDocumentBytes(data.sellerId),
       encryptedPayload: data.encryptedPayload,
       nonce: data.nonce,
-      // v5 (QA D-25): the order copies its store's status, which consensus
+      // v5-v7 (QA D-25): the order copies its store's status, which consensus
       // checks against the store (40127) and requires to be active (10422), so
       // an order to a paused or closed store is refused on chain, not only in
-      // the checkout. Only an active store reaches this write.
+      // the checkout. Only an active store reaches this write. v8 has no copy:
+      // the `storeId` reference itself requires an active store.
       ...(storefrontOrdersCarryStoreStatus() ? { storeStatus: 'active' } : {})
     };
 
-    return this.create(buyerId, documentData);
+    try {
+      return await this.create(buyerId, documentData);
+    } catch (error) {
+      // v8: a 40127 naming the store's `status` (the `{const: "active"}`
+      // condition) means the store stopped taking orders after checkout loaded
+      // it. The reference's other entry, `$ownerId: sellerId`, is a different
+      // fault and keeps its own error.
+      if (storefrontIsV8() && isPropertyAgreementError(error) && STATUS_CONDITION.test(extractErrorMessage(error))) {
+        throw new Error(STORE_NOT_TAKING_ORDERS_MESSAGE);
+      }
+      throw error;
+    }
   }
 
   /**

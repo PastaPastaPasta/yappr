@@ -37,12 +37,12 @@ export const APP_CONNECT_GROUP = {
  */
 export const APP_CONNECT_ENTRIES = [
   { name: 'app', file: 'yappr-app-contract.json', envKey: 'NEXT_PUBLIC_APP_CONNECT_APP_ID', sha256: 'd3acd888168f6ee074d2eb7f73442917b255aa0be3b6417698d637844ce41f41' },
-  { name: 'social', file: 'yappr-social-contract-v15.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: 'd2e729005ce68688a7663c605efa37f979321d0b0a5e5c417fd03b12ce179859' },
+  { name: 'social', file: 'yappr-social-contract-v15.json', envKey: 'NEXT_PUBLIC_YAPPR_CONTRACT_ID', sha256: '9b6c7eeda3194044040a9eb0822956f3dc81eaee99f0abea5f3e215b5762e078' },
   { name: 'blocks', file: 'yappr-blocks-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID', sha256: 'ba0ef67a458cae5c702612a096a6b71fb0098fa370b3861da6da735dd80d3677' },
   { name: 'dmV5', file: 'yappr-dm-contract-v5.json', envKey: 'NEXT_PUBLIC_YAPPR_DM_V5_CONTRACT_ID', sha256: '4fe2b3f46447d8aff30efcafc0e6235bee97724e34e7c96130951a59b0037c21' },
-  { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '0b7d68391b9444b01787f343436b79635dae06b265d71e94f60d41486d0ac30f' },
-  { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: '75a9deec439a7cb8d24f9ceb386a0d2afb24b9e1639134654aff7b92ffd9a846' },
-  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: 'ab7cd33354b63c691e1780acc3713507d3f375684d2d90b7c58910d2009ad94d' },
+  { name: 'blog', file: 'yappr-blog-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_BLOG_CONTRACT_ID', sha256: '79c8a4620cf1756cbc91dcb89d05fc902be74a703b24372f8cf93fe405c085a9' },
+  { name: 'pollr', file: 'pollr-contract.json', envKey: 'NEXT_PUBLIC_POLLR_CONTRACT_ID', sha256: '4b660df8d095f931c9b422714ddb4ed7bcc629ab1ff5a9919d8df4079469b7d4' },
+  { name: 'storefront', file: 'yappr-storefront-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_STOREFRONT_CONTRACT_ID', sha256: '8f0feeebd2e8b1ac1cf415d93f47b606077118b192473938b39f7c324cd68ed8' },
   { name: 'authVault', file: 'yappr-auth-vault-contract.json', envKey: 'NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID', sha256: 'cecf0ccca95ab0aff76ccf3142405dadd84c8f4c662419a727c0fa157f9738dd' },
 ];
 

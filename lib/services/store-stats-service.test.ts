@@ -7,8 +7,10 @@ vi.mock('./evo-sdk-service', () => ({ getEvoSdk: async () => sdk }));
 import { storeStatsService } from './store-stats-service';
 
 const storeId = '11111111111111111111111111111111';
-// hex of 0x80 + rating: the grouped-count key encoding for small integers
+// hex of 0x80 + rating: the grouped-count key encoding for small integers before beta.5
 const ratingKey = (rating: number) => (0x80 + rating).toString(16);
+// hex of the plain rating byte: the beta.5 encoding of an unsigned integer index value
+const plainRatingKey = (rating: number) => rating.toString(16).padStart(2, '0');
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -29,6 +31,13 @@ describe('store rating summary', () => {
       expect.objectContaining({ documentTypeName: 'storeReview', where: [['storeId', '==', storeId]] }),
       'rating'
     );
+  });
+
+  it('decodes the plain big-endian rating keys of a beta.5 network too', async () => {
+    sdk.documents.average.mockResolvedValue(new Map([['', { count: 3n, sum: 11n }]]));
+    sdk.documents.count.mockResolvedValue(new Map([[plainRatingKey(4), 2n], [plainRatingKey(3), 1n], [plainRatingKey(5), 0n]]));
+    const summary = await storeStatsService.getStoreRatingSummary(storeId);
+    expect(summary.ratingDistribution).toEqual({ 1: 0, 2: 0, 3: 1, 4: 2, 5: 0 });
   });
 
   it('keeps the average when only the distribution read fails', async () => {

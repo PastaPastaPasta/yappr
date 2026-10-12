@@ -1230,11 +1230,65 @@ describe('contract topology', () => {
       return [docType, { ...schema, tokenCost: { create } }]
     }))
 
+    /** v15 with its mentions array written back as v14's single `mentionedUserId` (the array is pinned on its own below). */
+    const withSingleMention = (schemas: Schemas): Schemas => {
+      const single = JSON.parse(JSON.stringify(schemas).replaceAll('"mentionedUserIds"', '"mentionedUserId"')) as Schemas
+      for (const docType of ['post', 'reply']) {
+        const { position } = single[docType].properties.mentionedUserId as { position: number }
+        single[docType].properties.mentionedUserId = { type: 'identifier', refersTo: { type: 'identity' }, position } as Schemas[string]['properties'][string]
+        const index = single[docType].indices?.find((entry) => entry.name === 'mentionedUserAndTime')
+        if (index) index.skipIfAbsent = true
+      }
+      return single
+    }
+
+    /** v15 without the report rule its 5.0.0-beta.5 re-cut added (pinned on its own below). */
+    const withoutStaysResolved = (schemas: Schemas): Schemas => {
+      const copy = JSON.parse(JSON.stringify(schemas)) as Schemas
+      delete (copy.report.propertyConstraints as Record<string, unknown>).staysResolved
+      return copy
+    }
+
     it('is v14 written with shorthands, every YAPP cost burning (effect 1)', () => {
       const costs = Object.values(V15).map(costOf).filter((cost): cost is Cost => cost !== undefined)
       expect(costs.map((cost) => cost.effect)).toEqual([1, 1, 1, 1])
       expect(JSON.stringify(V15)).toMatch(/"type":"identifier"/)
-      expect(longForm(withoutEffect(V15))).toEqual(longForm(V14))
+      expect(longForm(withoutEffect(withSingleMention(withoutStaysResolved(V15))))).toEqual(longForm(V14))
+    })
+
+    it('keeps a resolved report resolved: a moderator may change its status, never remove it', () => {
+      expect((V15.report.propertyConstraints as Record<string, unknown>).staysResolved)
+        .toEqual({ ifThen: [{ present: '$old.status' }, { present: 'status' }] })
+    })
+
+    it('names up to 8 distinct mentions per post or reply, indexed per element, cleared by the tombstone', async () => {
+      for (const docType of ['post', 'reply']) {
+        const schema = V15[docType]
+        expect(schema.properties.mentionedUserIds, docType).toEqual({
+          type: 'array', minItems: 1, maxItems: 8, uniqueItems: true, items: { type: 'identifier', refersTo: { type: 'identity' } }, position: docType === 'post' ? 15 : 10,
+        })
+        expect(schema.properties.mentionedUserId, docType).toBeUndefined()
+        // An array index always skips an empty list; skipIfAbsent on the array alone is refused (10231).
+        expect(schema.indices?.find((entry) => entry.name === 'mentionedUserAndTime'), docType)
+          .toEqual({ name: 'mentionedUserAndTime', properties: [{ mentionedUserIds: 'asc' }, { $createdAt: 'asc' }] })
+        expect(schema.immutable, docType).toContainEqual({ property: 'mentionedUserIds', when: { absent: 'deleted' } })
+        expect(JSON.stringify(schema.propertyConstraints?.blankTombstone), docType).toContain('"mentionedUserIds"')
+        expect(JSON.stringify(schema.propertyConstraints?.notEmpty ?? {}), docType).not.toContain('mentionedUserIds')
+      }
+
+      const shapes: Record<string, unknown> = {}
+      for (const topology of ['v2', 'v9', 'v10', 'v14', 'v15']) shapes[topology] = (await topologyModule(topology)).inlineMentions()
+      expect(shapes).toEqual({
+        v2: null,
+        v9: null,
+        v10: { field: 'mentionedUserId', max: 1, isArray: false },
+        v14: { field: 'mentionedUserId', max: 1, isArray: false },
+        v15: { field: 'mentionedUserIds', max: 8, isArray: true },
+      })
+      const v15 = await topologyModule('v15')
+      expect([v15.mentionsAreInline(), v15.mentionDocTypes()]).toEqual([true, ['post', 'reply']])
+      // The tombstone keeps nothing of the mentions (blankTombstone above).
+      expect([...v15.tombstonePreservationFor('post').identifiers, ...v15.tombstonePreservationFor('reply').identifiers]).not.toContain('mentionedUserIds')
     })
 
     it('makes YAPP non-transferable and starts it with no supply; every other token rule is v14\'s', async () => {

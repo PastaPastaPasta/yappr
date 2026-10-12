@@ -849,20 +849,21 @@
         "storeId",
         "sellerId",
         "encryptedPayload",
-        "nonce",
-        "storeStatus"
+        "nonce"
       ],
       "properties": {
         "storeId": {
           "type": "identifier",
           "position": 0,
-          "description": "ID of the store; its owner is copied into sellerId and its status into storeStatus",
+          "description": "ID of the store, which must be active; its owner is copied into sellerId",
           "refersTo": {
             "type": "moderatedDocument",
             "documentType": "store",
             "where": {
               "$ownerId": "sellerId",
-              "status": "storeStatus"
+              "status": {
+                "const": "active"
+              }
             }
           }
         },
@@ -885,33 +886,12 @@
           "position": 3,
           "description": "24-byte nonce for XChaCha20-Poly1305 encryption",
           "size": 24
-        },
-        "storeStatus": {
-          "type": "string",
-          "enum": [
-            "active",
-            "paused",
-            "closed"
-          ],
-          "position": 4,
-          "description": "The store's status when the order was placed, consensus-bound to store.status; must be active",
-          "maxLength": 6
         }
       },
       "description": "A buyer's encrypted order. Permanent; `sellerId` is bound to the store's owner, and the buyer is $ownerId.",
       "additionalProperties": false,
       "documentsMutable": false,
-      "canBeDeleted": false,
-      "propertyConstraints": {
-        "storeIsOpen": {
-          "equal": [
-            "storeStatus",
-            {
-              "const": "active"
-            }
-          ]
-        }
-      }
+      "canBeDeleted": false
     },
     "orderStatusUpdate": {
       "type": "object",

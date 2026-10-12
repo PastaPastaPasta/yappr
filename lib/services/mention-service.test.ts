@@ -73,6 +73,47 @@ describe('v10 mentions (post and reply mentionedUserId)', () => {
   })
 })
 
+describe('v15 mentions (post and reply mentionedUserIds)', () => {
+  it('reads the user\'s element of the mentions array with contains, ordered by $createdAt alone, and pages through it', async () => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v15')
+    // A post naming several people is one entry per element: the user's walk returns it once.
+    // The posts fill a whole first page (100), then one more on the second.
+    const posts = Array.from({ length: 101 }, (_, i) => ({ $id: `post-${i}`, $ownerId: 'alice', $createdAt: i, mentionedUserIds: ['me', 'bob'] }))
+    query.mockImplementation(async ({ documentTypeName, startAfter, limit }: { documentTypeName: string; startAfter?: string; limit: number }) => {
+      if (documentTypeName !== 'post') return []
+      const from = startAfter ? posts.findIndex((post) => post.$id === startAfter) + 1 : 0
+      return posts.slice(from, from + limit)
+    })
+    const { mentionService } = await import('./mention-service')
+    const mentions = await mentionService.getPostsMentioningUser('me')
+    expect(mentions).toHaveLength(101)
+    expect(mentions[0]).toEqual({ $id: 'post-100', $ownerId: 'alice', $createdAt: 100, postId: 'post-100', mentionedUserId: 'me' })
+
+    const postReads = query.mock.calls.map(([q]) => q).filter((q) => q.documentTypeName === 'post')
+    expect(postReads.map((q) => q.startAfter)).toEqual([undefined, 'post-99'])
+    for (const q of query.mock.calls.map(([read]) => read)) {
+      expect(q).toMatchObject({
+        where: [['mentionedUserIds', 'contains', 'me'], ['$createdAt', '>', 0]],
+        orderBy: [['$createdAt', 'asc']],
+      })
+    }
+  })
+
+  it('builds the beta.5 contains read on v15 only; every other cut pins mentionedUserId with ==', async () => {
+    const shapes: Record<string, unknown> = {}
+    for (const topology of ['v2', 'v9', 'v14', 'v15']) {
+      vi.resetModules()
+      vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology)
+      shapes[topology] = (await import('./mention-service')).mentionsOfUserQuery('me', 5, 'desc')
+    }
+    const single = { where: [['mentionedUserId', '==', 'me'], ['$createdAt', '>', 5]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']] }
+    expect(shapes).toEqual({
+      v2: single, v9: single, v14: single,
+      v15: { where: [['mentionedUserIds', 'contains', 'me'], ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']] },
+    })
+  })
+})
+
 describe('v2 mentions (postMention documents)', () => {
   it('lists them newest first, read to the end', async () => {
     vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', 'v2')

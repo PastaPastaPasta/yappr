@@ -518,11 +518,14 @@ const V14_DESCRIPTOR: ContractTopologyDescriptor = {
 }
 
 /**
- * v15 — `contracts/yappr-social-contract-v15.json`, the 5.0.0-beta.4 re-cut
- * (docs/SOCIAL_V15.md). Every v14 surface; only YAPP changes, outside this
- * descriptor: it cannot be transferred ({@link yappIsTransferable} is false),
- * so it is locked ({@link yappIsLocked}), and a post, reply or like paid in
- * YAPP burns it instead of paying the contract owner.
+ * v15 — `contracts/yappr-social-contract-v15.json`, the 5.0.0-beta.4 re-cut,
+ * re-cut again in place for 5.0.0-beta.5 (docs/SOCIAL_V15.md,
+ * docs/PLATFORM_V5_BETA5_UPGRADE.md). Every v14 surface but two, outside this descriptor:
+ * YAPP cannot be transferred ({@link yappIsTransferable} is false), so it is
+ * locked ({@link yappIsLocked}), and a post, reply or like paid in YAPP burns
+ * it instead of paying the contract owner; and a post or reply mentions up to
+ * eight identities in the typed array `mentionedUserIds`
+ * ({@link inlineMentions}).
  */
 const V15_DESCRIPTOR: ContractTopologyDescriptor = {
   ...V14_DESCRIPTOR,
@@ -1061,24 +1064,52 @@ export function windowedRankingsAvailable(): boolean {
 }
 
 /**
- * True when a post or reply names at most one mentioned identity inline, in
- * its own `mentionedUserId` (optional, `refersTo` identity), and the
- * `postMention` doctype does not exist (v10). The compose flow indexes only
- * the first @mention of the public content, like the single inline hashtag;
- * the rest stay plain text. Mentions are read off the permanent
- * `post.mentionedUserAndTime` / `reply.mentionedUserAndTime [mentionedUserId,
- * $createdAt]` (shaped like `tagAndTime`), so the Mentions tab keeps its full
- * history.
+ * True when a post or reply names the identities it mentions itself, and the
+ * `postMention` doctype does not exist (v10): see {@link inlineMentions} for
+ * the property. Mentions are read off the permanent `post.mentionedUserAndTime`
+ * / `reply.mentionedUserAndTime` (shaped like `tagAndTime`), so the Mentions
+ * tab keeps its full history.
  */
 export function mentionsAreInline(): boolean {
   return isV10()
 }
 
+/** How a post or reply names the identities it mentions (v10 on). Post and reply declare the same property. */
+export interface InlineMentions {
+  /**
+   * `mentionedUserId` (v10–v14: one optional identifier) or `mentionedUserIds`
+   * (v15: an optional typed array of distinct identifiers, at least one). Each
+   * identifier `refersTo` an identity; on the array a 40120 names the element
+   * (`mentionedUserIds[2]`).
+   */
+  readonly field: 'mentionedUserId' | 'mentionedUserIds'
+  /**
+   * How many identities one post or reply names: 1, or the array's `maxItems`
+   * (8). The compose flow indexes the first `max` identities the public
+   * content @mentions, in order; the rest stay plain text.
+   */
+  readonly max: number
+  /**
+   * True on the array (v15): `mentionedUserAndTime [mentionedUserIds,
+   * $createdAt]` enters the document once per element, so a read pins one
+   * element with `contains`, never `==`, and orders by `$createdAt` alone.
+   */
+  readonly isArray: boolean
+}
+
+/** The inline mention property of the configured cut ({@link InlineMentions}), or null where mentions are `postMention` documents (v2, v9). */
+export function inlineMentions(): InlineMentions | null {
+  if (!mentionsAreInline()) return null
+  const listed = devnetSchemas().post.properties?.mentionedUserIds
+  return listed
+    ? { field: 'mentionedUserIds', max: listed.maxItems ?? 0, isArray: true }
+    : { field: 'mentionedUserId', max: 1, isArray: false }
+}
+
 /**
- * The doctypes mentions are read from, each pinned on `mentionedUserId` and
- * walked by `$createdAt`: the mentioning `post` and `reply` themselves on
- * v10, a `postMention` document elsewhere. Same field, same index order on
- * all of them.
+ * The doctypes mentions are read from, each walked by `$createdAt` on its
+ * `mentionedUserAndTime`: the mentioning `post` and `reply` themselves on
+ * v10, a `postMention` document elsewhere.
  */
 export function mentionDocTypes(): readonly ('post' | 'reply' | 'postMention')[] {
   return mentionsAreInline() ? ['post', 'reply'] : ['postMention']

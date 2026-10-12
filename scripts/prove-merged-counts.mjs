@@ -524,7 +524,7 @@ async function main() {
     // Every fixture shape, v12-written and fitted to the cut: it must build, serialize, and pass the cut's rules.
     const fixtures = [
       ['post', { content: 'x' }], ['post', { content: 'x', hashtag: 'olproof' }], ['post', { quotedPostId: x, quotedPostOwnerId: y }],
-      ['post', { content: 'hello @b', mentionedUserId: y }], ['reply', { rootPostId: x, parentOwnerId: y, content: 'x' }],
+      ['post', { content: 'hello @b', ...shapes.mentions([y]) }], ['reply', { rootPostId: x, parentOwnerId: y, content: 'x' }],
       ['reply', { rootPostId: x, rootOwnerId: y, replyToReplyId: z, parentOwnerId: z, content: 'nested' }],
       ['like', { postId: x, postAuthor: y }], ['likeReply', { replyId: x, replyAuthor: y }], ['follow', { followingId: x }],
       ...(source.documentSchemas.post.properties.deleted ? [['post', { deleted: true, hashtag: 'rwproof' }], ['reply', { deleted: true, rootPostId: x, parentOwnerId: y }]] : []),
@@ -594,7 +594,7 @@ async function main() {
   const r6 = await mustCreate('r6 (A → T2)', A, 'reply', { content: 'r6', rootPostId: id(T2), parentOwnerId: id(A.ownerId) });
   const qr = await mustCreate('qr (A reposts r1)', A, 'post', { quotedReplyId: id(r1), quotedPostOwnerId: id(B.ownerId) });
   for (const [who, whom] of [[A, B], [C, B], [A, C], [B, A]]) await mustCreate(`${who.label} follows ${whom.label}`, who, 'follow', { followingId: id(whom.ownerId) });
-  const m1 = await mustCreate('m1 (C mentions B)', C, 'post', { content: 'hello @b', mentionedUserId: id(B.ownerId) });
+  const m1 = await mustCreate('m1 (C mentions B)', C, 'post', { content: 'hello @b', ...shapes.mentions([id(B.ownerId)]) });
   // Likes are indexOnly: the create may report a fault after the broadcast, so
   // the like counts below decide (c5 and k check them).
   const likeWrite = (who, docType, data) => {
@@ -794,8 +794,8 @@ async function main() {
     await attempt('n1', () => bothWindows('reply', 'parentOwnerId', A.ownerId), ({ docs, current, previous }) => check('n1 replies to A in the current and the previous 3.5-day window (parentOwnerRecent, `newest` + `byStart`, deduped; the previous read is accepted): r1, r2, r5, r6, each with its exact $createdAt', sameSet(docs.map(idOf), [r1, r2, r5, r6]) && docs.every((d) => createdAtOf(d) > 0), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
   }
   await attempt('n2', () => bothWindows('post', 'quotedPostOwnerId', A.ownerId), ({ docs, current, previous }) => check('n2 quotes/reposts of A in the last two windows (quotedPostOwnerRecent): q1, q2, q3', sameSet(docs.map(idOf), [q1, q2, q3]), `${JSON.stringify(docs.map(idOf))} (current window ${current}, previous window ${previous})`));
-  // Mentions stay permanent: the mentioning post's own [mentionedUserId, $createdAt].
-  const mentionsOfB = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
+  // Mentions stay permanent: the mentioning post's own mentionedUserAndTime (v15: one entry per mention, read with `contains`).
+  const mentionsOfB = { ...shapes.mentionsOf(B.ownerId), limit: 100 };
   await attempt('n3', () => sdk.documents.query(q('post', mentionsOfB)), (r) => check('n3 mentions of B (permanent mentionedUserAndTime, `$createdAt >`, newest first): m1', same(ids(r), [m1]) && docsOf(r).every((d) => createdAtOf(d) > 0), JSON.stringify(ids(r))));
   /**
    * A read the node must refuse: a collapsed transport is retried, and a timeout or a gateway
@@ -1565,7 +1565,7 @@ async function main() {
     refusedWith(`M-tb3 a tombstone keeping the text is refused (10422 ${BLANK_RULE})`, await replaceDoc(D, 'post', Pt, { deleted: true, content: 'kept', hashtag: 'mproof' }), BLANK);
     refusedWith('M-tb4 a tombstone changing the hashtag is refused (40128)', await replaceDoc(D, 'post', Pt, { deleted: true, hashtag: 'other' }), IMMUTABLE);
     // Adding a field the post never had counts as a change too ("differs" covers a value the stored document lacked).
-    refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', mentionedUserId: id(B.ownerId) }), IMMUTABLE);
+    refusedWith('M-tb4b adding a mention the post never had, without the flag, is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', ...shapes.mentions([id(B.ownerId)]) }), IMMUTABLE);
     refusedWith('M-tb4c marking it sensitive afterwards is refused (40128)', await replaceDoc(D, 'post', Pt, { content: 'to tombstone', hashtag: 'mproof', sensitive: true }), IMMUTABLE);
     const untagged = await mustCreate('Pu (D, untagged)', D, 'post', { content: 'untagged' });
     refusedWith('M-tb4d adding a hashtag to an untagged post is refused (40128: frozen by name)', await replaceDoc(D, 'post', untagged, { content: 'untagged', hashtag: 'late' }), IMMUTABLE);
@@ -1621,9 +1621,9 @@ async function main() {
   // ---- rm: reply mentions (written last, so no earlier count moves) ----
   console.log('\n--- rm. a reply names one mentioned identity ---');
   await attempt('rm1', async () => {
-    const rm1 = await mustCreate('rm1 (C replies to T3 mentioning B)', C, 'reply', { content: 'reply @b', rootPostId: id(T3), parentOwnerId: id(A.ownerId), mentionedUserId: id(B.ownerId) });
+    const rm1 = await mustCreate('rm1 (C replies to T3 mentioning B)', C, 'reply', { content: 'reply @b', rootPostId: id(T3), parentOwnerId: id(A.ownerId), ...shapes.mentions([id(B.ownerId)]) });
     await sleep(SETTLE_MS);
-    const mentions = { where: [['mentionedUserId', '==', B.ownerId], ['$createdAt', '>', 0]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']], limit: 100 };
+    const mentions = { ...shapes.mentionsOf(B.ownerId), limit: 100 };
     const [replies, bundle] = await Promise.all([
       sdk.documents.query(q('reply', mentions)),
       sdk.documents.composite({ dataContractId: contractId, documentType: 'follow', where: [['followingId', '==', A.ownerId], ['$createdAt', '>', 0]], orderBy: [['followingId', 'asc'], ['$createdAt', 'desc']], limit: 100,

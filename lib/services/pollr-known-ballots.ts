@@ -2,7 +2,7 @@ import { POLLR_CONTRACT_ID } from '@/lib/constants';
 import { scopedKey } from '@/lib/storage-scope';
 
 /**
- * Polls this browser knows have a ballot. Ballots are never deleted, so on v6
+ * Polls this browser knows have a ballot. Ballots are never deleted, so on v7
  * such a poll can never be deleted again (its `noBallots` rule): the store
  * only grows. It is kept in localStorage, so no reload, card, tab or session
  * resets it, and a later count of 0 from a node that lags behind cannot bring

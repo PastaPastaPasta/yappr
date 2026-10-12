@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import bs58 from 'bs58';
 import type { Poll } from './pollr-poll-service';
 
-// Exercises the v3/v4/v5 branch points of the ballot service at an in-memory
+// Exercises the v3/v4/v7 branch points of the ballot service at an in-memory
 // SDK boundary: what gets written, what query shape reads it back, and how a
 // refused or uncertain write is resolved. No network.
 const mocks = vi.hoisted(() => ({
@@ -44,12 +44,11 @@ const poll = (overrides: Partial<Poll> = {}): Poll => ({
   createdAt: new Date(0),
   question: 'Which?',
   options: ['alpha', 'bravo', 'charlie'],
-  optionCount: 3,
   multiChoice: false,
   ...overrides,
 });
 
-async function loadService(topology: 'v3' | 'v4' | 'v5' | 'v6') {
+async function loadService(topology: 'v3' | 'v4' | 'v7') {
   vi.stubEnv('NEXT_PUBLIC_POLLR_TOPOLOGY', topology);
   const { pollrVoteService } = await import('./pollr-vote-service');
   return pollrVoteService;
@@ -66,14 +65,22 @@ function counted<T extends { readAt?: number }>(tally: T | null): Omit<T, 'readA
   return rest as Omit<T, 'readAt'>;
 }
 
-/** A v5 ballot as `documents.query` returns it. */
-const ballotDoc = (slot: number, choice: number | null, revision = 1) => ({
-  $id: `ballot-${slot}`,
+/** A v7 ballot as `documents.query` returns it; null choices = withdrawn. */
+const ballotDoc = (choices: number[] | null, revision = 1) => ({
+  $id: 'ballot',
   $revision: revision,
-  slot,
-  ...(choice === null ? {} : { choice }),
+  ...(choices === null ? {} : { choices }),
 });
-const ballots = (...docs: ReturnType<typeof ballotDoc>[]) => new Map(docs.map((doc) => [doc.$id, doc]));
+const ballots = (doc: ReturnType<typeof ballotDoc>) => new Map([[doc.$id, doc]]);
+
+/** The data of the first create, with its pollId bytes as base58. */
+function created(): Record<string, unknown> {
+  const data = mocks.createDocument.mock.calls[0][3] as Record<string, unknown>;
+  return { ...data, pollId: bs58.encode(data.pollId as Uint8Array) };
+}
+
+const TIMED_OUT = 'wait for state transition result timed out';
+const CLOSED_40127 = 'Document X: the referenced poll does not satisfy where on pollId (endsAt) (code=40127)';
 
 beforeEach(() => {
   vi.resetModules();
@@ -91,77 +98,99 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('v5 ballots', () => {
-  const open = (overrides: Partial<Poll> = {}) => poll({ endsAt: Date.now() + HOUR, ...overrides });
+const open = (overrides: Partial<Poll> = {}) => poll({ endsAt: Date.now() + HOUR, ...overrides });
 
-  // v6 keeps v5's ballots unchanged.
-  it.each(['v5', 'v6'] as const)('%s creates a first single-choice ballot on slot 0, copying the poll’s bound fields', async (topology) => {
-    const service = await loadService(topology);
-    const target = open();
+describe('v7 ballot writes', () => {
+  it('creates a first ballot holding just the poll and the choice, planned off byPollVoter', async () => {
+    const service = await loadService('v7');
 
-    expect(await service.setVote(target, [1], VOTER)).toEqual({ success: true, choices: [1], closed: false, stale: false });
-    const [, docType, owner, data] = mocks.createDocument.mock.calls[0];
+    expect(await service.setVote(open(), [1], VOTER)).toEqual({ success: true, choices: [1], closed: false, stale: false });
+    const [, docType, owner] = mocks.createDocument.mock.calls[0];
     expect({ docType, owner }).toEqual({ docType: 'vote', owner: VOTER });
-    expect({ ...data, pollId: bs58.encode(data.pollId as Uint8Array) }).toEqual({
-      pollId: id(9),
-      slot: 0,
-      choice: 1,
-      pollOptionCount: 3,
-      pollMultiChoice: false,
-      pollEndsAt: target.endsAt,
+    expect(created()).toEqual({ pollId: id(9), choices: [1] });
+    // Planned against a fresh read of the voter's one ballot.
+    expect(mocks.query.mock.calls[0][0]).toMatchObject({
+      documentTypeName: 'vote',
+      where: [['pollId', '==', id(9)], ['$ownerId', '==', VOTER]],
+      orderBy: [['pollId', 'asc'], ['$ownerId', 'asc']],
+      limit: 1,
     });
-    // Planned against a fresh read of the voter's ballots.
-    expect(whereOf()).toEqual([['pollId', '==', id(9)], ['$ownerId', '==', VOTER]]);
   });
 
-  it('changes a single-choice vote by replacing the ballot at its current revision', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 4)));
+  it('casts a first multi-choice vote as one ballot holding every pick', async () => {
+    const service = await loadService('v7');
+
+    expect((await service.setVote(open({ multiChoice: true }), [2, 0], VOTER)).choices).toEqual([0, 2]);
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
+    expect(created()).toEqual({ pollId: id(9), choices: [0, 2] });
+  });
+
+  it('changes a vote by replacing the ballot at its current revision', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1], 4)));
 
     expect((await service.setVote(open(), [2], VOTER)).choices).toEqual([2]);
     expect(mocks.createDocument).not.toHaveBeenCalled();
     const [, docType, documentId, owner, data, revision] = mocks.updateDocument.mock.calls[0];
-    expect({ docType, documentId, owner, revision, choice: data.choice, slot: data.slot }).toEqual({
-      docType: 'vote', documentId: 'ballot-0', owner: VOTER, revision: 4, choice: 2, slot: 0,
+    expect({ docType, documentId, owner, revision, choices: data.choices }).toEqual({
+      docType: 'vote', documentId: 'ballot', owner: VOTER, revision: 4, choices: [2],
     });
   });
 
-  it('withdraws by replacing the ballot without a choice', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 2)));
+  it('ticks and unticks multi-choice options in one replace', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0, 1], 2)));
 
-    expect((await service.setVote(open(), [], VOTER)).choices).toEqual([]);
-    const data = mocks.updateDocument.mock.calls[0][4];
-    expect(data).not.toHaveProperty('choice');
-    expect(data).toMatchObject({ slot: 0, pollOptionCount: 3, pollMultiChoice: false });
+    expect(await service.setVote(open({ multiChoice: true }), [1, 2], VOTER)).toEqual({ success: true, choices: [1, 2], closed: false, stale: false });
+    expect(mocks.updateDocument).toHaveBeenCalledTimes(1);
+    expect(mocks.updateDocument.mock.calls[0][4].choices).toEqual([1, 2]);
+    expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 
-  it('multi choice: creates newly ticked options and unticks by replace', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null, 3)));
+  it('withdraws by replacing the ballot without choices', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0, 2], 2)));
 
-    const result = await service.setVote(open({ multiChoice: true }), [1, 2], VOTER);
-    expect(result).toEqual({ success: true, choices: [1, 2], closed: false, stale: false });
-    // Untick 0, re-tick 1 (replace), tick 2 (create) — in slot order, one at a time.
-    expect(mocks.updateDocument.mock.calls.map((call) => [call[2], call[4].choice ?? null])).toEqual([
-      ['ballot-0', null],
-      ['ballot-1', 1],
-    ]);
-    expect(mocks.createDocument.mock.calls.map((call) => [call[3].slot, call[3].choice])).toEqual([[2, 2]]);
+    expect((await service.setVote(open({ multiChoice: true }), [], VOTER)).choices).toEqual([]);
+    const data = mocks.updateDocument.mock.calls[0][4];
+    // An empty array is refused by the contract: withdrawing leaves the field out.
+    expect(Object.keys(data)).toEqual(['pollId']);
+  });
+
+  it('re-picks on a withdrawn ballot by replacing it, never creating a second', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(null, 3)));
+
+    expect((await service.setVote(open(), [0], VOTER)).success).toBe(true);
+    expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(mocks.updateDocument.mock.calls[0][4].choices).toEqual([0]);
+    expect(mocks.updateDocument.mock.calls[0][5]).toBe(3);
+  });
+
+  it('reads choices off a typed array view, and refuses to plan over a ballot it cannot read', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(new Map([['ballot', { $id: 'ballot', $revision: 2, choices: Uint8Array.of(2, 0) }]]));
+    expect(await service.getMyBallot(open(), VOTER)).toEqual({ id: 'ballot', revision: 2, choices: [0, 2] });
+
+    mocks.query.mockResolvedValue(new Map([['ballot', { $id: 'ballot', $revision: 2, choices: 'garbled' }]]));
+    const result = await service.setVote(open(), [1], VOTER);
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/Couldn't read your ballot/);
+    expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 
   it('writes nothing when the selection is unchanged', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1])));
 
-    expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
+    expect(await service.setVote(open(), [1], VOTER)).toEqual({ success: true, choices: [1], closed: false, stale: false });
     expect(mocks.createDocument).not.toHaveBeenCalled();
     expect(mocks.updateDocument).not.toHaveBeenCalled();
   });
 
   it('refuses a closed poll, a second single choice and a choice past the options before writing', async () => {
-    const service = await loadService('v5');
-    // Nothing was written, so nothing about the voter's ballots is reported.
+    const service = await loadService('v7');
+    // Nothing was written, so nothing about the voter's ballot is reported.
     expect(await service.setVote(poll({ endsAt: Date.now() - 1 }), [1], VOTER)).toEqual({
       success: false, closed: true, stale: false, error: 'This poll has closed',
     });
@@ -171,77 +200,85 @@ describe('v5 ballots', () => {
     expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 
-  it('reports "closed" when the close rule refuses the write, and re-reads the ballots', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
-    mocks.updateDocument.mockResolvedValue({
-      success: false,
-      error: 'A document of type "vote" breaks its propertyConstraints rule "writtenBeforeClose": it does not hold (code=10422)',
-    });
+  it('reports "closed" when the reference’s close condition refuses a replace (40127), and re-reads', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1])));
+    mocks.updateDocument.mockResolvedValue({ success: false, error: CLOSED_40127 });
 
     expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, closed: true, stale: false, choices: [1] });
     expect(mocks.query).toHaveBeenCalledTimes(2);
   });
 
+  it('reports "closed" for the mismatch in prose when it names endsAt', async () => {
+    const service = await loadService('v7');
+    mocks.createDocument.mockResolvedValue({
+      success: false,
+      error: 'ReferencedDocumentPropertyMismatchError: vote.pollId does not satisfy endsAt >= $updatedAt',
+    });
+
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, closed: true, stale: false, choices: [] });
+  });
+
+  it('no longer maps a property-rule refusal (10422) as closed', async () => {
+    const service = await loadService('v7');
+    const error = 'A document of type "vote" breaks its propertyConstraints rule "singleChoice" (code=10422)';
+    mocks.createDocument.mockResolvedValue({ success: false, error });
+
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, closed: false, stale: false, choices: [], error });
+  });
+
   it.each([
     ['a stale revision (40106)', 'Document X has invalid revision Some(2). The desired revision is 3 (code=40106)'],
-    ['a ballot created elsewhere (40105)', 'Document X has duplicate unique properties ["pollId", "$ownerId", "slot"] with other documents'],
+    ['a ballot created elsewhere (40105)', 'Document X has duplicate unique properties ["pollId", "$ownerId"] with other documents'],
   ])('reports %s as stale so the caller refetches', async (_, error) => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     mocks.createDocument.mockResolvedValue({ success: false, error });
-    mocks.updateDocument.mockResolvedValue({ success: false, error });
     // The first read predates the other tab's write; the re-read sees it.
-    mocks.query.mockResolvedValueOnce(new Map()).mockResolvedValue(ballots(ballotDoc(0, 0, 2)));
+    mocks.query.mockResolvedValueOnce(new Map()).mockResolvedValue(ballots(ballotDoc([0], 2)));
 
     expect(await service.setVote(open(), [1], VOTER)).toMatchObject({ success: false, stale: true, closed: false, choices: [0] });
   });
 
-  it('v6 stops a multi-choice vote at the first 40120 (the poll was deleted) and keeps the error', async () => {
-    const service = await loadService('v6');
-    const error = 'Referenced document poll X not found for vote.pollId (code=40120)';
+  it('reports a deleted poll (40120) as gone, without a re-read', async () => {
+    const service = await loadService('v7');
+    const error = 'Referenced document poll X not found for path pollId (code=40120)';
     mocks.createDocument.mockResolvedValue({ success: false, error });
 
-    const result = await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER);
-    // Every planned ballot names the same missing poll: one paid refusal, not three.
+    expect(await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER)).toEqual({
+      success: false, gone: true, closed: false, stale: false, error,
+    });
     expect(mocks.createDocument).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ success: false, closed: false, stale: false, error });
+    expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it('v6 reports the 40120 even after an earlier, different failure in the same vote', async () => {
-    const service = await loadService('v6');
-    const missing = 'Referenced document poll X not found for vote.pollId (code=40120)';
-    mocks.createDocument
-      .mockResolvedValueOnce({ success: false, error: 'Identity not found' })
-      .mockResolvedValueOnce({ success: false, error: missing });
-
-    const result = await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER);
-    // Stopped at the 40120, and the card sees it to re-read the poll.
-    expect(mocks.createDocument).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({ success: false, error: missing });
-  });
-
-  it('reports a timed-out replace as unconfirmed, without a re-read or further writes', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null)));
-    mocks.updateDocument.mockResolvedValue({ success: false, error: 'wait for state transition result timed out' });
+  it('reports a timed-out replace as unconfirmed, without a re-read', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0])));
+    mocks.updateDocument.mockResolvedValue({ success: false, error: TIMED_OUT });
 
     const result = await service.setVote(open({ multiChoice: true }), [1, 2], VOTER);
     expect(result).toMatchObject({ success: false, unconfirmed: true });
     // Leaves the caller's view alone: a read this soon would predate the write.
     expect(result.choices).toBeUndefined();
     expect(mocks.query).toHaveBeenCalledTimes(1);
-    expect(mocks.updateDocument).toHaveBeenCalledTimes(1);
-    expect(mocks.createDocument).not.toHaveBeenCalled();
+  });
+
+  it('reports an unconfirmed create as unconfirmed, not as counted', async () => {
+    const service = await loadService('v7');
+    mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
+
+    expect(await service.setVote(open({ multiChoice: true }), [0, 1], VOTER)).toMatchObject({ success: false, unconfirmed: true });
+    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
   });
 
   it('settles a timed-out replace that landed before the next edit writes', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     const order: string[] = [];
     mocks.settle.mockImplementation(async () => { order.push('settle'); return 0; });
-    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 1)); });
+    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc([1])); });
     mocks.updateDocument.mockImplementation(async () => {
       order.push('replace');
-      return { success: false, error: 'wait for state transition result timed out' };
+      return { success: false, error: TIMED_OUT };
     });
 
     // The first edit times out: it reports unconfirmed and leaves the reservation.
@@ -252,7 +289,7 @@ describe('v5 ballots', () => {
     mocks.settle.mockImplementation(async () => { order.push('settle'); return 1; });
     // The chain shows the ballot at the revision the replace wrote, so its record clears too.
     mocks.getDocument.mockResolvedValue({ $revision: 2 });
-    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 2, 2)); });
+    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc([2], 2)); });
     mocks.updateDocument.mockImplementation(async () => { order.push('replace'); return { success: true }; });
     expect(await service.setVote(open(), [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
 
@@ -262,137 +299,80 @@ describe('v5 ballots', () => {
   });
 
   it('still votes when settling pending replaces fails', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     mocks.settle.mockRejectedValue(new Error('down'));
 
     expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
     expect(mocks.createDocument).toHaveBeenCalledTimes(1);
   });
 
-  it('holds back a reduced selection while the unconfirmed half of a first vote could still land', async () => {
-    const service = await loadService('v5');
+  it('holds back even a no-write selection while an unconfirmed create could still land', async () => {
+    const service = await loadService('v7');
     const target = open({ multiChoice: true });
-    // First vote [0, 1]: slot 0 confirms, slot 1's create goes unconfirmed.
-    mocks.createDocument
-      .mockResolvedValueOnce({ success: true })
-      .mockResolvedValueOnce({ success: true, confirmed: false });
+    mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
     expect(await service.setVote(target, [0, 1], VOTER)).toMatchObject({ unconfirmed: true });
 
     // That create is still reserved at its nonce (6) and Platform has not consumed it.
     mocks.loadReservation.mockReturnValue({
       mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
+      pending: [{ id: 'create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
     });
     mocks.contractNonce.mockResolvedValue(BigInt(5));
-    // The chain shows only slot 0, so [0] plans no writes, yet slot 1 can still land.
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
+    // The chain shows no ballot, so "none" plans no write, yet the create can still land.
     mocks.createDocument.mockClear();
+    mocks.query.mockClear();
 
-    expect(await service.setVote(target, [0], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(await service.setVote(target, [], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(mocks.query).not.toHaveBeenCalled();
     expect(mocks.createDocument).not.toHaveBeenCalled();
-    expect(mocks.updateDocument).not.toHaveBeenCalled();
 
     // Once its nonce is consumed (it landed or never will), the same selection goes through.
     mocks.contractNonce.mockResolvedValue(BigInt(6));
-    expect(await service.setVote(target, [0], VOTER)).toEqual({ success: true, choices: [0], closed: false, stale: false });
+    expect(await service.setVote(target, [], VOTER)).toEqual({ success: true, choices: [], closed: false, stale: false });
   });
 
-  it('still holds back a zero-write selection behind an aged, unconsumed create', async () => {
-    const service = await loadService('v5');
+  it('still holds back behind an aged, unconsumed create', async () => {
+    const service = await loadService('v7');
     mocks.loadReservation.mockReturnValue({
       mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
+      pending: [{ id: 'create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
     });
     mocks.contractNonce.mockResolvedValue(BigInt(5));
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
     // An hour later its nonce is still unconsumed, so it can still land.
     vi.setSystemTime(Date.now() + HOUR);
 
-    expect(await service.setVote(open({ multiChoice: true }), [0], VOTER)).toMatchObject({ success: false, heldBack: true });
+    expect(await service.setVote(open(), [0], VOTER)).toMatchObject({ success: false, heldBack: true });
     expect(mocks.createDocument).not.toHaveBeenCalled();
     expect(mocks.updateDocument).not.toHaveBeenCalled();
   });
 
-  it('getBallotState reads the ballots only after the settle and the pending check', async () => {
-    const service = await loadService('v5');
-    const order: string[] = [];
-    mocks.settle.mockImplementation(async () => { order.push('settle'); return 0; });
-    mocks.loadReservation.mockImplementation(() => {
-      order.push('pending check');
-      return { mark: BigInt(6), pending: [{ id: 'c', nonce: BigInt(6), expiresAt: null }] };
-    });
-    // The create lands during the check: the nonce it reads is consumed.
-    mocks.contractNonce.mockResolvedValue(BigInt(6));
-    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc(0, 0), ballotDoc(1, 1)); });
-
-    // The read comes after, so it shows the landed slot 1 rather than a snapshot from before it.
-    expect(await service.getBallotState(open({ multiChoice: true }), VOTER)).toEqual({ choices: [0, 1], pending: false });
-    expect(order).toEqual(['settle', 'pending check', 'read']);
-  });
-
-  it('refuses a reduced selection that plans no writes when the reservation store is unreadable', async () => {
-    const service = await loadService('v5');
+  it('refuses to plan when the reservation store is unreadable', async () => {
+    const service = await loadService('v7');
     const { NONCE_STORE_ERROR } = await import('@/lib/error-utils');
-    // Slot 1's create may still be out there, but nothing can say so.
     mocks.loadReservation.mockImplementation(() => { throw new Error(NONCE_STORE_ERROR); });
-    // The chain shows only slot 0, so [0] would plan no writes and never reach a write path.
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0])));
 
-    expect(await service.setVote(open({ multiChoice: true }), [0], VOTER)).toEqual({
+    expect(await service.setVote(open(), [0], VOTER)).toEqual({
       success: false, closed: false, stale: false, error: NONCE_STORE_ERROR,
     });
     expect(mocks.query).not.toHaveBeenCalled();
     expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 
-  it('getBallotState reads the ballots and whether a write to them could still land', async () => {
-    const service = await loadService('v5');
-    const target = open({ multiChoice: true });
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0), ballotDoc(1, null)));
-    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: false });
-    expect(mocks.settle).toHaveBeenCalledWith(VOTER, expect.any(String));
-
-    // A create to this poll's ballots is still out, unconsumed.
-    mocks.loadReservation.mockReturnValue({
-      mark: BigInt(6),
-      pending: [{ id: 'slot-1-create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
-    });
-    mocks.contractNonce.mockResolvedValue(BigInt(5));
-    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });
-    // A pending write on another poll does not hold this one.
-    expect(await service.getBallotState(open({ id: id(8), multiChoice: true }), VOTER)).toEqual({ choices: [0], pending: false });
-
-    // An unreadable store proves nothing: pending, not settled.
-    mocks.loadReservation.mockImplementation(() => { throw new Error('blocked'); });
-    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });
-  });
-
-  it('getBallotState throws when the ballots cannot be read', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockRejectedValue(new Error('down'));
-    await expect(service.getBallotState(open(), VOTER)).rejects.toThrow('down');
-  });
-
-  it('getBallotState is never pending before v5', async () => {
-    const service = await loadService('v3');
-    mocks.query.mockResolvedValue(new Map([['0', { choice: 1 }]]));
-    expect(await service.getBallotState(poll(), VOTER)).toEqual({ choices: [1], pending: false });
-    expect(mocks.settle).not.toHaveBeenCalled();
-  });
-
-  it('reserves each ballot write with its poll’s scope', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 3)));
-    await service.setVote(open({ multiChoice: true }), [1], VOTER);
-
+  it('reserves the write with its poll’s scope', async () => {
+    const service = await loadService('v7');
     const scope = `pollr-vote:${id(9)}`;
-    expect(mocks.updateDocument.mock.calls[0][6]).toBe(scope);
+    await service.setVote(open(), [1], VOTER);
     expect(mocks.createDocument.mock.calls[0][4]).toEqual({ reservationScope: scope });
+
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1], 3)));
+    await service.setVote(open(), [2], VOTER);
+    expect(mocks.updateDocument.mock.calls[0][6]).toBe(scope);
   });
 
   it('reports a replace refused without a verdict as pending, not as settled', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 2)));
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1], 2)));
     // A transport failure: withSdkSignedWrite keeps its reservation pending.
     mocks.updateDocument.mockImplementation(async () => {
       mocks.loadReservation.mockReturnValue({ mark: BigInt(0), pending: [{ id: 'r', nonce: null, expiresAt: Date.now() + HOUR, scope: `pollr-vote:${id(9)}` }] });
@@ -402,35 +382,34 @@ describe('v5 ballots', () => {
     expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, unconfirmed: true, error: 'fetch failed' });
   });
 
-  it('holds back a vote whose first write waits on another poll’s pending write', async () => {
-    const service = await loadService('v5');
+  it('treats a replace refused without a verdict as possibly in flight, by its record', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1])));
+    mocks.getDocument.mockResolvedValue({ $revision: 1 });
+    mocks.updateDocument.mockResolvedValue({ success: false, error: 'insufficient balance' });
+
+    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, unconfirmed: true });
+  });
+
+  it('holds back a vote whose write waits on another poll’s pending write', async () => {
+    const service = await loadService('v7');
     const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 2)));
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1], 2)));
     mocks.updateDocument.mockResolvedValue({ success: false, error: PENDING_WRITE_ERROR });
 
     expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, heldBack: true });
     expect(mocks.query).toHaveBeenCalledTimes(1);
   });
 
-  it('getBallotState is never pending once the poll is past its close', async () => {
-    const service = await loadService('v5');
-    mocks.loadReservation.mockReturnValue({ mark: BigInt(6), pending: [{ id: 'c', nonce: BigInt(6), expiresAt: null }] });
-    mocks.contractNonce.mockResolvedValue(BigInt(5));
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0)));
-
-    expect(await service.getBallotState(poll({ endsAt: Date.now() - HOUR }), VOTER)).toEqual({ choices: [0], pending: false });
-    expect(mocks.settle).not.toHaveBeenCalled();
-  });
-
-  it('holds a zero-write selection behind an aged, unconfirmed replace until its revision is proven', async () => {
-    const service = await loadService('v5');
+  it('holds a no-write selection behind an aged, unconfirmed replace until its revision is proven', async () => {
+    const service = await loadService('v7');
     const target = open();
     // 0 -> 1 goes out as a replace (writing revision 3) and times out.
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 2)));
-    mocks.updateDocument.mockResolvedValue({ success: false, error: 'wait for state transition result timed out' });
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0], 2)));
+    mocks.updateDocument.mockResolvedValue({ success: false, error: TIMED_OUT });
     expect(await service.setVote(target, [1], VOTER)).toMatchObject({ unconfirmed: true });
 
-    // 30 minutes on, the nonce store no longer holds it, and the ballot still reads choice 0 at revision 2.
+    // 30 minutes on, the nonce store no longer holds it, and the ballot still reads 0 at revision 2.
     vi.setSystemTime(Date.now() + 30 * 60_000);
     mocks.getDocument.mockResolvedValue({ $revision: 2 });
     mocks.updateDocument.mockClear();
@@ -438,15 +417,15 @@ describe('v5 ballots', () => {
     expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0], pending: true });
     expect(mocks.updateDocument).not.toHaveBeenCalled();
 
-    // The ballot reaches revision 3 (the replace landed): settled, and it reads choice 1.
+    // The ballot reaches revision 3 (the replace landed): settled, and it reads 1.
     mocks.getDocument.mockResolvedValue({ $revision: 3 });
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1, 3)));
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1], 3)));
     expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [1], pending: false });
   });
 
   it('clears the replace record on a confirmed replace and on a consensus refusal', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 2)));
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0], 2)));
     expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
     expect(await service.getBallotState(open(), VOTER)).toMatchObject({ pending: false });
 
@@ -456,36 +435,9 @@ describe('v5 ballots', () => {
     expect(mocks.getDocument).not.toHaveBeenCalled();
   });
 
-  it('reports an unconfirmed create as unconfirmed, not as counted', async () => {
-    const service = await loadService('v5');
-    mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
-
-    expect(await service.setVote(open({ multiChoice: true }), [0, 1], VOTER)).toMatchObject({ success: false, unconfirmed: true });
-    expect(mocks.createDocument).toHaveBeenCalledTimes(1);
-  });
-
-  it('stops at a later write held back for a pending transition, then re-reads', async () => {
-    const service = await loadService('v5');
-    const { PENDING_WRITE_ERROR } = await import('@/lib/error-utils');
-    mocks.createDocument
-      .mockResolvedValueOnce({ success: true })
-      .mockResolvedValue({ success: false, error: PENDING_WRITE_ERROR });
-    mocks.query.mockResolvedValueOnce(new Map()).mockResolvedValue(ballots(ballotDoc(0, 0)));
-
-    expect(await service.setVote(open({ multiChoice: true }), [0, 1, 2], VOTER)).toMatchObject({ success: false, choices: [0] });
-    expect(mocks.createDocument).toHaveBeenCalledTimes(2);
-    expect(mocks.query).toHaveBeenCalledTimes(2);
-  });
-
-  it('copies the poll’s stored optionCount, not the options it could read', async () => {
-    const service = await loadService('v5');
-    await service.setVote(open({ optionCount: 4 }), [1], VOTER);
-    expect(mocks.createDocument.mock.calls[0][3]).toMatchObject({ pollOptionCount: 4 });
-  });
-
   it('reports the ballot state unknown when the re-read fails too', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValueOnce(ballots(ballotDoc(0, 1))).mockRejectedValue(new Error('down'));
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValueOnce(ballots(ballotDoc([1]))).mockRejectedValue(new Error('down'));
     // A consensus refusal: a verdict, so nothing is left in flight.
     const refusal = 'Identity has insufficient balance (code=40001)';
     mocks.updateDocument.mockResolvedValue({ success: false, error: refusal });
@@ -493,94 +445,131 @@ describe('v5 ballots', () => {
     expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, choices: null, error: refusal });
   });
 
-  it('treats a replace refused without a verdict as possibly in flight', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
-    mocks.getDocument.mockResolvedValue({ $revision: 1 });
-    mocks.updateDocument.mockResolvedValue({ success: false, error: 'insufficient balance' });
-
-    expect(await service.setVote(open(), [2], VOTER)).toMatchObject({ success: false, unconfirmed: true });
-  });
-
-  it('keeps going past an ordinary failure on an independent multi-choice ballot', async () => {
-    const service = await loadService('v5');
-    mocks.createDocument
-      .mockResolvedValueOnce({ success: false, error: 'insufficient balance' })
-      .mockResolvedValue({ success: true });
-    mocks.query.mockResolvedValueOnce(new Map()).mockResolvedValue(ballots(ballotDoc(2, 2)));
-
-    expect(await service.setVote(open({ multiChoice: true }), [0, 2], VOTER)).toMatchObject({ success: false, choices: [2] });
-    expect(mocks.createDocument).toHaveBeenCalledTimes(2);
-  });
-
-  it('castVote is not the v5 path', async () => {
-    const service = await loadService('v5');
+  it('castVote is not the v7 path', async () => {
+    const service = await loadService('v7');
     expect((await service.castVote(open(), [1], VOTER)).success).toBe(false);
     expect(mocks.createDocument).not.toHaveBeenCalled();
   });
 });
 
-describe('ballot evidence for the v6 delete', () => {
+describe('v7 ballot state', () => {
+  it('reads the ballot only after the settle and the pending check', async () => {
+    const service = await loadService('v7');
+    const order: string[] = [];
+    mocks.settle.mockImplementation(async () => { order.push('settle'); return 0; });
+    mocks.loadReservation.mockImplementation(() => {
+      order.push('pending check');
+      return { mark: BigInt(6), pending: [{ id: 'c', nonce: BigInt(6), expiresAt: null }] };
+    });
+    // The create lands during the check: the nonce it reads is consumed.
+    mocks.contractNonce.mockResolvedValue(BigInt(6));
+    mocks.query.mockImplementation(async () => { order.push('read'); return ballots(ballotDoc([0, 1])); });
+
+    // The read comes after, so it shows the landed ballot rather than a snapshot from before it.
+    expect(await service.getBallotState(open({ multiChoice: true }), VOTER)).toEqual({ choices: [0, 1], pending: false });
+    expect(order).toEqual(['settle', 'pending check', 'read']);
+  });
+
+  it('reports whether a write to the ballot could still land', async () => {
+    const service = await loadService('v7');
+    const target = open({ multiChoice: true });
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0, 2])));
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0, 2], pending: false });
+    expect(mocks.settle).toHaveBeenCalledWith(VOTER, expect.any(String));
+
+    // A create to this poll's ballot is still out, unconsumed.
+    mocks.loadReservation.mockReturnValue({
+      mark: BigInt(6),
+      pending: [{ id: 'create', nonce: BigInt(6), expiresAt: null, scope: `pollr-vote:${id(9)}` }],
+    });
+    mocks.contractNonce.mockResolvedValue(BigInt(5));
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0, 2], pending: true });
+    // A pending write on another poll does not hold this one.
+    expect(await service.getBallotState(open({ id: id(8), multiChoice: true }), VOTER)).toEqual({ choices: [0, 2], pending: false });
+
+    // An unreadable store proves nothing: pending, not settled.
+    mocks.loadReservation.mockImplementation(() => { throw new Error('blocked'); });
+    expect(await service.getBallotState(target, VOTER)).toEqual({ choices: [0, 2], pending: true });
+  });
+
+  it('throws when the ballot cannot be read', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockRejectedValue(new Error('down'));
+    await expect(service.getBallotState(open(), VOTER)).rejects.toThrow('down');
+  });
+
+  it('is never pending on v3', async () => {
+    const service = await loadService('v3');
+    mocks.query.mockResolvedValue(new Map([['0', { choice: 1 }]]));
+    expect(await service.getBallotState(poll(), VOTER)).toEqual({ choices: [1], pending: false });
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+
+  it('is never pending once the poll is past its close', async () => {
+    const service = await loadService('v7');
+    mocks.loadReservation.mockReturnValue({ mark: BigInt(6), pending: [{ id: 'c', nonce: BigInt(6), expiresAt: null }] });
+    mocks.contractNonce.mockResolvedValue(BigInt(5));
+    mocks.query.mockResolvedValue(ballots(ballotDoc([0])));
+
+    expect(await service.getBallotState(poll({ endsAt: Date.now() - HOUR }), VOTER)).toEqual({ choices: [0], pending: false });
+    expect(mocks.settle).not.toHaveBeenCalled();
+  });
+});
+
+describe('ballot evidence for the poll delete', () => {
   const known = async () => (await import('./pollr-known-ballots')).pollHasKnownBallots(id(9));
-  const openPoll = (overrides: Partial<Poll> = {}) => poll({ endsAt: Date.now() + HOUR, ...overrides });
 
-  it('keeps a confirmed first ballot as evidence when a later write of the same vote times out', async () => {
-    const service = await loadService('v6');
-    mocks.createDocument
-      .mockResolvedValueOnce({ success: true, confirmed: true })
-      .mockResolvedValueOnce({ success: false, error: 'Request timed out after 8000ms' });
-
-    const result = await service.setVote(openPoll({ multiChoice: true }), [0, 1], VOTER);
-    expect(result.unconfirmed).toBe(true);
-    // The first create landed: the poll is permanent, whatever a lagging count says later.
+  it('takes a confirmed ballot write as evidence', async () => {
+    const service = await loadService('v7');
+    expect((await service.setVote(open(), [1], VOTER)).success).toBe(true);
     expect(await known()).toBe(true);
   });
 
   it('takes a create refused as a duplicate (40105) as evidence, even when the re-read lags', async () => {
-    const service = await loadService('v6');
-    mocks.createDocument.mockResolvedValue({ success: false, error: 'Document X has duplicate unique properties ["pollId", "$ownerId", "slot"] with other documents' });
+    const service = await loadService('v7');
+    mocks.createDocument.mockResolvedValue({ success: false, error: 'Document X has duplicate unique properties ["pollId", "$ownerId"] with other documents' });
     // The lagging node shows no ballot before or after.
     mocks.query.mockResolvedValue(new Map());
-    expect((await service.setVote(openPoll(), [1], VOTER)).stale).toBe(true);
+    expect((await service.setVote(open(), [1], VOTER)).stale).toBe(true);
     expect(await known()).toBe(true);
   });
 
   it('never takes an unconfirmed create or an optimistic tally as evidence', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.createDocument.mockResolvedValue({ success: true, confirmed: false });
-    expect((await service.setVote(openPoll(), [1], VOTER)).unconfirmed).toBe(true);
+    expect((await service.setVote(open(), [1], VOTER)).unconfirmed).toBe(true);
     // Folded in locally, then served from the cache: no chain read showed it.
     service.applyOptimisticVotes(id(9), { counts: [0, 0, 0], total: 0, readAt: 1 }, [1]);
-    expect((await service.getTally(openPoll())).total).toBe(1);
+    expect((await service.getTally(open())).total).toBe(1);
     expect(mocks.count).not.toHaveBeenCalled();
     expect(await known()).toBe(false);
   });
 
   it('a ballot the vote service saw makes deletePoll answer voted with no count or write', async () => {
-    const service = await loadService('v6');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
-    await service.getBallotState(openPoll(), VOTER);
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1])));
+    await service.getBallotState(open(), VOTER);
     const { pollrPollService } = await import('./pollr-poll-service');
     mocks.count.mockClear();
-    expect(await pollrPollService.deletePoll(openPoll({ ownerId: VOTER }), VOTER)).toEqual({ status: 'voted' });
+    expect(await pollrPollService.deletePoll(open({ ownerId: VOTER }), VOTER)).toEqual({ status: 'voted' });
     expect(mocks.count).not.toHaveBeenCalled();
     expect(mocks.deleteDocument).not.toHaveBeenCalled();
   });
 
   it('keeps the evidence through a reload or in another tab: nothing resets it', async () => {
-    const service = await loadService('v6');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 1)));
-    await service.getBallotState(openPoll(), VOTER);
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([1])));
+    await service.getBallotState(open(), VOTER);
     expect(await known()).toBe(true);
 
     // A reload (or another tab): fresh modules, the same browser storage.
     vi.resetModules();
-    const reloaded = await loadService('v6');
+    const reloaded = await loadService('v7');
     expect(await known()).toBe(true);
     // And a lagging zero count cannot offer the delete there either.
     mocks.query.mockResolvedValue(new Map());
     mocks.count.mockResolvedValue(new Map());
-    expect(await reloaded.deleteEligible(openPoll({ ownerId: VOTER }), VOTER)).toBe(false);
+    expect(await reloaded.deleteEligible(open({ ownerId: VOTER }), VOTER)).toBe(false);
     expect(mocks.count).not.toHaveBeenCalled();
   });
 
@@ -600,16 +589,16 @@ describe('ballot evidence for the v6 delete', () => {
   });
 
   it('takes an own withdrawn ballot as evidence, though it selects nothing', async () => {
-    const service = await loadService('v6');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, null, 3)));
-    expect(await service.getBallotState(openPoll(), VOTER)).toEqual({ choices: [], pending: false });
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(null, 3)));
+    expect(await service.getBallotState(open(), VOTER)).toEqual({ choices: [], pending: false });
     expect(await known()).toBe(true);
   });
 
   it('takes a tallied selection as evidence', async () => {
-    const service = await loadService('v6');
-    mocks.count.mockResolvedValue(new Map([['81', 1n]]));
-    await service.getTally(openPoll());
+    const service = await loadService('v7');
+    mocks.count.mockResolvedValue(new Map([['01', 1n]]));
+    await service.getTally(open());
     expect(await known()).toBe(true);
   });
 
@@ -622,20 +611,20 @@ describe('ballot evidence for the v6 delete', () => {
   });
 
   it('a getBallotState whose ballot read fails rejects, and so holds the delete back', async () => {
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     mocks.query.mockRejectedValue(new Error('down'));
     const { ownBallotMayBePending } = await import('./pollr-vote-service');
-    const [read] = await Promise.allSettled([service.getBallotState(poll({ endsAt: Date.now() + HOUR }), VOTER)]);
+    const [read] = await Promise.allSettled([service.getBallotState(open(), VOTER)]);
     expect(read.status).toBe('rejected');
     expect(ownBallotMayBePending(read)).toBe(true);
   });
 
   it('a first create that times out before it is sent leaves the poll deletable on the next load', async () => {
-    const service = await loadService('v6');
-    const open = poll({ endsAt: Date.now() + HOUR });
+    const service = await loadService('v7');
+    const target = open();
     // The identity or nonce read timed out: nothing was signed, reserved or broadcast.
     mocks.createDocument.mockResolvedValue({ success: false, error: 'Request timed out after 8000ms' });
-    const result = await service.setVote(open, [1], VOTER);
+    const result = await service.setVote(target, [1], VOTER);
     const { ownBallotMayBePending } = await import('./pollr-vote-service');
     expect(result.unconfirmed).toBe(true);
     expect(await known()).toBe(false);
@@ -643,20 +632,20 @@ describe('ballot evidence for the v6 delete', () => {
     // The next load: no reservation, no ballot, so eligibility is counted again.
     mocks.loadReservation.mockReturnValue(null);
     mocks.query.mockResolvedValue(new Map());
-    const [read] = await Promise.allSettled([service.getBallotState(open, VOTER)]);
+    const [read] = await Promise.allSettled([service.getBallotState(target, VOTER)]);
     expect(read).toMatchObject({ status: 'fulfilled', value: { choices: [], pending: false } });
     expect(ownBallotMayBePending(read)).toBe(false);
   });
 
   it('offers the delete again after a first vote refused at its preflight read (nothing sent)', async () => {
-    const service = await loadService('v6');
-    const mine = openPoll({ ownerId: VOTER });
+    const service = await loadService('v7');
+    const mine = open({ ownerId: VOTER });
     mocks.query.mockRejectedValueOnce(new Error('down'));
     expect((await service.setVote(mine, [1], VOTER)).success).toBe(false);
     expect(mocks.createDocument).not.toHaveBeenCalled();
+    expect(await known()).toBe(false);
 
-    // The card's check once the submission is over (Cancel changes nothing):
-    // no reservation, no ballot, and a zero count.
+    // The card's check once the submission is over: no reservation, no ballot, and a zero count.
     mocks.query.mockResolvedValue(new Map());
     mocks.count.mockResolvedValue(new Map());
     expect(await service.deleteEligible(mine, VOTER)).toBe(true);
@@ -666,10 +655,10 @@ describe('ballot evidence for the v6 delete', () => {
     const closed = poll({ ownerId: VOTER, endsAt: Date.now() - 2 * HOUR });
     // Left by an earlier session: a replace on this poll, long past its close.
     const { recordBallotReplace } = await import('./pollr-pending-writes');
-    recordBallotReplace(VOTER, { pollId: closed.id, ballotId: 'ballot-0', revision: 2, endsAt: closed.endsAt as number });
+    recordBallotReplace(VOTER, { pollId: closed.id, ballotId: 'ballot', revision: 2, endsAt: closed.endsAt as number });
     // A fresh session: nothing in memory, only the stored record.
     vi.resetModules();
-    const service = await loadService('v6');
+    const service = await loadService('v7');
     expect((await import('./pollr-known-ballots')).pollHasKnownBallots(closed.id)).toBe(false);
     mocks.query.mockResolvedValue(new Map());
     mocks.count.mockResolvedValue(new Map());
@@ -681,8 +670,8 @@ describe('ballot evidence for the v6 delete', () => {
   });
 
   it('offers no delete to anyone but the owner, nor once a ballot is known, a write may land or the state is unreadable', async () => {
-    const service = await loadService('v6');
-    const mine = openPoll({ ownerId: VOTER });
+    const service = await loadService('v7');
+    const mine = open({ ownerId: VOTER });
     mocks.count.mockResolvedValue(new Map());
     expect(await service.deleteEligible(mine, CREATOR)).toBe(false);
     expect(await service.deleteEligible(mine, VOTER, { status: 'fulfilled', value: { choices: [], pending: true } })).toBe(false);
@@ -693,29 +682,74 @@ describe('ballot evidence for the v6 delete', () => {
     expect(await service.deleteEligible(mine, VOTER, { status: 'fulfilled', value: { choices: [], pending: false } })).toBe(false);
     expect(mocks.count).not.toHaveBeenCalled();
   });
-
-  it('a vote refused at its preflight read leaves the poll deletable on a later zero count', async () => {
-    const service = await loadService('v6');
-    mocks.query.mockRejectedValue(new Error('down'));
-    const result = await service.setVote(poll({ endsAt: Date.now() + HOUR }), [1], VOTER);
-    expect(result.success).toBe(false);
-    expect(mocks.createDocument).not.toHaveBeenCalled();
-    expect(await known()).toBe(false);
-  });
 });
 
-describe('v5 tallies', () => {
+describe('v7 tallies', () => {
+  /** The grouped count's query, the first `documents.count` call. */
+  const groupedQuery = () => mocks.count.mock.calls[0][0];
+
+  it('reads every option in one grouped containsAny count over the choices array', async () => {
+    const service = await loadService('v7');
+    // PV14 keys: the plain byte of each choice. A ballot holding 0 and 2 counts under both.
+    mocks.count.mockResolvedValue(new Map([['00', 2n], ['02', 1n]]));
+
+    expect(counted(await service.getTally(open({ multiChoice: true })))).toEqual({ counts: [2, 0, 1], total: 3 });
+    expect(groupedQuery()).toEqual({
+      dataContractId: expect.any(String),
+      documentTypeName: 'vote',
+      where: [['pollId', '==', id(9)], ['choices', 'containsAny', [0, 1, 2]]],
+      groupBy: ['choices'],
+    });
+    expect(mocks.count).toHaveBeenCalledTimes(1);
+  });
+
+  it('decodes the older top-bit-flipped keys the same way', async () => {
+    const service = await loadService('v7');
+    mocks.count.mockResolvedValue(new Map([['80', 1n], ['82', 4n]]));
+    expect(counted(await service.getTally(open()))).toEqual({ counts: [1, 0, 4], total: 5 });
+  });
+
+  it('reads an empty grouped answer as no votes yet', async () => {
+    const service = await loadService('v7');
+    mocks.count.mockResolvedValue(new Map());
+    expect(counted(await service.getTally(open()))).toEqual({ counts: [0, 0, 0], total: 0 });
+    expect(mocks.count).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['its keys decode to nothing', () => mocks.count.mockResolvedValueOnce(new Map([['ffff', 3n]]))],
+    ['it fails', () => mocks.count.mockRejectedValueOnce(new Error('unsupported operator'))],
+  ])('falls back to one contains count per option when the grouped count %s', async (_, arrangeGrouped) => {
+    const service = await loadService('v7');
+    arrangeGrouped();
+    mocks.count.mockImplementation(async ({ where }: { where: unknown[][] }) => new Map([['', BigInt((where[1][2] as number) + 1)]]));
+
+    expect(counted(await service.getTally(open()))).toEqual({ counts: [1, 2, 3], total: 6 });
+    expect(mocks.count.mock.calls.slice(1).map((call) => call[0].where)).toEqual([0, 1, 2].map((choice) => [
+      ['pollId', '==', id(9)],
+      ['choices', 'contains', choice],
+    ]));
+  });
+
+  it('reports the tally unavailable when every count fails, with no ballot scan', async () => {
+    const service = await loadService('v7');
+    const { PollTallyUnavailableError } = await import('./pollr-vote-service');
+    mocks.count.mockRejectedValue(new Error('down'));
+    await expect(service.getTally(open())).rejects.toBeInstanceOf(PollTallyUnavailableError);
+    expect(mocks.query).not.toHaveBeenCalled();
+  });
+
   it('folds a moved vote in as a decrement plus an increment', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     const moved = service.applyOptimisticVotes(id(9), { counts: [2, 1, 0], total: 3, readAt: 1 }, [1], [0]);
     expect(moved).toEqual({ counts: [1, 2, 0], total: 3 });
     // The optimistic tally is served from the cache until the next real read.
-    expect(await service.getTally(poll({ endsAt: Date.now() + HOUR }))).toEqual({ counts: [1, 2, 0], total: 3 });
+    expect(await service.getTally(open())).toEqual({ counts: [1, 2, 0], total: 3 });
     expect(mocks.count).not.toHaveBeenCalled();
   });
 
   it('is final only when read off the chain after the close', async () => {
-    await loadService('v5');
+    await loadService('v7');
     const { tallyIsFinal } = await import('./pollr-vote-service');
     const endsAt = Date.now() - 5 * 60_000;
     const closed = poll({ endsAt });
@@ -724,22 +758,22 @@ describe('v5 tallies', () => {
     // Read while the poll was still open, or optimistic: ballots could still move.
     expect(tallyIsFinal(closed, { counts: [1, 0, 0], total: 1, readAt: endsAt - 1 })).toBe(false);
     expect(tallyIsFinal(closed, { counts: [1, 0, 0], total: 1 })).toBe(false);
-    expect(tallyIsFinal(poll({ endsAt: Date.now() + HOUR }), { counts: [1, 0, 0], total: 1, readAt: Date.now() })).toBe(false);
+    expect(tallyIsFinal(open(), { counts: [1, 0, 0], total: 1, readAt: Date.now() })).toBe(false);
   });
 
   it('re-reads a tally cached while the poll was open once it has closed', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     const endsAt = Date.now() + 10_000;
-    mocks.count.mockResolvedValue(new Map([['80', 1n]]));
+    mocks.count.mockResolvedValue(new Map([['00', 1n]]));
     expect(counted(await service.getTally(poll({ endsAt })))).toEqual({ counts: [1, 0, 0], total: 1 });
 
     // A last-second change lands; the poll closes inside the cache TTL.
     vi.advanceTimersByTime(45_000);
-    mocks.count.mockResolvedValue(new Map([['81', 1n]]));
+    mocks.count.mockResolvedValue(new Map([['01', 1n]]));
     const tally = await service.getTally(poll({ endsAt }));
     expect(counted(tally)).toEqual({ counts: [0, 1, 0], total: 1 });
     expect(mocks.count).toHaveBeenCalledTimes(2);
-    // Never the v3 time-bounded scan: v5 enforces the close on chain.
+    // Never the v3 time-bounded scan: v7 enforces the close on chain.
     expect(mocks.query).not.toHaveBeenCalled();
   });
 });
@@ -817,20 +851,32 @@ describe('v4 is read-only', () => {
 });
 
 describe('ballot reads', () => {
-  it('v5 reads my ballots off byPollVoter and keeps only those holding a choice', async () => {
-    const service = await loadService('v5');
-    mocks.query.mockResolvedValue(ballots(ballotDoc(0, 0, 2), ballotDoc(1, null, 3), ballotDoc(2, 2)));
+  it('v7 reads my one ballot off byPollVoter and returns its choices', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc([2, 0], 2)));
 
     expect(await service.getMyVotes(poll({ multiChoice: true }), VOTER)).toEqual([0, 2]);
-    expect(whereOf()).toEqual([['pollId', '==', id(9)], ['$ownerId', '==', VOTER]]);
     expect(mocks.query.mock.calls[0][0]).toMatchObject({
       documentTypeName: 'vote',
-      orderBy: [['pollId', 'asc'], ['$ownerId', 'asc'], ['slot', 'asc']],
+      where: [['pollId', '==', id(9)], ['$ownerId', '==', VOTER]],
+      orderBy: [['pollId', 'asc'], ['$ownerId', 'asc']],
+      limit: 1,
     });
   });
 
+  it('v7 reads no choices off a withdrawn ballot or no ballot', async () => {
+    const service = await loadService('v7');
+    mocks.query.mockResolvedValue(ballots(ballotDoc(null, 3)));
+    expect(await service.getMyBallot(poll(), VOTER)).toEqual({ id: 'ballot', revision: 3, choices: [] });
+    expect(await service.getMyVotes(poll(), VOTER)).toEqual([]);
+
+    mocks.query.mockResolvedValue(new Map());
+    expect(await service.getMyBallot(poll(), VOTER)).toBeNull();
+    expect(await service.getMyVotes(poll(), VOTER)).toEqual([]);
+  });
+
   it('throws rather than reporting "no votes" when the read fails', async () => {
-    const service = await loadService('v5');
+    const service = await loadService('v7');
     mocks.query.mockRejectedValue(new Error('down'));
     await expect(service.getMyVotes(poll(), VOTER)).rejects.toThrow('down');
   });

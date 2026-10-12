@@ -16,6 +16,7 @@ import { BLOG_YAPP_TOKEN_COSTS, blogCommentsCostYapp } from '@/lib/constants'
 import { blogAuthorHandle, createCommentReads, mergeComments } from '@/lib/blog/content-utils'
 import type { BlogComment } from '@/lib/types'
 import { blogCommentService } from '@/lib/services'
+import { COMMENTS_OFF_MESSAGE } from '@/lib/services/blog-comment-service'
 
 interface BlogCommentsProps {
   blogPostId: string
@@ -120,7 +121,9 @@ export function BlogComments({ blogPostId, blogPostOwnerId, commentsEnabled, onC
       await loadComments()
     } catch (error) {
       logger.error('Failed to post blog comment:', error)
-      if (!blogCommentsCostYapp() || !handleInsufficientYapp(error, `A comment costs ${COMMENT_YAPP_COST} YAPP.`)) {
+      if (error instanceof Error && error.message === COMMENTS_OFF_MESSAGE) {
+        toast.error(COMMENTS_OFF_MESSAGE)
+      } else if (!blogCommentsCostYapp() || !handleInsufficientYapp(error, `A comment costs ${COMMENT_YAPP_COST} YAPP.`)) {
         toast.error('Failed to post comment. Please try again.')
       }
     } finally {

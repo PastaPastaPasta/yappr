@@ -472,12 +472,16 @@
         "blogPostId": {
           "type": "identifier",
           "position": 0,
-          "description": "Reference to parent blog post document",
+          "description": "Reference to parent blog post document, which must not have comments turned off",
           "refersTo": {
             "type": "moderatedDocument",
             "documentType": "blogPost",
             "where": {
-              "commentsEnabled": "postCommentsEnabled"
+              "commentsEnabled": {
+                "notEqual": {
+                  "const": false
+                }
+              }
             }
           }
         },
@@ -487,29 +491,12 @@
           "maxLength": 500,
           "position": 1,
           "description": "Comment content"
-        },
-        "postCommentsEnabled": {
-          "type": "boolean",
-          "position": 2
         }
       },
       "additionalProperties": false,
       "description": "A comment on a post. blogPostId must name a real post, and postOwnerAndTime reads that post's $ownerId through it (blogPostId.$ownerId), so the notification key cannot be forged and comments on ghost posts are impossible.",
       "moderatorAbilities": {
         "delete": true
-      },
-      "propertyConstraints": {
-        "commentsOpen": {
-          "notEqual": [
-            {
-              "ifAbsent": [
-                "postCommentsEnabled",
-                1
-              ]
-            },
-            0
-          ]
-        }
       },
       "actionFees": {
         "pricing": "feeMultiplier",

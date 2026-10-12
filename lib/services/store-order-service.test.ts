@@ -30,7 +30,7 @@ describe('seller orders (QA D-23)', () => {
   });
 });
 
-describe('orders copy the store status on storefront v5 (QA D-25)', () => {
+describe('orders copy the store status on storefront v5-v7 (QA D-25)', () => {
   const place = async (topology: string) => {
     vi.resetModules();
     vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
@@ -40,9 +40,39 @@ describe('orders copy the store status on storefront v5 (QA D-25)', () => {
     return (create.mock.calls[0] as unknown as [string, Record<string, unknown>])[1];
   };
 
-  it('writes storeStatus active on v5, and nothing new before it', async () => {
+  it('writes storeStatus active on v5 through v7, and nothing new before it', async () => {
     expect((await place('v5')).storeStatus).toBe('active');
+    expect((await place('v7')).storeStatus).toBe('active');
     expect(await place('v4')).not.toHaveProperty('storeStatus');
+  });
+
+  it('writes no storeStatus on v8, where the storeId reference checks the store', async () => {
+    expect(await place('v8')).not.toHaveProperty('storeStatus');
+  });
+});
+
+describe('an order at a store that stopped taking orders (storefront v8)', () => {
+  const place = async (topology: string, error: Error) => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_STOREFRONT_TOPOLOGY', topology);
+    const { storeOrderService: service } = await import('./store-order-service');
+    vi.spyOn(service, 'create' as never).mockRejectedValue(error as never);
+    return service.createOrder('33333333333333333333333333333333', { storeId: seller, sellerId: seller, encryptedPayload: new Uint8Array(1), nonce: new Uint8Array(24) });
+  };
+
+  it('maps the 40127 of the store status condition to the closed-store copy', async () => {
+    const statusMismatch = 'state error (code=40127): the document\'s {"const":"active"} does not agree with the referenced document\'s status (where on storeId)';
+    await expect(place('v8', new Error(statusMismatch))).rejects.toThrow("This store isn't taking orders right now.");
+  });
+
+  it('keeps a 40127 on the seller agreement as it is', async () => {
+    const sellerMismatch = 'state error (code=40127): the document\'s sellerId does not agree with the referenced document\'s $ownerId (where on storeId)';
+    await expect(place('v8', new Error(sellerMismatch))).rejects.toThrow(sellerMismatch);
+  });
+
+  it('leaves other failures, and every earlier cut, untouched', async () => {
+    await expect(place('v8', new Error('offline'))).rejects.toThrow('offline');
+    await expect(place('v7', new Error('refused (code=40127)'))).rejects.toThrow('refused (code=40127)');
   });
 });
 

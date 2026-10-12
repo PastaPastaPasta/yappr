@@ -62,6 +62,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandSchemas, expandShorthands } from './schema-shorthands.mjs';
+;
 
 // SystemLimits (rs-platform-version system_limits/v4.rs, protocol 14).
 const LIMITS = {
@@ -330,18 +331,72 @@ function propertyAt(schema, path) {
   return definition;
 }
 
+/** The property names an index lists, in order. */
+const indexPropertyNames = (index) => index.properties.map((entry) => Object.keys(entry)[0]);
+
+/** Whether a property definition is a typed array (not a byte array). */
+const isTypedArray = (definition) => definition?.type === 'array' && definition.byteArray !== true && definition.items !== undefined;
+
+/** The typed array property `index` names, or undefined. */
+const typedArrayOf = (schema, index) => indexPropertyNames(index).find((property) => isTypedArray(schema.properties?.[property]));
+
+const MAX_INDEXED_TYPED_ARRAY_ITEMS = 16;
+const MAX_INDEXED_WINDOWED_TYPED_ARRAY_ITEMS = 4;
+const MAX_INDEX_ENTRIES_PER_DOCUMENT = 256;
+
+/**
+ * 5.0.0-beta.5 (#5370, book contract-keywords/indexes.md "Typed arrays"): an
+ * index may name one top-level typed array and enters the document once per
+ * distinct element. The element is held to the key limits of its type, the
+ * array to 16 items (4 under a timeRange or integerRange window), and the
+ * index may not be unique or contested, turn off nullSearchable, or skip on
+ * the array alone (it skips a document without elements already).
+ */
+function typedArrayIndexProblems(name, schema, index, property, definition) {
+  const at = `${name}.${index.name}`;
+  const problems = [];
+  if (property.includes('.')) problems.push(`${at}: the typed array "${property}" is not a top-level property (10231)`);
+  const arrays = indexPropertyNames(index).filter((p) => isTypedArray(schema.properties?.[p]));
+  if (arrays.length > 1 && arrays[0] === property) problems.push(`${at}: names ${arrays.length} typed arrays (${arrays.join(', ')}); an index keys by the elements of one (10231)`);
+  const windowed = index.timeRange !== undefined || index.integerRange !== undefined;
+  const cap = windowed ? MAX_INDEXED_WINDOWED_TYPED_ARRAY_ITEMS : MAX_INDEXED_TYPED_ARRAY_ITEMS;
+  if (!(definition.maxItems <= cap)) problems.push(`${at}: indexed typed array "${property}" has maxItems ${definition.maxItems}, above ${cap}${windowed ? ' under a window' : ''} (10205)`);
+  const items = definition.items;
+  if (items.type === 'string' && !(items.maxLength <= MAX_INDEXED_STRING_LENGTH)) problems.push(`${at}: the elements of "${property}" have maxLength ${items.maxLength ?? 'unbounded'}, above ${MAX_INDEXED_STRING_LENGTH} (10205)`);
+  if (items.type === 'array' && items.byteArray === true && !(items.maxItems <= MAX_INDEXED_BYTE_ARRAY_LENGTH && items.minItems >= 1)) {
+    problems.push(`${at}: the byte array elements of "${property}" must hold 1 to ${MAX_INDEXED_BYTE_ARRAY_LENGTH} bytes (10205)`);
+  }
+  if (index.unique === true || index.contested) problems.push(`${at}: a unique or contested index cannot name the typed array "${property}" (10231)`);
+  if (index.nullSearchable === false) problems.push(`${at}: an index naming a typed array keeps nullSearchable (10231)`);
+  const skip = index.skipIfAbsent === true
+    ? indexPropertyNames(index).filter((p) => !p.startsWith('$') && !(schema.required ?? []).includes(p))
+    : Array.isArray(index.skipIfAbsent) ? index.skipIfAbsent : [];
+  if (skip.length === 1 && skip[0] === property) problems.push(`${at}: skipIfAbsent would skip on the typed array "${property}" alone, which an element index does already (10231)`);
+  return problems;
+}
+
+/** One document's index entries on a type with an indexed typed array: each index 1, times its array's maxItems (windows not modelled). */
+function typedArrayEntryBudget(name, schema) {
+  const arrays = (schema.indices ?? []).map((index) => typedArrayOf(schema, index));
+  if (!arrays.some(Boolean)) return [];
+  const entries = arrays.reduce((total, array) => total + (array ? schema.properties[array].maxItems : 1), 0);
+  return entries > MAX_INDEX_ENTRIES_PER_DOCUMENT ? [`${name}: a document writes up to ${entries} index entries, above ${MAX_INDEX_ENTRIES_PER_DOCUMENT} (10231)`] : [];
+}
+
 /**
  * The index shape rules (V10-DESIGN §0, ported from index-audit.py): every
  * property exists or is a system property other than `$id`; none is an
- * object, a plain array or a typed array (10206); indexed strings are at most
- * 63 characters and byte arrays at most 255 bytes (10205); at most 10 indexes
- * with distinct names. wasm-dpp2 refuses the same shapes; the wasm-sdk parse
- * accepts every one of them.
+ * object or a plain array (10206), and a typed array only as 5.0.0-beta.5
+ * allows (`typedArrayIndexProblems`); indexed strings are at most 63
+ * characters and byte arrays at most 255 bytes (10205); at most 10 indexes
+ * with distinct names. wasm-dpp2 refuses the same shapes (5.0.0-beta.4's
+ * refuses every typed-array index, 10206); the wasm-sdk parse accepts them.
  */
 function auditIndexShapes(schemas) {
   const problems = [];
   for (const [name, schema] of Object.entries(schemas)) {
     const indices = schema.indices ?? [];
+    problems.push(...typedArrayEntryBudget(name, schema));
     if (indices.length > MAX_INDEXES) problems.push(`${name}: ${indices.length} indexes, above ${MAX_INDEXES} (10101)`);
     const names = indices.map((index) => index.name);
     if (new Set(names).size !== names.length) problems.push(`${name}: duplicate index names`);
@@ -354,8 +409,10 @@ function auditIndexShapes(schemas) {
         // 5.0.0-beta.1 derived index property: "<reference property>.<field>" read through a refersTo (#5216).
         if (!definition && property.includes('.') && schema.properties?.[property.split('.')[0]]?.refersTo) continue;
         if (!definition) { problems.push(`${name}.${index.name}: "${property}" is not a property of the type (10209)`); continue; }
-        if (definition.type === 'object' || (definition.type === 'array' && definition.byteArray !== true)) {
-          problems.push(`${name}.${index.name}: "${property}" is ${definition.items ? 'a typed array' : `an ${definition.type}`} and cannot be indexed (10206)`);
+        if (isTypedArray(definition)) {
+          problems.push(...typedArrayIndexProblems(name, schema, index, property, definition));
+        } else if (definition.type === 'object' || (definition.type === 'array' && definition.byteArray !== true)) {
+          problems.push(`${name}.${index.name}: "${property}" is an ${definition.type} and cannot be indexed (10206)`);
         } else if (definition.type === 'string' && !(definition.maxLength <= MAX_INDEXED_STRING_LENGTH)) {
           problems.push(`${name}.${index.name}: indexed string "${property}" has maxLength ${definition.maxLength ?? 'unbounded'}, above ${MAX_INDEXED_STRING_LENGTH} (10205)`);
         } else if (definition.byteArray === true && !(definition.maxItems <= MAX_INDEXED_BYTE_ARRAY_LENGTH)) {
@@ -448,6 +505,10 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
       // 40126, judged against the whole contract at registration: both sides of a
       // `where` entry must exist and hold the same type of value.
       for (const [referenced, referring] of Object.entries(ref.where ?? {})) {
+        if (typeof referring !== 'string') {
+          problems.push(...whereConditionProblems(`${name}.${path}`, referenced, referring, { schema, target, targetName: ref.documentType }));
+          continue;
+        }
         const theirs = referenced.startsWith('$') ? { system: referenced } : propertyAt(target, referenced);
         const mine = referring.startsWith('$') ? { system: referring } : propertyAt(schema, referring);
         if (!theirs) problems.push(`${name}.${path}: where names "${referenced}", which "${ref.documentType}" does not have (40126)`);
@@ -461,6 +522,67 @@ export function auditNodeRules(source, { network = 'devnet' } = {}) {
     }
   }
   problems.push(...auditNonTransferableTokens(source));
+  return problems;
+}
+
+const SYSTEM_TIMES = /^\$(created|updated|transferred)At(BlockHeight|CoreBlockHeight)?$/;
+const ORDERINGS = ['greaterThan', 'greaterThanOrEqual', 'lessThan', 'lessThanOrEqual'];
+
+/** Whether `literal` is a value `definition` can hold (its JSON type and enum). */
+function literalFits(literal, definition) {
+  if (definition.enum && !definition.enum.includes(literal)) return false;
+  if (definition.type === 'integer') return Number.isInteger(literal);
+  if (definition.type === 'boolean') return typeof literal === 'boolean';
+  return typeof literal === 'string';
+}
+
+/**
+ * The 5.0.0-beta.5 `where` conditions (#5369, book refers-to.md "Conditions"),
+ * registration rules a node refuses with 40126: the referenced side holds one
+ * value (not an object or a typed array); a `const` or `in` literal is a value
+ * it can hold; a `notEqual` bound is `$ownerId`, a `{ const }` or a property of
+ * the declaring type of the same kind; an ordering compares integers, bounded
+ * by an integer property, an integer `{ const }` or a time or height the
+ * declaring type lists in `required`.
+ */
+function whereConditionProblems(at, referenced, condition, { schema, target, targetName }) {
+  const problems = [];
+  const keys = Object.keys(condition ?? {});
+  if (keys.length !== 1) return [`${at}: where ${referenced} is not a one-key condition (10101)`];
+  const [kind] = keys;
+  const value = condition[kind];
+  const theirs = referenced.startsWith('$') ? { type: 'identifier' } : propertyAt(target, referenced);
+  if (!theirs) return [`${at}: where names "${referenced}", which "${targetName}" does not have (40126)`];
+  if (theirs.type === 'object' || (theirs.type === 'array' && theirs.byteArray !== true)) return [`${at}: where condition on "${referenced}", which holds no single value (40126)`];
+  const refuse = (why) => problems.push(`${at}: where ${referenced} ${JSON.stringify(condition)}: ${why} (40126)`);
+  const requireFit = (literal) => {
+    if (!literalFits(literal, theirs)) refuse(`${JSON.stringify(literal)} is not a value "${referenced}" can hold`);
+  };
+  if (kind === 'const') {
+    requireFit(value);
+  } else if (kind === 'in') {
+    if (!Array.isArray(value) || value.length < 2 || value.length > 30 || new Set(value).size !== value.length) refuse('an `in` lists 2 to 30 distinct literals');
+    else value.forEach(requireFit);
+  } else if (kind === 'notEqual') {
+    if (value && typeof value === 'object') {
+      requireFit(value.const);
+    } else if (value !== '$ownerId') {
+      const mine = propertyAt(schema, value);
+      if (!mine) refuse(`the declaring type has no "${value}"`);
+      else if (mine.type !== theirs.type) refuse(`"${value}" (${mine.type}) is not of the kind of "${referenced}" (${theirs.type})`);
+    }
+  } else if (ORDERINGS.includes(kind)) {
+    if (theirs.type !== 'integer') refuse(`"${referenced}" is not an integer`);
+    if (value && typeof value === 'object') {
+      if (!Number.isInteger(value.const)) refuse('the bound is not an integer');
+    } else if (SYSTEM_TIMES.test(value)) {
+      if (!(schema.required ?? []).includes(value)) refuse(`the declaring type does not list ${value} in required`);
+    } else if (propertyAt(schema, value)?.type !== 'integer') {
+      refuse(`the bound "${value}" is not an integer property of the declaring type`);
+    }
+  } else {
+    refuse(`unknown condition "${kind}"`);
+  }
   return problems;
 }
 
@@ -501,6 +623,7 @@ const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
 const BLOG = 'contracts/yappr-blog-contract.json';
 const APP_ANCHOR = 'contracts/yappr-app-contract.json';
+const POLLR = 'contracts/pollr-contract.json';
 
 const elected = (source) => source.config.moderation.moderators;
 const types = (source) => source.documentSchemas;
@@ -542,7 +665,7 @@ const PROBES = [
   { label: 'control: social v11 as committed', file: SOCIAL_V11, mutate: () => {}, expect: 'accepted' },
   { label: 'control: storefront as committed', file: STOREFRONT, mutate: () => {}, expect: 'accepted' },
   { label: 'control: blog as committed', file: BLOG, mutate: () => {}, expect: 'accepted' },
-  { label: 'control: pollr as committed', file: 'contracts/pollr-contract.json', mutate: () => {}, expect: 'accepted' },
+  { label: 'control: pollr as committed', file: POLLR, mutate: () => {}, expect: 'accepted' },
   { label: 'control: profile (testnet profile topology v2) as committed', file: PROFILE, mutate: () => {}, expect: 'accepted' },
   // The beta.6 grammar no longer parses anywhere from beta.7 on (#5197): social v9 is readable
   // by a beta.6 SDK only, and a beta.7 or later node would not load it.
@@ -849,7 +972,6 @@ const PROBES = [
   { label: 'an immutable list holding the deletable followRequest findBy', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: 'registration', mutate: (s) => { const g = types(s).privateFeedGrant; g.documentsMutable = true; g.immutable = ['recipientId']; } },
   { label: 'permanentDocument owner gate at a deletable privateFeedState', file: SOCIAL_V10, expect: 'audit', node: '40122', mutate: (s) => { types(s).privateFeedState.canBeDeleted = true; } },
   { label: 'permanentDocument reference at the deletable post (bookmark)', file: SOCIAL_V10, expect: 'audit', node: '40122', mutate: (s) => { types(s).bookmark.properties.postId.refersTo.type = 'permanentDocument'; } },
-  { label: 'D-25: the order storeStatus agreement against a property the store lacks', file: STOREFRONT, expect: 'audit', node: '40126', mutate: (s) => { types(s).storeOrder.properties.storeId.refersTo.where = { $ownerId: 'sellerId', state: 'storeStatus' }; } },
 
   // skipIfAbsent (#5162).
   { label: 'like without the all-time byHashtagPost (the "lean" variant)', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).like.indices = types(s).like.indices.filter((i) => i.name !== 'byHashtagPost'); } },
@@ -859,7 +981,13 @@ const PROBES = [
   // Index shapes (V10-DESIGN §0): the wasm-sdk accepts every one; wasm-dpp2 and the audit refuse.
   { label: 'an index on a property the type does not have', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10209', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ nope: 'asc' }] }); } },
   { label: 'an index on $id', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10208', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ $id: 'asc' }] }); } },
-  { label: 'an index on a typed array (hashtag arrays, V10-DESIGN §6)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10206', mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
+  // 5.0.0-beta.5 indexes typed arrays per element (#5370); 5.0.0-beta.4's wasm-dpp2 refuses any (10206).
+  { label: 'an index on a typed array whose elements are too long to key (socialLinks, 256 characters)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10205', why: /maxLength/i, mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
+  { label: 'an index on a typed array within the element-index limits (socialLinks at 63 characters)', file: SOCIAL_V10, expect: 'accepted', mutate: (s) => {
+    const links = types(s).yapprProfile.properties.socialLinks;
+    links.items.maxLength = 63; links.items.maxBytes = 63;
+    types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] });
+  } },
   { label: 'an indexed string of maxLength 64', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10205', mutate: (s) => { const p = types(s).post; p.properties.embedDocType.maxLength = 64; p.indices.push({ name: 'probe', properties: [{ embedDocType: 'asc' }] }); } },
   // Pads post to exactly 11 indexes whatever the cut declares (8 at the beta.7 re-cut).
   { label: 'an 11th index on post', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10101', mutate: (s) => {
@@ -921,7 +1049,6 @@ const PROBES = [
   // propertyConstraints grammar (#5036-#5042) and the rules the cuts declare.
   { label: 'propertyConstraints enum const + absent (control)', file: STOREFRONT, expect: 'accepted', mutate: (s) => { types(s).storeItem.propertyConstraints = { soldOutHasNoStock: { anyOf: [{ notEqual: ['status', { const: 'sold_out' }] }, { absent: 'stockQuantity' }, { equal: ['stockQuantity', 0] }] } }; } },
   { label: 'propertyConstraints const outside the enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeItem.propertyConstraints = { r: { equal: ['status', { const: 'gone' }] } }; } },
-  { label: 'storeIsOpen comparing storeStatus with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeOrder.propertyConstraints.storeIsOpen = { equal: ['storeStatus', { const: 'open' }] }; } },
   { label: 'propertyConstraints anyOf directly inside anyOf', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).storeItem.propertyConstraints = { r: { anyOf: [{ anyOf: [{ equal: ['weight', 0] }, { equal: ['weight', 1] }] }, { equal: ['weight', 2] }] } }; } },
   { label: 'tieredHasTiers comparing rateType with a value outside its enum', file: STOREFRONT, expect: 'wasm', mutate: (s) => { types(s).shippingZone.propertyConstraints.tieredHasTiers.anyOf[0] = { equal: ['rateType', { const: 'flat_rate' }] }; } },
   { label: 'resolvedHasStatus reading a property report does not have', file: SOCIAL_V10, expect: 'wasm', mutate: (s) => { types(s).report.propertyConstraints.resolvedHasStatus.anyOf[1] = { present: 'state' }; } },
@@ -930,18 +1057,66 @@ const PROBES = [
     const rules = types(s).post.propertyConstraints;
     for (let n = 0; Object.keys(rules).length < 17; n++) rules[`extra${n}`] = { absent: 'content' };
   } },
-  // rs-dpp node_count counts operands too: pollr v5's multiChoiceIsSlot is 8 as cut, and each
-  // `lessThan [slot, n]` adds 3, so nine more make 35.
-  { label: 'a 35-node multiChoiceIsSlot rule (32 max)', file: 'contracts/pollr-contract.json', expect: 'wasm', mutate: (s) => {
-    const rule = types(s).vote.propertyConstraints.multiChoiceIsSlot.anyOf;
-    for (let n = 1; n <= 9; n++) rule.push({ lessThan: ['slot', n] });
+  // rs-dpp node_count counts operands too: the comparison, `add`, its 30 operands and the bound make 33.
+  { label: 'a 33-node endsWithin31Days rule on poll (32 max)', file: POLLR, expect: 'wasm', mutate: (s) => {
+    types(s).poll.propertyConstraints.endsWithin31Days = { lessThanOrEqual: [{ add: ['endsAt', ...Array.from({ length: 29 }, (_, i) => i + 1)] }, 2_678_400_000] };
   } },
   // Pollr v6 (5.0.0-beta.3): a deleteConstraints countOf total needs a plain countable index
-  // whose properties are exactly the filter's keys. byPollChoice [pollId, choice] is not one.
-  { label: 'pollr v6: noBallots counting vote by pollId without byPoll', file: 'contracts/pollr-contract.json', expect: 'wasm', why: /no countable index/i, mutate: (s) => {
+  // whose properties are exactly the filter's keys. byPollChoice [pollId, choices] is not one.
+  { label: 'pollr: noBallots counting vote by pollId without byPoll', file: POLLR, expect: 'wasm', why: /no countable index/i, mutate: (s) => {
     const vote = types(s).vote;
     vote.indices = vote.indices.filter((index) => index.name !== 'byPoll');
   } },
+
+  // 5.0.0-beta.5: `where` conditions, rules reading the referenced document or the stored version,
+  // and typed-array element indexes. A `where` condition's registration rules (40126) run on the
+  // node only, so the audit models them; the parses refuse a bad element index or rule.
+  { label: 'control: pollr v7 declares its close as a where condition, its rules read the poll, and its tally indexes the choices', file: POLLR, mutate: () => {}, expect: 'accepted', holds: (s) => {
+    const vote = types(s).vote;
+    const rules = vote.propertyConstraints;
+    return JSON.stringify(vote.properties.pollId.refersTo.where) === '{"endsAt":{"greaterThanOrEqual":"$updatedAt"}}'
+      && JSON.stringify(Object.keys(rules).sort()) === '["choicesAreOptions","choicesAreOptionsHigh","singleChoice"]'
+      && Object.values(rules).every((rule) => JSON.stringify(rule).includes('"referenced":["pollId",'))
+      && typedArrayOf(vote, namedIndex(s, 'vote', 'byPollChoice')) === 'choices'
+      && !types(s).poll.properties.optionCount && vote.properties.choices.maxItems === 10;
+  } },
+  { label: 'pollr v7: the close bounded by $transferredAt, which vote does not require', file: POLLR, expect: 'audit', node: '40126', why: /does not list \$transferredAt/, mutate: (s) => {
+    types(s).vote.properties.pollId.refersTo.where.endsAt = { greaterThanOrEqual: '$transferredAt' };
+  } },
+  { label: 'pollr v7: a where condition on the options typed array', file: POLLR, expect: 'audit', node: '40126', why: /holds no single value/, mutate: (s) => {
+    types(s).vote.properties.pollId.refersTo.where.options = { const: 'a' };
+  } },
+  { label: 'pollr v7: an ordering on the boolean multiChoice', file: POLLR, expect: 'audit', node: '40126', why: /is not an integer/, mutate: (s) => {
+    types(s).vote.properties.pollId.refersTo.where.multiChoice = { greaterThan: { const: 0 } };
+  } },
+  { label: 'pollr v7: choices of 17 under the element index (16 max)', file: POLLR, expect: 'dpp2', auditToo: true, node: '10205', why: /maxItems/i, mutate: (s) => {
+    Object.assign(types(s).vote.properties.choices, { maxItems: 17 });
+    types(s).vote.properties.choices.items.maximum = 16;
+  } },
+  { label: 'storefront v8: the order where condition names a property the store lacks', file: STOREFRONT, expect: 'audit', node: '40126', why: /does not have/, mutate: (s) => { types(s).storeOrder.properties.storeId.refersTo.where = { $ownerId: 'sellerId', state: { const: 'active' } }; } },
+  { label: 'storefront v8: the order where condition with a status outside the store\'s enum', file: STOREFRONT, expect: 'audit', node: '40126', why: /"open" is not a value/, mutate: (s) => { types(s).storeOrder.properties.storeId.refersTo.where.status = { const: 'open' }; } },
+  { label: 'storefront v8: an order no longer carries storeStatus, and storeOrder declares no rule', file: STOREFRONT, mutate: () => {}, expect: 'accepted', holds: (s) => !types(s).storeOrder.properties.storeStatus && !types(s).storeOrder.propertyConstraints },
+  { label: 'blog v8: comments-off as notEqual a string const on the boolean commentsEnabled', file: BLOG, expect: 'audit', node: '40126', why: /is not a value/, mutate: (s) => { types(s).blogComment.properties.blogPostId.refersTo.where.commentsEnabled = { notEqual: { const: 'false' } }; } },
+  { label: 'blog v8: a comment no longer copies its post\'s flag', file: BLOG, mutate: () => {}, expect: 'accepted', holds: (s) => !types(s).blogComment.properties.postCommentsEnabled && !types(s).blogComment.propertyConstraints },
+  { label: 'social v15: post and reply mention up to 8 identities, indexed per element, cleared by a tombstone', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => ['post', 'reply'].every((type) => {
+    const schema = types(s)[type];
+    const index = schema.indices.find((i) => i.name === 'mentionedUserAndTime');
+    return schema.properties.mentionedUserIds?.maxItems === 8 && !schema.properties.mentionedUserId
+      && JSON.stringify(index.properties) === '[{"mentionedUserIds":"asc"},{"$createdAt":"asc"}]' && index.skipIfAbsent === undefined
+      && JSON.stringify(schema.propertyConstraints.blankTombstone).includes('"mentionedUserIds"')
+      && schema.immutable.some((entry) => entry.property === 'mentionedUserIds' && entry.when?.absent === 'deleted');
+  }) },
+  { label: 'social v15: mentionedUserAndTime skipping on the mentions array alone', file: SOCIAL_V15, expect: 'wasm', node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'post', 'mentionedUserAndTime').skipIfAbsent = true; } },
+  { label: 'social v15: 9 mentions under a 3.5-day window index (4 max under a window)', file: SOCIAL_V15, expect: 'dpp2', node: '10205', why: /maxItems|under a window/i, mutate: (s) => {
+    types(s).post.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { mentionedUserIds: 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } });
+  } },
+  // A second, keyable array (media URLs are too long to key, which would be refused first).
+  { label: 'social v15: one index naming two typed arrays (mentions and a short tag list)', file: SOCIAL_V15, expect: 'dpp2', node: '10231', why: /typed arrays?/i, mutate: (s) => {
+    const next = Math.max(...Object.values(types(s).post.properties).map((p) => p.position)) + 1;
+    types(s).post.properties.probeTags = { type: 'array', maxItems: 4, items: { type: 'integer', minimum: 0, maximum: 9 }, position: next };
+    types(s).post.indices.push({ name: 'probe', properties: [{ mentionedUserIds: 'asc' }, { probeTags: 'asc' }] });
+  } },
+  { label: 'social v15: a resolved report stays resolved (staysResolved reads $old.status)', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => JSON.stringify(types(s).report.propertyConstraints.staysResolved) === '{"ifThen":[{"present":"$old.status"},{"present":"status"}]}' },
 ];
 
 /**
@@ -975,21 +1150,62 @@ const WHERE_CASES = [
   ['v14: a nested reply in its parent\'s thread', SOCIAL_V14, 'reply', 'replyToReplyId', { rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread1' }, null],
   ['v14: a nested reply crossing threads (its parent is in another thread)', SOCIAL_V14, 'reply', 'replyToReplyId', { rootPostId: 'thread1' }, { $ownerId: 'bob', rootPostId: 'thread2' }, '40127'],
   ['v14: a post report naming someone else as the author', SOCIAL_V14, 'report', 'postId', { targetOwnerId: 'bob' }, { $ownerId: 'alice' }, '40127'],
+  // 5.0.0-beta.5 conditions. Pollr v7: a ballot written before the close, at it, and after it
+  // ($updatedAt is the write's block time, on a create and on every replace).
+  ['pollr v7: a ballot written before the close', POLLR, 'vote', 'pollId', { $updatedAt: 1_000 }, { endsAt: 2_000 }, null],
+  ['pollr v7: a ballot written at the close', POLLR, 'vote', 'pollId', { $updatedAt: 2_000 }, { endsAt: 2_000 }, null],
+  ['pollr v7: a ballot written after the close', POLLR, 'vote', 'pollId', { $updatedAt: 2_001 }, { endsAt: 2_000 }, '40127'],
+  // Storefront v8: an order at an active store of its seller; paused, closed or no status refused.
+  ['storefront v8: an order at an active store', STOREFRONT, 'storeOrder', 'storeId', { sellerId: 'alice' }, { $ownerId: 'alice', status: 'active' }, null],
+  ['storefront v8: an order at a paused store', STOREFRONT, 'storeOrder', 'storeId', { sellerId: 'alice' }, { $ownerId: 'alice', status: 'paused' }, '40127'],
+  ['storefront v8: an order at a closed store', STOREFRONT, 'storeOrder', 'storeId', { sellerId: 'alice' }, { $ownerId: 'alice', status: 'closed' }, '40127'],
+  ['storefront v8: an order naming someone else as the seller', STOREFRONT, 'storeOrder', 'storeId', { sellerId: 'bob' }, { $ownerId: 'alice', status: 'active' }, '40127'],
+  // Blog v8: comments are on unless the post sets commentsEnabled false (a tombstone does).
+  ['blog v8: a comment on a post with comments on', BLOG, 'blogComment', 'blogPostId', {}, { commentsEnabled: true }, null],
+  ['blog v8: a comment on a post that leaves commentsEnabled out', BLOG, 'blogComment', 'blogPostId', {}, {}, null],
+  ['blog v8: a comment on a post with comments off', BLOG, 'blogComment', 'blogPostId', {}, { commentsEnabled: false }, '40127'],
 ];
+
+/**
+ * Whether one `where` entry holds, as consensus judges it (book refers-to.md
+ * "Conditions"). An equality agrees when both sides are absent and fails when
+ * one is; a `const` or `in` fails on an absent referenced side; a `notEqual`
+ * is the negated equality; an ordering holds only when both sides have a value.
+ */
+function whereEntryHolds(theirs, condition, referring) {
+  const side = (bound) => (bound && typeof bound === 'object' ? bound.const : referring[bound]);
+  if (typeof condition === 'string') return theirs === referring[condition];
+  const [[kind, bound]] = Object.entries(condition);
+  if (kind === 'const') return theirs !== undefined && theirs === bound;
+  if (kind === 'in') return theirs !== undefined && bound.includes(theirs);
+  if (kind === 'notEqual') return theirs !== side(bound);
+  const mine = side(bound);
+  if (theirs === undefined || mine === undefined) return false;
+  return { greaterThan: theirs > mine, greaterThanOrEqual: theirs >= mine, lessThan: theirs < mine, lessThanOrEqual: theirs <= mine }[kind];
+}
 
 function runWhereCases({ loadContractSource, parseContract }) {
   let failures = 0;
   const parsed = new Map();
-  console.log('\nreference `where` agreements (read off the parsed contract; the node refuses a disagreement with 40127):');
+  console.log('\nreference `where` agreements (equalities read off the parsed contract, 5.0.0-beta.5 conditions off the file; the node refuses a disagreement with 40127):');
   for (const [label, file, type, path, referring, referenced, expected] of WHERE_CASES) {
-    if (!parsed.has(file)) parsed.set(file, parseContract(loadContractSource(file)));
-    const reference = parsed.get(file).documentTypeReferences(type).find((r) => r.path === path);
-    // A value left out on both sides agrees, as consensus judges it.
-    const disagreement = Object.entries(reference?.where ?? {}).find(([theirs, mine]) => referring[mine] !== referenced[theirs]);
+    if (!parsed.has(file)) {
+      const source = loadContractSource(file);
+      parsed.set(file, { contract: parseContract(source), source });
+    }
+    const { contract, source } = parsed.get(file);
+    const reference = contract.documentTypeReferences(type).find((r) => r.path === path);
+    // Conditions come off the file: the parse reports them in a shape of its own.
+    const declared = source.documentSchemas[type]?.properties?.[path]?.refersTo?.where ?? {};
+    const where = {
+      ...Object.fromEntries(Object.entries(reference?.where ?? {}).filter(([, mine]) => typeof mine === 'string')),
+      ...Object.fromEntries(Object.entries(declared).filter(([, condition]) => typeof condition !== 'string')),
+    };
+    const disagreement = Object.entries(where).find(([theirs, condition]) => !whereEntryHolds(referenced[theirs], condition, referring));
     const outcome = reference && disagreement ? '40127' : null;
     const ok = reference !== undefined && outcome === expected;
     if (!ok) failures += 1;
-    const detail = disagreement ? `${type}.${path} where ${disagreement[0]} = ${disagreement[1]}: ${referenced[disagreement[0]]} ≠ ${referring[disagreement[1]]}` : `where ${JSON.stringify(reference?.where ?? null)} agrees`;
+    const detail = disagreement ? `${type}.${path} where ${disagreement[0]} ${JSON.stringify(disagreement[1])} fails on ${JSON.stringify(referenced[disagreement[0]] ?? null)}` : `where ${JSON.stringify(where)} agrees`;
     console.log(`${ok ? 'PASS' : 'FAIL'}  [${(outcome ?? 'agrees').padEnd(8)}] ${label} — ${detail}${ok ? '' : ` (expected ${expected ?? 'agreement'})`}`);
   }
   return failures;

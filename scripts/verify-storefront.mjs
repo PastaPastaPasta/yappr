@@ -2,7 +2,7 @@
  * Registration-day battery for the **storefront contract**
  * (`contracts/yappr-storefront-contract.json`, docs/NON_SOCIAL_CONTRACTS.md), run
  * live on a beta.1+ devnet. Actors are seed-ledger personas: a SELLER, a BUYER and
- * a STRANGER. The committed contract is storefront v6, which charges action fees
+ * a STRANGER. The committed contract is storefront v8, which charges action fees
  * (credits) instead of YAPP, so the actors need credits only.
  *
  *   NETWORK=devnet node scripts/verify-storefront.mjs --contract <id> \
@@ -16,9 +16,11 @@
  * seller reviewing an order on their own store (s19, distinctFrom). The beta.5
  * re-cut adds `propertyConstraints` (s20: a price or a flat rate names its
  * currency; a tiered zone carries its tiers; each breach is refused 10422).
- * The beta.7 cut (storefront topology v5) fixes QA D-25: an order copies its
- * store's `status` into `storeStatus` through the storeId `where` (40127 on a
- * stale copy) and `storeIsOpen` refuses any status but active (10422): s21.
+ * The beta.7 cut (storefront topology v5) fixed QA D-25 with a copied
+ * `storeStatus`; the committed v8 (5.0.0-beta.5) states it as a `where`
+ * condition on the order's storeId, `status: {const: 'active'}`, so an order at
+ * a paused or closed store is refused 40127 and the copy (with its `storeIsOpen`
+ * rule) is gone: s21.
  * Storefront topology v6 adds digital products (docs/DIGITAL_PRODUCTS.md):
  * `storeItem.fulfillment`, the seller-only `itemDeliverable` kit and the
  * seller-written `orderDelivery`: s22. v6 is also the mainnet re-cut
@@ -75,9 +77,9 @@ const storeData = ({ name, status = 'active', category = CATEGORY }) => ({ name,
 const itemData = ({ storeId, title, status = 'active', tags, imageUrls }) => ({ storeId, title, status, basePrice: 1000, currency: 'USD', ...(tags ? { tags } : {}), ...(imageUrls ? { imageUrls } : {}) });
 const zoneData = ({ storeId, name }) => ({ storeId, name, rateType: 'flat', flatRate: 500, currency: 'USD', priority: 1 });
 // No buyerId anywhere: the buyer is the order's $ownerId, and the documents filed
-// under it index `orderId.$ownerId` (v6), derived through the order. `storeStatus`
-// is the store's status, which v5 requires (QA D-25) and only an active store satisfies.
-const orderData = ({ storeId, sellerId, storeStatus = 'active' }) => ({ storeId, sellerId, storeStatus, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
+// under it index `orderId.$ownerId` (v6), derived through the order. v8 has no
+// `storeStatus`: the storeId reference itself requires an active store (QA D-25).
+const orderData = ({ storeId, sellerId, ...extra }) => ({ storeId, sellerId, ...extra, encryptedPayload: crypto.getRandomValues(new Uint8Array(64)), nonce: crypto.getRandomValues(new Uint8Array(24)) });
 const statusData = ({ orderId, status = 'shipped', message }) => ({ orderId, status, ...(message ? { message } : {}) });
 const storeReviewData = ({ storeId, orderId, sellerId, rating, title }) => ({ storeId, orderId, sellerId, rating, ...(title ? { title } : {}) });
 const itemReviewData = ({ storeId, itemId, orderId, rating }) => ({ storeId, itemId, orderId, rating });
@@ -458,30 +460,27 @@ async function caseS20PropertyConstraints(ctx) {
 
 async function caseS21StoreMustBeOpen(ctx) {
   const { battery, buyer, stranger, run } = ctx;
-  console.log('\n--- s21. QA D-25: only an active store takes orders (storeStatus bound to store.status, storeIsOpen) ---');
+  console.log('\n--- s21. QA D-25: only an active store takes orders (storeId where status: active, 40127) ---');
   // The stranger's store (s1b) is paused and reopened by its own owner; the
   // seller's store stays active for every other case.
   const storeId = ctx.strangerStoreId;
   if (!storeId) { battery.check('s21 fixture', false, 'no stranger store'); return; }
-  const place = (label, expect, storeStatus) => battery.probeCreate(label, expect, buyer, 'storeOrder', orderData({ storeId: id32(storeId), sellerId: id32(stranger.ownerId), storeStatus }));
+  const place = (label, expect, extra) => battery.probeCreate(label, expect, buyer, 'storeOrder', orderData({ storeId: id32(storeId), sellerId: id32(stranger.ownerId), ...extra }));
   // A reused store keeps its own name and category through the status flips.
   const current = (await battery.fetchDocument('store', storeId))?.toJSON?.() ?? {};
   const fields = { name: current.name ?? `Cy Store ${run}`, category: current.category ?? CATEGORY };
   const setStatus = async (status) => battery.probeReplace(`s21 the owner sets the store ${status}`, null, stranger, 'store', storeId, storeData({ ...fields, status }), await battery.revisionOf('store', storeId));
   try {
-    await place('s21a an order at the active store lands', null, 'active');
-    // The rule runs in the structure stage, before the `where` state read: a
-    // non-active copy is 10422 whatever the store says.
-    await place('s21b an order copying "paused" to an active store is refused (10422 storeIsOpen, before the where)', constraintViolation('storeIsOpen'), 'paused');
+    await place('s21a an order at the active store lands', null);
+    await place('s21b an order still carrying the dropped storeStatus is refused (10101: v8 checks the store through the reference)', SCHEMA_REFUSED, { storeStatus: 'active' });
     await setStatus('paused');
-    await place('s21c an order at the paused store is refused (40127: storeStatus active no longer matches)', PROPERTY_MISMATCH, 'active');
-    await place('s21d copying the true "paused" status is refused by the rule (10422 storeIsOpen)', constraintViolation('storeIsOpen'), 'paused');
+    await place('s21c an order at the paused store is refused (40127: the storeId condition status = active fails)', PROPERTY_MISMATCH);
     await setStatus('closed');
-    await place('s21e an order at the closed store is refused (10422 storeIsOpen)', constraintViolation('storeIsOpen'), 'closed');
+    await place('s21e an order at the closed store is refused (40127)', PROPERTY_MISMATCH);
   } finally {
     await setStatus('active');
   }
-  await place('s21f the reopened store takes orders again', null, 'active');
+  await place('s21f the reopened store takes orders again', null);
 }
 
 async function caseS22Digital(ctx) {
@@ -704,7 +703,7 @@ function selfTestV6() {
   const derivedFeed = (docType, name) => indexProps(docType, name) === '[{"orderId.$ownerId":"asc"},{"$createdAt":"asc"}]';
   const variants = SCHEMAS.storeItem.properties.variants;
   const list = (name) => variants.properties?.[name];
-  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v7)`, [
+  return reportSelfTest(`contracts/${CONTRACT_FILE} (storefront v8)`, [
     ['moderation is elected, seats contestable, owner protected, interim the contract owner', moderators.$type === 'elected' && moderators.seatContestable === true && moderators.ownerProtected === true && moderators.interim?.$type === 'contractOwner'],
     ['no doctype carries a tokenCost (nothing costs YAPP)', Object.values(SCHEMAS).every((schema) => schema.tokenCost === undefined)],
     ['store, storeItem, storeReview and itemReview creates declare 1000M / 50M / 16M / 8M moderators fees (s5e, s12)', fee('store') === 1_000_000_000n && fee('storeItem') === 50_000_000n && fee('storeReview') === 16_000_000n && fee('itemReview') === 8_000_000n],
@@ -712,6 +711,7 @@ function selfTestV6() {
     ['store requires a lowercase-slug category of at most 20 characters (s23d)', SCHEMAS.store.required.includes('category') && SCHEMAS.store.properties.category.pattern === '^[a-z0-9]+(-[a-z0-9]+)*$' && SCHEMAS.store.properties.category.maxLength === 20],
     ['store byStatus [status, $createdAt] and byCategory [status, category, $createdAt] (rangeCountable, ranked at category; s23)', indexProps('store', 'byStatus') === '[{"status":"asc"},{"$createdAt":"asc"}]'
       && indexProps('store', 'byCategory') === '[{"status":"asc"},{"category":"asc"},{"$createdAt":"asc"}]' && byCategory?.rangeCountable === true && byCategory?.rankedCountable?.at === 'category'],
+    ['storeOrder has no storeStatus; the store check is the storeId where condition (s21)', SCHEMAS.storeOrder.properties.storeStatus === undefined && !SCHEMAS.storeOrder.required.includes('storeStatus')],
     ['storeOrder.sellerId is distinctFrom $ownerId (s19)', SCHEMAS.storeOrder.properties.sellerId.distinctFrom === '$ownerId'],
     ['order counts ride buyerOrders and storeOrders (rangeCountable; storeOrders ranked at storeId; s9)', index('storeOrder', 'buyerOrders')?.rangeCountable === true && index('storeOrder', 'storeOrders')?.rangeCountable === true && index('storeOrder', 'storeOrders')?.rankedCountable?.at === 'storeId'],
     ['status updates and deliveries store no buyerId; buyerFeed and buyerDeliveries derive it (s4g, s22q)', !SCHEMAS.orderStatusUpdate.properties.buyerId && !SCHEMAS.orderDelivery.properties.buyerId && derivedFeed('orderStatusUpdate', 'buyerFeed') && derivedFeed('orderDelivery', 'buyerDeliveries')],
@@ -744,8 +744,8 @@ function selfTestRules() {
     storeItem: { ...ownedByStoreOwner, moderatorDeletable: true, typedArrays: { tags: { items: 'string', maxItems: 32, maxLength: 64 }, imageUrls: { items: 'string', maxItems: 12, maxLength: 512 } }, constraints: constraints.storeItem },
     shippingZone: { ...ownedByStoreOwner, constraints: constraints.shippingZone },
     // s3d: sellerId is the store's real owner, not a buyer's claim. s21 (QA D-25):
-    // storeStatus is the store's real status, and only an active store takes orders.
-    storeOrder: { where: { storeId: { $ownerId: 'sellerId', status: 'storeStatus' } }, constraints: constraints.storeOrder },
+    // the store must be active, a where condition rather than a rule.
+    storeOrder: { where: { storeId: { $ownerId: 'sellerId', status: { const: 'active' } } }, constraints: [] },
     // s4d/s4e: only the seller posts status updates (the buyer is derived, not copied).
     orderStatusUpdate: { where: { orderId: { sellerId: '$ownerId' } } },
     // s5c/s6: only the identity that placed the order may review it.

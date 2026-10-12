@@ -21,7 +21,11 @@
  *     a post or reply report may carry the moderators' `box`, and every
  *     report pays a moderators action fee on create;
  *   - blocks (v13): `block`, `blockFilter` and `blockFollow` live in the
- *     standalone blocks contract, not in social.
+ *     standalone blocks contract, not in social;
+ *   - mentions (v15): a post or reply names 1–8 distinct identities in the
+ *     typed array `mentionedUserIds` (one `mentionedUserId` up to v14), and
+ *     `mentionedUserAndTime` enters it once per element, read with the
+ *     5.0.0-beta.5 `contains` operator.
  *
  * Pure: no network, no SDK. `node scripts/social-shapes.mjs --self-test`
  * builds every write against each social cut and judges it with the pure
@@ -94,6 +98,7 @@ export function socialShapes(contract) {
     mediaArrays: declares('post', 'mediaUrls'),
     profileReports: declares('report', 'about'),
     blocksInSocial: schemas.block !== undefined,
+    mentionArray: declares('post', 'mentionedUserIds'),
   });
 
   /** A post create or replace: `live: true` unless it is a tombstone (`deleted` present). */
@@ -160,6 +165,34 @@ export function socialShapes(contract) {
   };
 
   /**
+   * The mention fields of a post or reply naming `ids` (32-byte identifiers):
+   * nothing for none, `mentionedUserId` for one up to v14, `mentionedUserIds`
+   * (at most `maxItems`, 8) on v15. Throws past the cut's limit; a refusal
+   * probe writes the property itself.
+   */
+  const mentions = (ids = []) => {
+    if (ids.length === 0) return {};
+    if (!cut.mentionArray) {
+      if (ids.length !== 1) throw new Error(`this cut names one mention (mentionedUserId), not ${ids.length}`);
+      return { mentionedUserId: ids[0] };
+    }
+    const { maxItems } = schemas.post.properties.mentionedUserIds;
+    if (ids.length > maxItems) throw new Error(`a post names at most ${maxItems} mentions, not ${ids.length}`);
+    return { mentionedUserIds: ids };
+  };
+
+  /**
+   * The `where` and `orderBy` reading a post's or reply's `mentionedUserAndTime`
+   * for the documents mentioning `mentioned` (base58) after `since`, in
+   * `direction`: `mentionedUserId ==` up to v14; on v15 one element of
+   * `mentionedUserIds` with `contains` (5.0.0-beta.5), ordered by `$createdAt`
+   * alone, since a typed array is ordered by only under `containsAny`.
+   */
+  const mentionsOf = (mentioned, since = 0, direction = 'desc') => (cut.mentionArray
+    ? { where: [['mentionedUserIds', 'contains', mentioned], ['$createdAt', '>', since]], orderBy: [['$createdAt', direction]] }
+    : { where: [['mentionedUserId', '==', mentioned], ['$createdAt', '>', since]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', direction]] });
+
+  /**
    * A report: exactly one of `postId`, `replyId` or (v13) `about: 1` for the
    * profile of `targetOwnerId`. `box` (v13) is the moderators' key box of a
    * private post or reply. reason 8 needs a `note`.
@@ -213,6 +246,15 @@ export function socialShapes(contract) {
     for (const key of schema.required ?? []) if (!key.startsWith('$') && data[key] === undefined) problems.push(`${docType}.${key} is required`);
     for (const [key, property] of Object.entries(schema.properties)) {
       if (data[key] !== undefined && property.contentMediaType === IDENTIFIER_MEDIA_TYPE && data[key]?.length !== 32) problems.push(`${docType}.${key} is not a 32-byte identifier`);
+      if (data[key] !== undefined && property.items?.contentMediaType === IDENTIFIER_MEDIA_TYPE) {
+        const list = data[key];
+        if (!Array.isArray(list) || list.some((element) => element?.length !== 32)) {
+          problems.push(`${docType}.${key} is not a list of 32-byte identifiers`);
+        } else {
+          if (list.length < (property.minItems ?? 0) || list.length > (property.maxItems ?? Infinity)) problems.push(`${docType}.${key} holds ${list.length} identifiers, outside ${property.minItems ?? 0}–${property.maxItems}`);
+          if (property.uniqueItems && new Set(list.map((element) => bs58.encode(element))).size !== list.length) problems.push(`${docType}.${key} repeats an identifier`);
+        }
+      }
     }
     if (docType === 'post' && cut.liveMarker) {
       if (data.deleted !== undefined && data.live !== undefined) problems.push('a post tombstone carries live');
@@ -241,7 +283,7 @@ export function socialShapes(contract) {
   };
 
   return Object.freeze({
-    schemas, cut, post, reply, likeReply, media, report, fit,
+    schemas, cut, post, reply, likeReply, media, mentions, mentionsOf, report, fit,
     ownerPostsWhere, ownerPostsOrderBy, ownerPosts, contractFor, check,
     actionFee: (docType) => actionFeeOf(schemas, docType),
   });
@@ -266,6 +308,7 @@ function expectedCut(version) {
     mediaArrays: from('v13'),
     profileReports: from('v13'),
     blocksInSocial: !from('v13'),
+    mentionArray: from('v15'),
   };
 }
 const readContract = (file) => JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', file), 'utf8'));
@@ -283,7 +326,8 @@ function writesFor(shapes) {
   const { cut } = shapes;
   const writes = [
     ['post', 'post', shapes.post({ content: 'self-test post' }), null],
-    ['post (tagged, mention)', 'post', shapes.post({ content: 'tagged', hashtag: 'selftest', mentionedUserId: replier }), null],
+    ['post (tagged, mention)', 'post', shapes.post({ content: 'tagged', hashtag: 'selftest', ...shapes.mentions([replier]) }), null],
+    ['reply (mention)', 'reply', shapes.reply({ content: 'hi', rootPostId: root, parentOwnerId: author, ...shapes.mentions([liker]) }), null],
     ['post (one media item)', 'post', shapes.post({ content: 'media', ...shapes.media([item(1)]) }), null],
     ['post (media only)', 'post', shapes.post(shapes.media([item(2)])), null],
     ['quote', 'post', shapes.post({ content: 'quote', quotedPostId: root, quotedPostOwnerId: author }), null],
@@ -320,6 +364,13 @@ function writesFor(shapes) {
   }
   if (!cut.storedReplyOwners) {
     writes.push(['reply (nested, its owners left to the windows)', 'reply', shapes.reply({ content: 'nested', rootPostId: root, replyToReplyId: parentReply }), null]);
+  }
+  if (cut.mentionArray) {
+    writes.push(
+      ['post (three mentions)', 'post', shapes.post({ content: 'hi all', ...shapes.mentions([author, replier, liker]) }), null],
+      ['post (eight mentions)', 'post', shapes.post({ content: 'hi all', ...shapes.mentions([1, 2, 3, 4, 5, 6, 7, 8].map((n) => id(30 + n))) }), null],
+      ['reply (two mentions)', 'reply', shapes.reply({ content: 'hi both', rootPostId: root, replyToReplyId: parentReply, ...shapes.mentions([author, liker]) }), null],
+    );
   }
   if (cut.rootOwner) {
     writes.push(['reply (forged: top-level parent other than the root owner)', 'reply', shapes.reply({ content: 'forged', rootPostId: root, rootOwnerId: author, parentOwnerId: liker }), 'parentIsRoot']);
@@ -363,6 +414,19 @@ function builderExpectations(shapes, version) {
       shapes.contractFor('block', { social: 'S', blocks: 'B' }) === (fromV13 ? 'B' : 'S') && shapes.contractFor('follow', { social: 'S', blocks: 'B' }) === 'S'],
     ['blocks without a blocks contract throw from v13', throws(() => shapes.contractFor('blockFollow', { social: 'S' })) === fromV13],
     ['a report pays an action fee from v13 (50M credits to the moderators)', fromV13 ? shapes.actionFee('report')?.moderators === 50_000_000n : shapes.actionFee('report') === null],
+    ['no mention writes nothing', JSON.stringify(shapes.mentions([])) === '{}'],
+    ['one mention is mentionedUserId up to v14, a one-element mentionedUserIds on v15',
+      cut.mentionArray ? shapes.mentions([id]).mentionedUserIds?.[0] === id : shapes.mentions([id]).mentionedUserId === id],
+    ['two mentions throw up to v14 only', throws(() => shapes.mentions([id, id])) === !cut.mentionArray],
+    ['nine mentions always throw', throws(() => shapes.mentions(Array.from({ length: 9 }, () => id)))],
+    ['the checker calls a repeated, empty or ninth mention wrong on v15',
+      !cut.mentionArray || [[id, id], [], Array.from({ length: 9 }, (_, n) => new Uint8Array(32).fill(n + 1))]
+        .every((list) => shapes.check('post', shapes.post({ content: 'x', mentionedUserIds: list })).some((problem) => problem.startsWith('post.mentionedUserIds')))],
+    ['the mention read pins one element with contains on v15, the identifier with == before',
+      JSON.stringify(shapes.mentionsOf('B', 5))
+        === JSON.stringify(cut.mentionArray
+          ? { where: [['mentionedUserIds', 'contains', 'B'], ['$createdAt', '>', 5]], orderBy: [['$createdAt', 'desc']] }
+          : { where: [['mentionedUserId', '==', 'B'], ['$createdAt', '>', 5]], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']] })],
   ];
 }
 
@@ -401,6 +465,12 @@ async function selfTest() {
       // v14 needs the 5.0.0-beta.3 SDK (countPresent, deleteConstraints, a derived skip property),
       // v15 the 5.0.0-beta.4 one (shorthands, a non-transferable token).
       report(false, `${version} parses with the installed SDK`, String(e?.message ?? e).slice(0, 160));
+      // The writes are still judged by the shape checker alone (the 10422 rules need the parsed contract).
+      for (const [label, docType, data, expected] of writesFor(shapes)) {
+        if (expected !== null) continue;
+        const problems = shapes.check(docType, data);
+        report(problems.length === 0, `${version} ${label} (shape checker only)`, problems.join('; '));
+      }
       continue;
     }
     for (const [label, docType, data, expected] of writesFor(shapes)) {

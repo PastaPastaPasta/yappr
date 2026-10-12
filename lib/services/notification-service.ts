@@ -11,6 +11,7 @@ import { likesAreIndexOnly, likeNotificationsAreTimeless, likeNotificationsPinTa
 import { withoutHiddenTombstones } from '../feed/hidden-tombstones';
 import { quoteNotificationType, quotedTargetIdOf } from '../feed/quote-reposts';
 import { readNotificationWindow } from './notification-windows';
+import { mentionsOfUserQuery } from './mention-service';
 import { readScoped, scopedKey, writeScoped } from '../storage-scope';
 import { applyLikeObservations, parseLikeSnapshot, targetsToRead, type KindObservation, type LikeBatch } from '../like-notification-snapshot';
 
@@ -96,6 +97,14 @@ function recentQuery(userId: string, sinceTimestamp: number, documentTypeName: s
     dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
     where: [[ownerField, '==', userId], ['$createdAt', '>', sinceTimestamp]],
     orderBy: [[ownerField, 'asc'], ['$createdAt', 'desc']], limit: NOTIFICATION_QUERY_LIMIT,
+  };
+}
+
+/** {@link recentQuery} for a {@link mentionDocTypes} type: the documents mentioning the user ({@link mentionsOfUserQuery}). */
+function recentMentionsQuery(userId: string, sinceTimestamp: number, documentTypeName: string): QueryDocumentsOptions {
+  return {
+    dataContractId: YAPPR_CONTRACT_ID, documentTypeName,
+    ...mentionsOfUserQuery(userId, sinceTimestamp, 'desc'), limit: NOTIFICATION_QUERY_LIMIT,
   };
 }
 
@@ -461,26 +470,17 @@ class NotificationService {
   }
 
   /**
-   * Get new mentions since timestamp, off `[mentionedUserId, $createdAt]`:
-   * `postMention.mentionedUserAndTime` on v2/v9, the mentioning posts' and
-   * replies' own `mentionedUserAndTime` on v10
-   * ({@link getMentioningPostNotifications}). `preloaded` holds one result per
-   * doctype of {@link mentionDocTypes}, in its order.
+   * Get new mentions since timestamp, off `mentionedUserAndTime`
+   * ({@link mentionsOfUserQuery}): `postMention`'s on v2/v9, the mentioning
+   * posts' and replies' own on v10 ({@link getMentioningPostNotifications}).
+   * `preloaded` holds one result per doctype of {@link mentionDocTypes}, in
+   * its order.
    */
   async getNewMentions(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
     if (mentionsAreInline()) return this.getMentioningPostNotifications(userId, sinceTimestamp, preloaded);
     const sdk = await getEvoSdk();
 
-    const documents = preloaded?.[0] ?? await queryDocuments(sdk, {
-      dataContractId: YAPPR_CONTRACT_ID,
-      documentTypeName: 'postMention',
-      where: [
-        ['mentionedUserId', '==', userId],
-        ['$createdAt', '>', sinceTimestamp]
-      ],
-      orderBy: [['mentionedUserId', 'asc'], ['$createdAt', 'desc']],
-      limit: NOTIFICATION_QUERY_LIMIT
-    });
+    const documents = preloaded?.[0] ?? await queryDocuments(sdk, recentMentionsQuery(userId, sinceTimestamp, 'postMention'));
 
     return documents.map((doc) => {
       const postId = doc.postId ? identifierToBase58(doc.postId) : undefined;
@@ -496,15 +496,17 @@ class NotificationService {
   }
 
   /**
-   * v10: posts and replies naming the user in `mentionedUserId`, since
-   * timestamp. The document IS the mention (only its author can write it), so
-   * its id, author and exact `$createdAt` are the notification's. A mentioning
-   * reply carries its thread linkage and content, so the notification links to
-   * the reply itself (shown with its thread root) without a re-read.
+   * v10: posts and replies naming the user, since timestamp (v15: the user is
+   * one element of `mentionedUserIds`, so a post naming several people
+   * notifies each of them once). The document IS the mention (only its author
+   * can write it), so its id, author and exact `$createdAt` are the
+   * notification's. A mentioning reply carries its thread linkage and
+   * content, so the notification links to the reply itself (shown with its
+   * thread root) without a re-read.
    */
   private async getMentioningPostNotifications(userId: string, sinceTimestamp: number, preloaded?: Record<string, unknown>[][]): Promise<RawNotification[]> {
     const [posts, replies] = preloaded ?? await Promise.all(mentionDocTypes().map(async (docType) =>
-      queryDocuments(await getEvoSdk(), recentQuery(userId, sinceTimestamp, docType, 'mentionedUserId'))));
+      queryDocuments(await getEvoSdk(), recentMentionsQuery(userId, sinceTimestamp, docType))));
     const fromPosts = (posts ?? []).flatMap((doc): RawNotification[] => typeof doc.$id === 'string' && typeof doc.$ownerId === 'string'
       ? [{ id: `mention-${doc.$id}`, type: 'mention', fromUserId: doc.$ownerId, postId: doc.$id, createdAt: Number(doc.$createdAt) }]
       : []);
@@ -951,19 +953,20 @@ class NotificationService {
     slice: (documents: Documents[]) => PermanentSourceResults;
   } {
     const mentionTypes = mentionDocTypes();
-    const sources = [
-      ['follow', 'followingId'], ...mentionTypes.map(docType => [docType, 'mentionedUserId']), ['followRequest', 'targetId'],
-      ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return [index.docType, index.ownerField]; }),
+    const recent = (documentTypeName: string, ownerField: string) => recentQuery(userId, sinceTimestamp, documentTypeName, ownerField);
+    const queries = [
+      recent('follow', 'followingId'), ...mentionTypes.map(docType => recentMentionsQuery(userId, sinceTimestamp, docType)), recent('followRequest', 'targetId'),
+      ...kinds.map(kind => { const index = likeIndexFor(kind); if (!index.ownerField) throw new Error('Notification index has no author field'); return recent(index.docType, index.ownerField); }),
     ];
     const requestsAt = 1 + mentionTypes.length;
     return {
-      queries: sources.map(([documentTypeName, ownerField]) => recentQuery(userId, sinceTimestamp, documentTypeName, ownerField)),
+      queries,
       slice: (documents) => ({
         follows: documents[0],
         mentions: documents.slice(1, requestsAt),
         followRequests: documents[requestsAt],
         likes: documents.slice(requestsAt + 1, requestsAt + 1 + kinds.length),
-        rest: documents.slice(sources.length),
+        rest: documents.slice(queries.length),
       }),
     };
   }

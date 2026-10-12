@@ -1,4 +1,5 @@
-import { contentLimits } from '@/lib/contract-topology'
+import { contentLimits, inlineMentions } from '@/lib/contract-topology'
+import { extractMentions } from '@/lib/post-helpers'
 
 /** Characters allowed in one post's content field (500; 1000 on v10). */
 export const CHARACTER_LIMIT = contentLimits().maxLength
@@ -54,4 +55,27 @@ export function isOverContentLimit(text: string, extraAscii = 0): boolean {
  */
 export function hasVisibleContent(text: string): boolean {
   return text.replace(/[\s\p{Default_Ignorable_Code_Point}]/gu, '').length > 0
+}
+
+/**
+ * What the composer says when `text` @mentions more people than a post or
+ * reply notifies, or null. On v15 a post indexes its first eight @mentions
+ * ({@link inlineMentions}) and the rest stay plain text. v10–v14 index one
+ * and say nothing about it, as before; v2/v9 index every mention.
+ */
+export function mentionLimitHint(text: string): string | null {
+  const mentions = inlineMentions()
+  if (!mentions?.isArray || extractMentions(text).length <= mentions.max) return null
+  return `Only the first ${mentions.max} people you mention will be notified.`
+}
+
+/**
+ * The mention hints of a thread's first post: under its body, or under its
+ * teaser box. An encrypted post (private, or a reply inheriting encryption)
+ * indexes the mentions of its public teaser only, and none without one
+ * (`createPost`, `createReply`), so its body never gets a hint.
+ */
+export function firstPostMentionHints({ body, encrypted, teaser }: { body: string; encrypted: boolean; teaser?: string }): { body: string | null; teaser: string | null } {
+  if (!encrypted) return { body: mentionLimitHint(body), teaser: null }
+  return { body: null, teaser: teaser ? mentionLimitHint(teaser) : null }
 }

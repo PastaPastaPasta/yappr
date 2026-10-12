@@ -46,25 +46,18 @@
             "maxBytes": 160
           },
           "position": 1,
-          "description": "The choices, in display order; a ballot names one by its index"
-        },
-        "optionCount": {
-          "type": "integer",
-          "minimum": 2,
-          "maximum": 10,
-          "position": 2,
-          "description": "How many options there are (rule-bound to options), so a ballot can be held to a real one"
+          "description": "The choices, in display order; a ballot names them by index"
         },
         "multiChoice": {
           "type": "boolean",
-          "position": 3,
+          "position": 2,
           "description": "True when a voter may pick several options; false = one"
         },
         "endsAt": {
           "type": "integer",
           "minimum": 0,
           "maximum": 9007199254740991,
-          "position": 4,
+          "position": 3,
           "description": "Close time, ms since epoch: after creation and at most 31 days later. Ballots are editable until then and final after"
         }
       },
@@ -72,19 +65,10 @@
         "$createdAt",
         "question",
         "options",
-        "optionCount",
         "multiChoice",
         "endsAt"
       ],
       "propertyConstraints": {
-        "optionCountMatches": {
-          "equal": [
-            {
-              "count": "options"
-            },
-            "optionCount"
-          ]
-        },
         "endsAfterCreation": {
           "greaterThan": [
             "endsAt",
@@ -119,7 +103,7 @@
         }
       },
       "additionalProperties": false,
-      "description": "A poll: immutable, so the optionCount, multiChoice and endsAt its ballots copy never move under them. Its owner may delete it only until the first ballot, withdrawn or not (noBallots). Closes at endsAt, within 31 days of creation"
+      "description": "A poll: immutable, so the options, multiChoice and endsAt its ballots are judged against never move. Its owner may delete it only until the first ballot, withdrawn or not (noBallots). Closes at endsAt, within 31 days of creation"
     },
     "vote": {
       "type": "object",
@@ -133,13 +117,10 @@
               "pollId": "asc"
             },
             {
-              "choice": "asc"
+              "choices": "asc"
             }
           ],
-          "countable": "countable",
-          "skipIfAbsent": [
-            "choice"
-          ]
+          "countable": "countable"
         },
         {
           "name": "byPollVoter",
@@ -149,9 +130,6 @@
             },
             {
               "$ownerId": "asc"
-            },
-            {
-              "slot": "asc"
             }
           ],
           "unique": true
@@ -170,120 +148,228 @@
         "pollId": {
           "type": "identifier",
           "position": 0,
-          "description": "The poll voted on",
+          "description": "The poll voted on; every create and replace must land by its endsAt",
           "refersTo": {
             "type": "deletableDocument",
             "documentType": "poll",
             "where": {
-              "optionCount": "pollOptionCount",
-              "multiChoice": "pollMultiChoice",
-              "endsAt": "pollEndsAt"
+              "endsAt": {
+                "greaterThanOrEqual": "$updatedAt"
+              }
             }
           }
         },
-        "slot": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9,
+        "choices": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
           "position": 1,
-          "description": "Which ballot of the voter this is: always 0 on a single-choice poll (one ballot), the option itself on a multi-choice poll (one per option). Never changes"
-        },
-        "choice": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9,
-          "position": 2,
-          "description": "The selected option; absent = not selected (withdrawn, or a multi-choice option unticked). Only ballots holding it are tallied"
-        },
-        "pollOptionCount": {
-          "type": "integer",
-          "minimum": 2,
-          "maximum": 10,
-          "position": 3,
-          "description": "The poll's optionCount, consensus-bound"
-        },
-        "pollMultiChoice": {
-          "type": "boolean",
-          "position": 4,
-          "description": "The poll's multiChoice, consensus-bound"
-        },
-        "pollEndsAt": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991,
-          "position": 5,
-          "description": "The poll's endsAt, consensus-bound"
+          "description": "The selected options by index; absent = withdrawn. byPollChoice counts each one"
         }
       },
       "required": [
         "$updatedAt",
-        "pollId",
-        "slot",
-        "pollOptionCount",
-        "pollMultiChoice",
-        "pollEndsAt"
+        "pollId"
       ],
       "immutable": [
-        "pollId",
-        "slot"
+        "pollId"
       ],
       "propertyConstraints": {
-        "writtenBeforeClose": {
-          "lessThanOrEqual": [
-            "$updatedAt",
-            "pollEndsAt"
+        "choicesAreOptions": {
+          "allOf": [
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "count": {
+                      "referenced": [
+                        "pollId",
+                        "options"
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      1
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      2
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      3
+                    ]
+                  }
+                ]
+              }
+            }
           ]
         },
-        "choiceIsAnOption": {
-          "lessThan": [
-            "choice",
-            "pollOptionCount"
+        "choicesAreOptionsHigh": {
+          "allOf": [
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      4
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      5
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      6
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "not": {
+                "contains": [
+                  "choices",
+                  {
+                    "add": [
+                      {
+                        "count": {
+                          "referenced": [
+                            "pollId",
+                            "options"
+                          ]
+                        }
+                      },
+                      7
+                    ]
+                  }
+                ]
+              }
+            }
           ]
         },
-        "slotIsAnOption": {
-          "lessThan": [
-            "slot",
-            "pollOptionCount"
-          ]
-        },
-        "singleUsesSlotZero": {
+        "singleChoice": {
           "anyOf": [
             {
               "equal": [
-                "pollMultiChoice",
+                {
+                  "referenced": [
+                    "pollId",
+                    "multiChoice"
+                  ]
+                },
                 1
               ]
             },
             {
-              "equal": [
-                "slot",
-                0
-              ]
-            }
-          ]
-        },
-        "multiChoiceIsSlot": {
-          "anyOf": [
-            {
-              "equal": [
-                "pollMultiChoice",
-                0
-              ]
-            },
-            {
-              "absent": "choice"
-            },
-            {
-              "equal": [
-                "choice",
-                "slot"
+              "lessThanOrEqual": [
+                {
+                  "count": "choices"
+                },
+                1
               ]
             }
           ]
         }
       },
       "additionalProperties": false,
-      "description": "A voter's ballot, editable until the poll closes and final after: every create and replace must land by pollEndsAt ($updatedAt is the write's block time), and nothing deletes one. Single choice: one ballot (slot 0) whose choice may change or be dropped. Multi choice: one ballot per option (slot = option) whose choice is ticked (= slot) or dropped. byPollChoice skips unselected ballots, so it tallies selections; byPoll counts them all for noBallots"
+      "description": "A voter's one ballot on a poll (byPollVoter), editable until the poll closes and final after: every create and replace must land by the poll's endsAt ($updatedAt is the write's block time), and nothing deletes one. choices holds options of the poll only, one at most on a single-choice poll. byPollChoice counts every selected option; byPoll counts ballots, withdrawn ones too, for noBallots"
     }
   }
 }
