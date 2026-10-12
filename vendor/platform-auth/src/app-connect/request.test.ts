@@ -115,6 +115,23 @@ describe('App Connect request v2 codec', () => {
     expect(refusal(() => decodeAppConnectRequest(zero)).code).toBe('invalid')
   })
 
+  it('keeps a leading BOM instead of stripping it', () => {
+    const request = yapprVectorRequest()
+    const labelled = { ...request, label: '\ufeffYappr' }
+    expect(decodeAppConnectRequest(encodeAppConnectRequest(labelled)).label).toBe('\ufeffYappr')
+
+    // A DashPay binding whose name is EF BB BF "profile" must not decode as "profile".
+    const bytes = encodeAppConnectRequest(request)
+    const nameAt = PROFILE_LEVEL_AT + 1 + 32 + 16
+    expect(bytes[nameAt]).toBe(7)
+    const spliced = Uint8Array.from([
+      ...bytes.subarray(0, PROFILE_LEVEL_AT - 3),
+      0x02, 61, ...bytes.subarray(PROFILE_LEVEL_AT - 1, nameAt), 10, 0xef, 0xbb, 0xbf,
+      ...bytes.subarray(nameAt + 1),
+    ])
+    expect(refusal(() => decodeAppConnectRequest(spliced)).message).toMatch(/document type name/)
+  })
+
   it('requires CREATED_AT', () => {
     const bytes = encodeAppConnectRequest(yapprVectorRequest())
     expect(refusal(() => decodeAppConnectRequest(bytes.subarray(0, bytes.length - 10))).code).toBe('invalid')

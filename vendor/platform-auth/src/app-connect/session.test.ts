@@ -124,6 +124,12 @@ describe('selectSigningKey', () => {
     expect(chosen([{ ...groupKey, remainingBudget: 100n }], { ...post, estimatedCost: 101n })).toBe('no-covering-key')
     expect(chosen([{ ...groupKey, remainingBudget: 101n }], { ...post, estimatedCost: 101n })).toBe(5)
     expect(chosen([{ ...groupKey, disabled: true }], post)).toBe('no-covering-key')
+    // A budgeted key with no known remaining budget is skipped, and an equivalent known one used instead.
+    const unknownBudget = { ...groupKey, keyId: 12, remainingBudget: undefined }
+    expect(chosen([unknownBudget], { ...post, estimatedCost: 101n })).toBe('no-covering-key')
+    expect(chosen([unknownBudget, groupKey], post)).toBe(5)
+    // A key with no budget at all is unlimited.
+    expect(chosen([{ ...groupKey, totalBudget: undefined, remainingBudget: undefined }], { ...post, estimatedCost: 10n ** 12n })).toBe(5)
   })
 
   it('prefers the narrowest key, then the least privileged', () => {

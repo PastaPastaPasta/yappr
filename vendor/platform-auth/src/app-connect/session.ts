@@ -21,7 +21,7 @@ export interface AppConnectSessionKey {
   bounds?: AppConnectKeyBounds
   securityLevel: number
   totalBudget?: bigint
-  /** Last known remaining budget; refreshed after writes and on 40218. */
+  /** Last known remaining budget; refreshed after writes and on 40218. A budgeted key without one is not used. */
   remainingBudget?: bigint
   expiresAt?: number
   disabled?: boolean
@@ -208,6 +208,8 @@ function usable(key: AppConnectSessionKey, request: SigningRequest, ctx: SelectS
   if (key.securityLevel === KeySecurityLevel.MASTER) return false
   const margin = ctx.expiryMarginMs ?? APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS
   if (key.expiresAt !== undefined && key.expiresAt - ctx.now <= margin) return false
+  // A budgeted key whose remaining budget is unknown is not unlimited: skip it until refreshed.
+  if (key.totalBudget !== undefined && key.remainingBudget === undefined) return false
   if (key.remainingBudget !== undefined
     && (key.remainingBudget <= 0n || key.remainingBudget < (request.estimatedCost ?? 0n))) return false
   return true
