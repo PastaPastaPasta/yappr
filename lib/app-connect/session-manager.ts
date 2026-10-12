@@ -93,6 +93,8 @@ class AppConnectSessionManager {
   private active: AppConnectSession | null = null
   private trustPromise: Promise<AppConnectTrust> | null = null
   private refreshTimer: ReturnType<typeof setInterval> | null = null
+  /** Bumped by every activation and deactivation, so an activation finishing late can tell it was overtaken. */
+  private activations = 0
   private signedOutListener: ((identityId: string) => void) | null = null
 
   network(): YapprKeyExchangeNetworkName {
@@ -201,21 +203,23 @@ class AppConnectSessionManager {
   }
 
   private async activate(session: AppConnectSession): Promise<void> {
+    const activation = ++this.activations
     this.active = session
     setAppConnectSessionIdentity(session.identityId)
     clearAppConnectEncryptionKey()
     const pins = appConnectPins()
     const encKey = session.encKeys.find((key) => key.purpose === KeyPurpose.ENCRYPTION && key.contractId === pins?.appId)
-    if (encKey) {
-      const wif = await this.privateKeyWif(session, encKey.keyRef)
-      if (wif) setAppConnectEncryptionKey(session.identityId, wif)
-    }
+    const wif = encKey ? await this.privateKeyWif(session, encKey.keyRef) : null
+    // A logout, discard or newer activation during the key read wins: install nothing for this one.
+    if (activation !== this.activations) return
+    if (wif) setAppConnectEncryptionKey(session.identityId, wif)
     publishSession(session)
     this.startRefresh()
   }
 
   /** Drops this tab's in-memory session; the stored ring is left alone. */
   private deactivate(): void {
+    this.activations++
     this.active = null
     setAppConnectSessionIdentity(null)
     clearAppConnectEncryptionKey()

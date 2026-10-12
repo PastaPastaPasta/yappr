@@ -44,6 +44,7 @@ vi.mock('@/lib/logger', () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: 
 
 const { AppConnectKeyRingStore } = await import('./key-ring-store')
 const { appConnectSessions, useAppConnectStatus } = await import('./session-manager')
+const { appConnectEncryptionKey } = await import('./memory-keys')
 
 function grant(identityId: string, grantedAt: number, keyId = grantedAt): AppConnectSession {
   return {
@@ -159,5 +160,24 @@ describe('AppConnectSessionManager across tabs', () => {
     // The older grant of that same millisecond can no longer clear the newer one.
     await appConnectSessions.discard(old)
     expect(storedGrantedAt()).toBe(1)
+  })
+  it('installs nothing from an activation overtaken by a logout', async () => {
+    const withEncKey: AppConnectSession = { ...grant('alice', 1), encKeys: [{ keyId: 7, contractId: 'app', purpose: 1, keyRef: 'key-enc' }] }
+    await new AppConnectKeyRingStore(backend).save(withEncKey, new Map([['key-group', new Uint8Array(32).fill(7)], ['key-enc', new Uint8Array(32).fill(8)]]))
+    let release: (wif: string) => void = () => undefined
+    const keyRead = vi.spyOn(appConnectSessions, 'privateKeyWif').mockReturnValueOnce(new Promise((resolve) => { release = resolve }))
+    const startRefresh = vi.spyOn(appConnectSessions as unknown as { startRefresh: () => void }, 'startRefresh')
+
+    const restoring = appConnectSessions.restore('alice')
+    await vi.waitFor(() => expect(keyRead).toHaveBeenCalled())
+    await appConnectSessions.logout('alice')
+    release('cMockWif')
+    await restoring
+
+    expect(appConnectEncryptionKey('alice')).toBeNull()
+    expect(useAppConnectStatus.getState().identityId).toBeNull()
+    expect(startRefresh).not.toHaveBeenCalled()
+    keyRead.mockRestore()
+    startRefresh.mockRestore()
   })
 })
