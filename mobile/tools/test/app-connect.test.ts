@@ -441,6 +441,17 @@ describe('App Connect fault flags', () => {
     expect(reason(await verdictFor(chain, lane.request, lane.appPrivateKey, spammers[0]))).toBe('ok')
   })
 
+  it('spam=<n> can be retried on the same request', async () => {
+    const chain = newChain()
+    const spammers = [92, 93].map((idx) => testPersona(idx))
+    const { request, appPrivateKey, uri } = newRequest()
+    await answer(chain, uri, { faults: ['spam=2'], spamPersonas: spammers })
+    await answer(chain, uri, { faults: ['spam=2'], spamPersonas: spammers })
+    const verdicts = await verifyAll(chain, request, appPrivateKey)
+    expect(verdicts).toHaveLength(3)
+    expect(reason(await verdictFor(chain, request, appPrivateKey))).toBe('ok')
+  })
+
   it('refuses faults it cannot honour as usage errors, before writing', async () => {
     const chain = newChain()
     await expect(answer(chain, newRequest().uri, { faults: ['second-identity'] })).rejects.toThrow(/other persona/)

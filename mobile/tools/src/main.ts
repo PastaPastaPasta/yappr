@@ -126,6 +126,9 @@ class Responder {
     const persona = selectPersona(this.pool, request.personaIdx)
     if (uri.startsWith('dash-key:') && !appConnect) requireKeyExchangeContract(this.config)
     if (appConnect && request.keyIndex !== undefined) throw new Error('keyIndex applies to legacy (v=1) requests only')
+    if (!appConnect && (request.faults || request.otherPersonaIdx !== undefined || request.spamPersonaIdxs)) {
+      throw new Error('Fault flags apply to App Connect (v=2) requests only')
+    }
     const spamIdxs = request.spamPersonaIdxs ?? (request.faults?.spam ? MOBILE_PERSONAS : undefined)
     return respond({
       uri,

@@ -710,8 +710,9 @@ function junkResponse(plan: Plan): ResponseValues {
  * Wallet rule 9: delete the responses this wallet published earlier for the
  * identity and app (by their values), then create the new one. A delete
  * Platform refused (a consensus error: the entry is gone) is dropped from the
- * record; any other failure keeps it for the next answer. Spam junk only
- * adds (`replacePrevious: false`).
+ * record; any other failure keeps it for the next answer. Spam junk
+ * (`replacePrevious: false`) only replaces an earlier answer to the same
+ * request (a retry), never a live response to another one.
  */
 async function publish(
   persona: Persona,
@@ -721,25 +722,28 @@ async function publish(
   { replacePrevious = true } = {},
 ): Promise<{ deletedResponses: number; documentId?: string; confirmed: boolean }> {
   const record = ports.grants.get(persona.identityId, appId)
+  const requestHash = bytesToHex(values.appEphemeralPubKeyHash)
   let deletedResponses = 0
-  if (replacePrevious) {
-    const kept: StoredResponse[] = []
-    for (const old of record.responses) {
-      try {
-        await ports.deleteResponse(persona, old)
-        deletedResponses++
-      } catch (error) {
-        ports.log(`persona ${persona.personaIdx}: deleting the response to ${old.appEphemeralPubKeyHash} failed: ${errorMessage(error)}`)
-        if (!isConsensusError(error)) kept.push(old)
-      }
+  const kept: StoredResponse[] = []
+  for (const old of record.responses) {
+    if (!replacePrevious && old.appEphemeralPubKeyHash !== requestHash) {
+      kept.push(old)
+      continue
     }
-    record.responses = kept
-    ports.grants.put(persona.identityId, appId, record)
+    try {
+      await ports.deleteResponse(persona, old)
+      deletedResponses++
+    } catch (error) {
+      ports.log(`persona ${persona.personaIdx}: deleting the response to ${old.appEphemeralPubKeyHash} failed: ${errorMessage(error)}`)
+      if (!isConsensusError(error)) kept.push(old)
+    }
   }
+  record.responses = kept
+  ports.grants.put(persona.identityId, appId, record)
 
   const { documentId, confirmed } = await ports.createResponse(persona, values)
   record.responses.push({
-    appEphemeralPubKeyHash: bytesToHex(values.appEphemeralPubKeyHash),
+    appEphemeralPubKeyHash: requestHash,
     walletEphemeralPubKey: bytesToHex(values.walletEphemeralPubKey),
     encryptedPayload: bytesToHex(values.encryptedPayload),
     documentId,
