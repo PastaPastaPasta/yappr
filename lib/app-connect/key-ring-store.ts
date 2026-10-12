@@ -61,7 +61,8 @@ export class AppConnectKeyRingStore {
   constructor(
     private readonly backend: KeyRingBackend,
     private readonly subtle: SubtleCrypto = globalThis.crypto.subtle,
-    private readonly random: (bytes: Uint8Array) => Uint8Array = (bytes) => globalThis.crypto.getRandomValues(bytes),
+    /** `length` random bytes (allocated here, so the array is backed by a plain ArrayBuffer). */
+    private readonly random: (length: number) => Uint8Array = (length) => globalThis.crypto.getRandomValues(new Uint8Array(length)),
   ) {}
 
   private deviceKey(): Promise<CryptoKey> {
@@ -80,7 +81,7 @@ export class AppConnectKeyRingStore {
 
   /** Wraps `plaintext` under the device key, bound to `label`; wipes its own copy of the plaintext. */
   private async wrap(plaintext: Uint8Array, label: string): Promise<WrappedBytes> {
-    const iv = this.random(new Uint8Array(12))
+    const iv = this.random(12)
     const copy = toArrayBuffer(plaintext)
     try {
       const additionalData = toArrayBuffer(encoder.encode(label))
@@ -103,7 +104,7 @@ export class AppConnectKeyRingStore {
   async connectionId(network: string): Promise<string> {
     const existing = await this.backend.get<string>(connectionKey(network))
     if (typeof existing === 'string' && /^[0-9a-f]{32}$/.test(existing)) return existing
-    const created = bytesToHex(this.random(new Uint8Array(16)))
+    const created = bytesToHex(this.random(16))
     await this.backend.put(connectionKey(network), created)
     return created
   }
