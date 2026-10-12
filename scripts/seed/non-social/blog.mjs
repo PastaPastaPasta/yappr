@@ -1,16 +1,18 @@
 /**
  * Blogs: `blog` (zlib-compressed themeConfig), `blogPost` (real BlockNote block arrays, zlib-compressed and chunked
- * into data0–data3 exactly like lib/services/blog-post-service.ts), `blogComment` (1 YAPP each through the cross-
- * contract tokenCost on the social contract; up to v5 `blogPostOwnerId` bound to the post's `$ownerId`, which v6 derives) and `blogFollow`
+ * into data0–data3 exactly like lib/services/blog-post-service.ts), `blogComment` (up to v6 1 YAPP each through the cross-
+ * contract tokenCost on the social contract, a credit action fee from v7; up to v5 `blogPostOwnerId` bound to the post's `$ownerId`, which v6 derives) and `blogFollow`
  * (unevenly distributed so "Most followed" and "Trending today" have a clear leader). A few posts are EDITED after
  * creation so the replace path (frozen `blogId`/`publishedAt`) is exercised. Article bodies are generated from a fragment bank into
  * a small markdown dialect and converted to blocks here — the converter is what the app will read back, so it stays
  * faithful even though the prose is synthetic.
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { zlibSync } from 'fflate';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { COLD_BUCKET, id32, normalizeId, reportSelfTest } from '../../battery-lib.mjs';
-import { YAPP_TOKEN_POSITION, describeErr } from '../seed-lib.mjs';
+import { REPO_ROOT, YAPP_TOKEN_POSITION, describeErr, feeAgreementFor } from '../seed-lib.mjs';
 import {
   actorsFor, counts, createDocWriter, createRecorder, ensureTokens, entropySource, groupTasks, loadCheckpoint,
   network, phaseRunner, pick, printTable, rngFrom, runByActor, shuffled, topologyAtLeast, utf8,
@@ -39,6 +41,25 @@ const commentsCopyPostFlag = () => blogAtLeast('v5') && !blogAtLeast('v8');
  * `blogPostOwnerId`, and the contract refuses one that does.
  */
 const commentsDerivePostOwner = () => blogAtLeast('v6');
+/**
+ * Blog v7 (5.0.0-beta.1) prices `blog`, `blogPost` and `blogComment` creates
+ * with a credit action fee each create must agree to (a comment no longer costs
+ * YAPP), and its rankings are rolling windows: "trending" and "most discussed"
+ * read `followersTrend` / `discussedRecent` on the contract's own grid, and
+ * there is no all-time comment ranking. lib/blog/blog-contract.ts mirrors this.
+ */
+const blogIsV7 = () => blogAtLeast('v7');
+const SCHEMAS = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-blog-contract.json'), 'utf8')).documentSchemas;
+/** A v7 trend window as `documents.ranked()` names it: the index's own grid, the oldest still-open window (as the app reads it). */
+function trendWindow(docType, indexName) {
+  const { range, step } = SCHEMAS[docType].indices.find((index) => index.name === indexName).timeRange;
+  return [{ field: '$createdAt', selector: 'oldest', grid: { range, step } }];
+}
+/** "Trending" blogs: today's bucket up to v6, v7's 72h `followersTrend` window. */
+const trendingWindow = () => (blogIsV7() ? trendWindow('blogFollow', 'followersTrend') : [{ field: '$createdAt', selector: 'newest', grid: { ...DAY_GRID } }]);
+/** "Most discussed" posts: all time up to v6, v7's 72h `discussedRecent` window. */
+const discussedWindow = () => (blogIsV7() ? { timeRange: trendWindow('blogComment', 'discussedRecent') } : {});
+
 /** A seeded comment's fields; \`postCommentsEnabled\` only on v5-v7, and only ever \`true\` (see above); no \`blogPostOwnerId\` on v6+. */
 const commentFields = ({ blogPostId, blogPostOwnerId, content }) => ({
   blogPostId, ...(commentsDerivePostOwner() ? {} : { blogPostOwnerId }), content, ...(commentsCopyPostFlag() ? { postCommentsEnabled: true } : {}),
@@ -515,8 +536,12 @@ const planPersonas = (plan) => [...new Set([...plan.blogs.map((b) => b.owner), .
 async function run({ args, handle, battery, socialId, contractId }) {
   const state = loadCheckpoint(args.state, { network: network(), contractId }, { docs: {}, publishAnchor: Date.now() });
   const plan = buildPlan({ seed: args.seed, only: args.only, publishAnchor: state.publishAnchor });
-  const writer = createDocWriter({ handle, contractId, entropyFor: entropySource(`yappr/blog-seed/${contractId}`), paymentInfo: battery.paymentInfo });
-  const tokenId = await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION));
+  const writer = createDocWriter({
+    handle, contractId, entropyFor: entropySource(`yappr/blog-seed/${contractId}`), paymentInfo: battery.paymentInfo,
+    ...(blogIsV7() ? { agreementFor: (docType) => feeAgreementFor(handle.sdk, docType, SCHEMAS) } : {}),
+  });
+  const commentsCostYapp = !blogIsV7();
+  const tokenId = commentsCostYapp ? await battery.readback(() => battery.sdk.tokens.calculateId(socialId, YAPP_TOKEN_POSITION)) : null;
   const actors = await actorsFor(battery, planPersonas(plan));
   const recorder = createRecorder({ writer, state, file: args.state });
   const { createDoc } = recorder;
@@ -533,11 +558,13 @@ async function run({ args, handle, battery, socialId, contractId }) {
   };
 
   if (!args.verifyOnly) {
-    // One YAPP per comment, bought with credits when the maker transfer was
-    // unavailable (the battery's documented fallback).
-    const perAuthor = new Map();
-    for (const comment of plan.comments) perAuthor.set(comment.author, (perAuthor.get(comment.author) ?? 0) + 1);
-    await ensureTokens(battery, tokenId, actors, new Map([...perAuthor].map(([idx, count]) => [idx, BigInt(count) * COMMENT_COST])));
+    // Up to v6, one YAPP per comment, bought with credits when the maker transfer
+    // was unavailable (the battery's documented fallback). v7 charges credits.
+    if (commentsCostYapp) {
+      const perAuthor = new Map();
+      for (const comment of plan.comments) perAuthor.set(comment.author, (perAuthor.get(comment.author) ?? 0) + 1);
+      await ensureTokens(battery, tokenId, actors, new Map([...perAuthor].map(([idx, count]) => [idx, BigInt(count) * COMMENT_COST])));
+    }
 
     // `blog` has NO unique index, so a deterministic id alone cannot recognise a
     // blog an earlier run — or the registration battery, which shares this
@@ -582,7 +609,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
         blogPostOwnerId: id32(actors.get(ownerOf(comment.postKey).owner).ownerId),
         content: comment.content,
       }), {
-        tokenCost: COMMENT_COST,
+        ...(commentsCostYapp ? { tokenCost: COMMENT_COST } : {}),
         adopt: resumed ? async () => {
           const written = await battery.queryDocs('blogComment', {
             where: [['blogPostId', '==', postIds.get(comment.postKey)]],
@@ -621,12 +648,11 @@ async function run({ args, handle, battery, socialId, contractId }) {
   const { page: followed } = await battery.ranked('blogFollow', 'blogId', { type: 'count' }, { direction: 'desc' });
   let trending = new Map();
   try {
-    const { page } = await battery.ranked('blogFollow', 'blogId', { type: 'count' },
-      { direction: 'desc', timeRange: [{ field: '$createdAt', selector: 'newest', grid: { ...DAY_GRID } }] });
+    const { page } = await battery.ranked('blogFollow', 'blogId', { type: 'count' }, { direction: 'desc', timeRange: trendingWindow() });
     trending = new Map(page.entries.map((entry) => [entry.groupValue, Number(entry.value)]));
   } catch (error) {
     const message = describeErr(error);
-    console.log(`trending today: ${COLD_BUCKET.test(message) ? 'cold bucket (empty page, as designed)' : message.slice(0, 160)}`);
+    console.log(`trending ${blogIsV7() ? '(3 days)' : 'today'}: ${COLD_BUCKET.test(message) ? 'cold bucket (empty page, as designed)' : message.slice(0, 160)}`);
   }
 
   // blogCommentService.countCommentsByPostBatch() — one grouped count per page.
@@ -652,16 +678,25 @@ async function run({ args, handle, battery, socialId, contractId }) {
     ]);
   }
   rows.sort((a, b) => b[0] - a[0] || b[4] - a[4]);
-  printTable([['followers', -9], ['ranked', -6], ['today', -5], ['posts', -5], ['comments', -8], ['blog', 40]], rows,
+  printTable([['followers', -9], ['ranked', -6], [blogIsV7() ? '3 days' : 'today', -6], ['posts', -5], ['comments', -8], ['blog', 40]], rows,
     'read back through the app’s query shapes — followers from the countable axis, ranked = the "Most followed" page');
 
   const postById = new Map(plan.posts.map((post) => [postIds.get(post.key), post]));
-  const { page: discussed } = await battery.ranked('blogComment', 'blogPostId', { type: 'count' }, { direction: 'desc', limit: 10 });
+  let discussed = [];
+  try {
+    const { page } = await battery.ranked('blogComment', 'blogPostId', { type: 'count' }, { direction: 'desc', limit: 10, ...discussedWindow() });
+    discussed = page.entries;
+  } catch (error) {
+    // Only the v7 window has a cold-bucket empty answer; an all-time axis that fails is a real fault.
+    const message = describeErr(error);
+    if (!(blogIsV7() && COLD_BUCKET.test(message))) throw error;
+    console.log('most discussed (3 days): cold bucket (empty page, as designed)');
+  }
   printTable([['comments', -8], ['post', 60]],
-    discussed.entries.filter((e) => e.value > 0n).slice(0, 8).map((entry) => {
+    discussed.filter((e) => e.value > 0n).slice(0, 8).map((entry) => {
       const post = postById.get(entry.groupValue);
       return [Number(entry.value), post ? `${post.title} [${post.blogKey}]` : `(another run) ${entry.groupValue}`];
-    }), 'Most discussed posts (ranked commentCount axis)');
+    }), blogIsV7() ? 'Most discussed posts (3 days, ranked discussedRecent window)' : 'Most discussed posts (ranked commentCount axis)');
 
   const edited = [];
   for (const edit of plan.edits) {
@@ -681,7 +716,7 @@ function dryRun(plan) {
       [post.published ? null : 'draft', post.commentsEnabled ? null : 'comments off',
         plan.edits.some((edit) => edit.postKey === post.key) ? 'edited' : null].filter(Boolean).join(', ')]));
   console.log(`\n${counts({ blogs: plan.blogs.length, posts: plan.posts.length, edits: plan.edits.length,
-    comments: plan.comments.length, follows: plan.follows.length }, `; YAPP required ${plan.comments.length}`)}`);
+    comments: plan.comments.length, follows: plan.follows.length }, blogIsV7() ? '; blog/post/comment creates pay action fees in credits' : `; YAPP required ${plan.comments.length}`)}`);
   return 0;
 }
 
@@ -698,18 +733,23 @@ function selfTest(args) {
   // Uneven on purpose: "Most followed" is only worth looking at with a clear leader.
   const followerCounts = Object.values(FOLLOWERS).map((list) => list.length).sort((a, b) => b - a);
   const again = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
-  // The label and comment encodings follow NEXT_PUBLIC_BLOG_TOPOLOGY: prove every shape.
-  const labelShapes = (topology) => {
+  // The label, comment and ranking shapes follow NEXT_PUBLIC_BLOG_TOPOLOGY: prove every one.
+  const underTopology = (topology, fn) => {
     const saved = process.env.NEXT_PUBLIC_BLOG_TOPOLOGY;
     process.env.NEXT_PUBLIC_BLOG_TOPOLOGY = topology;
     try {
-      const shaped = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
-      const comment = commentFields({ blogPostId: 'p', blogPostOwnerId: 'o', content: 'c' });
-      return [shaped.blogs[0].data.labels, shaped.posts.find((post) => post.data.labels)?.data.labels, comment];
+      return fn();
     } finally {
       if (saved === undefined) delete process.env.NEXT_PUBLIC_BLOG_TOPOLOGY; else process.env.NEXT_PUBLIC_BLOG_TOPOLOGY = saved;
     }
   };
+  const labelShapes = (topology) => underTopology(topology, () => {
+    const shaped = buildPlan({ seed: args.seed, only: null, publishAnchor: 1_800_000_000_000 });
+    const comment = commentFields({ blogPostId: 'p', blogPostOwnerId: 'o', content: 'c' });
+    return [shaped.blogs[0].data.labels, shaped.posts.find((post) => post.data.labels)?.data.labels, comment];
+  });
+  const rankingShapes = (topology) => underTopology(topology, () => JSON.stringify([trendingWindow(), discussedWindow()]));
+  const window72h = { field: '$createdAt', selector: 'oldest', grid: { range: 259200, step: 86400 } };
   const [v3Blog, v3Post] = labelShapes('v3');
   const [v4Blog, v4Post, v4Comment] = labelShapes('v4');
   const [v5Blog, v5Post, v5Comment] = labelShapes('v5');
@@ -722,6 +762,10 @@ function selfTest(args) {
     ['a v4 comment carries no postCommentsEnabled; a v5 comment copies true', !('postCommentsEnabled' in v4Comment) && v5Comment.postCommentsEnabled === true],
     ['a v5 comment copies blogPostOwnerId; a v6 comment leaves it out and still copies true', v5Comment.blogPostOwnerId === 'o' && !('blogPostOwnerId' in v6Comment) && v6Comment.postCommentsEnabled === true && Array.isArray(v6Blog)],
     ['a v8 comment is only the post and the content: no postCommentsEnabled, no blogPostOwnerId', JSON.stringify(Object.keys(v8Comment)) === '["blogPostId","content"]'],
+    ['up to v6 trending reads today\'s daily bucket and most-discussed is all time',
+      rankingShapes('v6') === JSON.stringify([[{ field: '$createdAt', selector: 'newest', grid: DAY_GRID }], {}])],
+    ['v7+ trending and most-discussed read the contract\'s 72h windows stepping 24h (followersTrend, discussedRecent)',
+      rankingShapes('v8') === JSON.stringify([[window72h], { timeRange: [window72h] }])],
     ['every commented post stores commentsEnabled true (what a v5-v7 comment copies, and what v8 requires not to be false)', plan.comments.every((comment) => plan.posts.find((post) => post.key === comment.postKey)?.data.commentsEnabled === true)],
     [`8 blogs / 42 posts (${plan.blogs.length}/${plan.posts.length})`, plan.blogs.length === 8 && plan.posts.length === 42],
     [`40 follows / 4 edits (${plan.follows.length}/${plan.edits.length})`, plan.follows.length === 40 && plan.edits.length === 4],
