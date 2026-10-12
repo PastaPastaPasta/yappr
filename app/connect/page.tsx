@@ -5,6 +5,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Spinner } from '@/components/ui/spinner'
 import { Button } from '@/components/ui/button'
+import { useAuth } from '@/contexts/auth-context'
+import { useRenewModal } from '@/hooks/use-renew-modal'
+import { isPendingRenewal } from '@/hooks/use-app-connect-login'
 import {
   APP_CONNECT_CHANNEL,
   isConnectCallbackAck,
@@ -33,7 +36,29 @@ type View = { kind: 'waiting' } | { kind: 'other-tab' } | { kind: 'status'; titl
  */
 export default function ConnectPage() {
   const router = useRouter()
+  const { user, isAuthRestoring } = useAuth()
   const [view, setView] = useState<View>({ kind: 'waiting' })
+  /** No other tab took the request: continue here once we know who is signed in. */
+  const [continueHere, setContinueHere] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!continueHere || isAuthRestoring) return
+    const requestHash = continueHere
+    const identityId = user?.identityId
+    // A renewal of the signed-in account resumes in its renew dialog; anything else is a sign-in.
+    const pendingRenewal = identityId ? isPendingRenewal(identityId, requestHash) : Promise.resolve(false)
+    pendingRenewal
+      .catch(() => false)
+      .then((renewal) => {
+        if (renewal) {
+          useRenewModal.getState().open()
+          router.replace('/feed/')
+        } else {
+          router.replace('/login/')
+        }
+      })
+      .catch(() => router.replace('/login/'))
+  }, [continueHere, isAuthRestoring, router, user?.identityId])
 
   useEffect(() => {
     const callback = parseConnectCallback(window.location.search)
@@ -47,7 +72,7 @@ export default function ConnectPage() {
       return
     }
     if (typeof BroadcastChannel === 'undefined') {
-      router.replace('/login/')
+      setContinueHere(callback.requestHash)
       return
     }
 
@@ -61,7 +86,7 @@ export default function ConnectPage() {
     const message: ConnectCallbackMessage = { type: 'app-connect-callback', requestHash: callback.requestHash, status: callback.status }
     channel.postMessage(message)
     const timer = setTimeout(() => {
-      if (!answered) router.replace('/login/')
+      if (!answered) setContinueHere(callback.requestHash)
     }, ACK_WAIT_MS)
     return () => {
       clearTimeout(timer)

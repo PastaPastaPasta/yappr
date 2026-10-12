@@ -9,6 +9,7 @@ import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAppConnectStatus, type RenewReason } from '@/lib/app-connect/session-manager'
 import { useRenewModal } from '@/hooks/use-renew-modal'
+import { identityService } from '@/lib/services/identity-service'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
 
@@ -43,9 +44,11 @@ export function AppConnectSessionNotices() {
   /** The renewal landed: tell whoever opened the dialog (a settings card, the messaging-key prompt). */
   const finishRenew = useCallback(() => {
     const onRenewed = useRenewModal.getState().onRenewed
+    // The renewal may have added keys: callers re-checking the identity must not see a cached copy.
+    if (sessionUser) identityService.clearCache(sessionUser.identityId)
     closeRenew()
     onRenewed?.()
-  }, [closeRenew])
+  }, [closeRenew, sessionUser])
 
   const onGrant = useCallback(async (grant: AppConnectGrant) => {
     await renewWithAppConnect(grant)

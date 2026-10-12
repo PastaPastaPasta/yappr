@@ -5,6 +5,8 @@ import { LockClosedIcon } from '@heroicons/react/24/outline'
 import { useAuth } from '@/contexts/auth-context'
 import { useAppConnectStatus } from '@/lib/app-connect/session-manager'
 import { useRenewModal } from '@/hooks/use-renew-modal'
+import { getEncryptionKey } from '@/lib/secure-storage'
+import toast from 'react-hot-toast'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 
@@ -29,7 +31,17 @@ export function WalletEncryptionKeyPrompt({
   /** Called once the renewal (which brings the messaging key) has landed, so the caller can re-check. */
   onSuccess?: () => void
 }) {
+  const { user } = useAuth()
   const openRenew = useRenewModal((state) => state.open)
+
+  // The wallet may leave messaging out of a renewal: only report success when the key arrived.
+  const renewed = () => {
+    if (user && getEncryptionKey(user.identityId)) {
+      onSuccess?.()
+      return
+    }
+    toast.error('Your wallet didn\'t include messaging. Renew again and allow messaging when it asks.')
+  }
   return (
     <Modal open={isOpen} onOpenChange={(next) => { if (!next) onClose() }} className="w-[420px] max-w-[90vw]">
       <ModalTitle>
@@ -42,7 +54,7 @@ export function WalletEncryptionKeyPrompt({
       </Dialog.Description>
       <div className="flex gap-2 justify-end">
         <Button variant="ghost" onClick={onClose}>Not now</Button>
-        <Button onClick={() => { onClose(); openRenew(onSuccess) }}>Renew in your wallet</Button>
+        <Button onClick={() => { onClose(); openRenew(renewed) }}>Renew in your wallet</Button>
       </div>
     </Modal>
   )

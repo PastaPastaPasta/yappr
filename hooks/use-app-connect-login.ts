@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { clearSensitiveBytes, getYapprPublicKey, hash160 } from 'platform-auth'
+import { bytesToHex, hexToBytes } from '@/lib/bytes'
 import { logger } from '@/lib/logger'
 import { appConnectPins } from '@/lib/app-connect/config'
 import { AppConnectLogin, parseStoredRequest, type AppConnectLoginState, type RequestRecordStore, type StoredAppConnectRequest } from '@/lib/app-connect/login-flow'
@@ -67,6 +69,22 @@ function requestRecordsFor(identityHint: string | undefined): RequestRecordStore
  * /connect in another tab, and wipes everything on unmount. `identityHint`
  * makes it a renewal that only that identity may answer.
  */
+/**
+ * Whether the request the wallet just returned for (its hash, hex) is the
+ * pending renewal for `identityId`, so /connect can resume that renewal
+ * rather than start a sign-in.
+ */
+export async function isPendingRenewal(identityId: string, requestHash: string): Promise<boolean> {
+  const record = await requestRecordsFor(identityId).load()
+  if (!record) return false
+  const privateKey = hexToBytes(record.ephemeralPrivateKey)
+  try {
+    return bytesToHex(hash160(getYapprPublicKey(privateKey))) === requestHash
+  } finally {
+    clearSensitiveBytes(privateKey)
+  }
+}
+
 function createLogin(identityHint: string | undefined): AppConnectLogin | null {
   const pins = appConnectPins()
   if (!pins || typeof window === 'undefined') return null

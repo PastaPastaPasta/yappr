@@ -135,6 +135,11 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
     if (user) {
       const { getEncryptionKey } = await import('@/lib/secure-storage')
       const storedKey = getEncryptionKey(user.identityId)
+      // A wallet sign-in uses the messaging key its wallet granted, never a typed one.
+      if (walletSession && !storedKey) {
+        openEncryptionKeyModal('manage_private_feed', checkPrivateFeedStatus)
+        return
+      }
       if (storedKey) {
         // Pre-populate the key field with the stored key
         setEncryptionKeyInput(storedKey)
@@ -500,6 +505,12 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                 </div>
 
                 <div className="space-y-2">
+                  {walletSession ? (
+                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                      Your private feed will use the messaging key from your Dash wallet.
+                    </p>
+                  ) : (
+                  <>
                   <label htmlFor={encryptionKeyId} className="text-sm font-medium">
                     Encryption Private Key
                   </label>
@@ -514,6 +525,8 @@ export function PrivateFeedSettings({ openReset = false, onResetOpened }: Privat
                     }}
                     className="font-mono text-sm"
                   />
+                  </>
+                  )}
                   {keyError && (
                     <p className="text-sm text-red-600 dark:text-red-400">
                       {keyError}
