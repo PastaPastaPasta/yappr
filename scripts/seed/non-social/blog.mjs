@@ -49,6 +49,10 @@ const commentsDerivePostOwner = () => blogAtLeast('v6');
  * there is no all-time comment ranking. lib/blog/blog-contract.ts mirrors this.
  */
 const blogIsV7 = () => blogAtLeast('v7');
+/**
+ * The committed contract is the newest cut (v8), read for both v7 and v8 runs, as the app does: the
+ * two declare the same action fees and the same trend grids (v8 only changed the comment reference).
+ */
 const SCHEMAS = JSON.parse(readFileSync(join(REPO_ROOT, 'contracts', 'yappr-blog-contract.json'), 'utf8')).documentSchemas;
 /** A v7 trend window as `documents.ranked()` names it: the index's own grid, the oldest still-open window (as the app reads it). */
 function trendWindow(docType, indexName) {

@@ -686,7 +686,7 @@ async function run({ args, handle, battery, socialId, contractId }) {
             message: pick(rngFrom(`status/${order.key}/${status}`), STATUS_MESSAGE[status]),
             ...(status === 'shipped' && order.carrier ? { trackingCarrier: order.carrier, trackingNumber: trackingFor(order.key, order.carrier) } : {}),
           }, {
-            scope: { where: [['orderId', '==', orderIds.get(order.key)]], orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']] },
+            scope: { where: [['orderId', '==', orderIds.get(order.key)]], orderBy: [['orderId', 'desc'], ['$createdAt', 'desc']] },
           });
         }
       }

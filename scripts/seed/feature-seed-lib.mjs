@@ -182,13 +182,19 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     // then checkpointed by the caller under the key); a create that threw after landing is
     // recognised by the caller's `accepted` probe, or by a value readback for a stored type.
     let id = null;
+    // Every id a priced create derived before broadcasting, one per attempt: an
+    // earlier attempt whose wait threw may land after a later one was sent.
+    const derivedIds = [];
     // Unbounded in time on purpose: the pre-write probe is how a resumed run
     // with a lost checkpoint recognises its own earlier document.
     const landed = async () => {
       if (accepted) return accepted(id);
-      if (id) return (await stored(docType, id, contract)) != null;
-      id = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data, scope }));
-      return id != null;
+      for (const candidate of new Set([id, ...derivedIds].filter(Boolean))) {
+        if ((await stored(docType, candidate, contract)) != null) { id = candidate; return true; }
+      }
+      const found = await readback(handle, () => findRecentByValues(handle.sdk, { contractId: contract, docType, ownerId: actor.ownerId, data, scope }));
+      if (found) id = found;
+      return found != null;
     };
     if (await landed()) return { id, skipped: true };
     let lastError = null;
@@ -198,7 +204,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
           contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
           // A priced create derives its id before broadcasting: keep it, so a create whose
           // wait throws after landing is recognised by id even on a doctype with no owner index.
-          onDerivedId: (derived) => { id = derived; },
+          onDerivedId: (derived) => { derivedIds.push(derived); },
         }));
         id = createdId(created) ?? id;
         if (await landed()) return { id };
@@ -461,12 +467,13 @@ export async function plumbingAssertions() {
       ['a', { $id: 'other-owners', $ownerId: bs58.decode(fakeId('someone-else')), status: 'shipped' }],
       ['b', { $id: 'mine', $ownerId: ownerBytes, status: 'shipped' }],
     ]); } } };
-    const scope = { where: [['orderId', '==', 'o1']], orderBy: [['orderId', 'asc'], ['$createdAt', 'desc']] };
+    const scope = { where: [['orderId', '==', 'o1']], orderBy: [['orderId', 'desc'], ['$createdAt', 'desc']] };
     const scopedProbe = await findRecentByValues(scoped, { contractId: 'c', docType: 'orderStatusUpdate', ownerId: fakeId('owner'), data: { status: 'shipped' }, scope });
     return [
       ['an index refusal is not transient, whatever byte count its truncated text carries',
         NOT_QUERYABLE_BY_OWNER.test(indexRefusal) && !RETRYABLE.test(indexRefusal) && !WAIT_MAYBE_LANDED.test(indexRefusal)],
       ['real 429/503/504 statuses still read as transient', RETRYABLE.test('HTTP 429 Too Many Requests') && RETRYABLE.test('status: 503') && WAIT_MAYBE_LANDED.test('504 Gateway Time-out')],
+      ['a status code inside an id is not a status', !RETRYABLE.test('document 7Hx503abc not found') && !WAIT_MAYBE_LANDED.test('id 9k504Zq refused')],
       ['a value probe on a doctype with no owner index answers null after two queries, without throwing', refusedProbe === null && refusedQueries === 2],
       ['a scoped value probe queries the scope and only adopts the owner\'s document',
         scopedProbe === 'mine' && queries[2]?.where === scope.where && queries[2]?.orderBy === scope.orderBy],

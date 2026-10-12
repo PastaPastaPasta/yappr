@@ -1054,7 +1054,7 @@ export function createDocument(sdk, { contractId, actor, docType, document, data
 /** Errors that mean "this SDK instance is dead", not "this request was refused". */
 export const TRANSPORT_COLLAPSE = /no available addresses|invalid quorum|quorum not found/i;
 /** Confirmation-wait shapes that do NOT mean the write was refused (readback decides). */
-export const WAIT_MAYBE_LANDED = /(?<!\d)504(?!\d| bytes)|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
+export const WAIT_MAYBE_LANDED = /\b504\b(?! bytes)|gateway|deadline|timed? ?out|timeout|wait.*state.*transition|AffectedState/i;
 
 /**
  * After a write threw: false when the error is a refusal; otherwise (a gateway
@@ -1077,11 +1077,11 @@ export const NOT_QUERYABLE_BY_OWNER = /non indexed property|must be for valid in
 
 /**
  * Retry-worthy transient transport noise. The HTTP status codes only count as
- * whole numbers that are not a byte count: Drive truncates a long refusal with
+ * whole words (not inside a base58/hex id) that are not a byte count: Drive truncates a long refusal with
  * "… (429 bytes truncated)", and a bare /429/ read that as a rate limit, so a
  * permanent index refusal was retried until the readback gave up.
  */
-export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|(?<!\d)(?:503|502|429)(?!\d| bytes)|unavailable|rate limited|resource has been exhausted/i;
+export const RETRYABLE = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|socket|network error|\b(?:503|502|429)\b(?! bytes)|unavailable|rate limited|resource has been exhausted/i;
 /** Identity (contract) nonce desync — cured by a reconnect (fresh nonce cache). */
 export const NONCE_DESYNC = /nonce/i;
 /** Structural duplicate (unique index) — the end state already holds. */
