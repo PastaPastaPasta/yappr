@@ -69,7 +69,8 @@ export interface StoredAppConnectRequest {
 export interface RequestRecordStore {
   load(): Promise<StoredAppConnectRequest | null>
   save(record: StoredAppConnectRequest): Promise<void>
-  clear(): Promise<void>
+  /** Forgets the stored request, but only if it is still `record` (another tab may have replaced it). */
+  clear(record: StoredAppConnectRequest): Promise<void>
 }
 
 export interface AppConnectLoginDeps {
@@ -229,6 +230,12 @@ export class AppConnectLogin {
     clearSensitiveBytes(privateKey)
     if (!current()) return null
     await this.deps.records.save(record)
+    // Overtaken while saving (a finish, a newer start or an unmount): forget
+    // this request again; the clear only removes it if it is still the stored one.
+    if (!current()) {
+      this.clearRecord(record)
+      return null
+    }
     return record
   }
 
@@ -298,8 +305,9 @@ export class AppConnectLogin {
    */
   finish(): void {
     this.generation += 1
+    const record = this.active?.record
     this.teardown()
-    this.clearRecord()
+    if (record) this.clearRecord(record)
   }
 
   /**
@@ -316,7 +324,7 @@ export class AppConnectLogin {
     this.listeners.clear()
     // Before a request is active there is nothing of ours to forget; a stale
     // stored one is dropped the next time it is loaded.
-    if (active && this.now() - active.record.createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS) this.clearRecord()
+    if (active && this.now() - active.record.createdAt >= APP_CONNECT_MAX_REQUEST_AGE_MS) this.clearRecord(active.record)
   }
 
   private teardown(): void {
@@ -326,8 +334,8 @@ export class AppConnectLogin {
     this.active = null
   }
 
-  private clearRecord(): void {
-    this.deps.records.clear().catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
+  private clearRecord(record: StoredAppConnectRequest): void {
+    this.deps.records.clear(record).catch((error: unknown) => this.deps.onError?.('App Connect: could not clear the request', error))
   }
 
   private stop(): void {

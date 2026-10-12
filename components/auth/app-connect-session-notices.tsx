@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { KeyRound, LogOut } from 'lucide-react'
 import type { AppConnectGrant } from 'platform-auth'
@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/auth-context'
 import { Modal, ModalTitle } from '@/components/ui/modal'
 import { Button } from '@/components/ui/button'
 import { useAppConnectStatus, type RenewReason } from '@/lib/app-connect/session-manager'
-import { useRenewModal } from '@/hooks/use-renew-modal'
+import { APP_CONNECT_RENEWED_EVENT, useRenewModal } from '@/hooks/use-renew-modal'
 import { identityService } from '@/lib/services/identity-service'
 import { useLoginModal } from '@/hooks/use-login-modal'
 import { AppConnectLoginPanel } from './app-connect-login-panel'
@@ -27,14 +27,32 @@ const RENEW_REASON_COPY: Record<RenewReason, string> = {
  * - "Signed out from DashPay" when the wallet revoked this browser's keys.
  */
 export function AppConnectSessionNotices() {
-  const { user, renewWithAppConnect } = useAuth()
+  const { user, renewWithAppConnect, loginWithAppConnect } = useAuth()
   const { identityId, health, renewRequired, signedOutByWallet, dismissRenewRequired, dismissSignedOut } = useAppConnectStatus()
   const renew = useRenewModal()
   const openLogin = useLoginModal((state) => state.open)
   const [bannerDismissed, setBannerDismissed] = useState(false)
 
   const sessionUser = user && identityId === user.identityId ? user : null
-  const dialogOpen = Boolean(sessionUser) && (renew.isOpen || renewRequired !== null)
+  const wantsRenew = renew.isOpen || renewRequired !== null
+  /**
+   * The identity being renewed, kept for as long as the dialog is open: the
+   * wallet may already have disabled the old keys, and the hourly or startup
+   * check can sign the old session out while the renewal is still arriving.
+   * The renewal must survive that and sign the identity back in.
+   */
+  const [renewing, setRenewing] = useState<string | null>(null)
+  useEffect(() => {
+    if (!wantsRenew) setRenewing(null)
+    else if (sessionUser) setRenewing((current) => current ?? sessionUser.identityId)
+  }, [sessionUser, wantsRenew])
+  const dialogOpen = wantsRenew && renewing !== null
+  // A refused write asks for renewal through the session status, which a
+  // sign-out resets; hold the dialog open on its own state so it survives that.
+  const openRenewDialog = renew.open
+  useEffect(() => {
+    if (renewRequired !== null && !renew.isOpen) openRenewDialog()
+  }, [openRenewDialog, renew.isOpen, renewRequired])
 
   const closeRenew = useCallback(() => {
     renew.close()
@@ -45,14 +63,23 @@ export function AppConnectSessionNotices() {
   const finishRenew = useCallback(() => {
     const onRenewed = useRenewModal.getState().onRenewed
     // The renewal may have added keys: callers re-checking the identity must not see a cached copy.
-    if (sessionUser) identityService.clearCache(sessionUser.identityId)
+    if (renewing) identityService.clearCache(renewing)
     closeRenew()
     onRenewed?.()
-  }, [closeRenew, sessionUser])
+    window.dispatchEvent(new CustomEvent(APP_CONNECT_RENEWED_EVENT))
+  }, [closeRenew, renewing])
 
   const onGrant = useCallback(async (grant: AppConnectGrant) => {
-    await renewWithAppConnect(grant)
-  }, [renewWithAppConnect])
+    // Still signed in: replace the keys. Signed out meanwhile (the old keys
+    // were revoked first): this grant, for the identity being renewed, signs it back in.
+    if (user?.identityId === grant.identityId) {
+      await renewWithAppConnect(grant)
+      return
+    }
+    if (grant.identityId !== renewing) throw new Error('The renewal came from another account')
+    await loginWithAppConnect(grant)
+    dismissSignedOut()
+  }, [dismissSignedOut, loginWithAppConnect, renewWithAppConnect, renewing, user?.identityId])
 
   return (
     <>
@@ -76,12 +103,12 @@ export function AppConnectSessionNotices() {
         <Dialog.Description className="text-sm text-gray-600 dark:text-gray-400 mb-2">
           {renewRequired ? RENEW_REASON_COPY[renewRequired] : 'Scan the code with your Dash wallet to give Yappr a fresh allowance.'}
         </Dialog.Description>
-        {sessionUser && dialogOpen && (
-          <AppConnectLoginPanel identityHint={sessionUser.identityId} onGrant={onGrant} onComplete={finishRenew} />
+        {renewing && dialogOpen && (
+          <AppConnectLoginPanel identityHint={renewing} onGrant={onGrant} onComplete={finishRenew} />
         )}
       </Modal>
 
-      <Modal open={signedOutByWallet} onOpenChange={(next) => { if (!next) dismissSignedOut() }} className="w-[420px] max-w-[90vw]">
+      <Modal open={signedOutByWallet && !dialogOpen} onOpenChange={(next) => { if (!next) dismissSignedOut() }} className="w-[420px] max-w-[90vw]">
         <ModalTitle>
           <LogOut className="h-6 w-6 text-yappr-500" />
           Signed out from DashPay

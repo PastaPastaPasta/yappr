@@ -8,7 +8,7 @@ import { appConnectPins } from '@/lib/app-connect/config'
 import { walletKeyRows, type WalletKeyRow } from '@/lib/app-connect/wallet-keys'
 import { appConnectPlatformPort } from '@/lib/app-connect/platform-port'
 import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
-import { useRenewModal } from '@/hooks/use-renew-modal'
+import { APP_CONNECT_RENEWED_EVENT, useRenewModal } from '@/hooks/use-renew-modal'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
@@ -65,7 +65,11 @@ export function WalletConnectionsSettings() {
   }, [user])
 
   useEffect(() => {
-    load().catch((error: unknown) => logger.warn('Could not load wallet connections:', error))
+    const reload = () => { load().catch((error: unknown) => logger.warn('Could not load wallet connections:', error)) }
+    reload()
+    // A renewal started anywhere (the banner, a refused write) changes the keys listed here.
+    window.addEventListener(APP_CONNECT_RENEWED_EVENT, reload)
+    return () => window.removeEventListener(APP_CONNECT_RENEWED_EVENT, reload)
   }, [load])
 
   if (!user) return null
@@ -110,10 +114,7 @@ export function WalletConnectionsSettings() {
           </div>
         ))}
         {signedInWithWallet && (
-          <Button
-            variant="outline"
-            onClick={() => openRenew(() => { load().catch((error: unknown) => logger.warn('Could not reload wallet connections:', error)) })}
-          >
+          <Button variant="outline" onClick={() => openRenew()}>
             Renew in your wallet
           </Button>
         )}

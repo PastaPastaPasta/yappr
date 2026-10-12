@@ -52,7 +52,7 @@ function harness(options: {
     records: {
       load: async () => records.value,
       save: async (r) => { records.value = r },
-      clear: async () => { records.value = null },
+      clear: async (record) => { if (records.value?.ephemeralPrivateKey === record.ephemeralPrivateKey) records.value = null },
     },
     origin: 'https://yap.pr',
     basePath: '/devnet',
@@ -335,6 +335,18 @@ describe('AppConnectLogin without storage', () => {
     }
     await h.login.start()
     expect(last(h)).toEqual({ phase: 'unavailable', reason: 'storage' })
+  })
+})
+
+describe('AppConnectLogin and other tabs', () => {
+  it('finishing never clears a newer request another tab stored in the same slot', async () => {
+    const h = harness()
+    await h.login.start()
+    const newer: StoredAppConnectRequest = { ephemeralPrivateKey: '22'.repeat(32), createdAt: T0 + 1, connectionId: 'ab'.repeat(16) }
+    h.records.value = newer
+    h.login.finish()
+    await h.flush()
+    expect(h.records.value).toBe(newer)
   })
 })
 

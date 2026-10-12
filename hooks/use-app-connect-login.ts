@@ -69,8 +69,25 @@ function requestRecordsFor(identityHint: string | undefined): RequestRecordStore
         bytes.fill(0)
       }
     },
-    async clear() {
-      await inOrder(() => appConnectSessions.keyStore().deleteSecret(appConnectSessions.network(), secretName))
+    async clear(record) {
+      // Only if it is still ours: another tab may have stored a newer request in this slot.
+      await inOrder(async () => {
+        const network = appConnectSessions.network()
+        const bytes = await appConnectSessions.keyStore().loadSecret(network, secretName)
+        if (!bytes) return
+        let stored: unknown = null
+        try {
+          stored = JSON.parse(decoder.decode(bytes))
+        } catch {
+          // Unreadable: not a request anyone can resume, so it may go.
+        } finally {
+          bytes.fill(0)
+        }
+        const storedKey = (stored as { ephemeralPrivateKey?: unknown } | null)?.ephemeralPrivateKey
+        if (stored === null || storedKey === record.ephemeralPrivateKey) {
+          await appConnectSessions.keyStore().deleteSecret(network, secretName)
+        }
+      })
     },
   }
 }
