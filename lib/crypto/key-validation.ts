@@ -103,7 +103,12 @@ export async function validateKey(
 
   // Step 3: Fetch user's identity
   const { identityService } = await import('@/lib/services/identity-service')
-  const identityData = await identityService.getIdentity(identityId)
+  // On App Connect builds an encryption key must be the anchor's current one,
+  // so a cached identity (which may predate a rotation) won't do.
+  const { isAppConnectBuild } = await import('@/lib/app-connect/config')
+  const identityData = await identityService.getIdentity(identityId, {
+    fresh: purpose === KeyPurposeEnum.ENCRYPTION && isAppConnectBuild(),
+  })
   if (!identityData) {
     return {
       isValid: false,
@@ -116,7 +121,6 @@ export async function validateKey(
   // Exclude disabled keys
   // On App Connect builds an encryption key is only valid as the anchor's
   // current one (what peers encrypt to), never another key of that purpose.
-  const { isAppConnectBuild } = await import('@/lib/app-connect/config')
   const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
   const anchorKey = purpose === KeyPurposeEnum.ENCRYPTION && isAppConnectBuild()
     ? findEncryptionKey(identityData.publicKeys)
