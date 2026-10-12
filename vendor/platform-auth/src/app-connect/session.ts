@@ -104,27 +104,37 @@ export function buildAppConnectSession(grant: AppConnectGrant, input: BuildAppCo
 }
 
 /**
- * One member of a batch: a document operation or a token operation. A
- * document create whose type consumes other types (`consume`) is checked
- * against those types' bounds too, so list them in `consumedDocumentTypes`.
+ * One member of a batch: a document operation or a token operation. Each
+ * carries its own requirements, so a batch that has to be split is checked
+ * step by step rather than against the whole batch's.
  */
-export type SigningMember =
-  | { contractId: string; documentType: string; consumedDocumentTypes?: string[] }
-  | { contractId: string; tokenPosition: number }
+export type SigningMember = DocumentSigningMember | TokenSigningMember
 
-export interface SigningRequest {
-  /** Bound keys sign batches only (20013 otherwise). */
-  transition: 'batch' | 'non-batch'
-  members: SigningMember[]
+export interface DocumentSigningMember {
+  contractId: string
+  documentType: string
   /**
-   * Strictest `securityLevelRequirement` among the members' document types
-   * (HIGH unless a type says otherwise). Required, because guessing low costs a
-   * paid 20004. Token members force CRITICAL on top.
+   * The type's `securityLevelRequirement` (HIGH unless the type says
+   * otherwise). Required, because guessing low costs a paid 20004.
    */
-  requiredSecurityLevel: number
-  /** Expected credit cost; keys whose remaining budget is below it are skipped. */
+  securityLevel: number
+  /** Types this create consumes (`consume`); the key's bounds must cover them too. */
+  consumedDocumentTypes?: string[]
+  /** Expected credit cost of this member. */
   estimatedCost?: bigint
 }
+
+/** Platform requires CRITICAL for any batch with a token transition. */
+export interface TokenSigningMember {
+  contractId: string
+  tokenPosition: number
+  estimatedCost?: bigint
+}
+
+export type SigningRequest =
+  | { transition: 'batch'; members: SigningMember[] }
+  /** Bound keys sign batches only (20013 otherwise). */
+  | { transition: 'non-batch'; requiredSecurityLevel: number; estimatedCost?: bigint }
 
 export interface SelectSigningKeyContext {
   now: number
@@ -151,8 +161,21 @@ export type SigningKeySelection =
   | { ok: false; reason: 'empty' | 'non-batch' | 'no-covering-key' }
   | { ok: false; reason: 'needs-split'; plan: SigningPlanStep[] }
 
-function isToken(member: SigningMember): member is { contractId: string; tokenPosition: number } {
+function isToken(member: SigningMember): member is TokenSigningMember {
   return 'tokenPosition' in member
+}
+
+/** What signing a set of members needs: the strictest level and the summed cost. */
+interface Requirement {
+  level: number
+  cost: bigint
+}
+
+function requirementOf(members: SigningMember[]): Requirement {
+  return {
+    level: Math.min(...members.map((m) => (isToken(m) ? KeySecurityLevel.CRITICAL : m.securityLevel))),
+    cost: members.reduce((sum, m) => sum + (m.estimatedCost ?? 0n), 0n),
+  }
 }
 
 /** Whether `bounds` (or no bounds: an unbound key) admits `member`, including every type it consumes. */
@@ -162,14 +185,18 @@ function covers(bounds: AppConnectKeyBounds | undefined, member: SigningMember, 
     .every((documentType) => coversOne(bounds, { contractId: member.contractId, documentType }, groups))
 }
 
-function coversOne(bounds: AppConnectKeyBounds | undefined, member: SigningMember, groups: PinnedGroup[]): boolean {
+function coversOne(
+  bounds: AppConnectKeyBounds | undefined,
+  member: Pick<DocumentSigningMember, 'contractId' | 'documentType'> | TokenSigningMember,
+  groups: PinnedGroup[],
+): boolean {
   if (!bounds) return true
   switch (bounds.kind) {
     case 'singleContract':
       return member.contractId === bounds.contractId
     case 'documentType':
       // Token operations are contract-wide and never covered by a document-type bound.
-      return !isToken(member) && member.contractId === bounds.contractId && member.documentType === bounds.documentTypeName
+      return !('tokenPosition' in member) && member.contractId === bounds.contractId && member.documentType === bounds.documentTypeName
     case 'contractGroup': {
       const group = groups.find((g) => g.groupId === bounds.groupId)
       return group !== undefined && group.members.some((m) => groupMemberCovers(m, member))
@@ -177,15 +204,19 @@ function coversOne(bounds: AppConnectKeyBounds | undefined, member: SigningMembe
   }
 }
 
-function groupMemberCovers(groupMember: AppConnectGroupMember, member: SigningMember): boolean {
+function groupMemberCovers(
+  groupMember: AppConnectGroupMember,
+  member: Pick<DocumentSigningMember, 'contractId' | 'documentType'> | TokenSigningMember,
+): boolean {
   if (groupMember.contractId !== member.contractId) return false
+  const token = 'tokenPosition' in member
   switch (groupMember.kind) {
     case 'contract':
       return true
     case 'documentType':
-      return !isToken(member) && member.documentType === groupMember.documentTypeName
+      return !token && member.documentType === groupMember.documentTypeName
     case 'token':
-      return isToken(member) && member.tokenPosition === groupMember.position
+      return token && member.tokenPosition === groupMember.position
   }
 }
 
@@ -203,7 +234,7 @@ function scopeRank(key: AppConnectSessionKey): number {
   }
 }
 
-function usable(key: AppConnectSessionKey, request: SigningRequest, ctx: SelectSigningKeyContext): boolean {
+function usable(key: AppConnectSessionKey, requirement: Requirement, ctx: SelectSigningKeyContext): boolean {
   if (key.disabled) return false
   if (key.securityLevel === KeySecurityLevel.MASTER) return false
   const margin = ctx.expiryMarginMs ?? APP_CONNECT_SIGNING_EXPIRY_MARGIN_MS
@@ -211,19 +242,9 @@ function usable(key: AppConnectSessionKey, request: SigningRequest, ctx: SelectS
   // A budgeted key whose remaining budget is unknown is not unlimited: skip it until refreshed.
   if (key.totalBudget !== undefined && key.remainingBudget === undefined) return false
   if (key.remainingBudget !== undefined
-    && (key.remainingBudget <= 0n || key.remainingBudget < (request.estimatedCost ?? 0n))) return false
-  return true
-}
-
-/** Lower is more privileged, so the key's level must be numerically at most the requirement. */
-function levelSatisfies(key: AppConnectSessionKey, required: number): boolean {
-  return key.securityLevel <= required
-}
-
-function requiredLevel(request: SigningRequest, members: SigningMember[]): number {
-  const base = request.requiredSecurityLevel
-  // Platform requires CRITICAL for any batch that contains a token transition.
-  return members.some(isToken) ? Math.min(base, KeySecurityLevel.CRITICAL) : base
+    && (key.remainingBudget <= 0n || key.remainingBudget < requirement.cost)) return false
+  // Lower is more privileged, so the key's level must be numerically at most the requirement.
+  return key.securityLevel <= requirement.level
 }
 
 /** Narrowest scope, then least privilege, then the most budget left, then the newest key. */
@@ -245,14 +266,11 @@ function compareBudget(a: bigint | undefined, b: bigint | undefined): number {
 function bestKey(
   keys: AppConnectSessionKey[],
   members: SigningMember[],
-  request: SigningRequest,
+  requirement: Requirement,
   ctx: SelectSigningKeyContext,
 ): AppConnectSessionKey | undefined {
-  const level = requiredLevel(request, members)
   return keys
-    .filter((key) => usable(key, request, ctx)
-      && levelSatisfies(key, level)
-      && members.every((member) => covers(key.bounds, member, ctx.groups)))
+    .filter((key) => usable(key, requirement, ctx) && members.every((member) => covers(key.bounds, member, ctx.groups)))
     .sort(compareKeys)[0]
 }
 
@@ -269,23 +287,29 @@ export function selectSigningKey(
     // Only an unbound authentication key (a raw-key session) can sign these.
     // Session keys carry no purpose, so TRANSFER-purpose transitions are out of scope.
     const unbound = keys.filter((key) => !key.bounds)
-    const key = bestKey(unbound, request.members, request, ctx)
+    const requirement = { level: request.requiredSecurityLevel, cost: request.estimatedCost ?? 0n }
+    const key = bestKey(unbound, [], requirement, ctx)
     return key ? { ok: true, key } : { ok: false, reason: 'non-batch' }
   }
-  if (request.members.length === 0) return { ok: false, reason: 'empty' }
+  const { members } = request
+  if (members.length === 0) return { ok: false, reason: 'empty' }
 
-  const key = bestKey(keys, request.members, request, ctx)
+  const key = bestKey(keys, members, requirementOf(members), ctx)
   if (key) return { ok: true, key }
 
   // Mixed batch (for example a DashPay profile plus a Yappr profile): sign
-  // each member with its own best key, grouped by key in first-use order.
+  // each member with its own best key, grouped by key in first-use order,
+  // then check each step's own level and summed cost against its key.
   const plan: SigningPlanStep[] = []
-  for (const member of request.members) {
-    const memberKey = bestKey(keys, [member], request, ctx)
+  for (const member of members) {
+    const memberKey = bestKey(keys, [member], requirementOf([member]), ctx)
     if (!memberKey) return { ok: false, reason: 'no-covering-key' }
     const step = plan.find((s) => s.key.keyId === memberKey.keyId)
     if (step) step.members.push(member)
     else plan.push({ key: memberKey, members: [member] })
+  }
+  if (plan.some((step) => !usable(step.key, requirementOf(step.members), ctx))) {
+    return { ok: false, reason: 'no-covering-key' }
   }
   return { ok: false, reason: 'needs-split', plan }
 }

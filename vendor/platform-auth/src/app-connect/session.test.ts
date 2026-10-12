@@ -3,6 +3,7 @@ import {
   buildAppConnectSession,
   selectSigningKey,
   type AppConnectSessionKey,
+  type DocumentSigningMember,
   type SigningMember,
   type SigningRequest,
 } from './session'
@@ -47,13 +48,11 @@ const profileKey = key(6, {
 })
 const ring = [groupKey, profileKey]
 
-const doc = (contractId: string, documentType: string): SigningMember => ({ contractId, documentType })
+const doc = (contractId: string, documentType: string, extra: Partial<DocumentSigningMember> = {}): DocumentSigningMember =>
+  ({ contractId, documentType, securityLevel: KeySecurityLevel.HIGH, ...extra })
 const token = (contractId: string, tokenPosition: number): SigningMember => ({ contractId, tokenPosition })
-const batch = (...members: SigningMember[]): SigningRequest => ({
-  transition: 'batch',
-  members,
-  requiredSecurityLevel: KeySecurityLevel.HIGH,
-})
+const batch = (...members: SigningMember[]): SigningRequest => ({ transition: 'batch', members })
+const costing = (cost: bigint) => batch(doc(SOCIAL, 'post', { estimatedCost: cost }))
 
 function chosen(keys: AppConnectSessionKey[], request: SigningRequest, now = NOW): number | string {
   const result = selectSigningKey(keys, request, { now, groups })
@@ -80,9 +79,9 @@ describe('selectSigningKey', () => {
   })
 
   it('never uses a bound key for a non-batch transition', () => {
-    expect(chosen(ring, { transition: 'non-batch', members: [], requiredSecurityLevel: KeySecurityLevel.HIGH })).toBe('non-batch')
+    expect(chosen(ring, { transition: 'non-batch', requiredSecurityLevel: KeySecurityLevel.HIGH })).toBe('non-batch')
     const rawKey = key(1, { securityLevel: KeySecurityLevel.CRITICAL })
-    expect(chosen([...ring, rawKey], { transition: 'non-batch', members: [], requiredSecurityLevel: KeySecurityLevel.CRITICAL })).toBe(1)
+    expect(chosen([...ring, rawKey], { transition: 'non-batch', requiredSecurityLevel: KeySecurityLevel.CRITICAL })).toBe(1)
   })
 
   it('requires CRITICAL for token operations', () => {
@@ -112,7 +111,7 @@ describe('selectSigningKey', () => {
   })
 
   it('honours a document type that requires CRITICAL', () => {
-    const request = { ...batch(doc(DASHPAY, 'profile')), requiredSecurityLevel: KeySecurityLevel.CRITICAL }
+    const request = batch(doc(DASHPAY, 'profile', { securityLevel: KeySecurityLevel.CRITICAL }))
     expect(chosen(ring, request)).toBe('no-covering-key')
   })
 
@@ -120,16 +119,16 @@ describe('selectSigningKey', () => {
     const post = batch(doc(SOCIAL, 'post'))
     expect(chosen([{ ...groupKey, expiresAt: NOW + 4 * 60_000 }], post)).toBe('no-covering-key')
     expect(chosen([{ ...groupKey, remainingBudget: 0n }], post)).toBe('no-covering-key')
-    expect(chosen([{ ...groupKey, remainingBudget: 0n }], { ...post, estimatedCost: 0n })).toBe('no-covering-key')
-    expect(chosen([{ ...groupKey, remainingBudget: 100n }], { ...post, estimatedCost: 101n })).toBe('no-covering-key')
-    expect(chosen([{ ...groupKey, remainingBudget: 101n }], { ...post, estimatedCost: 101n })).toBe(5)
+    expect(chosen([{ ...groupKey, remainingBudget: 0n }], costing(0n))).toBe('no-covering-key')
+    expect(chosen([{ ...groupKey, remainingBudget: 100n }], costing(101n))).toBe('no-covering-key')
+    expect(chosen([{ ...groupKey, remainingBudget: 101n }], costing(101n))).toBe(5)
     expect(chosen([{ ...groupKey, disabled: true }], post)).toBe('no-covering-key')
     // A budgeted key with no known remaining budget is skipped, and an equivalent known one used instead.
     const unknownBudget = { ...groupKey, keyId: 12, remainingBudget: undefined }
-    expect(chosen([unknownBudget], { ...post, estimatedCost: 101n })).toBe('no-covering-key')
+    expect(chosen([unknownBudget], costing(101n))).toBe('no-covering-key')
     expect(chosen([unknownBudget, groupKey], post)).toBe(5)
     // A key with no budget at all is unlimited.
-    expect(chosen([{ ...groupKey, totalBudget: undefined, remainingBudget: undefined }], { ...post, estimatedCost: 10n ** 12n })).toBe(5)
+    expect(chosen([{ ...groupKey, totalBudget: undefined, remainingBudget: undefined }], costing(10n ** 12n))).toBe(5)
   })
 
   it('prefers the narrowest key, then the least privileged', () => {
@@ -150,6 +149,30 @@ describe('selectSigningKey', () => {
     if (result.ok || result.reason !== 'needs-split') throw new Error('expected a split plan')
     expect(result.plan.map((step) => [step.key.keyId, step.members.length])).toEqual([[6, 1], [5, 2]])
     expect(chosen(ring, batch(doc(DASHPAY, 'profile'), doc(KEY_EXCHANGE, 'loginKey')))).toBe('no-covering-key')
+  })
+
+  it('checks each split step against its own level and cost, not the whole batch', () => {
+    // A CRITICAL-only Yappr type plus the HIGH DashPay profile: CRITICAL group key, HIGH profile key.
+    const mixedLevels = selectSigningKey(ring, batch(
+      doc(SOCIAL, 'moderatorNote', { securityLevel: KeySecurityLevel.CRITICAL }),
+      doc(DASHPAY, 'profile'),
+    ), { now: NOW, groups })
+    expect(mixedLevels.ok === false && mixedLevels.reason === 'needs-split' && mixedLevels.plan.map((s) => s.key.keyId)).toEqual([5, 6])
+
+    // Each key can afford its own step but neither could afford the whole batch.
+    const tight = [{ ...groupKey, remainingBudget: 100n }, { ...profileKey, remainingBudget: 50n }]
+    const affordable = selectSigningKey(tight, batch(
+      doc(SOCIAL, 'post', { estimatedCost: 60n }),
+      doc(DASHPAY, 'profile', { estimatedCost: 50n }),
+    ), { now: NOW, groups })
+    expect(affordable.ok === false && affordable.reason === 'needs-split' && affordable.plan.map((s) => s.key.keyId)).toEqual([5, 6])
+
+    // Members regrouped onto one key must fit its budget together.
+    expect(chosen(tight, batch(
+      doc(SOCIAL, 'post', { estimatedCost: 60n }),
+      doc(DASHPAY, 'profile', { estimatedCost: 50n }),
+      doc(SOCIAL, 'like', { estimatedCost: 60n }),
+    ))).toBe('no-covering-key')
   })
 
   it('refuses an empty batch', () => {
