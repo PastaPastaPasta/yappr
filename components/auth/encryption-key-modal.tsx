@@ -16,6 +16,7 @@ import { LostEncryptionKeyModal } from './lost-encryption-key-modal'
 import { identityService } from '@/lib/services/identity-service'
 import toast from 'react-hot-toast'
 import { keyNetwork } from '@/lib/constants'
+import { WalletEncryptionKeyPrompt, useWalletSession } from './wallet-encryption-key-prompt'
 
 type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
 
@@ -31,6 +32,13 @@ type AutoRecoveryStatus = 'idle' | 'checking' | 'found' | 'failed'
  * 3. Show manual entry only as last resort
  */
 export function EncryptionKeyModal() {
+  const walletSession = useWalletSession()
+  const { isOpen, close } = useEncryptionKeyModal()
+  if (walletSession) return <WalletEncryptionKeyPrompt isOpen={isOpen} onClose={close} />
+  return <KeyEntryEncryptionKeyModal />
+}
+
+function KeyEntryEncryptionKeyModal() {
   const router = useRouter()
   const { user, mergeSecretsIntoAuthVault } = useAuth()
   const encryptionKeyId = useId()

@@ -32,6 +32,8 @@ import { SettingsSwitch } from '@/components/settings/settings-switch'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { KeyBackupSettings } from '@/components/settings/key-backup-settings'
+import { WalletConnectionsSettings } from '@/components/settings/wallet-connections-settings'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 import { BlockedUsersSettings } from '@/components/settings/blocked-users'
 import { PrivateFeedSettings } from '@/components/settings/private-feed-settings'
 import { PrivateFeedFollowRequests } from '@/components/settings/private-feed-follow-requests'
@@ -392,7 +394,9 @@ function SettingsPage() {
   const renderPrivacySettings = () => (
     <div className="p-6 space-y-6">
       {/* Key Backup Section */}
-      <KeyBackupSettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />
+      {isAppConnectBuild()
+        ? <WalletConnectionsSettings />
+        : <KeyBackupSettings onEncryptionKeyChanged={handleEncryptionKeyChanged} />}
 
       <div>
         <h3 className="font-semibold mb-4">Privacy</h3>

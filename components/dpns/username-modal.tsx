@@ -11,6 +11,8 @@ import { useSettingsStore } from '@/lib/store'
 import { currentReturnToParam, returnToOrDefault } from '@/lib/auth/return-to'
 
 import { DpnsRegistrationWizard } from './registration-wizard'
+import { WalletUsernameGuide } from './wallet-username-guide'
+import { useAppConnectStatus } from '@/lib/app-connect/session-manager'
 
 interface UsernameModalProps {
   isOpen: boolean
@@ -32,6 +34,8 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
   const potatoMode = useSettingsStore((s) => s.potatoMode)
 
   const currentIdentityId = customIdentityId || user?.identityId || ''
+  // A wallet (App Connect) sign-in holds no key that can register names: that happens in the wallet.
+  const walletSession = useAppConnectStatus((state) => state.identityId !== null && state.identityId === currentIdentityId)
 
   // Reset wizard state when modal opens
   useEffect(() => {
@@ -102,7 +106,9 @@ export function UsernameModal({ isOpen, onClose, onDismiss, customIdentityId, ha
               </div>
 
               {/* Registration Wizard */}
-              <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />
+              {walletSession
+                ? <WalletUsernameGuide onComplete={handleComplete} onSkip={handleSkip} />
+                : <DpnsRegistrationWizard onComplete={handleComplete} onSkip={handleSkip} hasExistingUsernames={hasExistingUsernames} />}
             </div>
           </motion.div>
         </>
