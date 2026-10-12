@@ -37,7 +37,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandSchemas } from './schema-shorthands.mjs';
-import { beta4Rendering, describeConstructs } from './beta5-grammar.mjs';
 
 /** `mediaKinds` bytes (v13); a reader ignores any other value, which consensus cannot refuse. */
 export const MEDIA_KIND = { image: 0, video: 1, gif: 2 };
@@ -461,11 +460,7 @@ async function selfTest() {
     for (const [label, ok] of builderExpectations(shapes, version)) report(ok, `${version} ${label}`);
     let contract;
     try {
-      // 5.0.0-beta.5 grammar an older SDK cannot parse (v15's element indexes and staysResolved)
-      // is left out of the parse only; the writes below do not depend on it (beta5-grammar.mjs).
-      const { source: parseable, stripped } = beta4Rendering(source);
-      if (stripped.length > 0) console.log(`NOTE  ${version} parsed without: ${describeConstructs(stripped).join('; ')}`);
-      contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: parseable.documentSchemas, config: parseable.config, tokens: parseable.tokens }, true, platformVersion);
+      contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: source.documentSchemas, config: source.config, tokens: source.tokens }, true, platformVersion);
     } catch (e) {
       // v14 needs the 5.0.0-beta.3 SDK (countPresent, deleteConstraints, a derived skip property),
       // v15 the 5.0.0-beta.4 one (shorthands, a non-transferable token).

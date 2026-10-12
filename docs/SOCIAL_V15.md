@@ -22,7 +22,7 @@ v15 was never registered, so the beta.5 changes went into the same file and topo
 | 7 | **Several mentions** | Post and reply: `mentionedUserIds`, 1-8 distinct identities (each `refersTo` identity), replaces `mentionedUserId`. `mentionedUserAndTime [mentionedUserIds, $createdAt]` is an element index (one entry per mention, no `skipIfAbsent`: an empty list is entered nowhere); "mentions of me" reads it with `contains`. `blankTombstone` and the conditional `immutable` cover the list where they covered the single field. +98 B. One hashtag stays. |
 | 8 | **A resolved report stays resolved** | `report.propertyConstraints.staysResolved`: `{"ifThen": [{"present": "$old.status"}, {"present": "status"}]}`. A moderator can change the outcome or the note, never remove the status (which would reopen the reporter's withdrawal). +70 B. |
 
-After it: sha256 `9b6c7eeda3194044040a9eb0822956f3dc81eaee99f0abea5f3e215b5762e078`, 16,458 B signed (rs-dpp 5.0.0-beta.5, `b5val`). It needs the 5.0.0-beta.5 SDK to register and to query mentions; the beta.4 SDK parses it only without the element indexes and `staysResolved` (`scripts/beta5-grammar.mjs`). The tables below describe the beta.4 cut.
+After it: sha256 `9b6c7eeda3194044040a9eb0822956f3dc81eaee99f0abea5f3e215b5762e078`, 16,458 B signed (rs-dpp 5.0.0-beta.5, `b5val`). It needs the 5.0.0-beta.5 SDK and nodes. The tables below describe the beta.4 cut.
 
 No byte rules (`byteAt`, byte-array `startsWith`/`endsWith`, also new in beta.4) are used. Every candidate measured cost more bytes than it was worth: a `report.box` shape check +192 B, `mediaKinds` values +372 B, a public-key prefix +77 to +89 B.
 

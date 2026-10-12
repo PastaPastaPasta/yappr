@@ -167,13 +167,6 @@ const FINAL_TALLY_GRACE_MS = 30_000;
 
 type Sdk = Awaited<ReturnType<typeof getEvoSdk>>;
 
-/**
- * The SDK surface the tally counts through: pagination-utils' structural one,
- * since v7's typed-array operators (`contains`, `containsAny`) postdate the
- * SDK's where-clause typings.
- */
-type CountingSdk = Parameters<typeof documentCount>[0];
-
 /** `[0, 1, ... n-1]` — the choice indices to query, for a count's `in` clause. */
 function choiceRange(size: number): number[] {
   return Array.from({ length: size }, (_, index) => index);
@@ -189,12 +182,12 @@ function tallyField(): string {
  * `choices` hold any of them (each element counts under its own group), v3/v4
  * the scalar `choice`.
  */
-function choicesClause(size: number): unknown[] {
+function choicesClause(size: number): DocumentWhereClause {
   return [tallyField(), pollrHasEditableBallots() ? 'containsAny' : 'in', choiceRange(size)];
 }
 
 /** The per-choice fallback's clause: v7 ballots holding `choice`, or v3/v4 ballots of it. */
-function choiceClause(choice: number): unknown[] {
+function choiceClause(choice: number): DocumentWhereClause {
   return [tallyField(), pollrHasEditableBallots() ? 'contains' : '==', choice];
 }
 
@@ -864,7 +857,7 @@ class PollrVoteService {
    * Returns null (so the caller can fall back) when the response can't be decoded.
    */
   private async countByChoiceGrouped(
-    sdk: CountingSdk,
+    sdk: Sdk,
     pollId: string,
     docType: string,
     optionCount: number
@@ -906,7 +899,7 @@ class PollrVoteService {
 
   /** Fallback 1: one count per choice against the same countable index. */
   private async countByChoiceIndividually(
-    sdk: CountingSdk,
+    sdk: Sdk,
     pollId: string,
     docType: string,
     optionCount: number

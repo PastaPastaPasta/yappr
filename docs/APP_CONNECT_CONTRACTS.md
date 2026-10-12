@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura's 5.0.0-beta.5 genesis, where every member contract is created into the new group, with the beta.5 re-cuts ([PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)). It needs the 5.0.0-beta.5 SDK: on 5.0.0-beta.4 the publisher stops at the first file using beta.5 grammar.
+**Status: nothing is registered anywhere yet, and no client code reads any of this.** The PR that added it ships the anchor contract, the publisher (`scripts/register-app-connect-contracts.mjs`), the battery (`scripts/verify-appconnect.mjs`), the offline probes and empty env names. The first registration is planned for sakura's 5.0.0-beta.5 genesis, where every member contract is created into the new group, with the beta.5 re-cuts ([PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md)).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -79,8 +79,8 @@ Registered from the maker, anchor first, normally at consecutive identity nonces
 | N+7 | `authVault` | `yappr-auth-vault-contract.json` | `cecf0ccc…` | 2,029 B | `NEXT_PUBLIC_YAPPR_AUTH_VAULT_CONTRACT_ID` |
 
 - Signed sizes are the PV14 version 1 creates with the membership. A membership adds about 33 B to a create.
-- Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), meta-schema v3 at beta.5 and the node-rule audit. The beta.5 re-cuts pass the two 5.0.0-beta.4 wasm parses without their beta.5 constructs (`scripts/beta5-grammar.mjs`), the others as written. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
-- The `~` sizes of the beta.5 re-cuts come from `b5val`'s create transition (the same offset to the publisher's measurement as for the earlier cuts); the publisher measures them exactly once it runs on the 5.0.0-beta.5 SDK.
+- Every file passes rs-dpp's full validation at PV14 (5.0.0-beta.5 `b5val` for the four beta.5 re-cuts, 5.0.0-beta.4 `b4val` for the others), the two 5.0.0-beta.5 wasm full parses, meta-schema v3 at beta.5 and the node-rule audit. The elected cuts (social, blog, storefront) also pass with mainnet's rendering (interim `notYetUsable`).
+- The `~` sizes of the beta.5 re-cuts are the publisher's estimates (`--plan`) less its 100 B signature allowance, plus a 65 B signature.
 - None embeds another contract's id. The publisher refuses a `SOCIAL_CONTRACT_ID` placeholder, so the order inside the set only fixes the ids.
 - **Cost:** about 263e9 credits (2.6 DASH, ~15,800¢) by the beta.3 per-contract costs on sakura. The shorthand files are smaller, so expect a little less.
 

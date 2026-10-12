@@ -322,7 +322,6 @@ import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { DECLARED_DELETE_RULES, DECLARED_RULES, constraintViolation, deleteConstraintViolation, refusedCreates } from './property-constraint-cases.mjs';
 import { BLOCK_TYPES, MEDIA_DIGEST_BYTES, socialShapes } from './social-shapes.mjs';
 import { expandSchemas } from './schema-shorthands.mjs';
-import { beta4Rendering, describeConstructs } from './beta5-grammar.mjs';
 
 const CONTRACT_FILE = takeFlag('--contract-file', 'contracts/yappr-social-contract-v10.json');
 const V10 = JSON.parse(readFileSync(join(REPO_ROOT, CONTRACT_FILE), 'utf8'));
@@ -2831,11 +2830,7 @@ if (process.argv.includes('--self-test') || process.argv.includes('--dry-run')) 
   // checker, the dry run still runs, and the process exits 1 at the end.
   let contract = null;
   try {
-    // 5.0.0-beta.5 grammar an older SDK cannot parse (v15's element indexes and staysResolved) is
-    // left out of this parse only (beta5-grammar.mjs); the declarations are pinned off the file above.
-    const { source: parseable, stripped } = beta4Rendering(V10);
-    if (stripped.length > 0) console.log(`NOTE  ${CONTRACT_NAME} parsed without: ${describeConstructs(stripped).join('; ')}`);
-    contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: parseable.documentSchemas, config: parseable.config, tokens: parseable.tokens }, true, platformVersion);
+    contract = DataContract.fromJSON({ $formatVersion: '1', id: placeholder, ownerId: placeholder, version: 1, documentSchemas: V10.documentSchemas, config: V10.config, tokens: V10.tokens }, true, platformVersion);
   } catch (e) {
     console.error(`FAIL  ${CONTRACT_NAME} does not parse with the installed SDK (a newer cut needs a newer SDK; shapes below are judged by the shape checker alone): ${String(e?.message ?? e).slice(0, 200)}`);
     process.on('exit', (code) => {

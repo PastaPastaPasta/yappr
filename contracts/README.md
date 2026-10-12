@@ -83,9 +83,7 @@ single-choice rules reading the poll; no `optionCount`), **storefront v8** and
 **blog v8** (topology `v8`: an order's open store and a comment's open post are
 `where` conditions instead of copied fields), and **social v15** (still
 unregistered: up to 8 `mentionedUserIds` with an element index, and the report
-rule `staysResolved`). The 5.0.0-beta.4 SDK cannot parse that grammar; the
-offline tooling strips it from the wasm parses and rs-dpp 5.0.0-beta.5 judges
-it. Sizes, sha256s and the tooling are in
+rule `staysResolved`). They need the 5.0.0-beta.5 SDK and nodes. Sizes, sha256s and the tooling are in
 [docs/PLATFORM_V5_BETA5_UPGRADE.md](../docs/PLATFORM_V5_BETA5_UPGRADE.md).
 
 **Storefront v7** (5.0.0-beta.3, client topology `v7`) edits only storefront,

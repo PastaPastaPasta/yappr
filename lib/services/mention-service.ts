@@ -24,26 +24,18 @@ export interface PostMentionDocument {
 }
 
 /**
- * The 5.0.0-beta.5 query operator reading one element of a typed array: an
- * equality on the element, which takes an `orderBy` on the index properties
- * after the array and a cursor. The 5.0.0-beta.4 SDK this app builds against
- * neither types nor sends it, so the v15 mention reads only work once the SDK
- * is bumped to 5.0.0-beta.5 (its own PR).
- */
-const CONTAINS = 'contains' as string as DocumentWhereOperator;
-
-/**
  * The `where` and `orderBy` walking, by `$createdAt` after `since` in
  * `direction`, the documents of a {@link mentionDocTypes} type that mention
  * `userId`, on its `mentionedUserAndTime`: `mentionedUserId ==` on a
  * `postMention` and on a v10–v14 post or reply; on v15 the post's or reply's
- * `mentionedUserIds` element index, pinned with `contains` and ordered by
- * `$createdAt` alone (a typed array is ordered by only under `containsAny`).
+ * `mentionedUserIds` element index, pinned with `contains` (an equality on
+ * one element, which takes a cursor) and ordered by `$createdAt` alone (a
+ * typed array is ordered by only under `containsAny`).
  */
 export function mentionsOfUserQuery(userId: string, since: number, direction: 'asc' | 'desc'): Required<Pick<QueryDocumentsOptions, 'where' | 'orderBy'>> {
   const after: [string, DocumentWhereOperator, number] = ['$createdAt', '>', since];
   if (inlineMentions()?.isArray) {
-    return { where: [['mentionedUserIds', CONTAINS, userId], after], orderBy: [['$createdAt', direction]] };
+    return { where: [['mentionedUserIds', 'contains', userId], after], orderBy: [['$createdAt', direction]] };
   }
   return { where: [['mentionedUserId', '==', userId], after], orderBy: [['mentionedUserId', 'asc'], ['$createdAt', direction]] };
 }

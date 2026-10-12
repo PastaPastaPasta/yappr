@@ -62,7 +62,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expandSchemas, expandShorthands } from './schema-shorthands.mjs';
-import { SDK_PARSES_BETA5, beta5Constructs, indexPropertyNames, isTypedArray, typedArrayOf } from './beta5-grammar.mjs';
+;
 
 // SystemLimits (rs-platform-version system_limits/v4.rs, protocol 14).
 const LIMITS = {
@@ -330,6 +330,15 @@ function propertyAt(schema, path) {
   }
   return definition;
 }
+
+/** The property names an index lists, in order. */
+const indexPropertyNames = (index) => index.properties.map((entry) => Object.keys(entry)[0]);
+
+/** Whether a property definition is a typed array (not a byte array). */
+const isTypedArray = (definition) => definition?.type === 'array' && definition.byteArray !== true && definition.items !== undefined;
+
+/** The typed array property `index` names, or undefined. */
+const typedArrayOf = (schema, index) => indexPropertyNames(index).find((property) => isTypedArray(schema.properties?.[property]));
 
 const MAX_INDEXED_TYPED_ARRAY_ITEMS = 16;
 const MAX_INDEXED_WINDOWED_TYPED_ARRAY_ITEMS = 4;
@@ -615,8 +624,6 @@ const PROFILE = 'contracts/yappr-profile-contract.json';
 const BLOG = 'contracts/yappr-blog-contract.json';
 const APP_ANCHOR = 'contracts/yappr-app-contract.json';
 const POLLR = 'contracts/pollr-contract.json';
-/** The layer that refuses a 5.0.0-beta.5 construct: a beta.5 SDK parse, else (stripped from the parse) the audit. */
-const b5 = (withBeta5Sdk, beforeIt) => (SDK_PARSES_BETA5 ? withBeta5Sdk : beforeIt);
 
 const elected = (source) => source.config.moderation.moderators;
 const types = (source) => source.documentSchemas;
@@ -975,7 +982,7 @@ const PROBES = [
   { label: 'an index on a property the type does not have', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10209', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ nope: 'asc' }] }); } },
   { label: 'an index on $id', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10208', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ $id: 'asc' }] }); } },
   // 5.0.0-beta.5 indexes typed arrays per element (#5370); 5.0.0-beta.4's wasm-dpp2 refuses any (10206).
-  { label: 'an index on a typed array whose elements are too long to key (socialLinks, 256 characters)', file: SOCIAL_V10, expect: b5('dpp2', 'audit'), auditToo: true, node: '10205', why: /maxLength/i, mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
+  { label: 'an index on a typed array whose elements are too long to key (socialLinks, 256 characters)', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10205', why: /maxLength/i, mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
   { label: 'an index on a typed array within the element-index limits (socialLinks at 63 characters)', file: SOCIAL_V10, expect: 'accepted', mutate: (s) => {
     const links = types(s).yapprProfile.properties.socialLinks;
     links.items.maxLength = 63; links.items.maxBytes = 63;
@@ -1061,15 +1068,16 @@ const PROBES = [
     vote.indices = vote.indices.filter((index) => index.name !== 'byPoll');
   } },
 
-  // 5.0.0-beta.5 (scripts/beta5-grammar.mjs): `where` conditions, rules reading the referenced
-  // document or the stored version, and typed-array element indexes. Until the SDK bump the wasm
-  // parses never see them, so a refusal of one is the audit's (the node's); with a beta.5 SDK the
-  // parse speaks first (`b5`). rs-dpp 5.0.0-beta.5 (b5val) measured each committed cut.
+  // 5.0.0-beta.5: `where` conditions, rules reading the referenced document or the stored version,
+  // and typed-array element indexes. A `where` condition's registration rules (40126) run on the
+  // node only, so the audit models them; the parses refuse a bad element index or rule.
   { label: 'control: pollr v7 declares its close as a where condition, its rules read the poll, and its tally indexes the choices', file: POLLR, mutate: () => {}, expect: 'accepted', holds: (s) => {
     const vote = types(s).vote;
-    const kinds = beta5Constructs(s).map((c) => `${c.type}:${c.kind}:${c.name ?? ''}`).sort();
+    const rules = vote.propertyConstraints;
     return JSON.stringify(vote.properties.pollId.refersTo.where) === '{"endsAt":{"greaterThanOrEqual":"$updatedAt"}}'
-      && JSON.stringify(kinds) === JSON.stringify(['vote:referencedRead:choicesAreOptions', 'vote:referencedRead:choicesAreOptionsHigh', 'vote:referencedRead:singleChoice', 'vote:typedArrayIndex:byPollChoice', 'vote:whereCondition:'])
+      && JSON.stringify(Object.keys(rules).sort()) === '["choicesAreOptions","choicesAreOptionsHigh","singleChoice"]'
+      && Object.values(rules).every((rule) => JSON.stringify(rule).includes('"referenced":["pollId",'))
+      && typedArrayOf(vote, namedIndex(s, 'vote', 'byPollChoice')) === 'choices'
       && !types(s).poll.properties.optionCount && vote.properties.choices.maxItems === 10;
   } },
   { label: 'pollr v7: the close bounded by $transferredAt, which vote does not require', file: POLLR, expect: 'audit', node: '40126', why: /does not list \$transferredAt/, mutate: (s) => {
@@ -1081,7 +1089,7 @@ const PROBES = [
   { label: 'pollr v7: an ordering on the boolean multiChoice', file: POLLR, expect: 'audit', node: '40126', why: /is not an integer/, mutate: (s) => {
     types(s).vote.properties.pollId.refersTo.where.multiChoice = { greaterThan: { const: 0 } };
   } },
-  { label: 'pollr v7: choices of 17 under the element index (16 max)', file: POLLR, expect: b5('dpp2', 'audit'), auditToo: true, node: '10205', why: /maxItems/i, mutate: (s) => {
+  { label: 'pollr v7: choices of 17 under the element index (16 max)', file: POLLR, expect: 'dpp2', auditToo: true, node: '10205', why: /maxItems/i, mutate: (s) => {
     Object.assign(types(s).vote.properties.choices, { maxItems: 17 });
     types(s).vote.properties.choices.items.maximum = 16;
   } },
@@ -1098,12 +1106,12 @@ const PROBES = [
       && JSON.stringify(schema.propertyConstraints.blankTombstone).includes('"mentionedUserIds"')
       && schema.immutable.some((entry) => entry.property === 'mentionedUserIds' && entry.when?.absent === 'deleted');
   }) },
-  { label: 'social v15: mentionedUserAndTime skipping on the mentions array alone', file: SOCIAL_V15, expect: b5('wasm', 'audit'), node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'post', 'mentionedUserAndTime').skipIfAbsent = true; } },
-  { label: 'social v15: 9 mentions under a 3.5-day window index (4 max under a window)', file: SOCIAL_V15, expect: b5('dpp2', 'audit'), node: '10205', why: /maxItems|under a window/i, mutate: (s) => {
+  { label: 'social v15: mentionedUserAndTime skipping on the mentions array alone', file: SOCIAL_V15, expect: 'wasm', node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'post', 'mentionedUserAndTime').skipIfAbsent = true; } },
+  { label: 'social v15: 9 mentions under a 3.5-day window index (4 max under a window)', file: SOCIAL_V15, expect: 'dpp2', node: '10205', why: /maxItems|under a window/i, mutate: (s) => {
     types(s).post.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { mentionedUserIds: 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } });
   } },
   // A second, keyable array (media URLs are too long to key, which would be refused first).
-  { label: 'social v15: one index naming two typed arrays (mentions and a short tag list)', file: SOCIAL_V15, expect: b5('dpp2', 'audit'), node: '10231', why: /typed arrays?/i, mutate: (s) => {
+  { label: 'social v15: one index naming two typed arrays (mentions and a short tag list)', file: SOCIAL_V15, expect: 'dpp2', node: '10231', why: /typed arrays?/i, mutate: (s) => {
     const next = Math.max(...Object.values(types(s).post.properties).map((p) => p.position)) + 1;
     types(s).post.properties.probeTags = { type: 'array', maxItems: 4, items: { type: 'integer', minimum: 0, maximum: 9 }, position: next };
     types(s).post.indices.push({ name: 'probe', properties: [{ mentionedUserIds: 'asc' }, { probeTags: 'asc' }] });
@@ -1187,7 +1195,7 @@ function runWhereCases({ loadContractSource, parseContract }) {
     }
     const { contract, source } = parsed.get(file);
     const reference = contract.documentTypeReferences(type).find((r) => r.path === path);
-    // Conditions come off the file: a 5.0.0-beta.4 SDK cannot parse them (beta5-grammar.mjs).
+    // Conditions come off the file: the parse reports them in a shape of its own.
     const declared = source.documentSchemas[type]?.properties?.[path]?.refersTo?.where ?? {};
     const where = {
       ...Object.fromEntries(Object.entries(reference?.where ?? {}).filter(([, mine]) => typeof mine === 'string')),

@@ -22,8 +22,6 @@
  * nothing here names a real document.
  */
 
-import { SDK_VERSION, beta4Rendering, describeConstructs, strippedRules } from './beta5-grammar.mjs';
-
 const bytes = (n) => crypto.getRandomValues(new Uint8Array(n));
 const id = () => bytes(32);
 
@@ -552,14 +550,10 @@ export function refusedCreates(file, docType) {
  * default CASE_NOW): the pollr rules read `$createdAt` and `$updatedAt`; no
  * rule reads a height or a total.
  *
- * Two kinds of case are not judged here, and say so:
+ * One kind of case is not judged here, and says so:
  *   - `options.referenced`: the rule reads the document a reference points at
  *     (pollr's vote rules read the poll). No SDK pre-check reads it, so only
  *     the node judges these; the live battery broadcasts the refused ones.
- *   - a case whose rule `beta4Rendering` stripped (5.0.0-beta.5 grammar the
- *     installed SDK cannot parse, scripts/beta5-grammar.mjs): judged by
- *     rs-dpp 5.0.0-beta.5 (b5val) until the SDK bump. The file's other rules
- *     are judged as usual.
  * A case with `options.stored` is a write replacing that stored version, which
  * rules reading `$old.` compare against.
  *
@@ -596,16 +590,13 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
         console.log(`FAIL  ${file.replace(/\.json$/, '')}: ${docType} declares rules ${declared.join(', ')}, DECLARED_RULES says ${rules.join(', ')}`);
       }
     }
-    const { source: parseable, stripped } = beta4Rendering(source);
-    if (stripped.length > 0) console.log(`NOTE  ${file.replace(/\.json$/, '')}: judged without the 5.0.0-beta.5 grammar the SDK ${SDK_VERSION} cannot parse: ${describeConstructs(stripped).join('; ')}`);
-    const contract = parseContract(parseable, platformVersion);
+    const contract = parseContract(source, platformVersion);
     const build = (docType, data, at = {}, $id = id()) => Document.fromObject({
       $formatVersion: '0', $id, $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
       $revision: at.revision ?? 1n, $createdAt: at.createdAt ?? CASE_NOW, $updatedAt: at.updatedAt ?? CASE_NOW, ...data,
     }, platformVersion);
     for (const [label, docType, data, rule, options] of cases) {
-      const skip = options?.referenced ? 'reads a referenced document, which only the node reads'
-        : rule !== null && strippedRules(stripped, docType).has(rule) ? `"${rule}" is 5.0.0-beta.5 grammar (b5val judges it)` : null;
+      const skip = options?.referenced ? 'reads a referenced document, which only the node reads' : null;
       if (skip) {
         console.log(`SKIP  ${file.replace(/\.json$/, '')}: ${label} — ${skip}`);
         continue;
@@ -648,7 +639,7 @@ async function runDeleteCases({ loadContractSource, parseContract, platformVersi
       }
     }
     // The delete rules stand in for each type's write rules; the rest of the file as the SDK parses it.
-    const asWriteRules = structuredClone(beta4Rendering(source).source);
+    const asWriteRules = structuredClone(source);
     for (const schema of Object.values(asWriteRules.documentSchemas)) {
       if (!schema.deleteConstraints) continue;
       schema.propertyConstraints = schema.deleteConstraints;

@@ -31,7 +31,7 @@ What this means in the app: a poll's choice tally and any other equality on an i
 
 ### New where operators and constraint arguments
 
-- `where` accepts `contains` and `containsAny` over a typed-array index (wasm-sdk `queries/document.rs`). `DocumentWhereOperator` in `@dashevo/wasm-sdk` already lists them, so `DocumentWhereClause` needs no change. Nothing here queries with them yet.
+- `where` accepts `contains` and `containsAny` over a typed-array index (wasm-sdk `queries/document.rs`). `DocumentWhereOperator` in `@dashevo/wasm-sdk` already lists them, so `DocumentWhereClause` needs no change. The pollr v7 tally and the v15 "mentions of me" reads use them.
 - `DataContract.checkDocumentPropertyConstraints(document, storedDocument)` takes the stored version as an optional second argument, for rules that read `$old.`. The offline scripts pass one argument, which still works for the rules they check. It does not judge `referenced` reads or `countOf`/`sumOf`.
 
 ### Error codes
@@ -127,53 +127,36 @@ Clients on v8 send neither copy and word a 40127 as "This store isn't taking ord
 
 - **Pollr** (`v7` replaces `v5`/`v6`; `v3` testnet and read-only `v4` unchanged): `pollrHasEditableBallots`, `planBallotWrite` (one create or replace per vote), `getMyBallot` off `byPollVoter`, the tally from one `containsAny` grouped count with a per-option `contains` fallback (`decodeChoiceKey` reads both key encodings), 40127 = closed, 40120 = gone, 40105/40106 = stale. A poll is written without `optionCount`. The card's flows are the same for the voter.
 - **Storefront / blog v8**: no `storeStatus` / `postCommentsEnabled`; a 40127 naming the store's `status` is "This store isn't taking orders right now", a 40127 on a comment "Comments are turned off for this post". Rating group keys are read in both encodings.
-- **Mentions (v15)**: `inlineMentions()` describes the cut's mention field (`mentionedUserId` on v10–v14, `mentionedUserIds` up to 8 on v15). A post or reply writes the first 8 distinct @names that resolve (`mentionFieldsFor`); the composer says "Only the first 8 people you mention will be notified." past 8. "Mentions of me" and the mention notifications read `mentionedUserIds contains <me>` (`mentionsOfUserQuery`). That query needs the 5.0.0-beta.5 SDK: on beta.4 it reaches no node, and the source counts as failed.
+- **Mentions (v15)**: `inlineMentions()` describes the cut's mention field (`mentionedUserId` on v10–v14, `mentionedUserIds` up to 8 on v15). A post or reply writes the first 8 distinct @names that resolve (`mentionFieldsFor`); the composer says "Only the first 8 people you mention will be notified." past 8. "Mentions of me" and the mention notifications read `mentionedUserIds contains <me>` (`mentionsOfUserQuery`). 
 
-### Offline tooling while the SDK is beta.4
+### Offline checks
 
-The 5.0.0-beta.4 packages cannot parse these: the wasm-sdk refuses the conditions and both kinds of rule (10231), and wasm-dpp2 also refuses an element index (10206). `scripts/beta5-grammar.mjs`:
+The re-cuts were written while the repo's SDK was still 5.0.0-beta.4, which could not parse their grammar. That stop-gap is gone: on the 5.0.0-beta.5 SDK every check reads the files as written.
 
-- **`beta5Constructs(source)`** lists them: `whereCondition`, `referencedRead`, `storedVersionRead`, `typedArrayIndex`.
-- **`beta4Rendering(source)`** strips exactly those, nothing else, for the wasm parses only: condition entries leave their `where`, such rules leave `propertyConstraints`, element indexes leave `indices`. On a 5.0.0-beta.5 SDK (`SDK_PARSES_BETA5`) it is the identity.
-- **`requireSdkFor(source)`** makes the publisher refuse to build a create carrying them on an older SDK, so a stripped file can never be signed.
+| Check | What it judges |
+| --- | --- |
+| wasm-sdk / wasm-dpp2 parse (`validate-contract-offline.mjs`, `--probes`) | the whole file; wasm-dpp2 refuses a bad element index (10205/10231) |
+| `auditNodeRules` | what only the node checks: `where` conditions at registration (40126: referenced side exists and holds one value, literals of the property's type and in its enum, orderings on integers bounded by integers or required times), and the typed-array index rules again (one top-level array, ≤16 items or 4 under a window, element key limits, not unique, no skip on the array alone, ≤256 entries per document) |
+| meta-schema (ajv) | the whole file, at the beta.5 tag |
+| `--constraints` | every rule but those reading a referenced document, which no SDK pre-check reads (pollr's vote rules: the battery broadcasts them). The case runner pins `Date.now` to each case's instant, since the pre-check judges a write's recorded times by the device clock, and judges a replace against a stored version of the same document |
+| `b5val` (rs-dpp 5.0.0-beta.5, out of tree) | full validation and the create's size; an rs-dpp evaluator harness also judged the pollr vote rules and the 31-day boundary |
 
-Who judges what:
-
-| Check | Sees | Judges the beta.5 constructs? |
-| --- | --- | --- |
-| wasm-sdk / wasm-dpp2 parse (`validate-contract-offline.mjs`, `--probes`) | the file without them; each stripped one is printed `NOT PARSED BY THE SDK` (the `refersTo:` lines and the offline update check read the parse, so they omit them too) | no |
-| `auditNodeRules` | the whole file | yes: `where` conditions (40126: referenced side exists and holds one value, literals of the property's type and in its enum, orderings on integers bounded by integers or required times), typed-array indexes (10205/10231: one top-level array, ≤16 items or 4 under a window, element key limits, not unique, no skip on the array alone, ≤256 entries per document) |
-| meta-schema (ajv) | the whole file | yes: `scripts/meta-schema/document-meta-v3.json` is now rs-dpp's at the beta.5 tag (sha256 `d8676bfd…`) |
-| `--constraints` | rules the SDK parses | a rule reading a referenced document is never judged offline (no SDK pre-check reads it); a stripped rule's cases print `SKIP` |
-| `b5val` (rs-dpp 5.0.0-beta.5, full validation) | the whole file | yes: the authority until the bump |
-
-The size the wasm parse reports is a lower bound while constructs are stripped; `b5val`'s is the real one. The probes whose refusal is a beta.5 construct expect the audit layer now and the parse layer after the bump (`b5(...)` in `contract-probes.mjs`). The `where` cases now model the conditions off the file (`whereEntryHolds`): before, at and after a poll's close; an active, paused and closed store; comments on, unset and off.
-
-Run:
+The `where` cases model the new conditions off the file (`whereEntryHolds`): before, at and after a poll's close; an active, paused and closed store; comments on, unset and off.
 
 ```sh
 node scripts/validate-contract-offline.mjs contracts/pollr-contract.json --strict-size
 node scripts/validate-contract-offline.mjs --probes
 node scripts/validate-contract-offline.mjs --constraints
-# b5val (out of tree): rs-dpp 5.0.0-beta.5 DataContract::from_json(full validation) and the
-# create transition's size, on a file assembled as validate-contract-offline.mjs assembles it
-b5val-bin <assembled-contract.json>
 ```
 
 ### The register plan
 
 - **Ids do not change**: they are `generateId(maker, nonce)`; the anchor, the group and the member order are as before.
 - **Pins**: `APP_CONNECT_ENTRIES` pins the four new sha256s above (`verify-appconnect.mjs --self-test` checks them).
-- **SDK**: on the beta.4 SDK `--plan` builds the anchor and then stops at social with "uses Platform 5.0.0-beta.5 grammar the installed SDK 5.0.0-beta.4 cannot build". Every mode needs the bump first.
+- **Plan**: `--plan --maker 9RPq2Ju… --start-nonce 13` builds the whole set. Signed estimates (100 B allowance, with the membership): app 742, social 16,491, blocks 1,293, DM v5 3,592, blog 6,692, pollr 3,739, storefront 16,349, auth vault 2,064 B. The connected modes refuse a node below Drive 5.0.0-beta.5 (`requireDriveVersion`).
 - **Cost**: the set shrinks by about 690 B (pollr −467, storefront −290, blog −97, social +168).
 - **Env**: the cut-over sets `NEXT_PUBLIC_POLLR_TOPOLOGY=v7`, `NEXT_PUBLIC_STOREFRONT_TOPOLOGY=v8`, `NEXT_PUBLIC_BLOG_TOPOLOGY=v8` and `NEXT_PUBLIC_CONTRACT_TOPOLOGY=v15` with the new ids.
 
 ### /devnet until the cut-over
 
-The pollr client reads only v7 ballots now (v5/v6 slot ballots are gone from the code), so `.env.devnet` turns polls off (`NEXT_PUBLIC_POLLR_CONTRACT_ID=` blank, topology `v7`) until the beta.5 cut-over registers pollr v7. Storefront and blog keep `v7` there, which the client still serves.
-
-### For the SDK bump PR
-
-- Bump the three packages; `SDK_PARSES_BETA5` turns true and the wasm parses see the whole files. Re-run `--probes` (the `b5(...)` expectations flip to the parse layers) and `--constraints` (the `staysResolved` cases are judged with the stored report).
-- The `contains` / `containsAny` queries (pollr tally, mentions of me) start working; until then they reach no beta.4 node.
-- Group keys of unsigned integers are plain bytes on PV14 (#5350). Pollr, storefront ratings and the battery decoder already read both forms.
+The pollr client reads only v7 ballots (the v5/v6 slot-ballot code is gone), so `.env.devnet` keeps polls off (`NEXT_PUBLIC_POLLR_CONTRACT_ID=` blank, topology `v7`) until the cut-over registers pollr v7 and fills in every new id.
