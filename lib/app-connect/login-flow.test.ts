@@ -213,6 +213,32 @@ describe('AppConnectLogin teardown', () => {
     expect(h.login.requestHashHex()).toBeNull()
   })
 
+  it('a start superseded while preparing its request never stores it over the newer one', async () => {
+    let releaseFirst: () => void = () => undefined
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const h = harness()
+    const deps = (h.login as unknown as { deps: { connectionId: () => Promise<string> } }).deps
+    let calls = 0
+    deps.connectionId = async () => {
+      calls += 1
+      if (calls === 1) await firstGate
+      return 'ab'.repeat(16)
+    }
+
+    const first = h.login.start({ fresh: true })
+    await h.flush()
+    const second = h.login.start({ fresh: true })
+    await second
+    const stored = h.records.value
+    releaseFirst()
+    await first
+    await h.flush()
+
+    expect(stored).not.toBeNull()
+    expect(h.records.value).toBe(stored)
+    expect(h.login.requestHashHex()).not.toBeNull()
+  })
+
   it('wipes the previous ephemeral key when a new request replaces it', async () => {
     const h = harness()
     await h.login.start()

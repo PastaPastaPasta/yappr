@@ -211,6 +211,10 @@ export async function assertRawKeyCovers(
 /** Call after a write signed with `key` was refused; updates the session for key-ring errors. */
 export async function reportSigningFailure(ownerId: string, key: SigningKey, error: unknown): Promise<void> {
   if (!key.appConnect) return
+  // A refusal that arrives after a renewal belongs to the old grant: the
+  // current one did not sign this write, so it must not be signed out for it.
+  const current = appConnectSessions.current(ownerId)
+  if (!current?.authKeys.some((ringKey) => ringKey.keyId === key.identityKey.keyId)) return
   try {
     await appConnectSessions.handleWriteFailure(ownerId, consensusCodeOf(error) ?? codeFromMessage(error))
   } catch (handlingError) {

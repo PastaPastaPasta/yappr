@@ -64,6 +64,7 @@ export interface StoredAppConnectRequest {
  * answer, which carries the granted keys, so a real store wraps it rather than
  * leaving it in plain storage. Async so that store can be IndexedDB.
  */
+/** Writes (save, clear) must take effect in the order they are called. */
 export interface RequestRecordStore {
   load(): Promise<StoredAppConnectRequest | null>
   save(record: StoredAppConnectRequest): Promise<void>
@@ -196,13 +197,19 @@ export class AppConnectLogin {
     const stored = options.fresh ? null : await this.deps.records.load()
     if (!current()) return
     const resumable = stored && stored.identityHint === options.identityHint ? stored : null
-    const record = resumable ?? await this.newRecord(options.identityHint)
-    if (!current()) return
+    const record = resumable ?? await this.newRecord(options.identityHint, current)
+    if (!record || !current()) return
     this.activate(record)
     this.poll()
   }
 
-  private async newRecord(identityHint?: string): Promise<StoredAppConnectRequest> {
+  /**
+   * A new request, stored for resuming. `current` is checked right before
+   * the save is issued: a start that a newer one superseded stores nothing,
+   * so it cannot overwrite the newer request (the store applies writes in
+   * the order they are issued).
+   */
+  private async newRecord(identityHint: string | undefined, current: () => boolean): Promise<StoredAppConnectRequest | null> {
     const privateKey = secp256k1.utils.randomSecretKey()
     const record: StoredAppConnectRequest = {
       ephemeralPrivateKey: bytesToHex(privateKey),
@@ -211,6 +218,7 @@ export class AppConnectLogin {
       ...(identityHint ? { identityHint } : {}),
     }
     clearSensitiveBytes(privateKey)
+    if (!current()) return null
     await this.deps.records.save(record)
     return record
   }
