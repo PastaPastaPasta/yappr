@@ -140,8 +140,19 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
    * reports: a confirmation timeout can follow an update that landed, so the
    * chain read-back (`pointsAt`) decides, and `error` is only the detail.
    */
-  const addAnchorKey = async () => {
-    const identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
+  const addAnchorKey = async (previous) => {
+    // The update takes its key id and revision from this snapshot, so it must already hold the
+    // previous step's key: a node one block behind would hand back the identity without it.
+    let identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
+    const holds = (snapshot) => {
+      const key = snapshot.getPublicKeyById(previous.keyId);
+      return Boolean(key) && keyBytes(key).equals(previous.publicKey);
+    };
+    for (let attempt = 0; previous && !holds(identity); attempt++) {
+      if (attempt === 5) throw new Error(`the identity snapshot still lacks key ${previous.keyId} after the first update`);
+      await settle();
+      identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
+    }
     const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1;
     const fresh = generateKeypairHex();
     const signer = new IdentitySigner();
@@ -169,8 +180,14 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
     return { ok: false, current };
   };
   /** Adds one anchor-bound key and checks contractKeys names it; the added key, or null on a failure. */
-  const step = async (label, which) => {
-    const added = await addAnchorKey();
+  const step = async (label, which, previous) => {
+    let added;
+    try {
+      added = await addAnchorKey(previous);
+    } catch (e) {
+      battery.check(`${label} ${which} anchor-bound ENCRYPTION key registers`, false, describeErr(e).slice(0, 220));
+      return null;
+    }
     const { ok, current } = await pointsAt(added);
     const detail = `${current ? `current key ${current.keyId}` : 'no current key'}${added.error ? `; the SDK reported: ${added.error}` : ''}`;
     battery.check(`${label} ${which} anchor-bound ENCRYPTION key (id ${added.keyId}) registers and contractKeys(anchor) returns it as the latest`, ok, detail);
@@ -178,7 +195,7 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
   };
 
   const first = await step('k1a', 'a first');
-  if (!first || !(await step('k1b', 'a second'))) return;
+  if (!first || !(await step('k1b', 'a second', first))) return;
   const identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
   const stored = identity.getPublicKeyById(first.keyId);
   battery.check('k1c the superseded key stays enabled and anchor-bound (latest is a pointer, not a revocation)',
