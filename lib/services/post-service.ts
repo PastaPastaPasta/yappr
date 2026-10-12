@@ -161,16 +161,17 @@ async function fetchBlogPostsAsQuotes(blogPostIds: string[]): Promise<Post[]> {
   );
 }
 
-/** v15: the @names looked up per mention slot, so names that resolve to nobody (or to an identity already named) leave no slot empty. */
-const MENTION_LOOKUPS_PER_SLOT = 2;
+/** v15: how many @names are looked up in parallel at a time while mention slots are still empty. */
+const MENTION_LOOKUP_BATCH = 16;
 
 /**
  * The fields a post or reply with public text `content` names its mentions in
  * ({@link inlineMentions}), or none where mentions are `postMention` documents,
- * each @name resolved through DPNS in one parallel batch. v10–v14: the first
- * @mention alone, omitted when it does not resolve. v15: the first `max` (8)
- * distinct identities, in order of appearance, among the first 16 @names; a
- * name that resolves to nobody is skipped and two names of one identity count
+ * each @name resolved through DPNS. v10–v14: the first @mention alone, omitted
+ * when it does not resolve. v15: the first `max` (8) distinct identities the
+ * @names resolve to, in order of appearance; the names are looked up in
+ * parallel batches of 16 until that many are found or the text runs out, a
+ * name that resolves to nobody is skipped, and two names of one identity count
  * once. Every later @mention stays plain text, and the optional property is
  * omitted when nothing resolves (v15 refuses an empty array). DPNS names are
  * owned by identities, so each id satisfies the property's `refersTo: identity`.
@@ -178,14 +179,14 @@ const MENTION_LOOKUPS_PER_SLOT = 2;
 export async function mentionFieldsFor(content: string): Promise<Record<string, Uint8Array | Uint8Array[]>> {
   const mentions = inlineMentions();
   if (!mentions) return {};
-  const usernames = extractMentions(content).slice(0, mentions.isArray ? MENTION_LOOKUPS_PER_SLOT * mentions.max : 1);
+  const usernames = extractMentions(content).slice(0, mentions.isArray ? undefined : 1);
   if (usernames.length === 0) return {};
   const dpns = await import('./dpns-service').catch((error: unknown) => {
     logger.warn('Mentions not indexed: the username lookup could not load', error);
     return null;
   });
   if (!dpns) return {};
-  const resolved = await Promise.all(usernames.map(async (username) => {
+  const resolve = async (username: string): Promise<string | null> => {
     try {
       const identityId = await dpns.dpnsService.resolveIdentity(username);
       if (!identityId) logger.warn('Mention not indexed: could not resolve username', username);
@@ -194,10 +195,16 @@ export async function mentionFieldsFor(content: string): Promise<Record<string, 
       logger.warn('Mention not indexed: username lookup failed', username, error);
       return null;
     }
-  }));
-  const identities = Array.from(new Set(resolved.filter((id): id is string => id !== null))).slice(0, mentions.max);
-  if (identities.length === 0) return {};
-  const bytes = identities.map(identifierStringToDocumentBytes);
+  };
+  const identities = new Set<string>();
+  for (let start = 0; start < usernames.length && identities.size < mentions.max; start += MENTION_LOOKUP_BATCH) {
+    const resolved = await Promise.all(usernames.slice(start, start + MENTION_LOOKUP_BATCH).map(resolve));
+    for (const identityId of resolved) {
+      if (identityId !== null && identities.size < mentions.max) identities.add(identityId);
+    }
+  }
+  if (identities.size === 0) return {};
+  const bytes = Array.from(identities, identifierStringToDocumentBytes);
   return { [mentions.field]: mentions.isArray ? bytes : bytes[0] };
 }
 

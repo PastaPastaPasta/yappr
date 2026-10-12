@@ -139,12 +139,22 @@ describe('inline mentions on v15 (mentionedUserIds, up to 8)', () => {
     expect(resolveIdentity).toHaveBeenCalledTimes(11)
   })
 
-  it('looks up at most 16 names, in one batch', async () => {
-    const ghosts = Array.from({ length: 15 }, (_, n) => `@ghost${n}`).join(' ')
-    const data = await written('v15', `${ghosts} @a @b`)
-    expect(mentioned(data)).toEqual([ids.a])
+  it('keeps looking past unresolved names and aliases, 16 at a time, until 8 identities are found', async () => {
+    const ghosts = Array.from({ length: 16 }, (_, n) => `@ghost${n}`).join(' ')
+    const data = await written('v15', `${ghosts} @a @alias @b @c @d @e @f @g @h @i`)
+    // The first batch of 16 resolves nobody; the second finds a…h (alias and b are one identity).
+    expect(mentioned(data)).toEqual([ids.a, ids.b, ids.c, ids.d, ids.e, ids.f, ids.g, ids.h])
+    expect(resolveIdentity).toHaveBeenCalledTimes(26)
+  })
+
+  it('stops looking once 8 identities are found', async () => {
+    const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map((name) => `@${name}`).join(' ')
+    const later = Array.from({ length: 20 }, (_, n) => `@late${n}`).join(' ')
+    const data = await written('v15', `${names} ${later}`)
+    expect(mentioned(data)).toHaveLength(8)
+    // The first batch of 16 fills every slot; the remaining names are never looked up.
     expect(resolveIdentity).toHaveBeenCalledTimes(16)
-    expect(resolveIdentity).not.toHaveBeenCalledWith('b')
+    expect(resolveIdentity).not.toHaveBeenCalledWith('late8')
   })
 
   it('writes no mentions, and still posts, when the username lookup cannot load', async () => {
