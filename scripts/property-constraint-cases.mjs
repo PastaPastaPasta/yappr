@@ -232,6 +232,8 @@ export const CONSTRAINT_CASES = {
     ['poll: closes in exactly 31 days', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY }, null],
     ['poll: ten options', 'poll', { ...basePoll(), options: Array.from({ length: 10 }, (_, i) => `o${i}`) }, null],
     ['poll: closes in 31 days + 1 ms', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY + 1 }, 'endsWithin31Days', { offlineOnly: true }],
+    // The live form of the same boundary: an hour over, so block time cannot bring it back under.
+    ['poll: closes in 31 days + 1 hour', 'poll', { ...basePoll(), endsAt: CASE_NOW + 31 * DAY + HOUR }, 'endsWithin31Days'],
     ['poll: no endsAt (the schema requires it; the rules alone refuse it too)', 'poll', drop(basePoll(), 'endsAt'), 'endsAfterCreation', { offlineOnly: true }],
     ['poll: born closed', 'poll', { ...basePoll(), endsAt: CASE_NOW - 1000 }, 'endsAfterCreation'],
     ['vote: single, one option', 'vote', ballot([1]), null, onPoll(false)],
@@ -563,6 +565,23 @@ export function refusedCreates(file, docType) {
  *
  * Returns the number of cases whose outcome is not the recorded one.
  */
+/**
+ * Runs `check` with `Date.now` reading `now`. From 5.0.0-beta.5 the SDK judges
+ * the times a write records (a create's `$createdAt`, every write's
+ * `$updatedAt`) by the device clock, as a pre-check before the block exists,
+ * so a one-millisecond boundary (a poll closing 31 days + 1 ms after its
+ * creation) is judged at the case's own instant only with the clock pinned.
+ */
+function atClock(now, check) {
+  const deviceClock = Date.now;
+  Date.now = () => now;
+  try {
+    return check();
+  } finally {
+    Date.now = deviceClock;
+  }
+}
+
 export async function runConstraintCases({ loadContractSource, parseContract, platformVersion, Document }) {
   const owner = id();
   let failures = 0;
@@ -580,8 +599,8 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
     const { source: parseable, stripped } = beta4Rendering(source);
     if (stripped.length > 0) console.log(`NOTE  ${file.replace(/\.json$/, '')}: judged without the 5.0.0-beta.5 grammar the SDK ${SDK_VERSION} cannot parse: ${describeConstructs(stripped).join('; ')}`);
     const contract = parseContract(parseable, platformVersion);
-    const build = (docType, data, at = {}) => Document.fromObject({
-      $formatVersion: '0', $id: id(), $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
+    const build = (docType, data, at = {}, $id = id()) => Document.fromObject({
+      $formatVersion: '0', $id, $ownerId: owner, $dataContractId: contract.id.toBytes(), $type: docType,
       $revision: at.revision ?? 1n, $createdAt: at.createdAt ?? CASE_NOW, $updatedAt: at.updatedAt ?? CASE_NOW, ...data,
     }, platformVersion);
     for (const [label, docType, data, rule, options] of cases) {
@@ -593,8 +612,10 @@ export async function runConstraintCases({ loadContractSource, parseContract, pl
       }
       let violation = null;
       try {
-        const stored = options?.stored ? build(docType, options.stored) : null;
-        violation = contract.checkDocumentPropertyConstraints(build(docType, data, options?.at), stored) ?? null;
+        // A replace is judged against the stored version of the same document.
+        const $id = id();
+        const stored = options?.stored ? build(docType, options.stored, {}, $id) : null;
+        violation = atClock(options?.at?.updatedAt ?? CASE_NOW, () => contract.checkDocumentPropertyConstraints(build(docType, data, options?.at, $id), stored)) ?? null;
       } catch (e) {
         violation = { rule: null, message: String(e?.message ?? e) };
       }

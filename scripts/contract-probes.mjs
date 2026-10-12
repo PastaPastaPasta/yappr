@@ -975,7 +975,7 @@ const PROBES = [
   { label: 'an index on a property the type does not have', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10209', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ nope: 'asc' }] }); } },
   { label: 'an index on $id', file: SOCIAL_V10, expect: 'dpp2', auditToo: true, node: '10208', mutate: (s) => { types(s).follow.indices.push({ name: 'probe', properties: [{ $id: 'asc' }] }); } },
   // 5.0.0-beta.5 indexes typed arrays per element (#5370); 5.0.0-beta.4's wasm-dpp2 refuses any (10206).
-  { label: 'an index on a typed array whose elements are too long to key (socialLinks, 256 characters)', file: SOCIAL_V10, expect: b5('dpp2', 'audit'), auditToo: true, node: '10205', why: /maxLength 256|10205/i, mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
+  { label: 'an index on a typed array whose elements are too long to key (socialLinks, 256 characters)', file: SOCIAL_V10, expect: b5('dpp2', 'audit'), auditToo: true, node: '10205', why: /maxLength/i, mutate: (s) => { types(s).yapprProfile.indices.push({ name: 'probe', properties: [{ socialLinks: 'asc' }] }); } },
   { label: 'an index on a typed array within the element-index limits (socialLinks at 63 characters)', file: SOCIAL_V10, expect: 'accepted', mutate: (s) => {
     const links = types(s).yapprProfile.properties.socialLinks;
     links.items.maxLength = 63; links.items.maxBytes = 63;
@@ -1081,7 +1081,7 @@ const PROBES = [
   { label: 'pollr v7: an ordering on the boolean multiChoice', file: POLLR, expect: 'audit', node: '40126', why: /is not an integer/, mutate: (s) => {
     types(s).vote.properties.pollId.refersTo.where.multiChoice = { greaterThan: { const: 0 } };
   } },
-  { label: 'pollr v7: choices of 17 under the element index (16 max)', file: POLLR, expect: b5('dpp2', 'audit'), auditToo: true, node: '10205', why: /maxItems 17|10205/i, mutate: (s) => {
+  { label: 'pollr v7: choices of 17 under the element index (16 max)', file: POLLR, expect: b5('dpp2', 'audit'), auditToo: true, node: '10205', why: /maxItems/i, mutate: (s) => {
     Object.assign(types(s).vote.properties.choices, { maxItems: 17 });
     types(s).vote.properties.choices.items.maximum = 16;
   } },
@@ -1099,11 +1099,14 @@ const PROBES = [
       && schema.immutable.some((entry) => entry.property === 'mentionedUserIds' && entry.when?.absent === 'deleted');
   }) },
   { label: 'social v15: mentionedUserAndTime skipping on the mentions array alone', file: SOCIAL_V15, expect: b5('wasm', 'audit'), node: '10231', why: /skip/i, mutate: (s) => { namedIndex(s, 'post', 'mentionedUserAndTime').skipIfAbsent = true; } },
-  { label: 'social v15: 9 mentions under a 3.5-day window index (4 max under a window)', file: SOCIAL_V15, expect: b5('dpp2', 'audit'), node: '10205', why: /under a window|10205/i, mutate: (s) => {
+  { label: 'social v15: 9 mentions under a 3.5-day window index (4 max under a window)', file: SOCIAL_V15, expect: b5('dpp2', 'audit'), node: '10205', why: /maxItems|under a window/i, mutate: (s) => {
     types(s).post.indices.push({ name: 'probe', properties: [{ $createdAt: 'asc' }, { mentionedUserIds: 'asc' }], timeRange: { on: '$createdAt', range: 302400, step: 302400, ttl: 604800 } });
   } },
-  { label: 'social v15: one index naming two typed arrays (mentions and media)', file: SOCIAL_V15, expect: b5('wasm', 'audit'), node: '10231', why: /typed arrays/i, mutate: (s) => {
-    types(s).post.indices.push({ name: 'probe', properties: [{ mentionedUserIds: 'asc' }, { mediaUrls: 'asc' }] });
+  // A second, keyable array (media URLs are too long to key, which would be refused first).
+  { label: 'social v15: one index naming two typed arrays (mentions and a short tag list)', file: SOCIAL_V15, expect: b5('dpp2', 'audit'), node: '10231', why: /typed arrays?/i, mutate: (s) => {
+    const next = Math.max(...Object.values(types(s).post.properties).map((p) => p.position)) + 1;
+    types(s).post.properties.probeTags = { type: 'array', maxItems: 4, items: { type: 'integer', minimum: 0, maximum: 9 }, position: next };
+    types(s).post.indices.push({ name: 'probe', properties: [{ mentionedUserIds: 'asc' }, { probeTags: 'asc' }] });
   } },
   { label: 'social v15: a resolved report stays resolved (staysResolved reads $old.status)', file: SOCIAL_V15, mutate: () => {}, expect: 'accepted', holds: (s) => JSON.stringify(types(s).report.propertyConstraints.staysResolved) === '{"ifThen":[{"present":"$old.status"},{"present":"status"}]}' },
 ];

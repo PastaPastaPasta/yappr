@@ -20,7 +20,7 @@ import { dmBot, openDevice, type Device } from '../fixtures/dm'
 import { appUrl } from '../fixtures/app'
 import { reloadUntilVisible } from '../fixtures/eventual'
 import { uniqueTag } from '../fixtures/run-tag'
-import { ensureVariantListing, STOREFRONT_V7_BUILD, NOT_V7_REASON, type VariantListing } from '../fixtures/storefront'
+import { ensureVariantListing, STOREFRONT_VARIANTS_BUILD, NOT_VARIANTS_REASON, type VariantListing } from '../fixtures/storefront'
 
 test.describe.configure({ mode: 'serial' })
 
@@ -32,7 +32,7 @@ const [SELLER_SLOT, BUYER_SLOT] = (process.env.E2E_STOREFRONT_SLOTS ?? '7,8').sp
 const WRITE_TIMEOUT = 180_000
 
 test.skip(!hasSeedPhrase, NO_SEED_REASON)
-test.skip(!STOREFRONT_V7_BUILD, NOT_V7_REASON)
+test.skip(!STOREFRONT_VARIANTS_BUILD, NOT_VARIANTS_REASON)
 
 let listing: VariantListing
 let buyer: Device
