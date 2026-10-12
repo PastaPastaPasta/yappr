@@ -136,8 +136,9 @@ codec and the response crypto, so it cannot drift from the app side:
    keys. The responder waits until the change is visible on chain.
 8. **Publish**: delete the persona's previous responses for the app, then
    create the new one. The delete is index-only and carries all three values,
-   which the state file keeps. A delete Platform refuses (the entry is gone) is
-   forgotten; any other failure is retried on the next answer. The response
+   which the state file keeps. A delete Platform refuses with
+   `DocumentNotFoundError` (the entry is gone) is forgotten; any other failure
+   is retried on the next answer. The response
    is sealed with `sealAppConnectPayload` and its AAD, and signed with the
    persona's unbound HIGH key (keyId 2).
 
@@ -159,9 +160,12 @@ status: `stale`, `unsupported`, `invalid`, `declined` or `failed`.
   signed by MASTER): the binding's budget proposal is *added* to the key's
   total, up to the 5 DASH cap, and its expiry replaces the current one when it
   is later. A limit the key does not have is not added, because Platform
-  refuses that. It then republishes the same keys. Without such a grant it
-  answers as a new login, which supersedes the old keys (the profile's
-  phase-1 renewal).
+  refuses that. It then republishes the same keys. The targets are fixed once
+  per request and saved, so retrying the request does not add the allowance
+  twice. It answers as a new login instead, which supersedes the old keys
+  (the profile's phase-1 renewal), when there is no such grant, when an old
+  key lacks the level or a limit the request needs, or when a key would have
+  no budget left within the cap.
 - **Revoke** (disable-only): `--revoke --persona <idx> --app-id <id>
   [--connection-id <hex>]`, or `POST /revoke`. MASTER-signed IdentityUpdates,
   ten keys each (Platform's limit), disable the auth keys of that

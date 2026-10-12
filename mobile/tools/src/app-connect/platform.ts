@@ -76,6 +76,11 @@ export function liveAppConnectPorts(sdk: EvoSDK, grants: GrantStore, log: (line:
       return entry ? entry.keys.map(toAppConnectKey) : []
     },
 
+    async remainingBudgets(identityId, keyIds) {
+      const remaining = await sdk.identities.keysRemainingBudgets(identityId, keyIds)
+      return new Map(keyIds.map((keyId) => [keyId, remaining.get(keyId) ?? undefined]))
+    },
+
     async updateIdentity(persona, update) {
       const identity = await fetchIdentity(sdk, persona)
       const master = persona.key('master')

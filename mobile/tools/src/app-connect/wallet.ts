@@ -36,11 +36,11 @@ import {
   type AppConnectKeyBounds,
 } from '../../../../vendor/platform-auth/src/app-connect/types'
 import { getYapprPublicKey } from '../../../../vendor/platform-auth/src/key-exchange/yappr-protocol'
-import { errorMessage, isConsensusError } from '../errors'
+import { consensusCode, errorMessage } from '../errors'
 import type { Persona } from '../pool'
 import { appConnectDerivationTag, deriveAppConnectAuthKey, deriveAppConnectEncryptionKey } from './derive'
 import { describeFaults, noFaults, type AppConnectFaults } from './faults'
-import type { ConnectionGrant, GrantStore, GrantedAuthKey, StoredResponse } from './state'
+import type { ConnectionGrant, GrantStore, GrantedAuthKey, StoredRenewal, StoredResponse } from './state'
 
 /** The App Connect system contract (platform docs/protocol/app-connect.md). */
 export const APP_CONNECT_CONTRACT_ID = 'H8F9mP1BM55TE1ShsxPZHzhyinaMdY9bMmP85mkDhcJJ'
@@ -49,6 +49,8 @@ export const LOGIN_KEY_RESPONSE = 'loginKeyResponse'
 const MAX_KEYS_PER_UPDATE = 6
 /** …and disables at most this many (`MAX_KEYS_TO_DISABLE`). */
 const MAX_DISABLES_PER_UPDATE = 10
+/** `DocumentNotFoundError`: an indexOnly delete whose entry is not there. */
+const DOCUMENT_NOT_FOUND = 40101
 
 const DASHPAY_CONTRACT_ID = 'Bwr4WHCPz5rFVAD87RqTs3izo4zpzwsEdKPWUT1NS1C7'
 /** Wallet rule 3: the only foreign document type the profile allowlists. */
@@ -122,6 +124,8 @@ export interface AppConnectPorts {
   groupOwner(groupId: string): Promise<string | null>
   /** The keys Platform resolves for (identity, contract, purpose): `identities.contractKeys`. */
   contractKeys(identityId: string, contractId: string, purpose: number): Promise<AppConnectIdentityKey[]>
+  /** What is left of each key's budget (`identities.keysRemainingBudgets`); undefined for a key without one. */
+  remainingBudgets(identityId: string, keyIds: number[]): Promise<Map<number, bigint | undefined>>
   /**
    * One IdentityUpdate signed by the persona's MASTER key. Resolves once the
    * change is visible on chain, with the ids of the added keys in order.
@@ -473,28 +477,29 @@ async function answerAs(
   const previous = plan.connectionId === undefined ? undefined : record.connections[plan.connectionId]
 
   const renewal = plan.request.mode === 'renew' && previous
-    ? matchRenewal(persona, plan, previous, chainKeys, ports)
+    ? await planRenewal(persona, plan, faults, previous, chainKeys, ports)
     : undefined
   const raisedKeyIds: number[] = []
   const toAdd: Array<{ slot: Slot; key: NewIdentityKey }> = []
   let authSlots: Slot[]
 
   if (renewal) {
-    for (const { binding, chainKey } of renewal) {
-      const wanted = grantedLimits(binding, plan.now, faults)
-      // A renewal adds the proposed allowance (keeping the total within the
-      // cap) and moves the expiry out. A limit the key lacks cannot be added.
-      let addBudget: bigint | undefined
-      if (chainKey.totalBudget !== undefined && wanted.totalBudget !== undefined) {
-        addBudget = faults.budget ?? minBigint(wanted.totalBudget, BUDGET_CAP - chainKey.totalBudget)
-        if (addBudget <= 0n) addBudget = undefined
-      }
-      const expiresAt = chainKey.expiresAt !== undefined && wanted.expiresAt > chainKey.expiresAt ? wanted.expiresAt : undefined
+    // The targets are saved before any update, so a retry of this request
+    // finishes them instead of adding the allowance again.
+    previous!.renewal = renewal.saved
+    ports.grants.put(persona.identityId, plan.appId, record)
+    for (const { chainKey, target } of renewal.keys) {
+      const addBudget = target.totalBudget !== undefined && chainKey.totalBudget !== undefined && target.totalBudget > chainKey.totalBudget
+        ? target.totalBudget - chainKey.totalBudget
+        : undefined
+      const expiresAt = target.expiresAt !== undefined && chainKey.expiresAt !== undefined && target.expiresAt > chainKey.expiresAt
+        ? target.expiresAt
+        : undefined
       if (addBudget === undefined && expiresAt === undefined) continue
       await ports.raiseKeyLimits(persona, chainKey.id, { addBudget, expiresAt })
       raisedKeyIds.push(chainKey.id)
     }
-    authSlots = renewal.map(({ slot }) => slot)
+    authSlots = renewal.keys.map(({ slot }) => slot)
   } else {
     if (plan.request.mode === 'renew') ports.log(`persona ${persona.personaIdx}: no live grant to renew on this connection; answering as a new login`)
     authSlots = planAuthKeys(persona, plan, faults, chainKeys, toAdd)
@@ -607,32 +612,101 @@ function planAuthKeys(
   })
 }
 
+interface RenewalTarget {
+  totalBudget?: bigint
+  expiresAt?: number
+}
+
+interface RenewalPlan {
+  keys: Array<{ chainKey: AppConnectIdentityKey; slot: Slot; target: RenewalTarget }>
+  saved: StoredRenewal
+}
+
 /**
- * A renewal keeps the connection's keys: every requested binding must match a
- * live stored key this wallet re-derives. Otherwise it is answered as a new
- * login, which supersedes the old keys (the profile's phase-1 renewal).
+ * A renewal keeps the connection's keys when every requested binding matches
+ * a live stored key this wallet re-derives, that already has the level and
+ * limits the binding needs (a limit cannot be added later), and that will
+ * have budget left after the raise. Otherwise it is answered as a new login,
+ * which supersedes the old keys (the profile's phase-1 renewal).
+ *
+ * The target limits are fixed once per request and saved: a retry of the
+ * same request reuses them, so the allowance is never added twice.
  */
-function matchRenewal(
+async function planRenewal(
   persona: Persona,
   plan: Plan,
+  faults: AppConnectFaults,
   previous: ConnectionGrant,
   chainKeys: AppConnectIdentityKey[],
   ports: AppConnectPorts,
-): Array<{ binding: AppConnectAuthBinding; chainKey: AppConnectIdentityKey; slot: Slot }> | undefined {
-  const matches = []
+): Promise<RenewalPlan | undefined> {
+  const requestHash = bytesToHex(plan.requestHash)
+  const saved = previous.renewal?.requestHash === requestHash ? previous.renewal.targets : undefined
+  const keys: RenewalPlan['keys'] = []
   for (const { binding, index } of plan.auth) {
     const bounds = authBindingBounds(binding)
     const stored = previous.keys.find((key) => key.bounds !== undefined && boundsEqual(key.bounds, bounds))
     const chainKey = stored && chainKeys.find((key) => key.id === stored.keyId && key.disabledAt === undefined)
-    if (!stored || !chainKey) return undefined
+    if (!stored || !chainKey || !chainKey.bounds || !boundsEqual(chainKey.bounds, bounds) || !keyServesBinding(chainKey, binding)) {
+      return undefined
+    }
     const privateKey = rederiveGrantKey(persona, stored, chainKey)
     if (!privateKey) {
       ports.log(`persona ${persona.personaIdx}: key ${chainKey.id} does not re-derive from the grant record`)
       return undefined
     }
-    matches.push({ binding, chainKey, slot: { role: binding.kind, bindingIndex: index, privateKey, keyId: chainKey.id, bounds } })
+    const savedTarget = saved?.[chainKey.id]
+    const target = savedTarget
+      ? { totalBudget: savedTarget.totalBudget === undefined ? undefined : BigInt(savedTarget.totalBudget), expiresAt: savedTarget.expiresAt }
+      : renewalTarget(binding, chainKey, plan.now, faults)
+    keys.push({ chainKey, target, slot: { role: binding.kind, bindingIndex: index, privateKey, keyId: chainKey.id, bounds } })
   }
-  return matches
+
+  const budgeted = keys.filter(({ chainKey }) => chainKey.totalBudget !== undefined)
+  if (budgeted.length > 0) {
+    const remaining = await ports.remainingBudgets(persona.identityId, budgeted.map(({ chainKey }) => chainKey.id))
+    for (const { chainKey, target } of budgeted) {
+      const raise = (target.totalBudget ?? 0n) - chainKey.totalBudget!
+      if ((remaining.get(chainKey.id) ?? 0n) + (raise > 0n ? raise : 0n) <= 0n) {
+        ports.log(`persona ${persona.personaIdx}: key ${chainKey.id} would have no budget left within the cap`)
+        return undefined
+      }
+    }
+  }
+
+  return {
+    keys,
+    saved: {
+      requestHash,
+      targets: Object.fromEntries(keys.map(({ chainKey, target }) => [chainKey.id, {
+        totalBudget: target.totalBudget?.toString(),
+        expiresAt: target.expiresAt,
+      }])),
+    },
+  }
+}
+
+/** Whether an existing key can stand for the binding: the level verifiers accept, and every limit the binding needs. */
+function keyServesBinding(key: AppConnectIdentityKey, binding: AppConnectAuthBinding): boolean {
+  if (key.purpose !== KeyPurpose.AUTHENTICATION) return false
+  const levelOk = binding.kind === 'contractGroup'
+    ? (key.securityLevel === KeySecurityLevel.CRITICAL || key.securityLevel === KeySecurityLevel.HIGH) && key.securityLevel >= binding.securityLevel
+    : key.securityLevel === KeySecurityLevel.HIGH
+  const budgetOk = !(binding.kind === 'contractGroup' || binding.totalBudget !== undefined) || key.totalBudget !== undefined
+  const expiryOk = binding.expiresAt === undefined || key.expiresAt !== undefined
+  return levelOk && budgetOk && expiryOk
+}
+
+/** The renewed limits: the proposal added to the total (within the cap), the expiry moved out. */
+function renewalTarget(binding: AppConnectAuthBinding, key: AppConnectIdentityKey, now: number, faults: AppConnectFaults): RenewalTarget {
+  const wanted = grantedLimits(binding, now, faults)
+  let totalBudget = key.totalBudget
+  if (totalBudget !== undefined && wanted.totalBudget !== undefined) {
+    const add = faults.budget ?? minBigint(wanted.totalBudget, BUDGET_CAP - totalBudget)
+    if (add > 0n) totalBudget += add
+  }
+  const expiresAt = key.expiresAt === undefined ? undefined : Math.max(key.expiresAt, wanted.expiresAt)
+  return { totalBudget, expiresAt }
 }
 
 /**
@@ -709,8 +783,8 @@ function junkResponse(plan: Plan): ResponseValues {
 /**
  * Wallet rule 9: delete the responses this wallet published earlier for the
  * identity and app (by their values), then create the new one. A delete
- * Platform refused (a consensus error: the entry is gone) is dropped from the
- * record; any other failure keeps it for the next answer. Spam junk
+ * Platform refused with DocumentNotFoundError (the entry is gone) is dropped
+ * from the record; any other failure keeps it for the next answer. Spam junk
  * (`replacePrevious: false`) only replaces an earlier answer to the same
  * request (a retry), never a live response to another one.
  */
@@ -735,7 +809,8 @@ async function publish(
       deletedResponses++
     } catch (error) {
       ports.log(`persona ${persona.personaIdx}: deleting the response to ${old.appEphemeralPubKeyHash} failed: ${errorMessage(error)}`)
-      if (!isConsensusError(error)) kept.push(old)
+      // Forget it only when Platform says the entry is not there.
+      if (consensusCode(error) !== DOCUMENT_NOT_FOUND) kept.push(old)
     }
   }
   record.responses = kept

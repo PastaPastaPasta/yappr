@@ -173,6 +173,25 @@ describe('App Connect login', () => {
     expect((await verdictFor(chain, request, appPrivateKey)).ok).toBe(true)
   })
 
+  it('forgets a previous response only when Platform says it is gone', async () => {
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    const ports = chain.ports()
+    const remove = ports.deleteResponse
+    ports.deleteResponse = () => Promise.reject(Object.assign(new Error('nonce conflict'), { code: 40204 }))
+    await respondToAppConnect({ uri: newRequest().uri, persona: alice }, ports)
+    expect(chain.grants.get(alice.identityId, APP).responses).toHaveLength(2)
+
+    ports.deleteResponse = remove
+    const result = await respondToAppConnect({ uri: newRequest().uri, persona: alice }, ports)
+    expect(result.answer.deletedResponses).toBe(2)
+    expect(chain.grants.get(alice.identityId, APP).responses).toHaveLength(1)
+
+    ports.deleteResponse = () => Promise.reject(Object.assign(new Error('DocumentNotFoundError'), { code: 40101 }))
+    await respondToAppConnect({ uri: newRequest().uri, persona: alice }, ports)
+    expect(chain.grants.get(alice.identityId, APP).responses).toHaveLength(1)
+  })
+
   it('without a connection id supersedes nothing', async () => {
     const chain = newChain()
     await answer(chain, newRequest({ connectionId: undefined }).uri)
@@ -313,6 +332,59 @@ describe('App Connect renew', () => {
     chain.now += DAY_MS
     await answer(chain, renewRequest(chain, 490_000_000_000n).uri)
     expect(chain.keysOf(alice)[5].totalBudget).toBe(500_000_000_000n)
+  })
+
+  it('applies a renewal once, even when the same request is retried after a failed publish', async () => {
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    chain.now += DAY_MS
+    const renew = renewRequest(chain, 20_000_000_000n)
+    const ports = chain.ports()
+    const create = ports.createResponse
+    ports.createResponse = () => Promise.reject(new Error('gateway hiccup'))
+    await refusalOf(respondToAppConnect({ uri: renew.uri, persona: alice }, ports))
+    ports.createResponse = create
+    const result = await respondToAppConnect({ uri: renew.uri, persona: alice }, ports)
+    expect(result.answer.raisedKeyIds).toEqual([])
+    expect(chain.keysOf(alice)[5].totalBudget).toBe(70_000_000_000n)
+    expect(reason(await verdictFor(chain, renew.request, renew.appPrivateKey))).toBe('ok')
+  })
+
+  it('answers as a new login when the old key cannot serve the renewal', async () => {
+    // A CRITICAL group key cannot answer a request for HIGH.
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    const high = newRequest({
+      identityHint: alice.identityIdBytes,
+      mode: 'renew',
+      authBindings: [{ kind: 'contractGroup', id: GROUP_ID, securityLevel: KeySecurityLevel.HIGH, totalBudget: 1n, expiresAt: EXPIRES_AT }],
+      encBindings: [],
+    })
+    expect((await answer(chain, high.uri)).answer.mode).toBe('login')
+    expect(reason(await verdictFor(chain, high.request, high.appPrivateKey))).toBe('ok')
+
+    // A key granted without a budget cannot gain one.
+    const noBudget = newChain()
+    const profileOnly = (budget?: bigint) => newRequest({
+      identityHint: alice.identityIdBytes,
+      mode: budget === undefined ? undefined : 'renew',
+      authBindings: [{ kind: 'documentType', id: bs58.decode(DASHPAY_CONTRACT_ID), documentTypeName: 'profile', securityLevel: KeySecurityLevel.HIGH, totalBudget: budget }],
+      encBindings: [],
+    })
+    await answer(noBudget, profileOnly().uri)
+    const renew = profileOnly(1_000n)
+    expect((await answer(noBudget, renew.uri)).answer.mode).toBe('login')
+    expect(reason(await verdictFor(noBudget, renew.request, renew.appPrivateKey))).toBe('ok')
+  })
+
+  it('answers as a new login when an exhausted key cannot regain budget within the cap', async () => {
+    const chain = newChain()
+    await answer(chain, newRequest({ authBindings: [{ ...newRequest().request.authBindings[0], totalBudget: 500_000_000_000n }] }).uri)
+    chain.spend(alice, 5, 500_000_000_000n)
+    const renew = renewRequest(chain, 1_000n)
+    const result = await answer(chain, renew.uri)
+    expect(result.answer.mode).toBe('login')
+    expect(reason(await verdictFor(chain, renew.request, renew.appPrivateKey))).toBe('ok')
   })
 
   it('falls back to a new login when there is no live grant to renew', async () => {

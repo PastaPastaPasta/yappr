@@ -37,9 +37,17 @@ export interface GrantedAuthKey {
   bounds?: AppConnectKeyBounds
 }
 
+/** The limits a renewal request settled on per key id, so a retry finishes it instead of raising again. */
+export interface StoredRenewal {
+  /** hash160(appEphPub) of the renew request, hex. */
+  requestHash: string
+  targets: Record<string, { totalBudget?: string; expiresAt?: number }>
+}
+
 export interface ConnectionGrant {
   keys: GrantedAuthKey[]
   grantedAt: string
+  renewal?: StoredRenewal
 }
 
 export interface AppRecord {

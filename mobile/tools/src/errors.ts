@@ -11,17 +11,13 @@ export function errorMessage(error: unknown): string {
  * final whatever its prose says.
  */
 export function isTimeout(error: unknown): boolean {
-  if (hasConsensusCode(error)) return false
+  if (consensusCode(error) !== undefined) return false
   return /timeout|timed out|deadline|\b504\b/i.test(errorMessage(error))
 }
 
-/** A final consensus refusal: a numeric `code` 10000–99999 on the error or its cause. */
-export function isConsensusError(error: unknown): boolean {
-  return hasConsensusCode(error)
-}
-
-function hasConsensusCode(error: unknown, depth = 0): boolean {
-  if (!error || typeof error !== 'object' || depth > 3) return false
+/** The consensus error code (10000–99999) on the error or its cause, if any. */
+export function consensusCode(error: unknown, depth = 0): number | undefined {
+  if (!error || typeof error !== 'object' || depth > 3) return undefined
   const fields = error as { code?: unknown; error?: unknown; cause?: unknown }
   let code: unknown
   try {
@@ -30,6 +26,6 @@ function hasConsensusCode(error: unknown, depth = 0): boolean {
     // A wasm error whose Rust side was already freed throws from its getters.
     code = undefined
   }
-  if (typeof code === 'number' && code >= 10000 && code < 100000) return true
-  return hasConsensusCode(fields.error, depth + 1) || hasConsensusCode(fields.cause, depth + 1)
+  if (typeof code === 'number' && code >= 10000 && code < 100000) return code
+  return consensusCode(fields.error, depth + 1) ?? consensusCode(fields.cause, depth + 1)
 }

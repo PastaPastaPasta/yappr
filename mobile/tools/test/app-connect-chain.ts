@@ -76,6 +76,7 @@ export class MemoryChain {
   readonly contracts = new Map<string, ChainContract>()
   readonly groups = new Map<string, string>()
   readonly entries = new Map<string, ResponseValues & { ownerId: string }>()
+  readonly spent = new Map<string, bigint>()
   readonly calls: string[] = []
   readonly logs: string[] = []
   readonly grants = memoryGrantStore()
@@ -101,6 +102,7 @@ export class MemoryChain {
       contract: async (contractId) => this.contracts.get(contractId) ?? null,
       groupOwner: async (groupId) => this.groups.get(groupId) ?? null,
       contractKeys: async (identityId, contractId, purpose) => this.contractKeys(identityId, contractId, purpose),
+      remainingBudgets: async (identityId, keyIds) => this.remainingBudgets(identityId, keyIds),
       updateIdentity: async (persona, update) => {
         this.calls.push(`update ${persona.personaIdx} +${update.add.length} -[${update.disable.join(',')}]`)
         const keys = this.keysOf(persona)
@@ -169,17 +171,14 @@ export class MemoryChain {
     }
   }
 
-  /** The verifier's view of the same chain; a key's remaining budget is its total (nothing is spent here). */
+  /** The verifier's view of the same chain. */
   identityPort(): AppConnectIdentityPort {
     return {
       getIdentityFresh: async (identityId) => {
         const keys = this.identities.get(identityId)
         return keys ? { id: identityId, publicKeys: structuredClone(keys) } : null
       },
-      remainingBudgets: async (identityId, keyIds) => {
-        const keys = this.identities.get(identityId) ?? []
-        return new Map(keyIds.map((keyId) => [keyId, keys.find((key) => key.id === keyId)?.totalBudget]))
-      },
+      remainingBudgets: async (identityId, keyIds) => this.remainingBudgets(identityId, keyIds),
       contractKeys: async (identityId, contractId, purpose) => this.contractKeys(identityId, contractId, purpose),
       groupInfo: async (groupId): Promise<AppConnectGroupInfo | null> => {
         const ownerId = this.groups.get(groupId)
@@ -200,6 +199,19 @@ export class MemoryChain {
     const keys = this.identities.get(persona.identityId)
     if (!keys) throw new Error(`no identity ${persona.identityId}`)
     return keys
+  }
+
+  /** Credits a test says a key has spent: remaining = total − spent. */
+  spend(persona: Persona, keyId: number, credits: bigint): void {
+    this.spent.set(`${persona.identityId}/${keyId}`, (this.spent.get(`${persona.identityId}/${keyId}`) ?? 0n) + credits)
+  }
+
+  private remainingBudgets(identityId: string, keyIds: number[]): Map<number, bigint | undefined> {
+    const keys = this.identities.get(identityId) ?? []
+    return new Map(keyIds.map((keyId) => {
+      const total = keys.find((key) => key.id === keyId)?.totalBudget
+      return [keyId, total === undefined ? undefined : total - (this.spent.get(`${identityId}/${keyId}`) ?? 0n)]
+    }))
   }
 
   /** Platform's current-key pointer: the newest live key bound to the contract with that purpose. */
