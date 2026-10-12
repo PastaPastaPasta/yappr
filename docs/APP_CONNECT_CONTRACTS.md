@@ -144,8 +144,10 @@ During the live run, one entry at a time:
   - the contract, whose document types must equal the pinned file's, so a wrong id cannot pass;
   - its membership;
   - the group: owner the maker, no admins.
-- A create counts as refused only on proof: its nonce is spent, and a read that succeeded finds no contract. Then it was refused (and paid for), or another transition took the nonce. It is marked `refused` in the journal and the run stops. Reads that keep failing stop the run without marking anything; a re-run re-broadcasts the same bytes.
-- After investigating, `--retry-refused` proves the old id absent once more, then prepares the member again at the maker's next nonce, under a new id. The group already exists, so it can still join. A refused anchor leaves nothing of the set on chain: start a fresh journal.
+- A create counts as refused only on proof. A proof must show the maker's nonce spent at height H, and a membership proof at height H or later must show the contract outside the group. Every create writes its membership together with the contract. A plain contract fetch can't decide this: it proves "not found" with no height. Then the create was refused (and paid for), or another transition took the nonce.
+  - It is marked `refused` in the journal and the run stops.
+  - Reads that keep failing, or that never catch up with H, stop the run without marking anything; a re-run re-broadcasts the same bytes.
+- After investigating, `--retry-refused` proves the refusal again in the same way, then prepares the member again at the maker's next nonce, under a new id. The group already exists, so it can still join. A refused anchor leaves nothing of the set on chain: start a fresh journal.
 
 **Dry-run output.** The header comes first. The `--plan` example below is sakura's maker at nonce 13, the next one after storefront v7:
 

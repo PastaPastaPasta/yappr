@@ -204,24 +204,40 @@ function checkJournal(journal, plan, path) {
   }
 }
 
-/**
- * Polls for a broadcast create. `absent` is true only when the last read
- * succeeded and proved the contract absent; a read that failed proves nothing.
- */
+/** Polls for a broadcast create; null when it did not show up (yet). Absence is decided by `createOutcome`. */
 async function awaitContract(handle, id) {
-  let absent = false;
   for (let attempt = 0; attempt < 45; attempt++) {
     await sleep(2000);
     try {
       const found = await handle.sdk.contracts.fetch(id);
-      if (found) return { contract: found, absent: false };
-      absent = true;
+      if (found) return found;
     } catch (e) {
-      absent = false;
       console.log(`  fetch: ${describeErr(e).slice(0, 120)}`);
     }
   }
-  return { contract: null, absent };
+  return null;
+}
+
+/**
+ * What became of the create at `entry.nonce`, decided on proofs alone:
+ *   'pending'       the maker's nonce has not reached it (it may still land);
+ *   'landed'        the contract is a member of the group;
+ *   'refused'       the nonce is spent, and a membership proof at least as new as the nonce
+ *                   proof shows no membership: every create of the set writes its membership
+ *                   together with the contract, so the contract did not land;
+ *   'inconclusive'  no membership proof caught up with the nonce proof's height.
+ * A contract fetch cannot decide absence: it proves "not found" with no height to compare.
+ */
+async function createOutcome(handle, entry, plan) {
+  const nonce = await readback(handle, () => handle.sdk.identities.nonceWithProof(plan.groupOwner));
+  if (((nonce.data ?? 0n) & NONCE_SEQUENCE_MASK) < entry.nonce) return 'pending';
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const memberships = await readback(handle, () => handle.sdk.contractGroups.forContractWithProof(entry.id));
+    if (memberships.data.contract.includes(plan.groupId)) return 'landed';
+    if (memberships.metadata.height >= nonce.metadata.height) return 'refused';
+    await sleep(3000);
+  }
+  return 'inconclusive';
 }
 
 /**
@@ -273,14 +289,17 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
     if (saved?.state === 'refused') {
       if (planned === plan.anchor) throw new Error('the anchor create was refused, so neither it nor the group exists: start a fresh journal');
       if (!args.retryRefused) throw new Error(`${planned.name} was refused at nonce ${saved.nonce}; investigate, then re-run with --retry-refused to prepare it at the next nonce (a new id)`);
-      // Proved absent once more before it is replaced: a create that did land must never get a twin.
-      if (await read(() => handle.sdk.contracts.fetch(saved.id))) {
-        console.log(`  ${planned.name}: ${saved.id} turns out to exist; verifying it instead of replacing it`);
+      // Proved refused once more before it is replaced: a create that did land must never get a twin.
+      const outcome = await createOutcome(handle, { ...planned, nonce: BigInt(saved.nonce), id: saved.id }, plan);
+      if (outcome === 'landed') {
+        console.log(`  ${planned.name}: ${saved.id} turns out to have landed; verifying it instead of replacing it`);
         saved.state = 'broadcasting';
-      } else {
+      } else if (outcome === 'refused') {
         state.refused = [...(state.refused ?? []), { name: planned.name, nonce: saved.nonce, id: saved.id }];
         delete state.contracts[planned.name];
         saved = undefined;
+      } else {
+        throw new Error(`${planned.name}: the refusal at nonce ${saved.nonce} could not be proved again (${outcome}); re-run later`);
       }
       save();
     }
@@ -307,16 +326,16 @@ async function registerLive({ args, plan, state, handle, makerNonce, signing, pl
       } catch (e) {
         console.log(`  broadcast: ${describeErr(e).slice(0, 300)}`);
       }
-      const polled = await awaitContract(handle, entry.id);
-      found = polled.contract;
+      found = await awaitContract(handle, entry.id);
       if (found) break;
-      // Refused only on proof: the nonce is spent AND a read that succeeded (readback throws
-      // when every attempt fails) still finds no contract.
-      if (polled.absent && (await makerNonce()) >= entry.nonce) {
+      const outcome = await createOutcome(handle, entry, plan);
+      if (outcome === 'landed') {
         found = await read(() => handle.sdk.contracts.fetch(entry.id));
         if (found) break;
+      }
+      if (outcome === 'refused') {
         saved.state = 'refused'; save();
-        throw new Error(`${entry.name}: the maker's nonce passed ${entry.nonce} but ${entry.id} is proved absent: the create was refused (paid), or another transition took the nonce. Investigate; --retry-refused prepares it again at the next nonce.`);
+        throw new Error(`${entry.name}: the maker's nonce passed ${entry.nonce} and a membership proof at least as new shows ${entry.id} absent: the create was refused (paid), or another transition took the nonce. Investigate; --retry-refused prepares it again at the next nonce.`);
       }
       await handle.reconnect('contract not visible yet');
     }

@@ -135,6 +135,11 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
     const keys = result.find((r) => normalizeId(r.identityId) === ownerId)?.keys ?? [];
     return keys.length === 1 ? keys[0] : null;
   };
+  /**
+   * Submits one anchor-bound key. Returns the key it tried to add whatever the SDK
+   * reports: a confirmation timeout can follow an update that landed, so the
+   * chain read-back (`pointsAt`) decides, and `error` is only the detail.
+   */
   const addAnchorKey = async () => {
     const identity = await battery.readback(() => battery.sdk.identities.fetch(ownerId));
     const keyId = identity.publicKeys.reduce((max, key) => Math.max(max, key.keyId), 0) + 1;
@@ -145,8 +150,13 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
       keyId, purpose: 'encryption', securityLevel: 'medium', keyType: 'ecdsa_secp256k1', isReadOnly: false,
       data: Uint8Array.from(Buffer.from(fresh.publicKeyHex, 'hex')), signature: new Uint8Array(0), contractBounds: ContractBounds.SingleContract(pinned.appId),
     });
-    await battery.sdk.identities.update({ identity, signer, addPublicKeys: [key] });
-    return { keyId, publicKey: Buffer.from(fresh.publicKeyHex, 'hex') };
+    let error = null;
+    try {
+      await battery.sdk.identities.update({ identity, signer, addPublicKeys: [key] });
+    } catch (e) {
+      error = describeErr(e).slice(0, 220);
+    }
+    return { keyId, publicKey: Buffer.from(fresh.publicKeyHex, 'hex'), error };
   };
   /** Polls contractKeys until it names `want` (the update may take a block to show). */
   const pointsAt = async (want) => {
@@ -160,15 +170,10 @@ CASES.set('k1', async ({ battery, args, pinned }) => {
   };
   /** Adds one anchor-bound key and checks contractKeys names it; the added key, or null on a failure. */
   const step = async (label, which) => {
-    let added;
-    try {
-      added = await addAnchorKey();
-    } catch (e) {
-      battery.check(`${label} ${which} anchor-bound ENCRYPTION key registers`, false, describeErr(e).slice(0, 220));
-      return null;
-    }
+    const added = await addAnchorKey();
     const { ok, current } = await pointsAt(added);
-    battery.check(`${label} ${which} anchor-bound ENCRYPTION key (id ${added.keyId}) registers and contractKeys(anchor) returns it as the latest`, ok, current ? `key ${current.keyId}` : 'no current key');
+    const detail = `${current ? `current key ${current.keyId}` : 'no current key'}${added.error ? `; the SDK reported: ${added.error}` : ''}`;
+    battery.check(`${label} ${which} anchor-bound ENCRYPTION key (id ${added.keyId}) registers and contractKeys(anchor) returns it as the latest`, ok, detail);
     return ok ? added : null;
   };
 
