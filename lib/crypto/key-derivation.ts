@@ -81,9 +81,11 @@ export async function validateDerivedKeyMatchesIdentity(
     return false
   }
 
-  // Fetch identity's public keys
+  // Fetch identity's public keys. On App Connect builds the key must be the
+  // anchor's current one, so a cached identity (which may predate a rotation) won't do.
   const { identityService } = await import('@/lib/services/identity-service')
-  const identityData = await identityService.getIdentity(identityId)
+  const { isAppConnectBuild } = await import('@/lib/app-connect/config')
+  const identityData = await identityService.getIdentity(identityId, { fresh: isAppConnectBuild() })
   if (!identityData) {
     return false
   }
