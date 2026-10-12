@@ -118,6 +118,10 @@ with the offline validator, registered with
 `prove-merged-counts.mjs` (`verify-v8.mjs` covers the moderation grammar on a
 v9 chain).
 
+## App Connect anchor
+
+- `yappr-app-contract.json` — the `yappr-app` anchor (not yet registered). Its id is the App Connect app id, and its create registers Yappr's contract group ("Yappr", maker-owned, no admins) and joins it. It sets `requiresIdentityEncryptionBoundedKey: 2`, so identities hold ENCRYPTION keys bound to it with a current-key pointer that `identities.contractKeys` returns. Its only type is an owner-only `appInfo` (version, name, https origin). 707 B signed, sha256 `d3acd888…`. Social v15, blocks, DM v5, blog, pollr, storefront and the auth vault join the group at their next registration, in `scripts/register-app-connect-contracts.mjs`. Key exchange, the password vault, key backup and DM v4 are retired on PV14. See [docs/APP_CONNECT_CONTRACTS.md](../docs/APP_CONNECT_CONTRACTS.md).
+
 ## Feature contracts
 
 - `yappr-blocks-contract.json` — `block`, `blockFilter` and `blockFollow`, split out of social v13 (bare schemas, unmoderated; `block.ownerBlocks` dropped, everything else as social v12 declared them). Live on sakura since 2026-10-08 as `2huLPRT5…` (`NEXT_PUBLIC_YAPPR_BLOCKS_CONTRACT_ID`), read and written by the client on topologies `v13` and `v14`. See [docs/SOCIAL_V13.md](../docs/SOCIAL_V13.md#5-the-blocks-contract). Not to be confused with the legacy `yappr-block-contract.json` below

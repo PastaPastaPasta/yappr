@@ -1,12 +1,46 @@
 /**
- * What the two registration scripts (and the offline validator) share for the
- * moderation grammar: the interim each network registers an elected contract
- * with, appointing moderators at publish time, and auditing the moderation
- * declarations off the PARSED contract.
+ * What the registration scripts (and the offline validator) share: how a
+ * contract file becomes the JSON a create carries, and the moderation
+ * grammar (the interim each network registers an elected contract with,
+ * appointing moderators at publish time, and auditing the moderation
+ * declarations off the PARSED contract).
  */
 import bs58 from 'bs58';
 import { INTERIM_KINDS, referenceKindMismatch } from './contract-probes.mjs';
 import { describeErr } from './owner-keys.mjs';
+
+/**
+ * The config a bare-schemas contract file registers with (no moderation) — the
+ * beta.2 block, unchanged, so DM/pollr/vault/… republish exactly as before. A
+ * moderated cut carries its own `config` (format version 2) in its file.
+ */
+const DEFAULT_CONFIG = {
+  $formatVersion: '1', canBeDeleted: false, readonly: false, keepsHistory: false,
+  documentsKeepHistoryContractDefault: false, documentsMutableContractDefault: true,
+  documentsCanBeDeletedContractDefault: true, requiresIdentityEncryptionBoundedKey: null,
+  requiresIdentityDecryptionBoundedKey: null, sizedIntegerTypes: true,
+};
+
+/**
+ * A contract file's text as `{ $formatVersion?, version?, config, documentSchemas, tokens? }`:
+ * a file with `documentSchemas` keeps its own `config` (or gets DEFAULT_CONFIG),
+ * a bare-schemas file is all document types and gets DEFAULT_CONFIG.
+ */
+export function contractSource(text) {
+  const parsed = JSON.parse(text);
+  return parsed.documentSchemas
+    ? { ...parsed, config: parsed.config ?? DEFAULT_CONFIG }
+    : { documentSchemas: parsed, config: DEFAULT_CONFIG };
+}
+
+/** The JSON a create transition carries for `source`, under the given id and owner. */
+export function registrationJson(source, { id, ownerId }) {
+  return {
+    $formatVersion: source.$formatVersion ?? '1',
+    id, ownerId, version: source.version ?? 1, config: source.config, documentSchemas: source.documentSchemas,
+    ...(source.tokens ? { tokens: source.tokens } : {}),
+  };
+}
 
 /** The parsed config hands appointed identities back as bytes; print them as ids. */
 export function renderModeration(moderation) {
