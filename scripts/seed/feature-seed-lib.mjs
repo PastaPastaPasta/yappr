@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { getPublicKey } from '@noble/secp256k1';
 import bs58 from 'bs58';
+import { ensureInitialized } from '@dashevo/evo-sdk';
 import {
   DUPLICATE_UNIQUE, FEE_MULTIPLIER_NOT_TOLERATED, NONCE_DESYNC, NOT_QUERYABLE_BY_OWNER, REPO_ROOT, RETRYABLE, SOCIAL_SHAPES, TRANSPORT_COLLAPSE, WAIT_MAYBE_LANDED,
   buildDocument, createDocument, createdId, describeErr, findRecentByValues, forgetFeeMultiplier, ledgerEntry, loadLedger, network, readEnvFile, readback, sleep, writePrivateFile,
@@ -157,7 +158,7 @@ const MAX_ATTEMPTS = 4;
  * not the code, decides what counts as this write's document (pollr's ballot probe accepts any ballot in the voter's
  * slot, because the seeder replaces it to the planned choice next).
  */
-export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined }) {
+export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined, create = createDocument }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
   const settles = async (landed) => {
     for (let i = 0; i < SETTLE_POLLS; i++) {
@@ -173,10 +174,6 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     const { tokenCost, accepted, duplicateIsSuccess, scope, contract = contractId, payment = paymentInfo } = opts;
     const entropy = entropyFor(key);
     const { document } = buildDocument({ contractId: contract, docType, ownerId: actor.ownerId, data, entropy });
-    // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
-    // the fee, and `sdk.documents.create` has no option for it — so those go
-    // through a hand-built batch instead. Everything else is unchanged.
-    const agreement = await agreementFor(docType, contract);
     // Protocol 14: the stored id commits to the nonce `documents.create()` picks, so the id
     // a logical key used to determine is gone. It is learned from the create's RETURN (and
     // then checkpointed by the caller under the key); a create that threw after landing is
@@ -200,7 +197,12 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
     let lastError = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
-        const created = await actor.lock(() => createDocument(handle.sdk, {
+        // A doctype whose create is PRICED in credits (v8 post/reply) must agree to
+        // the fee, and `sdk.documents.create` has no option for it — so those go
+        // through a hand-built batch instead. Resolved per attempt: a 40134 forgets
+        // the cached epoch multiplier, and only a fresh agreement can pick up the new one.
+        const agreement = await agreementFor(docType, contract);
+        const created = await actor.lock(() => create(handle.sdk, {
           contractId: contract, actor, docType, document, data, entropy, agreement, payment: payment(tokenCost),
           // A priced create derives its id before broadcasting: keep it, so a create whose
           // wait throws after landing is recognised by id even on a doctype with no owner index.
@@ -219,9 +221,10 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         }
         const deadSdk = TRANSPORT_COLLAPSE.test(text) || NONCE_DESYNC.test(text);
         if (deadSdk) await handle.reconnect(text).catch(() => {});
-        if (await settles(landed)) return { id };
-        // A stale cached fee multiplier is the one consensus refusal a retry fixes.
+        // A stale cached fee multiplier is the one consensus refusal a retry fixes; refused
+        // outright, it never landed, so there is nothing to wait for.
         const staleMultiplier = FEE_MULTIPLIER_NOT_TOLERATED.test(text);
+        if (!staleMultiplier && await settles(landed)) return { id };
         if (staleMultiplier) forgetFeeMultiplier();
         const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
         if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
@@ -469,7 +472,24 @@ export async function plumbingAssertions() {
     ]); } } };
     const scope = { where: [['orderId', '==', 'o1']], orderBy: [['orderId', 'desc'], ['$createdAt', 'desc']] };
     const scopedProbe = await findRecentByValues(scoped, { contractId: 'c', docType: 'orderStatusUpdate', ownerId: fakeId('owner'), data: { status: 'shipped' }, scope });
+    // A priced create refused 40134 (the epoch multiplier moved past the 20% tolerance) must
+    // retry with a FRESH agreement; re-sending the first one is refused the same way forever.
+    await ensureInitialized();
+    let agreements = 0;
+    const offered = [];
+    const fresh = createDocWriter({
+      handle: { sdk: { documents: { query: async () => new Map(), get: async (c, t, docId) => (docId === 'landed' ? {} : null) } }, reconnect: async () => {} },
+      contractId: fakeId('contract'), entropyFor: (k) => sha256(utf8(k)), paymentInfo: () => ({}),
+      agreementFor: async () => ({ permille: ++agreements }),
+      create: async (sdk, { agreement }) => {
+        offered.push(agreement.permille);
+        if (agreement.permille === 1) throw new Error('consensus error code=40134: fee multiplier is 1500 permille, outside the agreement');
+        return { id: 'landed' };
+      },
+    });
+    const retried = await fresh.createDoc({ ownerId: fakeId('owner'), lock: (fn) => fn() }, 'blog', 'priced', { name: 'x' });
     return [
+      ['a 40134 is retried with a freshly resolved agreement, and the retry lands', retried.id === 'landed' && JSON.stringify(offered) === '[1,2]'],
       ['an index refusal is not transient, whatever byte count its truncated text carries',
         NOT_QUERYABLE_BY_OWNER.test(indexRefusal) && !RETRYABLE.test(indexRefusal) && !WAIT_MAYBE_LANDED.test(indexRefusal)],
       ['real 429/503/504 statuses still read as transient', RETRYABLE.test('HTTP 429 Too Many Requests') && RETRYABLE.test('status: 503') && WAIT_MAYBE_LANDED.test('504 Gateway Time-out')],
