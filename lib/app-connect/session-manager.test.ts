@@ -237,4 +237,47 @@ describe('AppConnectSessionManager across tabs', () => {
     expect(storedGrantedAt()).toBeUndefined()
     save.mockRestore()
   })
+
+  it('drops a renewal when a revoke signed the identity out while it was being stored', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+    const old = currentSession('alice')
+    const store = appConnectSessions.keyStore()
+    const realSave = store.save.bind(store)
+    let proceed: () => void = () => undefined
+    const save = vi.spyOn(store, 'save').mockImplementationOnce(async (...args) => {
+      await new Promise<void>((resolve) => { proceed = resolve })
+      return realSave(...args)
+    })
+
+    const renewing = appConnectSessions.adopt(walletGrant('alice', 5))
+    await vi.waitFor(() => expect(save).toHaveBeenCalled())
+    // The revoke drops this tab's grant first, so the sign-out that follows finds no session to log out.
+    await appConnectSessions.signOutRevoked(old)
+    expect(appConnectSessions.current('alice')).toBeNull()
+    appConnectSessions.cancelAdoptions('alice')
+    proceed()
+
+    await expect(renewing).rejects.toThrow('Signed out while the wallet was connecting')
+    expect(appConnectSessions.current()).toBeNull()
+    expect(storedGrantedAt()).toBeUndefined()
+    save.mockRestore()
+  })
+
+  it('a raw-key sign-in replaces this tab’s wallet grant but keeps a newer one another tab stored', async () => {
+    await storeFromAnotherTab(grant('alice', 1))
+    await appConnectSessions.restore('alice')
+
+    await appConnectSessions.yieldToRawKey('alice')
+
+    expect(appConnectSessions.current()).toBeNull()
+    expect(storedGrantedAt()).toBeUndefined()
+
+    await storeFromAnotherTab(grant('alice', 2))
+    await appConnectSessions.restore('alice')
+    await storeFromAnotherTab(grant('alice', 3))
+    await appConnectSessions.yieldToRawKey('alice')
+    expect(appConnectSessions.current()).toBeNull()
+    expect(storedGrantedAt()).toBe(3)
+  })
 })

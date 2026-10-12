@@ -247,9 +247,29 @@ class AppConnectSessionManager {
 
   /** Logout: forgets this browser's session for `identityId`, whichever tab stored it. The connection id stays. */
   async logout(identityId: string): Promise<void> {
-    this.loggedOutAt.set(identityId, ++this.lifecycle)
+    this.cancelAdoptions(identityId)
     if (this.active?.identityId === identityId) this.deactivate()
     await this.clearStored({ identityId })
+  }
+
+  /**
+   * `identityId` is being signed out: an adoption for it under way now
+   * activates nothing. Called on every sign-out, also one that leaves the
+   * stored ring alone because this tab no longer holds a grant (after a revoke).
+   */
+  cancelAdoptions(identityId: string): void {
+    this.loggedOutAt.set(identityId, ++this.lifecycle)
+  }
+
+  /**
+   * A raw key signed `identityId` in: this tab stops using its wallet grant
+   * for it and drops an adoption under way. Only that exact grant is cleared,
+   * never a newer one another tab stored.
+   */
+  async yieldToRawKey(identityId: string): Promise<void> {
+    this.cancelAdoptions(identityId)
+    const session = this.current(identityId)
+    if (session) await this.discard(session)
   }
 
   /** Whether this tab's active session is `session`'s grant, even after a refresh replaced the object. */

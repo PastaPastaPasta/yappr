@@ -152,12 +152,15 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
  * On App Connect builds a raw key typed in by hand is a one-key session, and a
  * CRITICAL one (or one whose level cannot be told) is kept for this tab only.
  * The session user, with the identity's keys, is saved just before this runs.
+ * The raw key replaces this tab's wallet grant for the identity, so writes
+ * sign with the key the user just entered.
  */
-function storeRawLoginKey(identityId: string, wif: string): void {
+async function storeRawLoginKey(identityId: string, wif: string): Promise<void> {
   if (!isAppConnectBuild()) {
     storePrivateKey(identityId, wif)
     return
   }
+  await appConnectSessions.yieldToRawKey(identityId)
   const session = readStoredSession()
   const keys = session?.user.identityId === identityId
     ? session.user.publicKeys.map((key) => ({ ...key, data: key.data }))
@@ -324,11 +327,14 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       hasPrivateKey: hasSessionPrivateKey,
       clearPrivateKey: async (identityId) => {
         clearPrivateKey(identityId)
+        if (!isAppConnectBuild()) return
         // Logout wipes the key ring too; the connection id stays for the next login.
         // Only while this tab holds the session: after a revoke this tab has
         // already dropped its own grant, and must not take a newer one another
-        // tab stored for the same identity with it.
-        if (isAppConnectBuild() && appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
+        // tab stored for the same identity with it. Either way a renewal still
+        // being stored is cancelled, so it cannot bring the session back.
+        if (appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
+        else appConnectSessions.cancelAdoptions(identityId)
       },
       storeEncryptionKey,
       getEncryptionKey,
