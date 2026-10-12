@@ -242,12 +242,12 @@ class StateTransitionService {
     action: DocumentAction
   ): Promise<SigningKey> {
     // A budgeted key must afford the write's declared action fee too, at the
-    // multiplier it will agree to plus the tolerance above it.
-    const actionFee = maxActionFee(
-      declaredActionFeeFor(contractId, documentType, action),
-      knownFeeMultiplierPermille ?? DEFAULT_FEE_MULTIPLIER_PERMILLE,
-      FEE_MULTIPLIER_TOLERANCE_PERCENT
-    );
+    // multiplier it will agree to plus the tolerance above it. The multiplier
+    // is resolved here, before the key is chosen, and cached, so the signed
+    // agreement built afterwards uses this same value.
+    const fee = declaredActionFeeFor(contractId, documentType, action);
+    const multiplier = fee ? await currentFeeMultiplierPermille(await getEvoSdk()) : DEFAULT_FEE_MULTIPLIER_PERMILLE;
+    const actionFee = maxActionFee(fee, multiplier, FEE_MULTIPLIER_TOLERANCE_PERCENT);
     const key = await resolveSigningKey(ownerId, publicKeys, documentSigningRequest(contractId, documentType, actionFee));
     logger.debug(`Using signing key id=${key.identityKey.keyId} with security level ${key.identityKey.securityLevel}`);
     return key;
