@@ -264,6 +264,42 @@ describe('composite feed page on v10', () => {
   });
 });
 
+describe('composite feed page on v10 to v15: no count shares an index path with a documents lookup', () => {
+  // Drive (5.0.0-beta.5) refuses the whole composite when a count sub-query and a
+  // documents component read one index path ("one proof cannot serve both"). From
+  // v10 the hearts live on the like count's own index (byPost/byReply), so every
+  // documents lookup bound to a page field must sit on a doctype no slot counts; a
+  // by-id join (bound to `$id`, the primary key) reads no count index.
+  type Sub = { documentType: string; kind?: string; bind?: { field: string } };
+  const answer = async (query: { subQueries: Sub[] }) => ({
+    pageDocuments: docs,
+    subResults: query.subQueries.map((sub) => sub.kind === 'counts'
+      ? { kind: 'counts', counts: new Map() }
+      : { kind: 'documents', documents: [] }),
+  });
+  const cases = (['v10', 'v11', 'v12', 'v13', 'v14', 'v15'] as const).flatMap((topology) =>
+    (['post', 'reply'] as const).flatMap((kind) => [true, false].map((byId) => [topology, kind, byId] as const)));
+
+  it.each(cases)('%s %s page (by id: %s), logged in', async (topology, kind, byId) => {
+    vi.stubEnv('NEXT_PUBLIC_CONTRACT_TOPOLOGY', topology);
+    mocks.composite.mockImplementation(answer);
+    const { transformRawPost } = await import('./transform-raw-post');
+    const sourcePosts = byId ? docs.map((doc) => ({ ...transformRawPost(doc), targetKind: kind, rootPostId: 'rootA' })) : undefined;
+    const { loadCompositeFeedPage } = await import('./composite-feed-page');
+    await loadCompositeFeedPage({
+      language: 'en', limit: docs.length, kind, currentUserId: ownerIds[0],
+      ...(byId ? { sourcePosts, documentIds: docs.map((doc) => doc.$id) } : {}),
+    });
+    const subs: Sub[] = mocks.composite.mock.calls[0][0].subQueries;
+    const counted = new Set(subs.filter((sub) => sub.kind === 'counts').map((sub) => sub.documentType));
+    expect(counted.has(kind === 'post' ? 'like' : 'likeReply')).toBe(true);
+    const clashing = subs.filter((sub) => sub.kind !== 'counts' && sub.bind?.field !== '$id' && counted.has(sub.documentType));
+    expect(clashing).toEqual([]);
+    // The hearts are read beside the composite instead.
+    expect(mocks.getUserLikedPostIds).toHaveBeenCalledWith(ownerIds[0], docs.map((doc) => doc.$id), kind);
+  });
+});
+
 describe('composite feed page on v9', () => {
   it('leaves the viewer-likes slot without a limit: byLiker is value-bounded and refuses one', async () => {
     const response = result();
