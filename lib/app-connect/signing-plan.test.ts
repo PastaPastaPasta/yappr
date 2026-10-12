@@ -1,15 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { selectSigningKey, type AppConnectSessionKey } from 'platform-auth'
-import { documentSigningRequest, explainNoCoveringKey, rawSessionKey, tokenSigningRequest } from './signing-plan'
+import { APP_CONNECT_WRITE_COST_ESTIMATE, documentSigningRequest, explainNoCoveringKey, rawSessionKey, tokenSigningRequest } from './signing-plan'
 
 const NOW = 1_000_000_000
 const ctx = { now: NOW, groups: [{ groupId: 'group', members: [{ kind: 'contract' as const, contractId: 'social' }] }] }
 
 const groupKey = (overrides: Partial<AppConnectSessionKey> = {}): AppConnectSessionKey => ({
-  keyId: 5, bounds: { kind: 'contractGroup', groupId: 'group' }, securityLevel: 2, totalBudget: 100n, remainingBudget: 50n, expiresAt: NOW + 86_400_000, keyRef: 'key-5', ...overrides,
+  keyId: 5, bounds: { kind: 'contractGroup', groupId: 'group' }, securityLevel: 2, totalBudget: 50_000_000_000n, remainingBudget: 25_000_000_000n, expiresAt: NOW + 86_400_000, keyRef: 'key-5', ...overrides,
 })
 const profileKey: AppConnectSessionKey = {
-  keyId: 6, bounds: { kind: 'documentType', contractId: 'dashpay', documentTypeName: 'profile' }, securityLevel: 2, totalBudget: 10n, remainingBudget: 10n, expiresAt: NOW + 86_400_000, keyRef: 'key-6',
+  keyId: 6, bounds: { kind: 'documentType', contractId: 'dashpay', documentTypeName: 'profile' }, securityLevel: 2, totalBudget: 1_000_000_000n, remainingBudget: 1_000_000_000n, expiresAt: NOW + 86_400_000, keyRef: 'key-6',
 }
 
 describe('the web signing requests', () => {
@@ -23,6 +23,16 @@ describe('the web signing requests', () => {
   it('needs a CRITICAL key for a token transition', () => {
     expect(selectSigningKey([groupKey()], tokenSigningRequest('social', 0), ctx)).toMatchObject({ ok: false })
     expect(selectSigningKey([groupKey({ securityLevel: 1 })], tokenSigningRequest('social', 0), ctx)).toMatchObject({ ok: true })
+  })
+})
+
+describe('the write cost estimate', () => {
+  it('passes over a key with less allowance left than one write, and asks to renew', () => {
+    const nearlySpent = groupKey({ remainingBudget: APP_CONNECT_WRITE_COST_ESTIMATE - 1n })
+    expect(selectSigningKey([nearlySpent], documentSigningRequest('social', 'post'), ctx)).toMatchObject({ ok: false })
+    expect(explainNoCoveringKey([nearlySpent], documentSigningRequest('social', 'post'), ctx)).toBe('renew')
+    expect(selectSigningKey([groupKey({ remainingBudget: APP_CONNECT_WRITE_COST_ESTIMATE })], documentSigningRequest('social', 'post'), ctx))
+      .toMatchObject({ ok: true })
   })
 })
 

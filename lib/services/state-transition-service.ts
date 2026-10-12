@@ -1047,6 +1047,7 @@ class StateTransitionService {
           throw waitErr;
         }
         logger.warn(`Delete-by-values wait unresolved for ${documentId} — assuming success:`, extractErrorMessage(waitErr));
+        reportSigningSuccess(ownerId);
         return { success: true, transactionHash: documentId, confirmed: false };
       }
 

@@ -20,6 +20,7 @@ import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
 import type { SelfStateFields } from '@/lib/dm/self-state'
 import type { DmInvite, IdentityId } from '@/lib/dm/types'
 import { hasPrivateKey } from '@/lib/secure-storage'
+import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getEvoSdk } from '../evo-sdk-service'
 import { stateTransitionService, type StateTransitionResult } from '../state-transition-service'
 import { identityService } from '../identity-service'
@@ -214,7 +215,8 @@ export class SdkDmChain implements DmChain {
   }
 
   canWrite(): boolean {
-    return hasPrivateKey(this.me)
+    // A wallet (App Connect) sign-in signs through its key ring, with no raw key stored.
+    return hasPrivateKey(this.me) || hasAppConnectSession(this.me)
   }
 
   /**

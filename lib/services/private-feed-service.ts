@@ -252,7 +252,8 @@ class PrivateFeedService {
       const encryptionPubKey = getPublicKey(encryptionPrivateKey);
 
       // Verify the derived public key is registered on the identity
-      const identity = await identityService.getIdentity(ownerId);
+      // On App Connect builds the anchor's current key decides, so a cached identity won't do.
+      const identity = await identityService.getIdentity(ownerId, { fresh: isAppConnectBuild() });
       if (!identity) {
         return { success: false, error: 'Could not fetch identity' };
       }
