@@ -6,7 +6,16 @@ import path from 'node:path'
 // or the DOM belongs in e2e/.
 export default defineConfig({
   resolve: {
-    alias: { '@': path.resolve(__dirname) },
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname) },
+      // Same substitution as next.config.js: evo-sdk's published entry inlines its own
+      // copy of wasm-sdk, so resolve the unbundled build to run what ships (one shared
+      // wasm instance with the direct @dashevo/wasm-sdk imports).
+      {
+        find: /^@dashevo\/evo-sdk$/,
+        replacement: path.resolve(__dirname, 'node_modules/@dashevo/evo-sdk/dist/sdk.js'),
+      },
+    ],
   },
   test: {
     environment: 'node',
