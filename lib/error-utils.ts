@@ -336,7 +336,13 @@ export function isReferenceNotFoundError(error: unknown): boolean {
   // "referenced contract <c> for path <p> does not meet ...") shares the
   // "referenced ... for path" phrasing below; it is not a dead target, and
   // treating it as one would have tombstone repair drop a live reference.
-  if (isReferenceRequirementError(error) || isReferencedDocumentTooYoungError(error)) return false
+  // 40149 (a commitment another identity holds first) says "referenced document
+  // <d> for path <p>" too, and its target is alive.
+  if (
+    isReferenceRequirementError(error) ||
+    isReferencedDocumentTooYoungError(error) ||
+    isReferencedDocumentPrecededError(error)
+  ) return false
   const msg = extractErrorMessage(error).toLowerCase()
   return (
     msg.includes('referencedentitynotfound') ||
@@ -844,6 +850,45 @@ function isReferencedDocumentTooYoungError(error: unknown): boolean {
 }
 
 /**
+ * **40149** `ReferencedDocumentPrecededError` (5.0.0-beta.5, `chooseFirst`): a
+ * commit-and-reveal create found the writer's commitment, but another identity
+ * holds a valid commitment to the same value from an earlier block, so theirs
+ * wins. Permanent: the earlier commitment never goes away (barring its `ttl`),
+ * so retrying the same write cannot pass. Message: "referenced document <d> for
+ * path <p> is preceded in its chooseFirst order by document <e>, a valid
+ * commitment of another identity holding the same <property>". It shares the
+ * "referenced ... for path" phrasing of a dead target, which
+ * {@link isReferenceNotFoundError} does not match. No Yappr contract declares
+ * `chooseFirst` yet.
+ */
+export function isReferencedDocumentPrecededError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /referenceddocumentpreceded/i.test(msg) ||
+    /is preceded in its choosefirst order/i.test(msg) ||
+    hasConsensusCode(error, [40149])
+  )
+}
+
+/**
+ * **40148** `ReferencedDocumentRuleReadInvalidError` (5.0.0-beta.5): a
+ * `propertyConstraints` rule reads, through a `refersTo` into another
+ * contract's document type (`{ referenced: [reference, field] }`), a field
+ * that type can not give it. Raised at contract registration and update, so a
+ * running client only meets it if a contract it depends on is changed under it.
+ * A contract-authoring mistake, permanent. Message: "propertyConstraints rule
+ * <r> of <t> reads through <ref>: <why>".
+ */
+export function isReferencedRuleReadInvalidError(error: unknown): boolean {
+  const msg = extractErrorMessage(error)
+  return (
+    /referenceddocumentrulereadinvalid/i.test(msg) ||
+    /propertyconstraints rule .* of .* reads through /i.test(msg) ||
+    hasConsensusCode(error, [40148])
+  )
+}
+
+/**
  * **40307** `VoteChoiceNotAllowedForVotePollError` (#4959): a masternode vote
  * named a choice the poll does not offer. Yappr casts no masternode votes
  * today; matched so a future election client never retries it.
@@ -1174,6 +1219,8 @@ export function isPermanentProtocol14Error(error: unknown): boolean {
     isPropertyMaxBytesError(error) ||
     isDocumentPropertyRuleError(error) ||
     isDeleteConstraintError(error) ||
+    isReferencedDocumentPrecededError(error) ||
+    isReferencedRuleReadInvalidError(error) ||
     isReferenceRequirementError(error) ||
     isVoteChoiceNotAllowedError(error) ||
     isModerationNotYetSeatedError(error) ||
@@ -1215,6 +1262,12 @@ export function categorizeError(error: unknown, action = 'create post'): string 
   if (isDeleteConstraintError(error)) {
     // Paid, like the 10422 above, so no "nothing was charged".
     return 'This can\'t be deleted anymore.'
+  }
+  if (isReferencedDocumentPrecededError(error)) {
+    return 'Someone else got there first, so this can\'t be completed.'
+  }
+  if (isReferencedRuleReadInvalidError(error)) {
+    return 'This isn\'t available on this network right now. Try again later.'
   }
   if (isOncePerIdentityAlreadyClaimedError(error)) {
     return 'You\'ve already claimed this — it can only be claimed once per account.'

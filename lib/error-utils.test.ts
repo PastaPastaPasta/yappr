@@ -20,6 +20,8 @@ import {
   isContestNotJoinableError,
   isNonFatalWaitError,
   isDeleteConstraintError,
+  isReferencedDocumentPrecededError,
+  isReferencedRuleReadInvalidError,
   isDocumentPropertyRuleError,
   isModerationNotYetSeatedError,
   isModeratorsShareMismatchError,
@@ -410,6 +412,34 @@ describe('4.2.0-beta.4 rejections', () => {
     }
   })
 
+  it('words a lost commit-and-reveal race (40149) as final, and not as a dead target', () => {
+    // Transcribed from rs-dpp's `#[error(...)]` at tag v5.0.0-beta.5.
+    for (const message of [
+      'referenced document 8Xv3 for path offer.commitmentId is preceded in its chooseFirst order by document 9t2e, a valid commitment of another identity holding the same name',
+      'rejected: code=40149',
+    ]) {
+      const error = new Error(message)
+      expect(isReferencedDocumentPrecededError(error)).toBe(true)
+      expect(isReferenceNotFoundError(error)).toBe(false)
+      expect(isPermanentProtocol14Error(error)).toBe(true)
+      expect(categorizeError(error)).toMatch(/someone else got there first/i)
+    }
+  })
+
+  it('treats a 40148 (a propertyConstraints rule reading an unreadable field) as permanent, with no retry copy', () => {
+    for (const message of [
+      'propertyConstraints rule sameOwner of order reads through item: the field $creatorId is not recorded',
+      'rejected: code=40148',
+    ]) {
+      const error = new Error(message)
+      expect(isReferencedRuleReadInvalidError(error)).toBe(true)
+      expect(isDocumentPropertyRuleError(error)).toBe(false)
+      expect(brokenPropertyRule(error)).toBeNull()
+      expect(isPermanentProtocol14Error(error)).toBe(true)
+      expect(categorizeError(error)).toMatch(/isn't available on this network/i)
+    }
+  })
+
   it('never tells a 40139 to reload: it is a share mismatch, not a stale client', () => {
     const error = new Error('Document create of type post declares a moderators fee of 80000000 credits; the transition agreed to 0, which is not discounted: the contract has no seated moderation charter')
     expect(isModeratorsShareMismatchError(error)).toBe(true)
@@ -684,6 +714,8 @@ describe('4.2.0-beta.6: consensus errors reach JS with their numeric code (platf
     [10421, isPropertyMaxBytesError],
     [10422, isDocumentPropertyRuleError],
     [40147, isDeleteConstraintError],
+    [40148, isReferencedRuleReadInvalidError],
+    [40149, isReferencedDocumentPrecededError],
     [40135, isReferenceRequirementError],
     [41200, isModerationNotYetSeatedError],
     [40140, isDocumentExpiredError],
@@ -772,6 +804,7 @@ describe('every consensus code against every matcher', () => {
     isBarredFromContractError, isGasPayerError, isActionFeeAgreementError, isModeratorsShareMismatchError,
     isFeeMultiplierNotToleratedError, isGasSponsorShortError, isReferencedTypeNotDeletableError,
     isOncePerIdentityAlreadyClaimedError, isPropertyMaxBytesError, isDocumentPropertyRuleError, isDeleteConstraintError,
+    isReferencedDocumentPrecededError, isReferencedRuleReadInvalidError,
     isReferenceRequirementError, isModerationNotYetSeatedError, isDocumentExpiredError, isContestFundError,
     isContestNotJoinableError, isContestFullError, isTrailingBytesError, isContestedDocumentsNotYetAllowedError,
     isTokenNotTransferableError,
@@ -798,6 +831,8 @@ describe('every consensus code against every matcher', () => {
     10419: ['isDocumentPropertyRuleError'],
     10422: ['isDocumentPropertyRuleError'],
     40147: ['isDeleteConstraintError'],
+    40148: ['isReferencedRuleReadInvalidError'],
+    40149: ['isReferencedDocumentPrecededError'],
     40135: ['isReferenceRequirementError'],
     40136: ['isReferenceRequirementError'],
     40137: ['isReferenceRequirementError'],
