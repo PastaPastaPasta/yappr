@@ -45,7 +45,7 @@
  * An elected declaration registers with the network's interim (`withInterim`).
  * Nothing here prints private key material.
  */
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { DataContract, DataContractCreateTransition, PlatformVersion, PrivateKey, StateTransition, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, * as dpp2 from '@dashevo/wasm-dpp2';
@@ -215,11 +215,13 @@ function writeDurably(path, contents) {
   const tmp = `${path}.tmp-${process.pid}`;
   const fd = openSync(tmp, 'w', 0o600);
   try {
-    writeSync(fd, contents);
+    // writeFileSync on a descriptor loops until every byte is written (a bare writeSync may stop short).
+    writeFileSync(fd, contents);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
   }
+  if (readFileSync(tmp, 'utf8') !== contents) throw new Error(`${tmp}: the journal checkpoint did not read back intact; the previous journal is untouched`);
   renameSync(tmp, path);
   const dir = openSync(dirname(resolve(path)), 'r');
   try {
