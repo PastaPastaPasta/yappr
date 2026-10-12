@@ -1,0 +1,62 @@
+{
+  "$formatVersion": "1",
+  "version": 1,
+  "config": {
+    "$formatVersion": "1",
+    "canBeDeleted": false,
+    "readonly": false,
+    "keepsHistory": false,
+    "documentsKeepHistoryContractDefault": false,
+    "documentsMutableContractDefault": true,
+    "documentsCanBeDeletedContractDefault": false,
+    "requiresIdentityEncryptionBoundedKey": 2,
+    "requiresIdentityDecryptionBoundedKey": null,
+    "sizedIntegerTypes": true
+  },
+  "documentSchemas": {
+    "appInfo": {
+      "type": "object",
+      "creationRestrictionMode": 1,
+      "documentsMutable": true,
+      "canBeDeleted": false,
+      "indices": [
+        {
+          "name": "byOwner",
+          "unique": true,
+          "properties": [
+            {
+              "$ownerId": "asc"
+            }
+          ]
+        }
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "position": 0
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "position": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 64,
+          "pattern": "^https://[a-z0-9.-]+$",
+          "position": 2
+        }
+      },
+      "required": [
+        "version",
+        "name",
+        "url"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

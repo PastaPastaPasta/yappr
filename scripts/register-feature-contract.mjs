@@ -38,22 +38,10 @@ import { CRITICAL_AUTH_KEY_ID } from './derive-identities.mjs';
 import { describeErr, resolveOwner, signerFor } from './owner-keys.mjs';
 import { REPO_ROOT, createSdkHandle, ledgerEntry, loadLedger, socialContractId, wifFromHex } from './seed/seed-lib.mjs';
 import { network } from './sdk-env.mjs';
-import { auditModeration, requireModeratorsExist, renderModeration, withInterim, withModerators } from './register-lib.mjs';
+import { auditModeration, contractSource, registrationJson, requireModeratorsExist, renderModeration, withInterim, withModerators } from './register-lib.mjs';
 
 const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
 const DRY_RUN_OWNER = '11111111111111111111111111111111';
-
-/**
- * The config a bare-schemas contract file registers with (no moderation) — the
- * beta.2 block, unchanged, so DM/pollr/vault/… republish exactly as before. A
- * moderated cut carries its own `config` (format version 2) in its file.
- */
-const DEFAULT_CONFIG = {
-  $formatVersion: '1', canBeDeleted: false, readonly: false, keepsHistory: false,
-  documentsKeepHistoryContractDefault: false, documentsMutableContractDefault: true,
-  documentsCanBeDeletedContractDefault: true, requiresIdentityEncryptionBoundedKey: null,
-  requiresIdentityDecryptionBoundedKey: null, sizedIntegerTypes: true,
-};
 
 function contractPath(name) {
   return name.includes('/') || isAbsolute(name) ? name : join(REPO_ROOT, 'contracts', name);
@@ -65,10 +53,7 @@ const needsSocialId = (file) => readFileSync(contractPath(file), 'utf8').include
 /** Loads a contract file, substituting the social contract id where priced. */
 function loadContractFile(file, socialId) {
   const text = readFileSync(contractPath(file), 'utf8');
-  const parsed = JSON.parse(socialId ? text.replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(Array.from(bs58.decode(socialId)))) : text);
-  return parsed.documentSchemas
-    ? { ...parsed, config: parsed.config ?? DEFAULT_CONFIG }
-    : { documentSchemas: parsed, config: DEFAULT_CONFIG };
+  return contractSource(socialId ? text.replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(Array.from(bs58.decode(socialId)))) : text);
 }
 
 /** Loads a contract file's document schemas, substituting the social contract id where priced. */
@@ -79,12 +64,7 @@ export function loadSchemas(file, socialId) {
 function buildContract({ file, ownerId, identityNonce, socialId, platformVersion, moderators, interim }) {
   const source = loadContractFile(file, socialId);
   const config = withModerators(withInterim(source.config, { network: network(), interim }), moderators);
-  const json = {
-    $formatVersion: source.$formatVersion ?? '1',
-    id: DataContract.generateId(ownerId, identityNonce).toBase58(),
-    ownerId, version: source.version ?? 1, config, documentSchemas: source.documentSchemas,
-    ...(source.tokens ? { tokens: source.tokens } : {}),
-  };
+  const json = registrationJson({ ...source, config }, { id: DataContract.generateId(ownerId, identityNonce).toBase58(), ownerId });
   if (config.moderation) console.log(`  registers with moderation ${renderModeration(config.moderation)} on ${network()}`);
   const dataContract = DataContract.fromJSON(json, true, platformVersion);
   // A token block lost in assembly would only show up as an unpayable first post.

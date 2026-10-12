@@ -496,6 +496,7 @@ const SOCIAL_V9 = 'contracts/yappr-social-contract-v9.json';
 const STOREFRONT = 'contracts/yappr-storefront-contract.json';
 const PROFILE = 'contracts/yappr-profile-contract.json';
 const BLOG = 'contracts/yappr-blog-contract.json';
+const APP_ANCHOR = 'contracts/yappr-app-contract.json';
 
 const elected = (source) => source.config.moderation.moderators;
 const types = (source) => source.documentSchemas;
@@ -790,6 +791,21 @@ const PROBES = [
     s.tokens['0'].transferable = true;
     for (const schema of Object.values(types(s))) if (schema.tokenCost) schema.tokenCost.create.effect = 0;
   } },
+
+  // The App Connect anchor (docs/APP_CONNECT_CONTRACTS.md): identities may hold ENCRYPTION keys
+  // bound to it, and `identities.contractKeys` reads the empty key under the purpose subtree,
+  // which only `MultipleReferenceToLatest` (2) writes as a pointer to the newest such key.
+  { label: 'control: the App Connect anchor as committed (encryption opt-in 2, owner-only appInfo), read back off the parse', file: APP_ANCHOR, mutate: () => {}, expect: 'accepted', holds: (s, parsed) => {
+    const { config } = parsed;
+    return config.requiresIdentityEncryptionBoundedKey === 2 && config.requiresIdentityDecryptionBoundedKey == null
+      && Object.keys(parsed.schemas).join() === 'appInfo' && Number(parsed.schemas.appInfo.creationRestrictionMode) === 1
+      && parsed.schemas.appInfo.canBeDeleted === false && !s.config.moderation && !s.tokens;
+  } },
+  { label: 'control: the anchor as mainnet registers it (no moderation, so the same)', file: APP_ANCHOR, network: 'mainnet', mutate: () => {}, expect: 'accepted' },
+  { label: 'anchor: an encryption opt-in of 3 (StorageKeyRequirements is 0, 1 or 2)', file: APP_ANCHOR, expect: 'wasm', mutate: (s) => { s.config.requiresIdentityEncryptionBoundedKey = 3; } },
+  { label: 'anchor: Multiple (1) instead of MultipleReferenceToLatest (legal, not adopted: no current-key pointer for contractKeys to read)', file: APP_ANCHOR, expect: 'accepted', mutate: (s) => { s.config.requiresIdentityEncryptionBoundedKey = 1; } },
+  { label: 'anchor: appInfo with creationRestrictionMode 3 (0, 1 or 2)', file: APP_ANCHOR, expect: 'wasm', why: /creation restriction mode/i, mutate: (s) => { types(s).appInfo.creationRestrictionMode = 3; } },
+  { label: 'anchor: appInfo with a property outside the meta-schema', file: APP_ANCHOR, expect: 'dpp2', auditToo: true, node: '10101', mutate: (s) => { types(s).appInfo.properties.name.colour = 'blue'; } },
 
   // Elected declaration (config/moderation/elected.rs): basic-structure rules of the
   // create transition, refused by the node with 10900. The one-day floor is mainnet's only

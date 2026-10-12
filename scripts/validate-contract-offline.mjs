@@ -52,7 +52,7 @@
 import { readFileSync } from 'node:fs';
 import { DataContract, DataContractCreateTransition, Document, PlatformVersion, documentCreateCost, ensureInitialized } from '@dashevo/evo-sdk';
 import initWasmDpp2, { DataContract as NodeRulesDataContract, PlatformVersion as NodeRulesPlatformVersion } from '@dashevo/wasm-dpp2';
-import { renderModeration, withInterim } from './register-lib.mjs';
+import { contractSource, registrationJson, renderModeration, withInterim } from './register-lib.mjs';
 import { CREATE_TRANSITION_BUDGET, STATE_TRANSITION_CAP, auditNodeRules, createTransitionSize, metaSchemaProblems, runContractProbes } from './contract-probes.mjs';
 import { runConstraintCases } from './property-constraint-cases.mjs';
 
@@ -65,14 +65,6 @@ const SOCIAL_PLACEHOLDER = 'SOCIAL_CONTRACT_ID';
  * ("redundant because it is targeting the current contract").
  */
 const SOCIAL_STAND_IN = Array(32).fill(7);
-
-/** The config a bare-schemas file registers with (register-feature-contract.mjs DEFAULT_CONFIG). */
-const DEFAULT_CONFIG = {
-  $formatVersion: '1', canBeDeleted: false, readonly: false, keepsHistory: false,
-  documentsKeepHistoryContractDefault: false, documentsMutableContractDefault: true,
-  documentsCanBeDeletedContractDefault: true, requiresIdentityEncryptionBoundedKey: null,
-  requiresIdentityDecryptionBoundedKey: null, sizedIntegerTypes: true,
-};
 
 function parseArgs(argv) {
   const flagIndex = argv.indexOf('--immutable');
@@ -105,25 +97,12 @@ function parseArgs(argv) {
  * `withInterim`), tokens.
  */
 function loadContractSource(file, { network, interim } = {}) {
-  const raw = JSON.parse(readFileSync(file, 'utf8').replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(SOCIAL_STAND_IN)));
-  const source = raw.documentSchemas
-    ? { ...raw, config: raw.config ?? DEFAULT_CONFIG }
-    : { documentSchemas: raw, config: DEFAULT_CONFIG };
+  const source = contractSource(readFileSync(file, 'utf8').replaceAll(`"${SOCIAL_PLACEHOLDER}"`, JSON.stringify(SOCIAL_STAND_IN)));
   return { ...source, config: withInterim(source.config, { network, interim }) };
 }
 
-/** The JSON `scripts/register-social-v3-draft.mjs` publishes. */
-function contractJson(source) {
-  return {
-    $formatVersion: source.$formatVersion ?? '1',
-    id: PLACEHOLDER_ID,
-    ownerId: PLACEHOLDER_ID,
-    version: source.version ?? 1,
-    documentSchemas: source.documentSchemas,
-    config: source.config,
-    ...(source.tokens ? { tokens: source.tokens } : {}),
-  };
-}
+/** The JSON the registration scripts publish, under placeholder ids. */
+const contractJson = (source) => registrationJson(source, { id: PLACEHOLDER_ID, ownerId: PLACEHOLDER_ID });
 
 /** The wasm-sdk parse: the package that signs and publishes the contract. */
 function parseContract(source, platformVersion = PlatformVersion.latest()) {
