@@ -21,6 +21,8 @@ The beta.4 SDK read beta.3 nodes. The beta.5 SDK does not read them fully. Measu
 | Document **count** with the same equality | **silently returns nothing** (`[]` where beta.4 returns 1) |
 | `identities.byNonUniquePublicKeyHash` | **fails**: `no proof in result` (beta.4: an empty list) |
 
+The cut-over prep also saw the beta.5 SDK fail to connect to beta.3 nodes with a quorum-key-unavailable error, which these probes did not hit, so treat the table as the best case.
+
 The cause is platform#5350 (unsigned-integer index values are now stored in numeric order, so a key encodes differently) and platform#5361 (the identity-by-public-key-hash request changed). A beta.4 SDK against beta.5 nodes breaks the same two paths from the other side, so **the SDK and the nodes move together**.
 
 What this means in the app: a poll's choice tally and any other equality on an integer key, and the passkey and key-hash sign-in path that falls back to `byNonUniquePublicKeyHash` (`lib/services/identity-service.ts`), would break on `/devnet` while sakura runs beta.3 or beta.4. The count failure returns zeros instead of an error. Merge this PR when sakura's nodes report 5.0.0-beta.5, and cut `/devnet` over in the same window.
@@ -61,6 +63,6 @@ The npm `wasm-sdk` 5.0.0-beta.5 wasm is about 26.38 MB. That is over Cloudflare 
 1. Get every sakura node onto beta.5 (`NETWORK=devnet node ops/status.mjs`: drive 5.0.0-beta.5, PV14, the height continuing).
 2. Merge this PR and redeploy `/devnet` (`workflow_dispatch --ref staging`; a master-triggered deploy wipes `/devnet`).
 3. Re-run the read batteries and the `/devnet` smoke on the beta.5 SDK, including a poll tally and a key-hash sign-in.
-4. Then register the beta.5 re-cuts.
+4. Then register the beta.5 re-cuts and the App Connect set. `scripts/register-app-connect-contracts.mjs` reads the Drive version from the status API and refuses to run against anything older than 5.0.0-beta.5.
 
 **Wiped:** rebuild as in [PLATFORM_V5_BETA2_UPGRADE.md](PLATFORM_V5_BETA2_UPGRADE.md) and [SAKURA_BETA3_DEPLOY.md](SAKURA_BETA3_DEPLOY.md).
