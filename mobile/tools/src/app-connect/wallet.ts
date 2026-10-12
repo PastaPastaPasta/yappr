@@ -309,7 +309,10 @@ export async function revokeAppConnect(input: RevokeInput, ports: AppConnectPort
     throw new Error(`persona ${persona.personaIdx} has no grant for app ${appId} on connection ${input.connectionId}`)
   }
   const chainKeys = await requireIdentityKeys(persona, ports)
-  const disable = liveGrantKeyIds(persona, connections.flatMap((id) => record.connections[id].keys), chainKeys)
+  const disable = [...new Set(liveGrantKeyIds(persona, connections.flatMap((id) => {
+    const grant = record.connections[id]
+    return [...grant.keys, ...resolvePendingKeys(persona, grant, chainKeys)]
+  }), chainKeys))]
   for (let start = 0; start < disable.length; start += MAX_DISABLES_PER_UPDATE) {
     await ports.updateIdentity(persona, { add: [], disable: disable.slice(start, start + MAX_DISABLES_PER_UPDATE) })
   }
@@ -445,6 +448,25 @@ function rederiveGrantKey(persona: Persona, grantKey: GrantedAuthKey, chainKey: 
   }
 }
 
+/** The grant's pending keys (an update with an unknown outcome) that are on chain, with their key ids. */
+function resolvePendingKeys(persona: Persona, grant: ConnectionGrant, chainKeys: AppConnectIdentityKey[]): GrantedAuthKey[] {
+  return (grant.pending ?? []).flatMap((pending) => {
+    try {
+      const privateKey = deriveAppConnectAuthKey(
+        persona.key('critical').privateKey,
+        persona.identityIdBytes,
+        hexToBytes(pending.derivationTag),
+        pending.bindingIndex,
+      )
+      const publicKey = getYapprPublicKey(privateKey)
+      const chainKey = chainKeys.find((key) => bytesEqual(key.data, publicKey))
+      return chainKey ? [{ ...pending, keyId: chainKey.id }] : []
+    } catch {
+      return []
+    }
+  })
+}
+
 /**
  * The stored grant keys that are still live on chain and provably this
  * wallet's App Connect auth keys (non-MASTER, and re-derived from the
@@ -520,11 +542,26 @@ async function answerAs(
   // Wallet rule 8: the previous grant on this connection goes in the same
   // update (not on a renewal, which keeps its keys; and never a key this
   // answer re-sends, as on a retry of the same request).
-  const disable = !renewal && previous
-    ? liveGrantKeyIds(persona, previous.keys, chainKeys).filter((id) => !authSlots.some((slot) => slot.keyId === id))
+  // Keys from an earlier update whose outcome was unknown count as part of
+  // the previous grant once they show up on chain.
+  const previousKeys = previous ? [...previous.keys, ...resolvePendingKeys(persona, previous, chainKeys)] : []
+  const disable = !renewal
+    ? [...new Set(liveGrantKeyIds(persona, previousKeys, chainKeys))].filter((id) => !authSlots.some((slot) => slot.keyId === id))
     : []
   if (toAdd.length > MAX_KEYS_PER_UPDATE) {
     throw new AppConnectRefusal('invalid', `the grant needs ${toAdd.length} new keys; Platform adds at most ${MAX_KEYS_PER_UPDATE} per update`)
+  }
+  // Recorded before the update: if it lands but its confirmation fails, the
+  // next login on this connection still finds and supersedes these keys.
+  const pendingAuth = toAdd.filter(({ key }) => key.purpose === KeyPurpose.AUTHENTICATION)
+  if (plan.connectionId !== undefined && !renewal && pendingAuth.length > 0) {
+    const grant = record.connections[plan.connectionId] ?? { keys: [], grantedAt: new Date(plan.now).toISOString() }
+    grant.pending = [
+      ...(grant.pending ?? []),
+      ...pendingAuth.map(({ slot }) => ({ bindingIndex: slot.bindingIndex, derivationTag: bytesToHex(plan.derivationTag), bounds: slot.bounds })),
+    ]
+    record.connections[plan.connectionId] = grant
+    ports.grants.put(persona.identityId, plan.appId, record)
   }
   let addedKeyIds: number[] = []
   if (toAdd.length > 0 || disable.length > 0) {

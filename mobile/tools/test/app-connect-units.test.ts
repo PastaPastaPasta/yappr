@@ -151,6 +151,17 @@ describe('grant state file', () => {
     dir = undefined
   })
 
+  it('belongs to one live process at a time, and takes over a lock left by a dead one', () => {
+    dir = mkdtempSync(join(tmpdir(), 'app-connect-state-'))
+    const path = join(dir, 'state.json')
+    // The parent process (vitest's runner) is alive and is not us.
+    writeFileSync(`${path}.lock`, `${process.ppid}\n`)
+    expect(() => fileGrantStore(path, 'sakura')).toThrow(/in use by responder process/)
+    writeFileSync(`${path}.lock`, '99999999\n')
+    expect(() => fileGrantStore(path, 'sakura')).not.toThrow()
+    expect(readFileSync(`${path}.lock`, 'utf8').trim()).toBe(String(process.pid))
+  })
+
   it('round-trips records per (identity, app), refuses another devnet, and holds no private key', async () => {
     dir = mkdtempSync(join(tmpdir(), 'app-connect-state-'))
     const path = join(dir, 'nested', 'state.json')
@@ -169,6 +180,7 @@ describe('grant state file', () => {
     const derived = deriveAppConnectAuthKey(testPrivateKey(1), persona.identityIdBytes, appConnectDerivationTag(request.appEphemeralPubKey), 0)
     for (const secret of [...secrets, bytesToHex(derived)]) expect(text).not.toContain(secret)
 
+    expect(readFileSync(`${path}.lock`, 'utf8').trim()).toBe(String(process.pid))
     expect(() => fileGrantStore(path, 'bonsia').get(persona.identityId, appId)).toThrow(/belongs to devnet sakura/)
     writeFileSync(path, '{"version":2}')
     expect(() => fileGrantStore(path, 'sakura').get(persona.identityId, appId)).toThrow(/not an App Connect state file/)

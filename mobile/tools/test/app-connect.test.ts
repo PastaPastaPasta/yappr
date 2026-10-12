@@ -221,6 +221,27 @@ describe('App Connect login', () => {
     expect(chain.grants.get(alice.identityId, APP).responses).toHaveLength(1)
   })
 
+  it('supersedes the keys of an update that landed but whose confirmation failed', async () => {
+    const chain = newChain()
+    await answer(chain, newRequest().uri)
+    const ports = chain.ports()
+    const update = ports.updateIdentity
+    ports.updateIdentity = async (persona, change) => {
+      await update(persona, change)
+      throw new Error('identity fetch failed')
+    }
+    await refusalOf(respondToAppConnect({ uri: newRequest().uri, persona: alice }, ports))
+    ports.updateIdentity = update
+    // The failed attempt disabled 5 and 6 and added 8 and 9 without confirming them.
+    expect(chain.keysOf(alice).filter((key) => key.disabledAt === undefined).map((key) => key.id)).toEqual([0, 1, 2, 3, 4, 7, 8, 9])
+
+    const next = newRequest()
+    const result = await respondToAppConnect({ uri: next.uri, persona: alice }, ports)
+    expect(result.answer.disabledKeyIds).toEqual([8, 9])
+    expect(chain.grants.get(alice.identityId, APP).connections[CONNECTION].pending).toBeUndefined()
+    expect(reason(await verdictFor(chain, next.request, next.appPrivateKey))).toBe('ok')
+  })
+
   it('without a connection id supersedes nothing', async () => {
     const chain = newChain()
     await answer(chain, newRequest({ connectionId: undefined }).uri)

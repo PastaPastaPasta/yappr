@@ -233,10 +233,16 @@ One JSON file per devnet, outside the repo, records per (identity, app):
 - the responses the responder published, with their three values. The
   indexOnly delete needs them, and nothing on chain lists responses by owner;
 - per `CONNECTION_ID`, the key ids of the current grant, with each key's
-  binding index and derivation tag.
+  binding index and derivation tag. Keys are recorded as pending before the
+  IdentityUpdate, so an update that lands without a confirmation is still
+  superseded by the next login.
 
 It holds no private key. Losing it is harmless: old responses stay on chain,
 and the next login does not disable the old keys (they still expire).
+
+One responder process owns the file at a time (`<file>.lock` holds its pid).
+A second process using the same file is refused; use another `--state-file`
+for it. A lock left by a process that is gone is taken over.
 
 ### Running it live
 

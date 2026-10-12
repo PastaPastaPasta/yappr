@@ -11,7 +11,7 @@
  * derivation tag `hash256(appEphPub)` reveal no key): no private key is ever
  * written. The file lives outside the repo, one per devnet.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { AppConnectKeyBounds } from '../../../../vendor/platform-auth/src/app-connect/types'
@@ -48,6 +48,8 @@ export interface ConnectionGrant {
   keys: GrantedAuthKey[]
   grantedAt: string
   renewal?: StoredRenewal
+  /** Keys of an update whose outcome was unknown, kept until they are found on chain (or the next grant replaces them). */
+  pending?: Array<Omit<GrantedAuthKey, 'keyId'>>
 }
 
 export interface AppRecord {
@@ -82,10 +84,55 @@ export function defaultStatePath(devnetName: string): string {
 }
 
 /**
+ * One responder process owns a state file at a time: a read-modify-write
+ * spans network work, so two processes sharing the file could overwrite each
+ * other's records. The owner's pid is kept in `<path>.lock`; a lock left by a
+ * process that is gone is taken over. Released when the process exits.
+ */
+function acquireOwnership(path: string): void {
+  const lock = `${path}.lock`
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(lock, `${process.pid}\n`, { flag: 'wx', mode: 0o600 })
+      process.once('exit', () => {
+        try {
+          if (readFileSync(lock, 'utf8').trim() === String(process.pid)) unlinkSync(lock)
+        } catch {
+          // Already gone.
+        }
+      })
+      return
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    const owner = Number(readFileSync(lock, 'utf8').trim())
+    if (owner === process.pid) return
+    if (Number.isInteger(owner) && owner > 0 && isAlive(owner)) {
+      throw new Error(`${path} is in use by responder process ${owner}; stop it or pass another --state-file`)
+    }
+    unlinkSync(lock)
+  }
+  throw new Error(`could not take ownership of ${path}`)
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/**
  * A JSON file, re-read on every call and replaced atomically on every write.
- * The responder answers one request at a time, so there is one writer.
+ * The process owns it (see acquireOwnership) and answers one request at a
+ * time, so there is one writer.
  */
 export function fileGrantStore(path: string, devnetName: string): GrantStore {
+  acquireOwnership(path)
+
   function load(): StateFile {
     if (!existsSync(path)) return { version: 1, devnet: devnetName, records: {} }
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<StateFile>
