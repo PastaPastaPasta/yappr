@@ -50,6 +50,8 @@ vi.mock('./identity-nonce', () => ({ withSdkSignedWrite: (...args: [string, stri
 vi.mock('./sdk-helpers', () => ({ identifierToBase58: (value: unknown) => String(value) }))
 vi.mock('./signer-service', () => ({ signerService: { createSigner: async () => ({ signer: true }) } }))
 vi.mock('../secure-storage', () => ({ getPrivateKey: () => 'wif' }))
+const walletSession = vi.hoisted(() => ({ active: false }))
+vi.mock('@/lib/auth/signing-keys', () => ({ hasAppConnectSession: () => walletSession.active }))
 vi.mock('@/lib/crypto/keys', () => ({ matchIdentityKey: () => ({ ok: true }) }))
 vi.mock('@dashevo/evo-sdk', () => ({
   Document: { fromBytes },
@@ -100,7 +102,18 @@ beforeEach(() => {
     for (const fn of Object.values(group)) fn.mockReset()
   }
   sdk.identities.fetch.mockResolvedValue({ id: MODERATOR, publicKeys: [] })
+  walletSession.active = false
   moderationService.invalidateTeam()
+})
+
+describe('moderation signs only with a raw key', () => {
+  it('refuses during a wallet session even with a CRITICAL key left in storage, before signing anything', async () => {
+    topology.lists = ['banlist', 'suspensions', 'warnings']
+    walletSession.active = true
+    const result = await moderationService.warn(MODERATOR, TARGET, 'tone')
+    expect(result).toMatchObject({ success: false, errorCode: 'NEEDS_CRITICAL_KEY' })
+    expect(sdk.contracts.warnUser).not.toHaveBeenCalled()
+  })
 })
 
 const OWNER = 'Own111111111111111111111111111111111111111'

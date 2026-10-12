@@ -2,7 +2,7 @@
 
 App Connect logs a user in by having their wallet add keys to their identity that are scoped to Yappr. The main one is an AUTHENTICATION key bound to a **contract group**, so one key can sign for every Yappr contract and nothing else. This document covers the contract side: the anchor contract that registers the group, which contracts join it, how they are registered, and how the app decides whether to trust the group.
 
-**Status: registered on sakura (5.0.0-beta.5) on 2026-10-12, exactly as planned below: the anchor `CWbSpGNi…` at maker nonce 13 registered the group `3S3owNij…`, and the seven members joined it at nonces 14-20 ([SAKURA_BETA5_DEPLOY.md](SAKURA_BETA5_DEPLOY.md)). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there. `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values; /devnet still signs in with the legacy protocol until the web App Connect client ships.** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md).
+**Status: registered on sakura (5.0.0-beta.5) on 2026-10-12, exactly as planned below: the anchor `CWbSpGNi…` at maker nonce 13 registered the group `3S3owNij…`, and the seven members joined it at nonces 14-20 ([SAKURA_BETA5_DEPLOY.md](SAKURA_BETA5_DEPLOY.md)). `verify-appconnect.mjs --only g1,g2,g3,a1` passes there. `.env.devnet` carries the four `NEXT_PUBLIC_APP_CONNECT_*` values. The web client reads them (`lib/app-connect/config.ts`) only on builds with `NEXT_PUBLIC_LOGIN_PROTOCOL=app-connect`, which no committed env file sets yet, so /devnet still signs in with the legacy protocol.** The beta.5 re-cuts are in [PLATFORM_V5_BETA5_UPGRADE.md](PLATFORM_V5_BETA5_UPGRADE.md).
 
 Credit costs are paired with cents at $60/DASH (1M credits = 0.06¢).
 
@@ -187,12 +187,12 @@ These are the ids nonce 13 produces, and the ids the sakura `--live` run of 2026
 
 - They are listed, unset, in `.env.devnet` and `.env.testing`.
 - The cut-over PR fills them from the publisher's output, together with the member contracts' own variables and the topology.
-- The web PR adds the client constants that read them.
+- `lib/app-connect/config.ts` reads them. A member may be written `id:version`; a bare id pins version 1.
 
 ## Group trust model
 
 - **Append-only.** Anything the maker creates with a membership joins the group for good, and every group-bound key can then sign for it. Binding a key to a group trusts the group's owner (and admins; this group has none) with that growth. Nobody else can add a member: any other creator is refused 41002.
-- **Widening by update.** A `contract` membership covers every document type and token the contract has or will have. A maker update that adds a type to a member, or to the non-readonly anchor, therefore widens what every group-bound key signs for, without changing the member list. Contract updates are maker-only too. The battery checks that every member is still at version 1 (g3e), and the web PR should pin each member's version beside its id.
+- **Widening by update.** A `contract` membership covers every document type and token the contract has or will have. A maker update that adds a type to a member, or to the non-readonly anchor, therefore widens what every group-bound key signs for, without changing the member list. Contract updates are maker-only too. The battery checks that every member is still at version 1 (g3e), and the app pins each member's version beside its id: a member at another version blocks new logins, and the group key stops signing for it.
 - **Pinned in the app.** The app ships `GROUP_OWNER` and the member list. At startup it makes proved reads (`contractGroups.info`, `contractGroups.members`), and checks in both directions:
   - the group's owner must equal the pinned owner, with no admins;
   - every pinned member must be in the group;

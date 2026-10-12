@@ -25,16 +25,13 @@ import { storeReviewService } from '@/lib/services/store-review-service'
 import { storeStatsService } from '@/lib/services/store-stats-service'
 import { storefrontIsV2, storefrontSupportsDigital } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
-import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { getEncryptionKeyBytes } from '@/lib/secure-storage'
 import type { StoreOrder, OrderStatusUpdate, Store, OrderPayload, OrderDelivery } from '@/lib/types'
-import { normalizeBytes } from '@/lib/bytes'
 
 /** A seller's encryption public key, which both order and delivery decryption need. */
 async function sellerEncryptionPublicKey(sellerId: string): Promise<Uint8Array | null> {
-  const sellerIdentity = await identityService.getIdentity(sellerId)
-  const sellerEncryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
-  return sellerEncryptionKey?.data ? normalizeBytes(sellerEncryptionKey.data) : null
+  return resolveEncryptionPublicKey(sellerId, async () => (await identityService.getIdentity(sellerId))?.publicKeys ?? null)
 }
 
 /**

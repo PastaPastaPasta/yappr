@@ -37,8 +37,13 @@ import {
   storeEncryptionKeyType,
   storeLoginKey,
   storePrivateKey,
+  storeSessionOnlyPrivateKey,
   storeTransferKey,
 } from '@/lib/secure-storage'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
+import { appConnectSessions } from '@/lib/app-connect/session-manager'
+import { matchIdentityKey } from '@/lib/crypto/keys'
+import { KeyPurpose, SecurityLevel } from '@/lib/crypto/identity-keys'
 import { identityService } from '@/lib/services/identity-service'
 import { storedKeyBelongsToIdentity } from '@/lib/auth/session-key'
 import { dpnsService } from '@/lib/services/dpns-service'
@@ -126,6 +131,8 @@ function readStoredSession(): AuthSessionSnapshot | null {
  * session identity; otherwise the controller clears the session.
  */
 async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
+  // An App Connect key ring restores from IndexedDB alone, without the network.
+  if (isAppConnectBuild() && await appConnectSessions.restore(identityId)) return true
   const wif = getPrivateKey(identityId)
   if (!wif) return false
   const session = readStoredSession()
@@ -139,6 +146,32 @@ async function hasSessionPrivateKey(identityId: string): Promise<boolean> {
   }, keyNetwork())
   if (!belongs) logger.warn(`Session restore: the stored key does not belong to ${identityId}; signing out`)
   return belongs
+}
+
+/**
+ * On App Connect builds a raw key typed in by hand is a one-key session, and a
+ * CRITICAL one (or one whose level cannot be told) is kept for this tab only.
+ * The session user, with the identity's keys, is saved just before this runs.
+ * The raw key replaces this tab's wallet grant for the identity, so writes
+ * sign with the key the user just entered.
+ */
+async function storeRawLoginKey(identityId: string, wif: string): Promise<void> {
+  if (!isAppConnectBuild()) {
+    storePrivateKey(identityId, wif)
+    return
+  }
+  await appConnectSessions.yieldToRawKey(identityId)
+  const session = readStoredSession()
+  const keys = session?.user.identityId === identityId
+    ? session.user.publicKeys.map((key) => ({ ...key, data: key.data }))
+    : []
+  const match = matchIdentityKey(wif, keys, {
+    network: keyNetwork(),
+    purpose: KeyPurpose.AUTHENTICATION,
+    allowedSecurityLevels: [SecurityLevel.HIGH],
+  })
+  if (match.ok) storePrivateKey(identityId, wif)
+  else storeSessionOnlyPrivateKey(identityId, wif)
 }
 
 function toSessionSnapshot(user: AuthUser, timestamp: number): AuthSessionSnapshot {
@@ -289,11 +322,19 @@ export function createYapprPlatformAuthDependencies(): PlatformAuthDependencies 
       },
     },
     secretStore: {
-      storePrivateKey,
+      storePrivateKey: storeRawLoginKey,
       getPrivateKey,
       hasPrivateKey: hasSessionPrivateKey,
       clearPrivateKey: async (identityId) => {
         clearPrivateKey(identityId)
+        if (!isAppConnectBuild()) return
+        // Logout wipes the key ring too; the connection id stays for the next login.
+        // Only while this tab holds the session: after a revoke this tab has
+        // already dropped its own grant, and must not take a newer one another
+        // tab stored for the same identity with it. Either way a renewal still
+        // being stored is cancelled, so it cannot bring the session back.
+        if (appConnectSessions.current(identityId)) await appConnectSessions.logout(identityId)
+        else appConnectSessions.cancelAdoptions(identityId)
       },
       storeEncryptionKey,
       getEncryptionKey,

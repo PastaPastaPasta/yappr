@@ -9,6 +9,8 @@ import { YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION, keyNetwork } from '../constants
 import { starterGrantAmount, yappIsLocked } from '../contract-topology';
 import { extractErrorMessage, isOncePerIdentityAlreadyClaimedError } from '../error-utils';
 import { withSdkSignedWrite } from './identity-nonce';
+import { SigningUnavailableError, assertRawKeyCovers, hasAppConnectSession, reportSigningFailure, reportSigningSuccess, resolveSigningKey, type SigningKey } from '@/lib/auth/signing-keys';
+import { tokenSigningRequest } from '@/lib/app-connect/signing-plan';
 
 export interface TokenResult {
   success: boolean;
@@ -214,12 +216,16 @@ class TokenService {
     if (starterGrantAmount() === null) {
       return { success: false, error: 'This contract declares no starter grant', errorCode: 'NOT_AUTHORIZED' };
     }
+    let signingKey: SigningKey | undefined;
     try {
       const sdk = await getEvoSdk();
-      const { signer, identityKey } = await this.getAuthSigner(identityId, {
+      const auth = await this.getAuthSigner(identityId, {
         requireCritical: true,
         overrideWif: criticalKeyWif,
+        keyRing: true,
       });
+      const { signer, identityKey } = auth;
+      signingKey = auth.signingKey;
       await withSdkSignedWrite(identityId, YAPPR_CONTRACT_ID, () => sdk.tokens.claim({
         dataContractId: new Identifier(YAPPR_CONTRACT_ID),
         tokenPosition: YAPP_TOKEN_POSITION,
@@ -228,8 +234,10 @@ class TokenService {
         identityKey,
         signer,
       } as Parameters<typeof sdk.tokens.claim>[0]));
+      reportSigningSuccess(identityId);
       return { success: true };
     } catch (error) {
+      if (signingKey) await reportSigningFailure(identityId, signingKey, error);
       return this.toResult(error, 'Claim failed');
     }
   }
@@ -293,12 +301,24 @@ class TokenService {
    * private key from secure storage. Mirrors tip-service's transfer-key flow.
    * With `requireCritical`, only a CRITICAL key may match — throws the
    * NEEDS_CRITICAL_KEY marker otherwise so callers can prompt for one.
+   *
+   * An App Connect session signs only what `keyRing` allows (the starter
+   * claim, with the CRITICAL group key); every other token transition needs a
+   * key the user enters, so it answers the same marker.
    */
   private async getAuthSigner(
     identityId: string,
-    opts?: { requireCritical?: boolean; overrideWif?: string }
-  ) {
+    opts?: { requireCritical?: boolean; overrideWif?: string; keyRing?: boolean }
+  ): Promise<{ signer: Awaited<ReturnType<typeof signerService.createSigner>>; identityKey: WasmIdentityPublicKey; signingKey?: SigningKey }> {
     let wif = opts?.overrideWif?.trim();
+    if (!wif && hasAppConnectSession(identityId)) {
+      if (!opts?.keyRing) throw new Error('critical key required');
+      const sdk = await getEvoSdk();
+      const identity = await sdk.identities.fetch(identityId);
+      if (!identity) throw new Error('Identity not found');
+      const signingKey = await resolveSigningKey(identityId, identity.publicKeys, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
+      return { ...(await signerService.createSignerFromWasmKey(signingKey.wif, signingKey.identityKey)), signingKey };
+    }
     if (!wif) {
       const { getPrivateKey } = await import('../secure-storage');
       const stored = getPrivateKey(identityId);
@@ -325,6 +345,8 @@ class TokenService {
           : 'No matching AUTHENTICATION key (CRITICAL/HIGH) found for the stored private key'
       );
     }
+    // Every transition here is on the YAPP token: a bound or limited key must cover it.
+    await assertRawKeyCovers(identityId, authKey, tokenSigningRequest(YAPPR_CONTRACT_ID, YAPP_TOKEN_POSITION));
 
     return signerService.createSignerFromWasmKey(wif, authKey);
   }
@@ -344,6 +366,7 @@ class TokenService {
   }
 
   private toResult(error: unknown, fallback: string): TokenResult {
+    if (error instanceof SigningUnavailableError) return { success: false, error: error.message, errorCode: 'NOT_AUTHORIZED' };
     const msg = extractErrorMessage(error);
     logger.error(`${fallback}:`, msg);
     const lower = msg.toLowerCase();

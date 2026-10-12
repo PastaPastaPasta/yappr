@@ -25,6 +25,7 @@ import { getPrivateKey } from '../secure-storage'
 import { YAPPR_DM_CONTRACT_ID, dmIsV4 } from '../constants'
 import { useSettingsStore } from '../store'
 import { promptForAuthKey } from '../auth-utils'
+import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import bs58 from 'bs58'
 import { normalizeBytes } from '@/lib/bytes'
 import { KeyPurpose, KeyType, SecurityLevel } from '@/lib/crypto/identity-keys'
@@ -76,7 +77,7 @@ class DirectMessageService {
       // 2. Get sender's private key
       const privateKey = getPrivateKey(senderId)
       if (!privateKey) {
-        promptForAuthKey()
+        if (!hasAppConnectSession(senderId)) promptForAuthKey()
         throw new Error('Private key not found. Please re-enter your key.')
       }
 
@@ -627,7 +628,8 @@ class DirectMessageService {
   ): Promise<DirectMessage | null> {
     const privateKey = getPrivateKey(currentUserId)
     if (!privateKey) {
-      promptForAuthKey()
+      // Wallet sign-ins hold no raw key; old (v4) conversations can't be opened with one.
+      if (!hasAppConnectSession(currentUserId)) promptForAuthKey()
       throw new Error('Private key not found. Please re-enter your key.')
     }
 

@@ -10,7 +10,6 @@ import {
   subscribeToPrivateFeedRequestStatus,
   type PrivateFeedRequestStatus as CacheStatus,
 } from '@/lib/caches/user-status-cache'
-import { normalizeBytes } from '@/lib/bytes'
 import { getPublicKey } from '@/lib/crypto/keys'
 
 export type PrivateFeedRequestStatus = 'none' | 'pending' | 'loading' | 'error'
@@ -179,17 +178,8 @@ export function usePrivateFeedRequest({
         encryptionPublicKey = getPublicKey(privateKeyBytes)
       } else {
         // Try to get from identity
-        const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
-        const identity = await identityService.getIdentity(currentUserId)
-        if (identity?.publicKeys) {
-          const encryptionKey = findEncryptionKey(identity.publicKeys)
-          if (encryptionKey?.data) {
-            encryptionPublicKey = normalizeBytes(encryptionKey.data) ?? undefined
-            if (!encryptionPublicKey) {
-              logger.error('Failed to decode encryption key data on identity')
-            }
-          }
-        }
+        const { resolveEncryptionPublicKey } = await import('@/lib/crypto/encryption-key-lookup')
+        encryptionPublicKey = await resolveEncryptionPublicKey(currentUserId, async () => (await identityService.getIdentity(currentUserId))?.publicKeys ?? null) ?? undefined
       }
 
       if (!encryptionPublicKey) {

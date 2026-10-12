@@ -7,6 +7,8 @@ import {
 import { isLikelyWif, parsePrivateKey, privateKeyToWif } from '@/lib/crypto/wif'
 import { scopedKey } from '@/lib/storage-scope'
 import { keyNetwork } from '@/lib/constants'
+import { appConnectEncryptionKey, hasAppConnectSession } from '@/lib/app-connect/memory-keys'
+import { isAppConnectBuild } from '@/lib/app-connect/config'
 
 const browserSecretStore = createBrowserSecretStore({
   prefix: scopedKey('yappr_secure_'),
@@ -23,9 +25,6 @@ export type KeyType = BrowserStoredKeyType
 
 export const {
   storePrivateKey,
-  getPrivateKey,
-  clearPrivateKey,
-  hasPrivateKey,
   storeLoginKey,
   getLoginKeyBytes,
   clearLoginKey,
@@ -33,15 +32,106 @@ export const {
   getAuthVaultDekBytes,
   clearAuthVaultDek,
   storeEncryptionKey,
-  getEncryptionKey,
-  getEncryptionKeyBytes,
-  hasEncryptionKey,
   clearEncryptionKey,
   storeEncryptionKeyType,
-  getEncryptionKeyType,
   clearEncryptionKeyType,
   storeTransferKey,
   getTransferKey,
   hasTransferKey,
   clearTransferKey,
 } = browserSecretStore
+
+/**
+ * A raw login key kept for this tab only (sessionStorage): on App Connect
+ * builds a CRITICAL key typed in by hand is never persisted. Its own prefix
+ * keeps the secret store from migrating it into localStorage.
+ */
+const SESSION_ONLY_KEY_PREFIX = scopedKey('yappr_session_pk_')
+
+/** Where sessionStorage is blocked the key is kept in memory instead, so it still signs until the tab closes. */
+const sessionOnlyMemory = new Map<string, string>()
+
+export function storeSessionOnlyPrivateKey(identityId: string, wif: string): void {
+  if (typeof window === 'undefined') return
+  const normalized = privateKeyToWif(parsePrivateKey(wif).privateKey, keyNetwork(), true)
+  try {
+    sessionStorage.setItem(SESSION_ONLY_KEY_PREFIX + identityId, normalized)
+    sessionOnlyMemory.delete(identityId)
+  } catch {
+    sessionOnlyMemory.set(identityId, normalized)
+  }
+  // Only now that this tab holds it is the persisted copy dropped.
+  browserSecretStore.clearPrivateKey(identityId)
+}
+
+function getSessionOnlyPrivateKey(identityId: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const stored = sessionStorage.getItem(SESSION_ONLY_KEY_PREFIX + identityId)
+    if (stored !== null) return stored
+  } catch {
+    // Storage blocked: fall back to the in-memory copy.
+  }
+  return sessionOnlyMemory.get(identityId) ?? null
+}
+
+export function getPrivateKey(identityId: string): string | null {
+  return browserSecretStore.getPrivateKey(identityId) ?? getSessionOnlyPrivateKey(identityId)
+}
+
+export function hasPrivateKey(identityId: string): boolean {
+  return getPrivateKey(identityId) !== null
+}
+
+export function clearPrivateKey(identityId: string): boolean {
+  const hadSessionOnly = getSessionOnlyPrivateKey(identityId) !== null
+  sessionOnlyMemory.delete(identityId)
+  if (hadSessionOnly) {
+    try {
+      sessionStorage.removeItem(SESSION_ONLY_KEY_PREFIX + identityId)
+    } catch {
+      // Nothing to clear where storage is blocked.
+    }
+  }
+  return browserSecretStore.clearPrivateKey(identityId) || hadSessionOnly
+}
+
+/**
+ * Whether a key stored in this browser may stand in for `identityId`'s
+ * encryption key. On App Connect builds a wallet sign-in holds no raw login
+ * key, and its only valid encryption key is the current anchor key from the
+ * wallet (in memory, or nothing); a key left over from an earlier sign-in
+ * must not be used in its place.
+ */
+function storedEncryptionKeyAllowed(identityId: string): boolean {
+  if (!isAppConnectBuild()) return true
+  // Decided by how this tab signed in, not by whatever an earlier sign-in left in storage.
+  return !hasAppConnectSession(identityId) && getPrivateKey(identityId) !== null
+}
+
+/**
+ * The encryption key. An App Connect session's key (unwrapped into memory
+ * from the key ring) comes first; otherwise the stored one, where allowed.
+ */
+export function getEncryptionKey(identityId: string): string | null {
+  const sessionKey = appConnectEncryptionKey(identityId)
+  if (sessionKey) return sessionKey
+  return storedEncryptionKeyAllowed(identityId) ? browserSecretStore.getEncryptionKey(identityId) : null
+}
+
+export function getEncryptionKeyBytes(identityId: string): Uint8Array | null {
+  const sessionKey = appConnectEncryptionKey(identityId)
+  if (sessionKey) return parsePrivateKey(sessionKey).privateKey
+  return storedEncryptionKeyAllowed(identityId) ? browserSecretStore.getEncryptionKeyBytes(identityId) : null
+}
+
+export function hasEncryptionKey(identityId: string): boolean {
+  if (appConnectEncryptionKey(identityId) !== null) return true
+  return storedEncryptionKeyAllowed(identityId) && browserSecretStore.hasEncryptionKey(identityId)
+}
+
+/** The wallet granted an App Connect session's key, so it counts as derived (not typed in). */
+export function getEncryptionKeyType(identityId: string): KeyType | null {
+  if (appConnectEncryptionKey(identityId)) return 'derived'
+  return storedEncryptionKeyAllowed(identityId) ? browserSecretStore.getEncryptionKeyType(identityId) : null
+}

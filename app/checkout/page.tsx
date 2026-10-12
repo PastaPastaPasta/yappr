@@ -26,7 +26,7 @@ import { storeOrderService } from '@/lib/services/store-order-service'
 import { ORDER_PAYMENT_FIELD_LIMITS, OWN_STORE_ORDER_MESSAGE, isOwnStore, orderPaymentBudgetError } from '@/lib/storefront/storefront-contract'
 import { storefrontIsV6 } from '@/lib/constants'
 import { identityService } from '@/lib/services/identity-service'
-import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { parseStorePolicies } from '@/lib/utils/policies'
 import { savedAddressService } from '@/lib/services/saved-address-service'
 import { hasEncryptionKey, getEncryptionKeyBytes } from '@/lib/secure-storage'
@@ -263,17 +263,17 @@ function CheckoutPage() {
     }
 
     try {
-      const sellerIdentity = await identityService.getIdentity(storeToValidate.ownerId)
-      const encryptionKey = sellerIdentity ? findEncryptionKey(sellerIdentity.publicKeys) : undefined
-
-      if (!encryptionKey?.data) {
+      const sellerEncryptionPublicKey = await resolveEncryptionPublicKey(
+        storeToValidate.ownerId,
+        async () => (await identityService.getIdentity(storeToValidate.ownerId))?.publicKeys ?? null
+      )
+      if (!sellerEncryptionPublicKey) {
         const state = blocked('missing-seller-key', buyerPrivateKey)
         setCheckoutReadiness(state)
         return state
       }
 
-      const sellerEncryptionPublicKey = normalizeKeyData(encryptionKey.data)
-      if (!sellerEncryptionPublicKey) {
+      if (!normalizeKeyData(sellerEncryptionPublicKey)) {
         const state = blocked('invalid-seller-key', buyerPrivateKey)
         setCheckoutReadiness(state)
         return state

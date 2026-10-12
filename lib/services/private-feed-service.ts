@@ -31,6 +31,7 @@ import {
 } from './private-feed-crypto-service';
 import { privateFeedKeyStore } from './private-feed-key-store';
 import { YAPPR_CONTRACT_ID, DOCUMENT_TYPES } from '../constants';
+import { isAppConnectBuild } from '@/lib/app-connect/config';
 import { contentLimits, isV10, privateFeedKeyFields, privateFeedWritesAreGated } from '@/lib/contract-topology';
 import { isReferenceNotFoundError, referencedPathFromError } from '@/lib/error-utils';
 import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup';
@@ -251,7 +252,8 @@ class PrivateFeedService {
       const encryptionPubKey = getPublicKey(encryptionPrivateKey);
 
       // Verify the derived public key is registered on the identity
-      const identity = await identityService.getIdentity(ownerId);
+      // On App Connect builds the anchor's current key decides, so a cached identity won't do.
+      const identity = await identityService.getIdentity(ownerId, { fresh: isAppConnectBuild() });
       if (!identity) {
         return { success: false, error: 'Could not fetch identity' };
       }
@@ -260,13 +262,17 @@ class PrivateFeedService {
         const onChainPubKey = normalizeBytes(data);
         return onChainPubKey !== null && bytesEqual(onChainPubKey, encryptionPubKey);
       };
-      // Find the identity's encryption key
+      // Find the identity's encryption key. On App Connect builds only the
+      // anchor's current key counts: peers look the feed key up there, so a
+      // feed sealed to any other key could never be opened again.
       const preferredKey = findEncryptionKey(identity.publicKeys);
       const matchingKey = preferredKey?.data && matchesDerived(preferredKey.data)
         ? preferredKey
-        : identity.publicKeys.find(key =>
-            key.purpose === KeyPurpose.ENCRYPTION && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt && matchesDerived(key.data)
-          );
+        : isAppConnectBuild()
+          ? undefined
+          : identity.publicKeys.find(key =>
+              key.purpose === KeyPurpose.ENCRYPTION && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt && matchesDerived(key.data)
+            );
 
       if (!matchingKey) {
         return {

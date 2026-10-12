@@ -15,12 +15,12 @@ import { Identifier } from '@dashevo/evo-sdk'
 import { logger } from '@/lib/logger'
 import { YAPPR_DM_V5_CONTRACT_ID } from '@/lib/constants'
 import { normalizeBytes } from '@/lib/bytes'
-import { KeyType } from '@/lib/crypto/identity-keys'
-import { findEncryptionKey } from '@/lib/crypto/encryption-key-lookup'
+import { resolveEncryptionPublicKey } from '@/lib/crypto/encryption-key-lookup'
 import { extractErrorMessage, isTimeoutError } from '@/lib/error-utils'
 import type { SelfStateFields } from '@/lib/dm/self-state'
 import type { DmInvite, IdentityId } from '@/lib/dm/types'
 import { hasPrivateKey } from '@/lib/secure-storage'
+import { hasAppConnectSession } from '@/lib/auth/signing-keys'
 import { getEvoSdk } from '../evo-sdk-service'
 import { stateTransitionService, type StateTransitionResult } from '../state-transition-service'
 import { identityService } from '../identity-service'
@@ -215,7 +215,8 @@ export class SdkDmChain implements DmChain {
   }
 
   canWrite(): boolean {
-    return hasPrivateKey(this.me)
+    // A wallet (App Connect) sign-in signs through its key ring, with no raw key stored.
+    return hasPrivateKey(this.me) || hasAppConnectSession(this.me)
   }
 
   /**
@@ -290,11 +291,8 @@ export class SdkDmChain implements DmChain {
   }
 
   async encryptionKey(identity: IdentityId): Promise<Uint8Array | null> {
-    const info = await identityService.getIdentity(bs58.encode(identity))
-    if (!info) return null
-    const key = findEncryptionKey(info.publicKeys)
-    if (!key || key.type !== KeyType.ECDSA_SECP256K1) return null
-    const bytes = normalizeBytes(key.data)
+    const identityId = bs58.encode(identity)
+    const bytes = await resolveEncryptionPublicKey(identityId, async () => (await identityService.getIdentity(identityId))?.publicKeys ?? null)
     return bytes?.length === ENCRYPTION_KEY_LENGTH ? bytes : null
   }
 

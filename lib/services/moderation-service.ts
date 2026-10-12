@@ -1446,6 +1446,11 @@ class ModerationService {
    * with. A HIGH login key answers NEEDS_CRITICAL_KEY without broadcasting.
    */
   private async getCriticalSigner(identityId: string) {
+    // A wallet (App Connect) session holds no key that may moderate, and it
+    // must not reach past its grant to a raw key left in storage either:
+    // moderating takes a raw-key sign-in.
+    const { hasAppConnectSession } = await import('@/lib/auth/signing-keys');
+    if (hasAppConnectSession(identityId)) throw new Error('critical key required');
     const { getPrivateKey } = await import('../secure-storage');
     const wif = getPrivateKey(identityId)?.trim();
     if (!wif) {

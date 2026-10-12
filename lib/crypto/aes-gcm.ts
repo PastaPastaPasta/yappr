@@ -18,7 +18,8 @@ export interface AesGcmSealed {
   iv: Uint8Array
 }
 
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+/** A standalone copy of `bytes` (Web Crypto wants an ArrayBuffer; the caller can wipe the copy). */
+export function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
 }
 

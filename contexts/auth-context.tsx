@@ -6,11 +6,12 @@ import { base64ToBytes } from '@/lib/bytes'
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import { Spinner } from '@/components/ui/spinner'
 import { usePathname, useRouter } from 'next/navigation'
-import { PlatformAuthController, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
+import { PlatformAuthController, clearSensitiveBytes, type AppConnectGrant, type AuthUser as PlatformAuthUser, type PlatformAuthIntent } from 'platform-auth'
 import { createYapprPlatformAuthDependencies } from '@/lib/auth/platform-auth-adapters'
 import { currentRoute, dpnsRegisterHref } from '@/lib/auth/return-to'
 import { extractErrorMessage, isAlreadyExistsError } from '@/lib/error-utils'
 import { useUsernameModal } from '@/hooks/use-username-modal'
+import { appConnectSessions, useAppConnectStatus } from '@/lib/app-connect/session-manager'
 
 export interface AuthUser {
   identityId: string
@@ -38,6 +39,10 @@ interface AuthContextType {
   loginWithPasskey: (identityOrUsername?: string) => Promise<void>
   /** Resolves with the post-login intent so the caller can tell a fully set-up account from one still needing a username. */
   loginWithKeyExchange: (identityId: string, loginKey: Uint8Array, keyIndex: number) => Promise<PlatformAuthIntent>
+  /** Signs in with a verified App Connect grant (the user already confirmed the identity). Wipes the grant's keys. */
+  loginWithAppConnect: (grant: AppConnectGrant) => Promise<PlatformAuthIntent>
+  /** Replaces the signed-in identity's App Connect keys with a renewed grant from the same identity. */
+  renewWithAppConnect: (grant: AppConnectGrant) => Promise<void>
   createOrUpdateUnifiedVaultFromLoginKey: (identityId: string, loginKey: Uint8Array) => Promise<void>
   createOrUpdateUnifiedVaultFromAuthKey: (identityId: string, authKeyWif: string) => Promise<void>
   addPasskeyWrapper: (label?: string) => Promise<void>
@@ -109,6 +114,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => controller.subscribe(setControllerState), [controller])
 
+  // The wallet revoked this browser's App Connect keys: end the session here too,
+  // if this tab is still signed in as that identity.
+  useEffect(() => {
+    appConnectSessions.onSignedOut((identityId) => {
+      if (controller.getState().user?.identityId !== identityId) return
+      // A newer grant for this identity became active while the old one was
+      // being signed out (another tab renewed): it stands, so nothing ends here.
+      if (appConnectSessions.current(identityId)) {
+        useAppConnectStatus.getState().dismissSignedOut()
+        return
+      }
+      controller.logout()
+        .then(() => router.push('/'))
+        .catch((error) => logger.error('Auth: sign-out after a wallet revoke failed:', error))
+    })
+    return () => appConnectSessions.onSignedOut(null)
+  }, [controller, router])
+
   useEffect(() => {
     controller.restoreSession().catch((error) => {
       logger.error('Auth: Failed to restore session:', error)
@@ -155,6 +178,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await applyIntent(result.intent)
     return result.intent
   }, [applyIntent, controller])
+
+  const loginWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    const session = await appConnectSessions.adopt(grant)
+    try {
+      const result = await controller.loginWithKeyRing(session.identityId)
+      // A logout while the controller read the identity ended this session:
+      // undo the sign-in it just stored rather than show a user with no keys.
+      if (!appConnectSessions.current(session.identityId)) {
+        await controller.logout()
+        throw new Error('Signed out while the wallet was connecting')
+      }
+      await applyIntent(result.intent)
+      return result.intent
+    } catch (error) {
+      await appConnectSessions.discard(session)
+      throw error
+    }
+  }, [applyIntent, controller])
+
+  const renewWithAppConnect = useCallback(async (grant: AppConnectGrant) => {
+    const identityId = controllerState.user?.identityId
+    if (!identityId || grant.identityId !== identityId) {
+      for (const key of [...grant.authKeys, ...grant.encryptionKeys]) clearSensitiveBytes(key.privateKey)
+      throw new Error('The renewal came from another account')
+    }
+    await appConnectSessions.adopt(grant)
+    useAppConnectStatus.getState().dismissRenewRequired()
+  }, [controllerState.user?.identityId])
 
   const createOrUpdateUnifiedVaultFromLoginKey = useCallback(async (identityId: string, loginKey: Uint8Array) => {
     await controller.createOrUpdateVaultFromLoginKey(identityId, loginKey)
@@ -232,6 +283,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loginWithPassword,
     loginWithPasskey,
     loginWithKeyExchange,
+    loginWithAppConnect,
+    renewWithAppConnect,
     createOrUpdateUnifiedVaultFromLoginKey,
     createOrUpdateUnifiedVaultFromAuthKey,
     addPasskeyWrapper,
@@ -252,6 +305,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     createOrUpdateUnifiedVaultFromAuthKey,
     createOrUpdateUnifiedVaultFromLoginKey,
     login,
+    loginWithAppConnect,
     loginWithKeyExchange,
     loginWithPasskey,
     loginWithPassword,
@@ -259,6 +313,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     mergeSecretsIntoAuthVault,
     refreshBalance,
     refreshDpnsUsernames,
+    renewWithAppConnect,
     updateDPNSUsername,
   ])
 

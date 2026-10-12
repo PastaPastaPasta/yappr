@@ -2,7 +2,9 @@ import { logger } from '@/lib/logger';
 import { TtlMap } from '@/lib/caches/ttl-map';
 import { getEvoSdk } from './evo-sdk-service';
 import { signerService } from './signer-service';
-import { IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
+import { ContractBounds, IdentityPublicKeyInCreation, PrivateKey } from '@dashevo/evo-sdk';
+import { appConnectPins, isAppConnectBuild } from '@/lib/app-connect/config';
+import { isBoundToContract } from '@/lib/crypto/encryption-key-lookup';
 import { keyNetwork } from '@/lib/constants'
 import { requireBytes } from '@/lib/bytes'
 import { findMatchingKeyIndex, getPublicKey } from '@/lib/crypto/keys'
@@ -347,9 +349,19 @@ class IdentityService {
         return { success: false, error: 'Identity not found' };
       }
 
+      // On App Connect builds the messaging key is bound to the yappr-app
+      // anchor (the only key peers look up there); other encryption keys,
+      // such as DashPay's, neither count nor stand in for it.
+      const anchorId = isAppConnectBuild() ? appConnectPins()?.appId : undefined;
+      if (isAppConnectBuild() && !anchorId) {
+        return { success: false, error: 'Encryption keys can\'t be added on this build' };
+      }
+
       // Check if encryption key already exists
       const existingKey = identity.publicKeys.find(
         (key) => isIdentityKeyForPurpose(key, KeyPurpose.ENCRYPTION)
+          && !key.disabledAt
+          && (!anchorId || isBoundToContract(key.contractBounds, anchorId))
       );
       if (existingKey) {
         return { success: false, error: 'Identity already has an encryption key' };
@@ -377,6 +389,7 @@ class IdentityService {
         keyType: 'ecdsa_secp256k1',
         isReadOnly: false,
         data: publicKeyBytes,
+        ...(anchorId ? { contractBounds: ContractBounds.SingleContract(anchorId) } : {}),
       });
       logger.debug('IdentityPublicKeyInCreation created successfully');
 

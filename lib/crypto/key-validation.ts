@@ -103,7 +103,12 @@ export async function validateKey(
 
   // Step 3: Fetch user's identity
   const { identityService } = await import('@/lib/services/identity-service')
-  const identityData = await identityService.getIdentity(identityId)
+  // On App Connect builds an encryption key must be the anchor's current one,
+  // so a cached identity (which may predate a rotation) won't do.
+  const { isAppConnectBuild } = await import('@/lib/app-connect/config')
+  const identityData = await identityService.getIdentity(identityId, {
+    fresh: purpose === KeyPurposeEnum.ENCRYPTION && isAppConnectBuild(),
+  })
   if (!identityData) {
     return {
       isValid: false,
@@ -114,9 +119,17 @@ export async function validateKey(
 
   // Step 4: Find all candidate keys on identity (purpose specified, type = 0 for ECDSA_SECP256K1)
   // Exclude disabled keys
-  const candidateKeys = identityData.publicKeys.filter(
-    (key) => key.purpose === purpose && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt
-  )
+  // On App Connect builds an encryption key is only valid as the anchor's
+  // current one (what peers encrypt to), never another key of that purpose.
+  const { findEncryptionKey } = await import('@/lib/crypto/encryption-key-lookup')
+  const anchorKey = purpose === KeyPurposeEnum.ENCRYPTION && isAppConnectBuild()
+    ? findEncryptionKey(identityData.publicKeys)
+    : undefined
+  const candidateKeys = purpose === KeyPurposeEnum.ENCRYPTION && isAppConnectBuild()
+    ? (anchorKey ? [anchorKey] : [])
+    : identityData.publicKeys.filter(
+        (key) => key.purpose === purpose && key.type === KeyType.ECDSA_SECP256K1 && !key.disabledAt
+      )
 
   if (candidateKeys.length === 0) {
     return {

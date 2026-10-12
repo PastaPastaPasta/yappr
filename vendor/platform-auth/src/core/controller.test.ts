@@ -10,6 +10,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     timestamp: 0,
   }
   const events: PlatformAuthEvent[] = []
+  const storePrivateKey = vi.fn(async () => undefined)
   const usernames: UsernamePort = {
     resolveUsername: vi.fn(resolveUsername),
     resolveIdentity: async () => null,
@@ -28,7 +29,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     },
     secretStore: {
       hasPrivateKey: async () => true,
-      storePrivateKey: async () => undefined,
+      storePrivateKey,
       clearPrivateKey: async () => undefined,
       clearEncryptionKey: async () => undefined,
       clearEncryptionKeyType: async () => undefined,
@@ -50,6 +51,7 @@ function setup(resolveUsername: UsernamePort['resolveUsername'], storedUsername?
     controller,
     events,
     usernames,
+    storePrivateKey,
     storedUser: (): AuthUser | undefined => session?.user,
   }
 }
@@ -160,5 +162,23 @@ describe('PlatformAuthController username sync', () => {
     const result = await controller.loginWithAuthKey(IDENTITY_ID, 'private-key')
 
     expect(result.intent.kind).toBe('username-required')
+  })
+})
+
+describe('PlatformAuthController key-ring login', () => {
+  it('signs in without storing a private key', async () => {
+    const { controller, storedUser, storePrivateKey } = setup(async () => 'alice.dash')
+
+    const result = await controller.loginWithKeyRing('ring-identity')
+
+    expect(result.intent).toEqual({ kind: 'ready', identityId: 'ring-identity' })
+    expect(controller.getState().user?.identityId).toBe('ring-identity')
+    expect(storedUser()?.identityId).toBe('ring-identity')
+    expect(storePrivateKey).not.toHaveBeenCalled()
+  })
+
+  it('refuses an empty identity', async () => {
+    const { controller } = setup(async () => null)
+    await expect(controller.loginWithKeyRing('')).rejects.toThrow('Identity ID is required')
   })
 })
