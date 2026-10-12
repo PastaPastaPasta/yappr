@@ -239,15 +239,14 @@ class StateTransitionService {
     publicKeys: WasmIdentityPublicKey[],
     contractId: string,
     documentType: string,
-    action: DocumentAction
+    action: DocumentAction,
+    multiplier: bigint = DEFAULT_FEE_MULTIPLIER_PERMILLE
   ): Promise<SigningKey> {
     // A budgeted key must afford the write's declared action fee too, at the
-    // multiplier it will agree to plus the tolerance above it. The multiplier
-    // is resolved here, before the key is chosen, and cached, so the signed
-    // agreement built afterwards uses this same value.
-    const fee = declaredActionFeeFor(contractId, documentType, action);
-    const multiplier = fee ? await currentFeeMultiplierPermille(await getEvoSdk()) : DEFAULT_FEE_MULTIPLIER_PERMILLE;
-    const actionFee = maxActionFee(fee, multiplier, FEE_MULTIPLIER_TOLERANCE_PERCENT);
+    // multiplier the write agrees to (read once per write by the caller, which
+    // builds the agreement at the same value) plus the tolerance above it.
+    // Replace and delete are never priced (assertUnpricedAction).
+    const actionFee = maxActionFee(declaredActionFeeFor(contractId, documentType, action), multiplier, FEE_MULTIPLIER_TOLERANCE_PERCENT);
     const key = await resolveSigningKey(ownerId, publicKeys, documentSigningRequest(contractId, documentType, actionFee));
     logger.debug(`Using signing key id=${key.identityKey.keyId} with security level ${key.identityKey.securityLevel}`);
     return key;
@@ -392,15 +391,15 @@ class StateTransitionService {
    * contract's declared amounts and the multiplier this session knows: a
    * different amount is 40133, no agreement is 40132.
    */
-  private async resolveActionFeeAgreement(
-    sdk: ConnectedSdk,
+  private resolveActionFeeAgreement(
     contractId: string,
     documentType: string,
-    action: DocumentAction
-  ): Promise<DocumentActionFeeAgreement | undefined> {
+    action: DocumentAction,
+    multiplier: bigint
+  ): DocumentActionFeeAgreement | undefined {
     const fee = declaredActionFeeFor(contractId, documentType, action);
     if (!fee) return undefined;
-    const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, await currentFeeMultiplierPermille(sdk)));
+    const agreement = new DocumentActionFeeAgreement(actionFeeAgreementOptions(fee, multiplier));
     logger.debug(`Agreeing to the ${documentType} ${action} fee: moderators=${fee.moderators} owner=${fee.owner} at ${agreement.knownFeeMultiplierPermille ?? 'fixed'} permille`);
     return agreement;
   }
@@ -580,7 +579,11 @@ class StateTransitionService {
       if (!identity) {
         throw new Error('Identity not found');
       }
-      signingKey = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'create');
+      // Read once: the key is chosen for, and the agreement signed at, this same multiplier.
+      const feeMultiplier = declaredActionFeeFor(contractId, documentType, 'create')
+        ? await currentFeeMultiplierPermille(sdk)
+        : DEFAULT_FEE_MULTIPLIER_PERMILLE;
+      signingKey = await this.signingKeyFor(ownerId, identity.publicKeys, contractId, documentType, 'create', feeMultiplier);
       const { identityKey } = signingKey;
 
       // --- The nonce comes first: the document id is derived from it ---
@@ -702,7 +705,7 @@ class StateTransitionService {
       if (paymentOptions) {
         logger.debug(`Attaching tokenPaymentInfo for ${documentType}: maxCost=${paymentOptions.maximumTokenCost} gasFeesPaidBy=${paymentOptions.gasFeesPaidBy ?? 0}`);
       }
-      const actionFeeAgreement = await this.resolveActionFeeAgreement(sdk, contractId, documentType, 'create');
+      const actionFeeAgreement = this.resolveActionFeeAgreement(contractId, documentType, 'create', feeMultiplier);
 
       // The transition re-derives the id from the document's entropy and this
       // nonce (wasm-dpp2, beta.4) and writes it back onto `document` — the id
