@@ -158,11 +158,11 @@ const MAX_ATTEMPTS = 4;
  * not the code, decides what counts as this write's document (pollr's ballot probe accepts any ballot in the voter's
  * slot, because the seeder replaces it to the planned choice next).
  */
-export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined, create = createDocument }) {
+export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, agreementFor = () => undefined, create = createDocument, wait = sleep }) {
   const stored = (docType, id, contract) => handle.sdk.documents.get(contract, docType, id);
   const settles = async (landed) => {
     for (let i = 0; i < SETTLE_POLLS; i++) {
-      await sleep(SETTLE_MS);
+      await wait(SETTLE_MS);
       try {
         if (await landed()) return true;
       } catch { /* a read that faults here is noise, not a verdict */ }
@@ -229,7 +229,7 @@ export function createDocWriter({ handle, contractId, entropyFor, paymentInfo, a
         const retryable = deadSdk || staleMultiplier || RETRYABLE.test(text) || WAIT_MAYBE_LANDED.test(text);
         if (!retryable && (/code=4\d{4}/.test(text) || /consensus/i.test(text))) throw error; // Platform said no
       }
-      await sleep(2_000 * attempt);
+      await wait(2_000 * attempt);
     }
     throw lastError ?? new Error(`${docType} create failed after ${MAX_ATTEMPTS} attempts`);
   }
@@ -475,21 +475,67 @@ export async function plumbingAssertions() {
     // A priced create refused 40134 (the epoch multiplier moved past the 20% tolerance) must
     // retry with a FRESH agreement; re-sending the first one is refused the same way forever.
     await ensureInitialized();
+    const signer = { ownerId: fakeId('owner'), lock: (fn) => fn() };
+    /** A writer over a fake chain: `visible(id, creates)` says whether a stored id is readable yet, `byValue(creates)` what the owner scan returns. */
+    const fakeWriter = ({ create, visible = () => false, byValue = () => [], agreementFor }) => {
+      let creates = 0;
+      const writer = createDocWriter({
+        handle: { sdk: { documents: {
+          get: async (c, t, docId) => (visible(docId, creates) ? {} : null),
+          query: async () => new Map(byValue(creates).map((doc) => [doc.$id, doc])),
+        } }, reconnect: async () => {} },
+        contractId: fakeId('contract'), entropyFor: (k) => sha256(utf8(k)), paymentInfo: () => ({}),
+        ...(agreementFor ? { agreementFor } : {}),
+        create: async (sdk, opts) => { creates += 1; return create(opts, creates); },
+        wait: async () => {},
+      });
+      return { writer, creates: () => creates };
+    };
+    // A wait that throws after the broadcast landed (the DAPI 504 quirk) is not a refusal.
+    const LOST_WAIT = 'wait for state transition result failed: 504 Gateway Timeout';
+    const recover = async (chain, key) => {
+      const docs = { docs: {} };
+      const { createDoc, id } = createRecorder({ writer: chain.writer, state: docs, file });
+      await createDoc(signer, 'blog', key, { name: key });
+      return { recorded: id(key), creates: chain.creates() };
+    };
+    // A priced create refused 40134 (the epoch multiplier moved past the 20% tolerance) must
+    // retry with a FRESH agreement; re-sending the first one is refused the same way forever.
     let agreements = 0;
     const offered = [];
-    const fresh = createDocWriter({
-      handle: { sdk: { documents: { query: async () => new Map(), get: async (c, t, docId) => (docId === 'landed' ? {} : null) } }, reconnect: async () => {} },
-      contractId: fakeId('contract'), entropyFor: (k) => sha256(utf8(k)), paymentInfo: () => ({}),
+    const priced = fakeWriter({
       agreementFor: async () => ({ permille: ++agreements }),
-      create: async (sdk, { agreement }) => {
+      visible: (docId) => docId === 'landed',
+      create: ({ agreement }) => {
         offered.push(agreement.permille);
         if (agreement.permille === 1) throw new Error('consensus error code=40134: fee multiplier is 1500 permille, outside the agreement');
         return { id: 'landed' };
       },
     });
-    const retried = await fresh.createDoc({ ownerId: fakeId('owner'), lock: (fn) => fn() }, 'blog', 'priced', { name: 'x' });
+    const retried = await priced.writer.createDoc(signer, 'blog', 'priced', { name: 'x' });
+    // (a) the create derives its id, lands, then its wait throws: recovered by that id.
+    const derivedThenThrew = await recover(fakeWriter({
+      visible: (docId) => docId === 'derived-1',
+      create: ({ onDerivedId }) => { onDerivedId('derived-1'); throw new Error(LOST_WAIT); },
+    }), 'a');
+    // (b) attempt 1's document only shows up after attempt 2 derived a second id: attempt 1's id is the one kept.
+    const lateFirst = await recover(fakeWriter({
+      visible: (docId, creates) => docId === 'derived-1' && creates >= 2,
+      create: ({ onDerivedId }, n) => { onDerivedId(`derived-${n}`); throw new Error(LOST_WAIT); },
+    }), 'b');
+    // (c) no derived id is ever readable, but the owner's value readback finds the document.
+    const byValueOnly = await recover(fakeWriter({
+      byValue: (creates) => (creates > 0 ? [{ $id: 'found-by-value', $ownerId: signer.ownerId, name: 'c' }] : []),
+      create: ({ onDerivedId }) => { onDerivedId('never-visible'); throw new Error(LOST_WAIT); },
+    }), 'c');
     return [
       ['a 40134 is retried with a freshly resolved agreement, and the retry lands', retried.id === 'landed' && JSON.stringify(offered) === '[1,2]'],
+      ['a create whose wait threw after landing is recovered by its derived id, with no second create',
+        derivedThenThrew.recorded === 'derived-1' && derivedThenThrew.creates === 1],
+      ['an earlier attempt that lands late is recovered by ITS id after a later attempt derived another, and creates stop',
+        lateFirst.recorded === 'derived-1' && lateFirst.creates === 2],
+      ['when no derived id is readable the value readback still finds the document, with no second create',
+        byValueOnly.recorded === 'found-by-value' && byValueOnly.creates === 1],
       ['an index refusal is not transient, whatever byte count its truncated text carries',
         NOT_QUERYABLE_BY_OWNER.test(indexRefusal) && !RETRYABLE.test(indexRefusal) && !WAIT_MAYBE_LANDED.test(indexRefusal)],
       ['real 429/503/504 statuses still read as transient', RETRYABLE.test('HTTP 429 Too Many Requests') && RETRYABLE.test('status: 503') && WAIT_MAYBE_LANDED.test('504 Gateway Time-out')],
